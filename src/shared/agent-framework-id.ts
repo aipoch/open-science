@@ -23,3 +23,17 @@ export const isPiFrameworkReady = (
   frameworks: readonly { id: AgentFrameworkId }[],
   runtimeReady: boolean | undefined
 ): boolean => runtimeReady === true && frameworks.some(({ id }) => id === 'pi')
+
+// Existing runtime routes, also used to scope persisted native validation evidence.
+export const AGENT_MODEL_ROUTE_VALUES = [
+  'claude-anthropic',
+  'opencode-anthropic',
+  'opencode-openai',
+  'codebuddy-openai',
+  'pi',
+  'open-science-agent',
+  'codex-responses',
+  'codex-responses-compatibility',
+  'codex-bridge'
+] as const
+export type AgentModelRoute = (typeof AGENT_MODEL_ROUTE_VALUES)[number]

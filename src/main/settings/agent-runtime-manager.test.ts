@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ClaudeInstallEvent } from '../../shared/settings'
 import type { ConnectorSettingsModule } from './connector-settings'
 import type { ClaudeDetectDeps } from './claude-detect'
+import { CODEBUDDY_VERSION } from './codebuddy-install'
 import type { CodexDetectDeps } from './codex-detect'
 import type { OpencodeDetectDeps } from './opencode-detect'
 import type { ProviderPreflightAccess } from './agent-runtime-manager'
@@ -318,6 +319,80 @@ describe('AgentRuntimeManager', () => {
   let managedAdapterPath: string
   let managedCodexPath: string
   let manager: InstanceType<typeof AgentRuntimeManager>
+
+  it('queries a shared npm directory once per environment check and detects each executable', async () => {
+    const resolveNpmBinDirs = vi.fn(async () => ['/custom/bin'])
+    const deps = { ...createOpencodeDeps(inventory), resolveNpmBinDirs }
+    manager = createManager({
+      opencodeDetectDeps: deps,
+      codebuddyDetectDeps: deps,
+      codexDetectDeps: {
+        ...createCodexDeps(inventory, managedAdapterPath, managedCodexPath),
+        managedAdapterPath: undefined,
+        resolveNpmBinDirs
+      }
+    })
+    await manager.checkEnvironment()
+    expect(resolveNpmBinDirs).toHaveBeenCalledTimes(1)
+
+    inventory.opencode.set('/custom/bin/opencode', '1.19.4')
+    inventory.opencode.set('/custom/bin/codebuddy', CODEBUDDY_VERSION)
+    await manager.checkEnvironment()
+    expect(resolveNpmBinDirs).toHaveBeenCalledTimes(2)
+    expect(await repository.getSettings()).toMatchObject({
+      opencodePath: '/custom/bin/opencode',
+      codebuddyPath: '/custom/bin/codebuddy'
+    })
+  })
+
+  it('shares concurrent npm availability checks and rechecks failures and expired successes', async () => {
+    const first = Promise.withResolvers<{ available: boolean }>()
+    const probe = vi
+      .spyOn(await import('./claude-install'), 'detectNpmAvailable')
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce({ available: false })
+      .mockResolvedValue({ available: true })
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(100)
+    const reads = [manager.isNpmAvailable(), manager.isNpmAvailable()]
+    first.resolve({ available: true })
+    expect(await Promise.all(reads)).toEqual([true, true])
+    expect(await manager.isNpmAvailable()).toBe(true)
+    expect(probe).toHaveBeenCalledTimes(1)
+
+    clock.mockReturnValue(2100)
+    expect(await manager.isNpmAvailable()).toBe(false)
+    expect(await manager.isNpmAvailable()).toBe(true)
+    expect(probe).toHaveBeenCalledTimes(3)
+  })
+
+  it('reuses a recent OpenCode launch probe until the executable changes or the window expires', async () => {
+    const executable = join(storageRoot, 'opencode')
+    await writeFile(executable, 'first')
+    const probe = vi.fn(async () => '1.2.3')
+    const runtime = createManager({
+      opencodeDetectDeps: { ...createOpencodeDeps(inventory), probeVersion: probe }
+    })
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(100)
+    probe.mockImplementationOnce(async () => {
+      clock.mockReturnValue(3100)
+      return '1.2.3'
+    })
+    try {
+      expect(await runtime.probeOpencodeVersion(executable)).toBe('1.2.3')
+      expect(await runtime.probeOpencodeVersion(executable)).toBe('1.2.3')
+      expect(probe).toHaveBeenCalledTimes(1)
+
+      await writeFile(executable, 'replacement')
+      probe.mockRejectedValueOnce(new Error('launch failed')).mockResolvedValue('2.0.1')
+      await expect(runtime.probeOpencodeVersion(executable)).rejects.toThrow('launch failed')
+      expect(await runtime.probeOpencodeVersion(executable)).toBe('2.0.1')
+      clock.mockReturnValue(5200)
+      expect(await runtime.probeOpencodeVersion(executable)).toBe('2.0.1')
+      expect(probe).toHaveBeenCalledTimes(4)
+    } finally {
+      clock.mockRestore()
+    }
+  })
 
   it('preserves a failed configured OpenCode version probe for diagnostics', async () => {
     const failure = Object.assign(new Error('version process failed'), { code: 23 })

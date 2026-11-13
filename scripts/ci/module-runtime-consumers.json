@@ -16,6 +16,7 @@
     "src/main/process-tree-native-loading.macos.integration.test.ts",
     "src/main/update/installation-occupancy.ts",
     "src/main/process-birth-identity.ts",
+    "src/main/update/windows-update-handoff.ts",
     "src/main/windows-process-query.ts"
   ],
   "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc": [

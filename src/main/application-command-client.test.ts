@@ -86,6 +86,56 @@ describe('Application command client', () => {
     expect(invocations[1]?.callerLease.signal.aborted).toBe(false)
     expect(invocations[1]?.callerLease.isCurrent()).toBe(true)
   })
+
+  it('keeps payload transfer identity stable when an invocation has cancellation', async () => {
+    const dispatcher: ApplicationCommandByNameDispatcher = {
+      commandNames: () => ['sessions:load-one'],
+      invoke: vi.fn(async () => ({ text: 'x'.repeat(10 * 1024 * 1024) }))
+    }
+    const client = createApplicationCommandClient()
+    const context = createWebCallerContext('payload-transfer')
+    const cancellation = new AbortController()
+
+    const descriptor = (await client.invoke(
+      dispatcher,
+      'sessions:load-one',
+      context,
+      [],
+      { acceptPayload: 1 },
+      cancellation.signal
+    )) as { $payload: { snapshotId: string; byteLength: number } }
+    expect(descriptor.$payload.byteLength).toBeGreaterThan(0)
+
+    const page = await client.invoke(
+      dispatcher,
+      'sessions:load-one',
+      context,
+      [],
+      {
+        acceptPayload: 1,
+        transfer: {
+          kind: 'read',
+          snapshotId: descriptor.$payload.snapshotId,
+          offset: 0
+        }
+      },
+      cancellation.signal
+    )
+    expect(page).toMatchObject({ offset: 0 })
+
+    await client.invoke(
+      dispatcher,
+      'sessions:load-one',
+      context,
+      [],
+      {
+        acceptPayload: 1,
+        transfer: { kind: 'release', snapshotId: descriptor.$payload.snapshotId }
+      },
+      cancellation.signal
+    )
+    client.dispose()
+  })
 })
 
 it.each(['projects:list', 'sessions:load-one'])(

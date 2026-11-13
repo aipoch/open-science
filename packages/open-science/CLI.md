@@ -646,7 +646,11 @@ open-science session import ~/backups/session.science --project <id-or-name> --n
 `--non-interactive` confirms the import preview on the caller's behalf; without it the command
 fails rather than waiting for an approval that a headless caller can never supply. Choose exactly
 one destination: `--project` imports into an existing Project, `--new-project` creates one with
-the given name, and omitting both uses the package's own Project name in a new Project. The
+the given name, and omitting both uses the package's own Project name in a new Project. A cancelled import exits nonzero with
+`code: "cancelled"`. If the import request times out, JSON output includes
+`completionStatus: "unconfirmed"`. The service can still finish the import. Check the destination
+before retrying, since another import can create a second Session. For a rejected local import,
+include the returned `error.correlationId` (when present) when looking up the service log. The
 package file is read directly from disk, so no upload or drag-and-drop step is involved.
 
 Both commands dispatch the same `sessions:export-package`, `sessions:import-package`, and

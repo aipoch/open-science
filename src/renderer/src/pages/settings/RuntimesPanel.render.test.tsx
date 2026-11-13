@@ -352,7 +352,7 @@ describe('RuntimesPanel', () => {
     getStatus.mockResolvedValue({ kind: 'ready', warnings: [] })
     await click(findButton('Recheck'))
     expect(findButton('Authorize and verify').disabled).toBe(false)
-    expect(container.textContent).toContain('Network protection on')
+    expect(container.textContent).toContain('Notebook network access')
     await click(findButton('Authorize and verify'))
     expect(authorize).toHaveBeenCalledOnce()
     expect(container.textContent).toContain('R access verified')
@@ -543,7 +543,7 @@ describe('RuntimesPanel', () => {
     await render(undefined, undefined, onOpenNetworkProtection)
 
     const banner = container.querySelector('[data-testid="notebook-network-protection-banner"]')
-    expect(banner?.textContent).toContain('Network protection on')
+    expect(banner?.textContent).toContain('Notebook network access')
     await click(banner?.querySelector('button') ?? null)
     expect(onOpenNetworkProtection).toHaveBeenCalledOnce()
   })

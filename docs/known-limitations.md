@@ -8,8 +8,8 @@ for suspected vulnerabilities; do not add undisclosed exploit details here.
 
 ## Review baseline
 
-The entries below were reviewed against source and documentation at [`v1.2.0`](https://github.com/aipoch/open-science/tree/v1.2.0)
-(commit `2be1d2665461`, application version **1.2.0**) on **2026-11-09**. Each entry's scope applies to that
+The entries below were reviewed against source and documentation at [`v1.2.1`](https://github.com/aipoch/open-science/tree/v1.2.1)
+(commit `a18fd48055b0`, application version **1.2.1**) on **2026-11-11**. Each entry's scope applies to that
 baseline; historical affected ranges and later fixes must be established separately. Independent
 packages retain their own versions. This review does not constitute new runtime testing, a security
 certification, or a claim that every release/platform combination has been exercised.
@@ -17,7 +17,7 @@ certification, or a claim that every release/platform combination has been exerc
 All entries share that review date unless an entry records a newer one. **Documented boundary** means
 the limitation remains relevant at this baseline, not that a fix is scheduled. **Verification gap**
 means the stated assurance has not been established by this review. Release-specific changes belong
-in the [release notes](../release-notes/1.2.0/en.md).
+in the [release notes](../release-notes/1.2.1/en.md).
 
 ## Source risk detection is bounded
 
@@ -47,13 +47,17 @@ in the [release notes](../release-notes/1.2.0/en.md).
 
 - **Scope / status:** The Notebook gateway's public read channel, excluding the separate WSL2 path;
   documented boundary.
-- **Trigger and impact:** When its local CA is available, the gateway can admit restricted GET/HEAD
-  requests to otherwise unknown public DNS hosts on port 443. URL paths and query parameters can
-  carry sensitive data even without a request body. The 8192-byte target limit is not an aggregate
-  data limit; there is no per-command request-count quota.
+- **Trigger and impact:** In the default Relaxed mode, when its local CA is available, the gateway can
+  admit restricted GET/HEAD requests to otherwise unknown public DNS hosts on port 443. URL paths and
+  query parameters can carry sensitive data even without a request body. The 8192-byte target limit is
+  not an aggregate
+  data limit; there is no per-command request-count quota. In Strict mode, unmatched requests are
+  blocked without an authorization offer, so this channel admits only whitelisted destinations; the
+  whitelist is managed manually and its built-in destinations are seeded once.
 - **Precautions:** Do not assume an unlisted public host cannot receive data. Use explicit deny rules
   for known destinations and an externally enforced restricted environment when the task requires
-  strict egress control. Review the TLS inspection behavior before using this channel.
+  strict egress control, or switch Notebook networking to Strict mode and review its seeded whitelist
+  rules. Review the TLS inspection behavior before using this channel.
 - **Details:** [Gateway policy](../packages/notebook-network-sandbox/README.md#scope) and
   [execution security model](security.md#code-and-notebook-execution).
 

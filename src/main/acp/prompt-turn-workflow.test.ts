@@ -99,9 +99,10 @@ const skillHandle = (kind: 'continue' | 'reload' = 'continue'): TurnSkillHandle 
 
 const backend: AcpBackendGenerationView = {
   framework: opencodeFramework,
-  session: { model: 'test-model', modelRequired: false },
+  providerName: 'Example Provider',
+  session: { model: 'transport/test-model', modelRequired: false },
   prompt: { systemPromptAppends: [] },
-  context: { supportsImageInput: false },
+  context: { model: 'test-model', supportsImageInput: false },
   adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
 }
 
@@ -665,7 +666,8 @@ describe('AcpPromptTurnWorkflow', () => {
       context: harness.context,
       prepared: harness.prepared,
       skill: harness.skill,
-      model: 'test-model'
+      model: 'test-model',
+      providerName: 'Example Provider'
     })
     expect(outcome).toMatchObject({
       kind: 'stopped',
@@ -903,7 +905,8 @@ describe('AcpPromptTurnWorkflow', () => {
       undefined,
       undefined,
       { text: request().text, attribution },
-      false
+      false,
+      undefined
     )
     expect(begin.mock.invocationCallOrder[0]).toBeLessThan(
       harness.executor.mock.invocationCallOrder[0]
@@ -928,7 +931,8 @@ describe('AcpPromptTurnWorkflow', () => {
       undefined,
       'message-1',
       undefined,
-      true
+      true,
+      { signal: expect.any(AbortSignal), assertCurrent: expect.any(Function) }
     )
     expect(harness.executor).not.toHaveBeenCalled()
     expect(harness.owner.current('s1')).toBeUndefined()
@@ -1044,14 +1048,17 @@ describe('AcpPromptTurnWorkflow', () => {
     await harness.workflow.run(turn, { kind: 'user' })
 
     expect(harness.interactions.reservePrompt).toHaveBeenCalledTimes(2)
-    expect(harness.resumeAfterReload).toHaveBeenCalledWith({
-      sessionId: 's1',
-      providerSessionId: 'provider-1',
-      cwd: '/session',
-      projectId: 'project-1',
-      permissionProfile: 'ask',
-      memoryEnabled: false
-    })
+    expect(harness.resumeAfterReload).toHaveBeenCalledWith(
+      {
+        sessionId: 's1',
+        providerSessionId: 'provider-1',
+        cwd: '/session',
+        projectId: 'project-1',
+        permissionProfile: 'ask',
+        memoryEnabled: false
+      },
+      expect.any(Function)
+    )
     expect(turn).toMatchObject({ contextReset: true, historyPreamble: 'restored transcript' })
     expect(harness.executor.mock.calls[0][0].session).toBe(reloaded)
   })

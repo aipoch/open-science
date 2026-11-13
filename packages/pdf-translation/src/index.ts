@@ -29,7 +29,10 @@ import {
 } from './snapshot.js'
 import type { PdfTranslationSaveSnapshotRequest } from './contracts.js'
 import { pdfTranslationMissingNumericUnits } from './numeric-units.js'
-import { pdfTranslationMissingProtectedLiterals } from './protected-literals.js'
+import {
+  pdfTranslationMissingProtectedLiterals,
+  pdfTranslationWrittenNumericLiterals
+} from './protected-literals.js'
 import { pdfTranslationBatchSourceIndices } from './batching.js'
 
 import {
@@ -37,6 +40,7 @@ import {
   nextPdfTranslationSourceIndex,
   normalizePdfTranslationText,
   pdfTranslationHasCommentary,
+  pdfTranslationIntroducesReplacementCharacters,
   pdfTranslationIntroducesMathMarkup,
   pdfTranslationCopiesNeighborFormula,
   pdfTranslationCopiesEnglishProse,
@@ -969,7 +973,13 @@ export class PdfTranslationOwner<
         return await accept(request.source)
       const retryFeedback = operation.retryFeedback.get(request.sourceIndex)
       const protectedPhrases =
-        retryFeedback?.reason === 'missing-numeric-literals'
+        retryFeedback?.reason === 'missing-numeric-literals' ||
+        (operation.input.contentFirst &&
+          retryFeedback?.reason === 'incomplete-output' &&
+          !!retryFeedback.missingProtectedLiterals?.length &&
+          retryFeedback.missingProtectedLiterals.every(
+            (literal) => pdfTranslationWrittenNumericLiterals(literal)[0] === literal
+          ))
           ? protectNumericPhrases(request.source)
           : undefined
       const shortSource = request.source.length <= 120
@@ -1000,7 +1010,9 @@ export class PdfTranslationOwner<
         sourceIndex: request.sourceIndex,
         ...(!protectedPhrases
           ? {
-              requiredNumericLiterals: numericLiterals(request.source),
+              requiredNumericLiterals: operation.input.contentFirst
+                ? pdfTranslationWrittenNumericLiterals(request.source)
+                : numericLiterals(request.source),
               ...(retryFeedback ? { retryFeedback } : {})
             }
           : {}),
@@ -1032,7 +1044,9 @@ export class PdfTranslationOwner<
             ).map((sourceIndex) => ({
               sourceIndex,
               source: operation.input.sources[sourceIndex],
-              requiredNumericLiterals: numericLiterals(operation.input.sources[sourceIndex]),
+              requiredNumericLiterals: operation.input.contentFirst
+                ? pdfTranslationWrittenNumericLiterals(operation.input.sources[sourceIndex])
+                : numericLiterals(operation.input.sources[sourceIndex]),
               definitionSourceUnits: abbreviationDefinitions(operation.input.sources, sourceIndex)
             }))
           : []
@@ -1050,7 +1064,7 @@ export class PdfTranslationOwner<
       // Keep the text to translate in the user message and retain bounded reference data separately.
       const { source: localSource, language: localLanguage, ...localContext } = promptInput
       const contentFirstInstruction = operation.input.contentFirst
-        ? 'Content first mode: translate only prose, headings and captions. Copy inline formulas, variables, subscripts, superscripts, code fragments, numeric literals, unit notation, citation/equation identifiers, URLs and DOI strings exactly as written in source. Do not translate or reformat these protected spans. This literal-preservation rule overrides permissions above to localize numeric spelling or unit names. If retryFeedback.missingProtectedLiterals is present, restore every listed occurrence exactly in its original context, without appending a detached list.'
+        ? 'Content first mode: translate only prose, headings and captions. Copy inline formulas, variables, subscripts, superscripts, code fragments, numeric literals, unit notation, citation/equation identifiers, URLs and DOI strings exactly as written in source. Do not translate or reformat these protected spans. This literal-preservation rule overrides permissions above to localize numeric spelling or unit names. Do not rescale quantities or abbreviate years or decades, even to mathematically equivalent values: keep 12.5 in "12.5 million" and 1990 in "the 1990s", translating only the surrounding words. If retryFeedback.missingProtectedLiterals is present, restore every listed occurrence exactly in its original context, without appending a detached list.'
         : undefined
       const localSystemPrompt = localTarget
         ? [
@@ -1290,6 +1304,10 @@ export class PdfTranslationOwner<
       )
       const changedLabel = pdfTranslationConfusesScientificLabel(request.source, text)
       const commentary = pdfTranslationHasCommentary(request.source, text)
+      const replacementCharacters = pdfTranslationIntroducesReplacementCharacters(
+        request.source,
+        text
+      )
       const contextLeak = pdfTranslationCopiesNeighborFormula(
         request.source,
         text,
@@ -1325,6 +1343,7 @@ export class PdfTranslationOwner<
         untranslated ||
         changedLabel ||
         commentary ||
+        replacementCharacters ||
         contextLeak
       ) {
         operation.retryFeedback.set(request.sourceIndex, {
@@ -1372,27 +1391,29 @@ export class PdfTranslationOwner<
           'incomplete-output',
           protectedPhrases && !text
             ? 'The model did not preserve the required numeric phrases.'
-            : missing.length
-              ? 'The translation omitted required numeric values.'
-              : missingNumericUnits.length
-                ? 'The translation changed or omitted a numeric unit.'
-                : changedNumericSign
-                  ? 'The translation changed a numeric sign.'
-                  : extraNumbers
-                    ? 'The translation added numeric values from another passage.'
-                    : missingCitationIdentities.length
-                      ? 'The translation omitted a citation identity or table footnote marker.'
-                      : missingMathIdentifiers.length
-                        ? 'The translation changed a mathematical identifier.'
-                        : missingProperName
-                          ? 'The translation changed a standalone proper name.'
-                          : reorderedInlineMath
-                            ? 'The translation reordered inline mathematical symbols.'
-                            : changedLabel
-                              ? 'The model changed the meaning of a scientific label.'
-                              : untranslated
-                                ? 'The model returned the original prose instead of a translation.'
-                                : 'The model did not finish the translation.'
+            : replacementCharacters
+              ? 'The translation introduced invalid replacement characters.'
+              : missing.length
+                ? 'The translation omitted required numeric values.'
+                : missingNumericUnits.length
+                  ? 'The translation changed or omitted a numeric unit.'
+                  : changedNumericSign
+                    ? 'The translation changed a numeric sign.'
+                    : extraNumbers
+                      ? 'The translation added numeric values from another passage.'
+                      : missingCitationIdentities.length
+                        ? 'The translation omitted a citation identity or table footnote marker.'
+                        : missingMathIdentifiers.length
+                          ? 'The translation changed a mathematical identifier.'
+                          : missingProperName
+                            ? 'The translation changed a standalone proper name.'
+                            : reorderedInlineMath
+                              ? 'The translation reordered inline mathematical symbols.'
+                              : changedLabel
+                                ? 'The model changed the meaning of a scientific label.'
+                                : untranslated
+                                  ? 'The model returned the original prose instead of a translation.'
+                                  : 'The model did not finish the translation.'
         )
       }
       operation.retryFeedback.delete(request.sourceIndex)

@@ -15,7 +15,12 @@ const mocks = vi.hoisted(() => ({
   run: vi.fn(),
   install: vi.fn(),
   acquire: vi.fn(),
-  shutdown: vi.fn()
+  shutdown: vi.fn(),
+  log: vi.fn()
+}))
+vi.mock('@aipoch/diagnostics/node', async (original) => ({
+  ...(await original<typeof import('@aipoch/diagnostics/node')>()),
+  createLogger: () => ({ info: mocks.log })
 }))
 vi.mock('../storage-root', () => ({ resolveDataRoot: () => mocks.root }))
 vi.mock('../runtime-metadata', () => ({ runtimeMetadata: () => ({ version: 'test' }) }))
@@ -38,6 +43,8 @@ vi.mock('../acp/restricted-inference-runner', async () => ({
 }))
 
 const outcomes = [
+  'prompt-unavailable',
+  'target-unavailable',
   'session-missing',
   'session-unreadable',
   'runtime-unavailable',
@@ -49,6 +56,7 @@ const outcomes = [
   'running',
   'unvalidated-interface',
   'max_tokens',
+  'max_turn_requests',
   'output-limit',
   'transport',
   'recovered',
@@ -283,7 +291,52 @@ it.each(outcomes)(
           (await owner.status({ ...request, checkReadiness: true })).preflightError
         ).toBeUndefined()
       }
-      await owner.start(request)
+      if (outcome === 'target-unavailable') {
+        input.settingsService.captureActiveExplicitAgentBackendTarget.mockRejectedValueOnce(
+          new Error('private target failure')
+        )
+        await owner.start(request)
+        await vi.waitFor(() =>
+          expect(mocks.log).toHaveBeenCalledWith(
+            'film model target failed',
+            expect.objectContaining({
+              sessionId: 's',
+              invocationId: expect.any(String),
+              errorCategory: 'error'
+            })
+          )
+        )
+        expect(mocks.run).not.toHaveBeenCalled()
+        expect(JSON.stringify(mocks.log.mock.calls)).not.toContain('private target failure')
+        return
+      }
+      const prepare =
+        outcome === 'prompt-unavailable'
+          ? vi.spyOn(inputContext, 'prepareResearchFilmPrompt').mockImplementation(() => {
+              throw new Error('private prompt failure')
+            })
+          : undefined
+      try {
+        await owner.start(request)
+        if (prepare) {
+          await vi.waitFor(() =>
+            expect(mocks.log).toHaveBeenCalledWith(
+              'film model failure',
+              expect.objectContaining({
+                sessionId: 's',
+                requestId: expect.any(String),
+                errorCategory: 'inference'
+              })
+            )
+          )
+          expect(mocks.run).not.toHaveBeenCalled()
+          expect(input.recordAuxiliaryUsage).not.toHaveBeenCalled()
+          expect(JSON.stringify(mocks.log.mock.calls)).not.toContain('private prompt failure')
+          return
+        }
+      } finally {
+        prepare?.mockRestore()
+      }
       await vi.waitFor(() => expect(mocks.run).toHaveBeenCalled())
       if (outcome === 'refusal') {
         expect(counter).toHaveBeenLastCalledWith(
@@ -306,13 +359,19 @@ it.each(outcomes)(
               ? 'byte output limit'
               : outcome === 'max_tokens'
                 ? 'output token limit'
-                : outcome === 'empty'
-                  ? 'no research film content'
-                  : 'refusal'
+                : outcome === 'max_turn_requests'
+                  ? 'max_turn_requests'
+                  : outcome === 'empty'
+                    ? 'no research film content'
+                    : 'refusal'
         )
         expect(status.result).toBeUndefined()
         const calls =
-          outcome === 'recovered' ? 3 : ['max_tokens', 'output-limit'].includes(outcome) ? 2 : 1
+          outcome === 'recovered'
+            ? 3
+            : ['max_tokens', 'max_turn_requests', 'empty', 'output-limit'].includes(outcome)
+              ? 2
+              : 1
         expect(mocks.run).toHaveBeenCalledTimes(calls)
         expect(input.recordAuxiliaryUsage).toHaveBeenCalledTimes(calls)
         expect(input.settingsService.captureActiveExplicitAgentBackendTarget).toHaveBeenCalledOnce()

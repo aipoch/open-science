@@ -83,7 +83,6 @@ const createDeletionOwner = (
     assertArchiveMutable: vi.fn(),
     notifyFilesChanged: vi.fn(),
     notifyDiscussionDetached: vi.fn(),
-    notifySessionsDeleted: vi.fn().mockResolvedValue(undefined),
     workspaceOwnership: {
       reconcileProvisional: vi.fn().mockResolvedValue(undefined),
       markProjectRetained: (projectId) => markManagedProjectWorkspacesRetained(projectId),
@@ -179,7 +178,8 @@ describe('managed workspace ownership', () => {
 
     await createDeletionOwner(liveSessions).deleteProjectSessions(
       'legacy-project',
-      (_sessionIds, operation) => operation()
+      (_sessionIds, operation) => operation(),
+      () => undefined
     )
 
     const usage = await computeStorageUsageWithOwnership(dataRoot)
@@ -212,7 +212,8 @@ describe('managed workspace ownership', () => {
 
     await createDeletionOwner(liveSessions).deleteProjectSessions(
       'project-1',
-      (_sessionIds, operation) => operation()
+      (_sessionIds, operation) => operation(),
+      () => undefined
     )
 
     await expect(readdir(externalCwd)).resolves.toEqual([])
@@ -315,7 +316,8 @@ describe('managed workspace ownership', () => {
 
     await createDeletionOwner(liveSessions, { projectScanComplete: false }).deleteProjectSessions(
       'project-1',
-      (_sessionIds, operation) => operation()
+      (_sessionIds, operation) => operation(),
+      () => undefined
     )
 
     await expect(readManagedWorkspaceOwnership(readableCwd, dataRoot)).resolves.toMatchObject({
@@ -339,7 +341,11 @@ describe('managed workspace ownership', () => {
       createDeletionOwner(new Map(), {
         projectScanComplete: false,
         deleteProjectSessionsError: new Error('Project Session authority delete failed')
-      }).deleteProjectSessions('project-1', (_sessionIds, operation) => operation())
+      }).deleteProjectSessions(
+        'project-1',
+        (_sessionIds, operation) => operation(),
+        () => undefined
+      )
     ).rejects.toThrow('Project Session authority delete failed')
 
     await expect(readManagedWorkspaceOwnership(cwd, dataRoot)).resolves.toMatchObject({
@@ -359,7 +365,9 @@ describe('managed workspace ownership', () => {
     await reconcileProvisionalManagedWorkspaces([], 20, dataRoot)
 
     await expect(readdir(workspacesRoot)).resolves.toEqual(['.ownership'])
-    await expect(readdir(join(workspacesRoot, '.ownership'))).resolves.toEqual([])
+    await expect(readdir(join(workspacesRoot, '.ownership'))).resolves.toEqual([
+      '.retired-workspaces'
+    ])
   })
 
   it('removes a finalized workspace with no authoritative Session', async () => {
@@ -375,7 +383,9 @@ describe('managed workspace ownership', () => {
     await reconcileProvisionalManagedWorkspaces([], 20, dataRoot)
 
     await expect(readdir(workspacesRoot)).resolves.toEqual(['.ownership'])
-    await expect(readdir(join(workspacesRoot, '.ownership'))).resolves.toEqual([])
+    await expect(readdir(join(workspacesRoot, '.ownership'))).resolves.toEqual([
+      '.retired-workspaces'
+    ])
   })
 
   it('preserves a finalized workspace referenced by another Session', async () => {
@@ -423,7 +433,7 @@ describe('managed workspace ownership', () => {
     await reconcileProvisionalManagedWorkspaces([], 20, dataRoot)
 
     await expect(readdir(workspacesRoot)).resolves.toEqual(['.ownership'])
-    await expect(readdir(ownershipDirectory)).resolves.toEqual([])
+    await expect(readdir(ownershipDirectory)).resolves.toEqual(['.retired-workspaces'])
   })
 
   it('finalizes a provisional receipt referenced by an authoritative Session', async () => {
@@ -645,7 +655,11 @@ describe('managed workspace ownership', () => {
     await expect(
       createDeletionOwner(liveSessions, {
         deleteProjectSessionsError: new Error('Project Session authority delete failed')
-      }).deleteProjectSessions('project-1', (_sessionIds, operation) => operation())
+      }).deleteProjectSessions(
+        'project-1',
+        (_sessionIds, operation) => operation(),
+        () => undefined
+      )
     ).rejects.toThrow('Project Session authority delete failed')
 
     const usage = await computeStorageUsageWithOwnership(dataRoot)
@@ -680,7 +694,11 @@ describe('managed workspace ownership', () => {
     await expect(
       createDeletionOwner(liveSessions, {
         markRetainedErrorAfterWrite: new Error('Retention directory sync failed')
-      }).deleteProjectSessions(session.projectId, (_sessionIds, operation) => operation())
+      }).deleteProjectSessions(
+        session.projectId,
+        (_sessionIds, operation) => operation(),
+        () => undefined
+      )
     ).rejects.toThrow('Retention directory sync failed')
 
     const usage = await computeStorageUsageWithOwnership(dataRoot)

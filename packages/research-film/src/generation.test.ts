@@ -95,7 +95,11 @@ it.each(['cancel', 'failure'] as const)(
       workers[1].emit('message', { kind: 'speech-duration', lane: 0, duration: 1 })
       if (reason === 'cancel')
         workers[2].emit('message', { kind: 'speech-duration', lane: 1, duration: 1 })
-      expect(await result).toEqual(new Error(reason === 'cancel' ? 'cancelled' : 'speech failed'))
+      expect(await result).toMatchObject({
+        message: reason === 'cancel' ? 'cancelled' : 'speech failed'
+      })
+      if (reason === 'failure')
+        expect(await result).toMatchObject({ workerRole: 'speech', lane: 1 })
       expect(workers[0].postMessage).not.toHaveBeenCalled()
       expect(workers[1].postMessage).toHaveBeenCalledOnce()
       expect(workers).toHaveLength(3)
@@ -197,3 +201,89 @@ it('routes scalar probes without PCM and transfers owned audio buffers to the ge
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it('reuses complete speech after a player build fails and replaces a damaged mix', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-speech-checkpoint-'))
+  try {
+    const specPath = join(root, 'video.json')
+    await writeFile(
+      specPath,
+      JSON.stringify({
+        title: 'Study',
+        session: 'session.json',
+        scenes: [{ id: 's', msg: 0, lines: [{ caption: 'Evidence.' }], panels: [] }]
+      })
+    )
+    await writeFile(join(root, 'session.json'), JSON.stringify({ messages: [{ md: 'Evidence.' }] }))
+    const synthesize = vi.fn(async () => ({ samples: new Float32Array(2400), sampleRate: 24000 }))
+    for (const expectedCalls of [1, 1, 2]) {
+      if (expectedCalls === 2) await writeFile(join(root, 'speech', 'mix.wav'), 'damaged')
+      const temporaryDirectory = await mkdtemp(join(root, 'attempt-'))
+      const progress = vi.fn()
+      await expect(
+        generateResearchVideoInWorker(
+          {
+            specPath,
+            retainNarration: true,
+            temporaryDirectory,
+            engineDirectory: join(root, 'missing-engine'),
+            modelDirectory: root,
+            outputDirectory: join(temporaryDirectory, 'output')
+          },
+          progress,
+          [{ identity: 'test', synthesize }]
+        )
+      ).rejects.toThrow()
+      expect(progress).toHaveBeenCalledWith({ phase: 'build' })
+      expect(synthesize).toHaveBeenCalledTimes(expectedCalls)
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it.each(['generation', 'speech'] as const)(
+  'identifies an unexpected %s exit without losing its code',
+  async (role) => {
+    const root = await mkdtemp(join(tmpdir(), 'film-exit-'))
+    try {
+      const workers: EventEmitter[] = []
+      const generate = createResearchVideoGenerator({
+        temporaryRoot: root,
+        createWorker: () => {
+          const worker = Object.assign(new EventEmitter(), {
+            terminate: vi.fn(async () => 1),
+            postMessage: vi.fn()
+          })
+          workers.push(worker)
+          if (workers.length === 1)
+            queueMicrotask(() => {
+              if (role === 'speech')
+                worker.emit('message', { kind: 'synthesize', lane: 0, text: 'private narration' })
+              workers.at(-1)!.emit('exit', 23)
+            })
+          return worker as unknown as Worker
+        }
+      })
+      await expect(
+        generate(
+          {
+            specPath: 'unused',
+            modelDirectory: 'unused',
+            engineDirectory: 'unused',
+            outputDirectory: join(root, 'output')
+          },
+          new AbortController().signal
+        )
+      ).rejects.toMatchObject({
+        message: 'Research video worker stopped before completion',
+        workerRole: role,
+        exitCode: 23,
+        lane: role === 'speech' ? 0 : undefined
+      })
+      expect(await readdir(root)).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)

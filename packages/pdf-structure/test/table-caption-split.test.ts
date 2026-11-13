@@ -129,3 +129,110 @@ it('splits independently titled tables while retaining all source rows and wrapp
   ])
   expect(table.unassigned).toEqual([])
 })
+
+const nativeCaptionFrames = (): ReturnType<typeof JSON.parse> => {
+  const captions = Array.from({ length: 4 }, (_, n) => ({
+    page: 1,
+    lines: [`Table ${n + 1}: Anonymous measurements.`],
+    rect: [20, n * 100, 180, n * 100 + 10]
+  }))
+  const items = captions.map((caption, index) => ({
+    text: caption.lines[0],
+    rect: caption.rect,
+    height: 10,
+    baseline: caption.rect[3],
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index, text: caption.lines[0] }
+  }))
+  for (let n = 0; n < 4; n++)
+    for (const y of [25, 45, 65])
+      for (const x of [10, 110]) {
+        const text = `Value ${n}-${y}-${x}`
+        items.push({
+          text,
+          rect: [x, n * 100 + y, x + 60, n * 100 + y + 8],
+          height: 8,
+          baseline: n * 100 + y + 8,
+          horizontal: true,
+          sourceItem: { pageNumber: 1, index: items.length, text }
+        })
+      }
+  const runs = items.map((item) => ({
+    ...item,
+    glyphRuns: [...item.text.replace(/\s/gu, '')].map(() => 1),
+    literalGlyphs: [...item.text.replace(/\s/gu, '')]
+  }))
+  const rules = captions.flatMap((_, n) =>
+    [20, 40, 80].map((y) => [0, n * 100 + y, 200, n * 100 + y])
+  )
+  const table = {
+    id: 'anonymous',
+    cropRect: [0, 15, 200, 385],
+    structure: {
+      objects: [
+        ...Array.from({ length: 2 }, (_, n) => ({
+          label: 'table column',
+          rect: [n * 100, 0, (n + 1) * 100, 370]
+        })),
+        ...Array.from({ length: 37 }, (_, n) => ({
+          label: 'table row',
+          rect: [0, n * 10, 200, (n + 1) * 10]
+        }))
+      ]
+    }
+  }
+  return {
+    table,
+    captions,
+    rules,
+    context: {
+      items,
+      runs,
+      graphics: rules.map((r) => ({ kind: 'path', rect: [r[0], r[1] - 0.2, r[2], r[3] + 0.2] })),
+      rulePaintBounds: new Map(
+        rules.map((r) => [r.join(','), [r[0], r[1] - 0.2, r[2], r[3] + 0.2]])
+      )
+    }
+  }
+}
+
+it('separates descriptive captions only at complete printed native frames', () => {
+  const f = nativeCaptionFrames(),
+    before = structuredClone(f)
+  const parts = splitCaptionedTableRegions(f.table, f.captions, f.rules, f.context)
+  expect(parts).toHaveLength(4)
+  expect(parts.map((p: { caption: unknown }) => p.caption)).toEqual(f.captions)
+  expect(parts.map((p: { cropRect: number[] }) => p.cropRect)).toEqual(
+    [0, 1, 2, 3].map((n) => [0, n * 100 + 19.8, 200, n * 100 + 80.2])
+  )
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'missing paint',
+  'missing program',
+  'missing closing',
+  'unprinted caption',
+  'continued number',
+  'crossing font',
+  'unowned corridor',
+  'aliased caption',
+  'native image',
+  'unowned path'
+])('keeps a composite intact without independent frame evidence: %s', (reason) => {
+  const f = nativeCaptionFrames()
+  if (reason === 'missing paint') f.context.rulePaintBounds.clear()
+  if (reason === 'missing program') f.context.runs.splice(3, 1)
+  if (reason === 'missing closing') f.rules.splice(5, 1)
+  if (reason === 'unprinted caption') f.captions[1].lines[0] += ' Unprinted.'
+  if (reason === 'continued number') f.captions[1].lines[0] = f.captions[0].lines[0]
+  if (reason === 'native image') f.context.graphics.push({ kind: 'image', rect: [10, 50, 30, 70] })
+  if (reason === 'unowned path') f.context.graphics.push({ kind: 'path', rect: [10, 85, 60, 95] })
+  if (reason === 'unowned corridor')
+    f.context.items.push({ text: 'Footnote', rect: [10, 85, 60, 93], horizontal: true })
+  if (reason === 'aliased caption')
+    f.context.items.push({ ...structuredClone(f.context.items[0]), rect: [210, 0, 370, 10] })
+  if (reason === 'crossing font')
+    f.context.items.push({ text: 'Foreign', rect: [10, 79, 30, 110], horizontal: true })
+  expect(splitCaptionedTableRegions(f.table, f.captions, f.rules, f.context)).toEqual([f.table])
+})

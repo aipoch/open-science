@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Zap, ChevronRight } from 'lucide-react'
 
 import type { JobSummary } from '../../../shared/compute'
-import { isComputeJobCancelled } from '@aipoch/compute'
+import { isComputeJobCancelled, isComputeJobTrackingStopped } from '@aipoch/compute'
 import { formatDuration, isJobElapsedLive, jobElapsedMs } from './remote-job-badge-utils'
 
 // RemoteJobRow appears at the bottom of the repl_execute tool-call block that submitted a job.
@@ -35,6 +35,7 @@ export function RemoteJobRow({ job, onOpen }: RemoteJobRowProps): React.JSX.Elem
   // Truncate long intent text to keep the row compact
   const intentDisplay = job.intent.length > 60 ? `${job.intent.slice(0, 57)}…` : job.intent
   const statusLabel = (() => {
+    if (isComputeJobTrackingStopped(job)) return t('Unable to confirm cancellation')
     if (isComputeJobCancelled(job)) return t('Cancelled')
     if (job.cancellation_status === 'cancelling') return t('Cancelling')
     switch (job.status) {
@@ -55,6 +56,7 @@ export function RemoteJobRow({ job, onOpen }: RemoteJobRowProps): React.JSX.Elem
     }
   })()
   const showElapsed =
+    !isComputeJobTrackingStopped(job) &&
     !isComputeJobCancelled(job) &&
     (job.status === 'queued' || job.status === 'submitted' || job.status === 'running')
 

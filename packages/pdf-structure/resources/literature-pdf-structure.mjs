@@ -22,7 +22,8 @@ import {
   attachNativeCaptionLaneRaster,
   attachNativeDualApiEvidence,
   nativeLigatureDualApiCaptureRequired,
-  attachNativeCompositingResources
+  attachNativeCompositingResources,
+  sealNativeMesh4RenderContext
 } from './literature-pdf-render-bounds.mjs'
 import { getDocument, OPS, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { repairPdfSymbolText } from './literature-pdf-symbol-text.mjs'
@@ -47,7 +48,8 @@ export const nativeFigureRenderContexts = new Map()
 export const nativePageRasterFiles = new Set()
 const assetRoot = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))
 const task = getDocument({
-  data: new Uint8Array(bytes),
+  // PDF.js needs a Uint8Array, but copying the whole source duplicates large PDFs.
+  data: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
   standardFontDataUrl: `${join(assetRoot, 'standard_fonts')}/`,
   cMapUrl: `${join(assetRoot, 'cmaps')}/`,
   wasmUrl: `${join(assetRoot, 'wasm')}/`,
@@ -87,7 +89,7 @@ try {
       const renderRotation = readingRotation(page, content)
       const viewport = page.getViewport({ scale: 1, rotation: renderRotation })
       const structure = await page.getStructTree()
-      const operators = await page.getOperatorList()
+      let operators = await page.getOperatorList()
       content = excludePdfLineNumbers(await repairPdfSymbolText(page, content, operators), viewport)
       const roles = {}
       const visit = (node) => {
@@ -130,6 +132,12 @@ try {
       if (
         geometryPages ? geometryPages.includes(pageNumber) : captionStarts.length && rendered < 2
       ) {
+        // Drop the raw operator-list owner before creating the genuine render
+        // program. Real PDF.js pages expose the intent cache; the lightweight
+        // probe page used by lifecycle tests does not and is cleaned in finally.
+        operators = undefined
+        if (page?._intentStates instanceof Map)
+          assert(page.cleanup(), 'PDF operator cache cleanup is incomplete.')
         const scaled = page.getViewport({ scale: 1.5, rotation: renderRotation })
         if (Math.ceil(scaled.width) * Math.ceil(scaled.height) > 4_000_000)
           throw new Error('PDF render pixel budget exceeded')
@@ -194,6 +202,7 @@ try {
             }
             evidence = attachNativeCompositingResources(evidence, rendering, encodedCaptionBytes)
             nativeFigureRenderContexts.set(pageNumber, evidence)
+            sealNativeMesh4RenderContext(evidence, rendering)
           }
         }
         if (mode !== 'production') {
@@ -220,6 +229,10 @@ try {
     } finally {
       if (canvas) canvas.width = canvas.height = 1
       page?.cleanup()
+      // Page cleanup leaves shared decoded images in the document cache.
+      await document.cleanup().catch((error) => {
+        if (!auxiliary) throw error
+      })
     }
   }
   const summary = {

@@ -1,3 +1,4 @@
+import { setImmediate } from 'node:timers/promises'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CredentialRequestBroker } from '../connectors/credential-request-broker'
 import type { SessionDeletionHandlers } from '../session-persistence/coordinator'
@@ -15,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   visionDelete: vi.fn(),
   visionReconcile: vi.fn(),
   harnessDelete: vi.fn(),
-  harnessReconcile: vi.fn(),
+  harnessReconcile: vi.fn(async () => []),
   archiveOwner: {
     withProjectDeletion: vi.fn(async (_id, operation) => operation()),
     restoreProjectDeletion: vi.fn(),
@@ -49,7 +50,7 @@ vi.mock('../acp/vision-evidence-repository', () => ({
 vi.mock('../harness-acp/storage-cleanup', () => ({
   HarnessStorageCleanup: class {
     commit = mocks.harnessDelete
-    reconcile = mocks.harnessReconcile
+    planReconciliation = mocks.harnessReconcile
   }
 }))
 vi.mock('../desktop-surface-declarations', () => ({}))
@@ -77,7 +78,10 @@ const fixture = (() => {
     broadcast: vi.fn()
   })
   const dependencies = {
-    researchFilmLifecycle: { deleteSessions: vi.fn(), reconcileSessions: vi.fn() },
+    researchFilmLifecycle: {
+      deleteSessions: vi.fn(),
+      planSessionReconciliation: vi.fn(async () => [])
+    },
     applicationEvents: {},
     notificationInbox: {
       setSessionAvailability: vi.fn(),
@@ -174,12 +178,31 @@ describe('Project lifecycle composition', () => {
     await handlers.reconcile(['session-1'], ['session-1'])
     await expect(broker.request(info)).resolves.toBe(false)
     expect(mocks.visionReconcile).toHaveBeenCalledWith(['session-1'])
-    expect(dependencies.researchFilmLifecycle.reconcileSessions).toHaveBeenCalledWith(['session-1'])
+    expect(mocks.harnessReconcile).not.toHaveBeenCalled()
+    await handlers.planReconciliation?.(['session-1'])
+    expect(dependencies.researchFilmLifecycle.planSessionReconciliation).toHaveBeenCalledWith([
+      'session-1'
+    ])
     expect(mocks.harnessReconcile).toHaveBeenCalledWith(['session-1'])
-    const clearHosts = vi.fn()
+    let releaseHosts!: () => void
+    const hostsGate = new Promise<void>((resolve) => {
+      releaseHosts = resolve
+    })
+    const clearHosts = vi.fn(() => hostsGate)
     result.sessionEnabledComputeHostsOwnerRef.current = { clear: clearHosts } as never
     mocks.visionDelete.mockRejectedValueOnce(new Error('projection unavailable'))
-    await expect(handlers.commit(['session-1'])).rejects.toThrow('projection unavailable')
+    let settled = false
+    const cleanup = handlers.commit(['session-1']).catch((error: unknown) => {
+      settled = true
+      return error
+    })
+    await setImmediate()
+    try {
+      expect(settled).toBe(false)
+    } finally {
+      releaseHosts()
+    }
+    await expect(cleanup).resolves.toEqual(new Error('projection unavailable'))
     const next = broker.request(info)
     expect(broker.hasPendingForSession('session-1')).toBe(true)
     expect(clearHosts).toHaveBeenCalledWith(['session-1'])
@@ -245,6 +268,81 @@ describe('Project lifecycle composition', () => {
     expect(availability('session-1')).toBe(true)
     mocks.archiveOwner.setMarkReadSessions.mock.calls[0][0](['session-1'])
     expect(d.notificationInbox.markSessionsRead).toHaveBeenCalledWith(['session-1'])
+  })
+
+  it.each(['pendingPermissions', 'pendingElicitations'] as const)(
+    'protects a session waiting for %s after the asynchronous job check',
+    async (kind) => {
+      const { dependencies: d, runtime } = fixture()
+      d.getActiveSideChatSessions.mockReturnValue([])
+      const activity = mocks.archive.mock.calls[0][2]
+      const jobCheck = Promise.withResolvers<number>()
+      d.computeJobActivityRef.current.countNonTerminalBySession.mockReturnValueOnce(
+        jobCheck.promise
+      )
+      const result = activity.isSessionBusy('project-1', 'session-1')
+      runtime.getSnapshot.mockReturnValue({
+        promptInFlightSessionIds: [],
+        [kind]: [{ sessionId: 'session-1' }]
+      })
+      jobCheck.resolve(0)
+      await expect(result).resolves.toBe(true)
+      await expect(activity.isSessionBusy('project-1', 'unrelated')).resolves.toBe(false)
+    }
+  )
+
+  it('keeps Compute-owned jobs in archive and export checks but out of local activity', async () => {
+    const { dependencies: d } = fixture()
+    d.getActiveSideChatSessions.mockReturnValue([])
+    d.computeJobActivityRef.current.countNonTerminalBySession.mockResolvedValue(1)
+    const activity = mocks.archive.mock.calls[0][2]
+    expect(activity.isSessionLocallyBusy('project-1', 'session-1')).toBe(false)
+    await expect(activity.isSessionBusy('project-1', 'session-1')).resolves.toBe(true)
+    await expect(activity.isSessionExportBusy('project-1', 'session-1')).resolves.toBe(true)
+    // A database outage cannot turn local activity into a persistent execution fence.
+    d.computeJobActivityRef.current.countNonTerminalBySession.mockRejectedValue(
+      new Error('offline')
+    )
+    await expect(activity.isSessionBusy('project-1', 'session-1')).rejects.toThrow('offline')
+    expect(activity.isSessionLocallyBusy('project-1', 'session-1')).toBe(false)
+    d.computeJobActivityRef.current.countNonTerminalBySession.mockResolvedValue(0)
+    await expect(activity.isSessionBusy('project-1', 'session-1')).resolves.toBe(false)
+  })
+
+  it.each([
+    'prompt',
+    'permission',
+    'elicitation',
+    'side-chat-owner',
+    'side-chat-prompt',
+    'delegated',
+    'notebook'
+  ])('protects local %s activity and releases the protection when it settles', (kind) => {
+    const { dependencies: d, runtime } = fixture()
+    d.getActiveSideChatSessions.mockReturnValue([])
+    const active = [{ projectId: 'project-1', sessionId: 'session-1' }]
+    const activity = mocks.archive.mock.calls[0][2]
+    const source = {
+      prompt: runtime.getActivePromptSessions,
+      'side-chat-prompt': d.getActiveSideChatSessions,
+      delegated: d.getActiveDelegatedSessions,
+      notebook: d.notebookActivityRef.current.getActiveNotebookSessions
+    }[kind]
+    if (source) source.mockReturnValue(active as never)
+    else if (kind === 'side-chat-owner')
+      d.sideChatOwnerRef.current.hasForParent.mockReturnValue(true)
+    else
+      runtime.getSnapshot.mockReturnValue({
+        promptInFlightSessionIds: [],
+        [kind === 'permission' ? 'pendingPermissions' : 'pendingElicitations']: [
+          { sessionId: 'session-1' }
+        ]
+      })
+    expect(activity.isSessionLocallyBusy('project-1', 'session-1')).toBe(true)
+    if (source) source.mockReturnValue([])
+    d.sideChatOwnerRef.current.hasForParent.mockReturnValue(false)
+    runtime.getSnapshot.mockReturnValue({ promptInFlightSessionIds: [] })
+    expect(activity.isSessionLocallyBusy('project-1', 'session-1')).toBe(false)
   })
 
   it('routes relays and file commands to the active owners with their original identities', async () => {

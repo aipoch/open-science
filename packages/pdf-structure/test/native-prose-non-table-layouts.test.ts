@@ -385,3 +385,67 @@ it.each(displayRefusals)('retains unproved single-display candidates with %s', (
   mutate(x)
   expect(hasTableEvidence(x.table, x.caption, x.tokens, x.rules, x.graphics)).toBe(true)
 })
+
+function captionDirectory(): ReturnType<typeof JSON.parse> {
+  const rows = [
+    item('9', 50, 50, 5),
+    item('Previous directory entry', 70, 50, 130),
+    item('8', 235, 50, 5),
+    item('List of Figures', 95, 75, 90),
+    ...Array.from({ length: 6 }, (_, n) => {
+      const x = n < 3 ? 50 : 270,
+        y = n < 3 ? 100 + n * 20 : 50 + (n - 3) * 20
+      return [
+        item(String(n + 1), x, y, 5),
+        item(`Independent plate ${n + 1}`, x + 20, y, 130),
+        item(String(1 + Math.floor(n / 2)), x + 185, y, 5)
+      ]
+    }).flat()
+  ].map((t, index) => ({ ...t, sourceItem: { pageNumber: 1, index, text: t.text } }))
+  return {
+    items: rows,
+    candidate: table(
+      [
+        ['entry', 'page', 'entry', 'page'],
+        ['first', '1', 'second', '2']
+      ],
+      [52, 40, 450, 150]
+    )
+  }
+}
+
+it.each([
+  'intact',
+  'heading',
+  'ordinal',
+  'source-alias',
+  'target-lane',
+  'prior-overlap',
+  'prior-font',
+  'wrong-source-page',
+  'extra-source',
+  'rule'
+])(
+  'uses whole native caption-directory packets beyond a clipped detector crop: %s',
+  async (kind) => {
+    const { hasNativeNonTableLayout } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-native-non-table-layout.mjs')).href
+    )
+    const f = captionDirectory(),
+      rules: number[][] = []
+    if (kind === 'heading') f.items[3].text = f.items[3].sourceItem.text = 'Comparison fields'
+    if (kind === 'ordinal') f.items[7].text = f.items[7].sourceItem.text = '9'
+    if (kind === 'source-alias') f.items[5].sourceItem.index = f.items[4].sourceItem.index
+    if (kind === 'prior-overlap') f.items[1].rect[2] = f.items[2].rect[0] + 1
+    if (kind === 'prior-font') f.items[1].height = 20
+    if (kind === 'target-lane') f.items[9].rect[2] += 20
+    if (kind === 'wrong-source-page') f.items[9].sourceItem.pageNumber = 2
+    if (kind === 'extra-source')
+      f.items.push({
+        ...item('orphan', 300, 130, 50),
+        sourceItem: { pageNumber: 1, index: 100, text: 'orphan' }
+      })
+    if (kind === 'rule') rules.push([52, 80, 450, 80])
+    expect(hasNativeNonTableLayout(f.candidate, f.items, rules)).toBe(kind === 'intact')
+  }
+)

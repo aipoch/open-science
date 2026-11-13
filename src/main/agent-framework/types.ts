@@ -89,16 +89,8 @@ export type AgentModelConfig = {
   persistentSystemPrompt?: string
 }
 
-export type AgentModelRoute =
-  | 'claude-anthropic'
-  | 'opencode-anthropic'
-  | 'opencode-openai'
-  | 'codebuddy-openai'
-  | 'pi'
-  | 'open-science-agent'
-  | 'codex-responses'
-  | 'codex-responses-compatibility'
-  | 'codex-bridge'
+import type { AgentModelRoute } from '../../shared/agent-framework-id'
+export type { AgentModelRoute } from '../../shared/agent-framework-id'
 
 export type AgentModelCatalogEntry = Readonly<{
   provider: ResolvedProvider
@@ -117,6 +109,7 @@ export type SkillSelectorUsageObservation = Readonly<{
 export type AgentModelChangeTarget = Readonly<{
   frameworkId: AgentFrameworkId
   providerId?: string
+  providerName?: string
   backendId: string
   route: AgentModelRoute
   model: string
@@ -331,6 +324,7 @@ export type ResolvedAgentBackend = {
   // Stable app provider/account identity used for usage attribution. This remains separate from
   // backendId because a framework may normalize provider selections onto one session store.
   providerId?: string
+  providerName?: string
   // Effective transport for an app-owned Codex subscription profile. Settings resolves Auto and
   // its learned HTTPS fallback once; disposable child/restricted homes project this exact choice
   // instead of re-reading or guessing it from a sanitized config snapshot.

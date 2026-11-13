@@ -6,18 +6,26 @@ import { Writable } from 'node:stream'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const { renameFile, appendLogFile, openLogFile } = vi.hoisted(() => ({
+const { renameFile, appendLogFile, openLogFile, mkdirLogDir } = vi.hoisted(() => ({
   renameFile: vi.fn(),
   appendLogFile: vi.fn(),
+  mkdirLogDir: vi.fn(),
   openLogFile: vi.fn()
 }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>()
+  mkdirLogDir.mockImplementation(original.mkdir)
   renameFile.mockImplementation(original.rename)
   appendLogFile.mockImplementation(original.appendFile)
   openLogFile.mockImplementation(original.open)
-  return { ...original, rename: renameFile, appendFile: appendLogFile, open: openLogFile }
+  return {
+    ...original,
+    mkdir: mkdirLogDir,
+    rename: renameFile,
+    appendFile: appendLogFile,
+    open: openLogFile
+  }
 })
 
 import {
@@ -32,6 +40,7 @@ import {
   writeFatalLogSync
 } from './logger'
 import { flushDiagnosticsWithTimeout } from './flush'
+import { consoleMirror } from './console-mirror'
 
 let logDir: string | undefined
 
@@ -62,7 +71,7 @@ describe('logger: main-process boundary', () => {
         })
       const terminal = new Console({ stdout: capture('stdout'), stderr: capture('stderr') })
       const method = level === 'debug' ? 'log' : level
-      vi.spyOn(console, method).mockImplementation(terminal[method])
+      vi.spyOn(consoleMirror, method).mockImplementation(terminal[method])
       runWithDiagnosticCorrelation(() =>
         createLogger('backend')[level]('first line\nsecond line %s', {
           apiKey: 'fictional-console-secret',
@@ -91,7 +100,7 @@ describe('logger: main-process boundary', () => {
 
   it('keeps JSON mirroring disabled when requested and text as the default', async () => {
     logDir = await mkdtemp(join(tmpdir(), 'os-logger-console-mode-'))
-    const mirror = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const mirror = vi.spyOn(consoleMirror, 'info').mockImplementation(() => undefined)
     initLogger({ logDir, mirrorToConsole: false, consoleFormat: 'json' })
     createLogger('backend').info('quiet')
     await flushLogs()
@@ -108,7 +117,7 @@ describe('logger: main-process boundary', () => {
     async (representation) => {
       logDir = await mkdtemp(join(tmpdir(), 'os-logger-d01-'))
       initLogger({ logDir, mirrorToConsole: true })
-      const mirror = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const mirror = vi.spyOn(consoleMirror, 'error').mockImplementation(() => undefined)
       const credentials = {
         OPENAI_API_KEY: 'fictional-d01-environment-7319',
         providerApiKey: 'fictional-d01-left-7319"\\\nfictional-d01-right-7319',
@@ -201,7 +210,7 @@ describe('logger: main-process boundary', () => {
     async (shape) => {
       logDir = await mkdtemp(join(tmpdir(), 'os-logger-d02-'))
       initLogger({ logDir, mirrorToConsole: true })
-      const mirror = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const mirror = vi.spyOn(consoleMirror, 'error').mockImplementation(() => undefined)
       const value = 'x'.repeat(8000)
       const shared = { detail: value }
       const data =
@@ -581,7 +590,7 @@ describe('logger: formatLine', () => {
 describe('logger: redacted sinks', () => {
   it('keeps the console mirror quiet by default in tests', async () => {
     logDir = await mkdtemp(join(tmpdir(), 'os-logger-quiet-'))
-    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const consoleWarn = vi.spyOn(consoleMirror, 'warn').mockImplementation(() => undefined)
     initLogger({ logDir, fileName: 'main.log' })
 
     createLogger('quiet').warn('captured in the log file')
@@ -594,7 +603,7 @@ describe('logger: redacted sinks', () => {
   it('keeps secrets out of the console mirror and every rotated JSONL file', async () => {
     logDir = await mkdtemp(join(tmpdir(), 'os-logger-redaction-'))
     const sentinel = 'sink-opaque-value-7319'
-    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const consoleWarn = vi.spyOn(consoleMirror, 'warn').mockImplementation(() => undefined)
     initLogger({
       logDir,
       fileName: 'main.log',
@@ -1806,6 +1815,24 @@ describe('logger: loss and recovery contracts', () => {
     expect(
       records.find((record) => record.msg === 'log records dropped')?.data.droppedRecords
     ).toBeGreaterThan(0)
+  })
+
+  it('prepares the directory once and restores it if removed between appends', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-directory-'))
+    const directory = join(logDir, 'logs')
+    initLogger({ logDir: directory, mirrorToConsole: false })
+    mkdirLogDir.mockClear()
+    const logger = createLogger('io')
+    for (let i = 0; i < 100; i++) logger.info('before removal')
+    await expect(flushLogs()).resolves.toEqual({ failed: false })
+    expect(mkdirLogDir).toHaveBeenCalledTimes(1)
+    await rm(directory, { recursive: true })
+    logger.info('after removal')
+    await expect(flushLogs()).resolves.toEqual({ failed: false })
+    expect(mkdirLogDir).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(await readFile(join(directory, 'main.log'), 'utf8')).msg).toBe(
+      'after removal'
+    )
   })
 
   it('reports directory and inspection failures without rejecting ordinary log calls', async () => {

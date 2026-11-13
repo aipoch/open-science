@@ -19,10 +19,10 @@ type PendingCustomServerDeletionStore = {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-const reconcilePermissionGrantOwners = async (
+const planPermissionGrantOwnerReconciliation = async (
   registry: PermissionGrantReconciliationRegistry,
   snapshot: PermissionGrantOwnerSnapshot
-): Promise<void> => {
+): Promise<Array<{ owner: PermissionGrantOwner; apply(): Promise<void> }>> => {
   const records = await registry.list()
   const sessions = snapshot.sessions
     ? new Set(
@@ -72,7 +72,20 @@ const reconcilePermissionGrantOwners = async (
     }
   }
 
-  for (const owner of owners.values()) await registry.prune(owner)
+  return [...owners.values()].map((owner) => ({
+    owner,
+    apply: async () => {
+      await registry.prune(owner)
+    }
+  }))
+}
+
+const reconcilePermissionGrantOwners = async (
+  registry: PermissionGrantReconciliationRegistry,
+  snapshot: PermissionGrantOwnerSnapshot
+): Promise<void> => {
+  for (const action of await planPermissionGrantOwnerReconciliation(registry, snapshot))
+    await action.apply()
 }
 
 const reconcilePendingCustomServerDeletions = async (
@@ -86,7 +99,11 @@ const reconcilePendingCustomServerDeletions = async (
   }
 }
 
-export { reconcilePendingCustomServerDeletions, reconcilePermissionGrantOwners }
+export {
+  reconcilePendingCustomServerDeletions,
+  reconcilePermissionGrantOwners,
+  planPermissionGrantOwnerReconciliation
+}
 export type {
   PendingCustomServerDeletionStore,
   PermissionGrantOwnerSnapshot,

@@ -1,4 +1,8 @@
 import { it as test } from 'vitest'
+import { readFile, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { readWorkerResult } from '../src/worker-result.js'
 import assert from 'node:assert/strict'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
@@ -8,9 +12,11 @@ const { accent, bar, group, stacked, lanes, cycle, formula, continuation } = awa
 const { nativeTableLayoutConflicts: conflicts } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-layout-conflicts.mjs')).href
 )
-const { reviewFinalNativeTableSources: review, nativeTableSourceConflicts } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-table-source-integrity.mjs')).href
-)
+const {
+  reviewFinalNativeTableSources: review,
+  nativeTableSourceConflicts,
+  retainNativeCenteredRecordGraphic
+} = await import(pathToFileURL(resolve('resources/literature-pdf-table-source-integrity.mjs')).href)
 const { signedScriptRows, addScriptRowPaint } = await import(
   pathToFileURL(resolve('test/fixtures/open-native-table-contradictions.mjs')).href
 )
@@ -981,3 +987,183 @@ for (const mode of [
       )
     )
   })
+
+const { centeredStageRecords } = await import(
+  pathToFileURL(resolve('test/fixtures/native-centered-stage-records.mjs')).href
+)
+const centeredMarker = 'native-centered-headed-record-lanes-collapsed'
+test.each([
+  ['AB12-3', true],
+  ['ÅB2', true],
+  ['A12', false],
+  ['AB--3', false],
+  ['AB' + '0'.repeat(96), true],
+  ['AB' + '0'.repeat(96) + '!', false]
+] as const)('keeps the complete centered heading grammar for %s', async (heading, expected) => {
+  const f = await centeredStageRecords(false, heading)
+  try {
+    assert.equal(
+      conflicts(f.table, f.tokens, f.rules, [], f.context).includes(centeredMarker),
+      expected
+    )
+  } finally {
+    await f.close()
+  }
+})
+test('diagnoses collapsed independently headed centered stages from an actual rendered native PDF', async () => {
+  const f = await centeredStageRecords()
+  try {
+    const before = structuredClone(f.table)
+    assert(conflicts(f.table, f.tokens, f.rules, [], f.context).includes(centeredMarker))
+    const out = review(f.table, f.tokens, f.rules, [], f.context)
+    assert(out.issues.includes('native-table-structure-ambiguous'))
+    assert.equal(out.cells, f.cells)
+    assert.equal(out.grid, f.grid)
+    assert.deepEqual(f.table, before)
+    assert.equal(f.cells.find((c: Fixture) => c.row === 2 && c.column === 1).text, 'Shared module')
+  } finally {
+    await f.close()
+  }
+})
+test('preserves native independent stages and the genuine shared column span', async () => {
+  const f = await centeredStageRecords(true)
+  try {
+    assert(!conflicts(f.table, f.tokens, f.rules, [], f.context).includes(centeredMarker))
+    const shared = f.cells.find((c: Fixture) => c.row === 2 && c.column === 1)
+    assert.equal(shared.colSpan, 2)
+    assert.equal(f.grid[0][1], 'Phase A')
+    assert.equal(f.grid[0][2], 'Phase B')
+    assert.equal(f.grid[3][1], '4')
+    assert.equal(f.grid[3][2], '8')
+  } finally {
+    await f.close()
+  }
+})
+for (const [name, change] of [
+  [
+    'only two independent records',
+    (f: Fixture) => {
+      f.table.cells = f.cells.filter((c: Fixture) => c.row !== 4)
+    }
+  ],
+  [
+    'missing original font binding',
+    (f: Fixture) => {
+      f.context.sourceContent.styles = {}
+    }
+  ],
+  [
+    'one genuine shared parent heading',
+    (f: Fixture) => {
+      f.cells.find((c: Fixture) => c.row === 0 && c.column === 1).colSpan = 2
+    }
+  ],
+  [
+    'unproved heading source rectangle',
+    (f: Fixture) => {
+      f.cells.find((c: Fixture) => c.row === 0 && c.column === 1).sourceRects[0] = [0, 0, 1, 1]
+    }
+  ]
+] as [string, (f: Fixture) => void][])
+  test('declines centered lane diagnosis with ' + name, async () => {
+    const f = await centeredStageRecords()
+    try {
+      change(f)
+      assert(!conflicts(f.table, f.tokens, f.rules, [], f.context).includes(centeredMarker))
+    } finally {
+      await f.close()
+    }
+  })
+
+test('publishes a proved collapsed-stage table through the extractor as only its original graphic', async () => {
+  const f = await centeredStageRecords(),
+    directory = await mkdtemp(join(tmpdir(), 'native-stage-publication-'))
+  try {
+    Object.assign(f.table, {
+      id: 'native-stages',
+      region: [10 / 300, 10 / 200, 290 / 300, 150 / 200],
+      sourceViewport: { width: 300, height: 200 },
+      thumbnail: 'thumbnails/native-stages.png',
+      nativeBody: { kind: 'stale body' },
+      sourceItems: [{ text: 'stale owner' }]
+    })
+    const source = await readFile(resolve('resources/literature-pdf-extract.mjs'), 'utf8'),
+      start = source.indexOf('            tables[i] = retainNativeCenteredRecordGraphic('),
+      end = source.indexOf('\n            )', start) + 14
+    assert(start > 0 && end > start)
+    const publish = new Function(
+        'tables',
+        'i',
+        'wholeOwnerFonts',
+        'rules',
+        'measuredRuns',
+        'reviewContext',
+        'retainNativeCenteredRecordGraphic',
+        source.slice(start, end) + '; return tables[i];'
+      ),
+      before = structuredClone(f.table),
+      reviewed = review(f.table, f.tokens, f.rules, [], f.context),
+      out = publish(
+        [reviewed],
+        0,
+        f.tokens,
+        f.rules,
+        [],
+        f.context,
+        retainNativeCenteredRecordGraphic
+      )
+    assert.deepEqual(out.grid, [])
+    assert.deepEqual(out.cells, [])
+    assert.equal(out.thumbnail, f.table.thumbnail)
+    assert.equal(out.region, f.table.region)
+    assert.equal(out.nativeBody, undefined)
+    assert.equal(out.sourceItems, undefined)
+    assert(out.issues.includes('no-source-cell-grid'))
+    assert(out.issues.includes(centeredMarker))
+    assert.deepEqual(f.table, before)
+    await mkdir(join(directory, 'thumbnails'))
+    await writeFile(join(directory, out.thumbnail), f.png)
+    const identity = {
+      extractionId: '00000000-0000-4000-8000-000000000001',
+      engineFingerprint: 'b'.repeat(64),
+      sourceChecksum: f.sourceSha256,
+      sourceSizeBytes: 100,
+      requestedPages: [1]
+    }
+    await writeFile(
+      join(directory, 'structure.json'),
+      JSON.stringify({
+        sourceSha256: f.sourceSha256,
+        pageCount: 1,
+        requestedPages: [1],
+        processedPages: [1],
+        pages: [{ page: 1, width: 300, height: 200, rotation: 0 }],
+        figures: [],
+        tables: [out],
+        navigation: { entries: [] }
+      })
+    )
+    const result = await readWorkerResult(directory, identity, new Map())
+    assert.equal(result.elements.length, 1)
+    assert.equal(result.elements[0].kind, 'table')
+    assert.equal(result.elements[0].table, undefined)
+    assert.equal(result.elements[0].nativeBody, undefined)
+    assert(result.elements[0].issues.some((i) => i.code === 'no-source-cell-grid'))
+    assert(result.elements[0].issues.some((i) => i.code === centeredMarker))
+  } finally {
+    await f.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+test('does not demote an unrelated ambiguity or valid independently owned shared-span table', async () => {
+  const f = await centeredStageRecords(true)
+  try {
+    f.table.issues = ['native-table-structure-ambiguous']
+    assert.equal(
+      retainNativeCenteredRecordGraphic(f.table, f.tokens, f.rules, [], f.context),
+      f.table
+    )
+  } finally {
+    await f.close()
+  }
+})

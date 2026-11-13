@@ -484,7 +484,7 @@ const NotebookNetworkApprovalDetail = ({
         <dd className="break-all font-mono text-foreground">
           {formatNetworkHostname(approval.hostname)}
         </dd>
-        <dt>{t('Protocol')}</dt>
+        <dt>{t('Network protocol')}</dt>
         <dd className="font-mono text-foreground">{approval.protocol.toUpperCase()}</dd>
         <dt>{t('Port')}</dt>
         <dd className="font-mono text-foreground">
@@ -990,7 +990,7 @@ const PermissionApprovalCard = ({
         data-testid="permission-header"
         className={cn(
           'flex min-w-0 items-center gap-2',
-          codeReview && 'flex-wrap',
+          codeReview && 'flex-col items-stretch gap-3',
           embedded &&
             'sticky top-0 z-10 -mx-4 -mt-4 -mb-3 bg-card px-4 pb-3 pt-4 sm:-mx-5 sm:-mt-5 sm:px-5 sm:pt-5'
         )}
@@ -1007,14 +1007,16 @@ const PermissionApprovalCard = ({
               </span>
             </div>
             {codeReview.environment ? (
-              <Badge
-                variant="secondary"
-                data-testid="permission-env-badge"
-                className="ml-auto min-w-0 max-w-full whitespace-normal break-all"
-                title={t('Environment')}
-              >
-                {codeReview.environment}
-              </Badge>
+              <div className="min-w-0 rounded-md bg-muted/60 px-3 py-2">
+                <span
+                  data-testid="permission-env-badge"
+                  className="line-clamp-2 select-text whitespace-normal break-all text-xs leading-5 text-muted-foreground"
+                  aria-label={t('Environment')}
+                  title={codeReview.environment}
+                >
+                  {codeReview.environment}
+                </span>
+              </div>
             ) : null}
           </>
         ) : (
@@ -1158,8 +1160,8 @@ const PermissionApprovalCard = ({
               className={cn(
                 'inline-flex h-8 select-none items-center justify-center gap-1 whitespace-nowrap border-0 px-3 text-sm outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50',
                 isDeleteRequest
-                  ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
-                  : 'bg-primary text-primary-foreground hover:bg-primary/80'
+                  ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                  : 'bg-primary text-primary-foreground hover:bg-primary/90'
               )}
               disabled={disabled || !allowOptionId || isSubmitting}
               onClick={() => {
@@ -1187,8 +1189,8 @@ const PermissionApprovalCard = ({
                   className={cn(
                     'inline-flex h-8 select-none items-center justify-center border-0 px-2 outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50',
                     isDeleteRequest
-                      ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
-                      : 'bg-primary text-primary-foreground hover:bg-primary/80'
+                      ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                      : 'bg-primary text-primary-foreground hover:bg-primary/90'
                   )}
                   disabled={isSubmitting}
                 >

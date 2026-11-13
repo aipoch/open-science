@@ -175,7 +175,9 @@ export type ApplicationRuntimeInterfaces = {
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   listTrayNavigationSessions: () => Promise<readonly TrayNavigationSession[]>
   prepareDesktopUpdate: import('./update/strategy').InstallGate
-  inspectDesktopUpdate: () => Promise<import('./update/strategy').InstallReadiness>
+  inspectDesktopUpdate: (
+    signal?: AbortSignal
+  ) => Promise<import('./update/strategy').InstallReadiness>
   abortDesktopUpdate: () => void
   hasActivePackageTransfer: () => boolean
   hasActiveReviewerWork: () => boolean
@@ -336,6 +338,7 @@ export const createApplicationModules = async (
     appVersion: runtimeMetadata().version,
     configRoot: sessionAuthority.configRoot,
     profileNamespace: 'prompt-optimization',
+    taskOnly: true,
     allowNativeCodexSubscription: true,
     resolveTarget: (target, context) =>
       settingsBootstrap.settingsService.resolveExplicitAgentBackend(target, context)
@@ -628,7 +631,8 @@ export const createApplicationModules = async (
   })
   const handoff = await composeHandoff({
     holdUpdateAdmission: () => applicationCommandComposition.holdUpdateAdmission(),
-    loadSessionSummaries: () => sessionFoundation.sessionRepository.loadSessionSummaries(),
+    loadSessionSummaries: (signal) =>
+      sessionFoundation.sessionRepository.loadSessionSummaries(signal),
     declareElectronAdapter,
     webSessionPersistenceFlush,
     ...settingsBootstrap,
@@ -864,6 +868,19 @@ export const createApplicationModules = async (
     dispose: () => owner.dispose(),
     disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
   }))
+  // Recovery starts only after foreground commands and selected-session startup are ready.
+  await modules.add(sessionProjection, (projection) => {
+    const recovery = projection.createDeferredRecovery((session) =>
+      sessionSurfaces.sessionDetailsOwner.recoverSession(session)
+    )
+    return {
+      name: 'deferred-session-recovery',
+      capability: recovery,
+      start: () => recovery.start(),
+      dispose: () => recovery.dispose(),
+      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
+    }
+  })
   composition.phase('commands')
   const quitPreparation = createQuitPreparation({
     quiesceAuthentication: () => settingsBootstrap.settingsService.quiesceAuthentication(),

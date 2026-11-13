@@ -22,10 +22,7 @@ const MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
 
 // Read the original documents directly: the normal durable store may promote crash-recovery temps
 // or sanitize fields. Neither action is allowed before the selected key proves it can read them.
-export const readCredentialCiphertexts = (options: {
-  configRoot: string
-  profilePath: string
-}): Buffer[] => {
+const readCiphertexts = (options: { configRoot: string; profilePath?: string }): Buffer[] => {
   const values: Buffer[] = []
   let source: InventoryDiagnostic['source'] = 'configuration'
   let stage: InventoryDiagnostic['stage'] = 'read-files'
@@ -200,6 +197,7 @@ export const readCredentialCiphertexts = (options: {
         }
       }
     })
+    if (options.profilePath === undefined) return values
     // Electron stores persistent partitions alongside its default profile. Opening either in
     // Chromium before this check can discard cookies which the newly selected key cannot decrypt.
     const profiles = [options.profilePath]
@@ -240,6 +238,17 @@ export const readCredentialCiphertexts = (options: {
     })
   }
 }
+
+// Shared application credentials determine which profile key an older CLI requires. Cookies in
+// an unselected browser profile keep their own key and must not be assigned to another profile.
+export const readConfigurationCredentialCiphertexts = (configRoot: string): Buffer[] =>
+  readCiphertexts({ configRoot })
+
+// Startup always validates the complete inventory of the profile it will actually open.
+export const readCredentialCiphertexts = (options: {
+  configRoot: string
+  profilePath: string
+}): Buffer[] => readCiphertexts(options)
 
 // This is a real secret-read phase, deliberately separate from metadata probing. The caller runs
 // it only after Electron has bound OSCrypt to the selected identity, before any app/profile writer.

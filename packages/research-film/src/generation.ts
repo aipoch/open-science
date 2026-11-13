@@ -1,12 +1,14 @@
 import { researchFilmResources } from './resources.js'
 import type { ResearchVideoStep } from './progress.js'
-import { mkdtemp, readFile, writeFile, rm, mkdir, copyFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { lstat, readdir, mkdtemp, readFile, writeFile, rm, mkdir, copyFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { Worker, type WorkerOptions } from 'node:worker_threads'
 import { availableParallelism, totalmem } from 'node:os'
 import type { SpeechSynthesizer } from './narration.js'
 
 export type ResearchVideoGenerationInput = {
+  retainNarration?: boolean
   speechConcurrency?: 1 | 2
   specPath: string
   provenance?: Record<string, unknown>
@@ -42,9 +44,21 @@ export type ResearchVideoWorkerMessage =
   | ResearchVideoSpeechResult
   | ResearchVideoSpeechDuration
   | { kind: 'result'; result: ResearchVideoGenerationResult }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; code?: string }
   | { kind: 'phase'; phase: 'voice' | 'build' }
   | { kind: 'progress'; progress: ResearchVideoStep }
+
+/** Worker identity survives the boundary without adding research content to diagnostic logs. */
+export class ResearchVideoWorkerError extends Error {
+  constructor(
+    error: unknown,
+    readonly workerRole: 'generation' | 'speech',
+    readonly lane?: number,
+    readonly exitCode?: number
+  ) {
+    super(error instanceof Error ? error.message : String(error), { cause: error })
+  }
+}
 
 /** The caller owns source authorization and Artifact publication; this owner only generates files. */
 export const createResearchVideoGenerator = (options: {
@@ -89,9 +103,17 @@ export const createResearchVideoGenerator = (options: {
       })
       const result = await new Promise<ResearchVideoGenerationResult>((resolve, reject) => {
         const abort = (): void => reject(signal.reason)
-        const exit = (): void =>
-          reject(new Error('Research video worker stopped before completion'))
-        const error = (failure: Error): void => reject(failure)
+        const exit = (code: number): void =>
+          reject(
+            new ResearchVideoWorkerError(
+              new Error('Research video worker stopped before completion'),
+              'generation',
+              undefined,
+              code
+            )
+          )
+        const error = (failure: Error): void =>
+          reject(new ResearchVideoWorkerError(failure, 'generation'))
         const message = (value: ResearchVideoWorkerMessage): void => {
           if (stopping || signal.aborted) return
           if (value.kind === 'synthesize' || value.kind === 'measure-duration') {
@@ -123,7 +145,14 @@ export const createResearchVideoGenerator = (options: {
                   if (['error', 'speech-result', 'speech-duration'].includes(reply.kind))
                     finishSpeechRequest(ownedSpeech)
                   if (stopping || signal.aborted) return
-                  if (reply.kind === 'error') reject(new Error(reply.message))
+                  if (reply.kind === 'error')
+                    reject(
+                      new ResearchVideoWorkerError(
+                        Object.assign(new Error(reply.message), { code: reply.code }),
+                        'speech',
+                        value.lane
+                      )
+                    )
                   else if (reply.kind === 'speech-result' || reply.kind === 'speech-duration') {
                     try {
                       if (reply.kind === 'speech-result')
@@ -136,11 +165,18 @@ export const createResearchVideoGenerator = (options: {
                 })
                 speech.once('error', (failure) => {
                   finishSpeechRequest(ownedSpeech)
-                  error(failure)
+                  reject(new ResearchVideoWorkerError(failure, 'speech', value.lane))
                 })
-                speech.once('exit', () => {
+                speech.once('exit', (code) => {
                   finishSpeechRequest(ownedSpeech)
-                  exit()
+                  reject(
+                    new ResearchVideoWorkerError(
+                      new Error('Research video worker stopped before completion'),
+                      'speech',
+                      value.lane,
+                      code
+                    )
+                  )
                 })
               }
               if (speechRequests.has(speech)) throw new Error('Speech worker already busy')
@@ -159,7 +195,13 @@ export const createResearchVideoGenerator = (options: {
               reject(error)
             }
           } else if (value.kind === 'result') resolve(value.result)
-          else if (value.kind === 'error') reject(new Error(value.message))
+          else if (value.kind === 'error')
+            reject(
+              new ResearchVideoWorkerError(
+                Object.assign(new Error(value.message), { code: value.code }),
+                'generation'
+              )
+            )
           else if (value.kind === 'phase' || value.kind === 'progress') {
             try {
               onProgress?.(value.kind === 'phase' ? { phase: value.phase } : value.progress)
@@ -234,17 +276,66 @@ export async function generateResearchVideoInWorker(
   )
   const spec = JSON.parse(await readFile(specPath, 'utf8'))
   progress({ phase: 'loading' })
-  const voiceDirectory = join(input.temporaryDirectory, 'voice')
-  const { mix } = await prepareVideoNarration({
-    spec,
-    synthesizer: synthesizers[0],
-    additionalSynthesizer: synthesizers[1],
-    onProgress: progress,
-    outputDirectory: voiceDirectory,
-    signal: new AbortController().signal
-  })
-  const mixPath = join(input.temporaryDirectory, 'mix.wav')
-  await writeFile(mixPath, mix, { flag: 'wx' })
+  const speech = input.retainNarration
+    ? join(dirname(input.specPath), 'speech')
+    : input.temporaryDirectory
+  const voiceDirectory = join(speech, 'voice')
+  const mixPath = join(speech, 'mix.wav')
+  const marker = join(speech, 'complete.json')
+  const inputKey = createHash('sha256')
+    .update(JSON.stringify([1, spec, input.provenance?.modelRevision]))
+    .digest('hex')
+  // Check the bytes once before using a previous run's speech/timing files.
+  const signature = async (): Promise<string> => {
+    const hash = createHash('sha256').update(inputKey)
+    if (!(await lstat(voiceDirectory)).isDirectory()) throw new Error('Invalid narration directory')
+    const names = await readdir(voiceDirectory)
+    if (names.length > 256) throw new Error('Too many narration files')
+    let bytes = 0
+    for (const name of ['mix.wav', ...names.sort().map((name) => 'voice/' + name)]) {
+      const path = join(speech, name)
+      const stat = await lstat(path)
+      bytes += stat.size
+      if (!stat.isFile() || bytes > 200 * 1024 * 1024)
+        throw new Error('Invalid narration checkpoint')
+      hash.update(JSON.stringify([name, stat.size])).update(await readFile(path))
+    }
+    return hash.digest('hex')
+  }
+  let ready = false
+  if (input.retainNarration) {
+    const stat = await lstat(speech).catch((e: NodeJS.ErrnoException) => {
+      if (e.code !== 'ENOENT') throw e
+    })
+    if (stat?.isDirectory()) {
+      try {
+        const receipt = await lstat(marker)
+        ready =
+          receipt.isFile() &&
+          receipt.size === 64 &&
+          (await readFile(marker, 'utf8')) === (await signature())
+      } catch {
+        /* An interrupted or incomplete cache is rebuilt below. */
+      }
+    }
+    if (!ready) {
+      await rm(speech, { recursive: true, force: true })
+      await mkdir(speech, { mode: 0o700 })
+    }
+  }
+  if (!ready) {
+    const { mix } = await prepareVideoNarration({
+      spec,
+      synthesizer: synthesizers[0],
+      additionalSynthesizer: synthesizers[1],
+      onProgress: progress,
+      outputDirectory: voiceDirectory,
+      signal: new AbortController().signal
+    })
+    await writeFile(mixPath, mix, { flag: 'wx' })
+    if (input.retainNarration)
+      await writeFile(marker, await signature(), { flag: 'wx', mode: 0o600 })
+  }
   progress({ phase: 'build' })
   return buildResearchVideoPlayer({ ...input, specPath, voiceDirectory, mixPath })
 }

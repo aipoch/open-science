@@ -565,7 +565,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
         name: 'RequestError'
       }),
       recoverable: undefined,
-      failure: { category: 'internal' }
+      failure: { category: 'service', responseMessage: 'OpenCode service failure' }
     },
     {
       name: 'provider error',

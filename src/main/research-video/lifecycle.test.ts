@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, lstat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it } from 'vitest'
 import { createResearchFilmLifecycle, type ResearchFilmLifecycle } from './lifecycle'
@@ -99,9 +99,15 @@ it('recovers interrupted deletion from a complete catalog and retains archived s
   const { root } = await fixture()
   const deleted = await presentation(root, 'gone')
   const archived = await presentation(root, 'archived')
+  // Crash after rename(pending, id), before the pending receipt was unlinked.
+  for (const saved of [deleted, archived])
+    await writeFile(
+      join(saved.base, 'pending.json'),
+      JSON.stringify({ version: 1, id: basename(saved.directory) })
+    )
   const restarted = createResearchFilmLifecycle({ dataRoot: () => root })
   await restarted.reconcileSessions(['archived'])
-  expect(await exists(join(deleted.directory, 'session.json'))).toBe(false)
+  await expect(lstat(deleted.base)).rejects.toMatchObject({ code: 'ENOENT' })
   expect(await exists(join(archived.directory, 'session.json'))).toBe(true)
   await restarted.reconcileSessions(['archived'])
 })
@@ -239,4 +245,35 @@ it('rejects imported-film symlinks without deleting local films and allows an ex
   await deleteStoredResearchFilms(root, request, id)
   await expect(lstat(saved.base)).rejects.toMatchObject({ code: 'ENOENT' })
   expect(await readFile(join(outside, 'player.html'), 'utf8')).toBe('keep')
+})
+
+it('does not cancel a live film admitted after orphan planning and rejects changed owner evidence', async () => {
+  const { root } = await fixture()
+  const saved = await presentation(root, 'gone')
+  await new Promise((resolve) => setTimeout(resolve, 2))
+  const owner = createResearchFilmLifecycle({ dataRoot: () => root })
+  const plans = await owner.planSessionReconciliation([])
+  expect(plans).toHaveLength(1)
+  let release!: () => void
+  let aborted = false
+  const live = owner.run('project', 'gone', async (signal) => {
+    signal.addEventListener('abort', () => {
+      aborted = true
+    })
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+  })
+  await Promise.resolve()
+  await expect(plans[0].apply()).rejects.toThrow('live work')
+  expect(aborted).toBe(false)
+  release()
+  await live
+  await writeFile(
+    join(saved.directory, 'session.json'),
+    JSON.stringify({ provenance: { projectId: 'project', sessionId: 'new-owner' } })
+  )
+  await expect(plans[0].apply()).rejects.toThrow('receipt changed')
+  expect(await exists(join(saved.directory, 'session.json'))).toBe(true)
+  await expect(owner.run('project', 'gone', async () => 'available')).resolves.toBe('available')
 })

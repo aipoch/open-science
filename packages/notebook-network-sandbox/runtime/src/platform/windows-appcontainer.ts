@@ -34,6 +34,35 @@ type WindowsRuntimeVerification = Readonly<{
   signal?: AbortSignal
 }>
 
+type WindowsAclPreflightRequest = Readonly<{
+  path: string
+  access: 'ro' | 'rw'
+  /** The user-selected path before realpath, used to detect junctions and aliases. */
+  requestedPath?: string
+  /**
+   * How much of the selected tree to validate. `tree` (default) walks descendants so a folder
+   * grant can report protected descendants before it is persisted; `target` validates only the
+   * selected path and its ancestors.
+   */
+  scope?: 'target' | 'tree'
+  filesystem?: FilesystemLayoutInput
+}>
+
+type WindowsAclPreflightResult =
+  | Readonly<{ ok: true }>
+  | Readonly<{
+      ok: false
+      error: Readonly<{
+        code: string
+        path: string
+        access: 'ro' | 'rw'
+        stage: string
+        win32Code?: number
+        message: string
+        remediation: string
+      }>
+    }>
+
 type WindowsLaunchRequest = Readonly<{
   command: string
   executable?: string
@@ -213,6 +242,146 @@ const readAppContainerStatus = async (
     throw new Error('AppContainer host returned an invalid status payload.')
   }
   return parsed as AppContainerStatus
+}
+
+const preflightFailure = (
+  request: WindowsAclPreflightRequest,
+  code: string,
+  stage: string,
+  message: string,
+  remediation: string
+): WindowsAclPreflightResult => ({
+  ok: false,
+  error: { code, path: request.path, access: request.access, stage, message, remediation }
+})
+
+const parseAclPreflightResult = (
+  value: unknown,
+  request: WindowsAclPreflightRequest
+): WindowsAclPreflightResult => {
+  if (value && typeof value === 'object' && (value as { ok?: unknown }).ok === true)
+    return { ok: true }
+  if (!value || typeof value !== 'object' || (value as { ok?: unknown }).ok !== false)
+    return preflightFailure(
+      request,
+      'WINDOWS_ACL_PREFLIGHT_INVALID_RESPONSE',
+      'native-response',
+      'The native ACL preflight returned an invalid result.',
+      'Update the application and retry.'
+    )
+  const error = (value as { error?: unknown }).error
+  if (!error || typeof error !== 'object')
+    return preflightFailure(
+      request,
+      'WINDOWS_ACL_PREFLIGHT_INVALID_RESPONSE',
+      'native-response',
+      'The native ACL preflight returned an invalid result.',
+      'Update the application and retry.'
+    )
+  const candidate = error as Record<string, unknown>
+  if (
+    typeof candidate.code !== 'string' ||
+    typeof candidate.path !== 'string' ||
+    (candidate.access !== 'ro' && candidate.access !== 'rw') ||
+    typeof candidate.stage !== 'string' ||
+    (candidate.win32Code !== undefined &&
+      (!Number.isSafeInteger(candidate.win32Code) ||
+        (candidate.win32Code as number) < 0 ||
+        (candidate.win32Code as number) > 0xffff_ffff)) ||
+    typeof candidate.message !== 'string' ||
+    typeof candidate.remediation !== 'string'
+  )
+    return preflightFailure(
+      request,
+      'WINDOWS_ACL_PREFLIGHT_INVALID_RESPONSE',
+      'native-response',
+      'The native ACL preflight error was incomplete.',
+      'Update the application and retry.'
+    )
+  return {
+    ok: false,
+    error: {
+      code: candidate.code,
+      path: candidate.path,
+      access: candidate.access,
+      stage: candidate.stage,
+      ...(candidate.win32Code === undefined ? {} : { win32Code: candidate.win32Code as number }),
+      message: candidate.message,
+      remediation: candidate.remediation
+    }
+  }
+}
+
+const preflightWindowsFilesystem = async (
+  hostPath: string,
+  installationId: string,
+  ownershipRoot: string,
+  request: WindowsAclPreflightRequest,
+  signal?: AbortSignal
+): Promise<WindowsAclPreflightResult> => {
+  signal?.throwIfAborted()
+  const specification = Buffer.from(
+    JSON.stringify({
+      ...request,
+      ...(request.filesystem ? { filesystem: normalizeFilesystemLayout(request.filesystem) } : {})
+    }),
+    'utf8'
+  ).toString('base64url')
+  const controller = new AbortController()
+  const cancel = (): void => controller.abort(signal?.reason)
+  signal?.addEventListener('abort', cancel, { once: true })
+  if (signal?.aborted) cancel()
+  let timedOut = false
+  const timeout = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, 60_000)
+  let result: Awaited<ReturnType<typeof runCapture>>
+  try {
+    result = await runCapture(
+      hostPath,
+      ['preflight-filesystem-acls', installationId, ownershipRoot, specification],
+      { maxBuffer: 16 * 1024 * 1024, signal: controller.signal }
+    )
+  } catch (cause) {
+    signal?.throwIfAborted()
+    return preflightFailure(
+      request,
+      timedOut ? 'WINDOWS_ACL_PREFLIGHT_TIMEOUT' : 'WINDOWS_ACL_PREFLIGHT_UNAVAILABLE',
+      'native-host',
+      timedOut
+        ? 'Windows ACL preflight exceeded 60 seconds.'
+        : cause instanceof Error
+          ? cause.message
+          : String(cause),
+      timedOut
+        ? 'Choose a smaller or local folder. A network or very large directory cannot be validated safely.'
+        : 'Repair or reinstall the Windows protection helper, then retry.'
+    )
+  } finally {
+    clearTimeout(timeout)
+    signal?.removeEventListener('abort', cancel)
+  }
+  signal?.throwIfAborted()
+  if (result.code !== 0)
+    return preflightFailure(
+      request,
+      'WINDOWS_ACL_PREFLIGHT_UNAVAILABLE',
+      'native-host',
+      result.stderr.trim() || `Windows ACL preflight exited with code ${result.code}.`,
+      'Repair or reinstall the Windows protection helper, then retry.'
+    )
+  try {
+    return parseAclPreflightResult(JSON.parse(result.stdout), request)
+  } catch {
+    return preflightFailure(
+      request,
+      'WINDOWS_ACL_PREFLIGHT_INVALID_RESPONSE',
+      'native-response',
+      'The native ACL preflight did not return JSON.',
+      'Update the application and retry.'
+    )
+  }
 }
 
 // A partial or unreadable receipt is not permission to launch outside AppContainer.
@@ -779,6 +948,7 @@ const windowsLaunch = (
       cwd: request.cwd,
       readOnlyRoots: layout.readOnlyRoots,
       optionalReadOnlyRoots: layout.optionalReadOnlyRoots ?? [],
+      optionalReadWriteRoots: layout.optionalReadWriteRoots ?? [],
       readWriteRoots: layout.readWriteRoots,
       deniedReadRoots: layout.deniedReadRoots,
       deniedWriteRoots: layout.deniedWriteRoots,
@@ -899,6 +1069,7 @@ export {
   ELECTRON_NO_STDIO_INIT,
   checkWindowsAppContainer,
   isWindowsProtectionConfigured,
+  preflightWindowsFilesystem,
   connectionProbeSpecification,
   installWindowsAppContainer,
   setWindowsRuntimeAccess,
@@ -913,6 +1084,8 @@ export {
 }
 export type {
   AppContainerStatus,
+  WindowsAclPreflightRequest,
+  WindowsAclPreflightResult,
   WindowsLaunchRequest,
   WindowsShell,
   WindowsStandardLaunchRequest,

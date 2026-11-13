@@ -240,7 +240,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
   })
 
   it.each(['official', 'codex-isolated', 'codex-shared'] as const)(
-    'offers GPT-6.1 Sol only as an explicit selection for %s',
+    'resolves the default and explicit GPT models for %s',
     (type) => {
       const owner = new ProviderRuntimeProjectionOwner()
       const provider: StoredProvider = {
@@ -253,10 +253,8 @@ describe('ProviderRuntimeProjectionOwner', () => {
       const model = 'gpt-6.1-sol'
 
       expect(owner.toProviderView(provider).models).toContain(model)
-      expect(owner.resolveActiveModel(provider)).toBe(
-        type === 'official' ? 'gpt-5.6-sol' : undefined
-      )
-      expect(owner.resolveActiveModel(provider, 'gpt-6-sol')).toBe('gpt-6-sol')
+      expect(owner.resolveActiveModel(provider)).toBe(type === 'official' ? model : undefined)
+      expect(owner.resolveActiveModel(provider, 'gpt-5.6-sol')).toBe('gpt-5.6-sol')
 
       for (const frameworkId of ['codex', 'opencode', 'claude-code'] as const) {
         const target = owner.resolveRuntimeTarget(
@@ -764,7 +762,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
         provider: { supportsImageInput: true, model }
       })
     }
-    expect(owner.toProviderView(provider).supportsImageInput).toBe(false)
+    expect(owner.toProviderView(provider).supportsImageInput).toBe(true)
   })
 
   it.each([

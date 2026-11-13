@@ -420,6 +420,8 @@ export function detectNativeTableAmbiguity(
     result.push({ kind: 'equation-matrix-fields', notErrorProof: true })
   if (hasRepeatedBlankStubContinuations(proof, table, inventory, rules))
     result.push({ kind: 'repeated-blank-stub-continuations', notErrorProof: true })
+  if (hasSplitNativeStubCitations(proof, table, inventory, rules))
+    result.push({ kind: 'split-native-stub-citations', notErrorProof: true })
   if (hasUnclaimedUnderlinedHeading(proof, table, inventory, rules))
     result.push({ kind: 'unclaimed-underlined-native-heading', notErrorProof: true })
   if (hasNativeRepeatedLeafAmbiguity(proof, table, inventory))
@@ -1660,6 +1662,109 @@ export function hasUnclaimedUnderlinedHeading(proof, table, inventory, rules) {
 }
 function containsNativeRect(a, b) {
   return b[0] >= a[0] && b[2] <= a[2] && b[1] > a[1] && b[3] < a[3]
+}
+
+// Negative eligibility only. Repeated whole citation tails printed before their
+// own numeric fields contradict independent model rows. Do not infer new rows,
+// cells, spans, source ownership or paint from this witness.
+function hasSplitNativeStubCitations({ proved }, table, inventory, rules) {
+  if (
+    !rect(table.cropRect) ||
+    !hasDisjointNativeTableSlots(table) ||
+    table.grid.length < 5 ||
+    table.grid.length > 128 ||
+    proved.length > 2048 ||
+    inventory.length > 8192 ||
+    table.grid[0].length < 3 ||
+    table.grid[0].length > 12
+  )
+    return false
+  const ps = proved.filter((p) => p.fonts.length),
+    nonempty = table.cells.filter((c) => c.text.trim()),
+    fonts = ps.flatMap((p) => p.fonts)
+  if (
+    ps.length !== nonempty.length ||
+    nonempty.some((c) => !ps.some((p) => p.cell === c)) ||
+    !proveNativeUniqueWholeFonts(fonts, inventory)
+  )
+    return false
+  if (
+    ps.some(
+      (p) =>
+        compact(p.fonts.map((f) => f.text).join('')) !== compact(p.cell.text) ||
+        p.cell.sourceSegments?.length ||
+        p.fonts.length !== p.cell.sourceItems?.length ||
+        p.fonts.length !== p.cell.sourceRects?.length ||
+        p.fonts.some(
+          (f, i) =>
+            !rect(p.cell.sourceRects[i]) ||
+            f.sourceItem.pageNumber !== p.cell.sourceItems[i]?.pageNumber ||
+            f.sourceItem.index !== p.cell.sourceItems[i]?.index ||
+            f.sourceItem.text !== p.cell.sourceItems[i]?.text ||
+            f.rect.some((x, n) => Math.abs(x - p.cell.sourceRects[i][n]) > 1e-6)
+        )
+    )
+  )
+    return false
+  const box = union(fonts),
+    hs = horizontal(rules),
+    full = hs.filter((r) => r[0] <= box[0] && r[2] >= box[2]).sort((a, b) => a[1] - b[1]),
+    opening = full.filter((r) => r[1] < box[1]).at(-1),
+    closing = full.find((r) => r[1] > box[3]),
+    domain = opening && closing && [table.cropRect[0], opening[1], table.cropRect[2], closing[1]]
+  if (
+    !domain ||
+    !fonts.every((f) => containsNativeRect(domain, f.rect)) ||
+    inventory.some((f) => f.text?.trim() && !fonts.includes(f) && intersects(f.rect, domain))
+  )
+    return false
+  let count = 0
+  for (let row = 1; row < table.grid.length; row++) {
+    const tail = ps.filter((p) => p.cell.row === row),
+      previous = ps.filter((p) => p.cell.row === row - 1),
+      stub = previous.find((p) => p.cell.column === 0),
+      citation = tail[0],
+      values = previous.filter((p) => p.cell.column > 0)
+    if (
+      tail.length !== 1 ||
+      citation.cell.column !== 0 ||
+      !stub ||
+      !/^(?:\(\d{4}\)\s*)?\[\d+(?:\s*[-–,]\s*\d+)*\]$/u.test(citation.cell.text.trim()) ||
+      !/\p{L}{2,}/u.test(stub.cell.text) ||
+      values.length !== table.grid[0].length - 1 ||
+      [...tail, ...previous].some((p) => p.cell.rowSpan !== 1 || p.cell.colSpan !== 1) ||
+      table.cells.some((c) => c.row === row && c.column > 0 && c.text.trim()) ||
+      values.some((p) => !/^[\d,.]+$/u.test(p.cell.text.trim()))
+    )
+      continue
+    const head = stub.fonts,
+      end = citation.fonts,
+      first = head[0],
+      h = first.height,
+      base = Math.min(...head.map((f) => f.baseline)),
+      tailBase = end[0].baseline,
+      lastStub = Math.max(...head.map((f) => f.sourceItem.index)),
+      firstTail = Math.min(...end.map((f) => f.sourceItem.index)),
+      lastTail = Math.max(...end.map((f) => f.sourceItem.index)),
+      valueFonts = values.flatMap((p) => p.fonts),
+      stubBox = union([...head, ...end])
+    if (
+      !(tailBase > base && tailBase - base <= h * 1.75) ||
+      [...head, ...end, ...valueFonts].some((f) => Math.abs(f.height - h) > h * 0.02) ||
+      end.some((f) => Math.abs(f.baseline - tailBase) > h * 0.02) ||
+      valueFonts.some((f) => Math.abs(f.baseline - base) > h * 0.02) ||
+      firstTail <= lastStub ||
+      valueFonts.some((f) => f.sourceItem.index <= lastTail) ||
+      Math.abs((union(head)[0] + union(head)[2] - union(end)[0] - union(end)[2]) / 2) > h ||
+      hs.some(
+        (r) => r[0] < stubBox[2] && r[2] > stubBox[0] && r[1] > stubBox[1] && r[1] < stubBox[3]
+      ) ||
+      !full.some((r) => r[1] > opening[1] && r[1] < Math.min(...head.map((f) => f.rect[1])))
+    )
+      continue
+    count++
+  }
+  return count >= 2
 }
 
 function hasRepeatedBlankStubContinuations({ proved }, table, inventory, rules) {

@@ -1,3 +1,4 @@
+import { registerDatabaseFixture } from '../../database/migrated-database.test-support'
 import { LiteratureCatalog } from '../catalog'
 import { readPdfTranslationCases } from '../../../../test/fixtures/pdf-translation/read-cases'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
@@ -7,7 +8,6 @@ import { PrismaClient } from '@prisma/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ProjectRepository } from '../../projects/repository'
 import { createProjectDbClient } from '../../projects/prisma-client'
-import { migrateApplicationDatabase } from '../../database/migration-service'
 import { beginMigration, endMigration, waitForDataRootWriters } from '../../storage/migration-state'
 import { PdfTranslationCheckpoints } from './checkpoints'
 import type { ResolvedLiteratureAttachmentVersion } from '../attachment-authority'
@@ -20,6 +20,8 @@ import {
   pdfTranslationCheckpointSchema,
   type PdfTranslationCheckpoint
 } from '../../../shared/pdf-translation'
+
+const openDatabase = registerDatabaseFixture()
 
 let root: string
 let client: PrismaClient
@@ -43,8 +45,7 @@ const input = {
 }
 async function setup(): Promise<PdfTranslationCheckpoints> {
   root = await mkdtemp(join(tmpdir(), 'pdf-checkpoint-'))
-  client = createProjectDbClient(root)
-  await migrateApplicationDatabase(client)
+  client = await openDatabase(root)
   await client.contentBlob.create({
     data: {
       id: 'blob',

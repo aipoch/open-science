@@ -520,17 +520,15 @@ describe('PreviewFileSurface managed text versions', () => {
     )
     await click(notice.querySelector('button'))
     expect(inspect).toHaveBeenLastCalledWith(failedRequest)
-    expect(
-      [...container.querySelectorAll('[role="status"]')].some((status) =>
-        status.textContent?.includes('Checking version…')
-      )
-    ).toBe(true)
+    const header = container.querySelector('[data-testid="preview-card-header"]')!
+    expect(header.querySelector('[role="status"]')?.textContent).toContain('Checking version…')
     await act(async () =>
       finish({
         ok: true,
         value: { ...managedInspect, selectedVersionId: failedRequest.versionId! }
       })
     )
+    expect(header.textContent).not.toContain('Checking version…')
     expect(container.querySelector('[role="alert"]')).toBeNull()
     expect(container.querySelector('[aria-label="Edit README.md"]')).not.toBeNull()
   })

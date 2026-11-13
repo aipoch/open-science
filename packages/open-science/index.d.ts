@@ -537,6 +537,7 @@ export type FormattedReferences = {
 export class OpenScienceApiError extends Error {
   code: string
   status?: number
+  correlationId?: string
 }
 
 export class OpenScienceClient {

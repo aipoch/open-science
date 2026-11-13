@@ -17,12 +17,13 @@ const CATEGORY_KEYS = {
 } as const satisfies Record<ValidationCategory, string>
 
 // Categories whose generic text benefits from the specific error/probe message (a timeout or network
-// failure). Auth/model/bad-url already carry actionable text.
+// failure), including native fallback details after a rejected model. Auth/bad-url have targeted copy.
 const MESSAGE_CATEGORIES = new Set<ValidationCategory>([
   'network',
   'timeout',
   'server-error',
-  'unknown'
+  'unknown',
+  'model-not-found'
 ])
 
 // Main returns provider operation failures as display-ready strings. Translate only the bounded set

@@ -397,3 +397,194 @@ export function validateNativeGraphicalTableCropPng(png, proof) {
     )
   )
 }
+
+// Complete native vector-rule tables published as PNGs without a cell grid.
+// Raster/mixed-image pages keep their existing fallback; foreign fonts stay excluded.
+export function completeNativeUnstructuredTableCrop(table, scope) {
+  try {
+    const { page, context, competingRects } = scope ?? {},
+      native = context?.nativeGlyphContext,
+      v = native?.viewport,
+      work = context?.viewport,
+      content = native?.content,
+      graphics = native?.graphicsBounds
+    if (
+      !table?.caption ||
+      table.nativeBody ||
+      table.parts ||
+      table.cropRects ||
+      (table.grid?.length ?? 0) ||
+      (table.cells?.length ?? 0) ||
+      (table.issues !== undefined && !equal(table.issues, ['no-source-cell-grid'])) ||
+      !valid(table.rect) ||
+      table.caption.page !== page?.pageNumber ||
+      page.invalidGraphicsBounds !== 0 ||
+      !equal(graphics, page.graphicsBounds) ||
+      !Array.isArray(graphics) ||
+      !graphics.length ||
+      graphics.length > 10000 ||
+      !Array.isArray(content?.items) ||
+      !equal(v?.transform, [1, 0, 0, -1, 0, page.height]) ||
+      v.rotation !== 0 ||
+      v.scale !== 1 ||
+      !(work?.scale > 0) ||
+      work.rotation !== 0 ||
+      work.width !== page.width * work.scale ||
+      work.height !== page.height * work.scale ||
+      !Array.isArray(competingRects) ||
+      !competingRects.every(valid)
+    )
+      return
+    const primary = context.sourceContent
+    if (!Array.isArray(primary?.items) || primary.items.length !== content.items.length) return
+    for (const [index, item] of content.items.entries()) {
+      const current = primary.items[index]
+      if (
+        ['str', 'width', 'height', 'dir'].some((key) => item[key] !== current[key]) ||
+        !equal(item.transform, current.transform) ||
+        !equal(content.styles[item.fontName], primary.styles[current.fontName])
+      )
+        return
+    }
+    const binding = JSON.stringify([table, page, context, competingRects]),
+      current = () => binding === JSON.stringify([table, page, context, competingRects]),
+      old = table.rect,
+      boxes = []
+    for (const [index, item] of content.items.entries()) {
+      if (!item.str?.trim()) continue
+      const style = content.styles?.[item.fontName],
+        t = item.transform
+      if (
+        !finite(t, 6) ||
+        item.dir !== 'ltr' ||
+        style?.vertical !== false ||
+        ![item.width, item.height, style?.ascent, style?.descent].every(Number.isFinite) ||
+        t[0] <= 0 ||
+        t[3] <= 0 ||
+        t[1] ||
+        t[2] ||
+        item.height !== t[3] ||
+        item.width <= 0 ||
+        style.ascent <= style.descent
+      )
+        return
+      const rect = [
+        t[4],
+        page.height - t[5] - style.ascent * t[3],
+        t[4] + item.width,
+        page.height - t[5] - style.descent * t[3]
+      ]
+      if (!valid(rect)) return
+      boxes.push({ index, text: item.str, rect })
+    }
+    const selected = boxes.filter((b) => over(b.rect, old))
+    if (selected.length < 9) return
+    const rulePaintBounds = new Map(),
+      rulePaintOperations = new Map()
+    collectTableRules(native.operators, v, rulePaintBounds, rulePaintOperations)
+    const graph = graphics.map((g) => {
+      const r = g.normalizedRect
+      return g.kind === 'path' && valid(r)
+        ? r.map((n, i) => n * (i % 2 ? page.height : page.width))
+        : undefined
+    })
+    if (graph.some((r) => !r)) return
+    const components = []
+    for (const rect of graph) {
+      let component = { rect, parts: [rect] }
+      for (let i = 0; i < components.length;) {
+        const a = component.rect,
+          b = components[i].rect,
+          connected =
+            a[0] <= b[2] + page.width * 0.006 &&
+            a[2] + page.width * 0.006 >= b[0] &&
+            a[1] <= b[3] + page.height * 0.006 &&
+            a[3] + page.height * 0.006 >= b[1]
+        if (connected) {
+          const previous = components.splice(i, 1)[0]
+          component = { rect: union([a, b]), parts: [...component.parts, ...previous.parts] }
+          i = 0
+        } else i++
+      }
+      components.push(component)
+    }
+    const candidates = components.filter(
+      (c) =>
+        c.parts.length >= 5 &&
+        c.rect[2] - c.rect[0] >= 30 &&
+        c.rect[3] - c.rect[1] >= 30 &&
+        selected.every((b) => inside(c.rect, b.rect))
+    )
+    if (candidates.length !== 1) return
+    const component = candidates[0],
+      exact = []
+    for (const rect of component.parts) {
+      const graphic = graphics[graph.indexOf(rect)],
+        keys = rulePaintOperations.get(graphic.operationIndex)
+      if (!keys?.size) return
+      for (const key of keys) {
+        const paint = rulePaintBounds.get(key)
+        if (!valid(paint) || !inside(rect, paint)) return
+        exact.push(paint)
+      }
+    }
+    const exactGraph = union(exact)
+    if (!selected.every((b) => inside(exactGraph, b.rect))) return
+    const nativeCrop = union([old, exactGraph, ...selected.map((b) => b.rect)]),
+      foreignGlyphs = boxes.filter((b) => !selected.includes(b)).map((b) => b.rect),
+      foreignPaints = components.filter((c) => c !== component).map((c) => c.rect),
+      captionBoxes = boxes.filter((b) => over(b.rect, table.caption.rect)),
+      captionText = captionBoxes
+        .map((box, position) => {
+          const item = content.items[box.index],
+            next = content.items[captionBoxes[position + 1]?.index]
+          const between = content.items.slice(
+              box.index + 1,
+              captionBoxes[position + 1]?.index ?? box.index + 1
+            ),
+            lineEnd =
+              item.hasEOL ||
+              (between.every((i) => typeof i.str === 'string' && !i.str.trim()) &&
+                between.some((i) => i.hasEOL))
+          return next &&
+            lineEnd &&
+            /\p{L}-$/u.test(item.str) &&
+            /^\p{Ll}/u.test(next.str) &&
+            item.fontName === next.fontName &&
+            item.transform[5] - next.transform[5] >= item.height * 0.5 &&
+            item.transform[5] - next.transform[5] <= item.height * 1.75 &&
+            next.transform[4] < item.transform[4] + item.width
+            ? item.str.slice(0, -1)
+            : item.str
+        })
+        .join('')
+        .replace(/\s/gu, '')
+    if (
+      !inside([0, 0, page.width, page.height], nativeCrop) ||
+      nativeCrop[3] <= old[3] ||
+      (captionText !==
+        (table.caption.text ?? table.caption.lines?.join(' '))?.replace(/\s/gu, '') &&
+        captionBoxes
+          .map((b) => b.text)
+          .join('')
+          .replace(/\s/gu, '') !==
+          (table.caption.text ?? table.caption.lines?.join(' '))?.replace(/\s/gu, '')) ||
+      !captionBoxes.length ||
+      captionBoxes.some((b) => selected.includes(b) || over(b.rect, nativeCrop)) ||
+      [...foreignGlyphs, ...foreignPaints].some((r) => over(r, nativeCrop)) ||
+      competingRects.some((r) => over(r, nativeCrop)) ||
+      !current()
+    )
+      return
+    return {
+      table: { ...table, rect: nativeCrop },
+      current,
+      nativeCrop,
+      bounds: { width: page.width, height: page.height },
+      foreignGlyphs,
+      foreignPaints
+    }
+  } catch {
+    return
+  }
+}

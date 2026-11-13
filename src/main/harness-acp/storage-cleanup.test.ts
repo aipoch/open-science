@@ -1,3 +1,4 @@
+import { AcpSessionRegistry, reserveAcpSessionStorageCleanup } from '../acp/session-registry'
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -13,7 +14,12 @@ afterEach(async () => {
 })
 const fixture = async (): Promise<{
   root: string
-  options: { sessionDirectory: string; receiptDirectory(): string; isLive(): boolean }
+  options: {
+    sessionDirectory: string
+    receiptDirectory(): string
+    isLive(): boolean
+    tryClaimIdentities: typeof reserveAcpSessionStorageCleanup
+  }
   store: ReturnType<typeof createJournalAgentStore>
   receipts: HarnessToolReceipts
   query: { invocationId: string; name: string; arguments: Record<string, never> }
@@ -29,6 +35,7 @@ const fixture = async (): Promise<{
   const options = {
     sessionDirectory,
     receiptDirectory: () => receiptsDirectory,
+    tryClaimIdentities: reserveAcpSessionStorageCleanup,
     isLive: () => live
   }
   const store = createJournalAgentStore({ directory: join(sessionDirectory, 'checkpoints') })
@@ -141,4 +148,54 @@ it('retries interrupted cleanup after restart without stealing a journal lock', 
   await new HarnessStorageCleanup(f.options).reconcile([])
   expect(await f.store.load(a)).toBeUndefined()
   expect(await readdir(f.options.sessionDirectory)).not.toContain(`${a}.json`)
+})
+
+it('keeps provisional post-startup bindings and rejects a new provider for a planned owner', async () => {
+  const f = await fixture()
+  await f.add(a, 'gone')
+  await new Promise((resolve) => setTimeout(resolve, 2))
+  const owner = new HarnessStorageCleanup(f.options)
+  const plans = await owner.planReconciliation([])
+  expect(plans).toHaveLength(1)
+  await f.add(b, 'gone')
+  await expect(plans[0].apply()).rejects.toThrow('provider ownership changed')
+  expect(await f.store.load(a)).toBeDefined()
+  expect(await f.store.load(b)).toBeDefined()
+  await f.add(c, 'provisional')
+  expect(
+    (await owner.planReconciliation([])).some((plan) => plan.sessionId === 'provisional')
+  ).toBe(false)
+})
+
+it('excludes native admission in both orderings and retains failed-open ownership until restart', async () => {
+  const f = await fixture()
+  await f.add(a, 'admission-race')
+  await new Promise((resolve) => setTimeout(resolve, 2))
+  const owner = new HarnessStorageCleanup(f.options)
+  const [plan] = await owner.planReconciliation([])
+  const registry = new AcpSessionRegistry()
+  const release = reserveAcpSessionStorageCleanup(['admission-race', a])!
+  try {
+    expect(registry.reserve({ sessionIds: ['admission-race'] }).collision?.message).toContain(
+      'cleanup'
+    )
+    expect(new AcpSessionRegistry().reserve({ sessionIds: [a] }).collision?.message).toContain(
+      'cleanup'
+    )
+  } finally {
+    release()
+  }
+  const pending = registry.reserve({ sessionIds: ['admission-race'] })
+  expect(pending.collision).toBeUndefined()
+  try {
+    await expect(plan.apply()).rejects.toThrow('Session admission')
+  } finally {
+    pending.reservation?.release()
+  }
+  // Failed startup can still be disposing the native process after releasing its registry token.
+  await expect(plan.apply()).rejects.toThrow('Session admission')
+  expect(await f.store.load(a)).toBeDefined()
+  const unrelated = reserveAcpSessionStorageCleanup(['untouched-old-owner'])
+  expect(unrelated).toBeTypeOf('function')
+  unrelated?.()
 })

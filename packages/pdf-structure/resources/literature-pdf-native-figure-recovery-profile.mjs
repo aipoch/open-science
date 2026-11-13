@@ -3,14 +3,19 @@ import { createHash } from 'node:crypto'
 import { types } from 'node:util'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { nativeIsolatedRasterScopeData } from './literature-pdf-isolated-raster-scope.mjs'
+import { compactNativePixelTupleBindings } from './literature-pdf-native-compact-bindings.mjs'
+import { compactNativePixelArrayBindings } from './literature-pdf-native-compact-array-bindings.mjs'
 
 const profiles = new WeakMap(),
-  paintProfiles = new WeakMap()
+  paintProfiles = new WeakMap(),
+  nonisolatedGroupProfiles = new WeakMap(),
+  nonisolatedExclusionProfiles = new WeakMap(),
+  compositeGroupProfiles = new WeakMap()
 const digest = (values) => createHash('sha256').update(JSON.stringify(values)).digest('hex')
 
 // Retain actual input objects as well as values. No getter is executed while
 // walking native snapshots; an own accessor declines this optional contract.
-function retainReferences(roots, viewport, secondaryViewport) {
+function retainReferences(roots, viewport, secondaryViewport, compact) {
   const seen = new Set(),
     bindings = []
   // A pixel-only caller can bind one additional actual native viewport. Keep
@@ -52,6 +57,7 @@ function retainReferences(roots, viewport, secondaryViewport) {
   const visit = (value) => {
     if (!value || typeof value !== 'object' || seen.has(value)) return true
     if (types.isProxy(value)) return false
+    if (compact?.contains(value)) return true
     if (seen.size >= 65536) return false
     seen.add(value)
     if (ArrayBuffer.isView(value)) {
@@ -126,7 +132,7 @@ function retainReferences(roots, viewport, secondaryViewport) {
   }
   if (!roots.every(visit) || (secondaryViewport !== undefined && !seen.has(secondaryViewport)))
     return
-  return () => bindings.every((same) => same())
+  return () => (!compact || compact.current()) && bindings.every((same) => same())
 }
 
 function nestedOrdinaryGroups(o) {
@@ -179,6 +185,79 @@ function nestedOrdinaryGroups(o) {
   }
   if (stack.length || !groups.some((g) => g.depth > 0)) return
   return groups
+}
+
+// Crop-only proof for a single root transparency group whose complete bounded
+// canvas has no prior page paint or text to contribute to nonisolated blending.
+// This lives in a separate weak map so it cannot activate ordinary Source/ink
+// ownership contracts.
+function nonisolatedCropGroup(page, context, disjointBackdrop = false) {
+  const o = context?.operators,
+    bounds = context?.graphicsBounds
+  if (!Array.isArray(bounds) || !Array.isArray(o?.fnArray)) return
+  const groups = [],
+    stack = []
+  for (let i = 0; i < o.fnArray.length; i++) {
+    const op = o.fnArray[i],
+      a = o.argsArray[i]
+    if (op === OPS.beginGroup) {
+      const g = a?.[0]
+      if (
+        !g ||
+        Object.keys(g).sort().join(',') !== 'bbox,isolated,knockout,matrix,smask' ||
+        g.matrix !== null ||
+        g.smask !== null ||
+        g.isolated !== false ||
+        g.knockout !== false ||
+        !Array.isArray(g.bbox) ||
+        g.bbox.length !== 4 ||
+        !g.bbox.every(Number.isFinite) ||
+        g.bbox[0] >= g.bbox[2] ||
+        g.bbox[1] >= g.bbox[3] ||
+        stack.length ||
+        groups.length
+      )
+        return
+      const row = { begin: i, depth: 0, args: g }
+      groups.push(row)
+      stack.push(row)
+    } else if (op === OPS.endGroup) {
+      const row = stack.pop()
+      if (!row || JSON.stringify(row.args) !== JSON.stringify(a?.[0])) return
+      row.end = i
+    }
+  }
+  if (stack.length || groups.length !== 1 || !Number.isInteger(groups[0].end)) return
+  const { begin, end, args } = groups[0]
+  if (
+    bounds.some(
+      (g) => !Number.isInteger(g.operationIndex) || (!disjointBackdrop && g.operationIndex < begin)
+    ) ||
+    !page ||
+    !Number.isFinite(page.width) ||
+    !Number.isFinite(page.height)
+  )
+    return
+  return [
+    Object.freeze({
+      begin,
+      end,
+      depth: 0,
+      bbox: Object.freeze([...args.bbox]),
+      isolated: false,
+      knockout: false,
+      matrix: null,
+      smask: null,
+      backdrop: Object.freeze(
+        disjointBackdrop
+          ? {
+              priorPaintRequiresIndependentDisjointProof: true,
+              glyphsRequireIndependentDisjointProof: true
+            }
+          : { priorPaint: false, glyphsRequireIndependentDisjointProof: true }
+      )
+    })
+  ]
 }
 
 function inertTextOperations(o) {
@@ -513,6 +592,202 @@ function viewportConverter(viewport) {
 export function createNativeFigureRecoveryProfile(page, tokens, context) {
   return createRecoveryProfile(page, tokens, context, 'figure')
 }
+function compositeCropGroup(context) {
+  const o = context?.operators,
+    bounds = context?.graphicsBounds,
+    stack = [],
+    nodes = []
+  if (!Array.isArray(bounds) || !Array.isArray(o?.fnArray)) return
+  for (let i = 0; i < o.fnArray.length; i++) {
+    const op = o.fnArray[i],
+      a = o.argsArray[i]
+    if (op === OPS.beginGroup) {
+      const g = a?.[0],
+        depth = stack.length
+      if (
+        !g ||
+        Object.keys(g).sort().join(',') !== 'bbox,isolated,knockout,matrix,smask' ||
+        g.smask !== null ||
+        g.knockout !== false ||
+        !Array.isArray(g.bbox) ||
+        g.bbox.length !== 4 ||
+        !g.bbox.every(Number.isFinite) ||
+        g.bbox[0] >= g.bbox[2] ||
+        g.bbox[1] >= g.bbox[3] ||
+        depth > 1 ||
+        nodes.length >= 5 ||
+        (depth === 0
+          ? nodes.length || g.isolated !== false || g.matrix !== null
+          : g.isolated !== true || JSON.stringify(g.matrix) !== JSON.stringify([1, 0, 0, 1, 0, 0]))
+      )
+        return
+      const node = { begin: i, depth, args: g }
+      nodes.push(node)
+      stack.push(node)
+    } else if (op === OPS.endGroup) {
+      const node = stack.pop()
+      if (!node || JSON.stringify(node.args) !== JSON.stringify(a?.[0])) return
+      node.end = i
+    }
+  }
+  if (
+    stack.length ||
+    nodes.length < 2 ||
+    nodes.length > 5 ||
+    !Number.isInteger(nodes[0].end) ||
+    bounds.some((g) => !Number.isInteger(g.operationIndex) || g.operationIndex < nodes[0].begin)
+  )
+    return
+  const descriptor = (n) =>
+    Object.freeze({
+      begin: n.begin,
+      end: n.end,
+      depth: n.depth,
+      bbox: Object.freeze([...n.args.bbox]),
+      isolated: n.args.isolated,
+      knockout: false,
+      matrix: n.args.matrix && Object.freeze([...n.args.matrix]),
+      smask: null
+    })
+  return [
+    Object.freeze({
+      ...descriptor(nodes[0]),
+      children: Object.freeze(nodes.slice(1).map(descriptor)),
+      backdrop: Object.freeze({ priorPaint: false, glyphsRequireIndependentDisjointProof: true })
+    })
+  ]
+}
+
+function createNonisolatedGroupCropProfile(
+  page,
+  tokens,
+  context,
+  disjointBackdrop,
+  composite = false
+) {
+  const safe = disjointBackdrop || composite
+  try {
+    const own = nativeRecoveryOwnValues(context),
+      witness =
+        own?.runningHeadWitness === undefined
+          ? undefined
+          : nativeRecoveryOwnValues(own.runningHeadWitness)
+    if (
+      !own ||
+      (own.runningHeadWitness !== undefined &&
+        (!witness || !witness.witnessViewport || typeof witness.witnessViewport !== 'object'))
+    )
+      return
+    const o = own.operators,
+      v = own.viewport,
+      groups = composite
+        ? compositeCropGroup(context)
+        : nonisolatedCropGroup(page, context, disjointBackdrop)
+    if (
+      !groups ||
+      !page ||
+      !context ||
+      page.pageNumber !== context.pageNumber ||
+      page.invalidGraphicsBounds !== 0 ||
+      page.rotation !== 0 ||
+      !/^[a-f0-9]{64}$/u.test(context.sourceSha256 ?? '') ||
+      !Array.isArray(tokens) ||
+      !Array.isArray(o?.fnArray) ||
+      o.fnArray.length !== o.argsArray?.length ||
+      o.fnArray.length > 100000 ||
+      v?.scale !== 1 ||
+      v.rotation !== 0 ||
+      v.width !== page.width ||
+      v.height !== page.height
+    )
+      return
+    const descriptors = Object.getOwnPropertyDescriptors(context),
+      keys = Reflect.ownKeys(descriptors),
+      prototype = Object.getPrototypeOf(context),
+      contextCurrent = () =>
+        Object.getPrototypeOf(context) === prototype &&
+        Reflect.ownKeys(context).length === keys.length &&
+        Reflect.ownKeys(context).every((key, index) => key === keys[index]) &&
+        keys.every((key) => {
+          const current = Object.getOwnPropertyDescriptor(context, key),
+            before = descriptors[key]
+          return (
+            current &&
+            Object.hasOwn(current, 'value') &&
+            current.value === before.value &&
+            current.enumerable === before.enumerable &&
+            current.configurable === before.configurable &&
+            current.writable === before.writable
+          )
+        }),
+      // The running-head certificate is not consumed by this crop purpose.
+      // Preserve its opaque identity and descriptors without traversing it.
+      observed =
+        safe &&
+        Object.fromEntries(Object.entries(own).filter(([key]) => key !== 'runningHeadWitness')),
+      roots = safe ? [page, tokens, observed] : [page, tokens, context],
+      unchanged = safe
+        ? retainReferences(roots, own.viewport)
+        : retainReferences(roots, own.viewport, witness?.witnessViewport),
+      converter = viewportConverter(v)
+    if (!unchanged || !converter) return
+    const profile = Object.freeze({})
+    const store = composite
+      ? compositeGroupProfiles
+      : disjointBackdrop
+        ? nonisolatedExclusionProfiles
+        : nonisolatedGroupProfiles
+    store.set(
+      profile,
+      Object.freeze({
+        page,
+        tokens,
+        context,
+        groups,
+        unchanged,
+        initial: digest(roots),
+        ...(safe ? { roots, contextCurrent } : {}),
+        converter
+      })
+    )
+    return profile
+  } catch {
+    return
+  }
+}
+export function createNativeNonisolatedGroupCropProfile(page, tokens, context) {
+  return createNonisolatedGroupCropProfile(page, tokens, context, false)
+}
+// Separate preview-only purpose: this descriptor proves group closure, not
+// backdrop independence. The crop interpreter must bound every exterior paint.
+export function createNativeNonisolatedExclusionCropProfile(page, tokens, context) {
+  return createNonisolatedGroupCropProfile(page, tokens, context, true)
+}
+function nonisolatedGroupProfileData(profile, page, tokens, context, store) {
+  try {
+    const proof = store.get(profile)
+    if (
+      !proof ||
+      page !== proof.page ||
+      tokens !== proof.tokens ||
+      context !== proof.context ||
+      (proof.contextCurrent && !proof.contextCurrent()) ||
+      !proof.unchanged() ||
+      viewportConverter(context.viewport) !== proof.converter ||
+      digest(proof.roots ?? [page, tokens, context]) !== proof.initial
+    )
+      return
+    return proof.groups
+  } catch {
+    return
+  }
+}
+export function nativeNonisolatedGroupProfileData(profile, page, tokens, context) {
+  return nonisolatedGroupProfileData(profile, page, tokens, context, nonisolatedGroupProfiles)
+}
+export function nativeNonisolatedExclusionProfileData(profile, page, tokens, context) {
+  return nonisolatedGroupProfileData(profile, page, tokens, context, nonisolatedExclusionProfiles)
+}
 export function createNativeForeignAccentProfile(page, tokens, context) {
   return createRecoveryProfile(page, tokens, context, 'foreign-accents')
 }
@@ -543,7 +818,23 @@ export function attachNativeRecoveryPaintProfile(evidence, profile, page, tokens
 export function nativeRecoveryGroupDepth(evidence) {
   return paintProfiles.has(evidence) ? 4 : 1
 }
-export const retainNativeRecoveryInputs = retainReferences
+export const retainNativeRecoveryInputs = (roots, viewport, secondaryViewport) =>
+  retainReferences(roots, viewport, secondaryViewport)
+
+export function retainNativeCompactPixelInputs(roots, viewport, secondaryViewport) {
+  const compact = compactNativePixelTupleBindings(roots)
+  return compact && retainReferences(roots, viewport, secondaryViewport, compact)
+}
+// Only the array-bound pixel purpose uses this private storage representation.
+// The ordinary retainer still visits every noncompact child with its original
+// descriptor, prototype, typed-byte and 65536-object checks.
+export function retainNativeArrayPixelInputs(roots, viewport, secondaryViewport) {
+  const compact = compactNativePixelArrayBindings(roots)
+  return (
+    compact &&
+    retainReferences([...roots, ...compact.frontier], viewport, secondaryViewport, compact)
+  )
+}
 export function nativeRecoveryOwnValues(value) {
   if (
     !value ||
@@ -561,4 +852,11 @@ export function nativeRecoveryOwnValues(value) {
 
 export function createNativeIsolatedRasterProfile(page, tokens, context) {
   return createRecoveryProfile(page, tokens, context, 'isolated-raster')
+}
+
+export function createNativeCompositeGroupCropProfile(page, tokens, context) {
+  return createNonisolatedGroupCropProfile(page, tokens, context, false, true)
+}
+export function nativeCompositeGroupProfileData(profile, page, tokens, context) {
+  return nonisolatedGroupProfileData(profile, page, tokens, context, compositeGroupProfiles)
 }

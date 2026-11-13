@@ -2,7 +2,8 @@ import type { FileSaveTarget } from '../file-save-target'
 import { downloadUseCase } from './use-case-download'
 import type { UseCaseSource } from '../../shared/use-cases'
 import { desktopShellInteraction, desktopFileInteraction } from '../desktop-interaction'
-import { PACKAGE_REQUIRES_UPDATE } from './archive'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import { isInvalidPackageArchive, PACKAGE_REQUIRES_UPDATE } from './archive'
 import {
   PackageSensitiveContentError,
   type PackageSensitiveContentSource
@@ -561,6 +562,7 @@ export class SessionPackageDesktop {
       ...diagnosticErrorFields(error),
       operationId: snapshot?.id,
       phase: snapshot?.progress.phase,
+      importStage: snapshot?.progress.importStage,
       ...(safeFailureMessages.has(detail) ? { error: { message: detail } } : {})
     })
     const translate = this.options.translate
@@ -571,11 +573,20 @@ export class SessionPackageDesktop {
         ),
         { cause: error }
       )
+    if (isInvalidPackageArchive(error))
+      throw new ApplicationCommandError(
+        'session-package-invalid-archive',
+        translate('The selected file is not a valid Session package.'),
+        undefined,
+        { cause: error }
+      )
     if (error instanceof PackageSourceUnavailableError)
-      throw new Error(
+      throw new ApplicationCommandError(
+        'session-package-source-unavailable',
         translate(
           'The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.'
         ),
+        undefined,
         { cause: error }
       )
     if (error instanceof PackageCapacityError)

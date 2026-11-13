@@ -604,19 +604,26 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
     return null
   // The opening bracket can share its native link with a collective author.
   // Keep it only with the complete closed author/year identity and occurrence.
-  if (/^[[［]/u.test(label)) {
+  if (/^[[［(（]/u.test(label)) {
     const pattern = new RegExp(
-        `[\\[［]\\s*(${author}\\s*(?:et\\s*al\\.|等人?))[,，]\\s*(\\d{4}[a-z]?)\\s*[\\]］]`,
+        `[\\[［(（]\\s*(${author}\\s*(?:et\\s*al\\.|等人?))[,，]\\s*(\\d{4}[a-z]?)\\s*年?[\\]］)）]`,
         'gu'
       ),
-      references = (text) => [...text.matchAll(pattern)],
+      references = (text) =>
+        [...text.matchAll(pattern)].filter((match) =>
+          /^[[［]/u.test(match[0]) ? /[\]］]$/u.test(match[0]) : /[)）]$/u.test(match[0])
+        ),
+      prefix = (match, comma) => {
+        const end = match[0].indexOf(match[1]) + match[1].length
+        return match[0].slice(0, end + (comma ? 1 : 0))
+      },
+      comma = /[,，]$/u.test(label),
       reference = references(source).find(
         (match) =>
-          match.index === offset &&
-          match[0].startsWith(label) &&
-          label === match[0].slice(0, match[0].indexOf(match[1]) + match[1].length)
+          match.index === offset && match[0].startsWith(label) && label === prefix(match, comma)
       ),
-      identity = (match) => `${pdfLinkLabelKey(match[1])}:${match[2]}`
+      identity = (match) =>
+        `${/^[[［]/u.test(match[0]) ? '[' : '('}:${pdfLinkLabelKey(match[1])}:${match[2]}`
     if (reference) {
       const from = references(source).filter((match) => identity(match) === identity(reference)),
         to = references(translation).filter((match) => identity(match) === identity(reference)),
@@ -625,7 +632,7 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
       const target = to[occurrence]
       return {
         start: target.index,
-        text: target[0].slice(0, target[0].indexOf(target[1]) + target[1].length)
+        text: prefix(target, comma)
       }
     }
   }
@@ -838,7 +845,7 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
   if (/^\d+[A-Za-z]?$/u.test(label)) {
     const panels = (text) => [
         ...text.matchAll(
-          /(?:\b(?:Figure|Fig\.?)\s*|[图圖]\s*)(\d+(?:[A-Za-z]|[（(]\s*[A-Za-z]\s*[)）]))(?![A-Za-z\d])/gu
+          /(?:\b(?:Figure|Fig\.?)\s*|[图圖]\s*)(\d+(?:[A-Za-z]|[（(]\s*[A-Za-z]\s*[)）]))(?![A-Za-z\d])/giu
         )
       ],
       identity = (match) => match[1].normalize('NFKC').replace(/\s/gu, '')
@@ -853,6 +860,22 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
       if (from.length !== to.length) return null
       const target = to[index]
       return { start: target.index + target[0].length - target[1].length, text: label }
+    }
+  }
+  // A wrapped native run can begin with the complete compound, without its
+  // preceding figure prefix. The digit alone still proves no panel identity.
+  if (/^\d+$/u.test(label)) {
+    const reference = source.match(/^\s*(\d+)[（(]\s*([A-Za-z])\s*[)）](?![A-Za-z\d])/u)
+    if (reference?.[1] === label && reference[0].indexOf(label) === offset) {
+      const compounds = (value) => [
+          ...value.matchAll(/(?<![A-Za-z\d_.])(\d+)[（(]\s*([A-Za-z])\s*[)）](?![A-Za-z\d])/gu)
+        ],
+        same = (match) => match[1] === label,
+        from = compounds(source).filter(same),
+        to = compounds(translation).filter(same)
+      return from.length === 1 && to.length === 1 && to[0][2] === reference[2]
+        ? { start: to[0].index, text: label }
+        : null
     }
   }
   const number = label.match(/^(\d+)(\.)?$/u)

@@ -68,6 +68,11 @@ export type RuntimeSessionAdmission = {
   approvedHandoffContinuation?: boolean
 }
 
+export type RuntimeSessionContinuationAdmission = {
+  signal: AbortSignal
+  assertCurrent: () => void
+}
+
 export type RuntimeSessionArtifactPublicationReceipt = {
   projectId: string
   sessionId: string
@@ -124,6 +129,7 @@ type Turn = {
   acceptedEventIds: Set<string>
   terminalEventIds: Set<string>
   tail: Promise<void>
+  flushOperation?: Promise<PersistedChatSession | undefined>
   cancelScheduledFlush?: () => void
   terminalObserved: boolean
   terminalReceipt?: { eventId: string; promise: Promise<void>; resolve: () => void }
@@ -558,29 +564,55 @@ export class RuntimeSessionOwner {
     )
   }
 
-  async waitForTerminalWrites(sessionId: string, signal: AbortSignal): Promise<void> {
-    signal.throwIfAborted()
-    const startedAt = Date.now()
-    let waiting = false
-    let timeoutReached = false
+  private async waitForStorage<Result>(
+    operation: Promise<Result>,
+    signal: AbortSignal,
+    deadline: number
+  ): Promise<Result> {
     let onAbort!: () => void
     let timer: ReturnType<typeof setTimeout> | undefined
     const aborted = new Promise<never>((_, reject) => {
       onAbort = () => reject(signal.reason)
+      if (signal.aborted) onAbort()
+      else signal.addEventListener('abort', onAbort, { once: true })
     })
     const timedOut = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        timeoutReached = true
-        reject(new Error('Main runtime completion has not committed yet.'))
-      }, TERMINAL_CONTINUATION_WAIT_BUDGET_MS)
+      timer = setTimeout(
+        () => {
+          reject(new Error('Main runtime completion has not committed yet.'))
+        },
+        Math.max(0, deadline - Date.now())
+      )
     })
-    signal.addEventListener('abort', onAbort, { once: true })
+    try {
+      return await Promise.race([operation, aborted, timedOut])
+    } finally {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+    }
+  }
+
+  async waitForTerminalWrites(
+    sessionId: string,
+    signal: AbortSignal,
+    deadline = Date.now() + TERMINAL_CONTINUATION_WAIT_BUDGET_MS
+  ): Promise<void> {
+    signal.throwIfAborted()
+    const startedAt = Date.now()
+    let waiting = false
     try {
       for (;;) {
-        const pending = this.pendingTerminalTurns(sessionId).map((turn) => ({
-          turn,
-          tail: turn.tail
-        }))
+        signal.throwIfAborted()
+        if (Date.now() >= deadline)
+          throw new Error('Main runtime completion has not committed yet.')
+        const pending = this.pendingTerminalTurns(sessionId).map((turn) => {
+          // A delayed flush has no unsettled tail yet. Start it here and observe its real
+          // failure, while leaving retained terminal batches available for atomic adoption.
+          const operation =
+            turn.flushOperation ??
+            (turn.terminalCommit ? turn.tail : this.flush(sessionId, turn.scope.promptMessageId))
+          return { turn, tail: turn.tail, operation }
+        })
         if (pending.length > 0 && !waiting) {
           waiting = true
           try {
@@ -589,13 +621,26 @@ export class RuntimeSessionOwner {
             void loggingError
           }
         }
-        await Promise.race([Promise.all(pending.map(({ tail }) => tail)), aborted, timedOut])
+        await this.waitForStorage(
+          Promise.all(pending.map(({ operation }) => operation)),
+          signal,
+          deadline
+        )
         signal.throwIfAborted()
-        if (pending.every(({ turn, tail }) => turn.tail === tail)) return
+        if (
+          pending.every(
+            ({ turn, tail }) =>
+              turn.tail === tail && (turn.pending.length === 0 || turn.terminalCommit)
+          ) &&
+          this.pendingTerminalTurns(sessionId).every((turn) =>
+            pending.some((entry) => entry.turn === turn)
+          )
+        )
+          return
       }
     } catch (error) {
       try {
-        if (timeoutReached) {
+        if (!signal.aborted && Date.now() >= deadline) {
           log.warn('Runtime terminal write wait timed out', {
             sessionId,
             elapsedMs: Date.now() - startedAt
@@ -610,9 +655,6 @@ export class RuntimeSessionOwner {
         void loggingError
       }
       throw error
-    } finally {
-      clearTimeout(timer)
-      signal.removeEventListener('abort', onAbort)
     }
   }
 
@@ -637,11 +679,25 @@ export class RuntimeSessionOwner {
 
   async begin(
     scope: RuntimeSessionTurnScope,
-    admission: RuntimeSessionAdmission = {}
+    admission: RuntimeSessionAdmission = {},
+    continuation?: RuntimeSessionContinuationAdmission
   ): Promise<PersistedChatSession> {
-    // Bound only waiting for an already-owned physical write, before queuing any admission work.
-    // A timeout cannot leave a callback that later admits an orphan turn after the caller rejected.
-    await this.assertAdmissionAvailable(scope.sessionId)
+    // Continuations have a fresh storage budget after Skill/reload preparation. Controls stay
+    // separate from admission because its remaining provider bindings are persisted below.
+    const deadline = Date.now() + TERMINAL_CONTINUATION_WAIT_BUDGET_MS
+    const assertCurrent = (): void => {
+      if (!continuation) return
+      continuation.signal.throwIfAborted()
+      continuation.assertCurrent()
+      if (Date.now() >= deadline) throw new Error('Main runtime completion has not committed yet.')
+    }
+    const wait = <Result>(operation: Promise<Result>): Promise<Result> =>
+      continuation ? this.waitForStorage(operation, continuation.signal, deadline) : operation
+    assertCurrent()
+    if (continuation)
+      await this.waitForTerminalWrites(scope.sessionId, continuation.signal, deadline)
+    else await this.assertAdmissionAvailable(scope.sessionId)
+    assertCurrent()
     // Detached responses are published against the stopped interaction. Plan feedback
     // then starts a different prompt, while approval/question answers reuse the old one.
     // A queued follow-up must not wait behind detached terminal retries. Include prior terminal
@@ -651,10 +707,12 @@ export class RuntimeSessionOwner {
     for (const turn of this.turns.values()) {
       if (turn.scope.sessionId === scope.sessionId && turn.terminalObserved) {
         if (turn.terminalCommit) priorBatches.push({ turn, batch: turn.pending.slice() })
-        else await this.flush(scope.sessionId, turn.scope.promptMessageId)
+        else await wait(this.flush(scope.sessionId, turn.scope.promptMessageId))
       }
     }
-    let loaded = await this.dependencies.loadSession(scope)
+    assertCurrent()
+    let loaded = await wait(this.dependencies.loadSession(scope))
+    assertCurrent()
     if (!loaded) throw new Error('Runtime Session turn is not durable.')
     for (const { turn, batch } of priorBatches) loaded = this.applyTurnEvents(loaded, turn, batch)
     const sameExecution =
@@ -712,7 +770,13 @@ export class RuntimeSessionOwner {
     }
     // The coordinator stamps Main's runtime ownership in this identity mutation. Await it before
     // provider dispatch so a renderer save can never become the first durable writer for the turn.
-    const session = await this.mutateSession(scope, 'begin-turn', (latest) => {
+    const admissionStarted = Promise.withResolvers<void>()
+    assertCurrent()
+    const committing = this.mutateSession(scope, 'begin-turn', (latest) => {
+      // This callback can be queued behind a global operation. A rejected wait must never
+      // gain durable execution authority when that operation eventually releases the lane.
+      assertCurrent()
+      admissionStarted.resolve()
       for (const { turn, batch } of priorBatches) latest = this.applyTurnEvents(latest, turn, batch)
       latest = admitApplicationPrompt(latest, scope, admission, this.now())
       latest = admitDelegatedMessage(latest, scope, admission, this.now())
@@ -779,6 +843,12 @@ export class RuntimeSessionOwner {
       }
       return next
     })
+    if (continuation) {
+      await wait(Promise.race([admissionStarted.promise, committing.then(() => undefined)]))
+    }
+    // Once the physical admission write starts, await its result rather than abandoning it.
+    // Prompt workflow owns cancellation before dispatch after an already-started write finishes.
+    const session = await committing
     for (const { turn, batch } of priorBatches) {
       turn.pending = turn.pending.filter((event) => !batch.some(({ id }) => id === event.id))
       if (turn.terminalCommit && turn.pending.length === 0) {
@@ -1196,9 +1266,14 @@ export class RuntimeSessionOwner {
     turn.cancelScheduledFlush?.()
     turn.cancelScheduledFlush = undefined
     const operation = turn.tail.then(() => this.flushTurn(turn))
+    turn.flushOperation = operation
     turn.tail = operation.then(
-      () => undefined,
-      () => undefined
+      () => {
+        if (turn.flushOperation === operation) turn.flushOperation = undefined
+      },
+      () => {
+        if (turn.flushOperation === operation) turn.flushOperation = undefined
+      }
     )
     return operation
   }

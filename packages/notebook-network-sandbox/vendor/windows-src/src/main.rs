@@ -10,6 +10,68 @@ const WINDOWS_ACL_ACCESS_DENIED_MARKER: &str = "WINDOWS_ACL_ACCESS_DENIED";
 const WINDOWS_ACL_TARGET_MISSING_MARKER: &str = "WINDOWS_ACL_TARGET_MISSING";
 const WINDOWS_ACL_OPERATION_FAILED_MARKER: &str = "WINDOWS_ACL_OPERATION_FAILED";
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AclFailure {
+    code: String,
+    path: String,
+    access: String,
+    stage: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    win32_code: Option<u32>,
+    message: String,
+    remediation: String,
+}
+
+impl AclFailure {
+    fn new(
+        code: &str,
+        path: impl Into<String>,
+        access: &str,
+        stage: &str,
+        message: impl Into<String>,
+        remediation: impl Into<String>,
+    ) -> Self {
+        Self {
+            code: code.to_owned(),
+            path: path.into(),
+            access: access.to_owned(),
+            stage: stage.to_owned(),
+            win32_code: None,
+            message: message.into(),
+            remediation: remediation.into(),
+        }
+    }
+
+    fn with_win32_code(mut self, code: u32) -> Self {
+        self.win32_code = Some(code);
+        self
+    }
+}
+
+impl std::fmt::Display for AclFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let win32 = self
+            .win32_code
+            .map(|code| format!(" win32Code={code}"))
+            .unwrap_or_default();
+        write!(
+            formatter,
+            "{}: access={} path={} stage={}{}: {}. {}",
+            self.code, self.access, self.path, self.stage, win32, self.message, self.remediation
+        )
+    }
+}
+
+impl std::error::Error for AclFailure {}
+
+#[derive(Debug, Serialize)]
+struct AclPreflightResponse {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<AclFailure>,
+}
+
 fn acl_error_marker(code: u32) -> &'static str {
     match code {
         2 | 3 | 0x8007_0002 | 0x8007_0003 => WINDOWS_ACL_TARGET_MISSING_MARKER,
@@ -29,7 +91,7 @@ mod wfp;
 #[cfg(windows)]
 mod directory_access;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LaunchSpec {
     executable: String,
@@ -40,6 +102,8 @@ struct LaunchSpec {
     read_only_roots: Vec<String>,
     #[serde(default)]
     optional_read_only_roots: Vec<String>,
+    #[serde(default)]
+    optional_read_write_roots: Vec<String>,
     read_write_roots: Vec<String>,
     denied_read_roots: Vec<String>,
     denied_write_roots: Vec<String>,
@@ -48,6 +112,41 @@ struct LaunchSpec {
     #[serde(default)]
     termination_request_path: Option<String>,
     shell_control_pipe: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum AclPreflightScope {
+    /// Validate the selected tree, including protected descendants that would not inherit the
+    /// tree grant. Used before a folder grant is persisted.
+    #[default]
+    Tree,
+    /// Validate only the selected path and its ancestors. Used for the per-command re-check:
+    /// a protected descendant only narrows what the command can reach and is not a security
+    /// boundary, so walking the whole tree on every command would not add authority checks.
+    Target,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AclPreflightSpec {
+    path: String,
+    access: String,
+    #[serde(default)]
+    requested_path: Option<String>,
+    #[serde(default)]
+    scope: AclPreflightScope,
+    #[serde(default)]
+    filesystem: Option<AclPreflightFilesystem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AclPreflightFilesystem {
+    read_only_roots: Vec<String>,
+    read_write_roots: Vec<String>,
+    denied_read_roots: Vec<String>,
+    denied_write_roots: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -122,6 +221,13 @@ fn decode_launch_spec(encoded: &str) -> Result<LaunchSpec> {
         .decode(encoded)
         .context("invalid launch specification encoding")?;
     serde_json::from_slice(&bytes).context("invalid launch specification")
+}
+
+fn decode_acl_preflight_spec(encoded: &str) -> Result<AclPreflightSpec> {
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .context("invalid ACL preflight specification encoding")?;
+    serde_json::from_slice(&bytes).context("invalid ACL preflight specification")
 }
 
 fn quote_windows_argument(value: &str) -> String {
@@ -249,9 +355,30 @@ fn merge_acl_grant(grants: &mut BTreeMap<String, AclGrant>, path: String, access
     grants.insert(path, access);
 }
 
+fn acl_failure(
+    code: &str,
+    path: impl Into<String>,
+    access: &str,
+    stage: &str,
+    message: impl Into<String>,
+    remediation: impl Into<String>,
+) -> anyhow::Error {
+    AclFailure::new(code, path, access, stage, message, remediation).into()
+}
+
 fn is_windows_volume_root(path: &Path) -> bool {
     let value = path.to_string_lossy();
     value.len() == 3 && value.as_bytes().get(1) == Some(&b':')
+}
+
+fn is_unc_path(path: &str) -> bool {
+    let normalized = path.replace('/', "\\");
+    normalized
+        .get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("\\\\?\\UNC\\"))
+        || (normalized.starts_with("\\\\")
+            && !normalized.starts_with("\\\\?\\")
+            && !normalized.starts_with("\\\\.\\"))
 }
 
 fn is_windows_profile_boundary(path: &Path) -> bool {
@@ -310,9 +437,10 @@ fn plan_required_path_acl_grants(spec: &LaunchSpec) -> Result<BTreeMap<String, A
         while let Some(path) = parent {
             // The volume root is already traversable by the AppContainer token. Never mutate its
             // ACL; only add list-only grants to user-managed ancestors below it.
-            let explicit_read_only_root = spec.read_only_roots.iter().any(|root| {
-                paths_equal(&path.to_string_lossy(), Path::new(root))
-            });
+            let explicit_read_only_root = spec
+                .read_only_roots
+                .iter()
+                .any(|root| paths_equal(&path.to_string_lossy(), Path::new(root)));
             if path.parent().is_some_and(|ancestor| ancestor != path)
                 && path.is_dir()
                 && !explicit_read_only_root
@@ -343,6 +471,7 @@ mod windows_host {
     use std::io::{Read, Write};
     use std::mem::{size_of, zeroed};
     use std::net::TcpListener;
+    use std::os::windows::fs::MetadataExt;
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
     use std::path::{Path, PathBuf};
     #[cfg(test)]
@@ -383,16 +512,17 @@ mod windows_host {
         TOKEN_GROUPS, TOKEN_QUERY, TOKEN_USER, TokenAppContainerSid, TokenCapabilities, TokenUser,
         UNPROTECTED_DACL_SECURITY_INFORMATION,
     };
-    use windows::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ,
-        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, MOVEFILE_REPLACE_EXISTING,
-        MOVEFILE_WRITE_THROUGH, MoveFileExW, SYNCHRONIZE,
-        OPEN_EXISTING, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_OUTBOUND, ReadFile, WRITE_DAC,
-    };
     #[cfg(test)]
     use windows::Win32::Storage::FileSystem::FILE_LIST_DIRECTORY;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+        FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, GetDriveTypeW,
+        GetVolumeInformationW, GetVolumePathNameW, MOVEFILE_REPLACE_EXISTING,
+        MOVEFILE_WRITE_THROUGH, MoveFileExW, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
+        PIPE_ACCESS_OUTBOUND, READ_CONTROL, ReadFile, SYNCHRONIZE, WRITE_DAC,
+    };
     use windows::Win32::System::Com::{CoCreateGuid, CoTaskMemFree};
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
@@ -426,9 +556,10 @@ mod windows_host {
     use windows::core::{BOOL, PCWSTR, PWSTR};
 
     use super::{
-        AclGrant, LaunchSpec, command_capability_name, command_line, parent_acl_grant_is_allowed,
-        parent_acl_grant_is_system_boundary, path_is_within, paths_equal, plan_writable_acl_grants,
-        strip_utf8_bom, valid_lease_id, wfp,
+        AclFailure, AclGrant, AclPreflightResponse, AclPreflightScope, AclPreflightSpec, LaunchSpec,
+        acl_failure, command_capability_name, command_line, is_unc_path,
+        parent_acl_grant_is_allowed, parent_acl_grant_is_system_boundary, path_is_within,
+        paths_equal, plan_writable_acl_grants, strip_utf8_bom, valid_lease_id, wfp,
     };
 
     const PROFILE_PREFIX: &str = "Aipoch.OpenScience.Notebook";
@@ -2294,6 +2425,603 @@ mod windows_host {
         }
     }
 
+    fn win32_code(error: &windows::core::Error) -> u32 {
+        let code = error.code().0 as u32;
+        if code & 0xffff_0000 == 0x8007_0000 {
+            code & 0xffff
+        } else {
+            code
+        }
+    }
+
+    fn io_win32_code(error: &std::io::Error) -> Option<u32> {
+        error.raw_os_error().map(|code| code as u32)
+    }
+
+    fn windows_acl_failure(
+        error: &windows::core::Error,
+        path: &str,
+        access: &str,
+        stage: &str,
+        message: &str,
+    ) -> AclFailure {
+        let code = win32_code(error);
+        AclFailure::new(
+            super::acl_error_marker(code),
+            path,
+            access,
+            stage,
+            message,
+            "Choose a local NTFS folder that this account can manage, or ask its owner to grant permission.",
+        )
+        .with_win32_code(code)
+    }
+
+    fn io_acl_failure(
+        error: &std::io::Error,
+        path: &str,
+        access: &str,
+        stage: &str,
+        message: &str,
+    ) -> AclFailure {
+        let failure = AclFailure::new(
+            error
+                .raw_os_error()
+                .map(|code| super::acl_error_marker(code as u32))
+                .unwrap_or("WINDOWS_ACL_OPERATION_FAILED"),
+            path,
+            access,
+            stage,
+            message,
+            "Choose a local NTFS folder that exists and is accessible to this account.",
+        );
+        match io_win32_code(error) {
+            Some(code) => failure.with_win32_code(code),
+            None => failure,
+        }
+    }
+
+    fn reject_network_or_hosted_volume(path: &str, access: &str, stage: &str) -> Result<()> {
+        if is_unc_path(path) {
+            return Err(acl_failure(
+                "WINDOWS_ACL_NETWORK_PATH_UNSUPPORTED",
+                path,
+                access,
+                stage,
+                "Network shares cannot be protected by a local command ACL lease.",
+                "Copy the data to a local NTFS folder and choose that folder instead.",
+            ));
+        }
+
+        let name = wide(path);
+        let mut volume = [0u16; 32_768];
+        unsafe { GetVolumePathNameW(PCWSTR(name.as_ptr()), &mut volume) }.map_err(|error| {
+            windows_acl_failure(
+                &error,
+                path,
+                access,
+                stage,
+                "Windows could not resolve the filesystem volume.",
+            )
+        })?;
+        if unsafe { GetDriveTypeW(PCWSTR(volume.as_ptr())) } == 4 {
+            return Err(acl_failure(
+                "WINDOWS_ACL_NETWORK_TARGET_UNSUPPORTED",
+                path,
+                access,
+                stage,
+                "Mapped network drives cannot be protected by a local command ACL lease.",
+                "Choose a folder on a local NTFS volume instead.",
+            ));
+        }
+
+        let mut filesystem = [0u16; 32];
+        unsafe {
+            GetVolumeInformationW(
+                PCWSTR(volume.as_ptr()),
+                None,
+                None,
+                None,
+                None,
+                Some(&mut filesystem),
+            )
+        }
+        .map_err(|error| {
+            windows_acl_failure(
+                &error,
+                path,
+                access,
+                stage,
+                "Windows could not identify the filesystem type.",
+            )
+        })?;
+        let length = filesystem
+            .iter()
+            .position(|value| *value == 0)
+            .unwrap_or(filesystem.len());
+        let filesystem = String::from_utf16_lossy(&filesystem[..length]);
+        if filesystem.eq_ignore_ascii_case("FAT")
+            || filesystem.eq_ignore_ascii_case("FAT32")
+            || filesystem.eq_ignore_ascii_case("EXFAT")
+        {
+            return Err(acl_failure(
+                "WINDOWS_ACL_VOLUME_UNSUPPORTED",
+                path,
+                access,
+                stage,
+                format!("{filesystem} does not provide Windows discretionary ACLs."),
+                "Choose a folder on a local NTFS volume instead.",
+            ));
+        }
+        Ok(())
+    }
+
+    fn reject_reparse_points(path: &Path, access: &str, stage: &str) -> Result<()> {
+        let mut ancestors = Vec::new();
+        let mut current = Some(path);
+        while let Some(candidate) = current {
+            ancestors.push(candidate);
+            current = candidate.parent().filter(|parent| *parent != candidate);
+        }
+        for candidate in ancestors.into_iter().rev() {
+            if !candidate.exists() {
+                continue;
+            }
+            let metadata = fs::symlink_metadata(candidate).map_err(|error| {
+                io_acl_failure(
+                    &error,
+                    &candidate.to_string_lossy(),
+                    access,
+                    stage,
+                    "Windows could not inspect a filesystem path component.",
+                )
+            })?;
+            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+                return Err(acl_failure(
+                    "WINDOWS_ACL_REPARSE_POINT_UNSUPPORTED",
+                    candidate.to_string_lossy(),
+                    access,
+                    stage,
+                    "A path component is a reparse point and could redirect access outside the selected folder.",
+                    "Choose a physical NTFS folder instead of a junction, mount point, or symbolic link.",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_requested_path_identity(
+        path: &str,
+        requested_path: Option<&str>,
+        access: &str,
+    ) -> Result<()> {
+        let Some(requested_path) = requested_path else {
+            return Ok(());
+        };
+        reject_reparse_points(Path::new(requested_path), access, "requested-path")?;
+        let requested = fs::canonicalize(requested_path).map_err(|error| {
+            io_acl_failure(
+                &error,
+                requested_path,
+                access,
+                "requested-path",
+                "Windows could not resolve the selected folder.",
+            )
+        })?;
+        let resolved = fs::canonicalize(path).map_err(|error| {
+            io_acl_failure(
+                &error,
+                path,
+                access,
+                "requested-path",
+                "Windows could not resolve the selected folder's canonical path.",
+            )
+        })?;
+        if normalize_acl_path(&requested) != normalize_acl_path(&resolved) {
+            return Err(acl_failure(
+                "WINDOWS_ACL_PATH_IDENTITY_CHANGED",
+                requested_path,
+                access,
+                "requested-path",
+                format!("The selected path resolves to a different folder: {path}"),
+                "Choose the resolved folder directly instead of a junction, mount point, or symbolic link.",
+            ));
+        }
+        Ok(())
+    }
+
+    fn normalize_acl_path(path: &Path) -> String {
+        let mut value = path.to_string_lossy().replace('/', "\\").to_lowercase();
+        for prefix in ["\\\\?\\", "\\??\\"] {
+            if let Some(rest) = value.strip_prefix(prefix) {
+                value = rest.to_owned();
+                break;
+            }
+        }
+        while value.ends_with('\\') && value.len() > 3 {
+            value.pop();
+        }
+        value
+    }
+
+    fn inspect_acl_target(path: &str, access: &str, stage: &str) -> Result<(fs::Metadata, bool)> {
+        let name = wide(path);
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR(name.as_ptr()),
+                WRITE_DAC.0 | READ_CONTROL.0 | FILE_READ_ATTRIBUTES.0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                None,
+            )
+        }
+        .map_err(|error| {
+            windows_acl_failure(
+                &error,
+                path,
+                access,
+                stage,
+                "The current user cannot read and change this path's DACL.",
+            )
+        })?;
+        let _handle = Handle(handle);
+        let metadata = fs::symlink_metadata(path).map_err(|error| {
+            io_acl_failure(
+                &error,
+                path,
+                access,
+                stage,
+                "Windows could not inspect the selected filesystem object.",
+            )
+        })?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+            return Err(acl_failure(
+                "WINDOWS_ACL_REPARSE_POINT_UNSUPPORTED",
+                path,
+                access,
+                stage,
+                "The selected path is a reparse point and could redirect access outside its folder.",
+                "Choose a physical NTFS folder instead of a junction, mount point, or symbolic link.",
+            ));
+        }
+        let snapshot = capture_acl_snapshot(path).map_err(|error| -> anyhow::Error {
+            let code = error
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<windows::core::Error>())
+                .map(win32_code)
+                .or_else(|| {
+                    error
+                        .chain()
+                        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+                        .and_then(io_win32_code)
+                });
+            let failure = AclFailure::new(
+                code.map(super::acl_error_marker)
+                    .unwrap_or("WINDOWS_ACL_OPERATION_FAILED"),
+                path,
+                access,
+                stage,
+                "Windows could not read the path's DACL.",
+                "Choose a local NTFS folder whose DACL this account can read.",
+            );
+            match code {
+                Some(code) => failure.with_win32_code(code).into(),
+                None => failure.into(),
+            }
+        })?;
+        Ok((metadata, snapshot.dacl_protected))
+    }
+
+    fn validate_affected_descendants(
+        root: &Path,
+        access: &str,
+        state: Option<&AclState>,
+        planned_paths: &BTreeSet<String>,
+    ) -> Result<()> {
+        let mut pending = fs::read_dir(root)
+            .map_err(|error| {
+                io_acl_failure(
+                    &error,
+                    &root.to_string_lossy(),
+                    access,
+                    "descendant",
+                    "Windows could not enumerate the selected folder.",
+                )
+            })?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::io::Result<Vec<_>>>()
+            .map_err(|error| {
+                io_acl_failure(
+                    &error,
+                    &root.to_string_lossy(),
+                    access,
+                    "descendant",
+                    "Windows could not enumerate the selected folder.",
+                )
+            })?;
+        while let Some(candidate) = pending.pop() {
+            let path = candidate.to_string_lossy();
+            // Explicit protected boundaries are checked separately using their planned access.
+            if planned_paths.contains(&normalize_acl_path(&candidate)) {
+                continue;
+            }
+            let (metadata, dacl_protected) = inspect_acl_target(&path, access, "descendant")?;
+            if dacl_protected {
+                if state.is_some_and(|state| {
+                    state.snapshots.iter().any(|snapshot| {
+                        paths_equal(&snapshot.path, &candidate) && !snapshot.dacl_protected
+                    }) && state.leases.iter().any(|lease| {
+                        lease.grants.iter().any(|grant| {
+                            paths_equal(&grant.path, &candidate)
+                                && (grant.access == AclGrant::ReadOnlyDirectory
+                                    || grant.protected_boundary)
+                        })
+                    })
+                }) {
+                    // The original DACL allowed inheritance, but an active lease protects it.
+                    // Do not guess whether an external edit also occurred while it was leased.
+                    return Err(acl_failure(
+                        "WINDOWS_ACL_PREFLIGHT_ACTIVE_LEASE",
+                        path.as_ref(),
+                        access,
+                        "active-lease",
+                        "A Notebook ACL lease protects this directory, whose original DACL allowed inheritance.",
+                        "Finish or stop the related task and retry. If no task is running, repair Notebook protection in Settings before retrying.",
+                    ));
+                }
+                return Err(acl_failure(
+                    "WINDOWS_ACL_DESCENDANT_DACL_PROTECTED",
+                    path.as_ref(),
+                    access,
+                    "descendant",
+                    "A protected descendant would not receive the selected folder's inherited access.",
+                    "Enable inheritance on that descendant or choose a folder without protected descendants.",
+                ));
+            }
+            if !metadata.is_dir() {
+                continue;
+            }
+            let entries = fs::read_dir(&candidate).map_err(|error| {
+                io_acl_failure(
+                    &error,
+                    &path,
+                    access,
+                    "descendant",
+                    "Windows could not enumerate a descendant folder.",
+                )
+            })?;
+            for entry in entries {
+                pending.push(
+                    entry
+                        .map_err(|error| {
+                            io_acl_failure(
+                                &error,
+                                &path,
+                                access,
+                                "descendant",
+                                "Windows could not enumerate a descendant folder.",
+                            )
+                        })?
+                        .path(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_acl_plan_path(
+        path: &str,
+        access: &str,
+        stage: &str,
+        recursive: bool,
+        state: Option<&AclState>,
+        planned_paths: &BTreeSet<String>,
+    ) -> Result<()> {
+        reject_reparse_points(Path::new(path), access, stage)?;
+        inspect_acl_target(path, access, stage)?;
+        // Every planned object must have both a readable DACL and FILE_WRITE_DAC. The target's own
+        // protection is expected and can be preserved; protected descendants cannot inherit the
+        // tree grant and are rejected during the recursive walk.
+        if recursive {
+            validate_affected_descendants(Path::new(path), access, state, planned_paths)?;
+        }
+        Ok(())
+    }
+
+    fn require_absolute_acl_path(path: &str, label: &str) -> Result<()> {
+        if !Path::new(path).is_absolute() {
+            bail!("ACL preflight {label} must be absolute: {path}");
+        }
+        Ok(())
+    }
+
+    fn preflight_launch_spec(spec: &AclPreflightSpec) -> Result<LaunchSpec> {
+        require_absolute_acl_path(&spec.path, "path")?;
+        if spec.access != "ro" && spec.access != "rw" {
+            bail!("ACL preflight access must be ro or rw");
+        }
+        if let Some(requested_path) = &spec.requested_path {
+            require_absolute_acl_path(requested_path, "requestedPath")?;
+        }
+        if let Some(filesystem) = &spec.filesystem {
+            for (label, roots) in [
+                ("readOnlyRoots", &filesystem.read_only_roots),
+                ("readWriteRoots", &filesystem.read_write_roots),
+                ("deniedReadRoots", &filesystem.denied_read_roots),
+                ("deniedWriteRoots", &filesystem.denied_write_roots),
+            ] {
+                for root in roots {
+                    require_absolute_acl_path(root, label)?;
+                }
+            }
+        }
+        let mut launch = LaunchSpec {
+            executable: String::new(),
+            arguments: Vec::new(),
+            verbatim_arguments: false,
+            cwd: String::new(),
+            read_only_roots: (spec.access == "ro")
+                .then(|| spec.path.clone())
+                .into_iter()
+                .collect(),
+            optional_read_only_roots: Vec::new(),
+            optional_read_write_roots: Vec::new(),
+            read_write_roots: (spec.access == "rw")
+                .then(|| spec.path.clone())
+                .into_iter()
+                .collect(),
+            denied_read_roots: Vec::new(),
+            denied_write_roots: Vec::new(),
+            termination_proof_path: None,
+            termination_proof_token: None,
+            termination_request_path: None,
+            shell_control_pipe: None,
+        };
+        if let Some(filesystem) = &spec.filesystem {
+            launch.read_only_roots = filesystem.read_only_roots.clone();
+            launch.read_write_roots = filesystem.read_write_roots.clone();
+            launch.denied_read_roots = filesystem.denied_read_roots.clone();
+            launch.denied_write_roots = filesystem.denied_write_roots.clone();
+        }
+        Ok(launch)
+    }
+
+    fn validate_supported_path(path: &str, access: &str) -> Result<()> {
+        reject_network_or_hosted_volume(path, access, "target")?;
+        reject_reparse_points(Path::new(path), access, "target")
+    }
+
+    fn preflight_requires_traversal_grant(path: &str, access: AclGrant) -> bool {
+        access != AclGrant::ReadOnlyDirectory
+            || (!parent_acl_grant_is_system_boundary(path)
+                && !appcontainer_reads_without_capability(path))
+    }
+
+    fn preflight_scope_requires_descendants(scope: AclPreflightScope, access: AclGrant) -> bool {
+        // Traversal-only grants never need a descendant walk, and the per-command re-check asks
+        // for 'target' scope so a large granted folder is not re-enumerated on every launch.
+        scope == AclPreflightScope::Tree && access != AclGrant::ReadOnlyDirectory
+    }
+
+    fn preflight_failure(error: &anyhow::Error, spec: &AclPreflightSpec) -> AclFailure {
+        if let Some(failure) = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<AclFailure>())
+        {
+            return failure.clone();
+        }
+        let failure = AclFailure::new(
+            "WINDOWS_ACL_OPERATION_FAILED",
+            &spec.path,
+            &spec.access,
+            "preflight",
+            format!("Windows ACL preflight failed: {error:#}"),
+            "Choose an existing local NTFS folder with a DACL this account can manage.",
+        );
+        let code = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+            .and_then(io_win32_code)
+            .or_else(|| {
+                error
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<windows::core::Error>())
+                    .map(win32_code)
+            });
+        match code {
+            Some(code) => failure.with_win32_code(code),
+            None => failure,
+        }
+    }
+
+    pub fn preflight_filesystem_acls(
+        installation_id: &str,
+        requested_root: &str,
+        request: &AclPreflightSpec,
+    ) -> AclPreflightResponse {
+        let result = (|| -> Result<()> {
+            let _lock = OperationLock::acquire_with_timeout(installation_id, 5_000).map_err(|_| {
+                acl_failure(
+                    "WINDOWS_ACL_PREFLIGHT_BUSY",
+                    &request.path,
+                    &request.access,
+                    "configured",
+                    "Windows protection setup is still changing, so the folder could not be validated.",
+                    "Wait for protection setup to finish and select the folder again.",
+                )
+            })?;
+            let ownership_root = ownership_directory(installation_id, requested_root)?;
+            let Some(record) = ownership_record(installation_id, &ownership_root)? else {
+                return Err(acl_failure(
+                    "WINDOWS_ACL_PROTECTION_NOT_CONFIGURED",
+                    &request.path,
+                    &request.access,
+                    "configured",
+                    "Windows protected mode is not configured.",
+                    "Prepare Notebook protection in Settings, or continue in standard mode.",
+                ));
+            };
+            if record.state != OwnershipState::Owned {
+                return Err(acl_failure(
+                    "WINDOWS_ACL_PROTECTION_NOT_CONFIGURED",
+                    &request.path,
+                    &request.access,
+                    "configured",
+                    "Windows protected mode setup is incomplete.",
+                    "Finish Notebook protection setup in Settings and retry.",
+                ));
+            }
+            let spec = preflight_launch_spec(request)?;
+            validate_supported_path(&request.path, &request.access)?;
+            validate_requested_path_identity(
+                &request.path,
+                request.requested_path.as_deref(),
+                &request.access,
+            )?;
+            let mut grants = required_command_acl_grants(&spec)?;
+            grants.retain(|path, access| preflight_requires_traversal_grant(path, *access));
+            let state = read_acl_state(installation_id, &ownership_root)?;
+            let planned_paths = grants
+                .keys()
+                .map(|path| normalize_acl_path(Path::new(path)))
+                .collect();
+            for (path, grant) in grants {
+                // Validate the full policy, but inspect only this selected tree and its ancestors.
+                if !path_is_within(&path, Path::new(&request.path))
+                    && !path_is_within(&request.path, Path::new(&path))
+                {
+                    continue;
+                }
+                let recursive = preflight_scope_requires_descendants(request.scope, grant);
+                validate_acl_plan_path(
+                    &path,
+                    &request.access,
+                    if grant == AclGrant::ReadOnlyDirectory {
+                        "parent-traversal"
+                    } else {
+                        "target"
+                    },
+                    recursive,
+                    state.as_ref(),
+                    &planned_paths,
+                )?;
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => AclPreflightResponse {
+                ok: true,
+                error: None,
+            },
+            Err(error) => AclPreflightResponse {
+                ok: false,
+                error: Some(preflight_failure(&error, request)),
+            },
+        }
+    }
+
     fn validate_denied_roots(spec: &LaunchSpec) -> Result<()> {
         for denied in &spec.denied_read_roots {
             if appcontainer_reads_without_capability(denied)
@@ -2301,11 +3029,42 @@ mod windows_host {
                     .read_only_roots
                     .iter()
                     .chain(&spec.read_write_roots)
-                    .any(|granted| path_is_within(denied, Path::new(granted)))
+                    .any(|granted| {
+                        path_is_within(denied, Path::new(granted))
+                            || path_is_within(granted, Path::new(denied))
+                    })
             {
-                bail!(
-                    "Windows AppContainer cannot enforce denied read root nested in an allowed root: {denied}"
-                );
+                return Err(acl_failure(
+                    "WINDOWS_ACL_POLICY_CONFLICT",
+                    denied,
+                    if spec.read_write_roots.iter().any(|root| {
+                        path_is_within(denied, Path::new(root))
+                            || path_is_within(root, Path::new(denied))
+                    }) {
+                        "rw"
+                    } else {
+                        "ro"
+                    },
+                    "policy-plan",
+                    "Windows AppContainer cannot enforce a denied read root overlapping an allowed root.",
+                    "Choose a data folder that does not overlap protected application directories.",
+                ));
+            }
+        }
+        for denied in &spec.denied_write_roots {
+            // Equal roots are downgraded to ReadOnlyTree by the planner; only a strict ancestor
+            // would re-grant writes inside the protected subtree.
+            if spec.read_write_roots.iter().any(|root| {
+                !paths_equal(root, Path::new(denied)) && path_is_within(root, Path::new(denied))
+            }) {
+                return Err(acl_failure(
+                    "WINDOWS_ACL_POLICY_CONFLICT",
+                    denied,
+                    "rw",
+                    "policy-plan",
+                    "A denied write root cannot contain a writable root.",
+                    "Choose a writable folder outside the protected directory, or request read-only access.",
+                ));
             }
         }
         Ok(())
@@ -2921,13 +3680,7 @@ mod windows_host {
         for ace in &aces {
             if !inserted && ace[1] & INHERITED_ACE.0 as u8 != 0 {
                 unsafe {
-                    AddAccessAllowedAceEx(
-                        target,
-                        ACL_REVISION_DS,
-                        ACE_FLAGS(flags),
-                        mask,
-                        sid,
-                    )
+                    AddAccessAllowedAceEx(target, ACL_REVISION_DS, ACE_FLAGS(flags), mask, sid)
                 }?;
                 inserted = true;
             }
@@ -2999,8 +3752,12 @@ mod windows_host {
                 SECURITY_DESCRIPTOR_CONTROL(control_bits | inheritance_request),
             )
             .context("preserve command ACL inheritance")?;
-            if SetFileSecurityW(PCWSTR(name.as_ptr()), DACL_SECURITY_INFORMATION, updated_ptr)
-                .as_bool()
+            if SetFileSecurityW(
+                PCWSTR(name.as_ptr()),
+                DACL_SECURITY_INFORMATION,
+                updated_ptr,
+            )
+            .as_bool()
             {
                 Ok(())
             } else {
@@ -3106,14 +3863,15 @@ mod windows_host {
 
     fn apply_acl_grant(path: &str, capability_sid: &str, grant: AclGrant) -> Result<()> {
         update_command_acl_native(path, capability_sid, Some(grant), false)
-            .map_err(|error| anyhow::anyhow!("grant AppContainer access to {path}: {error:#}"))
+            .with_context(|| AclPathFailure(path.to_owned()))
     }
 
     fn apply_acl_lease_grants(record: &AclLeaseRecord) -> Result<()> {
         if record.grants.iter().any(|grant| grant.protected_boundary) {
             let mut protected = true;
             for grant in record.grants.iter().filter(|grant| grant.protected_boundary) {
-                update_command_acl_native(&grant.path, &record.capability_sid, None, protected)?;
+                update_command_acl_native(&grant.path, &record.capability_sid, None, protected)
+                    .with_context(|| AclPathFailure(grant.path.clone()))?;
                 protected = false;
             }
         }
@@ -3290,6 +4048,119 @@ mod windows_host {
         serialize_dacl(target)
     }
 
+    fn acl_snapshot_with_grants(
+        baseline: &AclSnapshot,
+        grants: &[(&AclLeaseRecord, &AclLeaseGrant)],
+    ) -> Result<AclSnapshot> {
+        if grants.is_empty() {
+            return Ok(baseline.clone());
+        }
+        let mut descriptor = PSECURITY_DESCRIPTOR::default();
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(wide(&baseline.dacl_sddl).as_ptr()),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                None,
+            )
+        }
+        .context("parse leased filesystem ACL")?;
+        let _descriptor = LocalAllocation(descriptor.0);
+        let mut present = BOOL::default();
+        let mut defaulted = BOOL::default();
+        let mut dacl = std::ptr::null_mut();
+        unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) }?;
+        let mut entries = acl_entries(dacl)?;
+        let mut desired = baseline.clone();
+        desired.dacl_protected |= grants.iter().any(|(_, grant)| {
+            grant.protected_boundary || grant.access == AclGrant::ReadOnlyDirectory
+        });
+        if desired.dacl_protected && !baseline.dacl_protected {
+            entries.extend(inherited_acl_entries(&baseline.path)?);
+        }
+        let mut sids = Vec::new();
+        for (lease, _) in grants {
+            let mut sid = PSID::default();
+            unsafe {
+                ConvertStringSidToSidW(PCWSTR(wide(&lease.capability_sid).as_ptr()), &mut sid)
+            }?;
+            sids.push(LocalAllocation(sid.0));
+        }
+        let size = size_of::<ACL>()
+            + entries.iter().map(Vec::len).sum::<usize>()
+            + sids
+                .iter()
+                .map(|sid| {
+                    size_of::<ACCESS_ALLOWED_ACE>() + unsafe { GetLengthSid(PSID(sid.0)) } as usize
+                })
+                .sum::<usize>();
+        let mut storage = vec![0usize; size.div_ceil(size_of::<usize>())];
+        let target = storage.as_mut_ptr().cast::<ACL>();
+        unsafe {
+            InitializeAcl(
+                target,
+                (storage.len() * size_of::<usize>()) as u32,
+                ACL_REVISION_DS,
+            )
+        }?;
+        // Compose the complete ACL in memory. Publishing the baseline first transiently revokes
+        // other live kernels' access while recursive Windows inheritance propagation runs.
+        for entry in entries
+            .iter()
+            .filter(|entry| entry[1] & INHERITED_ACE.0 as u8 == 0)
+        {
+            unsafe {
+                AddAce(
+                    target,
+                    ACL_REVISION_DS,
+                    u32::MAX,
+                    entry.as_ptr().cast(),
+                    entry.len() as u32,
+                )
+            }?;
+        }
+        for ((_, grant), sid) in grants.iter().zip(&sids) {
+            let (mask, flags) = match grant.access {
+                AclGrant::ReadOnlyDirectory => (DIRECTORY_TRAVERSAL_ACCESS, 0),
+                AclGrant::ReadOnlyTree => (
+                    FILE_GENERIC_READ.0 | FILE_GENERIC_EXECUTE.0,
+                    if Path::new(&baseline.path).is_dir() {
+                        OBJECT_INHERIT_ACE.0 | CONTAINER_INHERIT_ACE.0
+                    } else {
+                        0
+                    },
+                ),
+                AclGrant::ModifyTree => (
+                    0x0013_01bf,
+                    if Path::new(&baseline.path).is_dir() {
+                        OBJECT_INHERIT_ACE.0 | CONTAINER_INHERIT_ACE.0
+                    } else {
+                        0
+                    },
+                ),
+            };
+            unsafe {
+                AddAccessAllowedAceEx(target, ACL_REVISION_DS, ACE_FLAGS(flags), mask, PSID(sid.0))
+            }?;
+        }
+        for entry in entries
+            .iter()
+            .filter(|entry| entry[1] & INHERITED_ACE.0 as u8 != 0)
+        {
+            unsafe {
+                AddAce(
+                    target,
+                    ACL_REVISION_DS,
+                    u32::MAX,
+                    entry.as_ptr().cast(),
+                    entry.len() as u32,
+                )
+            }?;
+        }
+        desired.dacl_sddl = serialize_dacl(target)?;
+        Ok(desired)
+    }
+
     fn rebuild_acl_state(state: &mut AclState, ownership_root: &Path) -> Result<()> {
         refresh_runtime_acl_snapshots(state, ownership_root)?;
         let mut snapshots = state.snapshots.iter().collect::<Vec<_>>();
@@ -3298,7 +4169,6 @@ mod windows_host {
         leases.sort_by(|left, right| left.lease_id.cmp(&right.lease_id));
 
         for snapshot in snapshots {
-            restore_acl_snapshot(snapshot)?;
             let grants = leases
                 .iter()
                 .flat_map(|lease| {
@@ -3309,21 +4179,8 @@ mod windows_host {
                         .map(move |grant| (*lease, grant))
                 })
                 .collect::<Vec<_>>();
-            if grants.iter().any(|(_, grant)| grant.protected_boundary) {
-                let mut protected = true;
-                for (lease, _) in grants.iter().filter(|(_, grant)| grant.protected_boundary) {
-                    update_command_acl_native(
-                        &snapshot.path,
-                        &lease.capability_sid,
-                        None,
-                        protected,
-                    )?;
-                    protected = false;
-                }
-            }
-            for (lease, grant) in grants {
-                apply_acl_grant(&snapshot.path, &lease.capability_sid, grant.access)?;
-            }
+            restore_acl_snapshot(&acl_snapshot_with_grants(snapshot, &grants)?)
+                .with_context(|| AclPathFailure(snapshot.path.clone()))?;
         }
         Ok(())
     }
@@ -3416,6 +4273,108 @@ mod windows_host {
         Ok(())
     }
 
+    fn required_command_acl_grants(spec: &LaunchSpec) -> Result<BTreeMap<String, AclGrant>> {
+        validate_denied_roots(spec)?;
+        let mut grants = BTreeMap::new();
+        for path in &spec.read_only_roots {
+            if !appcontainer_reads_without_capability(path) {
+                grants.insert(path.clone(), AclGrant::ReadOnlyTree);
+            }
+        }
+        for (path, access) in plan_writable_acl_grants(spec)? {
+            super::merge_acl_grant(&mut grants, path, access);
+        }
+        Ok(grants)
+    }
+
+    #[derive(Debug)]
+    struct AclPathFailure(String);
+
+    impl std::fmt::Display for AclPathFailure {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "grant AppContainer access to {}", self.0)
+        }
+    }
+
+    #[derive(Debug)]
+    struct AclRollbackIncomplete(String);
+
+    impl std::fmt::Display for AclRollbackIncomplete {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "rollback command filesystem ACLs also failed: {}",
+                self.0
+            )
+        }
+    }
+
+    fn omit_failed_optional_roots(spec: &mut LaunchSpec, error: &anyhow::Error) -> bool {
+        // An incomplete rollback must keep its recovery receipts and abort before child launch.
+        if error.downcast_ref::<AclRollbackIncomplete>().is_some() {
+            return false;
+        }
+        let Some(AclPathFailure(path)) = error.downcast_ref::<AclPathFailure>() else {
+            return false;
+        };
+        let failed_root = spec
+            .optional_read_only_roots
+            .iter()
+            .chain(&spec.optional_read_write_roots)
+            .any(|root| paths_equal(root, Path::new(path)));
+        let failed_write_boundary = spec
+            .denied_write_roots
+            .iter()
+            .any(|root| paths_equal(root, Path::new(path)));
+        let mut removed = false;
+        for (roots, writable) in [
+            (&mut spec.optional_read_only_roots, false),
+            (&mut spec.optional_read_write_roots, true),
+        ] {
+            roots.retain(|root| {
+                // Retry independent overlapping roots before deciding they also fail. A tree
+                // grant can fail while a parent read grant or child traversal still succeeds.
+                let affected = if failed_root {
+                    paths_equal(root, Path::new(path))
+                } else {
+                    path_is_within(root, Path::new(path))
+                        || (writable
+                            && failed_write_boundary
+                            && path_is_within(path, Path::new(root)))
+                };
+                removed |= affected;
+                !affected
+            });
+        }
+        removed
+    }
+
+    fn admit_optional_roots(spec: &LaunchSpec) -> LaunchSpec {
+        let mut admitted = spec.clone();
+        for roots in [
+            &mut admitted.optional_read_only_roots,
+            &mut admitted.optional_read_write_roots,
+        ] {
+            roots.retain(|path| {
+                !spec.denied_read_roots.iter().any(|denied| {
+                    path_is_within(path, Path::new(denied))
+                        || path_is_within(denied, Path::new(path))
+                }) && can_grant_optional_read_root(path)
+            });
+        }
+        admitted.optional_read_write_roots.retain(|path| {
+            let mut optional = spec.clone();
+            optional.read_only_roots.clear();
+            optional.read_write_roots = vec![path.clone()];
+            // A denied-write ancestor cannot re-grant write access, and a root whose protected
+            // descendants cannot be projected is unavailable too. Reject both during admission so
+            // they never reach the required workload retry path.
+            validate_denied_roots(&optional).is_ok()
+                && plan_writable_acl_grants(&optional).is_ok()
+        });
+        admitted
+    }
+
     impl AclLease {
         fn acquire(
             installation_id: &str,
@@ -3424,32 +4383,37 @@ mod windows_host {
             capability: &CommandCapability,
             spec: &LaunchSpec,
         ) -> Result<Self> {
-            validate_denied_roots(spec)?;
-            let mut grants = BTreeMap::new();
-            for path in &spec.read_only_roots {
-                if !appcontainer_reads_without_capability(path) {
-                    grants.insert(path.clone(), AclGrant::ReadOnlyTree);
+            let mut admitted = admit_optional_roots(spec);
+            loop {
+                let mut required = spec.clone();
+                required
+                    .read_only_roots
+                    .extend(admitted.optional_read_only_roots.iter().cloned());
+                required
+                    .read_write_roots
+                    .extend(admitted.optional_read_write_roots.iter().cloned());
+                match Self::acquire_required(
+                    installation_id,
+                    ownership_root,
+                    lease_id.clone(),
+                    capability,
+                    &required,
+                ) {
+                    Ok(lease) => return Ok(lease),
+                    Err(error) if omit_failed_optional_roots(&mut admitted, &error) => continue,
+                    Err(error) => return Err(error),
                 }
             }
-            for path in &spec.optional_read_only_roots {
-                // Required roots above retain their original failure behavior. Never turn an
-                // optional parent into a grant across an explicitly denied read boundary.
-                if grants.contains_key(path)
-                    || appcontainer_reads_without_capability(path)
-                    || spec.denied_read_roots.iter().any(|denied| {
-                        path_is_within(path, Path::new(denied))
-                            || path_is_within(denied, Path::new(path))
-                    })
-                {
-                    continue;
-                }
-                if can_grant_optional_read_root(path) {
-                    grants.insert(path.clone(), AclGrant::ReadOnlyTree);
-                }
-            }
-            for (path, access) in plan_writable_acl_grants(spec)? {
-                super::merge_acl_grant(&mut grants, path, access);
-            }
+        }
+
+        fn acquire_required(
+            installation_id: &str,
+            ownership_root: &Path,
+            lease_id: String,
+            capability: &CommandCapability,
+            spec: &LaunchSpec,
+        ) -> Result<Self> {
+            let mut grants = required_command_acl_grants(spec)?;
             grants.retain(|path, access| {
                 if *access != AclGrant::ReadOnlyDirectory {
                     return true;
@@ -3497,7 +4461,10 @@ mod windows_host {
                     .iter()
                     .any(|snapshot| paths_equal(&snapshot.path, Path::new(&grant.path)))
                 {
-                    state.snapshots.push(capture_acl_snapshot(&grant.path)?);
+                    state.snapshots.push(
+                        capture_acl_snapshot(&grant.path)
+                            .with_context(|| AclPathFailure(grant.path.clone()))?,
+                    );
                 }
             }
             let had_existing_leases = !state.leases.is_empty();
@@ -3512,13 +4479,16 @@ mod windows_host {
             if let Err(error) = write_acl_record(&path, &record).and_then(|()| {
                 if changes_permissions {
                     if had_existing_leases {
-                        rebuild_acl_state(&mut state, ownership_root)
+                        rebuild_acl_state(&mut state, ownership_root)?;
                     } else {
-                        apply_acl_lease_grants(&record)
+                        apply_acl_lease_grants(&record)?;
                     }
-                } else {
-                    Ok(())
                 }
+                #[cfg(test)]
+                if let Some(hook) = tests::AFTER_ACL_GRANT.with(|hook| hook.borrow_mut().take()) {
+                    hook(&record)?;
+                }
+                Ok(())
             }) {
                 state
                     .leases
@@ -3540,9 +4510,9 @@ mod windows_host {
                     });
                 return match rollback {
                     Ok(()) => Err(error),
-                    Err(rollback_error) => Err(error.context(format!(
-                        "rollback command filesystem ACLs also failed: {rollback_error:#}"
-                    ))),
+                    Err(rollback_error) => {
+                        Err(error.context(AclRollbackIncomplete(format!("{rollback_error:#}"))))
+                    }
                 };
             }
             Ok(Self {
@@ -4118,6 +5088,13 @@ mod windows_host {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        type AclGrantHook = Box<dyn FnOnce(&AclLeaseRecord) -> Result<()>>;
+        thread_local! {
+            // One-shot and thread-local so fault injection cannot affect other native tests.
+            pub(super) static AFTER_ACL_GRANT: std::cell::RefCell<Option<AclGrantHook>> =
+                std::cell::RefCell::new(None);
+        }
         use crate::WINDOWS_ACL_TARGET_MISSING_MARKER;
 
         #[test]
@@ -4149,12 +5126,13 @@ mod windows_host {
         fn profile_process_stop_accepts_an_already_exited_process() {
             use std::os::windows::process::CommandExt;
 
-            let mut child =
-                Command::new(Path::new(&std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe"))
-                    .args(["/d", "/c", "exit", "0"])
-                    .creation_flags(0x0800_0000)
-                    .spawn()
-                    .unwrap();
+            let mut child = Command::new(
+                Path::new(&std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe"),
+            )
+            .args(["/d", "/c", "exit", "0"])
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .unwrap();
             child.wait().unwrap();
             // Retain the same process handle across exit, as profile enumeration does.
             stop_profile_process(HANDLE(child.as_raw_handle()), child.id()).unwrap();
@@ -4189,15 +5167,16 @@ mod windows_host {
             use std::os::windows::process::CommandExt;
             use std::process::Stdio;
 
-            let mut child =
-                Command::new(Path::new(&std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe"))
-                    .args(["/d", "/c", "set /p value="])
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .creation_flags(0x0800_0000)
-                    .spawn()
-                    .unwrap();
+            let mut child = Command::new(
+                Path::new(&std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe"),
+            )
+            .args(["/d", "/c", "set /p value="])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .unwrap();
             let process = HANDLE(child.as_raw_handle());
             assert_eq!(unsafe { WaitForSingleObject(process, 0) }, WAIT_TIMEOUT);
             let result = stop_profile_process(process, child.id());
@@ -4825,6 +5804,249 @@ mod windows_host {
         }
 
         #[test]
+        fn nested_optional_failure_preserves_independent_parent_and_child_grants() {
+            for failure_at_boundary in [false, true] {
+                let installation_id = "abab1212abab1212abab1232";
+                let parent = unique_test_root("nested-optional-retry");
+                let readable = parent.join("readable");
+                let writable = readable.join("writable");
+                let nested = writable.join("nested");
+                let protected = writable.join(".git");
+                fs::create_dir_all(&nested).unwrap();
+                fs::create_dir_all(&protected).unwrap();
+                let root = parent.join(installation_id);
+                let id = new_lease_id().unwrap();
+                let capability =
+                    CommandCapability::new(command_capability_name(installation_id, &id)).unwrap();
+                let spec: LaunchSpec = serde_json::from_value(serde_json::json!({
+                    "executable": "unused", "arguments": [], "cwd": parent,
+                    "readOnlyRoots": [], "readWriteRoots": [], "deniedReadRoots": [],
+                    "optionalReadOnlyRoots": [readable, nested],
+                    "optionalReadWriteRoots": [writable], "deniedWriteRoots": [protected]
+                }))
+                .unwrap();
+                let failure_path = if failure_at_boundary {
+                    &protected
+                } else {
+                    &writable
+                }
+                .to_string_lossy()
+                .into_owned();
+                AFTER_ACL_GRANT.with(|hook| {
+                    *hook.borrow_mut() = Some(Box::new(move |_| {
+                        Err(anyhow::anyhow!("injected nested write failure")
+                            .context(AclPathFailure(failure_path)))
+                    }))
+                });
+                let mut lease =
+                    AclLease::acquire(installation_id, &root, id, &capability, &spec).unwrap();
+                let grants = lease.record.grants.clone();
+                lease.release().unwrap();
+                fs::remove_dir_all(&parent).unwrap();
+                for path in [&readable, &nested] {
+                    assert!(grants.iter().any(|grant| paths_equal(&grant.path, path)
+                        && grant.access == AclGrant::ReadOnlyTree));
+                }
+                assert!(
+                    !grants
+                        .iter()
+                        .any(|grant| paths_equal(&grant.path, &writable)
+                            && grant.access == AclGrant::ModifyTree)
+                );
+            }
+        }
+
+        #[test]
+        fn optional_acl_failure_rolls_back_before_retry_and_stops_on_incomplete_rollback() {
+            use std::cell::{Cell, RefCell};
+            use std::os::windows::fs::OpenOptionsExt;
+            use std::rc::Rc;
+
+            for block_rollback in [false, true] {
+                let installation_id = "abab1212abab1212abab1231";
+                let parent = unique_test_root("optional-rollback");
+                let required = parent.join("required");
+                let optional = parent.join("optional");
+                fs::create_dir_all(&required).unwrap();
+                fs::create_dir_all(&optional).unwrap();
+                let before = capture_acl_snapshot(&optional.to_string_lossy()).unwrap();
+                let root = parent.join(installation_id);
+                let id = new_lease_id().unwrap();
+                let receipt = acl_directory(&root).join(format!("{id}.json"));
+                let capability =
+                    CommandCapability::new(command_capability_name(installation_id, &id)).unwrap();
+                let spec: LaunchSpec = serde_json::from_value(serde_json::json!({
+                    "executable": "unused", "arguments": [], "cwd": parent,
+                    "readOnlyRoots": [], "readWriteRoots": [required], "deniedReadRoots": [],
+                    "optionalReadWriteRoots": [optional], "deniedWriteRoots": []
+                }))
+                .unwrap();
+                let calls = Rc::new(Cell::new(0));
+                let locked_receipt = Rc::new(RefCell::new(None));
+                let (calls_hook, lock_hook, before_hook, optional_hook) = (
+                    calls.clone(),
+                    locked_receipt.clone(),
+                    before.clone(),
+                    optional.clone(),
+                );
+                AFTER_ACL_GRANT.with(|hook| {
+                    *hook.borrow_mut() = Some(Box::new(move |record| {
+                        calls_hook.set(calls_hook.get() + 1);
+                        assert!(receipt.exists());
+                        assert!(
+                            capture_acl_snapshot(&optional_hook.to_string_lossy())?
+                                .dacl_sddl
+                                .contains(&record.capability_sid)
+                        );
+                        if block_rollback {
+                            // Actual Windows sharing failure during rollback receipt removal.
+                            *lock_hook.borrow_mut() =
+                                Some(OpenOptions::new().read(true).share_mode(3).open(&receipt)?);
+                        }
+                        let failure_path = optional_hook.to_string_lossy().into_owned();
+                        AFTER_ACL_GRANT.with(|hook| {
+                            *hook.borrow_mut() = Some(Box::new(move |_| {
+                                calls_hook.set(calls_hook.get() + 1);
+                                assert_eq!(
+                                    capture_acl_snapshot(&optional_hook.to_string_lossy())?,
+                                    before_hook
+                                );
+                                Ok(())
+                            }))
+                        });
+                        Err(anyhow::anyhow!("injected late ACL failure")
+                            .context(AclPathFailure(failure_path)))
+                    }))
+                });
+                let result =
+                    AclLease::acquire(installation_id, &root, id.clone(), &capability, &spec);
+                AFTER_ACL_GRANT.with(|hook| hook.borrow_mut().take());
+                if block_rollback {
+                    let error = result.err().expect("incomplete rollback must abort");
+                    assert!(error.downcast_ref::<AclRollbackIncomplete>().is_some());
+                    assert_eq!(calls.get(), 1);
+                    assert!(acl_directory(&root).join(format!("{id}.json")).exists());
+                    locked_receipt.borrow_mut().take();
+                    recover_acl_leases(installation_id, &root, true).unwrap();
+                } else {
+                    let mut lease = result.unwrap();
+                    assert_eq!(calls.get(), 2);
+                    let state = read_acl_state(installation_id, &root).unwrap().unwrap();
+                    let receipts = read_acl_lease_receipts(installation_id, &root).unwrap();
+                    assert_eq!(receipts[&id].1, state.leases[0]);
+                    assert!(
+                        lease
+                            .record
+                            .grants
+                            .iter()
+                            .any(|grant| paths_equal(&grant.path, &required))
+                    );
+                    assert!(
+                        !lease
+                            .record
+                            .grants
+                            .iter()
+                            .any(|grant| paths_equal(&grant.path, &optional))
+                    );
+                    assert!(
+                        !state
+                            .snapshots
+                            .iter()
+                            .any(|snapshot| paths_equal(&snapshot.path, &optional))
+                    );
+                    lease.release().unwrap();
+                }
+                assert_eq!(
+                    capture_acl_snapshot(&optional.to_string_lossy()).unwrap(),
+                    before
+                );
+                assert!(
+                    read_acl_lease_receipts(installation_id, &root)
+                        .unwrap()
+                        .is_empty()
+                );
+                fs::remove_dir_all(&parent).unwrap();
+            }
+        }
+
+        #[test]
+        fn optional_writable_roots_preserve_usable_grants_and_required_failures() {
+            let installation_id = "abab1212abab1212abab1230";
+            let parent = unique_test_root("optional-writable-roots");
+            let writable = parent.join("writable");
+            let protected = writable.join(".git");
+            let readable = parent.join("readable");
+            let denied = parent.join("denied");
+            fs::create_dir_all(&protected).unwrap();
+            fs::create_dir_all(&readable).unwrap();
+            fs::create_dir_all(&denied).unwrap();
+            let root = parent.join(installation_id);
+            let missing = parent.join("missing");
+            let id = new_lease_id().unwrap();
+            let capability =
+                CommandCapability::new(command_capability_name(installation_id, &id)).unwrap();
+            let spec: LaunchSpec = serde_json::from_value(serde_json::json!({
+                "executable": "unused", "arguments": [], "cwd": parent,
+                "readOnlyRoots": [], "readWriteRoots": [], "deniedReadRoots": [denied],
+                "optionalReadOnlyRoots": [readable, denied],
+                "optionalReadWriteRoots": [missing, writable, denied],
+                "deniedWriteRoots": [protected]
+            }))
+            .unwrap();
+            let before = capture_acl_snapshot(&writable.to_string_lossy()).unwrap();
+            let mut lease =
+                AclLease::acquire(installation_id, &root, id, &capability, &spec).unwrap();
+            let grants = lease.record.grants.clone();
+            lease.release().unwrap();
+            assert_eq!(
+                capture_acl_snapshot(&writable.to_string_lossy()).unwrap(),
+                before
+            );
+            let required: LaunchSpec = serde_json::from_value(serde_json::json!({
+                "executable": "unused", "arguments": [], "cwd": parent,
+                "readOnlyRoots": [], "readWriteRoots": [missing], "deniedReadRoots": [],
+                "deniedWriteRoots": [], "optionalReadWriteRoots": [missing]
+            }))
+            .unwrap();
+            assert!(
+                AclLease::acquire(
+                    installation_id,
+                    &root,
+                    new_lease_id().unwrap(),
+                    &capability,
+                    &required
+                )
+                .is_err()
+            );
+            fs::remove_dir_all(&parent).unwrap();
+            assert!(
+                grants
+                    .iter()
+                    .any(|grant| paths_equal(&grant.path, &readable)
+                        && grant.access == AclGrant::ReadOnlyTree)
+            );
+            assert!(!grants.iter().any(|grant| paths_equal(&grant.path, &denied)));
+            assert!(
+                grants
+                    .iter()
+                    .any(|grant| paths_equal(&grant.path, &writable)
+                        && grant.access == AclGrant::ModifyTree)
+            );
+            assert!(
+                grants
+                    .iter()
+                    .any(|grant| paths_equal(&grant.path, &protected)
+                        && grant.access == AclGrant::ReadOnlyTree
+                        && grant.protected_boundary)
+            );
+            assert!(
+                !grants
+                    .iter()
+                    .any(|grant| paths_equal(&grant.path, &missing))
+            );
+        }
+
+        #[test]
         fn unavailable_optional_network_root_does_not_block_an_acl_lease() {
             let installation_id = "abab1212abab1212abab1214";
             let parent = unique_test_root("optional-network-root");
@@ -4840,6 +6062,7 @@ mod windows_host {
                 cwd: parent.to_string_lossy().into_owned(),
                 read_only_roots: vec![],
                 optional_read_only_roots: vec![format!(r"\\127.0.0.1\os-missing-share-{id}")],
+                optional_read_write_roots: vec![],
                 read_write_roots: vec![],
                 denied_read_roots: vec![],
                 denied_write_roots: vec![],
@@ -5008,6 +6231,78 @@ mod windows_host {
         }
 
         #[test]
+        fn changing_another_lease_never_revokes_a_live_runtime_grant() {
+            use std::sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering},
+            };
+            let installation_id = "abab1212abab1212abab1220";
+            let parent = unique_test_root("continuous-runtime-access");
+            let root = parent.join(installation_id);
+            let directory = parent.join("runtime");
+            fs::create_dir_all(&directory).unwrap();
+            for index in 0..200 {
+                fs::write(directory.join(format!("module-{index}.py")), b"fixture").unwrap();
+            }
+            let spec = LaunchSpec {
+                executable: "unused".into(),
+                arguments: vec![],
+                verbatim_arguments: false,
+                cwd: parent.to_string_lossy().into_owned(),
+                read_only_roots: vec![directory.to_string_lossy().into_owned()],
+                optional_read_only_roots: vec![],
+                optional_read_write_roots: vec![],
+                read_write_roots: vec![],
+                denied_read_roots: vec![],
+                denied_write_roots: vec![],
+                termination_proof_path: None,
+                termination_proof_token: None,
+                termination_request_path: None,
+                shell_control_pipe: None,
+            };
+            let first_id = new_lease_id().unwrap();
+            let first = CommandCapability::new(command_capability_name(installation_id, &first_id))
+                .unwrap();
+            let mut live =
+                AclLease::acquire(installation_id, &root, first_id, &first, &spec).unwrap();
+            let sid = live.record.capability_sid.clone();
+            let path = directory.to_string_lossy().into_owned();
+            assert!(
+                capture_acl_snapshot(&path)
+                    .unwrap()
+                    .dacl_sddl
+                    .contains(&sid)
+            );
+            let stop = Arc::new(AtomicBool::new(false));
+            let stopping = stop.clone();
+            let reader = std::thread::spawn(move || {
+                let mut missing = false;
+                while !stopping.load(Ordering::Acquire) {
+                    missing |= !capture_acl_snapshot(&path)
+                        .unwrap()
+                        .dacl_sddl
+                        .contains(&sid);
+                }
+                missing
+            });
+            let second_id = new_lease_id().unwrap();
+            let second =
+                CommandCapability::new(command_capability_name(installation_id, &second_id))
+                    .unwrap();
+            let result = AclLease::acquire(installation_id, &root, second_id, &second, &spec)
+                .and_then(|mut lease| lease.release());
+            stop.store(true, Ordering::Release);
+            let missing = reader.join().unwrap();
+            live.release().unwrap();
+            fs::remove_dir_all(parent).unwrap();
+            result.unwrap();
+            assert!(
+                !missing,
+                "another lease temporarily revoked the live runtime capability"
+            );
+        }
+
+        #[test]
         fn empty_command_lease_does_not_rebuild_a_live_filesystem_lease() {
             let installation_id = "abab1212abab1212abab1213";
             let parent = unique_test_root("empty-command-lease");
@@ -5027,6 +6322,7 @@ mod windows_host {
                 cwd: parent.to_string_lossy().into_owned(),
                 read_only_roots: vec![directory.to_string_lossy().into_owned()],
                 optional_read_only_roots: Vec::new(),
+                optional_read_write_roots: vec![],
                 read_write_roots: vec![],
                 denied_read_roots: vec![],
                 denied_write_roots: vec![],
@@ -5047,6 +6343,7 @@ mod windows_host {
             let empty = LaunchSpec {
                 read_only_roots: vec![],
                 optional_read_only_roots: Vec::new(),
+                optional_read_write_roots: vec![],
                 ..spec
             };
             let (id, empty_capability) = make_capability();
@@ -5062,7 +6359,14 @@ mod windows_host {
             let mut second_probe =
                 AclLease::acquire(installation_id, &root, id, &second_capability, &empty).unwrap();
             let mut interrupted = read_acl_state(installation_id, &root).unwrap().unwrap();
-            let baseline = interrupted.snapshots[0].clone();
+            // Ancestor snapshots can name shared AppData directories changed by parallel tests.
+            // Simulate the interrupted grant only on this test's private runtime directory.
+            let baseline = interrupted
+                .snapshots
+                .iter()
+                .find(|snapshot| paths_equal(&snapshot.path, &directory))
+                .expect("private runtime ACL snapshot")
+                .clone();
             apply_acl_grant(
                 &baseline.path,
                 &live.record.capability_sid,
@@ -5192,6 +6496,7 @@ mod windows_host {
                     cwd: parent.to_string_lossy().into_owned(),
                     read_only_roots: vec![],
                     optional_read_only_roots: Vec::new(),
+                    optional_read_write_roots: vec![],
                     read_write_roots: vec![],
                     denied_read_roots: vec![],
                     denied_write_roots: vec![],
@@ -5263,6 +6568,7 @@ mod windows_host {
                 cwd: parent.to_string_lossy().into_owned(),
                 read_only_roots: vec![],
                 optional_read_only_roots: Vec::new(),
+                optional_read_write_roots: vec![],
                 read_write_roots: vec![],
                 denied_read_roots: vec![],
                 denied_write_roots: vec![],
@@ -5438,6 +6744,7 @@ mod windows_host {
                     cwd: "unused".into(),
                     read_only_roots: vec![],
                     optional_read_only_roots: Vec::new(),
+                    optional_read_write_roots: vec![],
                     read_write_roots: vec![],
                     denied_read_roots: vec![],
                     denied_write_roots: vec![],
@@ -5464,6 +6771,7 @@ mod windows_host {
                 cwd: root.to_string_lossy().into_owned(),
                 read_only_roots: vec![],
                 optional_read_only_roots: Vec::new(),
+                optional_read_write_roots: vec![],
                 read_write_roots: vec![],
                 denied_read_roots: vec![],
                 denied_write_roots: vec![],
@@ -5989,7 +7297,12 @@ exit 1"#
             .unwrap();
             let identity = sid_text(capability.sid()).unwrap();
             let access = format!("*{identity}:(OI)(CI)RX");
-            run_icacls(&path, &["/grant:r", &access, "/Q"], "grant runtime execution").unwrap();
+            run_icacls(
+                &path,
+                &["/grant:r", &access, "/Q"],
+                "grant runtime execution",
+            )
+            .unwrap();
             let expected_root = capability_grants(&path, &identity);
             let expected_child = capability_grants(&child_path, &identity);
             restore_acl_snapshot(&original).unwrap();
@@ -6049,6 +7362,627 @@ exit 1"#
             fs::remove_dir_all(&root).unwrap();
 
             assert!(protected.dacl_protected);
+        }
+
+        #[test]
+        fn acl_preflight_inspection_is_read_only() {
+            let root = unique_test_root("acl-preflight-read-only");
+            fs::create_dir_all(&root).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let before = capture_acl_snapshot(&path).unwrap();
+
+            validate_supported_path(&path, "rw").unwrap();
+            validate_acl_plan_path(&path, "rw", "target", true, None, &BTreeSet::new()).unwrap();
+
+            assert_eq!(capture_acl_snapshot(&path).unwrap(), before);
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn required_planner_preserves_optional_read_tree_over_required_traversal() {
+            let root = unique_test_root("optional-parent-planner");
+            let required = root.join("required");
+            fs::create_dir_all(&required).unwrap();
+            let request: AclPreflightSpec = serde_json::from_value(serde_json::json!({
+                "path": required.to_string_lossy(), "access": "rw"
+            }))
+            .unwrap();
+            let mut spec = preflight_launch_spec(&request).unwrap();
+            let parent = root.to_string_lossy().into_owned();
+            spec.optional_read_only_roots.push(parent.clone());
+            // Admission folds optional read roots into the required planner input.
+            spec.read_only_roots
+                .extend(spec.optional_read_only_roots.iter().cloned());
+            let grants = required_command_acl_grants(&spec).unwrap();
+            assert_eq!(grants.get(&parent), Some(&AclGrant::ReadOnlyTree));
+            assert_eq!(
+                grants.get(&required.to_string_lossy().into_owned()),
+                Some(&AclGrant::ModifyTree)
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn optional_write_inside_denied_write_ancestor_is_not_admitted() {
+            let root = unique_test_root("optional-denied-write");
+            let protected = root.join("protected");
+            let optional = protected.join("optional");
+            let required = root.join("required");
+            fs::create_dir_all(&optional).unwrap();
+            fs::create_dir_all(&required).unwrap();
+
+            let spec = LaunchSpec {
+                executable: "cmd.exe".into(),
+                arguments: Vec::new(),
+                verbatim_arguments: false,
+                cwd: std::env::temp_dir().to_string_lossy().into_owned(),
+                read_only_roots: Vec::new(),
+                optional_read_only_roots: Vec::new(),
+                read_write_roots: vec![required.to_string_lossy().into_owned()],
+                optional_read_write_roots: vec![optional.to_string_lossy().into_owned()],
+                denied_read_roots: Vec::new(),
+                denied_write_roots: vec![protected.to_string_lossy().into_owned()],
+                termination_proof_path: None,
+                termination_proof_token: None,
+                termination_request_path: None,
+                shell_control_pipe: None,
+            };
+
+            let admitted = admit_optional_roots(&spec);
+            assert!(admitted.optional_read_write_roots.is_empty());
+
+            // The legal required root still plans; the unrelated optional write root must not
+            // block it or re-grant writes inside the denied-write subtree.
+            let grants = required_command_acl_grants(&spec).unwrap();
+            assert!(grants.contains_key(&required.to_string_lossy().into_owned()));
+
+            // The same path requested as a required writable root remains a hard policy error.
+            let mut required_spec = spec.clone();
+            required_spec.optional_read_write_roots.clear();
+            required_spec.read_write_roots = vec![optional.to_string_lossy().into_owned()];
+            assert!(required_command_acl_grants(&required_spec).is_err());
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn preflight_uses_execution_protected_boundaries() {
+            let root = unique_test_root("preflight-policy-boundaries");
+            let protected = root.join("protected");
+            fs::create_dir_all(&protected).unwrap();
+            let request: AclPreflightSpec = serde_json::from_value(serde_json::json!({
+                "path": root.to_string_lossy(), "access": "rw",
+                "filesystem": {
+                    "readOnlyRoots": [root.to_string_lossy()],
+                    "readWriteRoots": [root.to_string_lossy()],
+                    "deniedReadRoots": [protected.to_string_lossy()],
+                    "deniedWriteRoots": []
+                }
+            }))
+            .unwrap();
+            let mut spec = preflight_launch_spec(&request).unwrap();
+            let error = required_command_acl_grants(&spec).unwrap_err();
+            let failure = error.downcast_ref::<AclFailure>().unwrap();
+            assert_eq!(failure.code, "WINDOWS_ACL_POLICY_CONFLICT");
+            assert_eq!(failure.path, protected.to_string_lossy());
+            assert_eq!(failure.stage, "policy-plan");
+            spec.denied_read_roots.clear();
+            spec.denied_write_roots
+                .push(protected.to_string_lossy().into_owned());
+            let grants = required_command_acl_grants(&spec).unwrap();
+            assert_eq!(
+                grants.get(&protected.to_string_lossy().into_owned()),
+                Some(&AclGrant::ReadOnlyTree)
+            );
+            let planned = grants
+                .keys()
+                .map(|path| normalize_acl_path(Path::new(path)))
+                .collect();
+            validate_acl_plan_path(
+                &root.to_string_lossy(),
+                "rw",
+                "target",
+                true,
+                None,
+                &planned,
+            )
+            .unwrap();
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        fn policy_spec(
+            read_only_roots: Vec<String>,
+            read_write_roots: Vec<String>,
+            denied_read_roots: Vec<String>,
+            denied_write_roots: Vec<String>,
+        ) -> LaunchSpec {
+            LaunchSpec {
+                executable: "cmd.exe".into(),
+                arguments: Vec::new(),
+                verbatim_arguments: false,
+                cwd: std::env::temp_dir().to_string_lossy().into_owned(),
+                read_only_roots,
+                optional_read_only_roots: Vec::new(),
+                optional_read_write_roots: Vec::new(),
+                read_write_roots,
+                denied_read_roots,
+                denied_write_roots,
+                termination_proof_path: None,
+                termination_proof_token: None,
+                termination_request_path: None,
+                shell_control_pipe: None,
+            }
+        }
+
+        #[test]
+        fn preflight_launch_spec_rejects_relative_paths_per_field() {
+            for invalid in ["", "folder", "C:folder", r"\folder"] {
+                let cases = [
+                    ("path", serde_json::json!({"path": invalid, "access": "rw"})),
+                    (
+                        "requestedPath",
+                        serde_json::json!({
+                            "path": r"C:\data", "access": "rw", "requestedPath": invalid
+                        }),
+                    ),
+                    (
+                        "readOnlyRoots",
+                        serde_json::json!({
+                            "path": r"C:\data", "access": "rw",
+                            "filesystem": {
+                                "readOnlyRoots": [invalid],
+                                "readWriteRoots": [r"C:\data"],
+                                "deniedReadRoots": [r"C:\protected"],
+                                "deniedWriteRoots": [r"C:\protected"]
+                            }
+                        }),
+                    ),
+                    (
+                        "readWriteRoots",
+                        serde_json::json!({
+                            "path": r"C:\data", "access": "rw",
+                            "filesystem": {
+                                "readOnlyRoots": [r"C:\readonly"],
+                                "readWriteRoots": [invalid],
+                                "deniedReadRoots": [r"C:\protected"],
+                                "deniedWriteRoots": [r"C:\protected"]
+                            }
+                        }),
+                    ),
+                    (
+                        "deniedReadRoots",
+                        serde_json::json!({
+                            "path": r"C:\data", "access": "rw",
+                            "filesystem": {
+                                "readOnlyRoots": [r"C:\readonly"],
+                                "readWriteRoots": [r"C:\data"],
+                                "deniedReadRoots": [invalid],
+                                "deniedWriteRoots": [r"C:\protected"]
+                            }
+                        }),
+                    ),
+                    (
+                        "deniedWriteRoots",
+                        serde_json::json!({
+                            "path": r"C:\data", "access": "rw",
+                            "filesystem": {
+                                "readOnlyRoots": [r"C:\readonly"],
+                                "readWriteRoots": [r"C:\data"],
+                                "deniedReadRoots": [r"C:\protected-read"],
+                                "deniedWriteRoots": [invalid]
+                            }
+                        }),
+                    ),
+                ];
+                for (label, value) in cases {
+                    let request: AclPreflightSpec = serde_json::from_value(value).unwrap();
+                    let error = format!("{:#}", preflight_launch_spec(&request).unwrap_err());
+                    assert!(error.contains(label), "{invalid:?} {label}: {error}");
+                    assert!(
+                        error.contains("must be absolute"),
+                        "{invalid:?} {label}: {error}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn preflight_launch_spec_accepts_absolute_paths_and_absent_optional_fields() {
+            for path in [
+                r"C:\data",
+                r"C:/data",
+                r"\\?\C:\data",
+                // Absolute-path acceptance does not mean the network share is supported; the
+                // rejection test below covers the policy check separately.
+                r"\\server\share\data",
+                r"\\?\UNC\server\share\data",
+            ] {
+                let request: AclPreflightSpec = serde_json::from_value(serde_json::json!({
+                    "path": path, "access": "rw"
+                }))
+                .unwrap();
+                let spec = preflight_launch_spec(&request).unwrap();
+                assert_eq!(spec.read_write_roots, vec![path]);
+            }
+
+            let missing: AclPreflightSpec = serde_json::from_value(serde_json::json!({
+                "path": r"C:\data", "access": "ro"
+            }))
+            .unwrap();
+            let spec = preflight_launch_spec(&missing).unwrap();
+            assert_eq!(spec.read_only_roots, vec![r"C:\data"]);
+            assert!(spec.read_write_roots.is_empty());
+
+            let empty: AclPreflightSpec = serde_json::from_value(serde_json::json!({
+                "path": r"C:\data", "access": "rw",
+                "filesystem": {
+                    "readOnlyRoots": [],
+                    "readWriteRoots": [],
+                    "deniedReadRoots": [],
+                    "deniedWriteRoots": []
+                }
+            }))
+            .unwrap();
+            let spec = preflight_launch_spec(&empty).unwrap();
+            assert!(spec.read_only_roots.is_empty());
+            assert!(spec.read_write_roots.is_empty());
+            assert!(spec.denied_read_roots.is_empty());
+            assert!(spec.denied_write_roots.is_empty());
+
+            let populated: AclPreflightSpec = serde_json::from_value(serde_json::json!({
+                "path": r"C:\data", "access": "rw", "requestedPath": r"C:/data",
+                "filesystem": {
+                    "readOnlyRoots": [r"C:\readonly"],
+                    "readWriteRoots": [r"C:\writable"],
+                    "deniedReadRoots": [r"C:\denied-read"],
+                    "deniedWriteRoots": [r"C:\denied-write"]
+                }
+            }))
+            .unwrap();
+            let spec = preflight_launch_spec(&populated).unwrap();
+            assert_eq!(spec.read_only_roots, vec![r"C:\readonly"]);
+            assert_eq!(spec.read_write_roots, vec![r"C:\writable"]);
+            assert_eq!(spec.denied_read_roots, vec![r"C:\denied-read"]);
+            assert_eq!(spec.denied_write_roots, vec![r"C:\denied-write"]);
+        }
+
+        #[test]
+        fn network_share_rejection_reports_unsupported_without_accessing_a_share() {
+            for path in [r"\\server\share\data", r"\\?\UNC\server\share\data"] {
+                let error = reject_network_or_hosted_volume(path, "rw", "target").unwrap_err();
+                let failure = error.downcast_ref::<AclFailure>().unwrap();
+                assert_eq!(failure.code, "WINDOWS_ACL_NETWORK_PATH_UNSUPPORTED");
+                assert_eq!(failure.path, path);
+            }
+        }
+
+        #[test]
+        fn writable_root_allows_a_protected_read_only_subtree() {
+            let root = unique_test_root("denied-write-subtree");
+            let protected = root.join(".git");
+            fs::create_dir_all(&protected).unwrap();
+            let spec = policy_spec(
+                Vec::new(),
+                vec![root.to_string_lossy().into_owned()],
+                Vec::new(),
+                vec![protected.to_string_lossy().into_owned()],
+            );
+
+            let grants = required_command_acl_grants(&spec).unwrap();
+
+            assert_eq!(
+                grants.get(&root.to_string_lossy().into_owned()),
+                Some(&AclGrant::ModifyTree)
+            );
+            assert_eq!(
+                grants.get(&protected.to_string_lossy().into_owned()),
+                Some(&AclGrant::ReadOnlyTree)
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn equal_denied_write_root_downgrades_to_read_only() {
+            let root = unique_test_root("denied-write-equal");
+            fs::create_dir_all(&root).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let spec = policy_spec(
+                Vec::new(),
+                vec![path.clone()],
+                Vec::new(),
+                vec![path.clone()],
+            );
+
+            let grants = required_command_acl_grants(&spec).unwrap();
+
+            assert_eq!(grants.get(&path), Some(&AclGrant::ReadOnlyTree));
+            assert_ne!(grants.get(&path), Some(&AclGrant::ModifyTree));
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn denied_write_ancestor_of_writable_root_is_a_policy_conflict() {
+            let root = unique_test_root("denied-write-ancestor");
+            let protected = root.join("protected");
+            let writable = protected.join("output");
+            fs::create_dir_all(&writable).unwrap();
+            let spec = policy_spec(
+                Vec::new(),
+                vec![writable.to_string_lossy().into_owned()],
+                Vec::new(),
+                vec![protected.to_string_lossy().into_owned()],
+            );
+
+            let error = required_command_acl_grants(&spec).unwrap_err();
+            let failure = error.downcast_ref::<AclFailure>().unwrap();
+
+            assert_eq!(failure.code, "WINDOWS_ACL_POLICY_CONFLICT");
+            assert_eq!(failure.path, protected.to_string_lossy());
+            assert_eq!(failure.access, "rw");
+            assert_eq!(failure.stage, "policy-plan");
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn denied_write_root_overlapping_a_read_only_root_is_redundant() {
+            let root = unique_test_root("denied-write-read-only-overlap");
+            fs::create_dir_all(&root).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let spec = policy_spec(
+                vec![path.clone()],
+                Vec::new(),
+                Vec::new(),
+                vec![path.clone()],
+            );
+
+            let grants = required_command_acl_grants(&spec).unwrap();
+
+            assert_eq!(grants.get(&path), Some(&AclGrant::ReadOnlyTree));
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn writable_roots_inside_a_protected_tree_conflict_in_any_order() {
+            let root = unique_test_root("denied-write-ordering");
+            let outside = root.join("outside");
+            let protected = root.join("protected");
+            let inside = protected.join("output");
+            fs::create_dir_all(&outside).unwrap();
+            fs::create_dir_all(&inside).unwrap();
+            let denied = vec![protected.to_string_lossy().into_owned()];
+            let outside = outside.to_string_lossy().into_owned();
+            let protected = protected.to_string_lossy().into_owned();
+            let inside = inside.to_string_lossy().into_owned();
+            let root = root.to_string_lossy().into_owned();
+
+            for roots in [
+                vec![outside.clone(), root.clone(), inside.clone()],
+                vec![inside.clone(), root.clone(), outside.clone()],
+            ] {
+                let spec = policy_spec(Vec::new(), roots, Vec::new(), denied.clone());
+                let error = required_command_acl_grants(&spec).unwrap_err();
+                assert_eq!(
+                    error.downcast_ref::<AclFailure>().unwrap().code,
+                    "WINDOWS_ACL_POLICY_CONFLICT"
+                );
+            }
+
+            let spec = policy_spec(
+                Vec::new(),
+                vec![root.clone(), outside.clone()],
+                Vec::new(),
+                denied,
+            );
+            let grants = required_command_acl_grants(&spec).unwrap();
+            assert_eq!(grants.get(&root), Some(&AclGrant::ModifyTree));
+            assert_eq!(grants.get(&protected), Some(&AclGrant::ReadOnlyTree));
+            assert_eq!(grants.get(&outside), Some(&AclGrant::ModifyTree));
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn preflight_reports_a_contended_operation_lock_as_busy() {
+            // Named mutexes are keyed by installation ID; a fixed test ID would make parallel
+            // tests contend with each other.
+            let installation_id = &new_resource_key().unwrap()[..24];
+            let root = unique_test_root("preflight-operation-lock");
+            let requested_root = root.join(installation_id);
+            fs::create_dir_all(&requested_root).unwrap();
+            let requested_root = requested_root.to_string_lossy().into_owned();
+            let request: AclPreflightSpec = serde_json::from_value(serde_json::json!({
+                "path": root.to_string_lossy(), "access": "ro"
+            }))
+            .unwrap();
+
+            let lock = OperationLock::acquire(installation_id).unwrap();
+            let response = std::thread::scope(|scope| {
+                scope
+                    .spawn(move || {
+                        preflight_filesystem_acls(installation_id, &requested_root, &request)
+                    })
+                    .join()
+            });
+            drop(lock);
+            fs::remove_dir_all(root).unwrap();
+
+            let response = response.unwrap();
+            assert!(!response.ok);
+            let failure = response.error.unwrap();
+            assert_eq!(failure.code, "WINDOWS_ACL_PREFLIGHT_BUSY");
+        }
+
+        #[test]
+        fn preflight_reports_owned_traversal_as_retryable_without_changing_acl() {
+            let root = unique_test_root("preflight-active-traversal");
+            let child = root.join("child");
+            fs::create_dir_all(&child).unwrap();
+            let path = child.to_string_lossy().into_owned();
+            let original = capture_acl_snapshot(&path).unwrap();
+            assert!(!original.dacl_protected);
+            let installation_id = "0123456789abcdef01234567";
+            let lease_id = new_lease_id().unwrap();
+            let capability =
+                CommandCapability::new(command_capability_name(installation_id, &lease_id))
+                    .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+            apply_acl_grant(&path, &identity, AclGrant::ReadOnlyDirectory).unwrap();
+            let before = capture_acl_snapshot(&path).unwrap();
+            assert!(before.dacl_protected);
+            let state = AclState {
+                schema_version: ACL_STATE_SCHEMA,
+                installation_id: installation_id.into(),
+                snapshots: vec![original.clone()],
+                leases: vec![AclLeaseRecord {
+                    schema_version: ACL_LEASE_SCHEMA,
+                    installation_id: installation_id.into(),
+                    lease_id,
+                    owner_process_id: unsafe { GetCurrentProcessId() },
+                    capability_name: capability.name().into(),
+                    capability_sid: identity,
+                    grants: vec![AclLeaseGrant {
+                        path: path.clone(),
+                        access: AclGrant::ReadOnlyDirectory,
+                        protected_boundary: false,
+                    }],
+                }],
+            };
+            let error = validate_affected_descendants(&root, "rw", Some(&state), &BTreeSet::new())
+                .unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<AclFailure>().unwrap().code,
+                "WINDOWS_ACL_PREFLIGHT_ACTIVE_LEASE"
+            );
+            assert_eq!(capture_acl_snapshot(&path).unwrap(), before);
+            restore_acl_snapshot(&original).unwrap();
+            validate_affected_descendants(&root, "rw", None, &BTreeSet::new()).unwrap();
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn acl_preflight_skips_system_parent_traversal() {
+            let program_files = known_folder_path(&FOLDERID_ProgramFiles).unwrap();
+            let path = program_files.to_string_lossy();
+            assert!(!preflight_requires_traversal_grant(
+                &path,
+                AclGrant::ReadOnlyDirectory
+            ));
+            assert!(preflight_requires_traversal_grant(
+                &path,
+                AclGrant::ReadOnlyTree
+            ));
+        }
+
+        #[test]
+        fn acl_preflight_rejects_a_directory_junction() {
+            let root = unique_test_root("acl-preflight-junction");
+            let target = root.join("target");
+            let junction = root.join("junction");
+            fs::create_dir_all(&target).unwrap();
+            let output = Command::new("cmd.exe")
+                .args(["/d", "/c", "mklink", "/J"])
+                .arg(junction.as_os_str())
+                .arg(target.as_os_str())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "could not create test junction: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+
+            let error = reject_reparse_points(&junction, "rw", "target").unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<AclFailure>().unwrap().code,
+                "WINDOWS_ACL_REPARSE_POINT_UNSUPPORTED"
+            );
+            fs::remove_dir(&junction).unwrap();
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn acl_preflight_rejects_a_protected_descendant() {
+            let root = unique_test_root("acl-preflight-protected-descendant");
+            let child = root.join("child");
+            fs::create_dir_all(&child).unwrap();
+            let child_path = child.to_string_lossy().into_owned();
+            let original = capture_acl_snapshot(&child_path).unwrap();
+            let capability = CommandCapability::new(format!(
+                "open-science.test.{}",
+                new_resource_key().unwrap()
+            ))
+            .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+            update_command_acl_native(&child_path, &identity, None, true).unwrap();
+
+            let error =
+                validate_affected_descendants(&root, "rw", None, &BTreeSet::new()).unwrap_err();
+
+            assert_eq!(
+                error.downcast_ref::<AclFailure>().unwrap().code,
+                "WINDOWS_ACL_DESCENDANT_DACL_PROTECTED"
+            );
+            restore_acl_snapshot(&original).unwrap();
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn target_scope_skips_the_descendant_walk_that_tree_scope_rejects() {
+            let root = unique_test_root("acl-preflight-target-scope");
+            let child = root.join("child");
+            fs::create_dir_all(&child).unwrap();
+            let child_path = child.to_string_lossy().into_owned();
+            let original = capture_acl_snapshot(&child_path).unwrap();
+            let capability = CommandCapability::new(format!(
+                "open-science.test.{}",
+                new_resource_key().unwrap()
+            ))
+            .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+            update_command_acl_native(&child_path, &identity, None, true).unwrap();
+
+            let root_path = root.to_string_lossy().into_owned();
+            assert!(preflight_scope_requires_descendants(
+                AclPreflightScope::Tree,
+                AclGrant::ModifyTree
+            ));
+            assert!(!preflight_scope_requires_descendants(
+                AclPreflightScope::Target,
+                AclGrant::ModifyTree
+            ));
+            assert!(!preflight_scope_requires_descendants(
+                AclPreflightScope::Tree,
+                AclGrant::ReadOnlyDirectory
+            ));
+
+            // 'tree' reports the protected descendant; 'target' must pass with the same tree.
+            let error = validate_acl_plan_path(
+                &root_path,
+                "rw",
+                "target",
+                preflight_scope_requires_descendants(AclPreflightScope::Tree, AclGrant::ModifyTree),
+                None,
+                &BTreeSet::new(),
+            )
+            .unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<AclFailure>().unwrap().code,
+                "WINDOWS_ACL_DESCENDANT_DACL_PROTECTED"
+            );
+            validate_acl_plan_path(
+                &root_path,
+                "rw",
+                "target",
+                preflight_scope_requires_descendants(
+                    AclPreflightScope::Target,
+                    AclGrant::ModifyTree,
+                ),
+                None,
+                &BTreeSet::new(),
+            )
+            .unwrap();
+
+            restore_acl_snapshot(&original).unwrap();
+            fs::remove_dir_all(root).unwrap();
         }
 
         #[test]
@@ -6124,11 +8058,13 @@ exit 1"#
             let profile_parent = known_folder_path(&FOLDERID_Profile)
                 .and_then(|profile| profile.parent().map(Path::to_owned))
                 .expect("Windows profile parent should resolve");
-            let denied = vec![profile_parent
-                .join("owner")
-                .join("private")
-                .to_string_lossy()
-                .into_owned()];
+            let denied = vec![
+                profile_parent
+                    .join("owner")
+                    .join("private")
+                    .to_string_lossy()
+                    .into_owned(),
+            ];
             assert!(!parent_acl_grant_is_allowed(
                 &profile_parent.to_string_lossy(),
                 &denied,
@@ -6371,6 +8307,23 @@ fn run() -> Result<i32> {
             windows_host::status(&installation_id, &ownership_root)?;
             Ok(0)
         }
+        Some("preflight-filesystem-acls") => {
+            let installation_id = args.next().context("missing installation identity")?;
+            let ownership_root = args.next().context("missing ownership root")?;
+            let encoded = args.next().context("missing ACL preflight specification")?;
+            if args.next().is_some() {
+                bail!("unexpected ACL preflight argument");
+            }
+            println!(
+                "{}",
+                serde_json::to_string(&windows_host::preflight_filesystem_acls(
+                    &installation_id,
+                    &ownership_root,
+                    &decode_acl_preflight_spec(&encoded)?,
+                ))?
+            );
+            Ok(0)
+        }
         Some("prepare-setup") => {
             let installation_id = args.next().context("missing installation identity")?;
             let ownership_root = args.next().context("missing ownership root")?;
@@ -6519,7 +8472,7 @@ fn run() -> Result<i32> {
             Ok(windows_host::supervise(decode_launch_spec(&encoded)?)? as i32)
         }
         _ => bail!(
-            "usage: notebook-appcontainer-host <status|prepare-setup|cancel-setup|setup|finish-setup|prepare-remove|remove|finish-remove INSTALLATION_ID OWNERSHIP_ROOT|launch INSTALLATION_ID OWNERSHIP_ROOT SPEC|supervise SPEC>"
+            "usage: notebook-appcontainer-host <status|preflight-filesystem-acls|prepare-setup|cancel-setup|setup|finish-setup|prepare-remove|remove|finish-remove INSTALLATION_ID OWNERSHIP_ROOT|launch INSTALLATION_ID OWNERSHIP_ROOT SPEC|supervise SPEC>"
         ),
     }
 }
@@ -6544,6 +8497,83 @@ mod tests {
     use super::*;
 
     #[test]
+    fn acl_preflight_spec_round_trips_all_authority_inputs() {
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(br#"{"path":"C:\\resolved","access":"rw","requestedPath":"C:\\selected"}"#);
+        let spec = decode_acl_preflight_spec(&encoded).unwrap();
+        assert_eq!(spec.path, r"C:\resolved");
+        assert_eq!(spec.access, "rw");
+        assert_eq!(spec.requested_path.as_deref(), Some(r"C:\selected"));
+    }
+
+    #[test]
+    fn acl_preflight_scope_defaults_to_tree_and_parses_target() {
+        let deep: AclPreflightSpec =
+            serde_json::from_value(serde_json::json!({"path": r"C:\data", "access": "rw"})).unwrap();
+        assert_eq!(deep.scope, AclPreflightScope::Tree);
+
+        let target: AclPreflightSpec = serde_json::from_value(
+            serde_json::json!({"path": r"C:\data", "access": "rw", "scope": "target"}),
+        )
+        .unwrap();
+        assert_eq!(target.scope, AclPreflightScope::Target);
+
+        let tree: AclPreflightSpec = serde_json::from_value(
+            serde_json::json!({"path": r"C:\data", "access": "rw", "scope": "tree"}),
+        )
+        .unwrap();
+        assert_eq!(tree.scope, AclPreflightScope::Tree);
+
+        assert!(
+            serde_json::from_value::<AclPreflightSpec>(
+                serde_json::json!({"path": r"C:\data", "access": "rw", "scope": "shallow"})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn acl_preflight_unc_detection_covers_native_and_extended_paths() {
+        assert!(is_unc_path(r"\\server\share\folder"));
+        assert!(is_unc_path(r"\\?\UNC\server\share\folder"));
+        assert!(!is_unc_path(r"C:\Users\researcher\folder"));
+        assert!(!is_unc_path(r"\\?\C:\Users\researcher\folder"));
+    }
+
+    #[test]
+    fn acl_preflight_failure_has_the_documented_wire_shape() {
+        let response = AclPreflightResponse {
+            ok: false,
+            error: Some(
+                AclFailure::new(
+                    "WINDOWS_ACL_ACCESS_DENIED",
+                    r"C:\locked",
+                    "rw",
+                    "target",
+                    "access denied",
+                    "choose another folder",
+                )
+                .with_win32_code(5),
+            ),
+        };
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            serde_json::json!({
+                "ok": false,
+                "error": {
+                    "code": "WINDOWS_ACL_ACCESS_DENIED",
+                    "path": r"C:\locked",
+                    "access": "rw",
+                    "stage": "target",
+                    "win32Code": 5,
+                    "message": "access denied",
+                    "remediation": "choose another folder"
+                }
+            })
+        );
+    }
+
+    #[test]
     fn shared_parent_acl_grant_survives_denied_sibling() {
         let root = std::env::temp_dir().join(format!(
             "open-science-acl-shared-parent-{}-{:?}",
@@ -6566,6 +8596,7 @@ mod tests {
             cwd: root.to_string_lossy().into_owned(),
             read_only_roots: vec![required_file.to_string_lossy().into_owned()],
             optional_read_only_roots: Vec::new(),
+            optional_read_write_roots: vec![],
             read_write_roots: Vec::new(),
             denied_read_roots: vec![denied.to_string_lossy().into_owned()],
             denied_write_roots: Vec::new(),
@@ -6611,6 +8642,7 @@ mod tests {
             cwd: root.to_string_lossy().into_owned(),
             read_only_roots: vec![read_only.to_string_lossy().into_owned()],
             optional_read_only_roots: Vec::new(),
+            optional_read_write_roots: vec![],
             read_write_roots: vec![read_write.to_string_lossy().into_owned()],
             denied_read_roots: Vec::new(),
             denied_write_roots: Vec::new(),
@@ -6647,6 +8679,7 @@ mod tests {
             cwd: root.to_string_lossy().into_owned(),
             read_only_roots: vec![required.to_string_lossy().into_owned()],
             optional_read_only_roots: vec![optional.to_string_lossy().into_owned()],
+            optional_read_write_roots: vec![],
             read_write_roots: Vec::new(),
             denied_read_roots: Vec::new(),
             denied_write_roots: Vec::new(),
@@ -6656,7 +8689,10 @@ mod tests {
             shell_control_pipe: None,
         };
 
-        let mut grants = BTreeMap::from([(optional.to_string_lossy().into_owned(), AclGrant::ReadOnlyTree)]);
+        let mut grants = BTreeMap::from([(
+            optional.to_string_lossy().into_owned(),
+            AclGrant::ReadOnlyTree,
+        )]);
         for (path, access) in plan_writable_acl_grants(&spec).unwrap() {
             merge_acl_grant(&mut grants, path, access);
         }
@@ -6677,6 +8713,7 @@ mod tests {
             cwd: "C:\\workspace".into(),
             read_only_roots: Vec::new(),
             optional_read_only_roots: Vec::new(),
+            optional_read_write_roots: vec![],
             read_write_roots: Vec::new(),
             denied_read_roots: Vec::new(),
             denied_write_roots: Vec::new(),
@@ -6705,6 +8742,7 @@ mod tests {
             cwd: "C:\\workspace".into(),
             read_only_roots: Vec::new(),
             optional_read_only_roots: Vec::new(),
+            optional_read_write_roots: vec![],
             read_write_roots: Vec::new(),
             denied_read_roots: Vec::new(),
             denied_write_roots: Vec::new(),
@@ -6805,6 +8843,7 @@ mod tests {
             cwd: workspace.to_string_lossy().into_owned(),
             read_only_roots: Vec::new(),
             optional_read_only_roots: Vec::new(),
+            optional_read_write_roots: vec![],
             read_write_roots: vec![workspace.to_string_lossy().into_owned()],
             denied_read_roots: Vec::new(),
             denied_write_roots: vec![git.to_string_lossy().into_owned()],

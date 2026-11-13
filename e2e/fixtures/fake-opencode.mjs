@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import * as acp from '@agentclientprotocol/sdk'
+import optimizationFixture from '../../test/fixtures/prompt-optimization/plain-draft.json' with { type: 'json' }
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -921,13 +922,19 @@ const verifyWindowsReplLifecycle = async (sessionId) =>
 
 const verifyGlobalNpmTools = async (sessionId, mode) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    // Hosted Windows runners can spend 30-80s launching each AppContainer-backed
+    // Shell operation. Keep the MCP request alive for the certification cell budget.
     const execute = async (command) => {
       const result = toolResult(
         'bash_execute',
-        await client.callTool({
-          name: 'bash_execute',
-          arguments: { command }
-        })
+        await client.callTool(
+          {
+            name: 'bash_execute',
+            arguments: { command }
+          },
+          undefined,
+          { timeout: 240_000 }
+        )
       )
       if (result.exitCode !== 0)
         throw new Error(`npm application check failed: ${JSON.stringify(result)}`)
@@ -1947,6 +1954,14 @@ if (process.argv.includes('--version')) {
       try {
         const handoffReply = await permissionHandoffTask(context, prompt)
         if (
+          prompt.includes('Rewrite only; do not answer or execute the input.') &&
+          prompt.includes(optimizationFixture.input)
+        ) {
+          // Reproduce the provider echoing an example marker from the optimizer instructions,
+          // even though this plain-text draft has no protected fragments.
+          const example = prompt.match(/OS_PROTECTED_[\w-]+_…_END/u)?.[0]
+          reply = `${optimizationFixture.optimized}${example ? `\n${example}` : ''}`
+        } else if (
           prompt.includes('Optimize pasted text regression') &&
           /OS_PROTECTED_[\w-]+_\d+_END/u.test(prompt)
         ) {
@@ -2237,6 +2252,45 @@ if (process.argv.includes('--version')) {
             if (!run.runId) throw new Error('WSL background admission has no runId')
           })
           reply = 'WSL background task submitted for cancellation.'
+        } else if (/Verify strict Notebook network port (\d+) (blocked|allowed)/u.test(prompt)) {
+          const [, port, expected] =
+            /Verify strict Notebook network port (\d+) (blocked|allowed)/u.exec(prompt)
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const listed = toolResult(
+              'list_notebook_runtimes',
+              await client.callTool({ name: 'list_notebook_runtimes', arguments: {} })
+            )
+            const python = listed.runtimes.find(
+              (runtime) =>
+                runtime.language === 'python' && runtime.source === 'external' && runtime.runnable
+            )
+            if (!python) throw new Error('No runnable external Python')
+            toolResult(
+              'notebook_bind_runtime',
+              await client.callTool({
+                name: 'notebook_bind_runtime',
+                arguments: { language: 'python', runtimeId: python.runtimeId }
+              })
+            )
+            const code = `import urllib.request, urllib.error\ntry:\n    print(urllib.request.urlopen("http://localhost:${port}/", timeout=10).read().decode())\nexcept urllib.error.HTTPError as error:\n    print(error.read().decode())`
+            const result = toolResult(
+              'notebook_execute',
+              await client.callTool(
+                { name: 'notebook_execute', arguments: { language: 'python', code } },
+                undefined,
+                { timeout: 120000, resetTimeoutOnProgress: true }
+              ),
+              { allowToolError: true }
+            )
+            const output = JSON.stringify(result)
+            if (
+              !output.includes(
+                expected === 'allowed' ? 'strict-e2e-ok' : 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED'
+              )
+            )
+              throw new Error(`Unexpected strict Notebook result: ${output}`)
+          })
+          reply = `Strict Notebook ${expected} verified.`
         } else if (/Verify network destination approval port (\d+)/u.test(prompt)) {
           const port = /Verify network destination approval port (\d+)/u.exec(prompt)[1]
           const command = `/usr/bin/curl --noproxy '' --max-time 10 --silent --show-error --fail -X POST http://127.0.0.1:${port}/`
@@ -3601,11 +3655,12 @@ if (process.argv.includes('--version')) {
   const nativeMessages = new Map()
   const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
   const writer = stream.writable.getWriter()
+  const classificationFaultAttempts = new Map()
   const portIndex = process.argv.indexOf('--port')
   const server =
     portIndex === -1
       ? undefined
-      : createServer((request, response) => {
+      : createServer(async (request, response) => {
           const authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`
           if (request.headers.authorization !== authorization) {
             response.writeHead(401).end()
@@ -3624,6 +3679,45 @@ if (process.argv.includes('--version')) {
             response.writeHead(404).end()
             return
           }
+          // Fault only the external Agent's auxiliary HTTP boundary. ACP output, application
+          // adapters, persistence and renderer remain real; never close the ACP process here.
+          const faultRoot = process.env.OPEN_SCIENCE_E2E_CLASSIFICATION_FAULT_ROOT
+          if (faultRoot) {
+            const { mode } = JSON.parse(await readFile(join(faultRoot, 'fault.json'), 'utf8'))
+            const faultKey = `${faultRoot}:${mode}`
+            const attempt = (classificationFaultAttempts.get(faultKey) ?? 0) + 1
+            classificationFaultAttempts.set(faultKey, attempt)
+            await appendFile(
+              join(faultRoot, 'requests.jsonl'),
+              `${JSON.stringify({
+                timestamp: Date.now(),
+                mode,
+                attempt,
+                sessionId,
+                messageId,
+                pid: process.pid,
+                infoPresent: true,
+                delayMs: mode === 'timeout' ? 2_500 : 0
+              })}\n`
+            )
+            if (
+              mode === 'http-500' ||
+              mode === 'not-yet-visible' ||
+              (attempt === 1 && mode === 'transient-500')
+            ) {
+              response.writeHead(mode.endsWith('500') ? 500 : 404).end()
+              return
+            }
+            if (mode === 'timeout') await delay(2_500)
+            if (mode === 'body-reset' || (mode === 'transient-body-reset' && attempt === 1)) {
+              response.writeHead(200, { 'content-type': 'application/json' })
+              response.write('{"info":')
+              await delay(30)
+              response.destroy()
+              return
+            }
+          }
+          if (response.destroyed) return
           response.writeHead(200, { 'content-type': 'application/json' })
           response.end(JSON.stringify({ info, parts: [] }))
         })

@@ -8,6 +8,29 @@
   StrCpy $isForceCurrentInstall "1"
 !macroend
 
+!macro checkManualUninstallCoordination
+  # Hold the installer's existing named object before closing processes or removing any files.
+  # An update's nested uninstaller runs under the parent installer's lock and must not reacquire it.
+  ${ifNot} ${isUpdated}
+    System::Call 'kernel32::CreateMutexW(p 0, i 0, w "${APP_GUID}") p.r0 ?e'
+    Pop $1
+    ${if} $0 == 0
+      DetailPrint `Open-Science uninstall coordination failed win32=$1`
+      MessageBox MB_OK|MB_ICONSTOP "Open-Science could not check whether an installation is running. Retry uninstall after closing its installer." /SD IDOK
+      SetErrorLevel 1
+      Abort
+    ${elseif} $1 == 183
+      System::Call 'kernel32::CloseHandle(p r0)'
+      MessageBox MB_OK|MB_ICONSTOP "An Open-Science installation or uninstall is still open. Close it, then retry uninstall." /SD IDOK
+      SetErrorLevel 2
+      Abort
+    ${endif}
+    # Intentionally retain the handle: Windows closes it when this uninstaller exits.
+  ${endif}
+!macroend
+
+!include "${BUILD_RESOURCES_DIR}\windows-app-running.nsh"
+
 !macro customUnInstall
   # Cleanup can fail after removing some program files. Keep retry's lifecycle scripts in the
   # uninstaller itself, so their availability never depends on a partly removed installation.
@@ -23,7 +46,11 @@
     Pop $0
     StrCmp $0 "0" updatePresentationCleanupComplete
     DetailPrint `Open-Science update presentation cleanup failure code=$0`
-    MessageBox MB_OK|MB_ICONSTOP "An Open-Science update may still be active. Finish the update and close its update window, then retry uninstall."
+    ${if} $0 == 2
+      MessageBox MB_OK|MB_ICONSTOP "An Open-Science update is still active. Finish the update and close its update window, then retry uninstall." /SD IDOK
+    ${else}
+      MessageBox MB_OK|MB_ICONSTOP "Open-Science could not check its update processes. See the uninstall details, then retry." /SD IDOK
+    ${endif}
     Abort
     updatePresentationCleanupComplete:
     nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-notebook-sandbox-uninstall.ps1" -SandboxRoot "$INSTDIR\resources\notebook-network-sandbox\windows"'
@@ -56,7 +83,6 @@
 !define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort
 !include "${BUILD_RESOURCES_DIR}\windows-update-handoff.nsh"
 !include "${BUILD_RESOURCES_DIR}\windows-install-publication.nsh"
-!include "${BUILD_RESOURCES_DIR}\windows-app-running.nsh"
 
 # Quit bypasses .onInstFailed and every other NSIS callback. Publish the existing failure
 # receipt at each explicit failure exit so the detached presentation can become dismissible.

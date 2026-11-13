@@ -1,5 +1,7 @@
 import type { TrustedPrivateDestination } from '../runtime/src/gateway/address-policy.js'
 export type NotebookNetworkPolicy = Readonly<{
+  mode?: 'relaxed' | 'strict'
+  strictWhitelist?: readonly import('./network-address.js').StrictNetworkRule[]
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   /** Overrides wildcard allows; an exact allow still represents explicit approval. */
@@ -24,8 +26,10 @@ export type NotebookFilesystemPolicy = Readonly<{
   restrictFolders?: boolean
   privateRoot?: string
   readOnlyRoots: readonly string[]
-  /** Incidental Windows PATH directories; inability to grant them must not block the workload. */
+  /** Windows PATH and saved folder grants that may be unavailable for this workload. */
   optionalReadOnlyRoots?: readonly string[]
+  /** Saved Windows write grants; required runtime/workspace roots belong in readWriteRoots. */
+  optionalReadWriteRoots?: readonly string[]
   readWriteRoots: readonly string[]
   deniedReadRoots: readonly string[]
   deniedWriteRoots: readonly string[]

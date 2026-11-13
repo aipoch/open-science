@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { createConnection } from 'node:net'
 import { open, type FileHandle } from 'node:fs/promises'
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -20,6 +21,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   connectionProbeSpecification,
   isWindowsProtectionConfigured,
+  preflightWindowsFilesystem,
   windowsElevationScript,
   windowsLaunch,
   windowsSupervisedLaunch,
@@ -178,6 +180,115 @@ describe('Windows AppContainer network fence probe', () => {
   })
 })
 
+describe.runIf(process.platform !== 'win32')('Windows ACL preflight host contract', () => {
+  const host = (body: string): { root: string; executable: string } => {
+    const root = mkdtempSync(join(tmpdir(), 'acl-preflight-'))
+    const executable = join(root, 'host')
+    writeFileSync(executable, `#!/bin/sh\n${body}\n`)
+    chmodSync(executable, 0o755)
+    return { root, executable }
+  }
+
+  it('serializes path, access, requestedPath and scope and parses a detailed failure', async () => {
+    const fixture = host(
+      `node -e 'const s=JSON.parse(Buffer.from(process.argv[1],"base64url")); if(s.path!=="C:\\\\locked"||s.access!=="rw"||s.requestedPath!=="C:\\\\shortcut"||s.scope!=="target") process.exit(2)' "$4"
+       printf '%s\\n' '{"ok":false,"error":{"code":"WINDOWS_ACL_ACCESS_DENIED","path":"C:\\\\locked","access":"rw","stage":"target","win32Code":5,"message":"denied","remediation":"choose another folder"}}'`
+    )
+    try {
+      await expect(
+        preflightWindowsFilesystem(fixture.executable, 'installation', '/ownership', {
+          path: 'C:\\locked',
+          access: 'rw',
+          requestedPath: 'C:\\shortcut',
+          scope: 'target'
+        })
+      ).resolves.toEqual({
+        ok: false,
+        error: {
+          code: 'WINDOWS_ACL_ACCESS_DENIED',
+          path: 'C:\\locked',
+          access: 'rw',
+          stage: 'target',
+          win32Code: 5,
+          message: 'denied',
+          remediation: 'choose another folder'
+        }
+      })
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+
+  it('passes the actual filesystem boundaries to the native planner', async () => {
+    const fixture = host(
+      `node -e 'const s=JSON.parse(Buffer.from(process.argv[1],"base64url")); if(s.filesystem.deniedReadRoots.length!==1 || s.filesystem.deniedWriteRoots.length!==1 || s.filesystem.readWriteRoots.length!==1) process.exit(2); console.log(JSON.stringify({ok:true}))' "$4"`
+    )
+    const protectedPath = join(fixture.root, 'protected')
+    mkdirSync(protectedPath)
+    try {
+      await expect(
+        preflightWindowsFilesystem(fixture.executable, 'installation', '/ownership', {
+          path: fixture.root,
+          access: 'rw',
+          filesystem: {
+            readOnlyRoots: [fixture.root],
+            readWriteRoots: [fixture.root],
+            deniedReadRoots: [protectedPath],
+            deniedWriteRoots: [protectedPath]
+          }
+        })
+      ).resolves.toEqual({ ok: true })
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+
+  it('cancels an in-progress native scan without reporting a folder permission failure', async () => {
+    const fixture = host(`printf ready > "$0.ready"
+while :; do :; done`)
+    const controller = new AbortController()
+    const reason = new Error('user stopped execution')
+    const scan = preflightWindowsFilesystem(
+      fixture.executable,
+      'installation',
+      '/ownership',
+      {
+        path: 'C:\\data',
+        access: 'ro'
+      },
+      controller.signal
+    )
+    // Observe rejection before aborting, so no rejection can escape the test harness.
+    const outcome = scan.catch((error: unknown) => error)
+    try {
+      await vi.waitFor(() => expect(existsSync(`${fixture.executable}.ready`)).toBe(true))
+      controller.abort(reason)
+      expect(await outcome).toBe(reason)
+    } finally {
+      controller.abort(reason)
+      await outcome
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed unless ok is exactly true or false', async () => {
+    const fixture = host(`printf '%s\\n' '{"ok":null,"error":{}}'`)
+    try {
+      await expect(
+        preflightWindowsFilesystem(fixture.executable, 'installation', '/ownership', {
+          path: 'C:\\folder',
+          access: 'ro'
+        })
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'WINDOWS_ACL_PREFLIGHT_INVALID_RESPONSE' }
+      })
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('Windows AppContainer elevation', () => {
   it.skipIf(process.platform !== 'win32')(
     'preserves native helper arguments and waits for its exit code',
@@ -293,7 +404,7 @@ describe('Windows AppContainer launch', () => {
     ).toEqual([ELECTRON_NO_STDIO_INIT, 'repl_loop.js'])
   })
 
-  it('keeps nested optional PATH candidates until their individual permissions are checked', () => {
+  it('keeps nested optional folder candidates until their individual permissions are checked', () => {
     const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'optional-path-')))
     const parent = join(root, 'tools')
     const child = join(parent, 'bin')
@@ -309,6 +420,7 @@ describe('Windows AppContainer launch', () => {
         filesystem: {
           readOnlyRoots: [],
           optionalReadOnlyRoots: [parent, child, child],
+          optionalReadWriteRoots: [parent, child, child],
           readWriteRoots: [root],
           deniedReadRoots: [],
           deniedWriteRoots: []
@@ -321,6 +433,7 @@ describe('Windows AppContainer launch', () => {
         Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8')
       )
       expect(specification.optionalReadOnlyRoots).toEqual([parent, child])
+      expect(specification.optionalReadWriteRoots).toEqual([parent, child])
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

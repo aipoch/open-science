@@ -15,7 +15,28 @@ const send = (message: ResearchVideoWorkerMessage): void => {
   else parentPort?.postMessage(message)
 }
 const fail = (error: unknown): void => {
-  send({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
+  let code: string | undefined
+  try {
+    code = (error as NodeJS.ErrnoException | null)?.code
+  } catch {
+    // Error metadata must not prevent the failure reply.
+  }
+  send({
+    kind: 'error',
+    message: error instanceof Error ? error.message : String(error),
+    ...([
+      'ENOENT',
+      'ENOTDIR',
+      'EACCES',
+      'EPERM',
+      'ENOSPC',
+      'ENOMEM',
+      'ETIMEDOUT',
+      'ERR_WORKER_OUT_OF_MEMORY'
+    ].includes(code ?? '')
+      ? { code }
+      : {})
+  })
 }
 const input = workerData as ResearchVideoWorkerInput | ResearchVideoSpeechInput
 if ('kind' in input && input.kind === 'speech') {

@@ -121,10 +121,10 @@ export async function composeBackgroundResults({
           () => undefined
         ),
       loadSessionCatalog: async () => {
-        const catalog = await getSessionRepository().loadAllWithDiagnostics({ mode: 'read-only' })
+        const catalog = await getSessionRepository().scanSessionIdentities()
         return {
           complete: catalog.isComplete,
-          sessions: catalog.result.sessions.map(({ projectId, id }) => ({
+          sessions: catalog.sessions.map(({ projectId, id }) => ({
             projectId,
             sessionId: id
           }))

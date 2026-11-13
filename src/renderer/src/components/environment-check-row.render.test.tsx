@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { EthernetPort } from 'lucide-react'
 
 import type { EnvironmentCheckItem } from '../../../shared/settings'
+import { i18next } from '@/i18n'
 import { EnvironmentCheckRow } from './environment-check-row'
 
 let container: HTMLDivElement
@@ -16,9 +17,10 @@ beforeEach(() => {
   root = createRoot(container)
 })
 
-afterEach(() => {
+afterEach(async () => {
   act(() => root.unmount())
   container.remove()
+  await i18next.changeLanguage('en')
 })
 
 const check: EnvironmentCheckItem = {
@@ -52,5 +54,19 @@ describe('EnvironmentCheckRow', () => {
 
     expect(container.querySelector('svg.lucide-ethernet-port')).not.toBeNull()
     expect(container.querySelector('svg.lucide-wifi')).toBeNull()
+  })
+
+  it('uses the audit translation for warning status', async () => {
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+    await act(async () => {
+      root.render(
+        <ul>
+          <EnvironmentCheckRow check={{ ...check, status: 'warning' }} />
+        </ul>
+      )
+    })
+
+    expect(container.textContent).toContain('审核')
+    expect(container.textContent).not.toContain('综述')
   })
 })

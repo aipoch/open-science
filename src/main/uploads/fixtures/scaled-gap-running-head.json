@@ -1,0 +1,119 @@
+{
+  "page": {
+    "view": [0, 0, 612, 792],
+    "rotate": 0
+  },
+  "items": [
+    {
+      "str": "Top of Page: Layout Note",
+      "dir": "ltr",
+      "width": 72.15790860000014,
+      "height": 6.9738,
+      "transform": [6.9738, 0, 0, 6.9738, 486.043, 725.549],
+      "fontName": "anonymous-font-0",
+      "hasEOL": false
+    },
+    {
+      "str": "Neutral examples of page layout patterns introduce a",
+      "dir": "ltr",
+      "width": 230.2802853119999,
+      "height": 8.9664,
+      "transform": [9.145728, 0, 0, 8.9664, 63.761, 698.351],
+      "fontName": "anonymous-font-1",
+      "hasEOL": true
+    },
+    {
+      "str": "varying panel positions while preserving legibility. This ex-",
+      "dir": "ltr",
+      "width": 241.76219089920002,
+      "height": 8.9664,
+      "transform": [8.8857024, 0, 0, 8.9664, 317.955, 413.42],
+      "fontName": "anonymous-font-1",
+      "hasEOL": true
+    },
+    {
+      "str": "ample forms a simple bridge between page-based rendering, which",
+      "dir": "ltr",
+      "width": 240.24455596800001,
+      "height": 8.9664,
+      "transform": [8.8050048, 0, 0, 8.9664, 317.955, 402.461],
+      "fontName": "anonymous-font-1",
+      "hasEOL": true
+    },
+    {
+      "str": "helps with interpreting independent and structured panel contents,",
+      "dir": "ltr",
+      "width": 241.23148761600018,
+      "height": 8.9664,
+      "transform": [8.787072, 0, 0, 8.9664, 317.955, 391.502],
+      "fontName": "anonymous-font-1",
+      "hasEOL": true
+    },
+    {
+      "str": "ically groups their content in reading positions while",
+      "dir": "ltr",
+      "width": 211.62300019200003,
+      "height": 8.9664,
+      "transform": [9.145728, 0, 0, 8.9664, 346.582, 236.159],
+      "fontName": "anonymous-font-1",
+      "hasEOL": true
+    },
+    {
+      "str": "preserving legibility. Specifically, inter-panel examples",
+      "dir": "ltr",
+      "width": 211.61905497600006,
+      "height": 8.9664,
+      "transform": [8.787072, 0, 0, 8.9664, 346.582, 225.2],
+      "fontName": "anonymous-font-1",
+      "hasEOL": true
+    },
+    {
+      "str": "in the",
+      "dir": "ltr",
+      "width": 20.86266983040002,
+      "height": 8.9664,
+      "transform": [8.8139712, 0, 0, 8.9664, 346.582, 214.242],
+      "fontName": "anonymous-font-1",
+      "hasEOL": false
+    },
+    {
+      "str": " ",
+      "dir": "ltr",
+      "width": 2.268499200000017,
+      "height": 0,
+      "transform": [8.8139712, 0, 0, 8.9664, 367.44466983039996, 214.242],
+      "fontName": "anonymous-font-1",
+      "hasEOL": false
+    },
+    {
+      "str": "Page View",
+      "dir": "ltr",
+      "width": 38.3319607488,
+      "height": 8.9664,
+      "transform": [8.8139712, 0, 0, 8.9664, 369.674604544, 214.242],
+      "fontName": "anonymous-font-2",
+      "hasEOL": false
+    }
+  ],
+  "styles": {
+    "anonymous-font-0": {
+      "fontFamily": "sans-serif",
+      "ascent": 0.686,
+      "descent": -0.237,
+      "vertical": false
+    },
+    "anonymous-font-1": {
+      "fontFamily": "sans-serif",
+      "ascent": 0.701,
+      "descent": -0.233,
+      "vertical": false
+    },
+    "anonymous-font-2": {
+      "fontFamily": "sans-serif",
+      "ascent": 0.696,
+      "descent": -0.234,
+      "vertical": false
+    }
+  },
+  "expectedText": "Top of Page: Layout NoteNeutral examples of page layout patterns introduce a\nvarying panel positions while preserving legibility. This ex-\nample forms a simple bridge between page-based rendering, which\nhelps with interpreting independent and structured panel contents,\nically groups their content in reading positions while\npreserving legibility. Specifically, inter-panel examples\nin the Page View"
+}

@@ -68,6 +68,158 @@ describe('LiteratureLatexBundle', () => {
     )
   })
 
+  it.each([
+    '\\usepackage{amsmath,biblatex}',
+    '\\usepackage{biblatex,amsmath}',
+    '\\usepackage [backend=biber] { amsmath, biblatex, graphicx }',
+    '\\usepackage \n{biblatex}',
+    '\\usepackage\t[backend=biber]\n{amsmath, biblatex}'
+  ])('accepts package lists and whitespace in %s', async (declaration) => {
+    const bundle = new LiteratureLatexBundle(
+      { getMany: async () => [item('item-1')] },
+      { exportReferences: async () => '@article{test}' }
+    )
+    const content = `${declaration}\n\\addbibresource{references.bib}\n{{cite:item-1}}\n{{bibliography}}`
+    const result = await bundle.prepare({ sourceName: 'review.tex', content })
+    const archive = unzipSync(result.content)
+
+    expect(strFromU8(archive['review.tex']!)).toContain(declaration)
+    expect(strFromU8(archive['review.tex']!)).toMatch(/\\cite\{os[a-f0-9]{12}\}/u)
+    expect(strFromU8(archive['references.bib']!)).toBe('@article{test}')
+    expect(result).toMatchObject({ citationCount: 1, referenceCount: 1 })
+  })
+
+  it.each([
+    '\\addbibresource {references.bib}',
+    '\\addbibresource \n[location=local]\t{references.bib}'
+  ])('accepts whitespace in %s', async (declaration) => {
+    const bundle = new LiteratureLatexBundle(
+      { getMany: async () => [item('item-1')] },
+      { exportReferences: async () => '@article{test}' }
+    )
+
+    await expect(
+      bundle.prepare({
+        sourceName: 'review.tex',
+        content: `\\usepackage{biblatex}\n${declaration}\n{{cite:item-1}}`
+      })
+    ).resolves.toMatchObject({ citationCount: 1, referenceCount: 1 })
+  })
+
+  it.each([
+    '\\usepackage{amsmath,biblatex-extra}',
+    '\\usepackage{notbiblatex,amsmath}',
+    '\\usepackageExtra{biblatex}',
+    '\\usepackage{amsmath,{biblatex}}'
+  ])('requires an exact literal package name in %s', async (declaration) => {
+    const exportReferences = vi.fn()
+    const bundle = new LiteratureLatexBundle(
+      { getMany: async () => [item('item-1')] },
+      { exportReferences }
+    )
+
+    await expect(
+      bundle.prepare({
+        sourceName: 'review.tex',
+        content: `${declaration}\n\\addbibresource{references.bib}\n{{cite:item-1}}`
+      })
+    ).rejects.toThrow('must load the biblatex package')
+    expect(exportReferences).not.toHaveBeenCalled()
+  })
+
+  it('does not treat a bibliography resource as a package list', async () => {
+    const bundle = new LiteratureLatexBundle(
+      { getMany: async () => [item('item-1')] },
+      { exportReferences: vi.fn() }
+    )
+
+    await expect(
+      bundle.prepare({
+        sourceName: 'review.tex',
+        content:
+          '\\usepackage{amsmath,biblatex}\n\\addbibresource{other.bib,references.bib}\n{{cite:item-1}}'
+      })
+    ).rejects.toThrow('must add references.bib')
+  })
+
+  it('handles repeated malformed declarations without hiding later valid commands', async () => {
+    const bundle = new LiteratureLatexBundle(
+      { getMany: async () => [item('item-1')] },
+      { exportReferences: async () => '@article{test}' }
+    )
+    for (const command of ['usepackage', 'addbibresource']) {
+      for (const malformed of [
+        `\\${command}[`.repeat(20_000),
+        `\\${command}{`.repeat(20_000),
+        `${`\\${command}[`.repeat(20_000)}]{${'x'.repeat(20_000)}{nested}}`
+      ]) {
+        const counterpart =
+          command === 'usepackage' ? '\\addbibresource{references.bib}' : '\\usepackage{biblatex}'
+        const content = `${counterpart}\n${malformed}\n{{cite:item-1}}`
+        await expect(bundle.prepare({ sourceName: 'review.tex', content })).rejects.toThrow(
+          command === 'usepackage' ? 'must load the biblatex package' : 'must add references.bib'
+        )
+        await expect(
+          bundle.prepare({
+            sourceName: 'review.tex',
+            content: `${content}\n\\usepackage[backend=\\custom]{amsmath,biblatex}\n\\addbibresource{references.bib}`
+          })
+        ).resolves.toMatchObject({ citationCount: 1 })
+      }
+    }
+  })
+
+  it.each(['usepackage', 'addbibresource'] as const)(
+    'finds a valid %s declaration between commented malformed examples',
+    async (command) => {
+      const argument = command === 'usepackage' ? 'biblatex' : 'references.bib'
+      const counterpart =
+        command === 'usepackage' ? '\\addbibresource{references.bib}' : '\\usepackage{biblatex}'
+      const bundle = new LiteratureLatexBundle(
+        { getMany: async () => [item('item-1')] },
+        { exportReferences: async () => '@article{test}' }
+      )
+      for (const suffix of ['unused', 'unused{nested}']) {
+        await expect(
+          bundle.prepare({
+            sourceName: 'review.tex',
+            content: `${counterpart}\n% Old example: \\${command}[\n\\${command}{${argument}}\n% ]{${suffix}}\n{{cite:item-1}}`
+          })
+        ).resolves.toMatchObject({ citationCount: 1, referenceCount: 1 })
+      }
+    }
+  )
+
+  it('allows comments mentioning the command inside options', async () => {
+    const bundle = new LiteratureLatexBundle(
+      { getMany: async () => [item('item-1')] },
+      { exportReferences: async () => '@article{test}' }
+    )
+
+    await expect(
+      bundle.prepare({
+        sourceName: 'review.tex',
+        content:
+          '\\usepackage[\n% Configure \\usepackage here\nbackend=biber\n]{biblatex}\n\\addbibresource[\n% Configure \\addbibresource here\nlocation=local\n]{references.bib}\n{{cite:item-1}}'
+      })
+    ).resolves.toMatchObject({ citationCount: 1, referenceCount: 1 })
+  })
+
+  it('does not reuse options belonging to an earlier declaration', async () => {
+    const bundle = new LiteratureLatexBundle(
+      { getMany: async () => [item('item-1')] },
+      { exportReferences: vi.fn() }
+    )
+
+    await expect(
+      bundle.prepare({
+        sourceName: 'review.tex',
+        content:
+          '\\usepackage[backend=biber]{amsmath}\n\\unrelated]{biblatex}\n\\addbibresource{references.bib}\n{{cite:item-1}}'
+      })
+    ).rejects.toThrow('must load the biblatex package')
+  })
+
   it('handles repeated unterminated options without hiding later valid commands', async () => {
     const bundle = new LiteratureLatexBundle(
       { getMany: async () => [item('item-1')] },

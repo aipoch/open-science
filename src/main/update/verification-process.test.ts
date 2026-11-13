@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { runVerificationProcess } from './verification-process'
+import { runVerificationProcess, VerificationProcessExitError } from './verification-process'
 
 describe('bounded verification subprocess', () => {
+  it('retains stderr on a failed child without exposing it in the display message', async () => {
+    const stderr = 'Cannot inspect 安装目录: EACCES\n' + 'detail\n'.repeat(3000)
+    const error = await runVerificationProcess(process.execPath, [
+      '-e',
+      `process.stderr.write(${JSON.stringify(stderr)}, () => process.exit(2))`
+    ]).catch((error: unknown) => error)
+    expect(error).toBeInstanceOf(VerificationProcessExitError)
+    expect(error).toMatchObject({ exitCode: 2, stderr })
+    expect((error as Error).message).not.toContain('EACCES')
+  })
+
   it('cancels a running process and waits for its exit', async () => {
     const controller = new AbortController()
     const pending = runVerificationProcess(

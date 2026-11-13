@@ -1,5 +1,9 @@
 import { expect, it, vi } from 'vitest'
-import { captureNativeLinkOrigins, nativeLinkOriginSpan } from '../resources/native-link-origin.mjs'
+import {
+  captureNativeLinkOrigins,
+  nativeLinkOriginSpan,
+  nativeLinkSourceSpan
+} from '../resources/native-link-origin.mjs'
 import { mapReflowLinks } from '../resources/reflow-links.mjs'
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- Retain inferred mock signatures for refusal controls.
@@ -104,6 +108,131 @@ it('preserves UTF16 offsets when native spaces and line endings differ', () => {
 })
 
 type Fixture = ReturnType<typeof fixture>
+
+function closedHitFixture(source = 'First [7, 9]. Next [7, 12].'): Fixture {
+  const f = fixture(source),
+    start = f.unit.source.lastIndexOf('[7,'),
+    last = start + 2
+  f.unit.translation = '首先 [7, 9]，随后 [7, 12]。'
+  f.link.labels = ['[7, ']
+  f.link.regions = [
+    {
+      x: f.chars[start].rect.x - 0.001,
+      y: 0.119,
+      width: f.chars[last].rect.x + f.chars[last].rect.width - f.chars[start].rect.x + 0.002,
+      height: 0.022
+    }
+  ]
+  return f
+}
+
+it('maps punctuation-bearing hits through the complete native closed list', () => {
+  const f = closedHitFixture()
+  expect(f.map().mapped).toHaveLength(0)
+  f.capture()
+  expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toEqual({ start: 19, text: '[7,' })
+  const result = f.map()
+  expect(result.failed.size).toBe(0)
+  expect(result.mapped).toHaveLength(1)
+  expect(result.mapped[0].target).toEqual(f.link.destination)
+  expect(result.mapped[0].regions[0].rect.width).toBeCloseTo(3 / 595.28)
+})
+
+it.each<[string, (f: Fixture) => void]>([
+  [
+    'changed list',
+    (f) => {
+      f.unit.translation = '首先 [7, 9]，随后 [7, 13]。'
+    }
+  ],
+  [
+    'added list occurrence',
+    (f) => {
+      f.unit.translation += ' 再次 [7, 12]。'
+    }
+  ],
+  [
+    'native item mismatch',
+    (f) => {
+      f.unit.fragments[0].items[0].text = 'Foreign source'
+    }
+  ],
+  [
+    'foreign native glyph',
+    (f) => {
+      f.chars[0].text = 'Z'
+    }
+  ],
+  [
+    'rotated native glyph',
+    (f) => {
+      f.chars[0].angle = 0.1
+    }
+  ],
+  [
+    'outside glyph',
+    (f) => {
+      f.chars[0].rect.x = 0.09
+    }
+  ],
+  [
+    'partial source block',
+    (f) => {
+      f.unit.source = f.unit.source.replace('[7, 12]', '[7, 12')
+    }
+  ]
+])('rejects a closed native hit with %s', (_name, change) => {
+  const f = closedHitFixture()
+  change(f)
+  f.capture()
+  expect(f.map().mapped).toHaveLength(0)
+  expect(f.map().failed).toEqual(new Set([1]))
+})
+
+it('binds a closed hit certificate to the original owner, region and source', () => {
+  const f = closedHitFixture()
+  f.capture()
+  const original = f.unit.source
+  f.unit.source += ' changed'
+  expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toBeUndefined()
+  f.unit.source = original
+  f.link.regions[0].width += 0.001
+  expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toBeUndefined()
+  expect(nativeLinkSourceSpan({ ...f.link }, f.unit, 0, 0)).toBeUndefined()
+})
+
+it('does not recover a duplicate native list from a truncated source owner', () => {
+  const f = closedHitFixture('First [7, 9]. Next [7, 9]. 1')
+  f.unit.source = '7,9]. Next [7, 9]. 1'
+  f.unit.translation = '译文 [7, 9]。'
+  f.capture()
+  expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toBeUndefined()
+  expect(f.map().mapped).toHaveLength(0)
+})
+
+it('uses a unique full native list with literal nearby context after line joining', () => {
+  const f = fixture('First hy-phen [7,9]. Middle suf-fix 1'),
+    start = f.unit.source.indexOf('[7,')
+  f.link.labels = ['[7,']
+  f.link.regions = [
+    {
+      x: f.chars[start].rect.x - 0.001,
+      y: 0.119,
+      width: f.chars[start + 2].rect.x + 0.01 - f.chars[start].rect.x + 0.001,
+      height: 0.022
+    }
+  ]
+  f.unit.source = f.unit.source.replace('hy-phen', 'hyphen').replace('suf-fix', 'suffix')
+  f.unit.translation = '译文 [7,9]。'
+  Object.assign(f.native.p, { FPDFText_IsHyphen: vi.fn(() => 1) })
+  f.native.p.FPDFText_GetUnicode.mockImplementation((_page: number, index: number) =>
+    f.chars[index].text === '-' ? 2 : f.chars[index].text.codePointAt(0)
+  )
+  f.capture()
+  expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toEqual({ start: 13, text: '[7,' })
+  expect(f.map().mapped).toHaveLength(1)
+})
+
 it.each<[string, (f: Fixture) => void]>([
   [
     'changed translation',
@@ -262,3 +391,100 @@ it('discards stale proof on recapture and returns independent result values', ()
   f.capture()
   expect(nativeLinkOriginSpan(f.link, f.unit, 0, 0)).toBeUndefined()
 })
+
+it('certifies a translated paragraph source occurrence without inventing a target position', () => {
+  const f = fixture()
+  f.unit.translation = '甲的结果为1。乙的结果也为1。'
+  f.capture()
+  expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toEqual({ start: 14, text: '1.' })
+  expect(nativeLinkOriginSpan(f.link, f.unit, 0, 0)).toBeUndefined()
+  expect(f.map().mapped).toHaveLength(0)
+  f.link.pageNumber = 2
+  expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toBeUndefined()
+  f.link.pageNumber = 1
+  f.link.index++
+  expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toBeUndefined()
+  f.link.index--
+  f.unit.translation = '另一种译文'
+  expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toEqual({ start: 14, text: '1.' })
+  f.unit.source += ' Changed source.'
+  expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toBeUndefined()
+})
+it.each(['ambiguous-context', 'native-text', 'direction', 'source-owner', 'source-index'])(
+  'does not certify an unproved translated source context: %s',
+  (kind) => {
+    const f = fixture()
+    f.unit.translation = '甲的结果为1。乙的结果也为1。'
+    if (kind === 'ambiguous-context') f.unit.source += ' ' + f.unit.source
+    if (kind === 'native-text') f.chars[0].text = 'Z'
+    if (kind === 'direction') f.chars[0].angle = Math.PI / 2
+    if (kind === 'source-owner') f.unit.fragments[0].items[0].text += 'foreign'
+    if (kind === 'source-index') f.unit.fragments[0].items.push({ index: 0, text: '' })
+    f.capture()
+    expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toBeUndefined()
+    expect(f.map().mapped).toHaveLength(0)
+  }
+)
+
+it.each([true, false])(
+  'requires native proof before reading a line-end hyphen marker: %s',
+  (proved) => {
+    const f = fixture('Alpha- 1. Beta 1.')
+    f.unit.translation = '不同的译文'
+    const index = f.chars.findIndex((c) => c.text === '-')
+    f.chars[index].text = '\u0002'
+    Object.assign(f.native.p, {
+      FPDFText_IsHyphen: (_page: number, at: number) => (proved && at === index ? 1 : 0)
+    })
+    f.capture()
+    if (proved)
+      expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toEqual({ start: 15, text: '1.' })
+    else expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toBeUndefined()
+  }
+)
+
+it('maps a repeated author prefix only after native source and dated target proofs agree', () => {
+  const source = '(Morris et al., 2021) versus (Morris et al., 2022).'
+  const f = fixture(source)
+  const label = '(Morris et al.,'
+  const start = source.lastIndexOf(label),
+    end = start + label.length
+  f.unit.translation = '比較（Morris等，2022年）与（Morris等，2021年）。'
+  f.link.labels[0] = label
+  f.link.regions[0] = {
+    x: f.chars[start].rect.x - 0.001,
+    y: 0.119,
+    width: f.chars[end - 1].rect.x + f.chars[end - 1].rect.width - f.chars[start].rect.x + 0.002,
+    height: 0.022
+  }
+  f.capture()
+  expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toEqual({ start, text: label })
+  const mapped = f.map()
+  expect(mapped.mapped).toHaveLength(1)
+  expect(mapped.mapped[0].regions[0].rect.x).toBeCloseTo(
+    0.1 + f.unit.translation.indexOf('（') / 595.28
+  )
+  f.unit.translation = f.unit.translation.replace('2022', '2023')
+  expect(f.map().mapped).toHaveLength(0)
+})
+
+it.each(['clear', 'foreign-ink', 'large-hit-area', 'spilling-owned-ink'])(
+  'keeps the annotation whitespace collar separate from native ink ownership: %s',
+  (kind) => {
+    const f = fixture()
+    f.unit.translation = '一处不同的译文'
+    f.unit.fragments[0].rect.height = 0.04
+    if (kind === 'foreign-ink')
+      f.chars.push({
+        text: 'X',
+        angle: 0,
+        rect: { x: f.link.regions[0].x + 0.002, y: 0.1405, width: 0.002, height: 0.001 }
+      })
+    if (kind === 'large-hit-area') f.link.regions[0].height += 0.004
+    if (kind === 'spilling-owned-ink') f.chars[0].rect.height += 0.005
+    f.capture()
+    if (kind === 'clear')
+      expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toEqual({ start: 14, text: '1.' })
+    else expect(nativeLinkSourceSpan(f.link, f.unit, 0, 0)).toBeUndefined()
+  }
+)

@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
+import type { PersistedChatSession } from '../shared/session-persistence'
 
 const projectRoot = resolve(__dirname, '../..')
 const readSource = (path: string): string => readFileSync(resolve(projectRoot, path), 'utf8')
@@ -762,6 +763,13 @@ it('connects committed deletion to the same credential broker used by approval s
   const broadcast = vi.fn()
   const broker = new CredentialRequestBroker({ generateId: () => 'credential', broadcast })
   const journalDispose = vi.fn()
+  const recovery = { start: vi.fn(), dispose: vi.fn(async () => undefined) }
+  const recoverSession = vi.fn<(session: PersistedChatSession) => Promise<void>>(
+    async () => undefined
+  )
+  const createDeferredRecovery = vi.fn<
+    (recover: (session: PersistedChatSession) => Promise<void>) => typeof recovery
+  >(() => recovery)
   const runtime = { prepareForQuit: vi.fn(async () => 'completed'), abortQuitPreparation: vi.fn() }
   const shutdown = vi.fn(async () => 'completed')
   const resumeAfterHandoff = vi.fn()
@@ -777,6 +785,8 @@ it('connects committed deletion to the same credential broker used by approval s
     skillImportApprovalBroker: {},
     reviewerCommandOwnerRef: { current: undefined },
     journalAttributes: { dispose: journalDispose },
+    createDeferredRecovery,
+    sessionDetailsOwner: { recoverSession },
     computeIpcModule: { handlers: {} },
     runtime,
     sideChatRuntime: { resumeAfterHandoff },
@@ -817,7 +827,7 @@ it('connects committed deletion to the same credential broker used by approval s
     desktop: {}
   }
   rootFixture.owners = owners
-  const moduleRecords: { name: string; dispose?: () => unknown }[] = []
+  const moduleRecords: { name: string; start?: () => unknown; dispose?: () => unknown }[] = []
   const events = { publish: vi.fn() }
   const add = vi.fn(async (input, create) => {
     if (typeof input === 'function') return events
@@ -834,6 +844,25 @@ it('connects committed deletion to the same credential broker used by approval s
     { add } as unknown as Parameters<typeof createApplicationModules>[1],
     { phase } as unknown as Parameters<typeof createApplicationModules>[2]
   )
+  const recoveryModule = moduleRecords.find(
+    (module) => module.name === 'deferred-session-recovery'
+  )!
+  expect(createDeferredRecovery).toHaveBeenCalledOnce()
+  expect(recovery.start).not.toHaveBeenCalled()
+  await recoveryModule.start!()
+  expect(recovery.start).toHaveBeenCalledOnce()
+  const recovered: PersistedChatSession = {
+    id: 'recovered',
+    projectId: 'project',
+    title: 'Recovered',
+    cwd: '/workspace',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+  await createDeferredRecovery.mock.calls[0][0](recovered)
+  expect(recoverSession).toHaveBeenCalledWith(recovered)
   const lifecycle = vi.mocked(composeProjectLifecycle).mock.calls.at(-1)![0]
   const info = {
     credentialId: 'openalex' as const,
@@ -980,4 +1009,6 @@ it('connects committed deletion to the same credential broker used by approval s
   expect(owners.sessionRepository.loadSession).toHaveBeenCalledWith('project', 'session')
   await moduleRecords.find((module) => module.name === 'literature-journal-attributes')!.dispose!()
   expect(journalDispose).toHaveBeenCalledOnce()
+  await recoveryModule.dispose!()
+  expect(recovery.dispose).toHaveBeenCalledOnce()
 })

@@ -463,9 +463,18 @@ async function startDesktop(): Promise<void> {
     (listener) => app.on('child-process-gone', listener),
     diagnostics.log
   )
-  process.on('uncaughtExceptionMonitor', (error, origin) =>
-    writeFatalLogSync('main', origin, diagnosticErrorFields(error))
-  )
+  // Electron's default uncaughtException handler keeps the app alive. Claim the first failure
+  // before logging so a second exception during exit cannot append another fatal record.
+  let exitingAfterFatalError = false
+  process.on('uncaughtException', (error, origin) => {
+    if (exitingAfterFatalError) return
+    exitingAfterFatalError = true
+    try {
+      writeFatalLogSync('main', origin ?? 'uncaughtException', diagnosticErrorFields(error))
+    } finally {
+      app.exit(1)
+    }
+  })
   registerRendererDiagnosticsIpc(
     ipcMain,
     createRendererFailureReporter({ log: createLogger('renderer') })
@@ -1589,8 +1598,8 @@ async function startDesktop(): Promise<void> {
     allowedProcessIds: allowedInstallationProcessIds,
     ...(process.platform === 'win32'
       ? {
-          ownedRuntimeProcessIds: async (runtime): Promise<number[]> => {
-            const pids = await runtime.invokeHost('desktop:update-owned-processes')
+          ownedRuntimeProcessIds: async (runtime, signal): Promise<number[]> => {
+            const pids = await runtime.invokeHost('desktop:update-owned-processes', [], signal)
             if (!Array.isArray(pids) || pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
               throw new Error('The service returned invalid process ownership evidence.')
             return pids as number[]

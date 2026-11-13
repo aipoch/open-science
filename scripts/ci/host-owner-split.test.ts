@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, expect, it } from 'vitest'
+import { afterAll, afterEach, expect, it } from 'vitest'
 import { moduleOwnershipFromRevisions } from './check-module-ownership.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
 import { checkDerivedConsumerRevisions, withDerivedConsumers } from './module-graph/index.mjs'
@@ -23,6 +23,11 @@ const unrelated = 'src/main/unrelated.test.ts'
 const other = 'src/main/other.ts'
 const otherTest = 'src/main/other.test.ts'
 const otherContract = 'src/main/other-contract.test.ts'
+
+let seed: { path: string; base: string } | undefined
+afterAll(() => {
+  if (seed) rmSync(seed.path, { recursive: true, force: true })
+})
 
 function fixture() {
   const cwd = mkdtempSync(join(tmpdir(), 'host-owner-split-'))
@@ -55,20 +60,28 @@ function fixture() {
   manifest.modules.host.testFiles.contract = [contract]
   manifest.modules.host.consumerModules = ['consumers']
   const save = () => put('scripts/ci/module-impact.json', JSON.stringify(manifest))
-  git('init', '-q')
-  git('config', 'user.name', 'Fixture')
-  git('config', 'user.email', 'fixture@example.test')
-  put(leaf, 'export const value = 1')
-  put(app, "export { value } from './leaf'")
-  put(leafTest, "import './leaf'")
-  put(appTest, "import './app'")
-  put(contract, 'export {}')
-  put(consumer, "import './leaf'")
-  put(uncertain, 'const target = process.env.RUNTIME_MODULE; import(target)')
-  put(unrelated, 'export {}')
-  put('scripts/ci/module-runtime-consumers.json', '{}')
-  save()
-  const base = commit()
+  if (!seed) {
+    git('init', '-q')
+    git('config', 'user.name', 'Fixture')
+    git('config', 'user.email', 'fixture@example.test')
+    put(leaf, 'export const value = 1')
+    put(app, "export { value } from './leaf'")
+    put(leafTest, "import './leaf'")
+    put(appTest, "import './app'")
+    put(contract, 'export {}')
+    put(consumer, "import './leaf'")
+    put(uncertain, 'const target = process.env.RUNTIME_MODULE; import(target)')
+    put(unrelated, 'export {}')
+    put('scripts/ci/module-runtime-consumers.json', '{}')
+    save()
+    const base = commit()
+    const path = mkdtempSync(join(tmpdir(), 'host-owner-seed-'))
+    seed = { path, base }
+    cpSync(cwd, path, { recursive: true })
+  } else {
+    cpSync(seed.path, cwd, { recursive: true })
+  }
+  const base = seed.base
   const split = () => {
     manifest.modules.foundation = module([leaf, leafTest], [leafTest])
     manifest.modules.foundation.consumerModules = ['consumers']

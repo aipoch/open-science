@@ -2267,6 +2267,31 @@ describe('Session package CLI', () => {
     ).toThrow('Use only one of --project and --new-project.')
   })
 
+  it.each(['cancelled', 'timeout'])(
+    'reports a %s import without a success receipt',
+    async (code) => {
+      const importSessionPackage = vi.fn().mockResolvedValue(null)
+      if (code === 'timeout')
+        importSessionPackage.mockRejectedValue(
+          Object.assign(new Error('Deadline exceeded.'), { code })
+        )
+      const log = vi.fn()
+      await expect(
+        runTaskCommand(
+          parseCliArgs(['session', 'import', 'in.science', '--non-interactive', '--json']),
+          {
+            connect: async () => ({ importSessionPackage }),
+            log
+          }
+        )
+      ).rejects.toMatchObject({
+        code,
+        ...(code === 'timeout' ? { completionStatus: 'unconfirmed' } : {})
+      })
+      expect(log).not.toHaveBeenCalled()
+    }
+  )
+
   it('passes resolved paths, destinations and transfer deadlines to the SDK', async () => {
     const client = {
       listProjects: vi.fn().mockResolvedValue([{ id: 'project-1', name: 'Research' }]),

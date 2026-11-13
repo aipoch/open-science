@@ -78,6 +78,9 @@ export function Fixture(): React.JSX.Element {
           {(['idle', 'loading', 'success', 'error'] as const).map((state) => (
             <RestoreDefaultPermissionsButton key={state} state={state} onRestore={() => {}} />
           ))}
+          <Button variant="destructive" data-testid="destructive-action">
+            {t('Delete')}
+          </Button>
         </div>
       </section>
       <section className="flex flex-wrap items-center gap-4" aria-label="Download states">

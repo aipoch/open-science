@@ -587,7 +587,9 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/settings-bootstrap.test.ts",
+      "src/main/notebook/managed-skill-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

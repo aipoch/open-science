@@ -15,11 +15,12 @@ const NORMAL_EVENT_STREAM_CLOSE_CODES = new Set([1000])
 const FAILED_EVENT_STREAM_CLOSE_CODES = new Set([1002, 1003, 1007, 1008, 1009])
 
 export class OpenScienceApiError extends Error {
-  constructor(message, { code = 'request_failed', status } = {}) {
+  constructor(message, { code = 'request_failed', status, correlationId } = {}) {
     super(message)
     this.name = 'OpenScienceApiError'
     this.code = code
     this.status = status
+    if (correlationId) this.correlationId = correlationId
   }
 }
 
@@ -39,7 +40,7 @@ const createRequestLifecycle = ({ defaultTimeoutMs, signal, timeoutMs }) => {
     `Open-Science request timed out after ${resolvedTimeoutMs} milliseconds.`,
     { code: 'timeout' }
   )
-  const timeout = setTimeout(() => timeoutController.abort(timeoutError), resolvedTimeoutMs)
+  let timeout = setTimeout(() => timeoutController.abort(timeoutError), resolvedTimeoutMs)
   const requestSignal = signal
     ? AbortSignal.any([signal, timeoutController.signal])
     : timeoutController.signal
@@ -47,6 +48,11 @@ const createRequestLifecycle = ({ defaultTimeoutMs, signal, timeoutMs }) => {
 
   return {
     signal: requestSignal,
+    refresh() {
+      if (finalized || timeoutController.signal.aborted) return
+      clearTimeout(timeout)
+      timeout = setTimeout(() => timeoutController.abort(timeoutError), resolvedTimeoutMs)
+    },
     finalize() {
       if (finalized) return
       finalized = true
@@ -85,6 +91,7 @@ const wrapResponseBodyLifecycle = (response, lifecycle) => {
           lifecycle.finalize()
           controller.close()
         } else {
+          lifecycle.refresh()
           controller.enqueue(chunk.value)
         }
       } catch (error) {
@@ -365,7 +372,11 @@ export class OpenScienceClient {
         if (!response.ok || payload?.ok !== true) {
           throw new OpenScienceApiError(
             payload?.error?.message ?? `Open-Science Web RPC request failed (${response.status}).`,
-            { code: payload?.error?.code, status: response.status }
+            {
+              code: payload?.error?.code,
+              status: response.status,
+              correlationId: response.headers.get('x-correlation-id')
+            }
           )
         }
         return payload.result

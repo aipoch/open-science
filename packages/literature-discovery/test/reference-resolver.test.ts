@@ -1,4 +1,3 @@
-import { setTimeout as realDelay } from 'node:timers/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LiteratureReferenceResolver } from '../src/reference-resolver.js'
@@ -443,9 +442,28 @@ describe('arXiv reference lookup', () => {
   beforeEach(async () => {
     vi.resetModules()
     vi.useFakeTimers()
+    // Import the resolver with the same abortable promise timer as the fake monotonic clock.
+    vi.doMock('node:timers/promises', () => ({
+      setTimeout: (ms: number, value: unknown, { signal }: { signal?: AbortSignal }) =>
+        new Promise((resolve, reject) => {
+          signal?.throwIfAborted()
+          const cancel = (): void => {
+            clearTimeout(timer)
+            reject(signal?.reason)
+          }
+          const timer = setTimeout(() => {
+            signal?.removeEventListener('abort', cancel)
+            resolve(value)
+          }, ms)
+          signal?.addEventListener('abort', cancel, { once: true })
+        })
+    }))
     Resolver = (await import('../src/reference-resolver.js')).LiteratureReferenceResolver
   })
-  afterEach(() => vi.useRealTimers())
+  afterEach(() => {
+    vi.doUnmock('node:timers/promises')
+    vi.useRealTimers()
+  })
   const feed = (
     id = '2401.12345v2',
     title = 'A paper &amp; its findings'
@@ -617,9 +635,6 @@ describe('arXiv reference lookup', () => {
     const second = new Resolver(secondFetch).lookup('arxiv:2401.12346')
     try {
       await vi.advanceTimersByTimeAsync(6000)
-      // Node's promise timer is real even when the provider's monotonic clock is faked.
-      // Keep the body open past the interval so removing serialization is observable.
-      await realDelay(3100)
       expect(secondFetch).not.toHaveBeenCalled()
     } finally {
       body.enqueue(new TextEncoder().encode(feed('2401.12345')))
@@ -674,7 +689,6 @@ describe('arXiv reference lookup', () => {
         }
       )
       await vi.advanceTimersByTimeAsync(3000)
-      await realDelay(3100)
       expect(next).toMatchObject({ result: { item: { title: 'A paper & its findings' } } })
       expect(fetchFn).toHaveBeenCalledTimes(2)
     }
@@ -720,7 +734,6 @@ describe('arXiv reference lookup', () => {
       }
     )
     await vi.advanceTimersByTimeAsync(3000)
-    await realDelay(3100)
     expect(next).toMatchObject({ result: { item: { title: 'A paper & its findings' } } })
     expect(fetchFn).toHaveBeenCalledTimes(2)
   })
@@ -742,7 +755,6 @@ describe('arXiv reference lookup', () => {
       }
     )
     await vi.advanceTimersByTimeAsync(3000)
-    await realDelay(3100)
     expect(outcome).toMatchObject({ result: { item: { title: 'A paper & its findings' } } })
     expect(fetchFn).toHaveBeenCalledTimes(2)
   })

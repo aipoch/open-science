@@ -77,6 +77,7 @@
     "packages/research-film/vitest.config.ts"
   ],
   "interfacePaths": [
+    "packages/research-film/src/generation.ts",
     "packages/research-film/src/index.ts",
     "packages/research-film/src/contracts.ts",
     "packages/research-film/src/export-mp4.ts",

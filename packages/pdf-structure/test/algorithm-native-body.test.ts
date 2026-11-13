@@ -2087,3 +2087,101 @@ it.each(['cross-closing', 'empty-input', 'empty-output'])(
     expect(findNativeAlgorithmCandidates(f.page, f.context)).toEqual([])
   }
 )
+
+function titledTwoRuleProgram(): ReturnType<typeof JSON.parse> {
+  const rows: [string, number, number][] = [
+    ['Algorithm 1 Update neighbors', 50, 100],
+    ['Input:', 50, 120],
+    ['neighbors', 85, 120],
+    ...[
+      'value ← choose()',
+      'while active:',
+      'value ← value + 1',
+      'send(value)',
+      'finish()'
+    ].flatMap((text, n): [string, number, number][] => [
+      [`${n + 1}:`, 65, 140 + n * 20],
+      [text, n === 2 || n === 3 ? 110 : 90, 140 + n * 20]
+    ])
+  ]
+  const items = rows.map(([str, x, baseline], index) => ({
+    str,
+    dir: 'ltr',
+    width: str.length * 4,
+    height: 10,
+    transform: [10, 0, 0, 10, x, 800 - baseline],
+    fontName: 'native',
+    sourceItem: { pageNumber: 1, index, text: str }
+  }))
+  const rails = [105, 240],
+    operators = {
+      fnArray: rails.map(() => OPS.constructPath),
+      argsArray: rails.map((y) => [
+        OPS.stroke,
+        [[0, 50, 800 - y, 1, 350, 800 - y]],
+        [50, 800 - y, 350, 800 - y]
+      ])
+    }
+  const viewport = {
+    width: 400,
+    height: 800,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, 800]
+  }
+  return {
+    page: {
+      pageNumber: 1,
+      width: 400,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      lines: rows.map(([text, x, baseline], n) => ({
+        text,
+        x,
+        y: baseline - 10,
+        width: items[n].width,
+        height: 10,
+        fontSize: 10
+      })),
+      graphicsBounds: rails.map((y, operationIndex) => ({
+        kind: 'path',
+        operationIndex,
+        normalizedRect: [50 / 400, y / 800, 350 / 400, y / 800]
+      }))
+    },
+    context: {
+      viewport,
+      operators,
+      rules: collectTableRules(operators, viewport),
+      content: { items, styles: { native: { ascent: 0.8, descent: -0.2, vertical: false } } }
+    }
+  }
+}
+
+it('owns a complete numbered two-rule program with a title above its frame', () => {
+  const f = titledTwoRuleProgram()
+  const result = findNativeAlgorithmCandidates(f.page, f.context)
+  expect(result).toHaveLength(1)
+  expect(result[0].nativeBody.sourceItems).toHaveLength(f.context.content.items.length - 1)
+  expect(result[0].rect[1]).toBeLessThanOrEqual(90)
+})
+
+it.each(['ordinal', 'input', 'closing-rule'])(
+  'keeps incomplete two-rule programs unowned: %s',
+  (kind) => {
+    const f = titledTwoRuleProgram()
+    if (kind === 'closing-rule') f.context.rules.pop()
+    else {
+      const index = kind === 'ordinal' ? 3 : 1
+      f.context.content.items[index].str = kind === 'ordinal' ? '9:' : 'Summary:'
+      f.context.content.items[index].sourceItem.text = f.context.content.items[index].str
+      f.page.lines[index].text = f.context.content.items[index].str
+    }
+    expect(
+      findNativeAlgorithmCandidates(f.page, f.context).filter(
+        (c: { nativeBody?: unknown }) => c.nativeBody
+      )
+    ).toHaveLength(0)
+  }
+)

@@ -14,6 +14,7 @@ import {
   closeElectronApplicationForCleanup,
   setFixtureServiceReconnectBlocked
 } from './fixtures/electron-app'
+import { openSettingsPage } from './fixtures/settings-preferences'
 import { createProjectViaUi, homeNewProjectButton } from './fixtures/project'
 
 type RuntimeOwner = { pid: number; port: number; generation: string }
@@ -373,7 +374,6 @@ for (const borrowed of [false, true])
           .getByTestId('local-service-recovery')
           .getByRole('button', { name: 'Retry', exact: true })
       ).toBeEnabled()
-      await page.getByTestId('session-persistence-dismiss').click()
       await app.evaluate(setFixtureServiceReconnectBlocked, false)
       await page
         .getByTestId('local-service-recovery')
@@ -396,6 +396,7 @@ for (const borrowed of [false, true])
           )
         )
         .toBeGreaterThan(networkChecksBeforeLoss)
+      await page.getByTestId('session-persistence-dismiss').click()
       await expect(composer).toContainText('Keep this unsent draft')
       await composer.fill('Keep this unsent draft @recovery-image-0')
       const selected = page.getByRole('option').filter({ hasText: 'recovery-image-0.png' })
@@ -422,6 +423,14 @@ for (const borrowed of [false, true])
         seeded
       )
       await app.evaluate(setFixtureServiceReconnectBlocked, true)
+      const settings = await openSettingsPage(page, 'Network')
+      await settings.getByRole('button', { name: 'Configure proxy' }).click()
+      const proxyMode = settings.getByRole('combobox', { name: 'Proxy mode' })
+      await proxyMode.click()
+      await page.getByRole('option', { name: 'Direct', exact: true }).click()
+      const save = settings.getByRole('button', { name: 'Save', exact: true })
+      await save.focus()
+      const saveBounds = (await save.boundingBox())!
       const lostTitle = 'saved-once-response-loss-fixture'
       await app.evaluate((_electron, marker) => {
         type Pipe = {
@@ -484,6 +493,25 @@ for (const borrowed of [false, true])
           .getByTestId('local-service-recovery')
           .getByRole('button', { name: 'Retry', exact: true })
       ).toBeVisible()
+      const recoveryDialog = page
+        .getByRole('dialog')
+        .filter({ has: page.getByRole('button', { name: 'Retry', exact: true }) })
+      const savePoint = {
+        x: saveBounds.x + saveBounds.width / 2,
+        y: saveBounds.y + saveBounds.height / 2
+      }
+      expect(
+        await page.evaluate(
+          ({ x, y }) =>
+            document.elementFromPoint(x, y)?.closest('[data-slot="settings-dialog"]') === null,
+          savePoint
+        )
+      ).toBe(true)
+      await page.mouse.click(savePoint.x, savePoint.y)
+      await page.keyboard.press('Escape')
+      await page.keyboard.press('Tab')
+      expect(await recoveryDialog.evaluate((el) => el.contains(document.activeElement))).toBe(true)
+      await page.screenshot({ path: test.info().outputPath('proxy-disconnected.png') })
       await app.evaluate(setFixtureServiceReconnectBlocked, false)
       await page
         .getByTestId('local-service-recovery')
@@ -492,6 +520,15 @@ for (const borrowed of [false, true])
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()), { timeout: 20_000 })
         .toMatchObject({ phase: 'connected' })
+      await expect(proxyMode).toHaveText('Direct')
+      expect(
+        (await page.evaluate(() => window.api.settings.getSettings())).networkProxy?.mode ??
+          'system'
+      ).toBe('system')
+      await save.click()
+      await expect(settings.getByText('Proxy settings saved.')).toBeVisible()
+      await page.screenshot({ path: test.info().outputPath('proxy-restored.png') })
+      await page.keyboard.press('Escape')
       const savedAfterRecovery = await page.evaluate(
         (request) => window.api.sessions.loadOne(request),
         seeded

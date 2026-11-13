@@ -16,6 +16,12 @@ const definitions: readonly OfficialVendor[] = [
     // The API exposes a broader mixed catalog (embeddings, image, and audio models); keep the coding
     // catalog curated here instead of importing every id from /v1/models.
     models: [
+      // https://developers.openai.com/api/docs/models/gpt-6.1-sol
+      {
+        id: 'gpt-6.1-sol',
+        contextWindow: 1_050_000,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
+      },
       {
         id: 'gpt-5.6-sol',
         contextWindow: 1_050_000,
@@ -23,12 +29,6 @@ const definitions: readonly OfficialVendor[] = [
       },
       {
         id: 'gpt-6-astra',
-        contextWindow: 1_050_000,
-        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
-      },
-      // https://developers.openai.com/api/docs/models/gpt-6.1-sol
-      {
-        id: 'gpt-6.1-sol',
         contextWindow: 1_050_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
@@ -79,8 +79,8 @@ const definitions: readonly OfficialVendor[] = [
     apiKeyUrl: 'https://console.anthropic.com/settings/keys',
     modelsListUrl: 'https://api.anthropic.com/v1/models',
     models: [
-      { id: 'claude-opus-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       { id: 'claude-opus-5-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+      { id: 'claude-opus-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       // https://platform.claude.com/docs/en/models/fable-5-2/overview
       { id: 'claude-fable-5-2', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       { id: 'claude-fable-5-1', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
@@ -164,9 +164,9 @@ const definitions: readonly OfficialVendor[] = [
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
     modelsListUrl: 'https://api.deepseek.com/v1/models',
     models: [
-      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
       // DeepSeek V4.1 Flash uses the stable API id deepseek-flash.
       { id: 'deepseek-flash', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
       { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000, maxOutputTokens: 384_000 }
     ],
@@ -260,12 +260,31 @@ const definitions: readonly OfficialVendor[] = [
   {
     id: 'bailianplan',
     label: 'Bailian for Plan',
-    // The qwen3.8, GLM, and DeepSeek entries below override this conservative default.
     reasoningEffort: { supported: false },
     apiEndpoints: ['messages', 'chat-completions'],
-    baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic',
-    chatCompletionsBaseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
-    apiKeyUrl: 'https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/overview',
+    regions: [
+      {
+        // Existing accounts without a saved region use Beijing.
+        id: 'china',
+        label: 'China (Beijing)',
+        baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic',
+        chatCompletionsBaseUrl:
+          'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+        apiKeyUrl:
+          'https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/overview'
+      },
+      {
+        id: 'global',
+        label: 'International (Singapore)',
+        baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic',
+        chatCompletionsBaseUrl:
+          'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+        apiKeyUrl:
+          'https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=plan#/efm/subscription/overview'
+      }
+    ],
+    responsesModels: ['qwen4-max-preview'],
+    // General-purpose chat models listed by both the Beijing and Singapore Token Plans.
     models: [
       {
         id: 'qwen3.8-max',
@@ -274,8 +293,15 @@ const definitions: readonly OfficialVendor[] = [
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
       {
-        id: 'qwen3.8-max-preview',
-        contextWindow: 983_616,
+        id: 'qwen4-max-preview',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 393_216,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
+      },
+      { id: 'auto', contextWindow: 1_000_000, maxOutputTokens: 393_216 },
+      {
+        id: 'qwen3.8-flash',
+        contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
@@ -283,16 +309,39 @@ const definitions: readonly OfficialVendor[] = [
       { id: 'qwen3.7-plus', contextWindow: 1_000_000, maxOutputTokens: 65_536 },
       { id: 'qwen3.6-flash', contextWindow: 1_000_000, maxOutputTokens: 65_536 },
       {
+        id: 'glm-5.3',
+        contextWindow: 1_048_576,
+        maxOutputTokens: 131_072,
+        reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
+      },
+      {
         id: 'glm-5.2',
         contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['high', 'max'] }
       },
       {
+        id: 'deepseek-v4.1-flash',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 393_216,
+        reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
+      },
+      {
+        id: 'deepseek-v4.1-flash-1017',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 393_216
+      },
+      {
         id: 'deepseek-v4-pro',
         contextWindow: 1_000_000,
         maxOutputTokens: 384_000,
         reasoningEffort: { supported: true, values: ['high', 'max'] }
+      },
+      {
+        id: 'deepseek-v4-pro-0813',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 393_216,
+        reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
         id: 'deepseek-v4-flash-0731',
@@ -302,7 +351,15 @@ const definitions: readonly OfficialVendor[] = [
       }
     ],
     multimodal: {
-      multimodalModels: ['qwen3.8-max', 'qwen3.8-max-preview', 'qwen3.7-plus', 'qwen3.6-flash']
+      multimodalModels: [
+        'qwen3.8-max',
+        'qwen4-max-preview',
+        'qwen3.8-flash',
+        'deepseek-v4.1-flash',
+        'deepseek-v4.1-flash-1017',
+        'qwen3.7-plus',
+        'qwen3.6-flash'
+      ]
     }
   },
   {
@@ -331,13 +388,13 @@ const definitions: readonly OfficialVendor[] = [
     ],
     models: [
       {
-        id: 'glm-5.3',
+        id: 'glm-5.3-flash',
         contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
-        id: 'glm-5.3-flash',
+        id: 'glm-5.3',
         contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
@@ -389,13 +446,13 @@ const definitions: readonly OfficialVendor[] = [
     // The coding plan omits glm-5v-turbo, but serves the natively multimodal GLM-5.3-Flash.
     models: [
       {
-        id: 'glm-5.3',
+        id: 'glm-5.3-flash',
         contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
-        id: 'glm-5.3-flash',
+        id: 'glm-5.3',
         contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
@@ -425,7 +482,6 @@ const definitions: readonly OfficialVendor[] = [
     apiKeyUrl: 'https://platform.kimi.com/console',
     modelsListUrl: 'https://api.moonshot.cn/v1/models',
     models: [
-      { id: 'kimi-k3', contextWindow: 1_000_000, maxOutputTokens: 1_048_576 },
       // https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart
       {
         id: 'kimi-k3.1-pro',
@@ -433,6 +489,7 @@ const definitions: readonly OfficialVendor[] = [
         maxOutputTokens: 1_048_576,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
+      { id: 'kimi-k3', contextWindow: 1_000_000, maxOutputTokens: 1_048_576 },
       {
         id: 'kimi-k3.1-pro-highspeed',
         contextWindow: 1_048_576,
@@ -459,6 +516,9 @@ const definitions: readonly OfficialVendor[] = [
     chatCompletionsBaseUrl: 'https://api.kimi.com/coding/v1',
     apiKeyUrl: 'https://www.kimi.com/code/docs',
     models: [
+      // The coding subscription uses an unprefixed ID and grants up to 1M context by plan.
+      // https://www.kimi.com/code/docs/en/kimi-code/models.html
+      { id: 'k3.1-pro', contextWindow: 1_048_576 },
       {
         id: 'kimi-k3',
         contextWindow: 1_000_000,
@@ -467,8 +527,7 @@ const definitions: readonly OfficialVendor[] = [
       { id: 'kimi-for-coding', contextWindow: 1_048_576, maxOutputTokens: 32_768 },
       { id: 'kimi-for-coding-highspeed', contextWindow: 256_000, maxOutputTokens: 32_768 }
     ],
-    // Only the k3 model in this plan is vision-capable; the coding-tuned ids are text-only.
-    multimodal: { multimodalModels: ['kimi-k3', 'kimi-for-coding'] }
+    multimodal: { multimodalModels: ['k3.1-pro', 'kimi-k3', 'kimi-for-coding'] }
   },
   {
     id: 'minimax',
@@ -496,20 +555,19 @@ const definitions: readonly OfficialVendor[] = [
       }
     ],
     models: [
+      // M3.1 always thinks and supports five effort levels (default: max).
+      // https://platform.minimax.cn/docs/guides/text-generation
+      {
+        id: 'MiniMax-M3.1-Flash',
+        contextWindow: 1_000_000,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
+      },
       // MiniMax documents M3 reasoning as a binary thinking switch: none disables thinking and high
       // enables Adaptive Thinking. Older M2 models remain conservative until documented otherwise.
       {
         id: 'MiniMax-M3',
         contextWindow: 1_000_000,
         reasoningEffort: { supported: true, values: ['none', 'high'] }
-      },
-      // M3.1 always thinks and supports five effort levels (default: max). Keep M3 as the
-      // default and retain the Preview id for existing selections.
-      // https://platform.minimax.cn/docs/guides/text-generation
-      {
-        id: 'MiniMax-M3.1-Flash',
-        contextWindow: 1_000_000,
-        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'MiniMax-M3.1-Flash-Preview',

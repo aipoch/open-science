@@ -1,4 +1,4 @@
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import { MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID } from '../../shared/lifecycle-events'
 import { SandboxNetworkApprovalOwner } from '../acp/sandbox-network-approval-owner'
 import { broadcastToRenderers } from '../renderer-broadcast'
@@ -24,7 +24,12 @@ import {
   withSessionDeletionCleanup,
   type SessionPersistenceBackend
 } from '../session-persistence/ipc'
+import {
+  DeferredSessionRecovery,
+  type RecoveredSessionReference
+} from '../session-persistence/deferred-recovery'
 import { SessionProjectionDiagnostics } from '../session-persistence/projection-diagnostics'
+import { selectSessionDetailsStartupCandidates } from '../session-details/startup-catalog'
 import { SettingsService } from '../settings/service'
 import { WslSetupSessionOwner } from '../wsl/wsl-setup-session-owner'
 
@@ -51,6 +56,13 @@ export function composeSessionProjection({
     | 'loadSessionForContinuation'
     | 'containsMessageOnActiveBranch'
     | 'deleteSession'
+    | 'recoverStartupSession'
+    | 'prepareSessionRecovery'
+    | 'commitSessionRecovery'
+    | 'recoveryCatalogGeneration'
+    | 'reconcileRecoveryCatalog'
+    | 'cleanupRecoveredSession'
+    | 'runSessionMutation'
     | 'loadAll'
     | 'loadAllReadOnly'
     | 'replaceSessionMetadata'
@@ -71,14 +83,24 @@ export function composeSessionProjection({
   sandboxNetworkApprovalOwner: SandboxNetworkApprovalOwner
   pendingSpecialistBindings: PendingSessionSpecialistBindings
   loadAllSessions: () => Promise<LoadAllSessionsResult>
+  loadStartupSessions: () => Promise<PersistedChatSession[]>
+  createDeferredRecovery: (
+    recoverDetails: (session: PersistedChatSession) => Promise<void>,
+    complete?: (
+      sessions: readonly RecoveredSessionReference[],
+      cancelled: () => boolean
+    ) => Promise<void>
+  ) => DeferredSessionRecovery
   startupSessionDetails: { current: LoadAllSessionsResult['sessions'] | undefined }
   ensureSessionProjection: () => Promise<{
     result?: LoadAllSessionsResult
+    recoveredSessions?: PersistedChatSession[]
     sessions: SessionSummary[]
   }>
   sessionPersistenceBackend: ReturnType<typeof coordinateSessionPersistenceWithProjectDeletions>
 } {
   const log = createLogger('session-network-approval')
+  const recoveryStartupCutoff = Date.now()
   // One host owner is shared by hydration and every provider runtime. Recovery must not
   // mistake another runtime's in-flight Settings transaction for an abandoned decision.
   const sandboxNetworkApprovalOwner = new SandboxNetworkApprovalOwner(
@@ -169,8 +191,10 @@ export function composeSessionProjection({
   }
   const ensureSessionProjection = async (): Promise<{
     result?: LoadAllSessionsResult
+    recoveredSessions?: PersistedChatSession[]
     sessions: SessionSummary[]
   }> => {
+    const metadataGeneration = sessionPersistenceCoordinator.recoveryCatalogGeneration()
     // Reconcile a JSON write from a committed Project tombstone before deletion recovery removes
     // that temporary authority. Its SQLite facts remain part of retained Project history.
     await sessionRepository.reconcilePendingSessionProjection()
@@ -178,13 +202,21 @@ export function composeSessionProjection({
     if (!recovery.isComplete) {
       const result = recovery.result
       const sessions = await sessionRepository.summarizeReadOnlyAuthority(result)
-      await sessionPersistenceCoordinator.replaceSessionMetadata(sessions, false)
+      await sessionPersistenceCoordinator.replaceSessionMetadata(
+        sessions,
+        false,
+        metadataGeneration
+      )
       return { result, sessions: await wslSetupSessions.projectSessionSummaries(sessions) }
     }
     const projection = await sessionRepository.ensureSessionProjection(loadAllSessions)
     const result = projection.result
     const catalogComplete = result ? canReconcileSessionAbsences(result) : true
-    await sessionPersistenceCoordinator.replaceSessionMetadata(projection.sessions, catalogComplete)
+    await sessionPersistenceCoordinator.replaceSessionMetadata(
+      projection.sessions,
+      catalogComplete,
+      metadataGeneration
+    )
     if (catalogComplete) await reconcileWslSetupSessions(projection.sessions)
     return {
       ...projection,
@@ -289,6 +321,150 @@ export function composeSessionProjection({
       return sessionPersistenceCoordinator.saveManifest(request)
     }
   }
+  const loadStartupSessions = async (): Promise<PersistedChatSession[]> => {
+    const startedAt = performance.now()
+    const projection = await ensureSessionProjection()
+    // An exceptional complete rebuild has already performed recovery. Never reinterpret a
+    // failed/incomplete catalog as a complete candidate set for mutating details recovery.
+    if (projection.result && !canReconcileSessionAbsences(projection.result)) return []
+    const candidates =
+      projection.recoveredSessions ??
+      (projection.result ? selectSessionDetailsStartupCandidates(projection.result) : undefined) ??
+      []
+    const manifest = projection.result?.manifest ?? (await sessionRepository.loadManifest())
+    const selected = projection.sessions.find((summary) => summary.id === manifest.lastSessionId)
+    if (selected && !candidates.some((session) => session.id === selected.id)) {
+      const session = selected.needsStartupRecovery
+        ? await sessionPersistenceCoordinator.recoverStartupSession(selected.projectId, selected.id)
+        : await uncoordinatedSessionPersistenceBackend.loadOne({
+            projectId: selected.projectId,
+            sessionId: selected.id
+          })
+      if (session) candidates.push(session)
+    }
+    createLogger('session-persistence').info('startup Session catalog hydrated', {
+      mode: 'startup',
+      durationMs: performance.now() - startedAt,
+      summaryCount: projection.sessions.length,
+      hydratedCount: candidates.length,
+      rebuiltCatalog: projection.result !== undefined
+    })
+    return candidates
+  }
+  const completeRecoveryCatalog = async (
+    references: readonly RecoveredSessionReference[],
+    cancelled: () => boolean
+  ): Promise<void> => {
+    const recoveryLog = createLogger('session-persistence')
+    const skipped = (reason: string, sessionId?: string): void => {
+      recoveryLog.info('deferred Session catalog cleanup skipped', {
+        mode: 'background',
+        reason,
+        sessionId,
+        sessionCount: references.length
+      })
+    }
+    await projectDeletionCoordinator.recoverPendingDeletions()
+    if (cancelled()) return
+    const generation = sessionPersistenceCoordinator.recoveryCatalogGeneration()
+    const snapshot = await sessionRepository.scanSessionIdentities()
+    if (cancelled()) return
+    if (!snapshot.isComplete) {
+      skipped('incomplete-catalog')
+      return
+    }
+    const summaries = await sessionRepository.loadSessionSummaries()
+    const refs = new Map(references.map((session) => [session.id, session]))
+    // Earlier sweep entries may already be stale. Completeness alone is insufficient for cwd
+    // cleanup; every reference must still describe the latest durable revision and identity.
+    if (
+      snapshot.sessions.length !== refs.size ||
+      summaries.length !== refs.size ||
+      !snapshot.sessions.every(({ projectId, id }) => refs.get(id)?.projectId === projectId) ||
+      !summaries.every((summary) => refs.get(summary.id)?.revision === summary.revision)
+    ) {
+      skipped('stale-references')
+      return
+    }
+    const guard = (operation: () => Promise<void>): Promise<boolean> =>
+      sessionRepository.runWithSessionCatalogSnapshot(snapshot, operation)
+    const failures: unknown[] = []
+    for (const reference of references) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      if (cancelled()) return
+      try {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          if (cancelled()) return
+          const prepared = await sessionPersistenceCoordinator.prepareSessionRecovery(
+            reference.projectId,
+            reference.id
+          )
+          if (prepared?.status !== 'prepared' || prepared.expectedRevision !== reference.revision) {
+            skipped('session-authority-changed', reference.id)
+            return
+          }
+          const result = await sessionPersistenceCoordinator.cleanupRecoveredSession(
+            prepared,
+            generation,
+            guard,
+            recoveryStartupCutoff,
+            cancelled
+          )
+          if (result === 'stale') {
+            skipped('catalog-or-session-changed', reference.id)
+            return
+          }
+          if (result === 'complete') break
+          if (attempt === 2) throw new Error('Deferred Session source cleanup remains busy.')
+          await new Promise<void>((resolve) => setTimeout(resolve, attempt === 0 ? 250 : 1000))
+        }
+      } catch (error) {
+        recoveryLog.warn('deferred Session source cleanup failed', {
+          ...diagnosticErrorFields(error),
+          mode: 'background',
+          projectId: reference.projectId,
+          sessionId: reference.id
+        })
+        failures.push(error)
+      }
+    }
+    const reconciled = await sessionPersistenceCoordinator.reconcileRecoveryCatalog(
+      references,
+      generation,
+      guard,
+      cancelled
+    )
+    if (!reconciled && !cancelled()) skipped('catalog-changed')
+    if (failures.length)
+      throw new AggregateError(failures, 'Deferred Session source cleanup is incomplete.')
+  }
+
+  const createDeferredRecovery = (
+    recoverDetails: (session: PersistedChatSession) => Promise<void>,
+    complete: (
+      sessions: readonly RecoveredSessionReference[],
+      cancelled: () => boolean
+    ) => Promise<void> = completeRecoveryCatalog
+  ): DeferredSessionRecovery =>
+    new DeferredSessionRecovery({
+      list: async () => (await ensureSessionProjection()).sessions,
+      prepare: (projectId, sessionId) =>
+        sessionPersistenceCoordinator.prepareSessionRecovery(projectId, sessionId),
+      missing: (projectId, sessionId) =>
+        sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, () =>
+          sessionRepository.reconcileMissingSessionProjection(projectId, sessionId)
+        ),
+      commit: (prepared) => sessionPersistenceCoordinator.commitSessionRecovery(prepared),
+      recovered: async (session) => {
+        const reconciled = sessionEnabledComputeHostsOwnerRef.current
+          ? await sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)
+          : session
+        const recovered = await sandboxNetworkApprovalOwner.recoverSession(reconciled)
+        await recoverDetails(recovered)
+        return recovered
+      },
+      complete
+    })
   const sessionPersistenceBackend = coordinateSessionPersistenceWithProjectDeletions(
     uncoordinatedSessionPersistenceBackend,
     projectDeletionCoordinator
@@ -297,6 +473,8 @@ export function composeSessionProjection({
     sandboxNetworkApprovalOwner,
     pendingSpecialistBindings,
     loadAllSessions,
+    loadStartupSessions,
+    createDeferredRecovery,
     startupSessionDetails,
     ensureSessionProjection,
     sessionPersistenceBackend

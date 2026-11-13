@@ -3,6 +3,7 @@ import { isDeepStrictEqual as navigationSourceExact } from 'node:util'
 import { inside } from './literature-pdf-table-geometry.mjs'
 import { area, intersection } from './literature-pdf-page-geometry.mjs'
 import { hasNativeNonTableLayout } from './literature-pdf-native-non-table-layout.mjs'
+import { hasNativeBulletFormulaList } from './literature-pdf-native-bullet-formulas.mjs'
 import { joinHorizontalTableRules, classifyTableRuleEdge } from './literature-pdf-table-rules.mjs'
 import { groupSourceRowsWithScripts } from './literature-pdf-source-records.mjs'
 import { proveNativeClosedLeafHeader } from './literature-pdf-native-header-grid.mjs'
@@ -2260,11 +2261,11 @@ function isCaptionlessEquationBand(table, items, rules = []) {
     .map((text) => text.trim())
     .filter(Boolean)
   if (values.length < 4) return false
-  const mathValues = values.filter((text) => /[=∈≤≥∑∫∇√∞⋆−+*\/^]/u.test(text))
+  const mathValues = values.filter((text) => /[=↔∈≤≥∑∫∇√∞⋆−+*\/^]/u.test(text))
   // A bare integer is common in sample-count and index columns. Treat only a
   // parenthesized equation label as display-equation evidence; otherwise a
   // legitimate formula-valued table can be discarded as an uncaptioned band.
-  const ordinals = values.filter((text) => /^\(\d+(?:\.\d+)*\)$/u.test(text))
+  const ordinals = values.filter((text) => /^\(\d+(?:\.\d+)*[a-z]?\)$/u.test(text))
   const proseLabels = values.filter(
     (text) =>
       /\b(?:leader|follower|pauses|advances|method|content|attribute|benchmark|task|total)\b/iu.test(
@@ -2273,8 +2274,26 @@ function isCaptionlessEquationBand(table, items, rules = []) {
   )
   if (mathValues.length < 3 || ordinals.length === 0 || proseLabels.length > 0) return false
   const source = (items ?? []).filter((item) => item.text?.trim() && inside(table.cropRect, item))
+  const suffixed = ordinals.filter((text) => /[a-z]\)$/u.test(text))
+  if (suffixed.length) {
+    const labels = source.filter((item) => suffixed.includes(item.text.trim()))
+    if (
+      labels.length < 2 ||
+      labels.some(
+        (label) =>
+          !Number.isFinite(label.baseline) ||
+          !source.some(
+            (item) =>
+              /^[=↔]$/u.test(item.text.trim()) &&
+              item.rect[2] < label.rect[0] &&
+              Math.abs(item.baseline - label.baseline) < Math.min(item.height, label.height) * 0.2
+          )
+      )
+    )
+      return false
+  }
   return (
-    source.length > 0 && source.filter((item) => /[=∈≤≥∑∫∇√∞⋆−+*\/^]/u.test(item.text)).length >= 3
+    source.length > 0 && source.filter((item) => /[=↔∈≤≥∑∫∇√∞⋆−+*\/^]/u.test(item.text)).length >= 3
   )
 }
 
@@ -4245,6 +4264,7 @@ export function hasTableEvidence(
   if (isNativeCodeListing(table, caption, pageItems)) return false
   if (isCaptionlessRuledActionListing(table, caption, pageItems, sourceRules)) return false
   if (caption) return true
+  if (hasNativeBulletFormulaList(table, pageItems, sourceRules)) return false
   if (isNativeBibliographyWithAffiliationMarkers(table, pageItems)) return false
   if (hasNativeNonTableLayout(table, pageItems, sourceRules)) return false
   if (

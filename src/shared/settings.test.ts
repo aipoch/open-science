@@ -1,3 +1,4 @@
+import { providerValidationSucceeded, providerValidationTargetMatches } from './settings'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { isModelBridgeSupported } from './provider-bridge-policy'
@@ -45,6 +46,27 @@ describe('canUseClaudeProviderTransport', () => {
         baseUrl: 'https://gateway.example/v1'
       })
     ).toBe(false)
+  })
+})
+
+describe('native provider validation evidence', () => {
+  it('applies HTTP evidence across frameworks but keeps ACP evidence on its exact route', () => {
+    const http = { model: 'm', endpoint: 'responses' as const }
+    const native = { ...http, frameworkId: 'codex' as const, route: 'codex-responses' as const }
+    const compatibility = { ...native, route: 'codex-responses-compatibility' as const }
+    const other = { ...http, frameworkId: 'pi' as const, route: 'pi' as const }
+    expect(
+      providerValidationSucceeded({ lastValidatedAt: 10, lastValidatedTarget: http }, native)
+    ).toBe(true)
+    const provider = { lastValidatedAt: 10, lastValidatedTarget: native }
+    expect(providerValidationSucceeded(provider, native)).toBe(true)
+    expect(providerValidationSucceeded(provider, http)).toBe(false)
+    expect(providerValidationSucceeded(provider, compatibility)).toBe(false)
+    expect(providerValidationSucceeded(provider, other)).toBe(false)
+    expect(providerValidationTargetMatches(native, http)).toBe(false)
+    const failed = { ...provider, lastValidationFailure: { at: 5, category: 'auth' as const } }
+    expect(providerValidationFailed(failed, native)).toBe(false)
+    expect(providerValidationFailed(failed, other)).toBe(true)
   })
 })
 

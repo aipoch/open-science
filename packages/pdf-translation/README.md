@@ -101,6 +101,11 @@ The fixed-layout reader also rebuilds a page with original text if post-generati
 that fallback is checked again, is never published as the translated cache, and runs at most once
 per affected page in an automatic recovery sequence.
 
+Two-line numeric drop caps need complete native ownership of the next fragment and its returning
+body line. Only this proven pair of overlapping source rectangles can be joined in the writer's
+working copy; source, paint, clipping, links and collision checks run again before export.
+Saved source units and paragraph indices stay unchanged.
+
 The desktop translation settings offer an opt-in **Content first** checkbox (off by default).
 Its `contentFirst` value is saved in each translation checkpoint and restored when reopening or
 switching editions. Historical checkpoints without the option preserve the original PDF layout.
@@ -148,19 +153,24 @@ translated text at those placements, uses them for navigation/highlights, and ex
 Reflow candidates bypass the fixed-layout cache. This local step reuses saved text and makes no
 inference requests.
 
-Reflow checks native text directions before pagination. Rotated pages and pages with
-unsupported text directions retain their complete original page once, including all pages
-connected by a translated cross-page paragraph. Other pages continue to use translated text.
-The sidebar reports the retained source pages; accepted translations remain readable there.
+Reflow checks native text directions before pagination. A complete, uniquely owned native text
+object with an unsupported direction can remain in an original image crop while independent
+body text reflows. This preserves isolated margin text and diagram axis labels. The actual rounded
+crop must avoid translated fragments and other native text, and must be large enough to be emitted.
+Rotated pages and ambiguous, overlapping or unsupported objects retain their complete original
+page once, including all pages connected by a translated cross-page paragraph. Other pages continue
+to use translated text. The sidebar reports retained source pages; accepted translations remain
+readable there.
 
 URI links and direct/named internal destinations are recreated against the output pages.
 Literal or verified scientific link labels follow their translated line positions; links inside
 retained graphics follow the crop transform. Links from copied pages are also rebuilt so they
-cannot point at orphan copies of the old page tree. When a translated link position cannot be
-proved, the original page is retained with an `annotations` diagnostic. Fallback extends
-across joined paragraphs and connected links so both endpoints remain valid. Internal targets
+cannot point at orphan copies of the old page tree. When a translated link endpoint cannot be
+proved, its original page is retained with an `annotations` diagnostic. One local retry extends
+that copy across joined paragraphs and remaps every link. If mapping still fails, fallback keeps
+the connected link component so both endpoints remain valid. Internal targets
 require a unique owning paragraph or crop; a nearest-paragraph guess is not used. Unresolved
-destinations or unsupported link actions retain the complete original document and report the
+source destinations or unsupported link actions retain the complete original document and report the
 limitation rather than publish an output with silently missing links. Existing broken links are
 not repaired. No extra source-links area is added to the translated document.
 Non-link annotations (including comments, highlights and widgets) and AcroForm structures

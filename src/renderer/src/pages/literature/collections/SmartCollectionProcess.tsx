@@ -765,7 +765,8 @@ function RunProcess({
                     rows: review,
                     slot: 'screening-review',
                     icon: CircleAlert,
-                    iconClassName: 'size-4 shrink-0 text-status-warning-foreground'
+                    iconClassName:
+                      'size-4 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground'
                   },
                   {
                     label: t('Failed / unavailable'),

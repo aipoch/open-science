@@ -2519,3 +2519,95 @@ it.each(['multiline', 'double-bar', 'foreign', 'type3-gap', 'numeral-font'])(
       }
   }
 )
+
+it.each([
+  'owned',
+  'crossing',
+  'missing-owner',
+  'native-alias',
+  'segment-alias',
+  'inventory-segment-alias'
+])('reconciles stale clipping only for one complete native cell owner: %s', (kind) => {
+  const f = font('Heading', 20, 20, 0, 40),
+    inventory = [f]
+  const t = {
+    ...table([cell(0, 0, [f])]),
+    clipped: [{ text: f.text, rect: [...f.rect] }],
+    issues: ['text-crosses-crop-boundary'],
+    reviewCandidate: false
+  }
+  if (kind === 'crossing') t.cropRect[0] = 30
+  if (kind === 'missing-owner') t.cells[0].sourceItems = []
+  if (kind === 'native-alias') inventory.push({ ...f })
+  if (kind === 'inventory-segment-alias')
+    inventory.push({
+      ...f,
+      text: 'part',
+      sourceItem: undefined,
+      sourceSegment: { ...f.sourceItem, start: 0, end: 1 }
+    } as unknown as Font)
+  if (kind === 'segment-alias')
+    (t.cells[0] as ReturnType<typeof cell> & { sourceSegments?: unknown[] }).sourceSegments = [
+      { ...f.sourceItem, start: 0, end: 1 }
+    ]
+  const result = reviewFinalNativeTableSources(t, inventory, [], [], {})
+  expect(result.clipped).toHaveLength(kind === 'owned' ? 0 : 1)
+  expect(result.issues.includes('text-crosses-crop-boundary')).toBe(kind !== 'owned')
+})
+
+it.each(['closing-rule', 'missing-rule', 'missing-rules', 'crossing-caption'])(
+  'drops a historical external caption clip only beyond a complete native closing: %s',
+  (kind) => {
+    const f = font('42', 20, 20, 0),
+      caption = font('Figure 2. Independent result.', 10, 120, 1, 160)
+    const t = {
+      ...table([cell(0, 0, [f])]),
+      cropRect: [0, 0, 300, 100],
+      clipped: [{ text: caption.text, rect: [...caption.rect] }],
+      issues: ['text-crosses-crop-boundary'],
+      reviewCandidate: false
+    }
+    if (kind === 'crossing-caption') t.cropRect[3] = 125
+    const rules =
+      kind === 'missing-rules' ? undefined : kind === 'missing-rule' ? [] : [[0, 90, 300, 90]]
+    const result = reviewFinalNativeTableSources(t, [f, caption], rules, [], {})
+    expect(result.clipped).toHaveLength(kind === 'closing-rule' ? 0 : 1)
+  }
+)
+
+it('keeps a remaining clipping warning when historical issues metadata is absent', () => {
+  const owned = font('Heading', 20, 20, 0, 40),
+    crossing = font('Other', 290, 40, 1, 30)
+  const t = {
+    ...table([cell(0, 0, [owned])]),
+    issues: undefined,
+    clipped: [owned, crossing].map((f) => ({ text: f.text, rect: f.rect }))
+  }
+  const result = reviewFinalNativeTableSources(t, [owned, crossing], undefined, [], {})
+  expect(result.clipped).toHaveLength(1)
+  expect(result.issues).toContain('text-crosses-crop-boundary')
+  expect(result.reviewCandidate).toBe(false)
+})
+
+it('publishes clipping reconciliation consistently for grouped table parts', () => {
+  const f = font('Heading', 20, 20, 0, 40)
+  const part = {
+    ...table([cell(0, 0, [f])]),
+    clipped: [{ text: f.text, rect: f.rect }],
+    issues: ['text-crosses-crop-boundary'],
+    reviewCandidate: false
+  }
+  const original = structuredClone(part)
+  const result = reviewFinalNativeTableSources(
+    { cropRect: part.cropRect, parts: [part] },
+    [f],
+    [],
+    [],
+    {}
+  )
+  expect(result.parts[0].clipped).toEqual([])
+  expect(result.parts[0].issues).toEqual([])
+  expect(result.parts[0].reviewCandidate).toBe(true)
+  expect(result.parts[0].repairs).toContain('native-final-clipping-reconciled')
+  expect(part).toEqual(original)
+})

@@ -16,6 +16,7 @@ import {
   type SessionUsageProjection
 } from '../../shared/session-persistence'
 import { deriveSessionAttention } from '../../shared/session-persistence'
+import { hasLegacySessionUpload } from './legacy-upload'
 
 // Session projection writes contend with upload publication and other metadata writes on the
 // shared single-connection SQLite client. Keep transaction admission bounded, but allow the
@@ -53,7 +54,8 @@ const runProjectionTransaction = async <Result>(
 }
 
 const PROJECTION_STATE_ID = 'session-projection'
-const PROJECTION_VERSION = 7
+// Rebuild the derived catalog once so older rows discover all pending recovery work.
+const PROJECTION_VERSION = 8
 const SESSION_NUMBER_SEQUENCE_ID = 'global'
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
 const MAX_SQLITE_INT = 2_147_483_647
@@ -474,6 +476,21 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
         !session.packageOrigin &&
         (session.activeRun !== undefined ||
           session.status === 'running' ||
+          session.status === 'waiting-permission' ||
+          session.runtimeContext?.permission?.state === 'pending' ||
+          session.runtimeContext?.networkApprovals?.some(
+            (approval) => approval.state === 'pending' || approval.state === 'continuing'
+          ) ||
+          session.promptPreparation !== undefined ||
+          (session.sessionDetailsGenerationEligible === true &&
+            !session.sessionDetailsGeneration &&
+            session.sessionDetailsSource !== 'manual') ||
+          session.sessionDetailsGeneration?.status === 'queued' ||
+          session.sessionDetailsGeneration?.status === 'running' ||
+          (session.sessionDetailsGeneration?.status === 'failed' &&
+            session.sessionDetailsGeneration.startedAt === undefined &&
+            session.sessionDetailsSource === 'fallback') ||
+          hasLegacySessionUpload(session) ||
           hasCurrentRunningDelegatedAttempt(session) ||
           hasPendingArtifact(session))
     },

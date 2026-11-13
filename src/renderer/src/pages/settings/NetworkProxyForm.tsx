@@ -185,7 +185,10 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
         </InlineNotice>
       ) : null}
       {isSuccess ? (
-        <p className="flex items-center gap-1.5 text-xs text-success-000" role="status">
+        <p
+          className="flex items-center gap-1.5 text-xs text-status-success-foreground dark:text-status-success-dark-foreground"
+          role="status"
+        >
           <CheckCircle2 className="size-4" aria-hidden="true" />
           {t('Proxy settings saved.')}
         </p>

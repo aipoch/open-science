@@ -7,10 +7,14 @@ import {
   closeMainAgentProcessOwnership
 } from './acp/main-agent-process-ownership'
 import { DelegatedProcessOwnership } from './delegation/process-ownership'
-import { inspectRuntimeWindowsProcessIds } from './process-tree-windows'
+import {
+  captureRuntimeWindowsProcessCleanup,
+  inspectRuntimeWindowsProcessIds
+} from './process-tree-windows'
 import {
   createLocalServiceLifetime,
   LOCAL_SERVICE_STOP_BUDGET_MS,
+  LOCAL_SERVICE_STOP_ESCALATION_MS,
   serviceStopDeadline
 } from './local-service-lifetime'
 import { installNodeFatalErrors } from './node-fatal-errors'
@@ -43,7 +47,9 @@ import {
   prepareCredentialValidation,
   selectStartupCredentialIdentity
 } from './credential-identity/bootstrap'
+import { readCredentialCiphertexts } from './credential-identity/ciphertext-inventory'
 import { consumeCredentialInventoryFromEnv } from './credential-identity/inventory-handoff'
+import { selectDefaultCliCredentialProfile } from './credential-identity/legacy-cli-profile'
 import {
   createNodeSecureStorageCipher,
   initializeNodeWindowsProfileKey
@@ -97,6 +103,18 @@ import { resolveElectronProfile } from './storage/electron-profile'
 import { cancelMigrationForQuit, isMigrationInProgress } from './storage/migration-state'
 import { parseWebModeOptions } from './web-service/options'
 
+// Packaged migration certification reads this launch's SQLite verification, and the CLI
+// surfaces terminal errors even if the process exits before the canonical queue flushes.
+const captureOptions =
+  process.env.OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT === '1'
+    ? {
+        mirrorToConsole: (scope: string, message: string) =>
+          (scope === 'main' && message.startsWith('database runtime verified: sqlite_version=')) ||
+          (scope === 'node-runtime' &&
+            (message === 'startup failed' || message === 'fatal local service failure'))
+      }
+    : {}
+
 const startupReporter = createBackendStartupReporter()
 // Helpers retain their own protocol and exit contract. Install before asynchronous bootstrap so
 // early failures cannot escape the same diagnostic-and-exit path as runtime failures.
@@ -147,6 +165,7 @@ async function main(): Promise<void> {
   // Credential preflight can fail before full application diagnostics are initialized.
   initLogger({
     logDir: join(configRoot, 'logs'),
+    ...captureOptions,
     consoleFormat: process.stdout.isTTY ? 'text' : 'json'
   })
   const resourceRecording = new ResourceRecording(
@@ -218,12 +237,51 @@ async function main(): Promise<void> {
     if (stopRequested) throw new Error('Node runtime startup was cancelled by a shutdown request.')
   }
   let disconnectDatabase: (() => Promise<void>) | undefined
-  const stop = (deadlineAt = serviceStopDeadline()): Promise<void> => {
+  const stop = (deadlineAt = serviceStopDeadline(), forUpdate = false): Promise<void> => {
     stopRequested = true
     runtime?.applicationCommands.beginStopping()
     startupCancellation.abort()
     return (stopping ??= withRuntimeShutdownLifetime(async () => {
       lifetime?.close()
+      let failed = false
+      let cleanupTimer: ReturnType<typeof setTimeout> | undefined
+      let cleanup: ((final?: boolean) => Promise<void>) | undefined
+      if (forUpdate) {
+        try {
+          const reap = captureRuntimeWindowsProcessCleanup()
+          const cleanupDeadline = deadlineAt - LOCAL_SERVICE_STOP_ESCALATION_MS
+          let reaping: Promise<void> | undefined
+          cleanup = async (final = false) => {
+            if (reaping) {
+              await reaping
+              if (!final) return
+            }
+            reaping = reap(Math.min(cleanupDeadline, Date.now() + 4_000))
+              .catch((error) => {
+                failed = true
+                createLogger('node-runtime').error(
+                  'update process cleanup failed',
+                  diagnosticErrorFields(error)
+                )
+              })
+              .finally(() => {
+                reaping = undefined
+              })
+            await reaping
+          }
+          // A stuck disposer must not strand children when the Desktop escalates service stop.
+          cleanupTimer = setTimeout(
+            () => void cleanup!(),
+            Math.max(0, cleanupDeadline - Date.now() - 4_000)
+          )
+        } catch (error) {
+          failed = true
+          createLogger('node-runtime').error(
+            'update process ownership capture failed',
+            diagnosticErrorFields(error)
+          )
+        }
+      }
       // One process-wide deadline covers startup cancellation, preparation, every disposer and
       // the exit record. A failed drain is diagnostic; it cannot leave Node alive indefinitely.
       const deadline = setTimeout(
@@ -240,7 +298,6 @@ async function main(): Promise<void> {
         Math.max(1, deadlineAt - Date.now())
       )
       await startupFinished
-      let failed = false
       try {
         const outcome = preparationOutcome ?? (await runtime?.prepareForQuit())
         if (outcome && outcome !== 'completed') failed = true
@@ -260,6 +317,10 @@ async function main(): Promise<void> {
         () => runtime?.dispose(),
         () => closeMainAgentProcessOwnership(),
         () => disconnectDatabase?.(),
+        async () => {
+          clearTimeout(cleanupTimer)
+          await cleanup?.(true)
+        },
         () => network.close(),
         () => flushLogs()
       ]) {
@@ -340,9 +401,9 @@ async function main(): Promise<void> {
     explicitStart: !process.argv.includes('--desktop'),
     deferFirstConnectionTimeout: true,
     onStoppingAdmission: () => runtime?.applicationCommands.beginStopping(),
-    stop: (_reason, deadlineAt) => {
+    stop: (reason, deadlineAt) => {
       // Cancellation must be visible before an already-resolving startup await resumes.
-      void stop(deadlineAt).catch((error) => {
+      void stop(deadlineAt, reason === 'update').catch((error) => {
         throw error
       })
     },
@@ -401,6 +462,15 @@ async function main(): Promise<void> {
           ? join(home, 'Library', 'Application Support')
           : process.env.XDG_CONFIG_HOME || join(home, '.config')
     profilePath = resolveElectronProfile({ appData, configRoot, packaged })
+    const profileSelection = selectDefaultCliCredentialProfile({
+      home,
+      configRoot,
+      profilePath,
+      packaged,
+      credentialStore: getCredentialStore(),
+      startupAttemptId: backendStartupAttemptId
+    })
+    profilePath = profileSelection.profilePath
     const credentialBootstrapLease = acquireCredentialBootstrapLease({
       home,
       profilePath,
@@ -421,10 +491,19 @@ async function main(): Promise<void> {
         profilePath
       })
       abortStartupIfStopping()
+      // Candidate selection releases its temporary leases. Re-read under final ownership and
+      // retain the verified configuration/profile inventory so changed ciphertexts cannot hide.
+      const validationCiphertexts = profileSelection.validationCiphertexts
+        ? [
+            ...profileSelection.validationCiphertexts,
+            ...(preloadedCiphertexts ?? []),
+            ...readCredentialCiphertexts({ configRoot, profilePath })
+          ]
+        : preloadedCiphertexts
       const validateCredentials = prepareCredentialValidation(
         identity,
         { configRoot, profilePath },
-        preloadedCiphertexts
+        validationCiphertexts
       )
       if (identity.backend === 'windows-dpapi') {
         await initializeNodeWindowsProfileKey(profilePath)
@@ -443,6 +522,7 @@ async function main(): Promise<void> {
     }
     const diagnostics = initializeApplicationDiagnostics({
       logDir: join(configRoot, 'logs'),
+      ...captureOptions,
       consoleFormat: process.stdout.isTTY ? 'text' : 'json',
       version: metadata.version,
       isPackaged: packaged,
@@ -596,8 +676,10 @@ async function main(): Promise<void> {
         invoke: async (channel, invocation) => {
           if (channel === 'locale:snapshot') return localeOwner.snapshot()
           if (!runtime) throw new Error('The runtime is still starting.')
-          if (channel === 'desktop:update-inspect') return runtime.inspectDesktopUpdate()
-          if (channel === 'desktop:update-owned-processes') return inspectRuntimeWindowsProcessIds()
+          if (channel === 'desktop:update-inspect')
+            return runtime.inspectDesktopUpdate(invocation.callerLease.signal)
+          if (channel === 'desktop:update-owned-processes')
+            return inspectRuntimeWindowsProcessIds(invocation.callerLease.signal)
           if (channel === 'desktop:update-gate')
             return runtime.prepareDesktopUpdate(
               z

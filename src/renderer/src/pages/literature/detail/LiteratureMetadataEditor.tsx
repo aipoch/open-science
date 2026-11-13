@@ -428,7 +428,7 @@ const LiteratureMetadataEditor = ({
                 )}
           </p>
           {legacyDateConflict ? (
-            <p className="text-xs text-status-warning-foreground">
+            <p className="text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
               {t(
                 'The saved year and publication date disagree. Editing either field will reconcile them.'
               )}

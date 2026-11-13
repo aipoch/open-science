@@ -39,7 +39,7 @@ const fixtures: Array<{ identity: CredentialIdentity; prefix: string; hex: strin
 describe('Node OSCrypt-compatible cipher', () => {
   it.each([
     { delay: 0, scale: 1 },
-    { delay: 31_000, scale: 1 },
+    { delay: 31_000, scale: 10 },
     { delay: 240_000, scale: 100 }
   ])(
     'decrypts legacy ciphertext after $delay ms authorization (time scale $scale)',

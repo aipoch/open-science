@@ -50,8 +50,11 @@ describe('sandboxedPackageSpawn', () => {
     await spawn(process.execPath, ['-e', ''], {})
 
     const filesystem = vi.mocked(processSandbox.wrap).mock.calls[0]![0].filesystem
-    expect(filesystem.readWriteRoots).toContain(grantedRoot)
-    expect(filesystem.readOnlyRoots).toContain(grantedRoots[1]!.path)
+    expect(filesystem.readWriteRoots).not.toContain(grantedRoot)
+    expect(filesystem.readOnlyRoots).not.toContain(grantedRoots[1]!.path)
+    expect(filesystem.optionalReadWriteRoots).toContain(grantedRoot)
+    expect(filesystem.optionalReadOnlyRoots).toContain(grantedRoots[1]!.path)
+    expect(filesystem.readWriteRoots).toContain(runtimeRoot)
   })
 
   it.each(

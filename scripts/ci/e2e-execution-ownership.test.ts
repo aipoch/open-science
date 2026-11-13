@@ -18,21 +18,33 @@ const workflows =
   workflowSources +
   (workflowSources.includes('uses: ./.github/actions/source-regression') ? supplementalAction : '')
 
+const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts as Record<string, string>
+const regressionArgs = scripts['test:e2e:regressions'].split(/\s+/).slice(2)
+let regressionSuites: JSONReport['suites'] | undefined
+
+function listSuites(args: string[]): JSONReport['suites'] {
+  const regression =
+    args.length === regressionArgs.length && args.every((arg, i) => arg === regressionArgs[i])
+  if (regression && regressionSuites) return regressionSuites
+  const run = spawnSync(
+    process.execPath,
+    [require.resolve('@playwright/test/cli'), 'test', '--list', '--reporter=json', ...args],
+    { encoding: 'utf8', timeout: 30_000, maxBuffer: 10 * 1024 * 1024 }
+  )
+  expect(run.status, run.stderr).toBe(0)
+  const suites = (JSON.parse(run.stdout) as JSONReport).suites
+  if (regression) regressionSuites = suites
+  return suites
+}
+
 it('assigns every discovered Electron spec to a workflow-reachable command', () => {
-  const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts as Record<string, string>
   const collect = (args: string[]): string[] => {
-    const run = spawnSync(
-      process.execPath,
-      [require.resolve('@playwright/test/cli'), 'test', '--list', '--reporter=json', ...args],
-      { encoding: 'utf8', timeout: 20_000, maxBuffer: 10 * 1024 * 1024 }
-    )
-    expect(run.status, run.stderr).toBe(0)
     const visit = (suites: JSONReport['suites']): string[] =>
       suites.flatMap((suite) => [
         ...suite.specs.map((spec) => spec.file),
         ...visit(suite.suites ?? [])
       ])
-    return visit((JSON.parse(run.stdout) as JSONReport).suites)
+    return visit(listSuites(args))
   }
   const commands = Object.entries(scripts).filter(
     ([name, command]) =>
@@ -126,26 +138,7 @@ it.each(['regressions', 'delegation'])(
 )
 
 it('partitions complete supplemental discovery into capacity and six disjoint ordinary shards', () => {
-  const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts as Record<string, string>
-  const args = scripts['test:e2e:regressions'].split(/\s+/).slice(2)
   const collect = (selection: string[]): string[] => {
-    const run = spawnSync(
-      process.execPath,
-      [
-        require.resolve('@playwright/test/cli'),
-        'test',
-        ...args,
-        '--list',
-        '--reporter=json',
-        ...selection
-      ],
-      {
-        encoding: 'utf8',
-        timeout: 30_000,
-        maxBuffer: 10 * 1024 * 1024
-      }
-    )
-    expect(run.status, run.stderr).toBe(0)
     const visit = (suites: JSONReport['suites']): string[] =>
       suites.flatMap((suite) => [
         ...suite.specs.flatMap((spec) =>
@@ -153,7 +146,7 @@ it('partitions complete supplemental discovery into capacity and six disjoint or
         ),
         ...visit(suite.suites ?? [])
       ])
-    return visit((JSON.parse(run.stdout) as JSONReport).suites)
+    return visit(listSuites([...regressionArgs, ...selection]))
   }
   const original = collect([])
   const groups = [

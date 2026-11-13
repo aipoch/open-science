@@ -1308,6 +1308,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           onEscapeKeyDown={(event) => {
             // The inline guide owns Escape even after focus moves to another Settings control.
             if (dismissSettingsManualUpdateGuide(event)) return
+            // Let a pending network choice consume Escape before the dialog's capture handler closes it.
+            if (networkEditorLeaveState.current?.cancelPendingMode) {
+              event.preventDefault()
+              networkEditorLeaveState.current.cancelPendingMode()
+              return
+            }
             if (
               event.target instanceof Element &&
               event.target.closest('[data-testid="permission-undo-stack"]')

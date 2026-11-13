@@ -5,7 +5,7 @@ import { DISPATCH_DEFINITELY_NOT_STARTED, dispatchMayHaveStarted } from './compu
 import { probeRemoteLaunch } from './remote-launch-recovery'
 
 import { projectJobStatus } from './compute-job-status'
-import type { ComputeConnectionBrokerAcquirer } from './connection'
+import { ComputeConnectionError, type ComputeConnectionBrokerAcquirer } from './connection'
 import {
   ComputeHostUnavailableError,
   type ComputeJob,
@@ -21,13 +21,13 @@ import {
   type ComputeJobOperationScope
 } from './ports'
 import { parseRemoteJobHandle } from './remote-job-handle'
-import {
-  probeRemoteJobProcessOwnership,
-  terminateRemoteJobProcessIfOwned
-} from './remote-job-process'
+import { probeRemoteJobProcessOwnership, terminateRemoteJobProcess } from './remote-job-process'
 import { cancelSlurmJob, recoverSlurmJob } from './slurm-driver'
 
 const log = createLogger('compute-cancellation')
+
+// Allow delayed launch receipts to appear. The durable attempt count survives app restarts.
+const DIRECT_SSH_CANCEL_ATTEMPT_LIMIT = 3
 
 type RetryReason =
   | 'dispatch-in-flight'
@@ -196,7 +196,8 @@ class ComputeJobCancellationReaper {
       'cancel',
       this.now(),
       this.leaseMs,
-      this.makeLeaseToken()
+      this.makeLeaseToken(),
+      { deferDirectSshAttempt: true }
     )
     if (!claim) return false
     await this.reap(claim)
@@ -210,6 +211,8 @@ class ComputeJobCancellationReaper {
     if (!job) return
     let handle = parseRemoteJobHandle(job.remote_handle, job.remote_workdir)
 
+    const directSsh = (job.execution_mode ?? 'direct_ssh') === 'direct_ssh'
+    let exhaustedDirectSsh = false
     try {
       if (!handle && this.dispatchTracker.has(job.job_id)) {
         await this.scheduleRetry(claim, 'dispatch-in-flight')
@@ -221,6 +224,12 @@ class ComputeJobCancellationReaper {
         await this.confirm(claim)
         return
       }
+      if (directSsh) {
+        const attempt = await this.operations.beginAttempt(claim, this.now())
+        if (!attempt) return
+        claim = attempt
+        exhaustedDirectSsh = claim.operation.attemptCount >= DIRECT_SSH_CANCEL_ATTEMPT_LIMIT
+      }
       const connection = await this.connectionBroker.acquire(job.provider_id, {
         intent: 'job_cleanup'
       })
@@ -230,17 +239,11 @@ class ComputeJobCancellationReaper {
       }
       if (!handle && job.execution_mode !== 'slurm' && job.remote_workdir) {
         const observation = await probeRemoteLaunch(connection, job.remote_workdir)
-        if (observation.kind === 'not_started' && dispatchMayHaveStarted(job)) {
-          // A missing directory after a possible launch is not evidence that the process stopped.
-          // Keep the cancellation claim retryable; do not mark results harvested or cleaned.
-          await this.scheduleRetry(claim, 'handle-unavailable')
-          return
-        }
         if (observation.kind === 'running') {
           handle = observation.handle
           await this.jobs.recordCancellationHandle(job.job_id, JSON.stringify(handle))
         } else if (
-          observation.kind === 'not_started' ||
+          (observation.kind === 'not_started' && !dispatchMayHaveStarted(job)) ||
           observation.kind === 'exited' ||
           observation.kind === 'vanished'
         ) {
@@ -249,7 +252,7 @@ class ComputeJobCancellationReaper {
         }
       }
       if (!handle) {
-        await this.scheduleRetry(claim, 'handle-unavailable')
+        await this.retryUnidentifiedProcess(claim, 'handle-unavailable', exhaustedDirectSsh)
         return
       }
       if (handle.driver === 'slurm') {
@@ -292,20 +295,12 @@ class ComputeJobCancellationReaper {
             if (settled) await this.onConfirmed?.(claim.jobId)
             return
           }
-          case 'rejected': {
-            const error = { code: 'cancel_request_rejected', message: result.message }
-            const settled = await this.operations.settle(claim, this.now(), {
-              outcome: 'failed',
-              error
+          case 'rejected':
+            await this.failCancellation(claim, {
+              code: 'cancel_request_rejected',
+              message: result.message
             })
-            if (settled)
-              await this.onFailed?.(claim.jobId, {
-                operationId: settled.id,
-                revision: settled.revision,
-                error
-              })
             return
-          }
           case 'unavailable': {
             const settled = await this.operations.settle(claim, this.now(), {
               outcome: 'failed',
@@ -335,17 +330,58 @@ class ComputeJobCancellationReaper {
         return
       }
       if (ownership !== 'owned') {
-        await this.scheduleRetry(claim, 'ownership-unknown')
+        await this.retryUnidentifiedProcess(claim, 'ownership-unknown', exhaustedDirectSsh)
         return
       }
-      if (await terminateRemoteJobProcessIfOwned(handle.pid, handle.workdir, connection)) {
+      const termination = await terminateRemoteJobProcess(handle.pid, handle.workdir, connection)
+      if (termination === 'terminated') {
         await this.confirm(claim)
+        return
+      }
+      if (termination === 'ownership-unknown') {
+        await this.retryUnidentifiedProcess(claim, 'ownership-unknown', exhaustedDirectSsh)
         return
       }
       await this.scheduleRetry(claim, 'termination-unconfirmed')
     } catch (error) {
+      if (
+        exhaustedDirectSsh &&
+        error instanceof ComputeConnectionError &&
+        (error.code === 'host_unreachable' || error.code === 'timeout')
+      ) {
+        await this.failCancellation(claim, {
+          code: 'cancel_confirmation_failed',
+          message: 'Unable to reach the remote host to confirm cancellation.'
+        })
+        return
+      }
       await this.scheduleRetry(claim, 'operation-failed', error)
     }
+  }
+
+  private async retryUnidentifiedProcess(
+    claim: ClaimedComputeJobOperation,
+    reason: 'handle-unavailable' | 'ownership-unknown',
+    exhausted: boolean
+  ): Promise<void> {
+    if (!exhausted) return this.scheduleRetry(claim, reason)
+    await this.failCancellation(claim, {
+      code: 'cancel_confirmation_failed',
+      message: 'Unable to identify the remote process to confirm cancellation.'
+    })
+  }
+
+  private async failCancellation(
+    claim: ClaimedComputeJobOperation,
+    error: JobError
+  ): Promise<void> {
+    const settled = await this.operations.settle(claim, this.now(), { outcome: 'failed', error })
+    if (settled)
+      await this.onFailed?.(claim.jobId, {
+        operationId: settled.id,
+        revision: settled.revision,
+        error
+      })
   }
 
   private async scheduleRetry(
@@ -354,7 +390,9 @@ class ComputeJobCancellationReaper {
     error?: unknown
   ): Promise<void> {
     const now = this.now()
-    const retryAt = new Date(now.getTime() + this.retryDelayMs(claim.operation.attemptCount))
+    const retryAt = new Date(
+      now.getTime() + this.retryDelayMs(Math.max(1, claim.operation.attemptCount))
+    )
     if (await this.operations.retry(claim, now, retryAt)) {
       // Keep repeated outages diagnosable without logging credentials, commands, or remote paths.
       // Log the first attempt and powers of two so an offline host cannot flood the log forever.

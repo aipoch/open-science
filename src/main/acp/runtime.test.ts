@@ -1734,6 +1734,7 @@ describe('ACP runtime migration write-gate', () => {
             text: expect.stringContaining(capacityError),
             failure: {
               category: 'service',
+              responseMessage: capacityError,
               diagnostics: { code: 'overloaded_error', raw: `Internal error: ${capacityError}` }
             }
           })
@@ -9537,6 +9538,222 @@ describe('ACP runtime session management', () => {
         activities: [{ elicitation: { state: action === 'accept' ? 'answered' : 'declined' } }]
       })
       expect(persisted.activities?.[0].elicitation?.answers).toEqual(answers)
+    }
+  )
+
+  it.each([
+    ...(['answer-queued', 'preparation-write', 'admission-queued'] as const).flatMap((stage) =>
+      (['release', 'cancel', 'disconnect', 'storage-failure', 'timeout'] as const).map(
+        (outcome) => ({ stage, outcome })
+      )
+    ),
+    ...(['release', 'cancel', 'disconnect'] as const).map((outcome) => ({
+      stage: 'admission-writing' as const,
+      outcome
+    })),
+    { stage: 'slow-skill', outcome: 'release' } as const
+  ])(
+    'continues a saved answer across deferred storage ($stage, $outcome)',
+    async ({ stage, outcome }) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['restored-choice-session'])
+      let persisted = addPendingRestoredChoice(
+        createRestoredContinuationSession(
+          'prompt-restored-1',
+          'restored-choice-session',
+          'project-1'
+        )
+      )
+      const mutateRuntimeSession: SessionPersistenceCoordinator['mutateRuntimeSession'] = async (
+        _scope,
+        mutate
+      ) => {
+        persisted = mutate(structuredClone(persisted))
+        return structuredClone(persisted)
+      }
+      const writeRelease = createDeferred()
+      let blockStorage = false
+      let storageFailed = false
+      let continuing = false
+      const runtimeSessions = new RuntimeSessionOwner({
+        loadSession: async () => {
+          if (continuing && (stage === 'admission-queued' || stage === 'admission-writing'))
+            blockStorage = true
+          return structuredClone(persisted)
+        },
+        mutateSession: async (scope, mutate) => {
+          if (blockStorage && stage === 'admission-writing') {
+            // Once admission has begun changing durable authority, its result must be awaited.
+            const committed = await mutateRuntimeSession(scope, mutate)
+            await writeRelease.promise
+            return committed
+          }
+          if (blockStorage) await writeRelease.promise
+          if (storageFailed) throw new Error('Answer storage unavailable')
+          return mutateRuntimeSession(scope, mutate)
+        },
+        finalizeArtifacts: async () => []
+      })
+      const runtime = new AcpRuntime({
+        appVersion: 'test',
+        defaultCwd: '/workspace',
+        framework: opencodeFramework,
+        spawnAgent: () => asAgentProcess(process),
+        runtimeSessions,
+        callbacks: { onEvent: (event) => runtimeSessions.accept(event) },
+        resolveSpecialistIdentity: async () => ({ append: '', prefix: '' }),
+        resolveSpecialistSkills: async () => {
+          if (continuing) {
+            if (stage === 'preparation-write') {
+              blockStorage = true
+              const answer = runtime
+                .getSnapshot()
+                .events.find((event) => event.elicitation?.state === 'answered')!
+              runtimeSessions.accept({
+                ...answer,
+                id: 'answer-preparation-update',
+                timestamp: Date.now()
+              })
+            }
+            // Match the preparation window in which the normal delayed flush starts.
+            await new Promise((resolve) =>
+              setTimeout(resolve, stage === 'slow-skill' ? 35_000 : 2_100)
+            )
+          }
+          return {
+            kind: 'specialist',
+            skillIds: [],
+            frameworkNames: [],
+            missingSkillIds: []
+          }
+        },
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: vi.fn(async () => ({ version: 1 as const, revision: 0 })),
+            patchSessionRuntimeContext: vi.fn(),
+            containsMessageOnActiveBranch: vi.fn(),
+            sessionProjectId: async () => 'project-1',
+            loadSessionForContinuation: async () => structuredClone(persisted),
+            mutateRuntimeSession
+          }
+        }
+      })
+      await runtime.createSession({
+        cwd: '/workspace',
+        projectId: 'project-1',
+        specialistId: 'continuation-specialist'
+      })
+      const provenance = getActiveConversationContext(
+        persisted.conversationGraph!,
+        'prompt-restored-1'
+      )!
+      await runtimeSessions.begin({
+        ...provenance,
+        projectId: persisted.projectId,
+        sessionId: persisted.id,
+        executionId: 'previous-execution'
+      })
+      persisted = addPendingRestoredChoice(persisted)
+      persisted.runtimeTranscriptLastRun = persisted.activeRun
+      await runtimeSessions.commitTerminal(
+        {
+          ...provenance,
+          id: 'previous-terminal',
+          sessionId: persisted.id,
+          promptExecutionId: 'previous-execution',
+          kind: 'stop',
+          level: 'info',
+          text: 'end_turn',
+          timestamp: Date.now()
+        },
+        () => undefined
+      )
+      vi.useFakeTimers()
+      continuing = true
+      blockStorage = stage === 'answer-queued'
+      const projection = persisted.activities![0].elicitation!
+      const request = {
+        sessionId: persisted.id,
+        toolCallId: persisted.activities![0].id,
+        requestId: projection.durable!.requestId,
+        message: projection.message,
+        fields: projection.fields,
+        durable: projection.durable
+      }
+      try {
+        await runtime.respondToElicitation({
+          requestId: request.requestId,
+          action: 'accept',
+          answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+          request
+        })
+        await vi.advanceTimersByTimeAsync(6_000)
+        expect(runtime.getSnapshot().events).not.toContainEqual(
+          expect.objectContaining({ title: 'Could not continue the Agent task' })
+        )
+        expect(fakeAgent.prompts).toHaveLength(0)
+        expect(persisted.activities![0].elicitation).toMatchObject({
+          state: 'answered',
+          continuationPending: true,
+          answers: [{ fieldId: 'question_0', value: 'Expanded' }]
+        })
+        const alreadyWriting = stage === 'admission-writing'
+        expect(persisted.runtimeSessionAdmissions).toHaveLength(alreadyWriting ? 2 : 1)
+        if (outcome === 'cancel') await runtime.cancelPrompt({ sessionId: persisted.id })
+        if (outcome === 'disconnect') await runtime.disconnect()
+        if (outcome === 'timeout') {
+          await vi.advanceTimersByTimeAsync(TERMINAL_CONTINUATION_WAIT_BUDGET_MS)
+          expect(runtime.getSnapshot().events).toContainEqual(
+            expect.objectContaining({
+              title: 'Could not continue the Agent task',
+              text: 'Main runtime completion has not committed yet.'
+            })
+          )
+        }
+        storageFailed = outcome === 'storage-failure'
+        blockStorage = false
+        writeRelease.resolve()
+        await vi.advanceTimersByTimeAsync(stage === 'slow-skill' ? 35_000 : 2_100)
+        if (outcome === 'release') {
+          await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+          await vi.waitFor(() =>
+            expect(persisted.activities![0].elicitation?.continuationPending).toBeUndefined()
+          )
+          expect(fakeAgent.prompts[0].text).toContain('Expanded')
+          expect(persisted.runtimeSessionAdmissions).toHaveLength(2)
+          expect(runtime.getSnapshot().events.filter(({ kind }) => kind === 'error')).toEqual([])
+        } else {
+          await vi.waitFor(() =>
+            expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(persisted.id)
+          )
+          expect(fakeAgent.prompts).toHaveLength(0)
+          expect(persisted.runtimeSessionAdmissions).toHaveLength(alreadyWriting ? 2 : 1)
+          expect(persisted.activities![0].elicitation?.answers).toEqual([
+            { fieldId: 'question_0', value: 'Expanded' }
+          ])
+          if (outcome === 'storage-failure') {
+            expect(runtime.getSnapshot().events).toContainEqual(
+              expect.objectContaining({
+                title: 'Could not continue the Agent task',
+                text: 'Answer storage unavailable'
+              })
+            )
+          }
+        }
+        await vi.advanceTimersByTimeAsync(10_000)
+        expect(fakeAgent.prompts).toHaveLength(outcome === 'release' ? 1 : 0)
+        expect(persisted.runtimeSessionAdmissions).toHaveLength(
+          outcome === 'release' || alreadyWriting ? 2 : 1
+        )
+      } finally {
+        continuing = false
+        storageFailed = false
+        blockStorage = false
+        writeRelease.resolve()
+        await runtimeSessions.flush(persisted.id, 'prompt-restored-1')
+        vi.useRealTimers()
+        await runtime.disconnect()
+      }
     }
   )
 
@@ -23163,6 +23380,51 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().contextUsageBySession.s1).toEqual(beforeFailure)
   })
 
+  it('keeps the OpenCode session connected after a classification rejection and accepts the next prompt', async () => {
+    const process = new FakeAgentProcess()
+    let rejectPrompt = true
+    const agent = startFakeAgent(process, ['s1'], {
+      onPrompt: () => {
+        if (rejectPrompt) {
+          throw acp.RequestError.internalError(
+            undefined,
+            'OpenCode message classification failed. Output was withheld.'
+          )
+        }
+      }
+    })
+    const spawnAgent = vi.fn(() => asAgentProcess(process))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent,
+      framework: opencodeFramework
+    })
+    try {
+      await runtime.createSession({ cwd: '/workspace' })
+      await expect(
+        runtime.sendPrompt({ sessionId: 's1', text: 'first turn' })
+      ).rejects.toMatchObject({
+        code: -32603
+      })
+      expect(runtime.getSnapshot()).toMatchObject({ status: 'connected', sessionIds: ['s1'] })
+
+      rejectPrompt = false
+      await expect(
+        runtime.sendPrompt({ sessionId: 's1', text: 'next turn' })
+      ).resolves.toMatchObject({
+        stopReason: 'end_turn'
+      })
+      expect(spawnAgent).toHaveBeenCalledOnce()
+      expect(agent.prompts).toEqual([
+        { sessionId: 's1', text: expect.stringContaining('first turn') },
+        { sessionId: 's1', text: expect.stringContaining('next turn') }
+      ])
+    } finally {
+      await runtime.disconnect()
+    }
+  })
+
   it('publishes the persisted Plan after a provider prompt fails and releases the interaction', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'], {
@@ -29266,7 +29528,11 @@ describe('ACP runtime — agent process lifecycle logging', () => {
         }),
         callbacks: { onEvent: (event) => events.push(event) }
       })
-      const mirror = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      let stderr = ''
+      const mirror = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+        stderr += chunk.toString()
+        return true
+      })
       try {
         await runtime.createSession({ cwd: '/workspace' })
         actualLog.initLogger({ logDir: dir, mirrorToConsole: true })
@@ -29303,7 +29569,10 @@ describe('ACP runtime — agent process lifecycle logging', () => {
         await actualLog.flushLogs()
         expect(await readFile(join(dir, 'main.log'), 'utf8')).not.toContain(secret)
         expect(JSON.stringify(events)).not.toContain(secret)
-        expect(JSON.stringify(mirror.mock.calls)).not.toContain(secret)
+        expect(mirror).toHaveBeenCalled()
+        expect(stderr).not.toContain(secret)
+        expect(stderr).toContain('正常诊断')
+        expect(stderr).toContain('[redacted]')
         expect(await readFile(join(dir, 'main.log'), 'utf8')).toContain('正常诊断')
         expect(await readFile(join(dir, 'main.log'), 'utf8')).toContain('[redacted]')
       } finally {

@@ -1,9 +1,10 @@
+import { strictNetworkRuleMatches } from '@aipoch/notebook-network-sandbox/network-address'
 import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import {
   destinationGrantAllows,
   type NetworkBlockEvidence
 } from '../../shared/network-destination-grants'
-import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
+import { NotebookNetworkSandbox, wslUncDistro } from '@aipoch/notebook-network-sandbox'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, realpathSync, type Stats } from 'node:fs'
@@ -23,7 +24,8 @@ import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, resolve, sep } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
-import { assertProcessTreeSupport } from '../process-tree'
+import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
+import { defaultSpawn } from './environment-process'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
 import { managedSkillReadRoots } from './managed-skill-read-roots'
 import {
@@ -74,7 +76,8 @@ import {
   type NotebookTrustBundle,
   type NotebookTrustBundleStatus
 } from './trust-bundle'
-import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { getAppClaudeConfigDir } from '../settings/provider-env'
+import type { GrantedLocalRoot, GrantedLocalRootAccess } from '../../shared/local-fs'
 import { kernelExecutableReadRoot } from './kernel-executor'
 import { windowsCondaPrefixForR } from '@aipoch/environment'
 import { rKernelProtocolProbe } from '@aipoch/environment'
@@ -119,6 +122,43 @@ const sameCleanupDomain = (left: NotebookSandboxTarget, right: NotebookSandboxTa
 
 const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
   result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
+
+export const runRAccessProbe = async (
+  invocation: NotebookSandboxedSpawn,
+  cwd: string,
+  timeoutMs = 60_000
+): Promise<{ stdout: string; stderr: string }> => {
+  const result = await defaultSpawn(
+    invocation.executable,
+    [...invocation.args],
+    invocation.env,
+    undefined,
+    undefined,
+    false,
+    cwd,
+    { timeoutMs },
+    async (child) => {
+      if (await invocation.confirmProcessTreeTermination?.().catch(() => false))
+        return { reaped: true }
+      // The native owner must reap its Job and restore temporary ACLs before exiting.
+      // execFile's timeout kills that owner before it can publish cleanup evidence.
+      if (await invocation.requestProcessTreeTermination?.().catch(() => false))
+        return { reaped: true }
+      const outcome = await terminateProcessTree(child)
+      return invocation.confirmProcessTreeTermination ? { reaped: false } : outcome
+    },
+    process.platform,
+    invocation.confirmProcessTreeTermination
+  )
+  if (result.code !== 0)
+    throw Object.assign(
+      new Error(
+        `R runtime verification exited with code ${result.code}.\n${result.stderr.slice(-4096)}`
+      ),
+      { code: result.code, stdout: result.stdout, stderr: result.stderr }
+    )
+  return result
+}
 
 const annotateRTemporaryDirectoryError = (text: string): string =>
   text.includes("Fatal error: 'R_TempDir' contains space")
@@ -286,6 +326,11 @@ const protectedWriteRoots = (readWriteRoots: readonly string[]): string[] =>
     ...readWriteRoots.map((root) => join(root, '.git'))
   ].filter(existsSync)
 
+// Application authority that must never be writable from a broad or nested grant. Grant-time and
+// execution-time planning must keep these write boundaries consistent.
+const authorityWriteDenyRoots = (configRoot: string | undefined): string[] =>
+  configRoot ? [join(configRoot, 'settings.json'), join(configRoot, 'sessions')] : []
+
 const dependencyReason = (message: string): NotebookNetworkStatusReason => {
   if (message.includes('bubblewrap')) return 'linuxBubblewrapMissing'
   if (message.includes('Seatbelt')) return 'macSeatbeltUnavailable'
@@ -341,6 +386,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   private sandbox: NotebookNetworkSandbox | undefined
   private initializePromise: Promise<void> | undefined
   private initialized = false
+  private policyAbort = new AbortController()
   private settings: NotebookNetworkSettings | undefined
   private trustBundle: NotebookTrustBundle | undefined
   private readonly nextExecutionGrants = new Map<string, Set<string>>()
@@ -377,7 +423,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         (selection, signal) =>
           probeWindowsRuntimeComponent(
             selection,
-            (request) => this.prepare(request),
+            // Compatibility checks need their fixture and runtime, not user or Skill folders.
+            (request) => this.prepare(request, false),
             signal,
             (message) => this.log.warn(message)
           )
@@ -396,6 +443,34 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       throw new Error('Prepare Notebook protection in Settings before protected execution.')
     if (this.windowsRuntime) await this.windowsRuntime.prepare(false)
     return true
+  }
+
+  async preflightGrantedRoot(
+    path: string,
+    access: GrantedLocalRootAccess,
+    requestedPath?: string
+  ): Promise<void> {
+    if (this.platform !== 'win32') return
+    // WSL2 grants use guest-side bubblewrap and must not depend on native helper readiness.
+    if (wslUncDistro(path)) return
+    if (!(await this.windowsProtectionConfigured())) return
+    const filesystem = {
+      readOnlyRoots: [path],
+      readWriteRoots: access === 'rw' ? [path] : [],
+      deniedReadRoots: this.options.configRoot
+        ? [getAppClaudeConfigDir(this.options.configRoot)]
+        : [],
+      deniedWriteRoots: [
+        ...(this.options.configRoot ? await managedSkillReadRoots(this.options.configRoot) : []),
+        ...authorityWriteDenyRoots(this.options.configRoot),
+        ...protectedWriteRoots(access === 'rw' ? [path] : [])
+      ]
+    }
+    await this.getOrCreateSandbox().preflightGrantedRoot(path, access, requestedPath, {
+      filesystem,
+      // A grant is persisted once; report protected descendants now rather than on every command.
+      scope: 'tree'
+    })
   }
 
   async resolveWindowsRuntime(request: {
@@ -478,6 +553,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+    return this.wrapInvocation(invocation, true)
+  }
+
+  private async wrapInvocation(
+    invocation: NotebookSandboxInvocation,
+    includeExecutionRoots: boolean
+  ): Promise<NotebookSandboxedSpawn> {
     if (
       this.platform === 'win32' &&
       invocation.target?.kind !== 'wsl2' &&
@@ -505,7 +587,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       }
     }
     try {
-      return await this.prepare(invocation)
+      return await this.prepare(invocation, includeExecutionRoots)
     } catch (error) {
       if (
         error instanceof Error &&
@@ -535,7 +617,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
   }
 
-  private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+  private async prepare(
+    invocation: NotebookSandboxInvocation,
+    includeExecutionRoots: boolean
+  ): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
     const nativeWindows = this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
     const windowsProtectionRequired = nativeWindows
@@ -560,7 +645,17 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const target = invocation.target ?? { kind: 'native' as const }
     await this.reconcilePendingCommandCleanups(target)
     await this.updateTrustBundle()
-    const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
+    const grantedRoots = includeExecutionRoots
+      ? ((await this.options.getGrantedLocalRoots?.()) ?? [])
+      : []
+    // Directories under \\wsl.localhost (or \\wsl$) belong to one guest. Native protected
+    // execution cannot use them, and another distro must not map them to its own guest paths.
+    const applicableGrantedRoots = grantedRoots.filter((root) => {
+      const distro = wslUncDistro(root.path)
+      if (!distro) return true
+      if (target.kind === 'wsl2') return distro.toLowerCase() === target.distro.toLowerCase()
+      return !(nativeWindows && windowsProtectionRequired === true)
+    })
     // Broad writable ancestors must never make application authority or its future staging
     // files writable. Keep explicit descendant workspaces and caches usable.
     const physicalPath = (path: string): string => {
@@ -581,9 +676,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       )
     }
 
-    const skillReadRoots = this.options.configRoot
-      ? await managedSkillReadRoots(this.options.configRoot)
-      : []
+    const skillReadRoots =
+      includeExecutionRoots && this.options.configRoot
+        ? await managedSkillReadRoots(this.options.configRoot)
+        : []
     const { commandTempRoot, receipt, retained } = await this.createCommandTemporaryRoot(
       target,
       invocation.runtime
@@ -662,35 +758,44 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             ...(invocation.target?.kind === 'wsl2' || this.platform === 'win32'
               ? []
               : environmentPathRoots(env, this.platform)),
-            ...grantedRoots.map((root) => root.path),
+            ...(nativeWindows ? [] : applicableGrantedRoots.map((root) => root.path)),
             ...(this.trustBundle ? [this.trustBundle.path] : [])
           ],
-          ...(this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
+          ...(nativeWindows
             ? {
                 optionalReadOnlyRoots: [
                   ...(invocation.filesystem.optionalReadOnlyRoots ?? []),
+                  ...applicableGrantedRoots.map((root) => root.path),
                   ...environmentPathRoots(env, this.platform)
-                ]
+                ],
+                optionalReadWriteRoots: [
+                  ...(invocation.filesystem.optionalReadWriteRoots ?? []),
+                  ...applicableGrantedRoots
+                    .filter((root) => root.access === 'rw')
+                    .map((root) => root.path)
+                ].filter((path) => !coversAuthority(path))
               }
             : {}),
           readWriteRoots: [
             ...invocation.filesystem.readWriteRoots,
             commandTempRoot,
-            ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
+            ...(nativeWindows
+              ? []
+              : applicableGrantedRoots
+                  .filter((root) => root.access === 'rw')
+                  .map((root) => root.path))
           ].filter((path) => !coversAuthority(path)),
           deniedReadRoots: invocation.filesystem.deniedReadRoots,
           deniedWriteRoots: [
             ...invocation.filesystem.deniedWriteRoots,
-            ...(this.options.configRoot
-              ? [
-                  join(this.options.configRoot, 'settings.json'),
-                  join(this.options.configRoot, 'sessions')
-                ]
-              : []),
+            ...authorityWriteDenyRoots(this.options.configRoot),
             ...skillReadRoots,
             ...protectedWriteRoots([
               ...invocation.filesystem.readWriteRoots,
-              ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
+              ...(invocation.filesystem.optionalReadWriteRoots ?? []),
+              ...applicableGrantedRoots
+                .filter((root) => root.access === 'rw')
+                .map((root) => root.path)
             ]),
             ...(this.trustBundle ? [this.trustBundle.path] : [])
           ]
@@ -698,6 +803,17 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         ...(invocation.signal ? { signal: invocation.signal } : {}),
         onNetworkAccessRequest: async (request) => {
           if (activeSignal?.aborted) return false
+          const policySignal = this.policyAbort.signal
+          const liveSettings =
+            this.settings ?? normalizeNotebookNetworkSettings(await this.options.getSettings())
+          if (policySignal.aborted) return false
+          if (liveSettings.mode === 'strict')
+            return strictNetworkRuleMatches(
+              liveSettings.strictWhitelist ?? [],
+              request.host,
+              request.port ?? 443,
+              request.protocol ?? 'https'
+            )
           if (request.addresses) {
             if (!executionActive || !activeExecutionId || request.signal.aborted) return false
             // This snapshot is emitted by the trusted gateway, never parsed from process output.
@@ -754,7 +870,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
               risks: [],
               blockReason: request.reason ?? 'approval-required'
             }
-            const signal = activeSignal ?? new AbortController().signal
+            const signal = AbortSignal.any([
+              policySignal,
+              request.signal,
+              ...(activeSignal ? [activeSignal] : [])
+            ])
             let approvedOnceAddresses: readonly string[] = addresses
             const result = this.options.requestDecision({
               onOnceGrant: (approved) => {
@@ -849,7 +969,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           existingConnections.add(request.canResume ?? (() => !request.signal.aborted))
           connections.set(key, existingConnections)
           if (existing) return existing
-          const signal = activeSignal ?? new AbortController().signal
+          const signal = AbortSignal.any([
+            policySignal,
+            request.signal,
+            ...(activeSignal ? [activeSignal] : [])
+          ])
           const canResume = (): boolean =>
             executionActive &&
             generation === executionGeneration &&
@@ -1228,6 +1352,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         decisionSource: 'aborted',
         message: 'The network access request was cancelled. No access was granted.'
       })
+    const policySignal = this.policyAbort.signal
+    const liveSettings =
+      this.settings ?? normalizeNotebookNetworkSettings(await this.options.getSettings())
+    if (liveSettings.mode === 'strict' || policySignal.aborted) {
+      return this.networkAccessResult('', 'blocked', request.runtime, {
+        message:
+          'Authorization is unavailable in strict mode. Add the destination manually to the whitelist.'
+      })
+    }
     if (request.recordId) {
       const record = this.blockedRecords.get(request.recordId)
       if (
@@ -1240,7 +1373,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       // A query issued before the user responds must observe the committed settings, not the
       // intermediate continuing state in the session transaction.
       const decision = record ? await record.result : undefined
-      if (request.signal?.aborted)
+      if (request.signal?.aborted || policySignal.aborted)
         return this.networkAccessResult('', 'denied', request.runtime, {
           decisionSource: 'aborted'
         })
@@ -1257,6 +1390,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           grant.projectId === request.projectId &&
           grant.sessionId === request.sessionId
       )
+      if (policySignal.aborted) return this.networkAccessResult('', 'blocked', request.runtime)
       if (saved && persisted?.status !== 'pending')
         return this.networkAccessResult(
           saved.hostname,
@@ -1320,10 +1454,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           'The current session allows public network access without approval. Explicit deny rules still apply.'
       })
     }
-    const settings = normalizeNotebookNetworkSettings(
-      this.settings ?? (await this.options.getSettings())
-    )
-    this.settings = settings
+    const settings = liveSettings
     if (
       settings.trustedPrivateDestinations?.some(
         (grant) =>
@@ -1364,7 +1495,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   applySettings(settings: NotebookNetworkSettings): void {
-    this.settings = normalizeNotebookNetworkSettings(settings)
+    const next = normalizeNotebookNetworkSettings(settings)
+    if (next.mode !== this.settings?.mode || next.mode === 'strict') {
+      this.policyAbort.abort()
+      this.policyAbort = new AbortController()
+    }
+    this.settings = next
     try {
       if (this.initialized) this.sandbox!.updatePolicy(buildNotebookNetworkPolicy(this.settings))
       this.log.info('network policy applied', {
@@ -1733,33 +1869,36 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       try {
         phase = 'sandbox-prepare'
         diagnostic.phase(phase, { condaPrefixDetected: Boolean(prefix) })
-        invocation = await this.wrap({
-          executable,
-          args: [
-            '--vanilla',
-            '-e',
-            pathsOnly
-              ? 'paths <- c(.Library, file.path(.Library, "compiler")); failed <- vapply(paths, function(p) inherits(try(normalizePath(p, mustWork=TRUE), silent=TRUE), "try-error"), logical(1)); if (any(failed)) { cat(paste(paths[failed], collapse="\\n")); quit(status=77) }; cat("OPEN_SCIENCE_R_ACCESS_OK")'
-              : 'stopifnot(requireNamespace("jsonlite", quietly=TRUE)); normalizePath(.libPaths(), mustWork=TRUE); cat("OPEN_SCIENCE_R_ACCESS_OK")'
-          ],
-          cwd,
-          // Only the contained path probe suppresses startup packages. Host readiness and full
-          // post-authorization verification must exercise ordinary R startup and dependencies.
-          env: {
-            ...env,
-            ...(pathsOnly ? { R_DEFAULT_PACKAGES: 'NULL', R_ENABLE_JIT: '0' } : {})
+        invocation = await this.wrapInvocation(
+          {
+            executable,
+            args: [
+              '--vanilla',
+              '-e',
+              pathsOnly
+                ? 'paths <- c(.Library, file.path(.Library, "compiler")); failed <- vapply(paths, function(p) inherits(try(normalizePath(p, mustWork=TRUE), silent=TRUE), "try-error"), logical(1)); if (any(failed)) { cat(paste(paths[failed], collapse="\\n")); quit(status=77) }; cat("OPEN_SCIENCE_R_ACCESS_OK")'
+                : 'stopifnot(requireNamespace("jsonlite", quietly=TRUE)); normalizePath(.libPaths(), mustWork=TRUE); cat("OPEN_SCIENCE_R_ACCESS_OK")'
+            ],
+            cwd,
+            // Only the contained path probe suppresses startup packages. Host readiness and full
+            // post-authorization verification must exercise ordinary R startup and dependencies.
+            env: {
+              ...env,
+              ...(pathsOnly ? { R_DEFAULT_PACKAGES: 'NULL', R_ENABLE_JIT: '0' } : {})
+            },
+            commandText: 'Verify selected R runtime',
+            runtime: 'r',
+            sessionId: 'runtime-access-check',
+            projectId: 'runtime-access-check',
+            filesystem: {
+              readOnlyRoots: [kernelExecutableReadRoot(executable, 'r', this.platform)],
+              readWriteRoots: [cwd],
+              deniedReadRoots: [],
+              deniedWriteRoots: []
+            }
           },
-          commandText: 'Verify selected R runtime',
-          runtime: 'r',
-          sessionId: 'runtime-access-check',
-          projectId: 'runtime-access-check',
-          filesystem: {
-            readOnlyRoots: [kernelExecutableReadRoot(executable, 'r', this.platform)],
-            readWriteRoots: [cwd],
-            deniedReadRoots: [],
-            deniedWriteRoots: []
-          }
-        })
+          false
+        )
         endExecution = invocation.beginExecution?.()
         phase = authorization ? 'authorize' : 'path-probe'
         diagnostic.phase(phase)
@@ -1778,19 +1917,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           }
         } else {
           probeMayHaveStarted = true
-          const { stdout } = await promisify(execFile)(
-            invocation.executable,
-            [...invocation.args],
-            {
-              cwd,
-              env: invocation.env,
-              // This bounds the native host, including ACL preparation and rollback, rather
-              // than only R execution. Live kernels can make directory propagation exceed 20s.
-              timeout: 60_000,
-              windowsHide: true,
-              maxBuffer: 1024 * 1024
-            }
-          )
+          const { stdout } = await runRAccessProbe(invocation, cwd)
           if (!stdout.includes('OPEN_SCIENCE_R_ACCESS_OK'))
             throw new Error('R runtime verification did not complete.')
         }
@@ -1932,13 +2059,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       fields: { platform: this.platform }
     })
     try {
-      this.settings = normalizeNotebookNetworkSettings(
-        this.settings ?? (await this.options.getSettings())
-      )
+      const storedSettings = await this.options.getSettings()
+      this.settings ??= normalizeNotebookNetworkSettings(storedSettings)
       const parentProxy = await this.options.getParentProxy?.()
       this.trustBundle = await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
-      this.sandbox = this.createSandbox(this.settings, parentProxy)
+      const initialSettings = this.settings
+      this.sandbox = this.createSandbox(initialSettings, parentProxy)
       await this.sandbox.initialize()
+      if (this.settings !== initialSettings)
+        this.sandbox.updatePolicy(buildNotebookNetworkPolicy(this.settings))
       this.initialized = true
       operation.complete({
         customDomainCount: this.settings.allowedDomains.length,
@@ -2412,7 +2541,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       purpose?: 'probe' | 'block'
     }
   ): Promise<boolean> {
-    if (request.signal.aborted) return Promise.resolve(false)
+    if (request.signal.aborted || this.settings?.mode === 'strict') return Promise.resolve(false)
     const normalized = validateCustomAllowedDomain(request.host)
     if (!normalized.ok || !executionActive) return Promise.resolve(false)
     // Read live authority on every connection/probe so another session or a later downgrade

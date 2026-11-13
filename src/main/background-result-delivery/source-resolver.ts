@@ -5,7 +5,11 @@ import type {
 } from '../../shared/background-result-delivery'
 import type { JobSummary } from '../../shared/compute'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { isComputeJobCancelled, projectComputeJobConclusion } from '@aipoch/compute'
+import {
+  isComputeJobCancelled,
+  isComputeJobTrackingStopped,
+  projectComputeJobConclusion
+} from '@aipoch/compute'
 
 const SUMMARY_LIMIT = 8_000
 const WORKING_FILE_LIMIT = 100
@@ -282,8 +286,14 @@ const mapComputeCancellationSource = (
       remote_workdir: job.remote_workdir,
       sessionId: delivery.sessionId,
       computeHost: { providerId: job.provider_id, displayName: job.display_name },
-      errorGuidance:
-        'The cancellation operation failed. The computation may still be running; this event does not consume its final result. Inspect the current scheduler state and output before deciding whether to cancel again.'
+      errorGuidance: isComputeJobTrackingStopped({
+        execution_mode: job.execution_mode,
+        status: failure.jobStatus,
+        cancellation_status: 'failed',
+        cancellation_error: failure.error
+      })
+        ? 'The remote process may still be running. Automatic checks stopped for this attempt. Report the failure and wait for the user to request another cancellation.'
+        : 'The cancellation operation failed. The computation may still be running; this event does not consume its final result. Inspect the current scheduler state and output before deciding whether to cancel again.'
     }
   }
 }

@@ -394,6 +394,54 @@ export function projectDiagnosticLog(
   if (typeof source.msg === 'string') result.event = diagnosticText(source.msg, options, 2_000)
   const data = object(source.data)
   const diagnostic = fields(data, options)
+  if (source.scope === 'research-video') {
+    if (identifier(data.invocationId))
+      diagnostic.invocationId = diagnosticText(data.invocationId, options, 200)
+    if (isAgentFrameworkId(data.frameworkId)) diagnostic.frameworkId = data.frameworkId
+    if (identifier(data.providerId))
+      diagnostic.providerId = diagnosticText(data.providerId, options, 200)
+    if (data.purpose === 'correction') diagnostic.purpose = data.purpose
+    if (['generation', 'speech'].includes(data.workerRole as string))
+      diagnostic.workerRole = data.workerRole
+    if (data.lane === 0 || data.lane === 1) diagnostic.lane = data.lane
+    if (typeof data.totalMs === 'number' && Number.isFinite(data.totalMs) && data.totalMs >= 0)
+      diagnostic.totalMs = data.totalMs
+    const stages = object(data.stagesMs)
+    const stagesMs: ObjectValue = {}
+    for (const phase of [
+      'preparing',
+      'images',
+      'readiness',
+      'narration-install',
+      'narration-acquire',
+      'writing',
+      'animations',
+      'loading',
+      'voice',
+      'alignment',
+      'mixing',
+      'build',
+      'publishing'
+    ]) {
+      const ms = stages[phase]
+      if (typeof ms === 'number' && Number.isFinite(ms) && ms >= 0) stagesMs[phase] = ms
+    }
+    if (Object.keys(stagesMs).length) diagnostic.stagesMs = stagesMs
+    if (
+      typeof data.totalUnits === 'number' &&
+      Number.isInteger(data.totalUnits) &&
+      data.totalUnits >= 0 &&
+      data.totalUnits <= 16
+    )
+      diagnostic.totalUnits = data.totalUnits
+    if (identifier(data.model)) diagnostic.model = diagnosticText(data.model, options, 200)
+    if (
+      typeof data.outputBytes === 'number' &&
+      Number.isSafeInteger(data.outputBytes) &&
+      data.outputBytes >= 0
+    )
+      diagnostic.outputBytes = data.outputBytes
+  }
   if (source.scope === 'notebook:runtime' || source.scope === 'notebook:network-sandbox') {
     for (const [key, allowed] of Object.entries(notebookLogStates))
       if (allowed.includes(data[key] as string)) diagnostic[key] = data[key]

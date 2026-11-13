@@ -298,7 +298,8 @@ const event = (value: Partial<AcpRuntimeEvent>): AcpRuntimeEvent =>
 const makeRunner = async (
   resolved: ResolvedAgentBackend,
   runtime: RuntimeHarnessOptions = {},
-  taskOnly = false
+  taskOnly = false,
+  preserveModelRoute = false
 ): Promise<{
   runner: RestrictedInferenceRunner
   resolveTarget: ReturnType<typeof vi.fn>
@@ -312,6 +313,7 @@ const makeRunner = async (
     configRoot: temporaryRoot,
     profileNamespace: 'test-inference',
     taskOnly,
+    preserveModelRoute,
     resolveTarget,
     allowNativeCodexSubscription: true,
     createRuntime: (options) => {
@@ -336,6 +338,106 @@ const runInput = (
 })
 
 describe('RestrictedInferenceRunner', () => {
+  it.each(['codex-responses', 'codex-responses-compatibility', 'codex-bridge'] as const)(
+    'preserves the actual %s route for validation',
+    async (modelRoute) => {
+      const native = modelRoute === 'codex-responses'
+      const { runner, resolveTarget } = await makeRunner(
+        backend(codexFramework, {
+          modelRoute,
+          ...(native ? {} : { responsesTransportLease: codexToolLessBridgeLease() })
+        }),
+        {
+          events: [event({ role: 'assistant', text: 'OK' })],
+          onCreateSession: async (resolved) => {
+            expect(resolved.modelRoute).toBe(modelRoute)
+            expect(JSON.parse(resolved.env.CODEX_CONFIG!).features.shell_tool).toBe(false)
+          }
+        },
+        true,
+        true
+      )
+      expect(await runner.run(runInput({ target: target('codex') }))).toMatchObject({ text: 'OK' })
+      expect(resolveTarget).toHaveBeenCalledWith(
+        target('codex'),
+        expect.not.objectContaining({ forceCodexNativeResponsesCompatibility: true })
+      )
+    }
+  )
+
+  it('bounds cancelled resolution and cleans up a backend that arrives later', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'validation-resolution-'))
+    let finish!: (value: ResolvedAgentBackend) => void
+    const resolving = new Promise<ResolvedAgentBackend>((resolve) => {
+      finish = resolve
+    })
+    const resolveTarget = vi.fn(async () => resolving)
+    const createRuntime = vi.fn()
+    const runner = new RestrictedInferenceRunner({
+      appVersion: 'test',
+      configRoot: temporaryRoot,
+      profileNamespace: 'test',
+      taskOnly: true,
+      preserveModelRoute: true,
+      resolveTarget,
+      createRuntime
+    })
+    const controller = new AbortController()
+    const pending = runner.run(runInput({ signal: controller.signal }))
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'cancelled' })
+    await vi.waitFor(() => expect(resolveTarget).toHaveBeenCalledOnce())
+    controller.abort()
+    await rejected
+    await runner.shutdown()
+    expect(createRuntime).not.toHaveBeenCalled()
+    const release = vi.fn(async () => undefined)
+    finish(
+      backend(claudeCodeFramework, { messagesBridgeLease: { setTarget: () => true, release } })
+    )
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+    await vi.waitFor(async () =>
+      expect(await readdir(join(temporaryRoot!, 'runtime-support', 'test'))).toEqual([])
+    )
+  })
+
+  it('shuts down a validation runtime when cancelled before session creation completes', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'validation-abort-'))
+    let rejectSession!: (error: Error) => void
+    const runtime = {
+      createSession: vi.fn(
+        () =>
+          new Promise<never>((_resolve, reject) => {
+            rejectSession = reject
+          })
+      ),
+      sendPrompt: vi.fn(),
+      cancelPrompt: vi.fn(),
+      respondToPermission: vi.fn(),
+      shutdownForQuit: vi.fn(async () => {
+        rejectSession(new Error('closed'))
+        return { reaped: true }
+      })
+    }
+    const runner = new RestrictedInferenceRunner({
+      appVersion: 'test',
+      configRoot: temporaryRoot,
+      profileNamespace: 'test',
+      taskOnly: true,
+      preserveModelRoute: true,
+      resolveTarget: async () => backend(claudeCodeFramework),
+      createRuntime: () => runtime
+    })
+    const controller = new AbortController()
+    const pending = runner.run(runInput({ signal: controller.signal }))
+    const rejected = expect(pending).rejects.toThrow('closed')
+    await vi.waitFor(() => expect(runtime.createSession).toHaveBeenCalledOnce())
+    controller.abort()
+    await rejected
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.shutdownForQuit).toHaveBeenCalled()
+    expect(await readdir(join(temporaryRoot, 'runtime-support', 'test'))).toEqual([])
+  })
+
   it.each(listAgentFrameworks())(
     'delivers only task instructions through the $id adapter',
     async (framework) => {
@@ -608,6 +710,7 @@ describe('RestrictedInferenceRunner', () => {
       frameworkId: 'codex'
     })
     expect(resolveTarget).toHaveBeenCalledWith(target('codex', CODEX_SHARED_PROVIDER_ID), {
+      storageRoot: expect.any(String),
       systemPromptAppends: [],
       includeSkillAndConnectorContext: false
     })
@@ -1047,6 +1150,7 @@ describe('RestrictedInferenceRunner', () => {
       usage
     })
     expect(resolveTarget).toHaveBeenCalledWith(target('codex'), {
+      storageRoot: expect.any(String),
       systemPromptAppends: [],
       includeSkillAndConnectorContext: false,
       forceCodexNativeResponsesCompatibility: true

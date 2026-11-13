@@ -34,7 +34,11 @@ export {
   computeProbeSnapshot,
   computeProviderId
 } from './model'
-export { isComputeJobCancelled, projectComputeJobConclusion } from './compute-job-status'
+export {
+  isComputeJobCancelled,
+  isComputeJobTrackingStopped,
+  projectComputeJobConclusion
+} from './compute-job-status'
 export type {
   AgentJobCancellation,
   AgentJobStatus,

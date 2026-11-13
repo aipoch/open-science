@@ -1,4 +1,9 @@
 import {
+  isAgentFrameworkId,
+  AGENT_MODEL_ROUTE_VALUES,
+  type AgentModelRoute
+} from '../../shared/agent-framework-id'
+import {
   decodeStoredModelProtocol,
   encodeStoredModelProtocol
 } from '../../shared/model-protocol-storage'
@@ -143,7 +148,23 @@ const sanitizeValidationTarget = (value: unknown): ProviderValidationTarget | un
   const model = asString(value.model)
   const endpoint = decodeStoredModelProtocol(value.endpoint)
   if (!model && !endpoint) return undefined
-  return { ...(model ? { model } : {}), ...(endpoint ? { endpoint } : {}) }
+  const scoped = value.frameworkId !== undefined || value.route !== undefined
+  if (
+    scoped &&
+    (!isAgentFrameworkId(value.frameworkId) ||
+      !AGENT_MODEL_ROUTE_VALUES.includes(value.route as AgentModelRoute))
+  )
+    return undefined
+  return {
+    ...(model ? { model } : {}),
+    ...(endpoint ? { endpoint } : {}),
+    ...(scoped
+      ? {
+          frameworkId: value.frameworkId as import('../../shared/settings').AgentFrameworkId,
+          route: value.route as AgentModelRoute
+        }
+      : {})
+  }
 }
 
 // Rebuild one provider from known fields and durable credential references only.
@@ -257,7 +278,11 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (keyRef) provider.keyRef = keyRef
   if (keyMask) provider.keyMask = keyMask
   if (accountEmail && type === 'xai-subscription') provider.accountEmail = accountEmail
-  if (lastValidatedAt !== undefined) provider.lastValidatedAt = lastValidatedAt
+  if (
+    lastValidatedAt !== undefined &&
+    (value.lastValidatedTarget === undefined || lastValidatedTarget)
+  )
+    provider.lastValidatedAt = lastValidatedAt
   if (lastValidatedTarget) provider.lastValidatedTarget = lastValidatedTarget
   if (lastValidationFailure) provider.lastValidationFailure = lastValidationFailure
   if (expiresAt !== undefined) provider.expiresAt = expiresAt
