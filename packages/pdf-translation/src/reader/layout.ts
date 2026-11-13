@@ -104,6 +104,7 @@ type Item = PdfLayoutTextItem &
   }
 type Line = Rect & { font: number; baseline: number; text: string; items: Item[] }
 type Block = Rect & {
+  sourceOnly?: true
   font: number
   lines: Line[]
   source: string
@@ -10927,6 +10928,90 @@ function extractPage(
   const parallelCaptions = nativeParallelFigureCaptions(blocks, page, all, tableItems, codeItems)
   if (parallelCaptions) blocks.splice(0, blocks.length, ...parallelCaptions)
   blocks.push(...panelCaptionBlocks)
+  const duplicateCaptionAnchors = all
+    .filter((item) => captionAnchorLabel.test(item.str))
+    .flatMap((item, index, anchors) =>
+      anchors.slice(index + 1).flatMap((other) => {
+        const sameLabel =
+          item.str.replace(/[.:]$/u, '').toLowerCase() ===
+          other.str.replace(/[.:]$/u, '').toLowerCase()
+        const font = Math.max(item.font, other.font)
+        const overlapping =
+          item.x < other.right + font * 0.8 &&
+          other.x < item.right + font * 0.8 &&
+          Math.abs(item.originalBaseline - other.originalBaseline) < font * 0.9
+        return sameLabel && overlapping ? [{ item, other }] : []
+      })
+    )
+  if (duplicateCaptionAnchors.length) {
+    for (const block of blocks) {
+      if (!block.items.length) continue
+      const anchor = duplicateCaptionAnchors.find(({ item, other }) => {
+        const anchorBlocks = blocks.filter(
+          (candidate) => candidate.items.includes(item) || candidate.items.includes(other)
+        )
+        if (
+          !anchorBlocks.some((candidate) => {
+            const source = collapseDuplicateCaptionLabels(candidate.source)
+            return isPdfTranslationCaption(source) && !captionBodyReference.test(source)
+          })
+        )
+          return false
+        const top = Math.min(item.y, other.y),
+          bottom = Math.max(item.bottom, other.bottom),
+          left = Math.min(item.x, other.x),
+          right = Math.max(item.right, other.right),
+          font = Math.max(item.font, other.font),
+          anchorFonts = new Set(
+            blocks
+              .filter(
+                (candidate) => candidate.items.includes(item) || candidate.items.includes(other)
+              )
+              .flatMap((candidate) => candidate.items.map((entry) => entry.fontName))
+              .filter((name): name is string => !!name)
+          ),
+          streamFonts = new Set(
+            block.items.map((entry) => entry.fontName).filter((name): name is string => !!name)
+          ),
+          anchorIndexGap = Math.abs(item.index - other.index),
+          lowerAnchorIndex = Math.min(item.index, other.index),
+          upperAnchorIndex = Math.max(item.index, other.index),
+          anchorBaselineGap = Math.abs(item.originalBaseline - other.originalBaseline),
+          carriesBothStreams =
+            [...streamFonts].filter((name) => anchorFonts.has(name)).length >= 2 ||
+            block.items.some((left, index) =>
+              block.items.slice(index + 1).some((right) => {
+                const pairFont = Math.max(left.font, right.font),
+                  sameNativeGap =
+                    Math.abs(Math.abs(left.index - right.index) - anchorIndexGap) <=
+                    Math.max(4, anchorIndexGap * 0.15),
+                  sameBaselineGap =
+                    Math.abs(
+                      Math.abs(left.originalBaseline - right.originalBaseline) - anchorBaselineGap
+                    ) <=
+                    pairFont * 0.35,
+                  sameAnchorX =
+                    (Math.abs(left.x - item.x) <= pairFont * 0.8 &&
+                      Math.abs(right.x - other.x) <= pairFont * 0.8) ||
+                    (Math.abs(left.x - other.x) <= pairFont * 0.8 &&
+                      Math.abs(right.x - item.x) <= pairFont * 0.8),
+                  straddlesAnchors =
+                    (left.index < lowerAnchorIndex && right.index > upperAnchorIndex) ||
+                    (right.index < lowerAnchorIndex && left.index > upperAnchorIndex)
+                return sameNativeGap && sameBaselineGap && sameAnchorX && straddlesAnchors
+              })
+            )
+        return (
+          (block.items.includes(item) || block.items.includes(other) || carriesBothStreams) &&
+          block.x < right + font * 0.8 &&
+          block.right > left - font * 0.8 &&
+          block.y < bottom + Math.max(item.font, other.font) * 1.8 &&
+          block.bottom > top - Math.max(item.font, other.font) * 1.8
+        )
+      })
+      if (anchor) block.sourceOnly = true
+    }
+  }
   for (const item of all.filter((i) => isolatedFolios.has(i.key)))
     blocks.push({
       ...item,
@@ -11167,6 +11252,7 @@ function extractPage(
             (packet) => packet.size === b.items.length && b.items.every((item) => packet.has(item))
           ) ||
           headers.has(b) ||
+          b.sourceOnly ||
           b.items.every((item) => embeddedMetadata.has(item)) ||
           b.lines.some((line) => preservedFormulaLines.has(line)) ||
           (b.items.every((item) => codeItems.has(item)) &&
@@ -11309,6 +11395,19 @@ export const isPdfTranslationCaption = (text: string): boolean =>
     text
   )
 const captionLabel = /^(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+[.:]\s/iu
+// Some publishers place a second, non-visible caption text stream inside the
+// figure Form. PDF.js exposes both streams at nearly the same baseline, which
+// otherwise makes the caption body interleave character-by-character. Keep
+// those caption rows in their native layout until a renderer can prove which
+// stream is paintable.
+const captionAnchorLabel = /^(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+[.:]$/iu
+const collapseDuplicateCaptionLabels = (text: string): string =>
+  text.replace(
+    /^(?<label>(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+[.:])\s*\k<label>\s*/iu,
+    '$<label> '
+  )
+const captionBodyReference =
+  /^(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+[.:]\s+(?:shows?|illustrates?|depicts?|presents?|summari[sz]es?|reports?|provides?|flips|clarifies|assesses|compares?|demonstrates?|contains?|lists?|is|are)\b/iu
 // Some PDF text maps expand formula glyphs into repeated `ffi` ligature text or
 // paired Latin-1 delimiters. The visual formula is still present, but its source
 // string cannot be safely matched to PDFium text objects for replacement.
