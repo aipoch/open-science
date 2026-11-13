@@ -50,13 +50,13 @@ const createApplicationCommandClient = (): ApplicationCommandClient => {
     invoke: async (dispatcher, commandName, callerContext, args, payloadOptions = {}, signal) => {
       const caller = callerFor(callerContext)
       signal?.throwIfAborted()
-      const callerLease = signal
+      const invocationLease = signal
         ? { ...caller.lease.lease, signal: AbortSignal.any([caller.lease.lease.signal, signal]) }
         : caller.lease.lease
       const dispatch = (arguments_: readonly unknown[]): Promise<unknown> =>
         dispatcher.invoke(commandName, {
           callerContext,
-          callerLease,
+          callerLease: invocationLease,
           args: arguments_
         })
       if (payloadOptions.acceptPayload !== 1 && !payloadOptions.transfer) return dispatch(args)
@@ -64,7 +64,7 @@ const createApplicationCommandClient = (): ApplicationCommandClient => {
         commandName,
         args,
         callerContext,
-        callerLease,
+        caller.lease.lease,
         payloadOptions,
         dispatch
       )
