@@ -371,6 +371,8 @@ export class AgentRuntimeManager {
   private readonly activeDetections = new Set<Promise<unknown>>()
   private environmentCheckRuntimeProbe: ReusableRuntimeProbe | undefined
   private preflightRuntimeProbe: ReusableRuntimeProbe | undefined
+  private pendingNpmAvailability?: Promise<boolean>
+  private npmAvailableUntil = 0
   private lastOpencodeLaunchProbe?: { executableKey: string; version: string; expiresAt: number }
   private readonly installManagedClaudeImpl: (
     options: InstallManagedClaudeOptions
@@ -402,7 +404,7 @@ export class AgentRuntimeManager {
     this.shutdownAbort.abort()
     const completion = this.activeInstallCompletion
     this.activeInstallAbort?.abort()
-    await Promise.allSettled([...(completion ? [completion] : []), ...this.activeDetections])
+    await Promise.allSettled([completion, this.pendingNpmAvailability, ...this.activeDetections])
     const cleanupFailure = await completion
     if (cleanupFailure) throw cleanupFailure
   }
@@ -1098,8 +1100,20 @@ export class AgentRuntimeManager {
   }
 
   async isNpmAvailable(): Promise<boolean> {
-    const { available } = await detectNpmAvailable()
-    return available
+    const signal = this.shutdownAbort.signal
+    if (signal.aborted) return false
+    if (performance.now() < this.npmAvailableUntil) return true
+
+    // Startup settings and environment refresh both request the same host capability.
+    this.pendingNpmAvailability ??= detectNpmAvailable(undefined, signal)
+      .then(({ available }) => {
+        if (available) this.npmAvailableUntil = performance.now() + RUNTIME_PROBE_REUSE_WINDOW_MS
+        return available
+      })
+      .finally(() => {
+        this.pendingNpmAvailability = undefined
+      })
+    return this.pendingNpmAvailability
   }
 
   async reserveOpenCodeUsagePort(): Promise<number> {

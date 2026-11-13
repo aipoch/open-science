@@ -319,6 +319,26 @@ describe('AgentRuntimeManager', () => {
   let managedCodexPath: string
   let manager: InstanceType<typeof AgentRuntimeManager>
 
+  it('shares concurrent npm availability checks and rechecks failures and expired successes', async () => {
+    const first = Promise.withResolvers<{ available: boolean }>()
+    const probe = vi
+      .spyOn(await import('./claude-install'), 'detectNpmAvailable')
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce({ available: false })
+      .mockResolvedValue({ available: true })
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(100)
+    const reads = [manager.isNpmAvailable(), manager.isNpmAvailable()]
+    first.resolve({ available: true })
+    expect(await Promise.all(reads)).toEqual([true, true])
+    expect(await manager.isNpmAvailable()).toBe(true)
+    expect(probe).toHaveBeenCalledTimes(1)
+
+    clock.mockReturnValue(2100)
+    expect(await manager.isNpmAvailable()).toBe(false)
+    expect(await manager.isNpmAvailable()).toBe(true)
+    expect(probe).toHaveBeenCalledTimes(3)
+  })
+
   it('reuses a recent OpenCode launch probe until the executable changes or the window expires', async () => {
     const executable = join(storageRoot, 'opencode')
     await writeFile(executable, 'first')
