@@ -61,23 +61,39 @@ describe('ArchiveCoordinator', () => {
     await expect(coordinator.isSessionBusy(project.id, session.id)).resolves.toBe(true)
   })
 
-  it('uses the conservative archive projection when no local activity source is installed', async () => {
-    const coordinator = new ArchiveCoordinator(
-      { get: async () => project, updateArchive: vi.fn() },
-      {
-        assertProjectArchivable: vi.fn(),
-        assertSessionAvailable: vi.fn(),
-        sessionProjectId: vi.fn(),
-        updateArchive: vi.fn()
-      },
-      {
-        isSessionBusy: () => true,
+  it.each([false, true])(
+    'preserves the activity receiver (local projection: %s)',
+    async (localProjection) => {
+      const runtime = {
+        busy: true,
+        isSessionBusy() {
+          return this.busy
+        },
+        isSessionLocallyBusy: localProjection
+          ? function (this: { busy: boolean }) {
+              return this.busy
+            }
+          : undefined,
         isProjectBusy: () => true,
         liveSessionProjectId: () => project.id
       }
-    )
-    await expect(coordinator.isSessionLocallyBusy(project.id, session.id)).resolves.toBe(true)
-  })
+      const coordinator = new ArchiveCoordinator(
+        { get: async () => project, updateArchive: vi.fn() },
+        {
+          assertProjectArchivable: vi.fn(),
+          assertSessionAvailable: vi.fn(),
+          sessionProjectId: vi.fn(),
+          updateArchive: vi.fn()
+        },
+        runtime
+      )
+      await expect(coordinator.isSessionBusy(project.id, session.id)).resolves.toBe(true)
+      await expect(coordinator.isSessionLocallyBusy(project.id, session.id)).resolves.toBe(true)
+      runtime.busy = false
+      await expect(coordinator.isSessionLocallyBusy(project.id, session.id)).resolves.toBe(false)
+      await expect(coordinator.isSessionBusy(project.id, session.id)).resolves.toBe(false)
+    }
+  )
 
   it.each(['success', 'failure'] as const)(
     'fences recovery deletion against pending and new work and releases after %s',

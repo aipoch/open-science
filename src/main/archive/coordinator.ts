@@ -40,7 +40,7 @@ class ArchiveCoordinator {
   async isSessionLocallyBusy(projectId: string, sessionId: string): Promise<boolean> {
     if (this.pendingDispatches.has(sessionId)) return true
     const check = this.runtime.isSessionLocallyBusy ?? this.runtime.isSessionBusy
-    const busy = await check(projectId, sessionId)
+    const busy = await check.call(this.runtime, projectId, sessionId)
     return busy || this.pendingDispatches.has(sessionId)
   }
 

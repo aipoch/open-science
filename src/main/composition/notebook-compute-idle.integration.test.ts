@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import JSZip from 'jszip'
 import { afterAll, expect, it, vi } from 'vitest'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
@@ -26,6 +26,7 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../projects/p
 import { NotebookRunRepository } from '../notebook/repository'
 import { NotebookIdleReclamation, NOTEBOOK_SESSION_IDLE_MS } from '../notebook/idle-reclamation'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
+import * as windowsNotebookRuntime from '../notebook/windows-notebook-runtime'
 import { composeApplicationRuntime } from '../application-runtime'
 import { initDataRoot } from '../storage-root'
 
@@ -250,6 +251,16 @@ it.each([
     let now = Date.now()
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
     const check = vi.spyOn(NotebookIdleReclamation.prototype, 'check')
+    // As in kernel-executor.test.ts, use the test host Node for real REPL children on Windows.
+    // These cases exercise process ownership/reclamation, without preparing the protected runtime
+    // or running PowerShell; retain the real executor and process-tree cleanup.
+    const runtimeResolver = vi
+      .spyOn(windowsNotebookRuntime, 'resolveWindowsNotebookRuntime')
+      .mockReturnValue({
+        root: dirname(process.execPath),
+        node: process.execPath,
+        powershell: 'C:\\runtime\\pwsh.exe'
+      })
     try {
       await migrateApplicationDatabase(client)
       await mkdir(workspace)
@@ -287,6 +298,7 @@ it.each([
         `var saved = 42; require('node:fs').writeFileSync(${JSON.stringify(join(workspace, 'saved.txt'))}, String(saved)); console.log(process.pid)`
       )
       expect(first.status, JSON.stringify(first)).toBe('completed')
+      if (process.platform === 'win32') expect(runtimeResolver).toHaveBeenCalled()
       const pid = Number(first.stdout.trim())
       expect(pid).toBeGreaterThan(0)
       const ordinary = await execute('ordinary', 'console.log(process.pid)')
