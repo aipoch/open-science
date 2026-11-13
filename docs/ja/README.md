@@ -172,6 +172,7 @@ AIPOCH は AIPOCH Open-Science を、論文の検索から内容に関する質�
 | 文献に基づいて回答する     | LitQA2-FullText        | 別の LitQA2-FullText 評価では、Open-Science が **75 問中 70 問に正解**しました（**正解率 93.33%**、deepseek-flash、Max 推論）。                                  |
 | 引用付きの回答をまとめる   | ScholarQA-CS2          | ScholarQA-CS2 の検証用 100 問で、deepseek-v4-flash を使用し **総合品質スコア 0.9289/1** を記録しました。公式テストの参考結果は異なる問題を使用しています。       |
 | 研究ワークフローを実行する | ASI-Bench              | 同じモデルを使ったローカルの ASI-Bench 評価で、B4 は Open-Science が **59.46**、Codex が **55.45** でした。B2 はほぼ同じスコアでした（**56.11** と **56.09**）。 |
+| 科学研究のタスクを実行する | TB-Science 0.1         | 70 タスク、GPT-6 Astra/max：ローカル実行 210 回中 **145 回合格**（**69.05%**）。公式順位ではなく、各実行の記録は未公開です。                                     |
 | 生物医学データを分析する   | BiomniBench-DA         | BiomniBench-DA Public 50 で、2 つの評価モデルのスコアは **81.04** と **77.06**、等重み平均は **79.05** でした。                                                  |
 | 公表された結果の再現       | CORE-Bench-Hard        | CORE-Bench-Hard — ローカル評価ではテスト37件中36件に正答（97.30%）。最終集計には再試行を含みます。                                                               |
 | データからの仮説の発見     | DiscoveryBench         | DiscoveryBench — 検証セットから選んだ25件に対するローカルのモデル採点は平均0.7467/1でした。                                                                      |
@@ -181,7 +182,7 @@ AIPOCH は AIPOCH Open-Science を、論文の検索から内容に関する質�
 
 **評価範囲：** 報告は、記載されたモデルとデータ分割による 2026 年 8 月から 11 月のローカル・内部実行を対象とし、現行リリース用に再実行したものではありません。参考スコアは過去のスナップショットであり、リアルタイムの順位ではありません。異なるベンチマーク系列のスコアは直接比較できず、数値の差は統計的有意性を示しません。
 
-詳細は [AstaBench と ASI-Bench のレポート](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA のレポート](https://aipoch.com/blog/open-science-biomnibench-da)をご覧ください。
+詳細は [AstaBench と ASI-Bench のレポート](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA のレポート](https://aipoch.com/blog/open-science-biomnibench-da)、[TB-Science 0.1 のローカル結果](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)をご覧ください。
 
 [CORE-Bench-Hard · 再現性評価レポート](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

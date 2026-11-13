@@ -172,6 +172,7 @@ AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回�
 | 根据文献回答问题 | LitQA2-FullText        | 在独立的 LitQA2-FullText 测试中，Open-Science **答对 75 题中的 70 题**（**准确率 93.33%**，deepseek-flash，Max 推理）。                     |
 | 综合带引用的答案 | ScholarQA-CS2          | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道验证题上获得 **0.9289/1 的综合质量分数**。官方测试参考结果使用不同的题目。                |
 | 执行研究流程     | ASI-Bench              | 在使用相同模型的本地 ASI-Bench 测试中，Open-Science 的 B4 得分为 **59.46**，Codex 为 **55.45**。B2 得分几乎相同（**56.11** 与 **56.09**）。 |
+| 执行科研工作流   | TB-Science 0.1         | 70 道任务，GPT-6 Astra/max：210 次本地执行中 **145 次通过**（**69.05%**）；非官方榜单名次，逐次记录未公开。                                 |
 | 分析生物医学数据 | BiomniBench-DA         | 在 BiomniBench-DA Public 50 上，两位评审模型的评分分别为 **81.04** 和 **77.06**，等权平均为 **79.05**。                                     |
 | 复现已发表的结果 | CORE-Bench-Hard        | CORE-Bench-Hard — 本地评测答对 37 项测试任务中的 36 项（97.30%），最终统计包含复测。                                                        |
 | 根据数据提出假设 | DiscoveryBench         | DiscoveryBench — 在验证集的 25 项任务上，本地模型评分的均值为 0.7467/1。                                                                    |
@@ -181,7 +182,7 @@ AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回�
 
 **评测范围：** 报告涵盖 2026 年 8 月至 11 月、使用所列模型与数据划分开展的本地或内部测试，并未针对当前版本重新运行。参考成绩是历史快照，并非实时排名。不同基准系列的分数不能直接比较，数值差距不代表统计显著性。
 
-评测详情见 [AstaBench 与 ASI-Bench 报告](https://aipoch.com/benchmark/open-science)及 [BiomniBench-DA 报告](https://aipoch.com/blog/open-science-biomnibench-da)。
+评测详情见 [AstaBench 与 ASI-Bench 报告](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA 报告](https://aipoch.com/blog/open-science-biomnibench-da)和 [TB-Science 0.1 本地测试报告](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)。
 
 [CORE-Bench-Hard · 复现评测报告](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 
