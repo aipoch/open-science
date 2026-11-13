@@ -190,6 +190,7 @@ export async function connectDesktopRuntime(options: {
   >()
   let supportsPayload = false
   let supportsResourceActivity = false
+  let supportsHostCancel = false
   let lastResourceActivity: { foreground: boolean; suspended: boolean } | undefined
   let requestId = 0
   let channels: readonly string[] = []
@@ -294,7 +295,10 @@ export async function connectDesktopRuntime(options: {
     })
   }
   const request = (frame: Record<string, unknown>): { id: number; response: Promise<unknown> } => {
-    if (pending.size >= 256) throw new Error('Too many pending desktop requests.')
+    // The runtime counts an abandoned request until its handler settles and closes the connection
+    // above 256, so abandoned requests keep their slot until their late response arrives.
+    if (pending.size + expiredRequests.size >= 256)
+      throw new Error('Too many pending desktop requests.')
     const id = ++requestId
     const response = new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject })
@@ -325,12 +329,15 @@ export async function connectDesktopRuntime(options: {
       }
       const abort = (): void => {
         if (settled) return
-        pending.delete(operation.id)
-        expiredRequests.add(operation.id)
-        try {
-          send({ kind: 'cancel', id: operation.id })
-        } catch {
-          // The request is already being cancelled locally; disconnect handling owns transport errors.
+        // A response already consumed this ID; its settlement is queued behind this listener.
+        if (pending.delete(operation.id)) {
+          expiredRequests.add(operation.id)
+          if (supportsHostCancel)
+            try {
+              send({ kind: 'cancel', id: operation.id })
+            } catch {
+              // Disconnect handling owns transport errors and rejects the remaining requests.
+            }
         }
         settle(() => reject(signal.reason ?? new Error('Desktop host operation cancelled.')))
       }
@@ -354,8 +361,7 @@ export async function connectDesktopRuntime(options: {
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
             () => {
-              pending.delete(operation.id)
-              expiredRequests.add(operation.id)
+              if (pending.delete(operation.id)) expiredRequests.add(operation.id)
               reject(new Error('Desktop lifecycle acknowledgement timed out.'))
             },
             Math.max(0, deadlineAt - Date.now())
@@ -463,6 +469,8 @@ export async function connectDesktopRuntime(options: {
         supportsPayload = bootstrap.rpcCapabilities?.includes(RUNTIME_PAYLOAD_CAPABILITY) ?? false
         supportsResourceActivity =
           bootstrap.rpcCapabilities?.includes('resource-activity-v1') ?? false
+        // Older runtimes reject unknown frames by closing the connection.
+        supportsHostCancel = bootstrap.rpcCapabilities?.includes('host-cancel-v1') ?? false
         channels = Object.freeze([...bootstrap.rpcChannels])
         cursor = bootstrap.eventStream
         runtimeInfo = desktopRuntimeInfoSchema.parse(

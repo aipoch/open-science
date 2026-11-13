@@ -830,9 +830,11 @@ class SessionRepository {
     }
   }
 
-  private async listProjectionSummaries(): Promise<SessionSummary[]> {
+  private async listProjectionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
     const queuedAt = performance.now()
     return this.operationScheduler.runGlobal(async () => {
+      // A caller cancelled while queued behind global work: skip the read instead of running it.
+      signal?.throwIfAborted()
       const startedAt = performance.now()
       const summaries = await this.projection!.list()
       try {
@@ -850,11 +852,11 @@ class SessionRepository {
     })
   }
 
-  async loadSessionSummaries(): Promise<SessionSummary[]> {
+  async loadSessionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
     if (!this.projection || !(await this.projection.isReady())) {
       throw new Error('Session projection is not ready.')
     }
-    return this.listProjectionSummaries()
+    return this.listProjectionSummaries(signal)
   }
 
   async loadSessionUsageProjection(): Promise<SessionUsageProjection> {

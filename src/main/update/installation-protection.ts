@@ -680,8 +680,9 @@ export async function captureInstallationManifestAsync(
   const regularFiles: Array<{ relativePath: string; path: string }> = []
   const symlinks: Array<{ relativePath: string; target: string }> = []
   async function walk(directory: string): Promise<void> {
+    // Code-unit order: the manifest must not depend on the process locale.
     const entries = (await readdir(directory, { withFileTypes: true })).sort((left, right) =>
-      left.name.localeCompare(right.name)
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0
     )
     for (const entry of entries) {
       signal?.throwIfAborted()
@@ -725,12 +726,15 @@ export async function captureInstallationManifestAsync(
       hashes[index] = hash.digest('hex')
     }
   }
+  const workers = Array.from({ length: Math.min(8, Math.max(1, regularFiles.length)) }, () =>
+    worker()
+  )
   try {
-    await Promise.all(
-      Array.from({ length: Math.min(8, Math.max(1, regularFiles.length)) }, () => worker())
-    )
+    await Promise.all(workers)
   } catch (error) {
     hashingAbort.abort(error)
+    // Return only after sibling streams released their handles; a caller may delete the tree next.
+    await Promise.allSettled(workers)
     throw error
   }
   for (const [index, entry] of regularFiles.entries()) files[entry.relativePath] = hashes[index]

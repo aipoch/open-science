@@ -23,7 +23,8 @@ export function processBirthIdentity(pid: number): string | undefined {
     if (process.platform === 'win32') {
       const native =
         require('@aipoch/process-tree-native') as typeof import('@aipoch/process-tree-native')
-      // Kernel creation FILETIME, the same value PowerShell's StartTime.ToFileTimeUtc() reported.
+      // Kernel creation FILETIME; equals .NET Process.StartTime.ToFileTimeUtc(), which the uninstall
+      // script compares. WMI CreationDate is only microsecond-precise and must not be used.
       const value = native.getWindowsProcessCreationTime(pid)
       return value && /^\d+$/.test(value) ? `windows-creation-time:${value}` : undefined
     }

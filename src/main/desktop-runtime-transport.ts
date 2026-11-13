@@ -470,7 +470,11 @@ export async function startDesktopRuntimeTransport(options: {
                   host: '127.0.0.1',
                   credentialStore: 'os'
                 },
-                rpcCapabilities: [RUNTIME_PAYLOAD_CAPABILITY, 'resource-activity-v1'],
+                rpcCapabilities: [
+                  RUNTIME_PAYLOAD_CAPABILITY,
+                  'resource-activity-v1',
+                  'host-cancel-v1'
+                ],
                 pid: process.pid,
                 ...(options.startup ? { startup: options.startup.getState() } : {}),
                 rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,

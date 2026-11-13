@@ -631,7 +631,8 @@ export const createApplicationModules = async (
   })
   const handoff = await composeHandoff({
     holdUpdateAdmission: () => applicationCommandComposition.holdUpdateAdmission(),
-    loadSessionSummaries: () => sessionFoundation.sessionRepository.loadSessionSummaries(),
+    loadSessionSummaries: (signal) =>
+      sessionFoundation.sessionRepository.loadSessionSummaries(signal),
     declareElectronAdapter,
     webSessionPersistenceFlush,
     ...settingsBootstrap,

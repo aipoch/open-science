@@ -17,7 +17,6 @@ const requestSchema = z
     parentPid: z.number().int().positive(),
     parentBirthToken: z.string().min(1).optional(),
     helperPid: z.number().int().positive().optional(),
-    helperBirthToken: z.string().min(1).optional(),
     successorPid: z.number().int().positive().optional(),
     successorBirthToken: z.string().min(1).optional(),
     targetVersion: z.string().min(1),
@@ -308,7 +307,7 @@ async function cleanupWindowsUpdateHandoffRoot(root: string): Promise<void> {
       const request = await readRequest(directory, entry.name)
       if (
         processMayBeAlive(request.parentPid, request.parentBirthToken) ||
-        (request.helperPid && processMayBeAlive(request.helperPid, request.helperBirthToken)) ||
+        (request.helperPid && processMayBeAlive(request.helperPid)) ||
         (request.successorPid &&
           processMayBeAlive(request.successorPid, request.successorBirthToken))
       )
