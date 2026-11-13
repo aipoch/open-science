@@ -6,6 +6,7 @@ import {
   SessionDeletionCommittedError,
   SessionRevisionConflictError,
   isSessionRevisionConflictError,
+  isPreparedSessionRun,
   sessionRevision,
   deleteSessionRecoveryFileRequestSchema,
   type DeleteSessionRecoveryFileRequest,
@@ -950,7 +951,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
             throw new SessionRevisionConflictError(expectedRevision, actualRevision)
           // Normal reads preserve active runtime state. Never restart an owned run or preparation.
           if (
-            loaded.session.activeRun ||
+            (loaded.session.activeRun && !isPreparedSessionRun(loaded.session)) ||
             this.stateOwner.ownsPromptPreparation(loaded.session) ||
             this.repository.hasLiveRuntimeSession?.(projectId, sessionId)
           )
