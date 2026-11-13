@@ -11,7 +11,7 @@ import {
 } from 'electron'
 import { showFileDialogInHelper } from './file-dialog-process'
 import { getFileDialogAppearance } from './file-dialog-appearance'
-import { showHtmlFileDialog } from './file-dialog-window'
+import { showInProcessFileDialog } from './file-dialog-save-window'
 import { assertSelectedSavePath } from './file-dialog-filename'
 import { usesHtmlFileDialog, type FileDialogSaveResult } from './file-dialog-protocol'
 import { snapshotFileTarget } from './file-save-target'
@@ -79,7 +79,7 @@ export function showSaveDialog(
     signal?.throwIfAborted()
     const dialogParent =
       parent ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-    return showHtmlFileDialog(
+    return showInProcessFileDialog(
       {
         kind: 'save',
         options: dialogOptions,

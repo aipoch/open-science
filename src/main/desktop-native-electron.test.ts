@@ -26,7 +26,7 @@ vi.mock('@aipoch/diagnostics/node', async (original) => ({
   createLogger: () => mocks.log
 }))
 vi.mock('./file-dialog-process', () => ({ showFileDialogInHelper: mocks.isolated }))
-vi.mock('./file-dialog-window', () => ({ showHtmlFileDialog: mocks.html }))
+vi.mock('./file-dialog-save-window', () => ({ showInProcessFileDialog: mocks.html }))
 vi.mock('electron', () => ({
   app: { getAppMetrics: mocks.metrics },
   shell: { openPath: mocks.openPath, showItemInFolder: mocks.reveal, openExternal: mocks.external },

@@ -28,6 +28,8 @@ class FakeParent {
     this.visible = true
   })
   readonly focus = vi.fn()
+  readonly once = vi.fn()
+  readonly removeListener = vi.fn()
 
   isDestroyed(): boolean {
     return this.destroyed
@@ -174,9 +176,9 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { showHtmlFileDialog } from './file-dialog-window'
+import { showInProcessFileDialog } from './file-dialog-save-window'
 
-describe('in-process file dialog window', () => {
+describe('in-process save file dialog window', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     FakeBrowserWindow.instances.length = 0
@@ -186,7 +188,7 @@ describe('in-process file dialog window', () => {
 
   it('creates a modal child and restores a hidden parent after cancel', async () => {
     const parent = new FakeParent()
-    const pending = showHtmlFileDialog(
+    const pending = showInProcessFileDialog(
       {
         kind: 'save',
         options: { defaultPath: '/tmp/output.txt' },
