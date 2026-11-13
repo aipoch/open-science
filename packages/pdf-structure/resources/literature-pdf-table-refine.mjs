@@ -1908,7 +1908,30 @@ export function recoverNativeInlineGroupLabels({
       return true
     }
     const ordered = candidates.slice().sort((a, b) => a.rect[1] - b.rect[1])
-    if (!ordered.every(insertLabel)) return false
+    const originalCells = cells.slice(),
+      originalCellRows = cells.map((cell) => cell.row),
+      originalBaseCells = baseCells.slice(),
+      originalBaseCellRows = baseCells.map((cell) => cell.row),
+      originalRows = rows.slice(),
+      originalHeaderRows = headerRows.slice(),
+      originalUnassigned = unassigned.slice()
+    const rollback = () => {
+      cells.splice(0, cells.length, ...originalCells)
+      originalCells.forEach((cell, index) => {
+        cell.row = originalCellRows[index]
+      })
+      baseCells.splice(0, baseCells.length, ...originalBaseCells)
+      originalBaseCells.forEach((cell, index) => {
+        cell.row = originalBaseCellRows[index]
+      })
+      rows.splice(0, rows.length, ...originalRows)
+      headerRows.splice(0, headerRows.length, ...originalHeaderRows)
+      unassigned.splice(0, unassigned.length, ...originalUnassigned)
+    }
+    if (!ordered.every(insertLabel)) {
+      rollback()
+      return false
+    }
     cells.sort((a, b) => a.row - b.row || a.column - b.column)
     if (!unassigned.length) issues?.delete?.('unassigned-source-text')
     repairs.push('native-inline-group-labels-recovered')
