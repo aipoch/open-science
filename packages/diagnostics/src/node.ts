@@ -6,6 +6,7 @@ export {
   getLogFilePath,
   getLogFileStatus,
   initLogger,
+  currentDiagnosticCorrelation,
   runWithDiagnosticCorrelation,
   writeFatalLogSync
 } from './logger'

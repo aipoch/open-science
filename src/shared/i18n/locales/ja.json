@@ -133,6 +133,7 @@
     "Session package operation in progress": "セッションパッケージを処理中",
     "Temporary files could not be removed. Try cleanup again.": "一時ファイルを削除できませんでした。後処理を再試行してください。",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "セッションパッケージの操作を完了できませんでした。パッケージとディスクの空き容量を確認してから、再試行してください。",
+    "The selected file is not a valid Session package.": "選択したファイルは有効なセッションパッケージではありません。",
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "元のパッケージを利用できません。移動、削除されたか、読み取れなくなった可能性があります。別のパッケージを選択してください。",
     "Could not fork this Session: {{reason}}": "このセッションを複製できませんでした：{{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "複製の公開処理を復旧する必要があります（操作 {{operationId}}、セッション {{sessionId}}）。再度複製する前にアプリを再起動してこの操作を復旧してください。",

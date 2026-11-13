@@ -1,5 +1,6 @@
 import type { PackageProgress } from '../../shared/session-package'
 import { parentPort, workerData } from 'node:worker_threads'
+import { isInvalidPackageArchive } from './archive'
 import { inspectSessionPackage } from './inspection'
 import { withFileIoPacing } from '../file-io-pacing'
 import { PackageCapacityError } from './capacity'
@@ -63,6 +64,7 @@ void withFileIoPacing(
           ? error.message
           : 'Session package inspection failed.'
         ).slice(0, 8192),
+        ...(isInvalidPackageArchive(error) ? { tarCode: 'TAR_BAD_ARCHIVE' as const } : {}),
         ...(error instanceof PackageCapacityError
           ? {
               capacity: {

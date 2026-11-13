@@ -133,6 +133,7 @@
     "Session package operation in progress": "세션 패키지 작업 진행 중",
     "Temporary files could not be removed. Try cleanup again.": "임시 파일을 제거할 수 없습니다. 정리를 다시 시도하세요.",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "세션 패키지 작업을 완료할 수 없습니다. 패키지와 사용 가능한 디스크 공간을 확인한 후 다시 시도하세요.",
+    "The selected file is not a valid Session package.": "선택한 파일은 유효한 세션 패키지가 아닙니다.",
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "원본 패키지를 사용할 수 없습니다. 이동 또는 삭제되었거나 읽을 수 없는 상태일 수 있습니다. 다른 패키지를 선택하세요.",
     "Could not fork this Session: {{reason}}": "이 세션을 복제할 수 없습니다: {{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "복제 게시를 복구해야 합니다(작업 {{operationId}}, 세션 {{sessionId}}). 다시 복제하기 전에 앱을 다시 시작하여 이 작업을 복구하세요.",
