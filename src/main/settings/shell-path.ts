@@ -39,6 +39,15 @@ const augmentedPathEnv = (env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessE
   return { ...env, PATH: merged.join(delimiter) }
 }
 
+// Keep the result (including a failure) local to one cancellable discovery operation.
+export const npmBinDirsForCheck = (
+  resolve: (signal?: AbortSignal) => Promise<string[]>,
+  signal?: AbortSignal
+): (() => Promise<string[]>) => {
+  let pending: Promise<string[]> | undefined
+  return () => (pending ??= resolve(signal))
+}
+
 // npm prefix starts a process. Ask for its directories only after all local candidates miss.
 export async function* withNpmBinFallback(
   dirs: readonly string[],

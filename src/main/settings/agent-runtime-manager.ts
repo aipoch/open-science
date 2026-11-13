@@ -126,7 +126,7 @@ import { runEnvironmentCheck } from './environment-check'
 import { computePreflight } from './preflight'
 import { isEncryptionAvailable } from './crypto'
 import { getCredentialStore } from './credential-store-mode'
-import { augmentedPathEnv } from './shell-path'
+import { augmentedPathEnv, npmBinDirsForCheck } from './shell-path'
 import { buildProviderEnv, type ResolvedProvider } from './provider-env'
 import { resolveSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
 import type { ProviderAccountsModule } from './provider-accounts'
@@ -562,12 +562,10 @@ export class AgentRuntimeManager {
       signal.throwIfAborted()
       const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
       const runtimeProbe = this.takeReusableRuntimeProbe('environmentCheckRuntimeProbe', settings)
-      // OpenCode and CodeBuddy use the same host npm prefix unless supplied distinct resolvers.
       const opencodeDeps = this.opencodeDetectDeps
       const codebuddyDeps = this.codebuddyDetectDeps
-      let npmDirs: Promise<string[]> | undefined
-      const sharedNpmDirs = (): Promise<string[]> =>
-        (npmDirs ??= opencodeDeps.resolveNpmBinDirs(signal))
+      const codexDeps = this.codexDetectDeps
+      const sharedNpmDirs = npmBinDirsForCheck(opencodeDeps.resolveNpmBinDirs, signal)
       const [claudeRuntime, opencodeRuntime, codebuddyRuntime, codexRuntime, piReady] =
         await Promise.all([
           this.trackDetection(() =>
@@ -590,7 +588,13 @@ export class AgentRuntimeManager {
             )
           ),
           this.trackDetection(() =>
-            this.resolveCodexRuntime(settings, runtimeProbe?.codex, signal)
+            this.resolveCodexRuntime(settings, runtimeProbe?.codex, signal, {
+              ...codexDeps,
+              resolveNpmBinDirs:
+                codexDeps.resolveNpmBinDirs === opencodeDeps.resolveNpmBinDirs
+                  ? sharedNpmDirs
+                  : npmBinDirsForCheck(codexDeps.resolveNpmBinDirs, signal)
+            })
           ),
           agentFrameworkId === 'pi'
             ? isPiRuntimeReady({ configRoot: this.configRoot })
@@ -732,7 +736,14 @@ export class AgentRuntimeManager {
 
   async detectCodex(signal?: AbortSignal): Promise<void> {
     return this.trackDetection(async (operationSignal) => {
-      const detected = await detectCodex(this.codexDetectDeps, operationSignal)
+      const deps = {
+        ...this.codexDetectDeps,
+        resolveNpmBinDirs: npmBinDirsForCheck(
+          this.codexDetectDeps.resolveNpmBinDirs,
+          operationSignal
+        )
+      }
+      const detected = await detectCodex(deps, operationSignal)
       operationSignal.throwIfAborted()
 
       if (detected) {
@@ -743,7 +754,7 @@ export class AgentRuntimeManager {
           nativeVersion: detected.nativeCodexVersion
         })
       } else {
-        const components = await detectCodexComponents(this.codexDetectDeps, operationSignal)
+        const components = await detectCodexComponents(deps, operationSignal)
         operationSignal.throwIfAborted()
         if (
           components.adapterPath &&
@@ -1549,14 +1560,15 @@ export class AgentRuntimeManager {
   private async resolveCodexRuntime(
     settings: StoredSettings,
     probedRuntime: ConfiguredCodexRuntimeProbe | undefined,
-    signal: AbortSignal
+    signal: AbortSignal,
+    deps: CodexDetectDeps
   ): Promise<ClaudeDetectResult> {
     const cached = settings.codex
     const configuredProbe =
       probedRuntime ?? (await this.probeConfiguredCodexRuntime(cached, signal))
     signal.throwIfAborted()
     const cachedVersions = codexVersionsFromProbe(configuredProbe)
-    const detectDeps = this.memoizedCodexDetectDeps(configuredProbe)
+    const detectDeps = this.memoizedCodexDetectDeps(configuredProbe, deps)
     if (cached?.resolvedPath && cachedVersions) {
       await this.repository.setCodexInfo({ ...cached, ...cachedVersions })
       let nativeCliFound = !!cached.nativePath
@@ -1711,8 +1723,10 @@ export class AgentRuntimeManager {
     }
   }
 
-  private memoizedCodexDetectDeps(probe: ConfiguredCodexRuntimeProbe): CodexDetectDeps {
-    const deps = this.codexDetectDeps
+  private memoizedCodexDetectDeps(
+    probe: ConfiguredCodexRuntimeProbe,
+    deps: CodexDetectDeps
+  ): CodexDetectDeps {
     const adapterVersions = new Map<string, Promise<string | undefined>>()
     const nativeVersions = new Map<string, Promise<string | undefined>>()
     const smokeResults = new Map<string, Promise<boolean>>()

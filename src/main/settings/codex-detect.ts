@@ -12,7 +12,7 @@ import {
   createLogger,
   runtimeChildProcessErrorFields
 } from '@aipoch/diagnostics/node'
-import { augmentedPathEnv, withNpmBinFallback } from './shell-path'
+import { augmentedPathEnv, npmBinDirsForCheck, withNpmBinFallback } from './shell-path'
 import { stripCodexCredentialEnv } from './process-tree'
 import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
 import { spawnCodexWithInstallAdmission } from './managed-codex'
@@ -189,6 +189,7 @@ const detectCodexComponents = async (
 }> => {
   signal?.throwIfAborted()
 
+  const search = { ...deps, resolveNpmBinDirs: npmBinDirsForCheck(deps.resolveNpmBinDirs, signal) }
   const managedNativeOutput = deps.managedCodexPath
     ? await deps.getCodexVersion(deps.managedCodexPath, signal)
     : undefined
@@ -196,7 +197,7 @@ const detectCodexComponents = async (
   const managedNativeVersion = managedNativeOutput ? parseVersion(managedNativeOutput) : undefined
   const nativeCodex = managedNativeVersion
     ? { path: deps.managedCodexPath!, version: managedNativeVersion }
-    : await detectNativeCodex(deps, signal)
+    : await detectNativeCodex(search, signal)
 
   let adapterFound = false
   let adapterPath: string | undefined
@@ -204,7 +205,7 @@ const detectCodexComponents = async (
   let adapterFailureReason:
     'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed' | undefined
 
-  for await (const candidate of adapterCandidates(deps, signal)) {
+  for await (const candidate of adapterCandidates(search, signal)) {
     signal?.throwIfAborted()
     if (!(await deps.isRunnable(candidate))) continue
 

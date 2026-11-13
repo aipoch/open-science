@@ -778,6 +778,16 @@ describe('detectNativeCodex', () => {
 })
 
 describe('detectCodexComponents', () => {
+  it('queries npm once for native CLI and adapter misses per diagnostic', async () => {
+    const { detectCodexComponents } = await import('./codex-detect')
+    const resolveNpmBinDirs = vi.fn().mockRejectedValue(new Error('npm unavailable'))
+    const deps = createDeps({}, { resolveNpmBinDirs })
+    await detectCodexComponents(deps)
+    expect(resolveNpmBinDirs).toHaveBeenCalledTimes(1)
+    await detectCodexComponents(deps)
+    expect(resolveNpmBinDirs).toHaveBeenCalledTimes(2)
+  })
+
   it('cancels diagnostic npm fallback before probing its candidates', async () => {
     const { detectCodexComponents } = await import('./codex-detect')
     const controller = new AbortController()

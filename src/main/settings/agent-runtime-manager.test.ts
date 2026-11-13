@@ -323,7 +323,15 @@ describe('AgentRuntimeManager', () => {
   it('queries a shared npm directory once per environment check and detects each executable', async () => {
     const resolveNpmBinDirs = vi.fn(async () => ['/custom/bin'])
     const deps = { ...createOpencodeDeps(inventory), resolveNpmBinDirs }
-    manager = createManager({ opencodeDetectDeps: deps, codebuddyDetectDeps: deps })
+    manager = createManager({
+      opencodeDetectDeps: deps,
+      codebuddyDetectDeps: deps,
+      codexDetectDeps: {
+        ...createCodexDeps(inventory, managedAdapterPath, managedCodexPath),
+        managedAdapterPath: undefined,
+        resolveNpmBinDirs
+      }
+    })
     await manager.checkEnvironment()
     expect(resolveNpmBinDirs).toHaveBeenCalledTimes(1)
 
