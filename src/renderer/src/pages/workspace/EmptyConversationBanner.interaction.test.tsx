@@ -119,3 +119,17 @@ it('shows the guide on info-button focus without triggering the row browse', () 
   expect(screen.queryByRole('tooltip')).toBeNull()
   pickerClick.mockRestore()
 })
+
+it('opens the guide on a touch click without triggering the file picker', () => {
+  const pickerClick = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {})
+  mount()
+  const info = screen.getByRole('button', { name: 'What is a .science research package?' })
+  const tap = new MouseEvent('click', { bubbles: true, cancelable: true })
+  Object.defineProperty(tap, 'pointerType', { value: 'touch' })
+
+  fireEvent(info, tap)
+
+  expect(screen.getByRole('tooltip')).toBeTruthy()
+  expect(pickerClick).not.toHaveBeenCalled()
+  pickerClick.mockRestore()
+})
