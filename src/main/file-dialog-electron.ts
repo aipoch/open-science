@@ -9,7 +9,6 @@ import {
   type OpenDialogReturnValue,
   type SaveDialogOptions
 } from 'electron'
-import { showFileDialogInHelper } from './file-dialog-process'
 import { getFileDialogAppearance } from './file-dialog-appearance'
 import { showInProcessFileDialog } from './file-dialog-save-window'
 import { assertSelectedSavePath } from './file-dialog-filename'
@@ -49,12 +48,7 @@ export function showOpenDialog(
 ): Promise<OpenDialogReturnValue> {
   const parent = options === undefined ? undefined : (parentOrOptions as BaseWindow)
   const dialogOptions = options ?? (parentOrOptions as OpenDialogOptions)
-  if (process.platform === 'win32' || usesHtmlFileDialog({ kind: 'open', options: dialogOptions }))
-    return showFileDialogInHelper(
-      { kind: 'open', options: dialogOptions },
-      parent,
-      signal
-    ) as Promise<OpenDialogReturnValue>
+  signal?.throwIfAborted()
   return runFileDialog('open', parent, (dialogParent) =>
     dialogParent
       ? dialog.showOpenDialog(dialogParent, dialogOptions)

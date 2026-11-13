@@ -2,14 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const electron = vi.hoisted(() => ({
   fromWebContents: vi.fn(),
-  isolated: vi.fn(),
+  getFocusedWindow: vi.fn(),
+  getAllWindows: vi.fn(),
+  saveWindow: vi.fn(),
   showSaveDialog: vi.fn()
 }))
 
-vi.mock('../file-dialog-process', () => ({ showFileDialogInHelper: electron.isolated }))
+vi.mock('../file-dialog-save-window', () => ({ showInProcessFileDialog: electron.saveWindow }))
 vi.mock('electron', () => ({
-  BrowserWindow: { fromWebContents: electron.fromWebContents },
-  dialog: { showSaveDialog: electron.showSaveDialog }
+  BrowserWindow: {
+    fromWebContents: electron.fromWebContents,
+    getFocusedWindow: electron.getFocusedWindow,
+    getAllWindows: electron.getAllWindows
+  },
+  dialog: { showSaveDialog: electron.showSaveDialog },
+  nativeTheme: { shouldUseDarkColors: false }
 }))
 
 const { showSettingsSaveDialog } = await import('./save-dialog')
@@ -18,8 +25,10 @@ afterEach(() => Object.defineProperty(process, 'platform', originalPlatform))
 
 describe('Settings Save As dialog', () => {
   beforeEach(() => {
-    electron.isolated.mockReset().mockResolvedValue({ canceled: true, filePath: '' })
+    electron.saveWindow.mockReset().mockResolvedValue({ canceled: true, filePath: '' })
     electron.fromWebContents.mockReset()
+    electron.getFocusedWindow.mockReset().mockReturnValue(undefined)
+    electron.getAllWindows.mockReset().mockReturnValue([])
     electron.showSaveDialog.mockReset().mockResolvedValue({ canceled: true, filePath: '' })
   })
 
@@ -36,8 +45,13 @@ describe('Settings Save As dialog', () => {
 
       expect(electron.fromWebContents).toHaveBeenCalledWith(sender)
       if (platform === 'win32' || platform === 'darwin') {
-        expect(electron.isolated).toHaveBeenCalledWith(
-          { kind: 'save', options },
+        expect(electron.saveWindow).toHaveBeenCalledWith(
+          expect.objectContaining({
+            kind: 'save',
+            options,
+            operationId: expect.any(String),
+            appearance: expect.any(Object)
+          }),
           parentWindow,
           undefined
         )
@@ -57,8 +71,13 @@ describe('Settings Save As dialog', () => {
       await showSettingsSaveDialog(sender as never, options)
 
       if (process.platform === 'win32' || process.platform === 'darwin')
-        expect(electron.isolated).toHaveBeenCalledWith(
-          { kind: 'save', options },
+        expect(electron.saveWindow).toHaveBeenCalledWith(
+          expect.objectContaining({
+            kind: 'save',
+            options,
+            operationId: expect.any(String),
+            appearance: expect.any(Object)
+          }),
           undefined,
           undefined
         )

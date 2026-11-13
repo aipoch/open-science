@@ -498,6 +498,5 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view",
-  "fullTestReason": "The isolated Windows destination picker adds a standalone renderer entry and destination selection lifecycle outside the reviewed application boundary; require full validation until its runtime contracts are reviewed."
+  "fallbackCapability": "renderer_view"
 }

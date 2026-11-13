@@ -33,6 +33,5 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "shared_contract",
-  "fullTestReason": "The isolated Windows destination picker adds a restricted preload IPC surface and helper-owned browser window outside the reviewed preload boundary; require full validation until its runtime contracts are reviewed."
+  "fallbackCapability": "shared_contract"
 }

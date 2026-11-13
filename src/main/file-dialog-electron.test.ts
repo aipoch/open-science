@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  helper: vi.fn(),
   html: vi.fn(),
   nativeOpen: vi.fn(),
   nativeSave: vi.fn(),
@@ -12,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   logger: { warn: vi.fn(), error: vi.fn() }
 }))
 
-vi.mock('./file-dialog-process', () => ({ showFileDialogInHelper: mocks.helper }))
 vi.mock('./file-dialog-save-window', () => ({ showInProcessFileDialog: mocks.html }))
 vi.mock('./file-dialog-appearance', () => ({ getFileDialogAppearance: vi.fn() }))
 vi.mock('./file-save-target', () => ({ snapshotFileTarget: mocks.snapshot }))
@@ -41,6 +39,8 @@ afterEach(() => Object.defineProperty(process, 'platform', originalPlatform))
 beforeEach(() => {
   vi.resetAllMocks()
   mocks.snapshot.mockResolvedValue({ path: '/tmp/output.txt', fingerprint: null })
+  mocks.nativeOpen.mockResolvedValue({ canceled: true, filePaths: [] })
+  mocks.nativeSave.mockResolvedValue({ canceled: true, filePath: '' })
 })
 
 describe('desktop save dialog routing', () => {
@@ -68,7 +68,6 @@ describe('desktop save dialog routing', () => {
       parent,
       signal
     )
-    expect(mocks.helper).not.toHaveBeenCalled()
     expect(mocks.nativeSave).not.toHaveBeenCalled()
   })
 
@@ -83,20 +82,16 @@ describe('desktop save dialog routing', () => {
     expect(mocks.html).toHaveBeenCalledWith(expect.any(Object), focused, undefined)
   })
 
-  it('keeps open dialogs on the existing helper path', async () => {
+  it('keeps open dialogs on Electron native dialogs', async () => {
     Object.defineProperty(process, 'platform', { value: 'win32' })
     const parent = { isDestroyed: () => false }
     const result = { canceled: true, filePaths: [] }
-    mocks.helper.mockResolvedValue(result)
+    mocks.nativeOpen.mockResolvedValue(result)
 
     await expect(showOpenDialog(parent as never, { properties: ['openDirectory'] })).resolves.toBe(
       result
     )
-    expect(mocks.helper).toHaveBeenCalledWith(
-      { kind: 'open', options: { properties: ['openDirectory'] } },
-      parent,
-      undefined
-    )
+    expect(mocks.nativeOpen).toHaveBeenCalledWith(parent, { properties: ['openDirectory'] })
     expect(mocks.html).not.toHaveBeenCalled()
   })
 })

@@ -201,7 +201,6 @@
         "src/main/**/*powershell*.ts",
         "src/main/**/*path*.ts",
         "src/main/**/*acl*.ts",
-        "src/main/electron-entry.ts",
         "src/main/file-dialog-*.ts",
         "src/main/research-video/export-electron.ts",
         "packages/research-film/src/ffmpeg.ts",
@@ -563,8 +562,7 @@
         "e2e/fixtures/replay-stage/**",
         "e2e/fixtures/reproducibility-preview/**",
         "e2e/fixtures/session-outcome-fault.ts",
-        "e2e/fixtures/settings-error-transport.ts",
-        "e2e/file-dialog-helper.spec.ts"
+        "e2e/fixtures/settings-error-transport.ts"
       ],
       "capabilities": ["desktop_e2e_source", "e2e_regressions"]
     },

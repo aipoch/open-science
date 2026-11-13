@@ -8,7 +8,6 @@ import { createDesktopNativeHandler } from './desktop-native-electron'
 
 const mocks = vi.hoisted(() => ({
   metrics: vi.fn(),
-  isolated: vi.fn(),
   html: vi.fn(),
   open: vi.fn(),
   save: vi.fn(),
@@ -25,7 +24,6 @@ vi.mock('@aipoch/diagnostics/node', async (original) => ({
   ...(await original<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => mocks.log
 }))
-vi.mock('./file-dialog-process', () => ({ showFileDialogInHelper: mocks.isolated }))
 vi.mock('./file-dialog-save-window', () => ({ showInProcessFileDialog: mocks.html }))
 vi.mock('electron', () => ({
   app: { getAppMetrics: mocks.metrics },
@@ -43,9 +41,6 @@ vi.mock('./session-persistence/conversation-pdf-electron', () => ({
 }))
 beforeEach(() => {
   vi.resetAllMocks()
-  mocks.isolated.mockImplementation((request) =>
-    (request.kind === 'save' ? mocks.save : mocks.open)(request.options)
-  )
 })
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
 afterEach(() => Object.defineProperty(process, 'platform', originalPlatform))
@@ -96,12 +91,8 @@ describe('native operations requested by the Node runtime', () => {
         )
       ).resolves.toEqual(result)
       const htmlSave = save && (platform === 'win32' || platform === 'darwin')
-      const isolated = platform === 'win32'
       if (htmlSave) expect(native).not.toHaveBeenCalled()
-      else
-        expect(native.mock.calls).toEqual([
-          isolated ? [{ title: 'Export' }] : [value.window, { title: 'Export' }]
-        ])
+      else expect(native).toHaveBeenCalledWith(value.window, { title: 'Export' })
       expect(value.resolve).toHaveBeenCalledWith(value.clientId)
       if (htmlSave) {
         expect(mocks.html).toHaveBeenCalledWith(
@@ -114,18 +105,8 @@ describe('native operations requested by the Node runtime', () => {
           value.window,
           value.signal.signal
         )
-        expect(mocks.isolated).not.toHaveBeenCalled()
         return
       }
-      if (isolated) {
-        expect(mocks.isolated).toHaveBeenCalledWith(
-          { kind: save ? 'save' : 'open', options: { title: 'Export' } },
-          value.window,
-          value.signal.signal
-        )
-        return
-      }
-      expect(mocks.isolated).not.toHaveBeenCalled()
       expect(mocks.log.info).toHaveBeenCalledWith(
         'operation started',
         expect.objectContaining({
@@ -198,7 +179,7 @@ describe('native operations requested by the Node runtime', () => {
       filePaths: [join(tmpdir(), 'chosen.science')]
     })
     await result
-    expect(native).toHaveBeenCalledWith({})
+    expect(native).toHaveBeenCalledWith(value.window, {})
   })
 
   it('records Linux native dialog cancellation and rejection without swallowing the error', async () => {

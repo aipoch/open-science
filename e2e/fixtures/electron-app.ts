@@ -22,7 +22,6 @@ import { createInterface } from 'node:readline'
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path'
 import {
   _electron as electron,
-  chromium,
   type ElectronApplication,
   type JSHandle,
   type Page
@@ -348,11 +347,6 @@ type NativeMenuProbe = {
   close: () => void
   dispose: () => void
 }
-type FileDialogObserver = {
-  next: (timeoutMs?: number) => Promise<{ page: Page; close: () => Promise<void> }>
-  stop: () => Promise<void>
-}
-
 type ElectronApp = {
   addCleanupAudit: (audit: () => Promise<void>) => void
   captureBrandState: () => Promise<BrandState>
@@ -389,16 +383,6 @@ type ElectronApp = {
   ) => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
   holdNextFakeSessionCreate: () => Promise<{ started: string; release: string; closed: string }>
-  observeFileDialogs: () => Promise<FileDialogObserver>
-  holdBrowserDownloadWrite: () => Promise<
-    JSHandle<{
-      entered: boolean
-      temporaryDirectory: string
-      release: () => void
-      closeCaller: () => void
-      restore: () => void
-    }>
-  >
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
   restartWithPackage: (path: string) => Promise<Page>
   emitPackageFileOpen: (path: string) => Promise<void>
@@ -927,7 +911,6 @@ class ElectronAppHarness implements ElectronApp {
   addCleanupAudit(audit: () => Promise<void>): void {
     this.cleanupAudits.push(audit)
   }
-  private stopFileDialogObserver?: () => Promise<void>
   private application: ElectronApplication | undefined
   private applicationProcess: ReturnType<typeof spawn> | undefined
   private currentPage: Page | undefined
@@ -1456,140 +1439,6 @@ class ElectronAppHarness implements ElectronApp {
     }, url)
   }
 
-  async holdBrowserDownloadWrite(): Promise<
-    JSHandle<{
-      entered: boolean
-      temporaryDirectory: string
-      release: () => void
-      closeCaller: () => void
-      restore: () => void
-    }>
-  > {
-    const owner = await this.runningApplication.browserWindow(this.page)
-    const id = await owner.evaluate((window) => window.id)
-    // Pause after the real filesystem copy, before the production publisher can commit it.
-    // This schedules a deterministic close during writing, without mocking download/selection.
-    return this.runningApplication.evaluateHandle(({ BrowserWindow }, id) => {
-      const fs = process.getBuiltinModule('node:fs/promises')
-      const path = process.getBuiltinModule('node:path')
-      const original = fs.copyFile
-      let release = (): void => {}
-      const gate = new Promise<void>((resolve) => {
-        release = resolve
-      })
-      const keeper = new BrowserWindow({ show: false })
-      const state = {
-        entered: false,
-        temporaryDirectory: '',
-        release,
-        closeCaller: () => BrowserWindow.fromId(id)!.destroy(),
-        restore: () => {
-          fs.copyFile = original
-          release()
-          keeper.destroy()
-        }
-      }
-      fs.copyFile = (async (...args: Parameters<typeof fs.copyFile>) => {
-        await original(...args)
-        if (String(args[0]).includes('open-science-download-')) {
-          state.temporaryDirectory = path.dirname(String(args[1]))
-          state.entered = true
-          await gate
-        }
-      }) as typeof original
-      return state
-    }, id)
-  }
-
-  async observeFileDialogs(): Promise<FileDialogObserver> {
-    await this.stopFileDialogObserver?.()
-    const probe = await this.runningApplication.evaluateHandle(() => {
-      const childProcess = process.getBuiltinModule('node:child_process')
-      const original = childProcess.spawn
-      const entries: Array<{ endpoint?: string; shown: boolean; focused: boolean }> = []
-      childProcess.spawn = ((
-        file: string,
-        args: string[],
-        options: import('node:child_process').SpawnOptions
-      ) => {
-        if (!args.includes('--open-science-file-dialog-helper'))
-          return original(file, args, options)
-        const entry = { endpoint: undefined as string | undefined, shown: false, focused: false }
-        entries.push(entry)
-        // Keep the production launch flags and IPC. Only expose a test debugging connection.
-        const child = original(file, [...args, '--remote-debugging-port=0'], {
-          ...options,
-          stdio: ['ignore', 'ignore', 'pipe', 'ipc']
-        })
-        child.stderr?.on('data', (chunk: Buffer) => {
-          const match = chunk.toString().match(/DevTools listening on (ws:\/\/[^\s]+)/)
-          if (match) entry.endpoint = match[1]
-        })
-        child.on('message', (message: unknown) => {
-          const state = message as {
-            type?: string
-            phase?: string
-            visible?: boolean
-            focused?: boolean
-          }
-          if (
-            state.type === 'window-state' &&
-            (state.phase === 'shown' || state.phase === 'focused')
-          ) {
-            entry.shown = state.visible === true
-            entry.focused = state.focused === true
-          }
-        })
-        return child
-      }) as typeof original
-      return {
-        entries,
-        restore: () => {
-          childProcess.spawn = original
-        }
-      }
-    })
-    let index = 0
-    let stopped = false
-    const browsers = new Set<import('playwright').Browser>()
-    const stop = async (): Promise<void> => {
-      if (stopped) return
-      stopped = true
-      await probe.evaluate((probe) => probe.restore()).catch(() => undefined)
-      await Promise.all([...browsers].map((browser) => browser.close().catch(() => undefined)))
-      await probe.dispose()
-    }
-    this.stopFileDialogObserver = stop
-    return {
-      stop,
-      next: async (timeoutMs = 20_000) => {
-        const current = index++
-        let endpoint: string | undefined
-        await expect
-          .poll(
-            async () => {
-              if (stopped) throw new Error('File dialog observer stopped')
-              const entry = await probe.evaluate((probe, index) => probe.entries[index], current)
-              endpoint = entry?.endpoint
-              return Boolean(endpoint && entry?.shown && entry?.focused)
-            },
-            { timeout: timeoutMs }
-          )
-          .toBe(true)
-        const browser = await chromium.connectOverCDP(endpoint!)
-        browsers.add(browser)
-        const page = browser.contexts()[0].pages()[0]
-        return {
-          page,
-          close: async () => {
-            browsers.delete(browser)
-            await browser.close()
-          }
-        }
-      }
-    }
-  }
-
   async configureSessionPackageDialogs(options?: { availableBytes?: number }): Promise<string> {
     const archive = join(this.testRoot, 'research.science')
     if (options?.availableBytes !== undefined)
@@ -1601,32 +1450,6 @@ class ElectronAppHarness implements ElectronApp {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: archive })
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [archive] })
     }, archive)
-    const observer = await this.observeFileDialogs()
-    const drive = async (): Promise<void> => {
-      while (true) {
-        const picker = await observer.next(240_000)
-        try {
-          await picker.page.getByRole('textbox', { name: 'Save path' }).fill(dirname(archive))
-          await picker.page.getByRole('textbox', { name: 'Save path' }).press('Enter')
-          await picker.page
-            .getByRole('textbox', { name: 'File name', exact: true })
-            .fill('research.science')
-          await picker.page.getByRole('button', { name: 'Save', exact: true }).click()
-          if (
-            await picker.page
-              .getByRole('alertdialog')
-              .isVisible()
-              .catch(() => false)
-          )
-            await picker.page.getByRole('button', { name: 'Replace', exact: true }).click()
-          if (!picker.page.isClosed())
-            await picker.page.waitForEvent('close').catch(() => undefined)
-        } finally {
-          await picker.close().catch(() => undefined)
-        }
-      }
-    }
-    void drive().catch(() => undefined)
     return archive
   }
 
@@ -2319,8 +2142,6 @@ class ElectronAppHarness implements ElectronApp {
     requireGraceful = false,
     gracefulTimeoutMs = CLEANUP_GRACEFUL_TIMEOUT_MS
   ): Promise<void> {
-    await this.stopFileDialogObserver?.()
-    this.stopFileDialogObserver = undefined
     if (!this.application) return
 
     const application = this.application
