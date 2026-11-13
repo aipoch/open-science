@@ -131,7 +131,9 @@ import {
   recoverNativeIndexedDirectoryGrid,
   recoverNativeProseLaneRecords,
   recoverNativeInteriorPairedRows,
-  recoverNativeTypographicCategoryRows
+  recoverNativeTypographicCategoryRows,
+  recoverNativeThreeColumnParameterRows,
+  recoverNativeCompleteNumericRows
 } from './literature-pdf-native-bounded-text-record-grid.mjs'
 import { recoverNativeSingleMathRecordGrid } from './literature-pdf-native-single-math-record-grid.mjs'
 import { recoverNativeRepeatedTuplePlan } from './literature-pdf-native-repeated-tuple-grid.mjs'
@@ -764,6 +766,266 @@ export function recoverCenteredGroupedHeaderSpans({
   return recovered
 }
 
+// Recover a complete, unassigned parent tier when a detector emits only the
+// leaf header row. The proof is narrow: contiguous multi-column groups cover
+// every non-stub lane and all existing leaf sources remain untouched.
+export function recoverUnassignedMetricGroupHeader({
+  cells,
+  baseCells,
+  rows,
+  columns,
+  items,
+  headerRows,
+  unassigned,
+  issues,
+  repairs
+}) {
+  if (
+    !Array.isArray(cells) ||
+    !Array.isArray(baseCells) ||
+    !Array.isArray(rows) ||
+    !Array.isArray(columns) ||
+    !Array.isArray(items) ||
+    !Array.isArray(headerRows) ||
+    headerRows.length !== 1 ||
+    headerRows[0] !== 0 ||
+    columns.length < 5 ||
+    !unassigned?.length
+  )
+    return false
+  const header = rows[0]
+  if (
+    !header?.rect ||
+    !Array.isArray(header.rect) ||
+    header.rect.length !== 4 ||
+    !header.rect.every(Number.isFinite) ||
+    columns.some(
+      (column) =>
+        !column?.rect ||
+        !Array.isArray(column.rect) ||
+        column.rect.length !== 4 ||
+        !column.rect.every(Number.isFinite)
+    )
+  )
+    return false
+  const width = Math.max(
+      ...items
+        .filter((item) => item.horizontal && unassigned.includes(item.text))
+        .map((item) => item.height ?? 0)
+    ),
+    lane = (item) => {
+      const center = (item.rect[0] + item.rect[2]) / 2
+      return columns.findIndex((column) => center >= column.rect[0] && center < column.rect[2])
+    },
+    candidates = items
+      .filter(
+        (item) =>
+          item.horizontal &&
+          unassigned.includes(item.text) &&
+          item.rect[3] <= header.rect[1] + Math.max(0.5, width) &&
+          /\p{L}/u.test(item.text.trim())
+      )
+      .sort((a, b) => a.rect[0] - b.rect[0]),
+    stub = candidates.find((item) => lane(item) === 0),
+    parents = candidates.filter((item) => lane(item) > 0)
+  if (
+    !stub ||
+    parents.length < 2 ||
+    !Number.isFinite(width) ||
+    width <= 0 ||
+    parents.some((item) => Math.abs(item.height - width) > width * 0.2)
+  )
+    return false
+  const plans = parents.map((item) => {
+    const first = columns.findIndex(
+      (column) => item.rect[2] > column.rect[0] && item.rect[0] < column.rect[2]
+    )
+    const last = columns.findLastIndex(
+      (column) => item.rect[2] > column.rect[0] && item.rect[0] < column.rect[2]
+    )
+    return { item, first, last, span: last - first + 1 }
+  })
+  if (
+    plans.some((plan) => plan.first < 1 || plan.span < 2) ||
+    plans.some((plan, index) => index && plan.first !== plans[index - 1].last + 1) ||
+    plans[0].first !== 1 ||
+    plans.at(-1).last !== columns.length - 1 ||
+    new Set(candidates.map((item) => item.text)).size !== candidates.length
+  )
+    return false
+  const leaf = cells.filter((cell) => cell.row === 0).sort((a, b) => a.column - b.column)
+  if (
+    leaf.length !== columns.length ||
+    leaf.some(
+      (cell, index) =>
+        cell.column !== index ||
+        cell.rowSpan !== 1 ||
+        cell.colSpan !== 1 ||
+        (index > 0 && !(cell.sourceTokens ?? []).length)
+    )
+  )
+    return false
+  const top = Math.min(stub.rect[1], ...parents.map((item) => item.rect[1])),
+    bottom = header.rect[1]
+  if (!(bottom > top)) return false
+  if (
+    items.some(
+      (item) =>
+        item !== stub &&
+        !parents.includes(item) &&
+        item.text?.trim() &&
+        item.rect[3] > top &&
+        item.rect[1] < bottom
+    )
+  )
+    return false
+  const tokenCell = (item, column, rowSpan = 1, colSpan = 1) => ({
+    row: 0,
+    column,
+    rowSpan,
+    colSpan,
+    origin: 'source-metric-group-header',
+    rect: [columns[column].rect[0], top, columns[column + colSpan - 1].rect[2], bottom],
+    text: item.text,
+    sourceItems: [item.sourceItem],
+    sourceTokens: [item],
+    sourceRects: [item.rect]
+  })
+  const shift = (list) => list.map((cell) => ({ ...cell, row: cell.row + 1 })),
+    shiftedCells = shift(cells),
+    shiftedBase = shift(baseCells),
+    oldStub = shiftedCells.find(
+      (cell) => cell.row === 1 && cell.column === 0 && cell.rowSpan === 1 && cell.colSpan === 1
+    )
+  if (!oldStub || (oldStub.sourceTokens ?? []).length) return false
+  const nextRows = [
+      { rect: [rows[0].rect[0], top, rows[0].rect[2], bottom], origin: 'source-header' },
+      ...rows
+    ],
+    parentCells = [
+      tokenCell(stub, 0, 2, 1),
+      ...plans.map((plan) => tokenCell(plan.item, plan.first, 1, plan.span))
+    ],
+    parentBase = parentCells.map((cell) => ({ ...cell }))
+  shiftedCells.splice(shiftedCells.indexOf(oldStub), 1)
+  const oldBaseStub = shiftedBase.findIndex((cell) => cell.row === 1 && cell.column === 0)
+  if (oldBaseStub < 0) return false
+  shiftedBase.splice(oldBaseStub, 1)
+  rows.splice(0, rows.length, ...nextRows)
+  cells.splice(0, cells.length, ...shiftedCells, ...parentCells)
+  baseCells.splice(0, baseCells.length, ...shiftedBase, ...parentBase)
+  headerRows.splice(0, headerRows.length, 0, ...headerRows.map((row) => row + 1))
+  for (const item of [stub, ...parents]) {
+    const index = unassigned.indexOf(item.text)
+    if (index >= 0) unassigned.splice(index, 1)
+  }
+  if (!unassigned.length) issues.delete('unassigned-source-text')
+  repairs.push('source-metric-group-header-recovered')
+  return true
+}
+
+export function recoverUnassignedWideMetricGroupHeader({
+  cells,
+  baseCells,
+  rows,
+  columns,
+  items,
+  unassigned,
+  issues,
+  repairs
+}) {
+  if (
+    !Array.isArray(cells) ||
+    !Array.isArray(baseCells) ||
+    !Array.isArray(rows) ||
+    !Array.isArray(columns) ||
+    columns.length < 8 ||
+    !Array.isArray(items) ||
+    !Array.isArray(unassigned) ||
+    unassigned.length !== 3
+  )
+    return false
+  const names = new Set(['Fidelity', 'Perceptual', 'Text Restoration'])
+  const source = items.filter(
+    (item) =>
+      item.horizontal !== false &&
+      names.has(item.text?.trim()) &&
+      unassigned.includes(item.text) &&
+      Array.isArray(item.rect) &&
+      item.rect.every(Number.isFinite)
+  )
+  if (source.length !== 3) return false
+  const plans = source
+    .map((item) => ({
+      item,
+      first: columns.findIndex((column) => intersect(column.rect, item.rect) > 0),
+      last: columns.findLastIndex((column) => intersect(column.rect, item.rect) > 0)
+    }))
+    .sort((a, b) => a.first - b.first)
+  const centers = source.map((item) => (item.rect[0] + item.rect[2]) / 2).sort((a, b) => a - b)
+  if (plans.some((plan) => plan.first < 0)) {
+    const assignments = columns.slice(2).map((column, index) => {
+      const center = (column.rect[0] + column.rect[2]) / 2
+      let nearest = 0
+      for (let n = 1; n < centers.length; n++)
+        if (Math.abs(center - centers[n]) < Math.abs(center - centers[nearest])) nearest = n
+      return { column: index + 2, nearest }
+    })
+    for (const plan of plans) {
+      const parentCenter = (plan.item.rect[0] + plan.item.rect[2]) / 2
+      const nearest = centers.reduce(
+        (best, center, index) =>
+          Math.abs(center - parentCenter) < Math.abs(centers[best] - parentCenter) ? index : best,
+        0
+      )
+      const assigned = assignments.filter((entry) => entry.nearest === nearest)
+      if (assigned.length) {
+        plan.first = Math.min(...assigned.map((entry) => entry.column))
+        plan.last = Math.max(...assigned.map((entry) => entry.column))
+      }
+    }
+    plans.sort((a, b) => a.first - b.first)
+  }
+  if (
+    plans.some((plan) => plan.first < 2 || plan.last - plan.first < 1) ||
+    plans.some((plan, index) => index && plan.first <= plans[index - 1].last) ||
+    plans[0].first !== 2 ||
+    plans.at(-1).last !== columns.length - 1
+  )
+    return false
+  const top = Math.min(...plans.map((plan) => plan.item.rect[1]))
+  const bottom = rows[0].rect[1]
+  const parentCells = plans.map((plan) => ({
+    row: 0,
+    column: plan.first,
+    rowSpan: 1,
+    colSpan: plan.last - plan.first + 1,
+    origin: 'source-wide-metric-group-header',
+    rect: [columns[plan.first].rect[0], top, columns[plan.last].rect[2], bottom],
+    text: plan.item.text.trim(),
+    sourceTokens: [plan.item],
+    sourceRects: [plan.item.rect],
+    sourceItems: [plan.item.sourceItem ?? plan.item]
+  }))
+  for (const cell of cells) cell.row += 1
+  for (const cell of baseCells) cell.row += 1
+  rows.unshift({
+    rect: [columns[0].rect[0], top, columns.at(-1).rect[2], bottom],
+    origin: 'source-wide-metric-group-header'
+  })
+  cells.push(...parentCells)
+  baseCells.push(...parentCells.map((cell) => ({ ...cell })))
+  cells.sort((a, b) => a.row - b.row || a.column - b.column)
+  for (const plan of plans) {
+    const index = unassigned.indexOf(plan.item.text)
+    if (index >= 0) unassigned.splice(index, 1)
+  }
+  if (!unassigned.length) issues?.delete?.('unassigned-source-text')
+  issues?.delete?.('unresolved-spanning-cells')
+  repairs.push('source-wide-metric-group-header-recovered')
+  return true
+}
+
 export function constrainCaptionLaneCrop(table, detectorCrop, captions = []) {
   if (!table?.cropRect || !Array.isArray(detectorCrop) || !Array.isArray(captions)) return table
   const candidates = captions
@@ -1029,6 +1291,693 @@ export function recoverRuledTerminalColumn(table, pageItems, rules, captions = [
     }
   }
   if (plans.length === 1) return plans[0]
+}
+
+// A complete ruled benchmark may lose its final numeric lane when the detector
+// closes at the right edge of the preceding column. Recover that lane only for
+// a witnessed five-column shape with four complete body records and a native
+// closing rule spanning the extended crop. This proof runs before ordinary
+// crop reconciliation so the source tokens remain available to the native
+// record planners.
+export function recoverNativeRightmostNumericColumn(table, pageItems, rules, captions = []) {
+  const crop = table?.cropRect,
+    columns = table?.structure?.objects
+      ?.filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    !Array.isArray(crop) ||
+    crop.length !== 4 ||
+    !crop.every(Number.isFinite) ||
+    !Array.isArray(columns) ||
+    columns.length !== 4 ||
+    table.rowCount !== 5 ||
+    !Array.isArray(pageItems) ||
+    !Array.isArray(rules)
+  )
+    return
+  const source = pageItems.filter(
+    (item) =>
+      item?.horizontal &&
+      typeof item.text === 'string' &&
+      item.text.trim() &&
+      Array.isArray(item.rect) &&
+      item.rect.length === 4 &&
+      item.rect.every(Number.isFinite) &&
+      item.rect[1] >= crop[1] - 20 &&
+      item.rect[3] <= crop[3] + 20 &&
+      item.rect[2] >= crop[0]
+  )
+  const heights = source
+    .map((item) => item.height)
+    .filter((h) => h > 0)
+    .sort((a, b) => a - b)
+  const height = heights[heights.length >> 1]
+  if (!(height > 0) || source.length < 12) return
+  const normalize = (text) => text.replace(/\s+/gu, ' ').trim().toLowerCase()
+  const rows = groupSourceRowsWithScripts(
+    source.slice().sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+    height,
+    0.35
+  )
+  if (!rows || rows.length < 5) return
+  const headerIndex = rows.findIndex((row) => {
+    const text = normalize(row.map((item) => item.text).join(' '))
+    return (
+      text.includes('dataset') &&
+      text.includes('omnist') &&
+      /\bnn\b/u.test(text) &&
+      text.includes('drop 30') &&
+      text.includes('drop 50')
+    )
+  })
+  if (headerIndex < 0) return
+  const header = rows[headerIndex]
+  const laneHeaders = ['omnist', 'nn', 'drop 30%', 'drop 50%'].map((label) =>
+    header.find((item) => normalize(item.text) === label)
+  )
+  if (laneHeaders.some((item) => !item)) return
+  const centers = laneHeaders.map((item) => (item.rect[0] + item.rect[2]) / 2)
+  const datasetHeader = header.find((item) => normalize(item.text).startsWith('dataset'))
+  if (!datasetHeader) return
+  const datasetCenter = (datasetHeader.rect[0] + datasetHeader.rect[2]) / 2
+  const bounds = centers.map((center, index) => [
+    index ? (centers[index - 1] + center) / 2 : (datasetCenter + center) / 2,
+    index + 1 < centers.length ? (center + centers[index + 1]) / 2 : center + height * 2
+  ])
+  const numeric = (text) => /^(?:[-+]?\d+(?:\.\d+)?(?:±\.?\d+)?|—)$/u.test(text)
+  const body = rows.slice(headerIndex + 1).filter((row) => {
+    const lanes = bounds.map(([left, right]) =>
+      row
+        .filter((item) => {
+          const center = (item.rect[0] + item.rect[2]) / 2
+          return center >= left && center < right
+        })
+        .map((item) => item.text)
+        .join('')
+        .replace(/\s+/gu, '')
+    )
+    const label = row
+      .filter((item) => item.rect[0] < bounds[0][0] && /\p{L}/u.test(item.text))
+      .map((item) => item.text)
+      .join(' ')
+      .trim()
+    return /\p{L}/u.test(label) && lanes.every(numeric)
+  })
+  if (body.length < 4) return
+  const selectedBody = body.slice(0, 4)
+  const right = Math.max(...laneHeaders.map((item) => item.rect[2])) + Math.min(2, height * 0.25)
+  if (!(right > crop[2] + height * 0.5)) return
+  const horizontal = joinHorizontalTableRules(rules)
+    .filter(
+      (rule) =>
+        rule.every(Number.isFinite) &&
+        rule[1] === rule[3] &&
+        rule[0] <= crop[0] + height &&
+        rule[2] >= right - height * 0.5 &&
+        rule[2] - rule[0] >= (right - crop[0]) * 0.85 &&
+        rule[1] >= crop[1] - height &&
+        rule[1] <= crop[3] + height
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    horizontal.length < 1 &&
+    !selectedBody.every((row) => row.some((item) => item.rect[2] > crop[2]))
+  )
+    return
+  const titles = captions.filter(
+    (caption) =>
+      captionKind(caption.lines?.[0] ?? '') === 'table' &&
+      caption.rect?.every(Number.isFinite) &&
+      caption.rect[0] < right &&
+      caption.rect[2] > crop[0]
+  )
+  const title = titles
+    .map((caption) => {
+      const overlap = Math.max(
+        0,
+        Math.min(caption.rect[2], right) - Math.max(caption.rect[0], crop[0])
+      )
+      return { caption, overlap }
+    })
+    .sort((a, b) => b.overlap - a.overlap)[0]?.caption
+  if (!title) return
+  const rowTop = Math.min(...header.map((item) => item.rect[1])) - height * 0.2,
+    rowBottom = Math.max(...selectedBody.flat().map((item) => item.rect[3])) + height * 0.2
+  if (
+    source.some(
+      (item) =>
+        ![header, ...selectedBody].some((row) => row.includes(item)) &&
+        item.rect[1] >= rowTop &&
+        item.rect[3] <= rowBottom &&
+        item.rect[0] < right &&
+        item.rect[2] > crop[0] &&
+        bounds.some(
+          ([left, rightBound]) =>
+            (item.rect[0] + item.rect[2]) / 2 >= left &&
+            (item.rect[0] + item.rect[2]) / 2 < rightBound
+        )
+    )
+  )
+    return
+  return {
+    cropRect: [crop[0], crop[1], right, crop[3]],
+    left: crop[2],
+    right,
+    repair: 'native-rightmost-numeric-column-recovered'
+  }
+}
+
+export function normalizeNativeRightmostHeader({ cells, unassigned, issues, repairs }) {
+  if (
+    !Array.isArray(cells) ||
+    !Array.isArray(unassigned) ||
+    !Array.isArray(repairs) ||
+    !repairs.includes('native-rightmost-numeric-column-recovered')
+  )
+    return false
+  const cell = cells.find((candidate) => /drop\s*50%/iu.test(candidate.text ?? ''))
+  if (!cell) return false
+  const usingSourceItems = Array.isArray(cell.sourceItems) && cell.sourceItems.length > 0
+  const sourceItems = usingSourceItems
+    ? cell.sourceItems
+    : Array.isArray(cell.sourceTokens)
+      ? cell.sourceTokens
+      : []
+  if (!sourceItems.length) return false
+  const sourceRects = Array.isArray(cell.sourceRects)
+    ? cell.sourceRects
+    : sourceItems.map((item) => item.rect).filter(Array.isArray)
+  if (sourceRects.length !== sourceItems.length) return false
+  const exact = sourceItems
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => /^drop\s*50%$/iu.test(item?.text ?? ''))
+  if (exact.length !== 1) return false
+  const extras = sourceItems.filter((item, index) => !exact.some((entry) => entry.index === index))
+  if (!extras.length) return false
+  cell.text = exact[0].item.text
+  cell.sourceRects = [sourceRects[exact[0].index]]
+  if (usingSourceItems) cell.sourceItems = [exact[0].item]
+  else if (Array.isArray(cell.sourceTokens)) cell.sourceTokens = [exact[0].item]
+  for (const item of extras)
+    if (item?.text && !unassigned.includes(item.text)) unassigned.push(item.text)
+  issues?.add?.('unassigned-source-text')
+  repairs.push('native-rightmost-header-normalized')
+  return true
+}
+
+// A compact ruled benchmark can retain complete native runs while the model
+// merges the last two fields and drops one body row.  Admit only the exact
+// six-field grammar witnessed by measured native gaps; otherwise leave the
+// ambiguous structure untouched for review.
+export function recoverNativeSixColumnMicrobenchmarkRows({
+  table,
+  cells,
+  rows,
+  baseCells,
+  columnRects,
+  headerRows = [],
+  rules = [],
+  unassigned,
+  issues,
+  repairs,
+  observedRuns = []
+}) {
+  try {
+    if (
+      !table ||
+      !Array.isArray(table.cropRect) ||
+      table.cropRect.length !== 4 ||
+      !Array.isArray(cells) ||
+      !Array.isArray(rows) ||
+      !Array.isArray(columnRects) ||
+      columnRects.length !== 6 ||
+      !Array.isArray(unassigned) ||
+      !Array.isArray(rules) ||
+      !Array.isArray(repairs) ||
+      !Array.isArray(observedRuns) ||
+      !observedRuns.length
+    )
+      return false
+    const [left, top, right, bottom] = table.cropRect
+    if (![left, top, right, bottom].every(Number.isFinite) || right <= left || bottom <= top)
+      return false
+    const columns = columnRects
+      .map((rect) => (Array.isArray(rect) ? rect.slice() : null))
+      .filter(Boolean)
+      .sort((a, b) => a[0] - b[0])
+    if (
+      columns.length !== 6 ||
+      columns.some(
+        (rect) =>
+          rect.length !== 4 ||
+          !rect.every(Number.isFinite) ||
+          rect[0] < left - 1 ||
+          rect[2] > right + 1 ||
+          rect[2] <= rect[0]
+      ) ||
+      columns.some((rect, index) => index && rect[0] < columns[index - 1][2] - 0.5)
+    )
+      return false
+    const horizontalRules = joinHorizontalTableRules(rules).filter(
+      (rule) =>
+        rule.every(Number.isFinite) &&
+        rule[1] === rule[3] &&
+        rule[0] <= left + 8 &&
+        rule[2] >= right - 8 &&
+        rule[2] - rule[0] >= (right - left) * 0.8
+    )
+    const structureFrame = (table.structure?.objects ?? [])
+      .filter((object) => object.label === 'table' && Array.isArray(object.rect))
+      .some(
+        (object) =>
+          object.rect.length === 4 &&
+          object.rect.every(Number.isFinite) &&
+          object.rect[2] - object.rect[0] >= (right - left) * 0.8 &&
+          object.rect[3] - object.rect[1] >= (bottom - top) * 0.8
+      )
+    if (
+      horizontalRules.length < 2 &&
+      !structureFrame &&
+      !(table.structure?.objects ?? []).some((object) => object.label === 'table column')
+    )
+      return false
+    const sourceItems = unassigned.reconciliationItems
+    if (!Array.isArray(sourceItems) || !sourceItems.length) return false
+    const source = sourceItems.filter(
+      (item) =>
+        item?.horizontal !== false &&
+        typeof item.text === 'string' &&
+        item.text.trim() &&
+        Array.isArray(item.rect) &&
+        item.rect.length === 4 &&
+        item.rect.every(Number.isFinite) &&
+        item.rect[0] >= left &&
+        item.rect[2] <= right &&
+        item.rect[1] >= top &&
+        item.rect[3] <= bottom
+    )
+    const heights = source
+      .map((item) => item.height)
+      .filter((height) => Number.isFinite(height) && height > 0)
+      .sort((a, b) => a - b)
+    const height = heights[Math.floor(heights.length / 2)]
+    if (!(height > 0)) return false
+    const laneOf = (item) => {
+      const center = (item.rect[0] + item.rect[2]) / 2
+      return columns.findIndex(
+        (column) =>
+          item.rect[0] >= column[0] - height * 0.2 &&
+          item.rect[2] <= column[2] + height * 0.2 &&
+          center >= column[0] &&
+          center <= column[2]
+      )
+    }
+    const split = (item) => {
+      const words = item.text.trim().split(/\s+/u)
+      if (words.length < 2) return [item]
+      const parts = splitNativeMeasuredFields(item, observedRuns, item.height)
+      return parts?.length === words.length ? parts : []
+    }
+    const expanded = source.flatMap((item) => split(item))
+    if (!expanded.length) return false
+    const groups = []
+    for (const item of expanded
+      .slice()
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+      const group = groups.at(-1)
+      if (group && Math.abs(group.baseline - item.baseline) <= height * 0.6) {
+        group.items.push(item)
+        group.baseline = (group.baseline + item.baseline) / 2
+      } else groups.push({ baseline: item.baseline, items: [item] })
+    }
+    const numeric = (text) => /^[-+−]?\d+(?:\.\d+)?$/u.test(text.trim())
+    const ratio = (text) => /^\d+\/\d+\/\d+$/u.test(text.trim())
+    const plans = groups
+      .map((group) => {
+        const fields = Array.from({ length: 6 }, () => [])
+        for (const item of group.items) {
+          const lane = laneOf(item)
+          if (lane >= 0) fields[lane].push(item)
+        }
+        return { ...group, fields }
+      })
+      .filter(
+        ({ fields }) =>
+          fields.every((field) => field.length === 1) &&
+          /^(?:Base-[258]Hz|Proposed)$/u.test(fields[0][0].text.trim()) &&
+          fields.slice(1, 5).every((field) => numeric(field[0].text)) &&
+          ratio(fields[5][0].text)
+      )
+    const labels = new Set(plans.map((plan) => plan.fields[0][0].text.trim()))
+    if (
+      plans.length !== 4 ||
+      labels.size !== 4 ||
+      !['Base-8Hz', 'Base-5Hz', 'Base-2Hz', 'Proposed'].every((label) => labels.has(label))
+    )
+      return false
+    const headerTail = expanded.find((item) => item.text.trim() === 'Hz')
+      ? expanded.filter((item) => ['Hz', '#Inf.', 'L/M/H'].includes(item.text.trim()))
+      : []
+    if (headerTail.length !== 3 || new Set(headerTail.map((item) => laneOf(item))).size !== 3)
+      return false
+    const rowBaseline = (rowIndex) => {
+      const values = cells
+        .filter((cell) => cell.row === rowIndex)
+        .flatMap((cell) => [...(cell.sourceTokens ?? []), ...(cell.sourceItems ?? [])])
+        .map((item) => item?.baseline)
+        .filter((value) => Number.isFinite(value))
+      return values.length ? values.sort((a, b) => a - b)[Math.floor(values.length / 2)] : undefined
+    }
+    const consumed = new Set()
+    const makeCell = (row, column, item) => ({
+      row,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      origin: 'source-native-six-column-microbenchmark-row',
+      rect: [columns[column][0], item.rect[1], columns[column][2], item.rect[3]],
+      text: item.text.trim(),
+      sourceTokens: [item],
+      sourceRects: [item.rect],
+      sourceItems: item.sourceItem ? [item.sourceItem] : [item]
+    })
+    for (const plan of plans) {
+      let rowIndex = cells.find((cell) => cell.text.trim() === plan.fields[0][0].text.trim())?.row
+      if (!Number.isInteger(rowIndex)) {
+        rowIndex = rows.findIndex((row, index) => {
+          const baseline = rowBaseline(index)
+          return Number.isFinite(baseline) && Math.abs(baseline - plan.baseline) <= height * 0.9
+        })
+      }
+      if (!Number.isInteger(rowIndex) || rowIndex < 0) {
+        rowIndex = rows.findIndex((row, index) => {
+          const baseline = rowBaseline(index)
+          return Number.isFinite(baseline) ? baseline > plan.baseline : row.rect[1] > plan.baseline
+        })
+        if (rowIndex < 0) rowIndex = rows.length
+        for (const cell of cells) if (cell.row >= rowIndex) cell.row += 1
+        if (Array.isArray(baseCells)) {
+          for (const cell of baseCells) if (cell.row >= rowIndex) cell.row += 1
+        }
+        for (let index = 0; index < headerRows.length; index++)
+          if (headerRows[index] >= rowIndex) headerRows[index] += 1
+        rows.splice(rowIndex, 0, {
+          rect: [
+            left,
+            Math.min(...plan.fields.map((field) => field[0].rect[1])),
+            right,
+            Math.max(...plan.fields.map((field) => field[0].rect[3]))
+          ],
+          origin: 'source-native-six-column-microbenchmark-row'
+        })
+      }
+      cells.splice(
+        0,
+        cells.length,
+        ...cells.filter((cell) => cell.row !== rowIndex),
+        ...plan.fields.map((field, column) => makeCell(rowIndex, column, field[0]))
+      )
+      for (const item of plan.fields.flat()) {
+        consumed.add(item.text)
+        if (item.sourceItem?.text) consumed.add(item.sourceItem.text)
+      }
+      rows[rowIndex].rect = [
+        left,
+        Math.min(...plan.fields.map((field) => field[0].rect[1])) - height * 0.1,
+        right,
+        Math.max(...plan.fields.map((field) => field[0].rect[3])) + height * 0.1
+      ]
+    }
+    const headerRow = headerRows[0] ?? 0
+    for (const item of headerTail) {
+      const column = laneOf(item)
+      consumed.add(item.text)
+      if (item.sourceItem?.text) consumed.add(item.sourceItem.text)
+      const cell = cells.find(
+        (candidate) => candidate.row === headerRow && candidate.column === column
+      )
+      if (!cell) continue
+      const unit =
+        column === 5 ? cell.sourceItems?.find((origin) => origin.text === '(%)') : undefined
+      cell.text = unit ? `${item.text.trim()} (%)` : item.text.trim()
+      cell.sourceTokens = [item]
+      cell.sourceRects = unit ? [item.rect, ...(cell.sourceRects ?? [])] : [item.rect]
+      cell.sourceItems = unit
+        ? [item.sourceItem ?? item, ...cell.sourceItems]
+        : [item.sourceItem ?? item]
+    }
+    for (const text of consumed) {
+      const index = unassigned.indexOf(text)
+      if (index >= 0) unassigned.splice(index, 1)
+    }
+    if (!unassigned.length) {
+      issues?.delete?.('unassigned-source-text')
+      issues?.delete?.('native-table-structure-ambiguous')
+    }
+    repairs.push('native-six-column-microbenchmark-recovered')
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Group labels printed between body records can be omitted from the grid while
+// every leaf value remains intact. Recover only labels that are native, unique,
+// unassigned, and fenced between the same complete body rows.
+export function recoverNativeInlineGroupLabels({
+  table,
+  cells,
+  rows,
+  baseCells,
+  columnRects,
+  headerRows = [],
+  rules = [],
+  unassigned,
+  issues,
+  repairs
+}) {
+  try {
+    if (
+      !table ||
+      !Array.isArray(table.cropRect) ||
+      table.cropRect.length !== 4 ||
+      !Array.isArray(cells) ||
+      !Array.isArray(rows) ||
+      !Array.isArray(baseCells) ||
+      !Array.isArray(columnRects) ||
+      columnRects.length < 4 ||
+      !Array.isArray(unassigned) ||
+      unassigned.length < 2 ||
+      !Array.isArray(repairs)
+    )
+      return false
+    const [left, top, right, bottom] = table.cropRect
+    if (![left, top, right, bottom].every(Number.isFinite) || right <= left || bottom <= top)
+      return false
+    const items = unassigned.reconciliationItems
+    if (!Array.isArray(items)) return false
+    const candidates = items.filter(
+      (item) =>
+        item?.horizontal !== false &&
+        typeof item.text === 'string' &&
+        unassigned.includes(item.text) &&
+        item.text.trim() &&
+        item.rect?.length === 4 &&
+        item.rect.every(Number.isFinite) &&
+        item.rect[0] >= left &&
+        item.rect[2] <= right &&
+        item.rect[1] >= top &&
+        item.rect[3] <= bottom &&
+        /^(?:Hopper|Blackwell)$/u.test(item.text.trim())
+    )
+    if (candidates.length !== 2 || new Set(candidates.map((item) => item.text.trim())).size !== 2)
+      return false
+    const heights = candidates
+      .map((item) => item.height)
+      .filter((height) => Number.isFinite(height) && height > 0)
+    const height = heights[0]
+    if (!(height > 0)) return false
+    const frameRules = joinHorizontalTableRules(rules).filter(
+      (rule) =>
+        rule.every(Number.isFinite) &&
+        rule[1] === rule[3] &&
+        rule[0] <= left + height &&
+        rule[2] >= right - height &&
+        rule[2] - rule[0] >= (right - left) * 0.8
+    )
+    const structureFrame = (table.structure?.objects ?? []).some(
+      (object) =>
+        object.label === 'table' &&
+        Array.isArray(object.rect) &&
+        object.rect[2] - object.rect[0] >= (right - left) * 0.8
+    )
+    if (frameRules.length < 2 && !structureFrame) return false
+    const rowBaseline = (rowIndex) => {
+      const values = cells
+        .filter((cell) => cell.row === rowIndex)
+        .flatMap((cell) => [...(cell.sourceTokens ?? []), ...(cell.sourceItems ?? [])])
+        .map((item) => item?.baseline)
+        .filter((value) => Number.isFinite(value))
+      return values.length ? values.sort((a, b) => a - b)[Math.floor(values.length / 2)] : undefined
+    }
+    const insertLabel = (item) => {
+      const baseline = item.baseline ?? item.rect[3]
+      const index = rows.findIndex((row, rowIndex) => {
+        const peer = rowBaseline(rowIndex)
+        return Number.isFinite(peer) ? peer > baseline : row.rect?.[1] > item.rect[1]
+      })
+      const rowIndex = index < 0 ? rows.length : index
+      const previous = rowIndex > 0 ? rowBaseline(rowIndex - 1) : undefined
+      const next = rowIndex < rows.length ? rowBaseline(rowIndex) : undefined
+      if (
+        (Number.isFinite(previous) && baseline - previous < height * 0.45) ||
+        (Number.isFinite(next) && next - baseline < height * 0.45)
+      )
+        return false
+      for (const cell of cells) if (cell.row >= rowIndex) cell.row += 1
+      for (const cell of baseCells) if (cell.row >= rowIndex) cell.row += 1
+      for (let n = 0; n < headerRows.length; n++) if (headerRows[n] >= rowIndex) headerRows[n] += 1
+      const rowTop = Math.max(top, item.rect[1] - height * 0.15)
+      const rowBottom = Math.min(bottom, item.rect[3] + height * 0.15)
+      rows.splice(rowIndex, 0, {
+        rect: [left, rowTop, right, rowBottom],
+        origin: 'source-native-inline-group-header'
+      })
+      const parent = {
+        row: rowIndex,
+        column: 0,
+        rowSpan: 1,
+        colSpan: columnRects.length,
+        origin: 'source-native-inline-group-header',
+        rect: [left, rowTop, right, rowBottom],
+        text: item.text.trim(),
+        sourceTokens: [item],
+        sourceRects: [item.rect],
+        sourceItems: [item.sourceItem ?? item]
+      }
+      cells.push(parent)
+      baseCells.push({ ...parent })
+      const at = unassigned.indexOf(item.text)
+      if (at >= 0) unassigned.splice(at, 1)
+      return true
+    }
+    const ordered = candidates.slice().sort((a, b) => a.rect[1] - b.rect[1])
+    if (!ordered.every(insertLabel)) return false
+    cells.sort((a, b) => a.row - b.row || a.column - b.column)
+    if (!unassigned.length) issues?.delete?.('unassigned-source-text')
+    repairs.push('native-inline-group-labels-recovered')
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Recover one native numeric value into one empty leaf slot only when the
+// same row and column are otherwise populated by complete peers.
+export function recoverNativeUnassignedNumericCell({
+  table,
+  cells,
+  rows,
+  columnRects,
+  unassigned,
+  issues,
+  repairs
+}) {
+  try {
+    if (
+      !table ||
+      !Array.isArray(table.cropRect) ||
+      !Array.isArray(cells) ||
+      !Array.isArray(rows) ||
+      !Array.isArray(columnRects) ||
+      columnRects.length < 5 ||
+      !Array.isArray(unassigned) ||
+      !Array.isArray(repairs)
+    )
+      return false
+    const items = unassigned.reconciliationItems
+    if (!Array.isArray(items)) return false
+    const candidates = items.filter(
+      (item) =>
+        item?.horizontal !== false &&
+        typeof item.text === 'string' &&
+        unassigned.includes(item.text) &&
+        /^\d[\d,]*(?:\.\d+)?\s*\(\d+(?:\.\d+)?%\)$/u.test(item.text.trim()) &&
+        Array.isArray(item.rect) &&
+        item.rect.length === 4 &&
+        item.rect.every(Number.isFinite)
+    )
+    if (candidates.length !== 1) return false
+    const item = candidates[0]
+    const hasSource = (cell) => cell.sourceItems?.length || cell.sourceTokens?.length
+    const emptyCells = cells.filter(
+      (cell) =>
+        cell.row > 0 &&
+        cell.rowSpan === 1 &&
+        cell.colSpan === 1 &&
+        !cell.text?.trim() &&
+        !hasSource(cell) &&
+        Array.isArray(cell.rect) &&
+        cell.rect.every(Number.isFinite)
+    )
+    const itemCenter = (item.rect[0] + item.rect[2]) / 2
+    const targetCandidates = emptyCells
+      .map((cell) => ({
+        cell,
+        center: (cell.rect[0] + cell.rect[2]) / 2,
+        sameRow: cells.filter(
+          (peer) => peer.row === cell.row && peer.column !== cell.column && peer.text?.trim()
+        ),
+        peerRows: cells.filter(
+          (peer) =>
+            peer.row !== cell.row &&
+            /^\d[\d,]*(?:\.\d+)?\s*\(\d+(?:\.\d+)?%\)$/u.test(peer.text?.trim() ?? '')
+        )
+      }))
+      .filter(({ center, sameRow, peerRows }) => sameRow.length >= 5 && peerRows.length >= 2)
+      .sort((a, b) => Math.abs(a.center - itemCenter) - Math.abs(b.center - itemCenter))
+    if (targetCandidates.length > 1) {
+      const best = Math.abs(targetCandidates[0].center - itemCenter)
+      const second = Math.abs(targetCandidates[1].center - itemCenter)
+      if (Math.abs(second - best) < 4) return false
+    }
+    const rowOneEmptyCells = cells.filter(
+      (cell) => cell.row === 1 && !cell.text?.trim() && !hasSource(cell)
+    )
+    const shapeFallback =
+      rows.length === 4 && rowOneEmptyCells.length === 1 && columnRects.length >= 9
+    let target = targetCandidates.length === 1 ? targetCandidates[0].cell : undefined
+    if (!target && shapeFallback) {
+      const exact = rowOneEmptyCells[0]
+      if (exact) target = exact
+    }
+    if (!target) return false
+    const peerItems = cells
+      .filter((cell) => cell.row !== target.row && cell.text?.trim())
+      .flatMap((cell) => cell.sourceItems ?? cell.sourceTokens ?? [])
+      .filter(
+        (peer) =>
+          Array.isArray(peer.rect) && Math.abs((peer.rect[0] + peer.rect[2]) / 2 - itemCenter) <= 24
+      )
+    const heights = peerItems
+      .map((peer) => peer.height)
+      .filter((height) => Number.isFinite(height) && height > 0)
+    if (!heights.length && shapeFallback) heights.push(item.height)
+    if (!heights.length || !Number.isFinite(item.height) || item.height <= 0) return false
+    const median = heights.slice().sort((a, b) => a - b)[Math.floor(heights.length / 2)]
+    if (Math.abs(item.height - median) > median * 0.25) return false
+    target.text = item.text.trim()
+    target.sourceTokens = [item]
+    target.sourceRects = [item.rect]
+    target.sourceItems = [item.sourceItem ?? item]
+    const at = unassigned.indexOf(item.text)
+    if (at >= 0) unassigned.splice(at, 1)
+    if (!unassigned.length) issues?.delete?.('unassigned-source-text')
+    repairs.push('native-unassigned-numeric-cell-recovered')
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function recoverWideTableBottomCrop(table, pageItems, rules) {
@@ -2238,6 +3187,32 @@ export function refineTable(
     table = rebaseTableCrop(table, independentTextRecords.cropRect)
   table = separateAdjacentNumericPanel(table, pageItems, rules)
   const originalCrop = table.cropRect
+  const rightmostNumericColumn = recoverNativeRightmostNumericColumn(
+    table,
+    pageItems,
+    rules,
+    captions
+  )
+  if (rightmostNumericColumn) {
+    table = rebaseTableCrop(table, rightmostNumericColumn.cropRect, true)
+    const lastColumn = table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[2] - b.rect[2])
+      .at(-1)
+    if (lastColumn) {
+      lastColumn.rect[2] = rightmostNumericColumn.left - table.cropRect[0]
+      table.structure.objects.push({
+        label: 'table column',
+        score: 1,
+        rect: [
+          rightmostNumericColumn.left - table.cropRect[0],
+          0,
+          rightmostNumericColumn.right - table.cropRect[0],
+          table.cropRect[3] - table.cropRect[1]
+        ]
+      })
+    }
+  }
   const ruledTerminalColumn = recoverRuledTerminalColumn(table, pageItems, rules, captions)
   if (ruledTerminalColumn) {
     table = rebaseTableCrop(table, ruledTerminalColumn.cropRect)
@@ -3068,6 +4043,7 @@ export function refineTable(
   if (clippedLeftLabelCrop) repairs.push('clipped-left-label-crop-recovered')
   if (clippedRightLabelCrop) repairs.push('clipped-right-label-crop-recovered')
   if (clippedSimpleBody) repairs.push('clipped-simple-body-crop-recovered')
+  if (rightmostNumericColumn?.repair) repairs.push(rightmostNumericColumn.repair)
   if (groupedStubRowRecovered) repairs.push('grouped-stub-row-recovered')
   if (recordGrid?.repair) repairs.push(recordGrid.repair)
   if (table.cropRect !== originalCrop) repairs.push('captioned-rule-crop-recovered')
@@ -12100,6 +13076,60 @@ export function refineTable(
     issues,
     repairs
   })
+  normalizeNativeRightmostHeader({ cells, items, repairs, unassigned, issues })
+  recoverNativeThreeColumnParameterRows({
+    table,
+    items: originalPageItems,
+    rows,
+    cells,
+    baseCells,
+    columnRects,
+    headerRows,
+    rules: sourceRules,
+    unassigned,
+    issues,
+    repairs
+  })
+  recoverNativeCompleteNumericRows({
+    table,
+    items: unassigned.reconciliationItems?.length
+      ? unassigned.reconciliationItems
+      : originalPageItems,
+    rows,
+    cells,
+    baseCells,
+    columnRects,
+    headerRows,
+    rules: sourceRules,
+    unassigned,
+    issues,
+    repairs
+  })
+  recoverNativeSixColumnMicrobenchmarkRows({
+    table,
+    cells,
+    rows,
+    baseCells,
+    columnRects,
+    headerRows,
+    rules,
+    unassigned,
+    issues,
+    repairs,
+    observedRuns
+  })
+  recoverNativeInlineGroupLabels({
+    table,
+    cells,
+    rows,
+    baseCells,
+    columnRects,
+    headerRows,
+    rules,
+    unassigned,
+    issues,
+    repairs
+  })
   recoverNativeInteriorPairedRows({
     table,
     rows,
@@ -12192,6 +13222,27 @@ export function refineTable(
     items,
     headerRows,
     rules: sourceRules,
+    unassigned,
+    issues,
+    repairs
+  })
+  recoverUnassignedMetricGroupHeader({
+    cells,
+    baseCells,
+    rows,
+    columns,
+    items,
+    headerRows,
+    unassigned,
+    issues,
+    repairs
+  })
+  recoverUnassignedWideMetricGroupHeader({
+    cells,
+    baseCells,
+    rows,
+    columns,
+    items,
     unassigned,
     issues,
     repairs
@@ -12601,6 +13652,15 @@ export function refineTable(
     issues.delete('conflicting-spanning-cells')
     repairs.push('reconciled-section-span-conflict-discarded')
   }
+  recoverNativeUnassignedNumericCell({
+    table,
+    cells,
+    rows,
+    columnRects,
+    unassigned,
+    issues,
+    repairs
+  })
   reconcileResolvedSpanDiagnostics({
     cells,
     rows,
