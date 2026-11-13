@@ -72,12 +72,15 @@ test('installs global npm tools through the app and reuses them across Sessions 
   test.setTimeout(240_000)
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
+  // Windows .cmd shims prompt separately from the Node fixture code.
+  const npmApprovals = process.platform === 'win32' ? ['npm.cmd pack', 'npm.cmd install'] : []
+  const toolApproval = process.platform === 'win32' ? ['os-npm-app-fixture.cmd'] : []
   await createProject(page, 'Npm installation')
   await sendReviewedPrompt(
     page,
     'Verify application npm global install.',
     'Application npm install verified',
-    ['node -e "eval(Buffer.from(', 'npm', 'npm', 'os-npm-app-fixture'],
+    ['node -e "eval(Buffer.from(', ...npmApprovals, ...toolApproval],
     90_000
   )
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
@@ -86,13 +89,7 @@ test('installs global npm tools through the app and reuses them across Sessions 
     page,
     'Verify application npm shared tool and local install.',
     'Application npm local verified',
-    [
-      'node -e "eval(Buffer.from(',
-      'npm',
-      'npm',
-      'node -e "eval(Buffer.from(',
-      'os-npm-app-fixture'
-    ],
+    ['node -e "eval(Buffer.from(', ...npmApprovals, 'node -e "eval(Buffer.from(', ...toolApproval],
     90_000
   )
   await captureLifecycleEvidence(page, 'npm-across-sessions.png')
@@ -102,7 +99,7 @@ test('installs global npm tools through the app and reuses them across Sessions 
     page,
     'Verify application npm tool after restart.',
     'Application npm restart verified',
-    ['os-npm-app-fixture'],
+    toolApproval,
     90_000
   )
   await captureLifecycleEvidence(page, 'npm-after-app-restart.png')
@@ -152,7 +149,7 @@ test('installs global npm tools through the app and reuses them across Sessions 
     page,
     'Verify application npm tool after restart.',
     'Application npm restart verified',
-    ['os-npm-app-fixture'],
+    toolApproval,
     90_000
   )
 })
