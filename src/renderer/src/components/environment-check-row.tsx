@@ -8,6 +8,7 @@ import {
   Wifi,
   XCircle
 } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import type { EnvironmentCheckId, EnvironmentCheckItem } from '../../../shared/settings'
@@ -29,10 +30,9 @@ const STATUS_COPY = {
   failed: 'Action needed'
 } satisfies Record<EnvironmentCheckItem['status'], string>
 
-const getStatusLabel = (
-  status: EnvironmentCheckItem['status'],
-  t: (key: string) => string
-): string => {
+const getStatusLabel = (status: EnvironmentCheckItem['status'], t: TFunction): string => {
+  if (status === 'warning') return t('Review', { context: 'audit' })
+
   return t(STATUS_COPY[status])
 }
 
