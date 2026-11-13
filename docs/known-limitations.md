@@ -47,13 +47,17 @@ in the [release notes](../release-notes/1.2.1/en.md).
 
 - **Scope / status:** The Notebook gateway's public read channel, excluding the separate WSL2 path;
   documented boundary.
-- **Trigger and impact:** When its local CA is available, the gateway can admit restricted GET/HEAD
-  requests to otherwise unknown public DNS hosts on port 443. URL paths and query parameters can
-  carry sensitive data even without a request body. The 8192-byte target limit is not an aggregate
-  data limit; there is no per-command request-count quota.
+- **Trigger and impact:** In the default Relaxed mode, when its local CA is available, the gateway can
+  admit restricted GET/HEAD requests to otherwise unknown public DNS hosts on port 443. URL paths and
+  query parameters can carry sensitive data even without a request body. The 8192-byte target limit is
+  not an aggregate
+  data limit; there is no per-command request-count quota. In Strict mode, unmatched requests are
+  blocked without an authorization offer, so this channel admits only whitelisted destinations; the
+  whitelist is managed manually and its built-in destinations are seeded once.
 - **Precautions:** Do not assume an unlisted public host cannot receive data. Use explicit deny rules
   for known destinations and an externally enforced restricted environment when the task requires
-  strict egress control. Review the TLS inspection behavior before using this channel.
+  strict egress control, or switch Notebook networking to Strict mode and review its seeded whitelist
+  rules. Review the TLS inspection behavior before using this channel.
 - **Details:** [Gateway policy](../packages/notebook-network-sandbox/README.md#scope) and
   [execution security model](security.md#code-and-notebook-execution).
 
