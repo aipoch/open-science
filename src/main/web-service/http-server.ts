@@ -29,6 +29,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import {
   createLogger,
   diagnosticErrorFields,
+  currentDiagnosticCorrelation,
   runWithDiagnosticCorrelation
 } from '@aipoch/diagnostics/node'
 import {
@@ -1728,6 +1729,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           if (externalAuthorization && !externalAuthorization.isCurrent()) {
             webRpcError(response, 401, 'invalid_request', 'Remote access authorization expired.')
             return
+          }
+          if (auth.localBearer && channel === 'sessions:import-package') {
+            const correlationId = currentDiagnosticCorrelation()
+            if (correlationId) response.setHeader('x-correlation-id', correlationId)
           }
           log.warn('web rpc rejected', {
             channel,

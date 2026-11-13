@@ -5,7 +5,7 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
-import { augmentedPathEnv } from './shell-path'
+import { augmentedPathEnv, withNpmBinFallback } from './shell-path'
 
 const execFileAsync = promisify(execFile)
 
@@ -43,7 +43,7 @@ const opencodeBinaryNames = (platform: NodeJS.Platform): string[] =>
 
 // Common non-PATH install locations by platform. Windows: npm's global bin (%APPDATA%\npm). Unix:
 // Homebrew + /usr/local. `~/.local/bin` and `~/.opencode/bin` (install-script targets) are added
-// separately by collectCandidateDirs.
+// separately by candidateDirs.
 const wellKnownDirs = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] => {
   if (platform === 'win32') {
     const p = pathFor(platform)
@@ -55,30 +55,19 @@ const wellKnownDirs = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): strin
 }
 
 // Builds the ordered list of directories to search for the opencode binary.
-const collectCandidateDirs = async (
-  deps: OpencodeDetectDeps,
-  signal?: AbortSignal
-): Promise<string[]> => {
+const candidateDirs = (deps: OpencodeDetectDeps, signal?: AbortSignal): AsyncGenerator<string> => {
   const p = pathFor(deps.platform)
-  const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter((dir) => dir.length > 0)
-  let npmBinDirs: string[] = []
-  try {
-    npmBinDirs = await deps.resolveNpmBinDirs(signal)
-  } catch {
-    signal?.throwIfAborted()
-  }
-  signal?.throwIfAborted()
-
-  // De-duplicate while preserving first-seen order so the first real hit wins.
-  return Array.from(
-    new Set([
+  const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter(Boolean)
+  return withNpmBinFallback(
+    [
       ...pathDirs,
       p.join(deps.homePath, '.local', 'bin'),
       p.join(deps.homePath, '.opencode', 'bin'),
       ...(deps.extraDirs ?? []),
-      ...wellKnownDirs(deps.platform, deps.env),
-      ...npmBinDirs
-    ])
+      ...wellKnownDirs(deps.platform, deps.env)
+    ],
+    deps,
+    signal
   )
 }
 
@@ -90,10 +79,9 @@ const detectOpencode = async (
 ): Promise<OpencodeDetectResult | undefined> => {
   const p = pathFor(deps.platform)
   signal?.throwIfAborted()
-  const candidateDirs = await collectCandidateDirs(deps, signal)
   const binaryNames = opencodeBinaryNames(deps.platform)
 
-  for (const dir of candidateDirs) {
+  for await (const dir of candidateDirs(deps, signal)) {
     for (const name of binaryNames) {
       const candidate = p.join(dir, name)
 
@@ -201,6 +189,9 @@ const resolveNpmBinDirs =
     }
   }
 
+// A stable resolver lets default OpenCode and CodeBuddy checks share one host npm lookup.
+const resolveHostNpmBinDirs = resolveNpmBinDirs(process.platform)
+
 // Production dependency bundle wired to real fs/child_process for the current host platform.
 const createDefaultDetectDeps = (): OpencodeDetectDeps => {
   const platform = process.platform
@@ -212,8 +203,8 @@ const createDefaultDetectDeps = (): OpencodeDetectDeps => {
     isExecutable: isExecutableFile(platform),
     getVersion: runOpencodeVersion(platform),
     probeVersion: runOpencodeVersion(platform, true),
-    resolveNpmBinDirs: resolveNpmBinDirs(platform)
+    resolveNpmBinDirs: resolveHostNpmBinDirs
   }
 }
 
-export { collectCandidateDirs, createDefaultDetectDeps, detectOpencode, parseVersion }
+export { candidateDirs, createDefaultDetectDeps, detectOpencode, parseVersion }

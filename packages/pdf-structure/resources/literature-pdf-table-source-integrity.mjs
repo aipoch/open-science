@@ -4135,6 +4135,40 @@ export function reviewFinalNativeTableSources(table, inventory, rules, measuredR
   return withoutStaleMath
 }
 
+// The source proves separate fields but not every shared/multiline span. Keep
+// the original graphic instead of publishing a known collapsed copyable grid.
+export function retainNativeCenteredRecordGraphic(table, inventory, rules, measuredRuns, context) {
+  if (
+    !nativeTableLayoutConflicts(table, inventory, rules, measuredRuns, context).includes(
+      'native-centered-headed-record-lanes-collapsed'
+    )
+  )
+    return table
+  return {
+    id: table.id,
+    page: table.page,
+    caption: table.caption,
+    notes: table.notes,
+    captionIssue: table.captionIssue,
+    sourceViewport: table.sourceViewport,
+    cropRect: table.cropRect,
+    region: table.region,
+    thumbnail: table.thumbnail,
+    grid: [],
+    cells: [],
+    unassigned: [],
+    reviewCandidate: false,
+    issues: [
+      ...new Set([
+        ...(table.issues ?? []),
+        'native-table-structure-ambiguous',
+        'no-source-cell-grid',
+        'native-centered-headed-record-lanes-collapsed'
+      ])
+    ]
+  }
+}
+
 export function trimNativeTablePageCounterCrop(table, inventory, rules, context) {
   if (
     !rect(table.cropRect) ||

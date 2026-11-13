@@ -2150,6 +2150,62 @@ describe('session store', () => {
     }
   )
 
+  it('adopts durable question authority when a summary is hydrated', () => {
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          id: 'session-1',
+          number: 1,
+          projectId: 'project-1',
+          title: 'Question',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          filesRevision: 0,
+          activeMessageCount: 1,
+          artifactCount: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined
+    )
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Question',
+      cwd: '/workspace',
+      status: 'waiting-for-user',
+      revision: 2,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2,
+      activities: [
+        {
+          id: 'choice',
+          kind: 'tool',
+          title: 'Question',
+          status: 'in_progress',
+          eventIds: [],
+          sortIndex: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          elicitation: {
+            message: 'Choose',
+            fields: [],
+            state: 'pending',
+            durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+          }
+        }
+      ]
+    })
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.interactionState?.elicitation).toBe(true)
+    expect(projectSessionActionability(session).blockingInteraction).toBe('elicitation')
+  })
+
   it('preserves pending summary metadata edits when lazy hydration finishes', () => {
     useSessionStore.getState().hydrateSessionSummaries(
       [

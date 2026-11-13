@@ -302,7 +302,7 @@ describe('Desktop installation orchestration', () => {
     expect(await hooks.recheckInstall!()).toMatchObject({ reason: 'active-work', canForce: true })
     expect(refresh).toHaveBeenCalledOnce()
     expect(state.availability).toHaveBeenCalledOnce()
-    expect(invoke).toHaveBeenCalledWith('desktop:update-inspect')
+    expect(invoke).toHaveBeenCalledWith('desktop:update-inspect', [], expect.any(AbortSignal))
     expect(invoke).not.toHaveBeenCalledWith('desktop:update-gate', expect.anything())
     invoke.mockResolvedValueOnce({ blockedBy: [], completed: true, reaped: false })
     expect(await hooks.recheckInstall!()).toMatchObject({
@@ -331,7 +331,9 @@ describe('Desktop installation orchestration', () => {
     const { hooks, invoke } = setup()
     invoke.mockImplementationOnce(() => new Promise(() => {}))
     const checked = hooks.recheckInstall!().catch((error) => error)
-    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('desktop:update-inspect'))
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('desktop:update-inspect', [], expect.any(AbortSignal))
+    )
     expect((await hooks.cancelInstall!()).outcome).toBe('cancelled')
     expect(await checked).toBeInstanceOf(Error)
   })

@@ -845,7 +845,7 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
   if (/^\d+[A-Za-z]?$/u.test(label)) {
     const panels = (text) => [
         ...text.matchAll(
-          /(?:\b(?:Figure|Fig\.?)\s*|[图圖]\s*)(\d+(?:[A-Za-z]|[（(]\s*[A-Za-z]\s*[)）]))(?![A-Za-z\d])/gu
+          /(?:\b(?:Figure|Fig\.?)\s*|[图圖]\s*)(\d+(?:[A-Za-z]|[（(]\s*[A-Za-z]\s*[)）]))(?![A-Za-z\d])/giu
         )
       ],
       identity = (match) => match[1].normalize('NFKC').replace(/\s/gu, '')
@@ -860,6 +860,22 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
       if (from.length !== to.length) return null
       const target = to[index]
       return { start: target.index + target[0].length - target[1].length, text: label }
+    }
+  }
+  // A wrapped native run can begin with the complete compound, without its
+  // preceding figure prefix. The digit alone still proves no panel identity.
+  if (/^\d+$/u.test(label)) {
+    const reference = source.match(/^\s*(\d+)[（(]\s*([A-Za-z])\s*[)）](?![A-Za-z\d])/u)
+    if (reference?.[1] === label && reference[0].indexOf(label) === offset) {
+      const compounds = (value) => [
+          ...value.matchAll(/(?<![A-Za-z\d_.])(\d+)[（(]\s*([A-Za-z])\s*[)）](?![A-Za-z\d])/gu)
+        ],
+        same = (match) => match[1] === label,
+        from = compounds(source).filter(same),
+        to = compounds(translation).filter(same)
+      return from.length === 1 && to.length === 1 && to[0][2] === reference[2]
+        ? { start: to[0].index, text: label }
+        : null
     }
   }
   const number = label.match(/^(\d+)(\.)?$/u)

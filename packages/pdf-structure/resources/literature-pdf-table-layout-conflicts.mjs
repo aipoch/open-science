@@ -6796,15 +6796,15 @@ function nativePrintedRecordConflicts(table, owned, inventory, rules, font, cont
       visibleNativeHeaderRule
     )
   )
-  // Two native headings and both numerical lanes are independently right
-  // aligned. Do not infer an invisible column from a long single heading.
+  // Repeated native pairs can prove that one serialized cell hides two fields.
+  // Require independently headed alignment; never infer a replacement grid.
   for (const head of leaves.filter(
     (p) => p.cell.row === 0 && p.fonts.length === 2 && printedOneLine(p.fonts)
   )) {
     const [a, b] = [...head.fonts].sort((a, b) => a.rect[0] - b.rect[0]),
       h = a.height
     if (
-      ![a, b].every((f) => /^\p{L}{2,}$/u.test(f.text.trim())) ||
+      ![a, b].every((f) => /^\p{L}{2}[\p{L}\d]*(?:[ -][\p{L}\d]+)*$/u.test(f.text.trim())) ||
       b.rect[0] - a.rect[2] < h * 0.6 ||
       Math.abs(a.height - b.height) > h * 0.02
     )
@@ -6818,20 +6818,31 @@ function nativePrintedRecordConflicts(table, owned, inventory, rules, font, cont
           printedOneLine(p.fonts)
       )
       .map((p) => ({ p, ff: [...p.fonts].sort((a, b) => a.rect[0] - b.rect[0]) }))
-    if (
-      pairs.length < 3 ||
-      pairs.some(
+    const center = (f) => (f.rect[0] + f.rect[2]) / 2,
+      centered = pairs.filter(
         ({ ff: [l, r] }) =>
-          ![l, r].every(
-            (f) => /^[+−-]?\d+(?:\.\d+)?$/u.test(f.text.trim()) && Math.abs(f.height - h) < h * 0.02
-          ) ||
-          r.rect[0] - l.rect[2] < h ||
-          Math.abs(l.rect[2] - a.rect[2]) > h * 0.02 ||
-          Math.abs(r.rect[2] - b.rect[2]) > h * 0.02
-      )
-    )
-      continue
-    const packet = [...head.fonts, ...pairs.flatMap(({ ff }) => ff)],
+          [l, r].every(
+            (f) => /^[\p{L}\d.+−-]{1,24}$/u.test(f.text.trim()) && Math.abs(f.height - h) < h * 0.02
+          ) &&
+          r.rect[0] - l.rect[2] >= h &&
+          Math.abs(center(l) - center(a)) < h * 0.02 &&
+          Math.abs(center(r) - center(b)) < h * 0.02
+      ),
+      rightAligned =
+        pairs.length >= 3 &&
+        pairs.every(
+          ({ ff: [l, r] }) =>
+            [l, r].every(
+              (f) =>
+                /^[+−-]?\d+(?:\.\d+)?$/u.test(f.text.trim()) && Math.abs(f.height - h) < h * 0.02
+            ) &&
+            r.rect[0] - l.rect[2] >= h &&
+            Math.abs(l.rect[2] - a.rect[2]) <= h * 0.02 &&
+            Math.abs(r.rect[2] - b.rect[2]) <= h * 0.02
+        )
+    if (!rightAligned && centered.length < 3) continue
+    const calibratedPairs = rightAligned ? pairs : centered
+    const packet = [...head.fonts, ...calibratedPairs.flatMap(({ ff }) => ff)],
       box = bounds(packet),
       originRight = Math.max(...packet.map((f) => f.rect[0]))
     if (
@@ -6839,17 +6850,19 @@ function nativePrintedRecordConflicts(table, owned, inventory, rules, font, cont
       !horizontal.some((r) => r[0] <= box[0] && r[2] >= originRight && r[1] > box[3])
     )
       continue
-    const envelopes = inventory
-      .filter((f) => f.text?.trim())
-      .map((f) => ({ envelope: fontEnvelope(f) }))
-    if (envelopes.some((f) => !rect(f.envelope))) continue
-    const visible = horizontal.filter((r) => visibleNativeHeaderRule(r, context, envelopes))
-    if (
-      !visible.some((r) => r[0] <= box[0] && r[2] >= originRight && r[1] < box[1]) ||
-      !visible.some((r) => r[0] <= box[0] && r[2] >= originRight && r[1] > box[3])
-    )
-      continue
-    const calibrated = pairs.filter(
+    if (rightAligned) {
+      const envelopes = inventory
+        .filter((f) => f.text?.trim())
+        .map((f) => ({ envelope: fontEnvelope(f) }))
+      if (envelopes.some((f) => !rect(f.envelope))) continue
+      const visible = horizontal.filter((r) => visibleNativeHeaderRule(r, context, envelopes))
+      if (
+        !visible.some((r) => r[0] <= box[0] && r[2] >= originRight && r[1] < box[1]) ||
+        !visible.some((r) => r[0] <= box[0] && r[2] >= originRight && r[1] > box[3])
+      )
+        continue
+    }
+    const calibrated = calibratedPairs.filter(
       ({ p, ff }) =>
         closed(ff) &&
         leaves.some(
@@ -6861,11 +6874,17 @@ function nativePrintedRecordConflicts(table, owned, inventory, rules, font, cont
         )
     )
     if (
-      calibrated.some(({ p }) =>
-        [1, 2].every((d) => calibrated.some((q) => q.p.cell.row === p.cell.row + d))
-      )
+      rightAligned
+        ? calibrated.some(({ p }) =>
+            [1, 2].every((d) => calibrated.some((q) => q.p.cell.row === p.cell.row + d))
+          )
+        : calibrated.length >= 3 && closed(head.fonts)
     )
-      reasons.push('native-right-aligned-headed-numeric-lanes-collapsed')
+      reasons.push(
+        rightAligned
+          ? 'native-right-aligned-headed-numeric-lanes-collapsed'
+          : 'native-centered-headed-record-lanes-collapsed'
+      )
   }
   return [...new Set(reasons)]
 }

@@ -5,7 +5,7 @@ import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../shared/compute'
-import { isComputeJobCancelled } from '@aipoch/compute'
+import { isComputeJobTrackingStopped, isComputeJobCancelled } from '@aipoch/compute'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { StagedResourceCleanupButton } from '@/components/StagedResourceCleanupButton'
 import { Button } from '@/components/ui/button'
@@ -68,6 +68,7 @@ function SessionJobsList({
           </div>
         ) : (
           jobs.map((job) => {
+            const trackingStopped = isComputeJobTrackingStopped(job)
             const isRunning = isJobElapsedLive(job)
             const elapsedMs = jobElapsedMs(job, now)
             const elapsedStr = formatDuration(elapsedMs)
@@ -90,13 +91,14 @@ function SessionJobsList({
                     </span>
                     <JobStatusBadge
                       status={job.status}
+                      trackingStopped={trackingStopped}
                       cancellationStatus={job.cancellation_status}
                       errorCode={job.error_code}
                     />
                   </div>
                 </div>
                 <span className="shrink-0 min-w-[6ch] text-right text-[12px] tabular-nums text-muted-foreground">
-                  {isRunning ? elapsedStr : ''}
+                  {isRunning ? elapsedStr : trackingStopped ? '—' : ''}
                 </span>
               </button>
             )
@@ -167,6 +169,7 @@ function JobDetailView({
 
   // Track elapsed time for running jobs
   const [now, setNow] = useState(() => Date.now())
+  const trackingStopped = isComputeJobTrackingStopped(latestJob)
   const isRunning = isJobElapsedLive(latestJob)
   const isCancelled = isComputeJobCancelled(latestJob)
   const isActive =
@@ -280,7 +283,7 @@ function JobDetailView({
         >
           {t('Refresh')}
         </Button>
-        {isActive ? (
+        {isActive && !trackingStopped ? (
           <Button
             type="button"
             variant="outline"
@@ -307,6 +310,7 @@ function JobDetailView({
         )}
         <JobStatusBadge
           status={latestJob.status}
+          trackingStopped={trackingStopped}
           cancellationStatus={latestJob.cancellation_status}
           errorCode={latestJob.error_code}
         />
@@ -321,23 +325,25 @@ function JobDetailView({
         <MetaRow
           label={t('Execution result')}
           value={
-            isCancelled
-              ? t('Cancelled')
-              : latestJob.cancellation_status === 'cancelling'
-                ? t('Cancelling')
-                : ((latestJob.status === 'queued'
-                    ? computeQueueBlockedLabel(latestJob.queue_blocked_reason, t)
-                    : latestJob.status === 'success'
-                      ? t('Success')
-                      : latestJob.status === 'failed'
-                        ? t('Failed')
-                        : latestJob.status === 'timeout'
-                          ? t('Timed out')
-                          : latestJob.status === 'submitted'
-                            ? t('Submitted')
-                            : latestJob.status === 'running'
-                              ? t('Running')
-                              : t('Error')) ?? latestJob.status)
+            trackingStopped
+              ? t('Unknown')
+              : isCancelled
+                ? t('Cancelled')
+                : latestJob.cancellation_status === 'cancelling'
+                  ? t('Cancelling')
+                  : ((latestJob.status === 'queued'
+                      ? computeQueueBlockedLabel(latestJob.queue_blocked_reason, t)
+                      : latestJob.status === 'success'
+                        ? t('Success')
+                        : latestJob.status === 'failed'
+                          ? t('Failed')
+                          : latestJob.status === 'timeout'
+                            ? t('Timed out')
+                            : latestJob.status === 'submitted'
+                              ? t('Submitted')
+                              : latestJob.status === 'running'
+                                ? t('Running')
+                                : t('Error')) ?? latestJob.status)
           }
         />
         <MetaRow
@@ -457,7 +463,9 @@ function JobDetailView({
                 ? t(
                     'The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.'
                   )
-                : t('The cancellation attempt ended. The job is still being tracked.')
+                : trackingStopped
+                  ? t('The remote job may still be running.')
+                  : t('The cancellation attempt ended. The job is still being tracked.')
             }
             content={
               isStatusUnavailable && hasCancellationFailure ? (
@@ -478,7 +486,7 @@ function JobDetailView({
             primaryButton={
               isActive
                 ? {
-                    label: t('Retry'),
+                    label: t('Retry cancellation'),
                     onClick: () => void cancelJob(),
                     loading: isCancellingRequest
                   }

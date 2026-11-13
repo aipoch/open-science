@@ -12,7 +12,7 @@ import {
   createLogger,
   runtimeChildProcessErrorFields
 } from '@aipoch/diagnostics/node'
-import { augmentedPathEnv } from './shell-path'
+import { augmentedPathEnv, npmBinDirsForCheck, withNpmBinFallback } from './shell-path'
 import { stripCodexCredentialEnv } from './process-tree'
 import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
 import { spawnCodexWithInstallAdmission } from './managed-codex'
@@ -62,19 +62,12 @@ const parseVersion = (output: string): string | undefined => {
   return match?.[0]
 }
 
-const collectCandidateDirs = async (
-  deps: CodexDetectDeps,
-  signal?: AbortSignal
-): Promise<string[]> => {
+type CodexSearchDirs = Pick<CodexDetectDeps, 'platform' | 'env' | 'extraDirs'> &
+  Partial<Pick<CodexDetectDeps, 'homePath' | 'resolveNpmBinDirs'>>
+
+const candidateDirs = (deps: CodexSearchDirs, signal?: AbortSignal): AsyncGenerator<string> => {
   const p = pathFor(deps.platform)
   const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter(Boolean)
-  let npmDirs: string[] = []
-  try {
-    npmDirs = await deps.resolveNpmBinDirs(signal)
-  } catch {
-    signal?.throwIfAborted()
-  }
-  signal?.throwIfAborted()
   const wellKnown =
     deps.platform === 'win32'
       ? deps.env.APPDATA
@@ -82,36 +75,60 @@ const collectCandidateDirs = async (
         : []
       : ['/opt/homebrew/bin', '/usr/local/bin']
 
-  return Array.from(
-    new Set([
+  return withNpmBinFallback(
+    [
       ...pathDirs,
-      p.join(deps.homePath, '.local', 'bin'),
+      p.join(deps.homePath ?? '', '.local', 'bin'),
       ...(deps.extraDirs ?? []),
-      ...wellKnown,
-      ...npmDirs
-    ])
+      ...wellKnown
+    ],
+    deps,
+    signal
   )
+}
+
+// A managed adapter is the only eligible candidate. Native CLI fallback discovery is independent.
+async function* adapterCandidates(
+  deps: CodexDetectDeps,
+  signal?: AbortSignal
+): AsyncGenerator<string> {
+  if (deps.managedAdapterPath) {
+    yield deps.managedAdapterPath
+    return
+  }
+  const names =
+    deps.platform === 'win32'
+      ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp.bat', 'codex-acp']
+      : ['codex-acp']
+  yield* candidatesInDirs(deps, names, signal)
+}
+
+async function* candidatesInDirs(
+  deps: CodexSearchDirs,
+  names: string[],
+  signal?: AbortSignal
+): AsyncGenerator<string> {
+  const p = pathFor(deps.platform)
+  const seen = new Set<string>()
+  for await (const dir of candidateDirs(deps, signal)) {
+    if (!dir) continue
+    for (const name of names) {
+      const candidate = p.join(dir, name)
+      if (seen.has(candidate)) continue
+      seen.add(candidate)
+      yield candidate
+    }
+  }
 }
 
 const detectCodex = async (
   deps: CodexDetectDeps = createDefaultDetectDeps(),
   signal?: AbortSignal
 ): Promise<CodexDetectResult | undefined> => {
-  const p = pathFor(deps.platform)
   signal?.throwIfAborted()
-  const dirs = await collectCandidateDirs(deps, signal)
-  const names =
-    deps.platform === 'win32'
-      ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp.bat', 'codex-acp']
-      : ['codex-acp']
-  const discoveredCandidates = dirs.flatMap((dir) => names.map((name) => p.join(dir, name)))
-  // Open-Science supplies managedAdapterPath in production. Once present, that path is the only
-  // adapter eligible to run; PATH/npm adapters are discovery noise and must never bypass the pinned
-  // app extension layer. The generic scan remains available to the standalone detector tests and
-  // diagnostics that do not declare an app-owned adapter.
-  const candidates = deps.managedAdapterPath ? [deps.managedAdapterPath] : discoveredCandidates
 
-  for (const adapterPath of Array.from(new Set(candidates))) {
+  for await (const adapterPath of adapterCandidates(deps, signal)) {
+    signal?.throwIfAborted()
     const runnable = await deps.isRunnable(adapterPath)
     signal?.throwIfAborted()
     if (!runnable) continue
@@ -171,21 +188,8 @@ const detectCodexComponents = async (
   adapterFailureReason?: 'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed'
 }> => {
   signal?.throwIfAborted()
-  const p = pathFor(deps.platform)
 
-  // Check for adapter first
-  const dirs = await collectCandidateDirs(deps, signal)
-  const adapterNames =
-    deps.platform === 'win32'
-      ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp.bat', 'codex-acp']
-      : ['codex-acp']
-  const discoveredAdapterCandidates = dirs.flatMap((dir) =>
-    adapterNames.map((name) => p.join(dir, name))
-  )
-  const adapterCandidates = deps.managedAdapterPath
-    ? [deps.managedAdapterPath]
-    : discoveredAdapterCandidates
-
+  const search = { ...deps, resolveNpmBinDirs: npmBinDirsForCheck(deps.resolveNpmBinDirs, signal) }
   const managedNativeOutput = deps.managedCodexPath
     ? await deps.getCodexVersion(deps.managedCodexPath, signal)
     : undefined
@@ -193,7 +197,7 @@ const detectCodexComponents = async (
   const managedNativeVersion = managedNativeOutput ? parseVersion(managedNativeOutput) : undefined
   const nativeCodex = managedNativeVersion
     ? { path: deps.managedCodexPath!, version: managedNativeVersion }
-    : await detectNativeCodex(deps, signal)
+    : await detectNativeCodex(search, signal)
 
   let adapterFound = false
   let adapterPath: string | undefined
@@ -201,7 +205,7 @@ const detectCodexComponents = async (
   let adapterFailureReason:
     'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed' | undefined
 
-  for (const candidate of Array.from(new Set(adapterCandidates))) {
+  for await (const candidate of adapterCandidates(search, signal)) {
     signal?.throwIfAborted()
     if (!(await deps.isRunnable(candidate))) continue
 
@@ -519,69 +523,33 @@ const createDefaultDetectDeps = (): CodexDetectDeps => {
   }
 }
 
-// Checks for a native Codex CLI when the adapter is missing. Used to provide accurate diagnostic
-// messages distinguishing "adapter missing" from "Codex not installed at all".
-//
-// Searches the SAME directory set that collectCandidateDirs + the ACP smoke test use (raw PATH plus
-// the augmented well-known dirs: ~/.local/bin, Homebrew, /usr/local, npm global bin). Without this,
-// an adapter could pass its handshake by resolving codex through the augmented PATH while this probe,
-// scanning only the narrower raw PATH, reported the native CLI as missing and blocked Continue.
+async function* nativeCandidates(
+  deps: CodexSearchDirs,
+  signal?: AbortSignal
+): AsyncGenerator<string> {
+  const p = pathFor(deps.platform)
+  let bundledPath: string | undefined
+  if (deps.platform === 'darwin') {
+    bundledPath = '/Applications/ChatGPT.app/Contents/Resources/codex'
+  } else if (deps.platform === 'win32' && deps.env.LOCALAPPDATA) {
+    bundledPath = p.join(deps.env.LOCALAPPDATA, 'Programs', 'ChatGPT', 'codex.exe')
+  }
+
+  if (bundledPath) yield bundledPath
+  const names = deps.platform === 'win32' ? ['codex.exe', 'codex.cmd', 'codex'] : ['codex']
+  for await (const candidate of candidatesInDirs(deps, names, signal)) {
+    if (candidate !== bundledPath) yield candidate
+  }
+}
+
+// Detect the native CLI independently so Settings can distinguish it from a missing adapter.
 const detectNativeCodex = async (
-  deps: Pick<CodexDetectDeps, 'platform' | 'env' | 'getCodexVersion'> &
-    Partial<
-      Pick<CodexDetectDeps, 'homePath' | 'resolveNpmBinDirs' | 'extraDirs'>
-    > = createDefaultDetectDeps(),
+  deps: CodexSearchDirs & Pick<CodexDetectDeps, 'getCodexVersion'> = createDefaultDetectDeps(),
   signal?: AbortSignal
 ): Promise<{ path: string; version: string } | undefined> => {
   signal?.throwIfAborted()
-  const p = pathFor(deps.platform)
-  const wellKnown: string[] = []
-
-  // Check common native Codex installation paths
-  if (deps.platform === 'darwin') {
-    wellKnown.push('/Applications/ChatGPT.app/Contents/Resources/codex')
-  } else if (deps.platform === 'win32') {
-    const localAppData = deps.env.LOCALAPPDATA
-    if (localAppData) {
-      wellKnown.push(p.join(localAppData, 'Programs', 'ChatGPT', 'codex.exe'))
-    }
-  }
-
-  // Search raw PATH plus the augmented dirs, mirroring collectCandidateDirs so this probe agrees
-  // with the adapter's own codex resolution during the smoke test.
-  const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter(Boolean)
-  let npmDirs: string[] = []
-  if (deps.resolveNpmBinDirs) {
-    try {
-      npmDirs = await deps.resolveNpmBinDirs(signal)
-    } catch {
-      signal?.throwIfAborted()
-    }
-  }
-  signal?.throwIfAborted()
-  const augmentedDirs =
-    deps.platform === 'win32'
-      ? deps.env.APPDATA
-        ? [p.join(deps.env.APPDATA, 'npm')]
-        : []
-      : ['/opt/homebrew/bin', '/usr/local/bin']
-
-  const searchDirs = Array.from(
-    new Set([
-      ...pathDirs,
-      p.join(deps.homePath ?? '', '.local', 'bin'),
-      ...(deps.extraDirs ?? []),
-      ...augmentedDirs,
-      ...npmDirs
-    ])
-  ).filter(Boolean)
-
-  const names = deps.platform === 'win32' ? ['codex.exe', 'codex.cmd', 'codex'] : ['codex']
-  const pathCandidates = searchDirs.flatMap((dir) => names.map((name) => p.join(dir, name)))
-
-  const candidates = Array.from(new Set([...wellKnown, ...pathCandidates]))
-
-  for (const codexPath of candidates) {
+  for await (const codexPath of nativeCandidates(deps, signal)) {
+    signal?.throwIfAborted()
     const versionOutput = await deps.getCodexVersion(codexPath, signal)
     signal?.throwIfAborted()
     const version = versionOutput ? parseVersion(versionOutput) : undefined
@@ -594,7 +562,7 @@ const detectNativeCodex = async (
 }
 
 export {
-  collectCandidateDirs,
+  candidateDirs,
   createDefaultDetectDeps,
   detectCodex,
   detectCodexComponents,

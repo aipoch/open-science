@@ -463,7 +463,7 @@ const SideChatPanel = ({
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    className="grid size-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground transition-colors duration-150 hover:bg-primary/80 focus-visible:keyboard-focus active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary motion-reduce:transition-none motion-reduce:active:translate-y-0"
+                    className="grid size-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground transition-colors duration-150 hover:bg-primary/90 focus-visible:keyboard-focus active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary motion-reduce:transition-none motion-reduce:active:translate-y-0"
                     disabled={
                       view.running
                         ? !view.sideSessionId

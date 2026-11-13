@@ -3375,7 +3375,7 @@ const ConversationPanel = ({
                             row and never wait for another user message. */}
                             {specialistHasPendingSwitch ? (
                               <span
-                                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] italic text-blue-400"
+                                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] italic text-status-info-foreground dark:text-status-info-dark-foreground"
                                 data-testid="specialist-pending-switch-chip"
                                 aria-label={t('Specialist switch pending')}
                               >

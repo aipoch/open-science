@@ -49,6 +49,8 @@
     "src/main/session-persistence/projection-diagnostics.test.ts",
     "src/main/session-persistence/projection-diagnostics.ts",
     "src/main/session-persistence/projection.test.ts",
+    "src/main/session-persistence/startup-hydration.integration.test.ts",
+    "src/main/session-persistence/recovery-commit.integration.test.ts",
     "src/main/session-persistence/projection.ts",
     "src/main/session-persistence/renderer-flush.test.ts",
     "src/main/session-persistence/renderer-flush.ts",
@@ -91,7 +93,8 @@
     "src/main/session-persistence/attention-projection.test.ts",
     "src/main/session-persistence/turn-outcome-authority.test.ts",
     "src/main/session-persistence/flush-protocol.ts",
-    "src/main/session-persistence/conversation-pdf-electron.ts"
+    "src/main/session-persistence/conversation-pdf-electron.ts",
+    "src/main/session-persistence/deferred-recovery.ts"
   ],
   "interfacePaths": [
     "src/main/session-persistence/coordinator.ts",
@@ -120,7 +123,8 @@
     "src/main/session-persistence/runtime-session-owner.ts",
     "src/main/session-persistence/runtime-writer.ts",
     "src/main/session-persistence/flush-protocol.ts",
-    "src/main/session-persistence/conversation-pdf-electron.ts"
+    "src/main/session-persistence/conversation-pdf-electron.ts",
+    "src/main/session-persistence/deferred-recovery.ts"
   ],
   "consumerModules": ["project_lifecycle"],
   "testFiles": {
@@ -141,6 +145,8 @@
       "src/main/session-persistence/pdf-context-owner.test.ts",
       "src/main/session-persistence/projection-diagnostics.test.ts",
       "src/main/session-persistence/projection.test.ts",
+      "src/main/session-persistence/startup-hydration.integration.test.ts",
+      "src/main/session-persistence/recovery-commit.integration.test.ts",
       "src/main/session-persistence/renderer-flush.test.ts",
       "src/main/session-persistence/renderer-save-options.test.ts",
       "src/main/session-persistence/repository-queue.test.ts",
@@ -624,5 +630,6 @@
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Deferred recovery adds an owner outside the reviewed Session persistence source boundary and changes cross-owner scheduling and cleanup contracts; retain full CI validation until the expanded boundary is reviewed and reclassified."
 }

@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "cli/profile-startup.test.ts",
     "packages/open-science/CLI.md",
     "packages/open-science/LICENSE",
     "packages/open-science/README.md",
@@ -17,6 +18,8 @@
     "packages/open-science/locate-app.mjs",
     "packages/open-science/package.json",
     "packages/open-science/locate-backend.mjs",
+    "packages/open-science/launch-log.mjs",
+    "packages/open-science/launch-log.d.mts",
     "packages/open-science/runtime-control.mjs",
     "packages/open-science/runtime-control.d.mts",
     "packages/open-science/appimage-launcher.mjs",
@@ -43,6 +46,8 @@
     "packages/open-science/index.mjs",
     "packages/open-science/locate-app.mjs",
     "packages/open-science/locate-backend.mjs",
+    "packages/open-science/launch-log.mjs",
+    "packages/open-science/launch-log.d.mts",
     "packages/open-science/runtime-control.mjs",
     "packages/open-science/runtime-control.d.mts",
     "packages/open-science/runtime-package.mjs",
@@ -55,6 +60,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "cli/profile-startup.test.ts",
       "packages/open-science/cli.test.ts",
       "packages/open-science/client-discovery.test.ts",
       "packages/open-science/client.test.ts",

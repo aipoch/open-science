@@ -216,7 +216,7 @@ describe('JobDetailModal — detail view', () => {
       (container.querySelector('[data-testid="job-cancel"]') as HTMLButtonElement).disabled
     ).toBe(false)
     const retry = [...container.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Retry'
+      (button) => button.textContent === 'Retry cancellation'
     )!
     await act(async () => retry.click())
     expect(jobsCancel).toHaveBeenCalledOnce()
@@ -227,6 +227,37 @@ describe('JobDetailModal — detail view', () => {
     )
     expect(container.querySelector('[data-testid="job-status-badge"]')?.textContent).toBe('Done')
     expect(container.querySelector('[data-testid="job-cancellation-failed"]')).toBeNull()
+  })
+
+  it('stops automatic checks after direct SSH cancellation failure until explicit retry', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      execution_mode: 'direct_ssh',
+      status: 'submitted',
+      started_at: undefined,
+      cancellation_status: 'failed',
+      cancellation_error: { code: 'cancel_confirmation_failed', message: 'No handle' }
+    })
+    const jobsCancel = vi.fn(async () => undefined)
+    const jobsList = vi.fn(async () => [{ ...job, cancellation_status: 'cancelling' as const }])
+    Object.assign(window, { api: { compute: { jobsCancel, jobsList } } })
+    useSessionJobStore.getState().applyUpdate(job)
+    vi.useFakeTimers()
+    act(() =>
+      root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+    )
+    expect(container.querySelector('[data-testid="job-status-badge"]')?.textContent).toBe(
+      'Unable to confirm cancellation'
+    )
+    expect(container.textContent).toContain('The remote job may still be running.')
+    expect(container.querySelector('[data-testid="job-cancel"]')).toBeNull()
+    act(() => vi.advanceTimersByTime(60_000))
+    expect(jobsList).not.toHaveBeenCalled()
+    const retry = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Retry cancellation'
+    )!
+    await act(async () => retry.click())
+    expect(jobsCancel).toHaveBeenCalledOnce()
   })
 
   it('explains unavailable status without promising a stopped remote process or continued polling', async () => {

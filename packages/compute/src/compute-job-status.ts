@@ -7,6 +7,16 @@ export const isComputeJobCancelled = (
   job.cancellation_status === 'cancelled' ||
   (job.status === 'failed' && job.error_code === 'job_cancelled')
 
+// The remote execution outcome is unknown. Only another explicit cancellation request
+// should resume probing this direct SSH job.
+export const isComputeJobTrackingStopped = (
+  job: Pick<ComputeJob, 'execution_mode' | 'status' | 'cancellation_status' | 'cancellation_error'>
+): boolean =>
+  (job.execution_mode ?? 'direct_ssh') === 'direct_ssh' &&
+  (job.status === 'submitted' || job.status === 'running') &&
+  job.cancellation_status === 'failed' &&
+  job.cancellation_error?.code === 'cancel_confirmation_failed'
+
 export const isComputeJobResultFinal = (job: ComputeJob): boolean =>
   isComputeJobCancelled(job) ||
   job.status === 'error' ||

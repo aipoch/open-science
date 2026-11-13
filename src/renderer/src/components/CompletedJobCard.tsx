@@ -22,13 +22,25 @@ function getStatusLabelKey(job: JobSummary): { key: StatusKey | null; colorClass
   if (isComputeJobCancelled(job)) return { key: 'Cancelled', colorClass: 'text-muted-foreground' }
   switch (job.status) {
     case 'success':
-      return { key: 'finished', colorClass: 'text-green-600 dark:text-green-400' }
+      return {
+        key: 'finished',
+        colorClass: 'text-status-success-foreground dark:text-status-success-dark-foreground'
+      }
     case 'failed':
-      return { key: 'failed', colorClass: 'text-red-600 dark:text-red-400' }
+      return {
+        key: 'failed',
+        colorClass: 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
+      }
     case 'timeout':
-      return { key: 'timed out', colorClass: 'text-red-600 dark:text-red-400' }
+      return {
+        key: 'timed out',
+        colorClass: 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
+      }
     case 'error':
-      return { key: 'error', colorClass: 'text-red-600 dark:text-red-400' }
+      return {
+        key: 'error',
+        colorClass: 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
+      }
     default:
       return { key: null, colorClass: 'text-muted-foreground' }
   }

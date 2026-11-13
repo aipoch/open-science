@@ -144,7 +144,14 @@ export interface ComputeJobOperationRepository {
     kind: ComputeJobOperationKind,
     now: Date,
     leaseMs: number,
-    claimToken: string
+    claimToken: string,
+    options?: { deferDirectSshAttempt?: boolean }
+  ): Promise<ClaimedComputeJobOperation | null>
+  // Start remote work only after local dispatch waiting has ended. The returned revision owns
+  // the attempt; a stale lease must not perform remote work or spend a replacement's budget.
+  beginAttempt(
+    claim: ClaimedComputeJobOperation,
+    now: Date
   ): Promise<ClaimedComputeJobOperation | null>
   fulfill(
     claim: ClaimedComputeJobOperation,

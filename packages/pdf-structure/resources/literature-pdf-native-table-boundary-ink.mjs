@@ -136,6 +136,7 @@ function retainOwnedGlyphCrop(table, target, rules, context, crop) {
       evidence: context.nativeEvidenceGraphics,
       identity: context.nativePaintIdentityGraphics,
       captions: context.captions,
+      operators: context.operators,
       viewport: context.viewport
     },
     // Retain the fields consumed by the packet rather than unrelated optional
@@ -164,6 +165,7 @@ function retainOwnedGlyphCrop(table, target, rules, context, crop) {
         'nativeEvidenceGraphics',
         'nativePaintIdentityGraphics',
         'captions',
+        'operators',
         'viewport'
       ].map((key) => [context, key]),
       ...Object.keys(nativeInputs).map((key) => [native, key])
@@ -182,6 +184,7 @@ function retainOwnedGlyphCrop(table, target, rules, context, crop) {
         inputs.evidence,
         inputs.identity,
         inputs.captions,
+        inputs.operators,
         inputs.viewport,
         nativeInputs
       ],
@@ -1964,8 +1967,96 @@ function wrappingParagraphBottom(table, fonts, owned, ink, bars, paint, graphics
   return { crop, missingHeader: false }
 }
 
+// Only existing parent/leaf header sources can own an interior underline.
+// The native visible-rule observer binds its exact stroke, clip, color and
+// complete page paint inventory; unrelated interior paths remain foreign.
+function nativeOwnedHeaderUnderlines(
+  table,
+  owned,
+  packet,
+  horizontal,
+  family,
+  paint,
+  graphics,
+  context,
+  firstOp,
+  lastOp
+) {
+  const result = [],
+    fonts = [...owned],
+    ink = packet.ink,
+    sources = (cell) => (cell.sourceItems ?? []).map((s) => fonts.find((f) => equal(f.source, s))),
+    parents = table.cells.filter((c) => c.row === 0 && c.rowSpan === 1 && c.colSpan >= 2)
+  if (parents.length > 16 || parents.some((c) => c.colSpan > 8)) return result
+  for (const parent of parents) {
+    const children = table.cells.filter(
+        (c) => c.row === 1 && c.column >= parent.column && c.column < parent.column + parent.colSpan
+      ),
+      upper = sources(parent),
+      lower = children.flatMap(sources)
+    if (
+      children.length !== parent.colSpan ||
+      children.some((c) => c.rowSpan !== 1 || c.colSpan !== 1) ||
+      new Set(children.map((c) => c.column)).size !== parent.colSpan ||
+      !upper.length ||
+      !lower.length ||
+      [...upper, ...lower].some((f) => !f)
+    )
+      continue
+    const a = union(upper.map((f) => f.advance)),
+      b = union(lower.map((f) => f.advance)),
+      h = upper[0].advance[3] - upper[0].advance[1]
+    if (
+      !(h > 0) ||
+      upper.some((f) => Math.abs(f.advance[3] - a[3]) > h * 0.02) ||
+      lower.some((f) => Math.abs(f.advance[3] - b[3]) > h * 0.02) ||
+      a[3] >= b[1] ||
+      Math.max(...upper.map((f) => f.source.index)) >= Math.min(...lower.map((f) => f.source.index))
+    )
+      continue
+    const matches = horizontal.filter(
+      (r) =>
+        !family.includes(r) &&
+        valid(paint(r)) &&
+        inside(table.cropRect, paint(r)) &&
+        r[1] > a[3] &&
+        r[1] < b[1] &&
+        r[0] <= Math.min(a[0], b[0]) &&
+        r[2] >= Math.max(a[2], b[2]) &&
+        Math.abs(r[0] + r[2] - a[0] - a[2]) <= h &&
+        b[0] - r[0] <= h * 2 &&
+        r[2] - b[2] <= h * 2 &&
+        !fonts.some(
+          (f) => !upper.includes(f) && !lower.includes(f) && over(ink.get(f), paint(r))
+        ) &&
+        visibleNativeHeaderRule(
+          r,
+          context,
+          fonts.map((f) => ({ envelope: ink.get(f) }))
+        ) === true
+    )
+    if (matches.length !== 1) continue
+    const r = matches[0],
+      ids = graphics.flatMap((g, i) =>
+        equal(g, paint(r)) && context.nativePaintIdentityGraphics[i]?.kind === 'path'
+          ? [context.nativePaintIdentityGraphics[i].operationIndex]
+          : []
+      )
+    if (
+      ids.length !== 1 ||
+      ids[0] <= firstOp ||
+      ids[0] >= lastOp ||
+      result.some((p) => p.op === ids[0])
+    )
+      continue
+    result.push({ op: ids[0], rect: paint(r) })
+  }
+  return result
+}
+
 // Existing whole cell sources may have complete advances while their actual
-// glyph overhang is cut. A closed native paint program proves only the preview:
+// glyph overhang or outer rule stroke is cut. A closed native paint program
+// proves only the preview:
 // every text show between its outer rules must already belong to those sources.
 function nativeOwnedGlyphOverhangCrop(
   table,
@@ -1986,7 +2077,16 @@ function nativeOwnedGlyphOverhangCrop(
     table.unassigned?.length ||
     !Array.isArray(identity) ||
     identity.length !== graphics.length ||
-    ![...owned].some((f) => !inside(old, ink.get(f)))
+    (![...owned].some((f) => !inside(old, ink.get(f))) &&
+      !horizontal.some(
+        (r) =>
+          valid(paint(r)) &&
+          !inside(old, paint(r)) &&
+          r[0] >= old[0] &&
+          r[2] <= old[2] &&
+          r[1] >= old[1] &&
+          r[1] <= old[3]
+      ))
   )
     return
   const sourceIds = new Set([...owned].map((f) => f.source.index)),
@@ -2079,12 +2179,25 @@ function nativeOwnedGlyphOverhangCrop(
       )
     )
       continue
+    const headers = nativeOwnedHeaderUnderlines(
+        table,
+        owned,
+        packet,
+        horizontal,
+        family,
+        paint,
+        graphics,
+        context,
+        firstOp,
+        lastOp
+      ),
+      ownedRules = [...family.map(paint), ...headers.map((p) => p.rect)]
     const rasterScale = Math.min(
         MAX_SCALE,
         (MAX_EDGE / Math.max(old[2] - old[0], old[3] - old[1])) * scale
       ),
       step = scale / rasterScale,
-      required = union([...ownInk, ...family.map(paint), ...[...owned].map((f) => f.advance)]),
+      required = union([...ownInk, ...ownedRules, ...[...owned].map((f) => f.advance)]),
       crop = old.map((x, i) => {
         const target = i < 2 ? Math.min(x, required[i] - step) : Math.max(x, required[i] + step)
         return x + (i < 2 ? Math.floor : Math.ceil)((target - x) / step) * step
@@ -2114,12 +2227,12 @@ function nativeOwnedGlyphOverhangCrop(
       continue
     plans.push({
       crop,
-      ownedPaint: [...ownInk, ...family.map(paint)].map((r) => r.map((x) => x / scale)),
+      ownedPaint: [...ownInk, ...ownedRules].map((r) => r.map((x) => x / scale)),
       foreignGlyphs: fonts
         .filter((f) => !owned.has(f))
         .map((f) => ink.get(f).map((x) => x / scale)),
       foreignPaints: graphics
-        .filter((g) => !family.some((r) => equal(paint(r), g)))
+        .filter((g) => !ownedRules.some((r) => equal(r, g)))
         .map((g) => g.map((x) => x / scale))
     })
   }

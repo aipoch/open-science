@@ -474,10 +474,12 @@ These are retained compatibility paths, not a request to migrate user data:
   removed only by its own generation. The attachment secret is not exposed by Web discovery.
 - Existing `web-token` and `web-service.json` remain the Web discovery/authentication mechanism.
 - Private startup logs (`cli-daemon-<uuid>.log` and `logs/desktop-backend-*.log`) remain for diagnosis.
-  After diagnostics initialization, Node mirrors application records as single-line JSON when stdout
-  is redirected, including these launch files; interactive terminals retain readable text. These
-  captures can still contain raw startup errors and third-party stderr, so they are not strict JSONL
-  files. Use config-root `logs/main.log` for canonical structured records.
+  Desktop and CLI launchers retain the first 5 MiB of combined native stdout and stderr per
+  launch. A detached reader drains later output until the last writer closes, including after
+  the launcher exits. Routine application diagnostics go to the rotating config-root
+  `logs/main.log`; the launch log also records terminal failures and the SQLite version used by package verification. A directly
+  invoked backend retains its existing terminal or redirected console output. On startup failure
+  the CLI reads up to 64 KiB from the end of its launch log to display the last 30 lines.
   Each time the desktop launcher creates a backend startup log, it keeps the newest 20
   `logs/desktop-backend-*.log` files and removes older ones, including files from earlier versions.
   It retains older logs that are still open or whose use it cannot verify, and retries on a later launch.

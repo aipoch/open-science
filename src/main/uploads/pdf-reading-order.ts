@@ -156,8 +156,8 @@ const projectRows = (
       const short = (item: TextItem): boolean =>
         /^\S+$/u.test(item.str.trim()) && item.width <= em * 2
       const prose = (item: TextItem): boolean => item.str.trim().split(/\s+/u).length >= 3
-      // A later original prose line in this same horizontal lane cannot
-      // overtake the first line after an authenticated native inline gap.
+      // A later native line under either side of this authenticated inline gap
+      // cannot overtake its first line, even when it is only a journal name or URL.
       const overtaken =
         previousRow !== undefined &&
         followingRow !== undefined &&
@@ -168,10 +168,12 @@ const projectRows = (
             return (
               index > before + 1 &&
               sourceLines[index] > sourceLines[before + 1] &&
-              prose(candidate) &&
               candidate.transform[5] + candidate.height < following.transform[5] - 1e-6 &&
-              candidate.transform[4] < following.transform[4] + following.width - 1e-6 &&
-              candidate.transform[4] + candidate.width > following.transform[4] + 1e-6
+              ((candidate.transform[4] < following.transform[4] + following.width - 1e-6 &&
+                candidate.transform[4] + candidate.width > following.transform[4] + 1e-6) ||
+                (candidate.transform[4] >= previous.transform[4] - 1e-6 &&
+                  candidate.transform[4] + candidate.width <=
+                    previous.transform[4] + previous.width + 1e-6))
             )
           })
         )

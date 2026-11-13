@@ -547,7 +547,10 @@ function TokenUsagePanel({
               </dl>
             ) : null}
             {summary.incompleteRequests ? (
-              <p role="status" className="mt-3 text-xs text-status-warning-foreground">
+              <p
+                role="status"
+                className="mt-3 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground"
+              >
                 {t('Some model requests have no reported token usage. Totals may be incomplete.')}
               </p>
             ) : null}

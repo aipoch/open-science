@@ -32,7 +32,7 @@ describe('codebuddy detection', () => {
 
     await detectCodeBuddy(
       {
-        ...deps({ '/usr/local/bin/codebuddy': '2.138.0' }),
+        ...deps({ '/npm/bin/codebuddy': '2.138.0' }),
         resolveNpmBinDirs,
         getVersion
       },
@@ -40,7 +40,7 @@ describe('codebuddy detection', () => {
     )
 
     expect(resolveNpmBinDirs).toHaveBeenCalledWith(controller.signal)
-    expect(getVersion).toHaveBeenCalledWith('/usr/local/bin/codebuddy', controller.signal)
+    expect(getVersion).toHaveBeenCalledWith('/npm/bin/codebuddy', controller.signal)
   })
 
   it('rejects versions outside the app-pinned release', async () => {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { isComputeJobCancelled } from '@aipoch/compute'
+import { isComputeJobCancelled, isComputeJobTrackingStopped } from '@aipoch/compute'
 
 import { sessionExportLocked, usePackageOperationStore } from '../../stores/package-operation-store'
 import type { BackgroundResultActivityItem } from '../../../../shared/background-result-delivery'
@@ -30,6 +30,7 @@ const isRunActive = (run: NotebookRunRecord): boolean =>
   run.status === 'queued' || run.status === 'running'
 
 const isJobActive = (job: JobSummary): boolean =>
+  !isComputeJobTrackingStopped(job) &&
   !isComputeJobCancelled(job) &&
   (job.status === 'queued' || job.status === 'submitted' || job.status === 'running')
 

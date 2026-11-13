@@ -17,6 +17,62 @@ import {
 
 it.each([
   'valid',
+  'missing-body',
+  'foreign-body',
+  'nonadjacent',
+  'raised',
+  'changed-call',
+  'distant',
+  'missing-bounds'
+] as const)('keeps native lowered callee scripts before repeated arguments: %s', (fault) => {
+  const source = 'Use Qr(t) and Qr(t).',
+    target = '使用Qr(t)与Qr(t)。',
+    markers: ScientificScriptMarker[] = [...source.matchAll(/Qr\(t\)/gu)].flatMap((m, n) => [
+      {
+        label: 'Q',
+        sourceOffset: m.index,
+        scale: 1,
+        rise: 0,
+        sourceIndices: [10 + n * 5],
+        bounds: [100 + n * 40, 700, 108 + n * 40, 708]
+      },
+      {
+        label: 'r',
+        sourceOffset: m.index + 1,
+        scale: 2 / 3,
+        rise: -1.8,
+        sourceIndices: [11 + n * 5],
+        bounds: [108 + n * 40, 698.5, 112 + n * 40, 704]
+      }
+    ])
+  for (const marker of markers) {
+    if (fault === 'foreign-body' && marker.label === 'Q') marker.label = 'R'
+    if (fault === 'nonadjacent' && marker.label === 'r') marker.sourceIndices[0]++
+    if (fault === 'raised' && marker.label === 'r') marker.rise = 1.8
+    if (fault === 'distant' && marker.label === 'r') marker.bounds = [130, 698.5, 134, 704]
+    if (fault === 'missing-bounds') delete marker.bounds
+  }
+  const spans = resolveScientificScriptSpans(
+    source,
+    fault === 'changed-call' ? target.replaceAll('(t)', '(u)') : target,
+    fault === 'missing-body' ? markers.filter((m) => m.label !== 'Q') : markers
+  )
+  expect(spans).toEqual(
+    fault === 'valid'
+      ? [...target.matchAll(/Qr\(t\)/gu)].map((m, n) => ({
+          start: m.index + 1,
+          end: m.index + 2,
+          scale: 2 / 3,
+          rise: -1.8,
+          sourceIndices: [11 + n * 5],
+          sourceOffsets: [[...source.matchAll(/Qr\(t\)/gu)][n].index + 1]
+        }))
+      : []
+  )
+})
+
+it.each([
+  'valid',
   'flat',
   'missing-lower',
   'foreign-object',
@@ -876,6 +932,11 @@ it.each([
   ['σ', 17, 100, 10, false],
   [', σ', 17, 100, 10, false],
   ['; x', 17, 100, 10, false],
+  [', . . . , q', 17, 100, 10, false],
+  [', . . . , σ', 17, 100, 10, false],
+  [', . . , q', 17, 100, 10, true],
+  ['text q', 17, 100, 10, true],
+  [', . . . , q', 5, 100, 10, true],
   [', word', 17, 100, 10, true],
   [', σ', 5, 100, 10, true],
   [', σ', 17, 110, 10, true],
@@ -893,6 +954,46 @@ it.each([
     if (fraction) expect(fractions[0].indices).toEqual([2, 3])
   }
 )
+
+it('keeps native paired scripts after an ellipsis-prefixed variable out of division', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRoman),
+    page = pdf.addPage([160, 140]),
+    base = ', . . . , q',
+    right = 20 + font.widthOfTextAtSize(base, 10)
+  page.drawText(base, { x: 20, y: 100, size: 10, font })
+  page.drawText('U', { x: right, y: 103.6, size: 7, font })
+  page.drawText('k', { x: right, y: 97.5, size: 7, font })
+  const task = getDocument({ data: await pdf.save(), useSystemFonts: true })
+  try {
+    const content = await (await (await task.promise).getPage(1)).getTextContent(),
+      items: FractionItem[] = content.items.flatMap((item, i) =>
+        'str' in item && item.str.trim()
+          ? [
+              {
+                i,
+                text: item.str,
+                fontSize: item.height,
+                baseline: item.transform[5],
+                bounds: [
+                  item.transform[4],
+                  item.transform[5],
+                  item.transform[4] + item.width,
+                  item.transform[5] + item.height
+                ] as [number, number, number, number]
+              }
+            ]
+          : []
+      )
+    expect(items.map((item) => item.text)).toEqual([base, 'U', 'k'])
+    expect(resolveInlineFractions(items, 100, 10)).toEqual([])
+    expect(resolveInlineFractions(items.slice(1), 100, 10).map((value) => value.label)).toEqual([
+      'U/k'
+    ])
+  } finally {
+    await task.destroy()
+  }
+})
 
 it.each(
   readPdfTranslationCases<{

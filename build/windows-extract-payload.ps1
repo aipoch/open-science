@@ -32,11 +32,36 @@ function Start-Extractor([string]$Selectors) {
   $info.FileName=$Extractor
   $info.UseShellExecute=$false
   $info.CreateNoWindow=$true
-  $info.Arguments='x -y -bd -bso0 -bsp0 -bse1 -spd "-o'+$Target+'" "'+$Archive+'" '+$Selectors
+  $info.RedirectStandardOutput=$true
+  $info.RedirectStandardError=$true
+  $info.StandardOutputEncoding=[Text.Encoding]::UTF8
+  $info.StandardErrorEncoding=[Text.Encoding]::UTF8
+  $info.Arguments='x -y -bd -bso0 -bsp0 -bse1 -sccUTF-8 -spd "-o'+$Target+'" "'+$Archive+'" '+$Selectors
   $process=New-Object Diagnostics.Process
   $process.StartInfo=$info
   try { [void]$process.Start() } catch { $process.Dispose(); throw }
+  # Drain both pipes immediately, including workers we will wait for later. Waiting first
+  # can deadlock when either pipe fills; inherited handles lose output under nsExec.
+  $process | Add-Member -NotePropertyName CapturedStdout -NotePropertyValue ($process.StandardOutput.ReadToEndAsync())
+  $process | Add-Member -NotePropertyName CapturedStderr -NotePropertyValue ($process.StandardError.ReadToEndAsync())
   return $process
+}
+
+function Get-ExtractorResult([Diagnostics.Process]$Process,[string]$Operation) {
+  $result=[ordered]@{ operation=$Operation; errorSource='7za'; toolExitCode=$Process.ExitCode; archive=$Archive }
+  foreach ($name in @('stdout','stderr')) {
+    try {
+      $task=if ($name -eq 'stdout') { $Process.CapturedStdout } else { $Process.CapturedStderr }
+      $text=$task.GetAwaiter().GetResult()
+      # Bound durable evidence, not the pipe reader: all children must still be drained.
+      $result[$name]=$text.Substring(0,[Math]::Min($text.Length,16384))
+      $result[$name+'Truncated']=$text.Length -gt 16384
+    } catch {
+      # Diagnostic capture must not replace the proven tool exit with a secondary read error.
+      $result[$name+'ReadError']=$_.Exception.Message
+    }
+  }
+  return $result
 }
 
 # Create archive directories first, including empty ones, so the file workers do not race
@@ -48,8 +73,9 @@ $directoryProcess=Start-Extractor ('"-i@'+$directories+'" "-x@'+$files+'"')
 try {
   $diagnosticOperation='wait-extractor'; $diagnosticPath=$Extractor
   $directoryProcess.WaitForExit()
+  $directoryResult=Get-ExtractorResult $directoryProcess 'extract-directories'
   if ($directoryProcess.ExitCode -ne 0) {
-    $toolFailures += [ordered]@{ operation='extract-directories'; errorSource='7za'; toolExitCode=$directoryProcess.ExitCode; archive=$Archive }
+    $toolFailures += $directoryResult
     $diagnosticSource='7za'; $diagnosticOperation='extract-directories'; $diagnosticPath=$null
     throw ('Directory extraction failed: '+$directoryProcess.ExitCode)
   }
@@ -78,8 +104,9 @@ try {
       $diagnosticSource='powershell-extractor'
       $diagnosticOperation='wait-extractor'; $diagnosticPath=$Extractor
       $child.WaitForExit()
+      $childResult=Get-ExtractorResult $child 'extract-files'
       if ($child.ExitCode -ne 0) {
-        $toolFailures += [ordered]@{ operation='extract-files'; errorSource='7za'; toolExitCode=$child.ExitCode; archive=$Archive }
+        $toolFailures += $childResult
         $diagnosticSource='7za'; $diagnosticOperation='extract-files'; $diagnosticPath=$null
         throw ('File extraction failed: '+$child.ExitCode)
       }

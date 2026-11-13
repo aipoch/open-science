@@ -72,7 +72,9 @@ export async function composeHandoff({
       import('../session-persistence/flush-protocol').RendererSessionPersistenceSurface | undefined
   ) => Promise<boolean>
   notifyRendererDurabilityAborted: () => void
-  loadSessionSummaries?: () => Promise<readonly { id: string; projectId: string; title: string }[]>
+  loadSessionSummaries?: (
+    signal?: AbortSignal
+  ) => Promise<readonly { id: string; projectId: string; title: string }[]>
   modules: ApplicationModuleBuilder
 }): Promise<{
   reviewerModelRuntimeShutdown: { current: ReviewerRuntimeShutdownOwner | undefined }
@@ -83,7 +85,7 @@ export async function composeHandoff({
   ) => Promise<InstallReadiness>
   updateCommandOwner: ReturnType<typeof createUpdateCommandOwner>
   prepareDesktopUpdate: import('../update/strategy').InstallGate
-  inspectDesktopUpdate: () => Promise<InstallReadiness>
+  inspectDesktopUpdate: (signal?: AbortSignal) => Promise<InstallReadiness>
   abortDesktopUpdate: () => void
 }> {
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
@@ -190,7 +192,8 @@ export async function composeHandoff({
     durableBackendHandoffGate,
     () => isMigrationInProgress() || isMigrationPending()
   )
-  const inspectDesktopUpdate = async (): Promise<InstallReadiness> => {
+  const inspectDesktopUpdate = async (signal?: AbortSignal): Promise<InstallReadiness> => {
+    signal?.throwIfAborted()
     const blockedBy = [...new Set(detectResearchBlockers())]
     const result: InstallReadiness = {
       completed: blockedBy.length === 0,
@@ -205,7 +208,8 @@ export async function composeHandoff({
     )
       return { ...result, completed: false, canForce: false, reason: 'installation-busy' }
     if (!loadSessionSummaries || !blockedBy.length) return result
-    const summaries = await loadSessionSummaries()
+    const summaries = await loadSessionSummaries(signal)
+    signal?.throwIfAborted()
     const active = detectActiveSessions({
       runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
       sideChat: { getActivePromptSessions: getActiveSideChatSessions },

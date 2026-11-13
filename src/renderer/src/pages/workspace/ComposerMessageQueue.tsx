@@ -99,7 +99,10 @@ const ComposerMessageQueueTrigger = ({
   return (
     <button
       type="button"
-      className={cn(queueTriggerClassName, failedCount > 0 && 'text-status-failure-foreground')}
+      className={cn(
+        queueTriggerClassName,
+        failedCount > 0 && 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
+      )}
       aria-expanded={expanded}
       aria-controls="composer-message-queue-list"
       onClick={() => onExpandedChange(!expanded)}
@@ -327,7 +330,7 @@ const ComposerMessageQueueContent = ({
                     {item.error ? (
                       <p
                         data-queue-error
-                        className="mt-0.5 text-[11px] leading-4 text-status-failure-foreground"
+                        className="mt-0.5 text-[11px] leading-4 text-status-failure-foreground dark:text-status-failure-dark-foreground"
                       >
                         {queueErrorText(t, item.error)}
                       </p>

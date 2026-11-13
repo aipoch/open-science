@@ -82,7 +82,8 @@ export type SettingsPreferencesActions = {
     settings: NotebookNetworkSettings,
     baseAllowedDomains?: readonly string[],
     baseTrustedPrivateDestinations?: NotebookNetworkSettings['trustedPrivateDestinations'],
-    revokeNetworkGrantIds?: readonly string[]
+    revokeNetworkGrantIds?: readonly string[],
+    baseline?: NotebookNetworkSettings
   ) => Promise<NotebookNetworkSettings>
 }
 
@@ -435,12 +436,20 @@ export const createSettingsPreferencesSlice = ({
       notebookNetwork,
       baseAllowedDomains,
       baseTrustedPrivateDestinations,
-      revokeNetworkGrantIds
+      revokeNetworkGrantIds,
+      baseline
     ) => {
       const command = getCommands().setNotebookNetwork
       if (!command) throw new Error('Notebook network settings are unavailable.')
       const request: SetNotebookNetworkRequest = {
         ...notebookNetwork,
+        ...(baseline
+          ? {
+              baseMode: baseline.mode ?? 'relaxed',
+              baseStrictWhitelist: baseline.strictWhitelist ?? [],
+              baseStrictWhitelistGroups: baseline.strictWhitelistGroups ?? []
+            }
+          : {}),
         ...(revokeNetworkGrantIds ? { revokeNetworkGrantIds } : {}),
         ...(baseTrustedPrivateDestinations === undefined ? {} : { baseTrustedPrivateDestinations }),
         ...(baseAllowedDomains === undefined ? {} : { baseAllowedDomains })

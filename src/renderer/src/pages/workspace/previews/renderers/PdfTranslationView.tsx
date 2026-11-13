@@ -391,7 +391,7 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
               <span
                 role="img"
                 aria-label={t('Translation failed')}
-                className="inline-flex items-center gap-1 text-xs text-status-warning-foreground"
+                className="inline-flex items-center gap-1 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground"
               >
                 <TriangleAlert aria-hidden="true" className="size-3.5" />
                 {translation.units.filter((unit) => unit.translationFailed).length}
@@ -588,7 +588,7 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
                                     ? t('Text kept in original layout')
                                     : t('Not in PDF')
                               }
-                              className="inline-flex shrink-0 rounded-sm text-status-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              className="inline-flex shrink-0 rounded-sm text-status-warning-foreground dark:text-status-warning-dark-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             >
                               <TriangleAlert aria-hidden="true" className="size-3.5" />
                             </span>
@@ -774,7 +774,7 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
                       >
                         <div className="space-y-2 border-t border-primary/15 px-3 py-3">
                           {!isCurrentTranslation(unit) && !unit.translationFailed ? (
-                            <p className="text-xs text-status-warning-foreground">
+                            <p className="text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
                               {t('Source changed. This translation is for review only.')}
                             </p>
                           ) : null}
@@ -973,7 +973,10 @@ export function PdfTranslationView({
               )}
             >
               {!isCurrentTranslation(unit) ? (
-                <p role="status" className="text-xs text-status-warning-foreground">
+                <p
+                  role="status"
+                  className="text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                >
                   {unit.translationFailed
                     ? t(
                         'This passage could not be translated and was skipped. Retry it individually.'

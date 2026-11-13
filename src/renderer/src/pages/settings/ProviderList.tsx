@@ -323,7 +323,7 @@ const ProviderList = ({
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span
-                            className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                            className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-status-warning-foreground dark:text-status-warning-dark-foreground"
                             aria-label={incompatibilityMessage}
                           >
                             <TriangleAlert className="size-3" strokeWidth={2} aria-hidden="true" />

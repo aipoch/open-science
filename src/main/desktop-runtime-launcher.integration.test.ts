@@ -12,6 +12,7 @@ import {
 } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
+import * as childProcess from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { build } from 'esbuild'
 import { desktopBackendPaths, startOrAttachDesktopBackend } from './desktop-runtime-launcher'
@@ -400,7 +401,7 @@ ${fixtureSource}`
       }
     })
     expect(launched.startedProcess?.pid).toBeGreaterThan(0)
-    expect(children.length).toBe(2)
+    expect(children.filter((child) => child.spawnargs.includes(entry))).toHaveLength(2)
   })
   it('gives up with a recoverable error when the lock stays held after exit 75', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-exit75-held-'))
@@ -420,6 +421,37 @@ ${fixtureSource}`
         terminationDeps: { lockHeld: () => true }
       })
     ).rejects.toThrow('still owned by another process')
+  })
+  it('releases the launch log reader if the backend executable disappears at spawn', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-capture-spawn-failure-'))
+    roots.push(root)
+    const entry = join(root, 'fixture.cjs')
+    await writeFile(entry, '')
+    const spawn = childProcess.spawn
+    const real = await vi.importActual<typeof childProcess>('node:child_process')
+    const spy = vi
+      .spyOn(childProcess, 'spawn')
+      .mockImplementation((...args) =>
+        Array.isArray(args[1]) && args[1].includes(entry)
+          ? real.spawn(join(root, 'missing-executable'), [], { stdio: 'ignore' })
+          : spawn(...args)
+      )
+    try {
+      await expect(
+        startOrAttachDesktopBackend({
+          configRoot: root,
+          profilePath: root,
+          version: 'test',
+          command: process.execPath,
+          entry,
+          packaged: true
+        })
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(children).toHaveLength(1)
+      await vi.waitFor(() => expect(children[0].exitCode).toBe(0))
+    } finally {
+      spy.mockRestore()
+    }
   })
   it('reports a backend that exits cleanly before publishing an endpoint instead of a startup timeout', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-clean-exit-'))

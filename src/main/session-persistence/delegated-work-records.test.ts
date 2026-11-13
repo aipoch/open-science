@@ -903,6 +903,30 @@ describe('delegated-work Session records', () => {
     })
   })
 
+  it.each(['targeted', 'catalog'] as const)(
+    'preserves live detached children during %s Session recovery',
+    async (mode) => {
+      const h = createHarness()
+      await h.coordinator.createChildren(key, {
+        expectedRevision: 0,
+        parentFrameId: h.durable().conversationGraph!.rootFrameId,
+        originMessageId: rootPrompt.id,
+        children: [child(1)]
+      })
+      Object.assign(h.repository, { hasLiveRuntimeSession: () => true })
+      vi.mocked(h.repository.saveSession).mockClear()
+      if (mode === 'targeted') {
+        const prepared = await h.coordinator.prepareSessionRecovery(key.projectId, key.sessionId)
+        expect(prepared).toBeDefined()
+        await h.coordinator.commitSessionRecovery(prepared!)
+      } else await h.coordinator.loadAll()
+      expect(h.durable().runtimeContext?.delegatedWork?.records[0].attempts[0].status).toBe(
+        'running'
+      )
+      expect(h.repository.saveSession).not.toHaveBeenCalled()
+    }
+  )
+
   it('preserves records and message quarantines through explicit interruption recovery', async () => {
     const prepared = createHarness()
     const rootFrameId = prepared.durable().conversationGraph!.rootFrameId

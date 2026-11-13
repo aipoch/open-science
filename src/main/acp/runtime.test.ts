@@ -1734,6 +1734,7 @@ describe('ACP runtime migration write-gate', () => {
             text: expect.stringContaining(capacityError),
             failure: {
               category: 'service',
+              responseMessage: capacityError,
               diagnostics: { code: 'overloaded_error', raw: `Internal error: ${capacityError}` }
             }
           })
@@ -29527,7 +29528,11 @@ describe('ACP runtime — agent process lifecycle logging', () => {
         }),
         callbacks: { onEvent: (event) => events.push(event) }
       })
-      const mirror = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      let stderr = ''
+      const mirror = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+        stderr += chunk.toString()
+        return true
+      })
       try {
         await runtime.createSession({ cwd: '/workspace' })
         actualLog.initLogger({ logDir: dir, mirrorToConsole: true })
@@ -29564,7 +29569,10 @@ describe('ACP runtime — agent process lifecycle logging', () => {
         await actualLog.flushLogs()
         expect(await readFile(join(dir, 'main.log'), 'utf8')).not.toContain(secret)
         expect(JSON.stringify(events)).not.toContain(secret)
-        expect(JSON.stringify(mirror.mock.calls)).not.toContain(secret)
+        expect(mirror).toHaveBeenCalled()
+        expect(stderr).not.toContain(secret)
+        expect(stderr).toContain('正常诊断')
+        expect(stderr).toContain('[redacted]')
         expect(await readFile(join(dir, 'main.log'), 'utf8')).toContain('正常诊断')
         expect(await readFile(join(dir, 'main.log'), 'utf8')).toContain('[redacted]')
       } finally {

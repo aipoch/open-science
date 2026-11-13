@@ -54,6 +54,82 @@ afterEach(async () => {
 })
 
 describe('ComputeJob repository (SQLite integration)', () => {
+  it.each([
+    { executionMode: 'direct_ssh', errorCode: 'cancel_confirmation_failed', stopped: true },
+    { executionMode: 'slurm', errorCode: 'cancel_confirmation_failed', stopped: false },
+    { executionMode: 'direct_ssh', errorCode: 'host_unreachable', stopped: false }
+  ] as const)(
+    'fences stale polling writes for $executionMode/$errorCode after SQLite restart',
+    async ({ executionMode, errorCode, stopped }) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'compute-poll-cancel-fence-'))
+      let client = await openDatabase(storageRoot)
+      disconnect = () => client.$disconnect()
+      let repo = makeJobRepository(client)
+      await repo.create({
+        id: 'job',
+        providerId: 'ssh:test',
+        projectId: 'p',
+        sessionId: 's',
+        shape: 'direct_ssh',
+        executionMode,
+        intent: 'test',
+        command: 'true',
+        commandHash: 'h'
+      })
+      await repo.update('job', { status: 'running', stdoutTail: 'original' })
+      const [snapshot] = await repo.findNonTerminal()
+      expect(snapshot.status).toBe('running')
+      await client.computeJobOperation.create({
+        data: {
+          id: 'cancel',
+          jobId: 'job',
+          kind: 'cancel',
+          phase: 'settled',
+          outcome: 'failed',
+          errorCode,
+          errorMessage: 'Unconfirmed',
+          settledAt: new Date()
+        }
+      })
+      await client.$disconnect()
+      // Reopen the persisted database; the fixture only seeds a new storage root.
+      client = createProjectDbClient(storageRoot)
+      repo = makeJobRepository(client)
+
+      // A poll selected before cancellation may publish tails, connectivity errors or an exit.
+      // Each write must be fenced at the SQL mutation, independently of list filtering.
+      for (const updates of [
+        { stdoutTail: 'stale tail', lastPollError: null },
+        { lastPollError: 'stale error' },
+        { status: 'success' as const, exitCode: 0, finishedAt: new Date() }
+      ]) {
+        const updated = await repo.updateIfStatus('job', [snapshot.status], updates)
+        if (stopped) expect(updated).toBeNull()
+        else expect(updated).not.toBeNull()
+      }
+      if (stopped) {
+        expect(await repo.get('job')).toMatchObject({
+          status: 'running',
+          stdout_tail: 'original',
+          cancellation_status: 'failed',
+          cancellation_error: { code: 'cancel_confirmation_failed' }
+        })
+        expect(await repo.findNonTerminal()).toEqual([])
+        const operations = new ComputeJobOperationRepository(async () => client, protectedFields())
+        const retry = await operations.request(
+          'job',
+          'cancel',
+          { projectId: 'p', sessionId: 's', providerId: 'ssh:test' },
+          new Date()
+        )
+        expect(retry).toMatchObject({ found: true, record: { phase: 'active', errorCode: null } })
+        expect(
+          await repo.updateIfStatus('job', ['running'], { stdoutTail: 'during retry' })
+        ).toBeNull()
+      }
+    }
+  )
+
   it('resumes an approved Kubernetes workspace after a lost response and a host restart', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'compute-workspace-restart-'))
     let client = await openDatabase(storageRoot)

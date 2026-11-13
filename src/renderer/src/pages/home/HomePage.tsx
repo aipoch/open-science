@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { isComputeJobTrackingStopped } from '@aipoch/compute'
 
 import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
@@ -314,6 +315,7 @@ const HomePage = ({
     const startedAtBySession = new Map<string, number>()
 
     for (const job of computeJobsById.values()) {
+      if (isComputeJobTrackingStopped(job)) continue
       if (job.status !== 'queued' && job.status !== 'submitted' && job.status !== 'running')
         continue
       const startedAt = job.started_at ?? job.created_at

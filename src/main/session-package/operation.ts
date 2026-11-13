@@ -154,6 +154,7 @@ export class SessionPackageOperation {
     const current = this.current!
     return {
       state: current.state,
+      ...(current.progress.importStage ? { importStage: current.progress.importStage } : {}),
       cleanupPending: Boolean(current.cleanupPending),
       completedBytes: current.progress.completedBytes,
       totalBytes: current.progress.totalBytes,

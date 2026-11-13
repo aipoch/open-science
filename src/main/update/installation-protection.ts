@@ -1,4 +1,5 @@
 import { systemBootIdentity } from '../system-boot-identity'
+import { windowsProcessIsAlive } from '../windows-process-query'
 import { cancelDebSystemdGate, type DebSystemdGate } from './deb-systemd-gate'
 import { z } from 'zod'
 import { createHash, randomUUID } from 'node:crypto'
@@ -427,15 +428,27 @@ export function installationRecoveryStatus(record: InstallationUpdateRecord): Up
     canRecover: true
   }
 }
+function hasExitedWindowsProcess(pid: number): boolean {
+  if (process.platform !== 'win32') return false
+  try {
+    return !windowsProcessIsAlive(pid)
+  } catch {
+    // An unreadable or reused PID is not proof that the installation is free.
+    return false
+  }
+}
 function createInstallationBusyError(
   otherRuntimePids: readonly number[],
   foreignProcessPids: readonly number[],
   processNames?: ReadonlyMap<number, string>
-): UpdateLifecycleError {
+): UpdateLifecycleError | undefined {
+  const names = processNames ?? inspectProcessNames([...otherRuntimePids, ...foreignProcessPids])
+  // The scanner and diagnostic lookup can outlive a holder. Recheck at the rejection boundary.
+  foreignProcessPids = foreignProcessPids.filter((pid) => !hasExitedWindowsProcess(pid))
+  if (!otherRuntimePids.length && !foreignProcessPids.length) return undefined
   const detail =
     foreignProcessPids.length && !otherRuntimePids.length ? 'foreign-process' : 'other-runtime'
   const blockingPids = [...otherRuntimePids, ...foreignProcessPids]
-  const names = processNames ?? inspectProcessNames(blockingPids)
   const message =
     detail === 'foreign-process'
       ? 'Another process is using installation files.'
@@ -455,7 +468,7 @@ async function createInstallationBusyErrorAsync(
   otherRuntimePids: readonly number[],
   foreignProcessPids: readonly number[],
   signal?: AbortSignal
-): Promise<UpdateLifecycleError> {
+): Promise<UpdateLifecycleError | undefined> {
   const processNames = await inspectProcessNamesAsync(
     [...otherRuntimePids, ...foreignProcessPids],
     signal
@@ -503,10 +516,11 @@ export function beginInstallationUpdate(
           runtime.configRoot !== options.runtime.configRoot)
     )
     if (others.length || foreignProcesses.length) {
-      throw createInstallationBusyError(
+      const error = createInstallationBusyError(
         others.map(({ pid }) => pid),
         foreignProcesses
       )
+      if (error) throw error
     }
     const record: InstallationUpdateRecord = {
       schema: 1,
@@ -663,8 +677,14 @@ export async function captureInstallationManifestAsync(
     for await (const chunk of createReadStream(root, { signal })) hash.update(chunk)
     return { version, files: { '@image': hash.digest('hex') } }
   }
+  const regularFiles: Array<{ relativePath: string; path: string }> = []
+  const symlinks: Array<{ relativePath: string; target: string }> = []
   async function walk(directory: string): Promise<void> {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
+    // Code-unit order: the manifest must not depend on the process locale.
+    const entries = (await readdir(directory, { withFileTypes: true })).sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+    )
+    for (const entry of entries) {
       signal?.throwIfAborted()
       const path = join(directory, entry.name)
       if (entry.isDirectory()) {
@@ -680,21 +700,51 @@ export async function captureInstallationManifestAsync(
       )
         throw new Error('Unsupported installation link or file.')
       if (entry.isSymbolicLink()) {
-        files[relative(root, path)] = `symlink:${await readlink(path)}`
+        symlinks.push({ relativePath: relative(root, path), target: await readlink(path) })
         continue
       }
-      const hash = createHash('sha256')
-      for await (const chunk of createReadStream(path, { signal })) hash.update(chunk)
-      files[relative(root, path)] = hash.digest('hex')
+      regularFiles.push({ relativePath: relative(root, path), path })
     }
   }
   await walk(root)
+  const hashingAbort = new AbortController()
+  const hashingSignal = signal
+    ? AbortSignal.any([signal, hashingAbort.signal])
+    : hashingAbort.signal
+  const hashes = new Array<string>(regularFiles.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const index = next++
+      if (index >= regularFiles.length) return
+      hashingSignal.throwIfAborted()
+      const hash = createHash('sha256')
+      for await (const chunk of createReadStream(regularFiles[index].path, {
+        signal: hashingSignal
+      }))
+        hash.update(chunk)
+      hashes[index] = hash.digest('hex')
+    }
+  }
+  const workers = Array.from({ length: Math.min(8, Math.max(1, regularFiles.length)) }, () =>
+    worker()
+  )
+  try {
+    await Promise.all(workers)
+  } catch (error) {
+    hashingAbort.abort(error)
+    // Return only after sibling streams released their handles; a caller may delete the tree next.
+    await Promise.allSettled(workers)
+    throw error
+  }
+  for (const [index, entry] of regularFiles.entries()) files[entry.relativePath] = hashes[index]
+  for (const entry of symlinks) files[entry.relativePath] = `symlink:${entry.target}`
   if (!Object.keys(files).length) throw new Error('Installation is empty.')
   return { version, files }
 }
 export async function beginInstallationUpdateAsync(
   options: Omit<Parameters<typeof beginInstallationUpdate>[0], 'allowedProcessIds'> & {
-    allowedProcessIds?: number[] | (() => number[] | Promise<number[]>)
+    allowedProcessIds?: number[] | ((signal?: AbortSignal) => number[] | Promise<number[]>)
   },
   signal?: AbortSignal
 ): Promise<InstallationUpdateRecord> {
@@ -710,7 +760,7 @@ export async function beginInstallationUpdateAsync(
   signal?.throwIfAborted()
   const allowedProcessIds =
     typeof options.allowedProcessIds === 'function'
-      ? await options.allowedProcessIds()
+      ? await options.allowedProcessIds(signal)
       : options.allowedProcessIds
   signal?.throwIfAborted()
   try {
@@ -908,17 +958,21 @@ export async function advanceInstallationUpdateAsync(
       if (!record || record.operationId !== operationId)
         throw new UpdateLifecycleError('install-failed', 'The installation operation has changed.')
       const processNames = await inspectProcessNamesAsync(foreignProcesses, options.signal)
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Another process is using this installation.',
-        {
-          // Occupancy refused the transition; retain the persisted phase and stop evidence.
-          ...installationRecoveryStatus(record),
-          canRetryInstall: false,
-          detail: 'foreign-process',
-          blockingProcesses: foreignProcesses.map((pid) => ({ pid, name: processNames.get(pid) }))
-        }
-      )
+      const blockingProcesses = foreignProcesses
+        .filter((pid) => !hasExitedWindowsProcess(pid))
+        .map((pid) => ({ pid, name: processNames.get(pid) }))
+      if (blockingProcesses.length)
+        throw new UpdateLifecycleError(
+          'installation-busy',
+          'Another process is using this installation.',
+          {
+            // Occupancy refused the transition; retain the persisted phase and stop evidence.
+            ...installationRecoveryStatus(record),
+            canRetryInstall: false,
+            detail: 'foreign-process',
+            blockingProcesses
+          }
+        )
     }
   }
   options.signal?.throwIfAborted()
@@ -929,7 +983,7 @@ export async function advanceInstallationUpdateAsync(
 export async function inspectInstallationAvailability(
   options: InstallationLocation & {
     runtime?: InstallationRuntime
-    allowedProcessIds?: number[] | (() => number[] | Promise<number[]>)
+    allowedProcessIds?: number[] | ((signal?: AbortSignal) => number[] | Promise<number[]>)
     inspectProcesses?: typeof inspectInstallationProcessesAsync
   },
   signal?: AbortSignal
@@ -960,7 +1014,7 @@ export async function inspectInstallationAvailability(
   signal?.throwIfAborted()
   const allowedProcessIds =
     typeof options.allowedProcessIds === 'function'
-      ? await options.allowedProcessIds()
+      ? await options.allowedProcessIds(signal)
       : options.allowedProcessIds
   signal?.throwIfAborted()
   let conflict: { otherRuntimePids: number[]; foreignProcessPids: number[] } | undefined
@@ -1013,12 +1067,14 @@ export async function inspectInstallationAvailability(
       }
     }
   })
-  if (conflict)
-    throw await createInstallationBusyErrorAsync(
+  if (conflict) {
+    const error = await createInstallationBusyErrorAsync(
       conflict.otherRuntimePids,
       conflict.foreignProcessPids,
       signal
     )
+    if (error) throw error
+  }
 }
 
 export function bindInstallationExecutor(

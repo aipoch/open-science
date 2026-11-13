@@ -71,6 +71,13 @@ type AcpPromptTurnMode =
       onProviderDispatched?: () => void
     }>
 
+type AcpReloadStartupRelease = (reason: 'prompt-activated' | 'cancelled' | 'failed') => void
+
+type AcpPromptRequestState = {
+  cancelled: boolean
+  releaseReloadStartup?: AcpReloadStartupRelease
+}
+
 type AcpPromptTurnPlanContext = Readonly<{
   active?: ActivePlanProjection
   protectedPending?: ActivePlanProjection
@@ -229,13 +236,16 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     request: AcpPromptRequest
   ) => Promise<AcpPromptRequest['resumeFallback']>
   disconnectForReload: () => Promise<unknown>
-  resumeAfterReload: (input: {
-    sessionId: string
-    providerSessionId?: string
-    cwd: string
-    projectId: string
-    permissionProfile: PermissionProfileId
-  }) => Promise<{ contextReset?: boolean }>
+  resumeAfterReload: (
+    input: {
+      sessionId: string
+      providerSessionId?: string
+      cwd: string
+      projectId: string
+      permissionProfile: PermissionProfileId
+    },
+    retainStartup: (release: AcpReloadStartupRelease) => void
+  ) => Promise<{ contextReset?: boolean }>
   recordAdmittedPrompt: (request: AcpPromptRequest) => void
   beginRuntimeSessionTurn?: (
     request: AcpPromptRequest,
@@ -255,7 +265,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
 
 class AcpPromptTurnWorkflow {
   // A send outlives the provider generation replaced by a forced Skill reload.
-  private readonly requests = new Map<string, { cancelled: boolean }>()
+  private readonly requests = new Map<string, AcpPromptRequestState>()
 
   captureCancellation(sessionId: string): (() => void) | undefined {
     const request = this.requests.get(sessionId)
@@ -277,11 +287,13 @@ class AcpPromptTurnWorkflow {
       throw new Error(`ACP session not found: ${request.sessionId}`)
     }
     this.assertSessionIdle(request.sessionId)
-    const cancellation = { cancelled: false }
+    const cancellation: AcpPromptRequestState = { cancelled: false }
     this.requests.set(request.sessionId, cancellation)
     try {
       return await this.runRequest(request, mode, cancellation, onPromptAdmitted)
     } finally {
+      // Cancellation or failure before activation must also unblock the queued reconnect.
+      this.releaseReloadStartup(cancellation, cancellation.cancelled ? 'cancelled' : 'failed')
       if (this.requests.get(request.sessionId) === cancellation)
         this.requests.delete(request.sessionId)
     }
@@ -290,7 +302,7 @@ class AcpPromptTurnWorkflow {
   private async runRequest(
     request: AcpPromptRequest,
     mode: AcpPromptTurnMode,
-    cancellation: { cancelled: boolean },
+    cancellation: AcpPromptRequestState,
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
     if (request.permissionPrompts === 'none' && request.turnIntent === 'plan-first') {
@@ -389,15 +401,20 @@ class AcpPromptTurnWorkflow {
           entry?.attachment?.providerSessionId ?? snapshot?.providerSessionId
         const projectId = this.options.resolveProjectId(request.sessionId)
         await this.options.disconnectForReload()
-        const resumed = await this.options.resumeAfterReload({
-          sessionId: request.sessionId,
-          ...(providerSessionId ? { providerSessionId } : {}),
-          cwd: snapshot?.cwd ?? this.options.currentCwd(),
-          projectId,
-          permissionProfile:
-            snapshot?.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
-          ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {})
-        })
+        const resumed = await this.options.resumeAfterReload(
+          {
+            sessionId: request.sessionId,
+            ...(providerSessionId ? { providerSessionId } : {}),
+            cwd: snapshot?.cwd ?? this.options.currentCwd(),
+            projectId,
+            permissionProfile:
+              snapshot?.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
+            ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {})
+          },
+          (release) => {
+            cancellation.releaseReloadStartup = release
+          }
+        )
         if (cancellation.cancelled) {
           skill.close('reload-restored')
           this.options.interactions.release(reservation)
@@ -437,6 +454,8 @@ class AcpPromptTurnWorkflow {
     let admittedRequest = request
     try {
       interaction = this.options.interactions.activatePrompt(reservation)
+      // Activate the prompt before releasing startup protection so reconnect never sees an idle gap.
+      this.releaseReloadStartup(cancellation, 'prompt-activated')
       const admittedPlan = this.options.plan.admit(request, interaction, plan)
       plan = admittedPlan instanceof Promise ? await admittedPlan : admittedPlan
       // Admission-dependent state may commit only while this interaction owns the Session. A
@@ -528,6 +547,7 @@ class AcpPromptTurnWorkflow {
     const eventIdentity = interaction.promptMessageId
       ? { promptMessageId: interaction.promptMessageId }
       : {}
+    let promptBackend: AcpBackendGenerationView | undefined
     let artifact: ArtifactTurnHandle | undefined
     let prepared: PreparedPromptHandle | undefined
     let context: ContextWindowTurnHandle | undefined
@@ -573,6 +593,7 @@ class AcpPromptTurnWorkflow {
         : request
       const snapshot = registry.lookup(sessionId)?.aggregate.snapshot()
       const backend = env.backend()
+      promptBackend = backend
       const planContext =
         turn.plan.active ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
       // Only an explicit user send carries the notice; continuations never consume it.
@@ -631,7 +652,7 @@ class AcpPromptTurnWorkflow {
         skillStarted = true
       }
       const promptSnapshot = registry.lookup(sessionId)?.aggregate.snapshot()
-      const promptBackend = env.backend()
+      promptBackend = env.backend()
       const framework = promptBackend.framework
       const cwd = promptSnapshot?.cwd ?? this.options.currentCwd()
       let providerContent = readyPrepared.content
@@ -861,7 +882,7 @@ class AcpPromptTurnWorkflow {
       sideChatRelaySettled = true
       sideChatRelay.restore()
     }
-    const model = env.backend().session.model
+    const model = promptBackend?.context.model ?? promptBackend?.session.model
     return finalizer.finalize(
       {
         sessionId,
@@ -873,6 +894,7 @@ class AcpPromptTurnWorkflow {
         ...(context ? { context } : {}),
         skill,
         ...(model ? { model } : {}),
+        providerName: promptBackend?.providerName,
         emitUserMessage,
         emitArtifact: (onPublished) => artifacts.publish(sessionId, artifact, onPublished),
         disposeArtifact: () => artifacts.dispose(artifact),
@@ -909,6 +931,15 @@ class AcpPromptTurnWorkflow {
       },
       outcome
     )
+  }
+
+  private releaseReloadStartup(
+    request: AcpPromptRequestState,
+    reason: Parameters<AcpReloadStartupRelease>[0]
+  ): void {
+    const release = request.releaseReloadStartup
+    request.releaseReloadStartup = undefined
+    release?.(reason)
   }
 
   private activeSession(sessionId: string): ActiveSession | undefined {

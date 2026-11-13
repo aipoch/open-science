@@ -2,7 +2,7 @@ import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { ProjectFilesReconciliationError } from '../project-files/repository'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
@@ -4953,6 +4953,8 @@ describe('SessionPersistenceCoordinator', () => {
       'operation phase',
       'operation phase',
       'operation phase',
+      'operation phase',
+      'operation phase',
       'operation completed'
     ])
     expect(
@@ -4965,7 +4967,9 @@ describe('SessionPersistenceCoordinator', () => {
       'recover-delegation',
       'reconcile-unread-sessions',
       'reconcile-derived-state',
-      'reconcile-derived-state'
+      'index-work',
+      'index-work-complete',
+      'index-work-complete'
     ])
     expect(log.info).toHaveBeenLastCalledWith(
       'operation completed',
@@ -4974,12 +4978,18 @@ describe('SessionPersistenceCoordinator', () => {
         operationId: expect.any(String),
         mode: 'reconcile',
         startupCleanupEligible: true,
-        phase: 'reconcile-derived-state',
+        phase: 'index-work-complete',
         outcome: 'completed',
         status: 'ready',
         sessionCount: 1,
         warningCount: 0,
-        durationMs: expect.any(Number)
+        durationMs: expect.any(Number),
+        queueWaitMs: expect.any(Number),
+        retainedSessionCount: 1,
+        retainedEstimatedBytes: expect.any(Number),
+        cacheRetention: 'admitted',
+        cacheMaxSessionCount: 32,
+        cacheMaxEstimatedBytes: 32 * 1024 * 1024
       })
     )
     const diagnosticPayload = JSON.stringify(log.info.mock.calls)
@@ -6371,7 +6381,7 @@ describe('SessionPersistenceCoordinator', () => {
         operationId: expect.any(String),
         mode: 'reconcile',
         startupCleanupEligible: true,
-        phase: 'reconcile-derived-state',
+        phase: 'index-work',
         outcome: 'failed',
         status: 'degraded',
         hydrationAvailable: true,
@@ -7111,6 +7121,118 @@ describe('SessionPersistenceCoordinator', () => {
     await coordinator.deleteSession('project-1', 'session-1')
 
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([survivor])
+  })
+
+  it('does not retain an over-count complete catalog and reloads historical authority on demand', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-bounded-cache-'))
+    try {
+      initDataRoot(root)
+      const reads: string[] = []
+      const repository = new SessionRepository(root, {
+        readSessionFile: async (path) => {
+          reads.push(path)
+          return readFile(path, 'utf8')
+        }
+      })
+      for (let index = 0; index < 33; index++) {
+        await repository.saveSession(createSession({ id: `history-${index}` }))
+      }
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      const first = await coordinator.loadAll()
+      expect(first.sessions).toHaveLength(33)
+      reads.length = 0
+      const second = await coordinator.loadAll()
+      expect(second.sessions).toHaveLength(33)
+      expect(reads.some((path) => basename(path) === 'history-0.json')).toBe(true)
+      expect(await coordinator.loadSessionForContinuation('project-1', 'history-0')).toMatchObject({
+        id: 'history-0',
+        title: 'Session'
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('releases an over-byte snapshot without evicting the selected authority or live runtime state', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-byte-cache-'))
+    try {
+      initDataRoot(root)
+      const reads: string[] = []
+      const repository = new SessionRepository(root, {
+        readSessionFile: async (path) => {
+          reads.push(path)
+          return readFile(path, 'utf8')
+        },
+        hasLiveRuntimeSession: (_projectId, sessionId) => sessionId === 'live'
+      })
+      await repository.saveSession(
+        createSession({
+          id: 'large-history',
+          messages: [
+            { ...createUserMessage('large-message', 1), content: 'x'.repeat(17 * 1024 * 1024) }
+          ]
+        })
+      )
+      await repository.saveSession(createSession({ id: 'selected' }))
+      await repository.saveManifest({ lastSessionId: 'selected' })
+      await repository.saveSession(
+        createSession({
+          id: 'live',
+          status: 'running',
+          activeRun: { promptMessageId: 'prompt', startedAt: 1 },
+          messages: [createUserMessage('prompt', 1)]
+        })
+      )
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      await coordinator.loadAll()
+      reads.length = 0
+      const next = await coordinator.loadAll()
+      expect(reads.some((path) => basename(path) === 'large-history.json')).toBe(true)
+      expect(next.manifest.lastSessionId).toBe('selected')
+      expect(await coordinator.loadSessionForContinuation('project-1', 'selected')).toMatchObject({
+        id: 'selected'
+      })
+      const live = await coordinator.loadSessionForContinuation('project-1', 'live')
+      expect(live).toMatchObject({ status: 'running', activeRun: { promptMessageId: 'prompt' } })
+      await coordinator.saveSession({ ...live, title: 'Updated live conversation' })
+      expect(await repository.loadSession('project-1', 'live')).toMatchObject({
+        title: 'Updated live conversation'
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('expires an idle catalog snapshot and reloads it without losing selected history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-cache-expiry-'))
+    try {
+      initDataRoot(root)
+      const reads: string[] = []
+      const repository = new SessionRepository(root, {
+        readSessionFile: async (path) => {
+          reads.push(path)
+          return readFile(path, 'utf8')
+        }
+      })
+      await repository.saveSession(
+        createSession({ messages: [createUserMessage('preserved-history', 1)] })
+      )
+      await repository.saveManifest({ lastSessionId: 'session-1' })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      await coordinator.loadAll()
+      reads.length = 0
+      await coordinator.loadAll()
+      expect(reads).toEqual([])
+      await vi.advanceTimersByTimeAsync(30_001)
+      const expired = await coordinator.loadAll()
+      expect(reads.some((path) => basename(path) === 'session-1.json')).toBe(true)
+      expect(expired.manifest.lastSessionId).toBe('session-1')
+      expect(expired.sessions[0].messages[0].content).toBe('preserved-history')
+    } finally {
+      vi.useRealTimers()
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it.each(['session-2', undefined])(

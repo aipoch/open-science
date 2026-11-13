@@ -5423,3 +5423,31 @@ it('isolated binary-record pixels bind the private crop to original inputs and t
   f.native.glyphBounds[0].glyphs[0].bounds[0] += 0.01
   expect(ownedGlyphPng(proof, f.png(result.cropRect), result)).toBe(false)
 })
+
+it('completes native opening and closing half strokes when all cell glyphs already fit', () => {
+  const f = ownedGlyphOverhang()
+  f.table.cropRect = [0.8, 30, 99.2, 90]
+  const before = structuredClone(f.table),
+    result = refine(f.table, f.rules, f.context)
+  expect(result?.cropRect).toEqual([0.55, 29.25, 99.45, 90.75])
+  expect(result?.cells).toBe(f.table.cells)
+  expect({ ...result, cropRect: before.cropRect }).toEqual(before)
+})
+
+it('keeps an already complete native ruled crop unchanged', () => {
+  const f = ownedGlyphOverhang()
+  f.table.cropRect = [0, 29, 100, 91]
+  expect(refine(f.table, f.rules, f.context)).toBeUndefined()
+})
+
+it.each(['source', 'paint', 'missing owner'])(
+  'does not complete half strokes with invalid %s proof',
+  (fault) => {
+    const f = ownedGlyphOverhang()
+    f.table.cropRect = [0.8, 30, 99.2, 90]
+    if (fault === 'source') f.table.cells[0].sourceItems[0].text += ' changed'
+    if (fault === 'paint') f.context.rulePaintBounds.get(f.rules[0].join(','))[1] -= 2
+    if (fault === 'missing owner') f.table.cells.pop()
+    expect(refine(f.table, f.rules, f.context)).toBeUndefined()
+  }
+)

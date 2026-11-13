@@ -1,8 +1,10 @@
 import type { JobSummary } from '../../../shared/compute'
-import { isComputeJobCancelled } from '@aipoch/compute'
+import { isComputeJobCancelled, isComputeJobTrackingStopped } from '@aipoch/compute'
 
 export const isJobElapsedLive = (job: JobSummary): boolean =>
-  !isComputeJobCancelled(job) && (job.status === 'running' || job.status === 'submitted')
+  !isComputeJobTrackingStopped(job) &&
+  !isComputeJobCancelled(job) &&
+  (job.status === 'running' || job.status === 'submitted')
 
 // Formats elapsed milliseconds as "Xm Ys" (e.g. "3m 33s") or "Xs" for under a minute.
 export const formatDuration = (ms: number): string => {

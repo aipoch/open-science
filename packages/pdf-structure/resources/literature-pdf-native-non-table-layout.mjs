@@ -404,6 +404,88 @@ function hasCaptionDirectory(table, items) {
   return true
 }
 
+// A theorem's final prose line, one complete display, and the terminal page
+// folio form a paragraph tail, even when the detector invents empty table rows.
+function hasProseDisplayFolio(table, items) {
+  const frame = table.cropRect
+  if (items.length > 8192) return false
+  const source = items.filter(
+    (i) =>
+      i.text?.trim() &&
+      i.rect?.[0] < frame[2] &&
+      i.rect[2] > frame[0] &&
+      i.rect[1] < frame[3] &&
+      i.rect[3] > frame[1]
+  )
+  const page = table.page ?? source[0]?.sourceItem?.pageNumber
+  if (
+    !Number.isSafeInteger(page) ||
+    page < 1 ||
+    source.length < 8 ||
+    source.some(
+      (i) =>
+        !i.horizontal ||
+        !(i.height > 0) ||
+        !Number.isFinite(i.baseline) ||
+        i.rect.length !== 4 ||
+        !i.rect.every(Number.isFinite) ||
+        i.rect[0] < frame[0] ||
+        i.rect[1] < frame[1] ||
+        i.rect[2] > frame[2] ||
+        i.rect[3] > frame[3] ||
+        i.sourceItem?.pageNumber !== page ||
+        !Number.isSafeInteger(i.sourceItem.index) ||
+        i.sourceItem.text !== i.text ||
+        i.sourceSegment
+    )
+  )
+    return false
+  source.sort((a, b) => a.sourceItem.index - b.sourceItem.index)
+  const folio = source.at(-1),
+    first = source[0],
+    h = first.height
+  if (
+    new Set(source.map((i) => i.sourceItem.index)).size !== source.length ||
+    folio.text !== String(page) ||
+    (first.text.match(/\p{Ll}{2,}/gu) ?? []).length < 4 ||
+    items.some(
+      (i) =>
+        i.text?.trim() &&
+        i.sourceItem?.index >= first.sourceItem.index &&
+        (!source.includes(i) || i.sourceItem.index > folio.sourceItem.index)
+    )
+  )
+    return false
+  const introduction = source.filter((i) => Math.abs(i.baseline - first.baseline) < h * 0.1),
+    display = source.filter((i) => !introduction.includes(i) && i !== folio)
+  if (
+    display.length < 5 ||
+    introduction[0] !== first ||
+    introduction.some(
+      (i, n) =>
+        Math.abs(i.height - h) > h * 0.05 ||
+        (n &&
+          (i.rect[0] < introduction[n - 1].rect[2] - h * 0.05 ||
+            i.rect[0] - introduction[n - 1].rect[2] > h * 0.8))
+    ) ||
+    display.some((i) => i.rect[1] < first.baseline + h * 0.5) ||
+    Math.max(...display.map((i) => i.rect[3])) - Math.min(...display.map((i) => i.rect[1])) >
+      h * 2 ||
+    folio.rect[1] - Math.max(...display.map((i) => i.rect[3])) < h ||
+    !display.some((i) => /^[=≃≅≈↔]$/u.test(i.text)) ||
+    display.at(-1).text !== '.'
+  )
+    return false
+  const previous = items.filter(
+    (i) =>
+      i.text?.trim() &&
+      i.sourceItem?.pageNumber === page &&
+      i.sourceItem.index < first.sourceItem.index &&
+      i.rect?.[1] > first.rect[1] - h * 8
+  )
+  return previous.some((i) => /\b(?:Corollary|Theorem|Proposition|Lemma)\s+\d/u.test(i.text))
+}
+
 export function hasNativeNonTableLayout(table, items, rules) {
   if (!table.cropRect || !Array.isArray(rules)) return false
   const [left, top, right, bottom] = table.cropRect,
@@ -428,6 +510,7 @@ export function hasNativeNonTableLayout(table, items, rules) {
   // native font. Preserve that whole font; two complete lanes and all repeated
   // navigation roles must close before treating the page numbers as prose.
   if (hasCaptionDirectory(table, items)) return true
+  if (hasProseDisplayFolio(table, items)) return true
   const wholeRows = wholeNativeRows(table.cropRect, items, rules)
   if (hasWholeFontContents(wholeRows, left, width)) return true
   if (hasWholeFontNumberedReferences(wholeRows, table, left, width)) return true

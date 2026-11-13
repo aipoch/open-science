@@ -473,11 +473,22 @@ export function captionKind(text) {
   if (
     /^(?:(?:Supplementary|Supplemental)\s+)?(?:Figure|Fig\.?)\s+/i.test(text) &&
     new RegExp(
-      `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+(?:records|pairs|renders|tests|showcases|takes|supplements|encodes)\\s+(?:the|this|that|these|those|a|an|our|their|its|both|each|some|several|multiple|one|two|\\d+)\\s+\\p{L}`,
+      `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+(?:records|pairs|renders|tests|showcases|takes|supplements|encodes|expands|combines)\\s+(?:the|this|that|these|those|a|an|our|their|its|both|each|some|several|multiple|one|two|\\d+)\\s+\\p{L}`,
       'iu'
     ).test(text)
   )
     return undefined
+  // "Costs of ..." is a noun title; an unpunctuated table subject followed
+  // by "costs" and a determiner-led object is running prose.
+  if (
+    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Table|Tab\.?)\s+/i.test(text) &&
+    new RegExp(
+      `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+costs\\s+(?:the|this|that|these|those|our|their|its|a|an)\\s+\\p{L}`,
+      'iu'
+    ).test(text)
+  )
+    return undefined
+
   // A local side qualifier does not change a finite Figure subject into a title.
   if (
     /^(?:(?:Supplementary|Supplemental)\s+)?(?:Figure|Fig\.?)\s+/i.test(text) &&
@@ -8778,7 +8789,11 @@ export function nativeConditionalFigureReferenceStarts(page) {
           line.x + line.width <= r.right + 0.01 &&
           r.text.replace(/\s/gu, '').startsWith(line.text.replace(/\s/gu, ''))
       )
-      return matches.length === 1 && nativeConditionalFigureReference(matches[0], runs, page)
+      return (
+        matches.length === 1 &&
+        (nativeConditionalFigureReference(matches[0], runs, page) ||
+          nativePanelReferenceContinuation(matches[0], runs, page, [], captionKind))
+      )
     })
   )
 }
@@ -9211,10 +9226,11 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
               line.text
             ) ||
               // A reference can end a statistical sentence and share its
-              // physical line with the next sentence. Bare "in" needs tight
-              // body leading, not the wider spacing allowed for explicit cues.
+              // physical line with the next sentence. Bare "in" or a semicolon
+              // followed by "see" needs tight body leading. Parenthesized
+              // references retain their separate source-closed ownership proof.
               (line.text.length > 40 &&
-                /\bin$/.test(line.text) &&
+                /(?:\bin|;\s+see)$/.test(line.text) &&
                 start.y - line.bottom <= start.fontSize * 0.5)) &&
             (Math.abs(line.x - start.x) <= 2 ||
               provesWrappedNativeColumn(
@@ -9733,10 +9749,23 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
           )
           .sort((a, b) => a.y - b.y)) {
           if (line.y - previous.bottom > start.fontSize * 1.6) break
+          // One isolated Greek parameter can interrupt otherwise uppercase
+          // IEEE prose. Keep its literal text and require the first centered
+          // title line to share the label's measured size and tight cadence.
+          const variableTitle =
+            title.length === 0 &&
+            (line.text.match(/[α-ω]/gu)?.length ?? 0) === 1 &&
+            /(?<=\s)[α-ω](?=\s)/u.test(line.text) &&
+            !/\p{Ll}/u.test(line.text.replace(/(?<=\s)[α-ω](?=\s)/u, '')) &&
+            line.text.split(/\s+/u).filter((word) => /\p{Lu}{2}/u.test(word)).length >= 3 &&
+            Math.abs(line.fontSize - start.fontSize) <= start.fontSize * 0.01 &&
+            line.y - start.y >= start.fontSize * 1.05 &&
+            line.y - start.y <= start.fontSize * 1.3 &&
+            Math.abs((line.x + line.right) / 2 - startCenter) <= start.fontSize * 0.1
           if (
             line.text.length < 12 ||
             !/\p{Lu}/u.test(line.text) ||
-            /\p{Ll}/u.test(line.text) ||
+            (/\p{Ll}/u.test(line.text) && !variableTitle) ||
             Math.abs((line.x + line.right) / 2 - startCenter) > start.fontSize * 3
           )
             break
@@ -10539,6 +10568,33 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
                 0.08 &&
               g.normalizedRect[3] * page.height <= start.y + page.height / 256
           )
+        // Raised native scripts may extend a grouped row above its regular font.
+        // Use that measured font's top for table leading only; retain every glyph box.
+        const tableSpacingTop =
+          captionKind(start.text) === 'table' &&
+          previous.fontSize === start.fontSize &&
+          previous.bottom - previous.y > previous.fontSize &&
+          page.lines.some(
+            (regular) =>
+              regular.fontSize === previous.fontSize &&
+              Math.abs(regular.height - regular.fontSize) < 1e-6 &&
+              regular.y > previous.y &&
+              Math.abs(regular.y + regular.height - previous.bottom) < 1e-6 &&
+              regular.x >= previous.x - 1e-6 &&
+              regular.x + regular.width <= previous.right + 1e-6 &&
+              page.lines.some(
+                (script) =>
+                  script.y === previous.y &&
+                  script.fontSize > 0 &&
+                  script.fontSize < previous.fontSize * 0.8 &&
+                  Math.abs(script.height - script.fontSize) < 1e-6 &&
+                  script.y + script.height < previous.bottom &&
+                  script.x >= previous.x - 1e-6 &&
+                  script.x + script.width <= previous.right + 1e-6
+              )
+          )
+            ? previous.bottom - previous.fontSize
+            : previous.y
         if (
           !next ||
           (outdented &&
@@ -10546,7 +10602,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             /[.!?]$/.test(previous.text) &&
             previous.right - previous.x < (start.right - outdented.x) * 0.6 &&
             next.x - outdented.x >= start.fontSize * 0.8) ||
-          next.y - previous.y >
+          next.y - tableSpacingTop >
             start.fontSize *
               (legendPage || boundedTableTail || isolatedFigureTail
                 ? 2.5
@@ -11381,8 +11437,12 @@ function proveNativeCreditReference(candidate, page, context, records, rules) {
 }
 
 function nativePanelReferenceContinuation(start, runs, page, rules, captionKind) {
+  const parenthesized = /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s*\([a-z]\),\s+\p{L}/u.test(
+    start.text
+  )
   if (
-    !/^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\.[a-z]\s+(?:and|or)\s+\p{Ll}/u.test(start.text) ||
+    (!parenthesized &&
+      !/^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\.[a-z]\s+(?:and|or)\s+\p{Ll}/u.test(start.text)) ||
     /[.!?:;]$/u.test(start.text.trim()) ||
     page.invalidGraphicsBounds !== 0 ||
     !Array.isArray(page.graphicsBounds) ||
@@ -11415,11 +11475,14 @@ function nativePanelReferenceContinuation(start, runs, page, rules, captionKind)
     !captionKind(r.text) &&
     Math.abs(r.fontSize - em) < em * 0.015 &&
     Math.abs(r.x - start.x) < em * 0.05 &&
-    Math.abs(r.right - start.right) < em * 0.05
+    // A justified continuation ending in a hyphen can slightly overhang its row.
+    Math.abs(r.right - start.right) < em * (parenthesized ? 0.25 : 0.05)
   const before = runs.filter(
     (r) =>
       aligned(r) &&
-      /\b(?:shown|displayed|given|plotted)\s+in$/u.test(r.text.trim()) &&
+      (parenthesized
+        ? /\b(?:shown|displayed|given|plotted|illustrated|depicted)\s+in$/u.test(r.text.trim())
+        : /\b(?:shown|displayed|given|plotted)\s+in$/u.test(r.text.trim())) &&
       r.bottom <= start.y &&
       start.y - r.y > em &&
       start.y - r.y < em * 2
@@ -11503,12 +11566,13 @@ export async function recoverNativeCaptionLane(input) {
 // belong to one literal, contiguous native stream and the next plate stays separate.
 export function recoverNativeMixedFontCaptionTail(candidate, page, tokens, context) {
   try {
+    const table = /^TABLE\s+[IVXLCDM]+\.\s+\p{Lu}/u.test(candidate?.lines?.[0] ?? '')
     if (
       !candidate ||
       candidate.page !== page.pageNumber ||
       candidate.lines?.length !== 1 ||
       candidate.regions ||
-      !/^(?:Fig\.?|Figure)\s+[A-Z]?\d+[.:]\s+\p{L}/u.test(candidate.lines[0]) ||
+      (!table && !/^(?:Fig\.?|Figure)\s+[A-Z]?\d+[.:]\s+\p{L}/u.test(candidate.lines[0])) ||
       /[.!?]$/u.test(candidate.lines[0].trim()) ||
       page.invalidGraphicsBounds !== 0 ||
       context?.pageNumber !== page.pageNumber ||
@@ -11547,9 +11611,13 @@ export function recoverNativeMixedFontCaptionTail(candidate, page, tokens, conte
       tail = following[0]
     if (
       !tail ||
-      !/^[\p{Ll}][\p{L}-]{2,20}[.!?]$/u.test(tail.text.trim()) ||
-      Math.abs(tail.x - rect[0]) > 0.02 ||
-      tail.width >= (rect[2] - rect[0]) * 0.3 ||
+      !(table ? /^\p{Lu}{2,}(?:[ -]\p{Lu}{2,})+$/u : /^[\p{Ll}][\p{L}-]{2,20}[.!?]$/u).test(
+        tail.text.trim()
+      ) ||
+      (table
+        ? Math.abs((tail.x * 2 + tail.width - rect[0] - rect[2]) / 2) > tail.fontSize * 0.15
+        : Math.abs(tail.x - rect[0]) > 0.02) ||
+      tail.width >= (rect[2] - rect[0]) * (table ? 0.6 : 0.3) ||
       tail.fontSize >= matches[0].fontSize - 0.7
     )
       return
@@ -11565,7 +11633,7 @@ export function recoverNativeMixedFontCaptionTail(candidate, page, tokens, conte
     const terminal = tailOwners[0],
       em = terminal.r.height,
       markerEnd = first.findIndex((_, i) =>
-        /^(?:Fig\.?|Figure)[A-Z]?\d+[.:]$/u.test(
+        (table ? /^TABLE[IVXLCDM]+\.$/u : /^(?:Fig\.?|Figure)[A-Z]?\d+[.:]$/u).test(
           compact(
             first
               .slice(0, i + 1)
@@ -11593,23 +11661,39 @@ export function recoverNativeMixedFontCaptionTail(candidate, page, tokens, conte
         (r, i) =>
           Math.abs(r.rect[3] - rect[3]) > 0.02 ||
           (i &&
+            !(table && i === markerEnd + 1) &&
             (r.rect[0] < first[i - 1].rect[2] - em * 0.02 ||
               r.rect[0] - first[i - 1].rect[2] > em * 0.5))
       ) ||
-      punctuation.length !== 1 ||
-      !/^[-–—]$/u.test(punctuation[0].r.str) ||
-      punctuation[0].r.height <= em ||
-      punctuation[0].r.height > em * 1.35 ||
-      body
-        .filter((r) => !punctuation.includes(r))
-        .some((r) => r.r.fontName !== terminal.r.fontName || Math.abs(r.r.height - em) > 0.02) ||
-      compact(
-        body
-          .filter((r) => !punctuation.includes(r))
-          .map((r) => r.r.str)
-          .join('')
-      ).length <
-        compact(candidate.lines[0]).length * 0.65 ||
+      (!table &&
+        (punctuation.length !== 1 ||
+          !/^[-–—]$/u.test(punctuation[0].r.str) ||
+          punctuation[0].r.height <= em ||
+          punctuation[0].r.height > em * 1.35 ||
+          body
+            .filter((r) => !punctuation.includes(r))
+            .some(
+              (r) => r.r.fontName !== terminal.r.fontName || Math.abs(r.r.height - em) > 0.02
+            ) ||
+          compact(
+            body
+              .filter((r) => !punctuation.includes(r))
+              .map((r) => r.r.str)
+              .join('')
+          ).length <
+            compact(candidate.lines[0]).length * 0.65)) ||
+      (table &&
+        (punctuation.length === 0 ||
+          body.some(
+            (r) =>
+              r.r.fontName !== terminal.r.fontName ||
+              !/^[\p{Lu}\d ,./–-]+$/u.test(r.r.str) ||
+              (Math.abs(r.r.height - em) > 0.02 &&
+                Math.abs(r.r.height - matches[0].fontSize) > 0.02)
+          ) ||
+          !body.some((r) => Math.abs(r.r.height - em) < 0.02 && /\p{Lu}{3,}/u.test(r.r.str)) ||
+          matches[0].fontSize <= em ||
+          matches[0].fontSize > em * 1.35)) ||
       terminal.rect[3] - last.rect[3] < em ||
       terminal.rect[3] - last.rect[3] > em * 1.6
     )
@@ -11627,6 +11711,88 @@ export function recoverNativeMixedFontCaptionTail(candidate, page, tokens, conte
       )
     )
       return
+    if (table) {
+      // A smaller small-caps title row must close above a native table header,
+      // with the same segmented opening/divider and a complete lower boundary.
+      const paint = new Map(),
+        rules = collectTableRules(context.operators, context.viewport, paint),
+        bands = []
+      for (const rule of rules
+        .filter(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] > tailRect[3] &&
+            r[0] >= rect[0] - em * 4 &&
+            r[2] <= rect[2] + em * 4
+        )
+        .toSorted((a, b) => a[1] - b[1] || a[0] - b[0])) {
+        const last = bands.at(-1)
+        if (last && Math.abs(last[0][1] - rule[1]) < 0.01) last.push(rule)
+        else bands.push([rule])
+      }
+      const opening = bands[0]
+      if (
+        !opening ||
+        opening.length < 3 ||
+        opening.length > 16 ||
+        opening[0][1] - tailRect[3] > em * 2 ||
+        opening[0][0] > rect[0] ||
+        opening.at(-1)[2] < rect[2] ||
+        opening.some(
+          (r, n) =>
+            !valid(paint.get(r.join(','))) ||
+            (n && (r[0] <= opening[n - 1][2] || r[0] - opening[n - 1][2] > em * 0.2))
+        )
+      )
+        return
+      const divider = bands.find(
+        (band, n) =>
+          n > 0 &&
+          band.length === opening.length &&
+          band[0][1] - opening[0][1] >= em &&
+          band[0][1] - opening[0][1] < em * 5 &&
+          band.every(
+            (r, k) =>
+              Math.abs(r[0] - opening[k][0]) < 0.02 &&
+              Math.abs(r[2] - opening[k][2]) < 0.02 &&
+              valid(paint.get(r.join(',')))
+          )
+      )
+      const closing =
+        divider &&
+        bands.find(
+          (band) =>
+            band[0][1] > divider[0][1] + em * 2 &&
+            band[0][0] <= opening[0][0] &&
+            band.at(-1)[2] >= opening.at(-1)[2] &&
+            band.every(
+              (r, n) => valid(paint.get(r.join(','))) && (!n || r[0] <= band[n - 1][2] + em * 0.2)
+            )
+        )
+      if (!divider || !closing) return
+      const frame = [opening[0][0], opening[0][1], opening.at(-1)[2], closing[0][1]],
+        header = inv.records.filter(
+          (r) =>
+            r.part.length &&
+            r.part.every(
+              (p) =>
+                valid(p.g.ink) &&
+                !p.g.rendererSkipped &&
+                p.g.textPaint?.fillAlpha === 1 &&
+                p.g.ink[1] > paint.get(opening[0].join(','))[3] &&
+                p.g.ink[3] < paint.get(divider[0].join(','))[1] &&
+                p.g.ink[0] >= frame[0] &&
+                p.g.ink[2] <= frame[2]
+            )
+        )
+      if (header.length < 3 || inv.evidence.images.some((image) => hit(image.rect, closed))) return
+      for (const [index, state] of inv.evidence.paths) {
+        if (context.operators.argsArray[index]?.[0] === OPS.endPath) continue
+        const path = nativeFigurePathPaint(inv, index, state)
+        if (!path || hit(path.rect, closed)) return
+      }
+      return { ...candidate, lines: [...candidate.lines, tail.text], rect: closed }
+    }
     const lowerCaption = following.find(
         (l) => l.y > tailRect[3] && captionKind(l.text) === 'figure'
       ),

@@ -18,6 +18,7 @@ import { nativeWholeSourceGlyphObservations } from './literature-pdf-symbol-text
 import { collectClosedFigureFrames, collectTableRules } from './literature-pdf-graphics.mjs'
 import { nativeFigurePathPaint } from './literature-pdf-figure-native-complete-form.mjs'
 import { recoverNativeScientificColumns } from './literature-pdf-native-scientific-columns.mjs'
+import { recoverNativeSegmentedHeaderRecords } from './literature-pdf-native-segmented-header.mjs'
 import {
   hasNativeLiteralColumnConflict,
   hasNativeRepeatedLeafAmbiguity
@@ -41,7 +42,10 @@ import {
 } from './literature-pdf-table-evidence.mjs'
 import {
   recoverNativeHeaderOwnershipGrid,
-  recoverNativeTwoTierParentHeaderGrid
+  recoverNativeTwoTierParentHeaderGrid,
+  recoverNativeOwnedGroupedParentSpan,
+  recoverNativeOwnedRepeatedParentPartition,
+  wholeMeanDeviationColumnPlan
 } from './literature-pdf-native-header-ownership.mjs'
 import { recoverNativeMeasuredGutterTokens } from './literature-pdf-native-measured-gutters.mjs'
 import { recoverNativeCitedProseRecordGrid } from './literature-pdf-native-cited-prose-records.mjs'
@@ -125,7 +129,9 @@ import {
   recoverNativePairedTextRecordGrid,
   recoverNativeOrdinalWrappedRecordGrid,
   recoverNativeIndexedDirectoryGrid,
-  recoverNativeProseLaneRecords
+  recoverNativeProseLaneRecords,
+  recoverNativeInteriorPairedRows,
+  recoverNativeTypographicCategoryRows
 } from './literature-pdf-native-bounded-text-record-grid.mjs'
 import { recoverNativeSingleMathRecordGrid } from './literature-pdf-native-single-math-record-grid.mjs'
 import { recoverNativeRepeatedTuplePlan } from './literature-pdf-native-repeated-tuple-grid.mjs'
@@ -278,6 +284,13 @@ import {
   recoverSingleRowContinuation
 } from './literature-pdf-aligned-numeric-grid.mjs'
 import {
+  proveNativeIntervalTerminalRecord,
+  separateCompleteScriptedRecord,
+  repairCompleteNarrativeBoundary,
+  repairCompletePairedIdentifierBoundary,
+  repairCompleteWholeHyphenatedHeaderBand,
+  repairCompletePairedDomainTopology,
+  repairContinuedTopAlignedStub,
   recoverUnownedSourceRows,
   recoverCitedRecordTails,
   mergeWrappedStubTails,
@@ -2041,6 +2054,13 @@ export function refineTable(
   nativeFontRoleWitness
 ) {
   const originalPageItems = pageItems
+  const segmentedHeader = recoverNativeSegmentedHeaderRecords(
+    table,
+    pageItems,
+    captions,
+    rules,
+    nativeRecordContext
+  )
   const leadingCoefficientHeader = recoverNativeRuledCoefficientHeader(
     table,
     pageItems,
@@ -2883,7 +2903,13 @@ export function refineTable(
     recoverNativeConfigurationGrid(table, pageItems, captions, sourceRules) ??
     recoverNativeSymbolDefinitionGrid(table, pageItems, captions, sourceRules) ??
     recoverNativeWrappedCountNarrativeGrid(table, pageItems, captions, sourceRules) ??
-    recoverNativeSegmentedScientificGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeSegmentedScientificGrid(
+      table,
+      pageItems,
+      captions,
+      sourceRules,
+      nativeRecordContext
+    ) ??
     recoverNativeRuledFormulaGrid(table, pageItems, captions, sourceRules) ??
     recoverNativeGroupedParameterGrid(table, pageItems, captions, sourceRules) ??
     recoverNativeMeasuredRecordGrid(table, pageItems, captions, sourceRules) ??
@@ -3676,6 +3702,34 @@ export function refineTable(
     i < cuts.length ? cuts[i] : right,
     bottom
   ])
+  const deviationColumnPlan =
+    !recordGrid &&
+    externalCaptions.length &&
+    wholeMeanDeviationColumnPlan({
+      table,
+      items: originalPageItems,
+      columnRects,
+      rows,
+      objects,
+      rules,
+      nativeContext: nativeRecordContext
+    })
+  if (deviationColumnPlan) {
+    columns.splice(
+      deviationColumnPlan.start,
+      columns.length - deviationColumnPlan.start,
+      ...deviationColumnPlan.columns
+    )
+    cuts.splice(0, cuts.length, ...deviationColumnPlan.cuts.slice(1, -1))
+    columnRects.splice(
+      0,
+      columnRects.length,
+      ...deviationColumnPlan.cuts
+        .slice(0, -1)
+        .map((x, n) => [x, top, deviationColumnPlan.cuts[n + 1], bottom])
+    )
+    repairs.push('whole-source-deviation-columns-recovered')
+  }
   const sampleHeaderBottom = Math.max(
     ...objects
       .filter((object) => object.label === 'table column header')
@@ -5399,21 +5453,45 @@ export function refineTable(
         repairs.push('text-supported-section-row-recovered')
         continue
       }
+      const completeScriptedBoundary =
+        overlapping.length === 1 && overlapping[0] === rows.at(-1)
+          ? separateCompleteScriptedRecord({
+              row: overlapping[0],
+              group,
+              items,
+              columnRects,
+              objects
+            })
+          : undefined
       if (
         overlapping.length === 1 &&
         overlapping[0] === rows.at(-1) &&
         rect[3] > overlapping[0].rect[3] &&
         (finalStatistic || cols.size >= Math.max(2, Math.ceil(columns.length / 2))) &&
         items.some((item) => inside(overlapping[0].rect, item)) &&
-        items
-          .filter((item) => inside(overlapping[0].rect, item))
-          .every((item) => item.rect[3] < rect[1]) &&
-        rules.some(
+        (completeScriptedBoundary !== undefined ||
+          items
+            .filter((item) => inside(overlapping[0].rect, item))
+            .every((item) => item.rect[3] < rect[1])) &&
+        (rules.some(
           (r) =>
             r[1] === r[3] &&
             r[1] >= rect[3] &&
             r[1] - rect[3] <= Math.max(...group.map((i) => i.height)) * 2
-        )
+        ) ||
+          proveNativeIntervalTerminalRecord({
+            table,
+            group,
+            groups,
+            inventory: originalPageItems,
+            rows,
+            columns: columnRects,
+            objects,
+            captions,
+            rules,
+            context: nativeRecordContext,
+            rulePaintBounds
+          }))
       ) {
         if (hasNativeFencedListContinuation(group, items, overlapping[0], columnRects, rules)) {
           issues.add('native-table-structure-ambiguous')
@@ -5422,8 +5500,11 @@ export function refineTable(
         const previousEnd = Math.max(
           ...items.filter((item) => inside(overlapping[0].rect, item)).map((item) => item.rect[3])
         )
-        overlapping[0].rect[3] = (previousEnd + rect[1]) / 2
-        rows.push({ rect: [left, rect[1], right, rect[3]], origin: 'source-text' })
+        overlapping[0].rect[3] = completeScriptedBoundary ?? (previousEnd + rect[1]) / 2
+        rows.push({
+          rect: [left, completeScriptedBoundary ?? rect[1], right, rect[3]],
+          origin: 'source-text'
+        })
         repairs.push('final-record-recovered')
         continue
       }
@@ -10012,6 +10093,31 @@ export function refineTable(
     recoveredHeaderCuts = postfixHeader.cuts
     repairs.push('native-calibrated-postfix-header-recovered')
   }
+  if (!recordGrid && !sourceHeaderBands && !postfixHeader.qualified) {
+    repairCompleteNarrativeBoundary({ rows, items, groups, columnRects, rules, objects, repairs })
+    repairCompletePairedIdentifierBoundary({ rows, items, columnRects, rules, objects, repairs })
+    repairCompleteWholeHyphenatedHeaderBand({
+      rows,
+      items,
+      inventory: originalPageItems,
+      columnRects,
+      rules,
+      objects,
+      repairs,
+      context: nativeRecordContext
+    })
+  }
+  if (!recordGrid && !sourceHeaderBands && !postfixHeader.qualified)
+    repairCompletePairedDomainTopology({
+      rows,
+      items,
+      inventory: originalPageItems,
+      columnRects,
+      rules,
+      objects,
+      repairs,
+      context: nativeRecordContext
+    })
   const baseCells = rows.flatMap((r, row) =>
     columnRects.map((c, column) => ({
       row,
@@ -11953,6 +12059,22 @@ export function refineTable(
     issues,
     repairs
   })
+  recoverNativeTypographicCategoryRows({
+    table,
+    items,
+    inventory: originalPageItems,
+    rows,
+    cells,
+    baseCells,
+    columnRects,
+    headerRows,
+    captions,
+    rules,
+    context: nativeRecordContext,
+    witness: nativeFontRoleWitness,
+    repairs,
+    notes
+  })
   const nativeMathOrder = proveNativeClosedMathOrder(
     table,
     pageItems,
@@ -11978,6 +12100,27 @@ export function refineTable(
     issues,
     repairs
   })
+  recoverNativeInteriorPairedRows({
+    table,
+    rows,
+    groups,
+    items,
+    inventory: originalPageItems,
+    columnRects,
+    objects,
+    captions,
+    rules,
+    context: nativeRecordContext,
+    witness: nativeFontRoleWitness,
+    repairs,
+    cells,
+    baseCells,
+    unassigned,
+    issues,
+    headerRows,
+    notes,
+    recordGrid
+  })
   reconcileNativeCenteredBodySpans({
     cells,
     rows,
@@ -11988,6 +12131,60 @@ export function refineTable(
     issues,
     repairs
   })
+  const ownedGroupedParent = recoverNativeOwnedGroupedParentSpan({
+    cells,
+    rows,
+    columns,
+    items: originalPageItems,
+    headerRows,
+    rules: sourceRules,
+    nativeContext: nativeRecordContext
+  })
+  if (ownedGroupedParent) {
+    const { parent, firstColumn, lastColumn } = ownedGroupedParent
+    const covered = new Set(
+      cells.filter((c) => c.row === parent.row && c.column >= firstColumn && c.column <= lastColumn)
+    )
+    const merged = {
+      ...parent,
+      column: firstColumn,
+      colSpan: lastColumn - firstColumn + 1,
+      rect: [
+        columns[firstColumn].rect[0],
+        parent.rect[1],
+        columns[lastColumn].rect[2],
+        parent.rect[3]
+      ],
+      origin: 'source-centered-grouped-header'
+    }
+    cells.splice(0, cells.length, ...cells.filter((c) => !covered.has(c)), merged)
+    cells.sort((a, b) => a.row - b.row || a.column - b.column)
+    repairs.push('source-centered-grouped-header-span-recovered')
+  }
+  const ownedRepeatedParents = recoverNativeOwnedRepeatedParentPartition({
+    cells,
+    rows,
+    columns,
+    headerRows,
+    rules: sourceRules,
+    nativeContext: nativeRecordContext
+  })
+  if (ownedRepeatedParents) {
+    const { parent, parts } = ownedRepeatedParents
+    const replacements = parts.map((p) => ({
+      ...parent,
+      column: p.column,
+      colSpan: p.colSpan,
+      rect: p.rect,
+      text: p.sourceItem.text,
+      sourceItems: [p.sourceItem],
+      sourceTokens: [p.sourceToken],
+      sourceRects: [p.sourceToken.rect]
+    }))
+    cells.splice(0, cells.length, ...cells.filter((c) => c !== parent), ...replacements)
+    cells.sort((a, b) => a.row - b.row || a.column - b.column)
+    repairs.push('source-owned-repeated-parent-spans-recovered')
+  }
   recoverCenteredGroupedHeaderSpans({
     cells,
     rows,
@@ -13676,6 +13873,7 @@ export function refineTable(
   // every row and leaf lane independently of a merged detector prediction.
   // Rebuild only a complete proof: each selected source token has one owner.
   const nativeRecordPlan =
+    (segmentedHeader?.groups ? segmentedHeader : undefined) ??
     recoverNativeOverlayMathRecords(table, pageItems, captions, sourceRules) ??
     recoverNativeRuledGroupedStubColumns(table, pageItems, columns, sourceRules) ??
     closedSingleNativeRecord ??
@@ -15388,6 +15586,8 @@ export function refineTable(
     if (!unassigned.length) issues.delete('unassigned-source-text')
     repairs.push('native-centered-numeric-rows-recovered')
   }
+  const segmentedHeaderUnresolved =
+    segmentedHeader && (segmentedHeader.ambiguous || !repairs.includes(segmentedHeader.repair))
   const result = {
     id: table.id,
     cropRect: outputCrop,
@@ -15397,9 +15597,14 @@ export function refineTable(
     unassigned,
     clipped: outputClipped.map((i) => ({ text: i.text, rect: i.rect })),
     excludedCaptionItems: excludedCaptionItems.map((i) => i.text),
-    issues: [...issues],
+    issues: [
+      ...new Set([
+        ...issues,
+        ...(segmentedHeaderUnresolved ? ['native-table-structure-ambiguous'] : [])
+      ])
+    ],
     repairs,
-    reviewCandidate: issues.size === 0,
+    reviewCandidate: issues.size === 0 && !segmentedHeaderUnresolved,
     selectedTextItems: items.length
   }
   const headerResult =
@@ -15432,8 +15637,10 @@ export function refineTable(
     recoverNativeRuledGroupedStubSpans(calibratedResult, table, pageItems, sourceRules) ??
     recoverNativeRuledGroupedStubSpans(calibratedResult, table, pageItems, sourceRules, true) ??
     calibratedResult
+  const bandedStubs =
+    reconcileNativeRuledStubBands(groupedStubs, pageItems, sourceRules) ?? groupedStubs
   const finalResult = reviewNativeTableSources(
-    reconcileNativeRuledStubBands(groupedStubs, pageItems, sourceRules) ?? groupedStubs,
+    repairContinuedTopAlignedStub(bandedStubs, pageItems, sourceRules) ?? bandedStubs,
     originalPageItems
   )
   const nativeCellProof = proveNativeFinalWholeCellSources(finalResult, originalPageItems)

@@ -21,6 +21,22 @@ export {
   sourcePaintFits as fitOrdinaryNativeTableSourcePaint
 }
 
+import { types as localPairTypes } from 'node:util'
+import { nativePageTextPacketInventory as localPairPacket } from './literature-pdf-figure-native-plot-labels.mjs'
+import { nativeTableFontRoleWitnessCurrent as localPairWitnessCurrent } from './literature-pdf-native-table-font-role.mjs'
+import { matchNativeFigureRenderContext as localPairMatch } from './literature-pdf-render-bounds.mjs'
+import {
+  retainNativeRecoveryInputs as retainLocalPairInputs,
+  nativeRecoveryOwnValues as localPairOwnValues
+} from './literature-pdf-native-figure-recovery-profile.mjs'
+import { nativeFigurePathPaint as localPairPathPaint } from './literature-pdf-figure-native-complete-form.mjs'
+import {
+  nativeWholeFontOrigins as localWholeOrigins,
+  nativeCellOriginsMatch as localCellOriginsMatch
+} from './literature-pdf-native-leaf-record-repair.mjs'
+import { nativeWholeSourceGlyphObservations as localGlyphObservations } from './literature-pdf-symbol-text.mjs'
+import { collectClosedFigureFrames as localRawEvidence } from './literature-pdf-graphics.mjs'
+
 const finiteItem = (i) =>
   i.horizontal !== false &&
   Number.isFinite(i.baseline) &&
@@ -2269,4 +2285,1347 @@ export function recoverNativeOrdinalWrappedRecordGrid(table, tokens, captions, r
   )
     return
   return grid(f, records)
+}
+
+// Repair only an unowned complete citation-directory pair between two proved owners.
+// This runs after ordinary assignment, so existing nonempty cells remain authoritative.
+export function recoverNativeInteriorPairedRows(args) {
+  try {
+    reconcileInteriorPairedRows(args)
+  } catch {
+    // Optional native evidence must fail closed without changing ordinary refinement.
+  }
+}
+
+function reconcileInteriorPairedRows({
+  table,
+  rows,
+  groups,
+  items,
+  inventory,
+  columnRects,
+  objects,
+  captions,
+  rules,
+  context,
+  witness,
+  repairs,
+  cells,
+  baseCells,
+  unassigned,
+  issues,
+  headerRows,
+  notes,
+  recordGrid
+}) {
+  const own = localPairOwnValues(context)
+  if (!own) return
+  context = own
+  const native = localPairOwnValues(context.nativeGlyphContext)
+  if (
+    !native ||
+    !localPairOwnValues(context.sourcePage) ||
+    !localPairTypes.isMap(context.rulePaintBounds) ||
+    localPairTypes.isProxy(context.rulePaintBounds) ||
+    Object.getPrototypeOf(context.rulePaintBounds) !== Map.prototype ||
+    Reflect.ownKeys(context.rulePaintBounds).length
+  )
+    return
+  const p = pageNumber(table),
+    c = context?.nativeGlyphContext,
+    page = context?.sourcePage,
+    v = context?.viewport
+  if (
+    recordGrid ||
+    notes.length ||
+    table.notes?.length ||
+    columnRects.length !== 2 ||
+    !localPairWitnessCurrent(witness) ||
+    !c ||
+    !page ||
+    Object.getOwnPropertyDescriptor(native.viewport, 'scale')?.value !== 1 ||
+    Object.getOwnPropertyDescriptor(v, 'scale')?.value !== 1.5 ||
+    table.readingRotation !== 0 ||
+    table.spans?.length ||
+    objects.some((o) => /spanning cell|projected row header/u.test(o.label)) ||
+    cells.some((c) => c.rowSpan !== 1 || c.colSpan !== 1)
+  )
+    return
+  const same = (a, b) => a?.length === b?.length && a.every((n, i) => n === b[i]),
+    insideBox = (a, b) => a[0] <= b[0] && a[1] <= b[1] && a[2] >= b[2] && a[3] >= b[3],
+    hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+  const keep = retainLocalPairInputs(
+    [
+      table,
+      rows,
+      groups,
+      inventory,
+      columnRects,
+      objects,
+      captions,
+      rules,
+      c,
+      page,
+      v,
+      context.sourceContent,
+      context.operators,
+      [...context.rulePaintBounds],
+      cells,
+      ...(Array.isArray(baseCells) ? [baseCells] : []),
+      unassigned,
+      headerRows,
+      notes
+    ],
+    v
+  )
+  if (
+    !keep ||
+    !localPairMatch(c, p, context.sourceContent, c.viewport, page.graphicsBounds, c.sourceSha256) ||
+    !same(
+      v.transform,
+      c.viewport.transform.map((n) => n * 1.5)
+    )
+  )
+    return
+  // The two PDF.js programs can fold unrelated path operations differently. Bind
+  // selected glyph carriers and the used physical rails, not whole-program bytes.
+  const liveGlyphs = localGlyphObservations(context.sourceContent, context.operators),
+    nativeGlyphs = localGlyphObservations(c.content, c.operators),
+    aliases = new Map(
+      context.sourceContent.items.map((r, i) => [r.fontName, c.content.items[i].fontName])
+    )
+  if (!liveGlyphs || !nativeGlyphs) return
+  const glyphProjection = (g, alias) =>
+    JSON.stringify([
+      g.glyph,
+      g.active,
+      g.transform,
+      g.size,
+      g.hScale,
+      g.start,
+      g.end,
+      alias ? aliases.get(g.fontName) : g.fontName
+    ])
+  const whole = c.content.items
+      .filter((r) => r.str?.trim())
+      .map((r) => tableTextToken(r, c.viewport, 0)),
+    packetBase = localPairPacket(page, whole, c, true)
+  if (!packetBase || packetBase.evidence.images.length) return
+  const lane = (t) =>
+      columnRects.flatMap((r, i) => (t.rect[0] >= r[0] && t.rect[2] <= r[2] ? [i] : [])),
+    ordered = (g) => [...g].sort((a, b) => a.rect[0] - b.rect[0]),
+    complete = (g) =>
+      g.length === 2 &&
+      g[0].height === g[1].height &&
+      g[0].baseline === g[1].baseline &&
+      ordered(g).every((t, i) => lane(t).length === 1 && lane(t)[0] === i),
+    pairs = groups
+      .filter(complete)
+      .map(ordered)
+      .sort((a, b) => a[0].baseline - b[0].baseline)
+  const nativePaint = new Map(),
+    ruleOps = new Map(),
+    nativeRules = collectTableRules(c.operators, v, nativePaint, ruleOps),
+    rawPaint = new Map(),
+    rawRuleOps = new Map(),
+    rawRules = collectTableRules(context.operators, v, rawPaint, rawRuleOps),
+    rawEvidence = { images: [], paths: new Map(), texts: new Map() },
+    plans = [],
+    headers = headerRows.map((r) => rows[r]),
+    cellRows = new Map(cells.map((cell) => [cell, rows[cell.row]])),
+    claimed = (t) =>
+      cells.filter((cell) =>
+        cell.sourceItems?.some(
+          (s) => s.pageNumber === t.sourceItem?.pageNumber && s.index === t.sourceItem?.index
+        )
+      ),
+    ordinaryPair = (g) =>
+      /^\p{L}/u.test(g[0].text) && /\p{L}.*\b\d{4}\s*\[[1-9]\d*\]$/u.test(g[1].text)
+  // An aggregated neighbor is retained intact only when every original whole
+  // Source and SourceRect is current; a matching visible label alone is insufficient.
+  const cellFonts = (cell) => {
+    if (
+      !Array.isArray(cell.sourceItems) ||
+      !cell.sourceItems.length ||
+      cell.sourceItems.length > 2 ||
+      cell.sourceSegments?.length ||
+      cell.sourceRects?.length !== cell.sourceItems.length
+    )
+      return
+    const fonts = []
+    for (const origin of cell.sourceItems) {
+      const match = inventory.filter(
+        (t) =>
+          t.sourceItem?.pageNumber === origin.pageNumber &&
+          t.sourceItem?.index === origin.index &&
+          t.text === origin.text
+      )
+      if (match.length !== 1 || !cell.sourceRects.some((r) => same(r, match[0].rect))) return
+      fonts.push(match[0])
+    }
+    return localCellOriginsMatch(cell, fonts) ? fonts : undefined
+  }
+  localRawEvidence(context.operators, c.viewport, rawEvidence)
+  const colors = new Map(),
+    stack = []
+  let stroke = '#000000'
+  for (let i = 0; i < packetBase.o.fnArray.length; i++) {
+    const op = packetBase.o.fnArray[i],
+      a = packetBase.o.argsArray[i]
+    if ([OPS.save, OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op)) stack.push(stroke)
+    else if ([OPS.restore, OPS.paintFormXObjectEnd, OPS.endGroup].includes(op)) {
+      if (!stack.length) return
+      stroke = stack.pop()
+    } else if (op === OPS.setStrokeRGBColor) stroke = a[0]
+    else if (
+      [OPS.setStrokeColor, OPS.setStrokeColorN, OPS.setStrokeGray, OPS.setStrokeCMYKColor].includes(
+        op
+      )
+    )
+      stroke = undefined
+    else if (op === OPS.constructPath) colors.set(i, stroke)
+  }
+  if (stack.length) return
+  const rawColors = new Map(),
+    rawStack = []
+  let rawStroke = '#000000'
+  for (let i = 0; i < context.operators.fnArray.length; i++) {
+    const op = context.operators.fnArray[i],
+      a = context.operators.argsArray[i]
+    if ([OPS.save, OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op)) rawStack.push(rawStroke)
+    else if ([OPS.restore, OPS.paintFormXObjectEnd, OPS.endGroup].includes(op)) {
+      if (!rawStack.length) return
+      rawStroke = rawStack.pop()
+    } else if (op === OPS.setStrokeRGBColor) rawStroke = a[0]
+    else if (
+      [OPS.setStrokeColor, OPS.setStrokeColorN, OPS.setStrokeGray, OPS.setStrokeCMYKColor].includes(
+        op
+      )
+    )
+      rawStroke = undefined
+    else if (op === OPS.constructPath) rawColors.set(i, rawStroke)
+  }
+  if (rawStack.length) return
+  // All proof is local to three native rows. Never extrapolate model bands or
+  // relax the existing whole-grid frame's leading/crop constraints.
+  for (let i = 1; i < pairs.length - 1; i++) {
+    const triple = pairs.slice(i - 1, i + 2),
+      [previous, target, next] = triple
+    if (
+      !triple.every(ordinaryPair) ||
+      target.some((t) => claimed(t).length || !unassigned.includes(t.text))
+    )
+      continue
+    const prev = previous.map(claimed),
+      following = next.map(claimed)
+    if (
+      [...prev, ...following].some((a) => a.length !== 1) ||
+      prev[0][0].row !== prev[1][0].row ||
+      following[0][0].row !== following[1][0].row ||
+      prev[0][0].row >= following[0][0].row ||
+      [...prev, ...following].some((a) => !cellFonts(a[0]))
+    )
+      continue
+    const previousFonts = [...new Set(prev.flatMap((a) => cellFonts(a[0])))],
+      nextFonts = [...new Set(following.flatMap((a) => cellFonts(a[0])))],
+      peerFonts = [...previousFonts, ...nextFonts],
+      prevOwner = rows[prev[0][0].row],
+      nextOwner = rows[following[0][0].row]
+    if (
+      previousFonts.some((t) => t.rect[3] >= Math.min(...target.map((t) => t.rect[1]))) ||
+      nextFonts.some((t) => t.rect[1] <= Math.max(...target.map((t) => t.rect[3])))
+    )
+      continue
+    const slots = target.map((t, col) =>
+        cells.filter(
+          (cell) =>
+            cell.column === col &&
+            Math.max(0, Math.min(cell.rect[3], t.rect[3]) - Math.max(cell.rect[1], t.rect[1])) /
+              (t.rect[3] - t.rect[1]) >
+              0.5
+        )
+      ),
+      duplicate = slots.every((a) => a.length === 2),
+      gap = slots.every((a) => !a.length)
+    if (!duplicate && !gap) continue
+    const competitors = duplicate ? [...new Set(slots.flat().map((cell) => rows[cell.row]))] : [],
+      remove = competitors.filter((row) =>
+        cells
+          .filter((cell) => cellRows.get(cell) === row)
+          .every(
+            (cell) =>
+              !cell.text &&
+              !cell.sourceItems?.length &&
+              !cell.sourceRects?.length &&
+              !cell.sourceTokens?.length &&
+              !cell.sourceSegments?.length
+          )
+      )
+    if (
+      duplicate &&
+      (competitors.length !== 2 ||
+        Math.abs(rows.indexOf(competitors[0]) - rows.indexOf(competitors[1])) !== 1 ||
+        !remove.length ||
+        remove.some(
+          (row) =>
+            row.origin !== 'model' ||
+            cells.filter((cell) => cellRows.get(cell) === row).length !== 2
+        ) ||
+        competitors.some((row) => !remove.includes(row) && row !== prevOwner && row !== nextOwner))
+    )
+      continue
+    const h = target[0].height,
+      full = joinHorizontalTableRules(rules)
+        .filter(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] >= table.cropRect[1] - h &&
+            r[1] <= table.cropRect[3] + h &&
+            Math.abs(r[0] - table.cropRect[0]) < h &&
+            r[2] - r[0] >= (table.cropRect[2] - table.cropRect[0]) * 0.85 &&
+            r[2] - r[0] <= (table.cropRect[2] - table.cropRect[0]) * 1.6
+        )
+        .sort((a, b) => a[1] - b[1])
+    if (full.length !== 3) continue
+    const header = items.filter(
+        (t) =>
+          t.rect[0] >= full[0][0] &&
+          t.rect[2] <= full[0][2] &&
+          t.baseline > full[0][1] &&
+          t.baseline < full[1][1]
+      ),
+      local = [...header, ...triple.flat()],
+      selected = [...new Set([...local, ...peerFonts])]
+    if (
+      header.length !== 2 ||
+      !proveNativeUniqueWholeFonts(selected, inventory) ||
+      triple.flat().some((t, n, a) => n && t.sourceItem.index <= a[n - 1].sourceItem.index)
+    )
+      continue
+    const f = frame(table, local, rules),
+      records = f && pairedRecords(f)
+    if (
+      !f?.closing ||
+      !records ||
+      records.length !== 3 ||
+      records.some((g, n) => g.length !== 2 || g.some((t) => !triple[n].includes(t)))
+    )
+      continue
+    if (
+      selected.some((t) => {
+        const a = liveGlyphs.records.find((r) => r.index === t.sourceItem.index),
+          b = nativeGlyphs.records.find((r) => r.index === t.sourceItem.index)
+        return (
+          !a ||
+          !b ||
+          a.glyphs.length !== b.glyphs.length ||
+          a.glyphs.some((g, i) => glyphProjection(g, true) !== glyphProjection(b.glyphs[i], false))
+        )
+      })
+    )
+      continue
+    const packet = localPairPacket(
+      page,
+      whole,
+      c,
+      true,
+      new Set(selected.map((t) => t.sourceItem.index)),
+      false
+    )
+    if (!packet) continue
+    const data = selected.map((t) => packet.records.find((r) => r.index === t.sourceItem.index))
+    if (
+      data.some(
+        (r) =>
+          !r ||
+          !r.advanceComplete ||
+          !packet.valid(r.ink) ||
+          r.part.some(
+            ({ g }) =>
+              g.rendererSkipped ||
+              g.textPaint?.fillAlpha !== 1 ||
+              !/^#[a-f0-9]{6}$/iu.test(g.textPaint.fillColor) ||
+              g.textPaint.fillColor.toLowerCase() === '#ffffff'
+          )
+      )
+    )
+      continue
+    const projected = {
+      transform: v.transform,
+      convertToViewportPoint: (x, y) => {
+        const a = [x, y]
+        Util.applyTransform(a, v.transform)
+        return a
+      }
+    }
+    if (
+      selected.some((t) => {
+        const r = c.content.items[t.sourceItem.index],
+          q = r && tableTextToken(r, projected, 0)
+        return (
+          !q ||
+          q.text !== t.text ||
+          !same(q.rect, t.rect) ||
+          q.baseline !== t.baseline ||
+          q.height !== t.height
+        )
+      })
+    )
+      continue
+    const prevEnd = Math.max(...previous.map((t) => t.rect[3])),
+      top = Math.min(...target.map((t) => t.rect[1])),
+      bottom = Math.max(...target.map((t) => t.rect[3])),
+      nextStart = Math.min(...next.map((t) => t.rect[1]))
+    if (!(prevEnd < top && bottom < nextStart)) continue
+    // Row faces are semantic metadata, not PNG clipping promises. Foreign ink
+    // is excluded from the full target advance/ink footprint. Only complete,
+    // already-owned peers may overhang it, disjoint from every target glyph.
+    const band = [
+        columnRects[0][0],
+        (prevEnd + top) / 2,
+        columnRects[1][2],
+        (bottom + nextStart) / 2
+      ],
+      targetData = data.filter((r) => target.some((t) => t.sourceItem.index === r.index)),
+      targetGlyphs = new Set(targetData.flatMap((r) => r.part.map((z) => z.g))),
+      peerData = data.filter((r) => peerFonts.some((t) => t.sourceItem.index === r.index)),
+      peerGlyphs = new Set(peerData.flatMap((r) => r.part.map((z) => z.g))),
+      ink = [
+        band[0] / 1.5,
+        Math.min(top / 1.5, ...targetData.map((r) => r.ink[1])),
+        band[2] / 1.5,
+        Math.max(bottom / 1.5, ...targetData.map((r) => r.ink[3]))
+      ],
+      prevRow = rows[prev[0][0].row],
+      nextRow = rows[following[0][0].row]
+    if (
+      !insideBox(table.cropRect, band) ||
+      targetData.some(
+        (r) =>
+          !insideBox(
+            table.cropRect.map((v) => v / 1.5),
+            r.ink
+          )
+      ) ||
+      packet.glyphs.some((g) => {
+        if (targetGlyphs.has(g)) return false
+        const emptyOutlineSpace =
+          g.text === ' ' &&
+          packet.finite(g.ink, 4) &&
+          g.ink[0] === g.ink[2] &&
+          g.ink[1] === g.ink[3]
+        if (emptyOutlineSpace) return false
+        // Unknown paint is not absence of paint, even outside this local row.
+        if (!packet.valid(g.ink)) return true
+        return (
+          hit(g.ink, ink) &&
+          (!peerGlyphs.has(g) || [...targetGlyphs].some((own) => hit(g.ink, own.ink)))
+        )
+      }) ||
+      objects.some((o) => o.label === 'table column header' && hit(o.rect, band)) ||
+      captions.some((cap) =>
+        hit(
+          cap.rect.map((v) => v / 1.5),
+          ink
+        )
+      ) ||
+      rows.some(
+        (row) =>
+          hit(row.rect, band) &&
+          row !== prevRow &&
+          row !== nextRow &&
+          !remove.includes(row) &&
+          cells.some(
+            (cell) => cellRows.get(cell) === row && (cell.text || cell.sourceItems?.length)
+          )
+      )
+    )
+      continue
+    let safe = true
+    const inv = {
+      o: packet.o,
+      v: packet.v,
+      finite: packet.finite,
+      valid: packet.valid,
+      box: packet.box,
+      strokeMargins: packet.strokeMargins
+    }
+    for (const [op, state] of packet.evidence.paths) {
+      const paint = localPairPathPaint(inv, op, state)
+      if (!paint || hit(paint.rect, ink)) {
+        safe = false
+        break
+      }
+    }
+    if (
+      !safe ||
+      full.some((r) => {
+        const key = r.join(','),
+          ops = [...ruleOps].filter(([, keys]) => keys.has(key))
+        if (
+          !nativeRules.some((q) => same(q, r)) ||
+          !nativePaint.has(key) ||
+          !same(nativePaint.get(key), context.rulePaintBounds.get(key)) ||
+          ops.length !== 1
+        )
+          return true
+        const rawOps = [...rawRuleOps].filter(([, keys]) => keys.has(key))
+        if (
+          rawOps.length !== 1 ||
+          !rawRules.some((q) => same(q, r)) ||
+          !same(rawPaint.get(key), nativePaint.get(key))
+        )
+          return true
+        const rawOp = rawOps[0][0],
+          rawState = rawEvidence.paths.get(rawOp)
+        const [op] = ops[0],
+          state = packet.evidence.paths.get(op),
+          paint = nativePaint.get(key).map((n) => n / 1.5)
+        return (
+          !rawState ||
+          rawState.strokeAlpha !== 1 ||
+          rawState.solidStroke !== true ||
+          rawState.lineWidth !== state?.lineWidth ||
+          rawState.lineCap !== state?.lineCap ||
+          rawColors.get(rawOp) !== colors.get(op) ||
+          !same(rawState.clip, state?.clip) ||
+          !state ||
+          state.solidStroke !== true ||
+          state.strokeAlpha !== 1 ||
+          state.lineCap !== 0 ||
+          !(state.lineWidth > 0) ||
+          !/^#[a-f0-9]{6}$/iu.test(colors.get(op)) ||
+          colors.get(op).toLowerCase() === '#ffffff' ||
+          !packet.valid(state.clip) ||
+          !insideBox(state.clip, paint)
+        )
+      })
+    )
+      continue
+    plans.push({
+      previous: prevRow,
+      following: nextRow,
+      remove,
+      band,
+      target,
+      kind: duplicate ? 'duplicate' : 'gap',
+      previousFootprintEnd: Math.max(
+        ...previousFonts.map((t) => t.rect[3]),
+        ...peerData
+          .filter((r) => previousFonts.some((t) => t.sourceItem.index === r.index))
+          .map((r) => r.ink[3] * 1.5)
+      ),
+      nextFootprintStart: Math.min(
+        ...nextFonts.map((t) => t.rect[1]),
+        ...peerData
+          .filter((r) => nextFonts.some((t) => t.sourceItem.index === r.index))
+          .map((r) => r.ink[1] * 1.5)
+      )
+    })
+  }
+  if (!plans.length || !keep() || !localPairWitnessCurrent(witness)) return
+  if (plans.some((plan, i) => plans.slice(i + 1).some((other) => hit(plan.band, other.band))))
+    return
+  const targetKeys = plans.flatMap((plan) =>
+    plan.target.map((t) => t.sourceItem.pageNumber + ':' + t.sourceItem.index)
+  )
+  if (new Set(targetKeys).size !== targetKeys.length) return
+  // Prepare the complete result first. Only Source-empty model bands disappear;
+  // peer faces are trimmed outside all their proved original advances and ink.
+  const removed = new Set(plans.flatMap((p) => p.remove)),
+    copies = new Map(
+      rows.filter((r) => !removed.has(r)).map((r) => [r, { ...r, rect: [...r.rect] }])
+    ),
+    added = [],
+    remaining = [...unassigned],
+    addedCells = []
+  for (const plan of plans) {
+    const before = copies.get(plan.previous),
+      after = copies.get(plan.following)
+    if (!before || !after) return
+    if (plan.band[1] >= plan.previousFootprintEnd)
+      before.rect[3] = Math.min(before.rect[3], plan.band[1])
+    if (plan.band[3] <= plan.nextFootprintStart)
+      after.rect[1] = Math.max(after.rect[1], plan.band[3])
+    const row = { rect: plan.band, origin: 'source-text' }
+    added.push(row)
+    for (let column = 0; column < 2; column++) {
+      const t = plan.target[column],
+        origins = localWholeOrigins([t])
+      if (!origins || origins.length !== 1) return
+      const cell = {
+        row: 0,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [columnRects[column][0], plan.band[1], columnRects[column][2], plan.band[3]],
+        origin: 'model-grid',
+        text: t.text,
+        sourceTokens: [{ text: t.text, rect: t.rect, baseline: t.baseline, height: t.height }],
+        sourceRects: [t.rect],
+        sourceItems: origins
+      }
+      addedCells.push(cell)
+      cellRows.set(cell, row)
+      const index = remaining.indexOf(t.text)
+      if (index < 0) return
+      remaining.splice(index, 1)
+    }
+  }
+  const entries = [...copies]
+      .map(([key, row]) => ({ key, row }))
+      .concat(added.map((row) => ({ key: row, row })))
+      .sort((a, b) => a.row.rect[1] - b.row.rect[1]),
+    indexes = new Map(entries.map((e, i) => [e.key, i])),
+    nextRows = entries.map((e) => e.row),
+    nextCells = cells
+      .filter((cell) => !removed.has(cellRows.get(cell)))
+      .concat(addedCells)
+      .map((cell) => {
+        const key = cellRows.get(cell),
+          index = indexes.get(key),
+          row = nextRows[index]
+        if (!row) return
+        const rect = [...cell.rect],
+          old = key.rect
+        if (!added.includes(key)) {
+          if (row.rect[1] !== old[1]) rect[1] = row.rect[1]
+          if (row.rect[3] !== old[3]) rect[3] = row.rect[3]
+        }
+        return { ...cell, row: index, rect }
+      }),
+    nextHeaderRows = headers.map((r) => indexes.get(r))
+  const remapBaseCells = Array.isArray(baseCells)
+    ? baseCells
+        .filter((cell) => !removed.has(rows[cell.row]))
+        .map((cell) => {
+          const old = rows[cell.row],
+            copy = copies.get(old),
+            rect = [...cell.rect]
+          if (!copy) return
+          if (copy.rect[1] !== old.rect[1]) rect[1] = copy.rect[1]
+          if (copy.rect[3] !== old.rect[3]) rect[3] = copy.rect[3]
+          return { ...cell, row: indexes.get(old), rect }
+        })
+    : undefined
+  if (Array.isArray(remapBaseCells))
+    for (const row of added) {
+      const index = indexes.get(row)
+      for (let column = 0; column < 2; column++)
+        remapBaseCells.push({
+          row: index,
+          column,
+          rowSpan: 1,
+          colSpan: 1,
+          origin: 'model-grid',
+          rect: [columnRects[column][0], row.rect[1], columnRects[column][2], row.rect[3]]
+        })
+    }
+  if (
+    nextCells.some((c) => !c) ||
+    nextRows.some(
+      (row) =>
+        !row.rect.every(Number.isFinite) ||
+        !(row.rect[0] < row.rect[2] && row.rect[1] < row.rect[3])
+    ) ||
+    nextCells.some(
+      (c) => !c.rect.every(Number.isFinite) || !(c.rect[0] < c.rect[2] && c.rect[1] < c.rect[3])
+    ) ||
+    remapBaseCells?.some(
+      (c) =>
+        !Number.isInteger(c.row) ||
+        !c.rect.every(Number.isFinite) ||
+        !(c.rect[0] < c.rect[2] && c.rect[1] < c.rect[3])
+    ) ||
+    nextHeaderRows.some((i) => !Number.isInteger(i) || i < 0) ||
+    new Set(nextHeaderRows).size !== nextHeaderRows.length
+  )
+    return
+  const claims = nextCells.flatMap((c) => c.sourceItems ?? [])
+  if (new Set(claims.map((s) => s.pageNumber + ':' + s.index)).size !== claims.length) return
+  // Validate all destinations before a synchronous commit. One unassigned
+  // occurrence is consumed per whole Source, preserving unrelated equal text.
+  const writable = (a) =>
+    Array.isArray(a) &&
+    Object.isExtensible(a) &&
+    Object.getOwnPropertyDescriptor(a, 'length')?.writable &&
+    Object.keys(a).every((key) => {
+      const d = Object.getOwnPropertyDescriptor(a, key)
+      return d && Object.hasOwn(d, 'value') && d.writable && d.configurable
+    })
+  if (
+    ![rows, cells, unassigned, headerRows, repairs, ...(baseCells ? [baseCells] : [])].every(
+      writable
+    ) ||
+    !keep() ||
+    !localPairWitnessCurrent(witness)
+  )
+    return
+  Set.prototype.has.call(issues, 'unassigned-source-text')
+  nextCells.sort((a, b) => a.row - b.row || a.column - b.column)
+  Array.prototype.splice.call(rows, 0, rows.length, ...nextRows)
+  Array.prototype.splice.call(cells, 0, cells.length, ...nextCells)
+  if (remapBaseCells) Array.prototype.splice.call(baseCells, 0, baseCells.length, ...remapBaseCells)
+  Array.prototype.splice.call(headerRows, 0, headerRows.length, ...nextHeaderRows)
+  Array.prototype.splice.call(unassigned, 0, unassigned.length, ...remaining)
+  Array.prototype.push.apply(
+    repairs,
+    plans.map(() => 'native-interior-paired-record-recovered')
+  )
+  if (!unassigned.length) {
+    Set.prototype.delete.call(issues, 'unassigned-source-text')
+  }
+}
+
+// Native whole-source evidence changes only the unpopulated row/cell layout.
+// Existing text assignment then owns each category and its link once, intact.
+export function recoverNativeTypographicCategoryRows(a) {
+  try {
+    return planNativeCategoryLayout(a)
+  } catch {
+    // Optional native evidence must leave ordinary refinement intact.
+  }
+}
+
+function planNativeCategoryLayout({
+  table,
+  items,
+  inventory,
+  rows,
+  cells,
+  baseCells,
+  columnRects,
+  headerRows,
+  captions,
+  rules,
+  context,
+  witness,
+  repairs,
+  notes = []
+}) {
+  const own = localPairOwnValues(context)
+  if (
+    !own ||
+    !localPairOwnValues(own.nativeGlyphContext) ||
+    !localPairOwnValues(own.sourcePage) ||
+    !localPairWitnessCurrent(witness)
+  )
+    return
+  // The native witness retains the rendered context, not this caller's outer
+  // carrier or Map. Keep both exact without invoking accessors or adding state.
+  const carrier = context,
+    carrierPrototype = Object.getPrototypeOf(carrier),
+    carrierDescriptors = Object.getOwnPropertyDescriptors(carrier),
+    carrierKeys = Reflect.ownKeys(carrierDescriptors),
+    carrierCurrent = () =>
+      Object.getPrototypeOf(carrier) === carrierPrototype &&
+      Reflect.ownKeys(carrier).length === carrierKeys.length &&
+      Reflect.ownKeys(carrier).every((key, i) => key === carrierKeys[i]) &&
+      carrierKeys.every((key) => {
+        const current = Object.getOwnPropertyDescriptor(carrier, key),
+          old = carrierDescriptors[key]
+        return (
+          current &&
+          Object.hasOwn(current, 'value') &&
+          Object.is(current.value, old.value) &&
+          current.enumerable === old.enumerable &&
+          current.configurable === old.configurable &&
+          current.writable === old.writable
+        )
+      })
+  context = own
+  const c = context.nativeGlyphContext,
+    page = context.sourcePage,
+    v = context.viewport
+  if (!v || localPairTypes.isProxy(v)) return
+  const workTransform = Object.getOwnPropertyDescriptor(v, 'transform'),
+    nativeTransform = Object.getOwnPropertyDescriptor(c.viewport, 'transform')
+  if (
+    !workTransform ||
+    !Object.hasOwn(workTransform, 'value') ||
+    !Array.isArray(workTransform.value) ||
+    !nativeTransform ||
+    !Object.hasOwn(nativeTransform, 'value') ||
+    !Array.isArray(nativeTransform.value)
+  )
+    return
+  const equal = (a, b) => a?.length === b?.length && a.every((n, i) => n === b[i]),
+    hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1],
+    inside = (a, b) => a[0] <= b[0] && a[1] <= b[1] && a[2] >= b[2] && a[3] >= b[3],
+    bounds = (rs) => [
+      Math.min(...rs.map((r) => r[0])),
+      Math.min(...rs.map((r) => r[1])),
+      Math.max(...rs.map((r) => r[2])),
+      Math.max(...rs.map((r) => r[3]))
+    ]
+  if (
+    notes.length ||
+    table.notes?.length ||
+    columnRects.length !== 6 ||
+    table.readingRotation !== 0 ||
+    Object.getOwnPropertyDescriptor(c.viewport, 'scale')?.value !== 1 ||
+    Object.getOwnPropertyDescriptor(v, 'scale')?.value !== 1.5 ||
+    !localPairMatch(
+      c,
+      pageNumber(table),
+      context.sourceContent,
+      c.viewport,
+      page.graphicsBounds,
+      c.sourceSha256
+    ) ||
+    !localPairTypes.isMap(context.rulePaintBounds) ||
+    localPairTypes.isProxy(context.rulePaintBounds) ||
+    Object.getPrototypeOf(context.rulePaintBounds) !== Map.prototype ||
+    Reflect.ownKeys(context.rulePaintBounds).length
+  )
+    return
+  const map = context.rulePaintBounds,
+    paintEntries = [...Map.prototype.entries.call(map)]
+  const retained = retainLocalPairInputs(
+    [
+      table,
+      items,
+      inventory,
+      rows,
+      cells,
+      baseCells,
+      columnRects,
+      headerRows,
+      captions,
+      rules,
+      c,
+      page,
+      v,
+      context.sourceContent,
+      context.operators,
+      [...context.rulePaintBounds]
+    ],
+    v
+  )
+  const keep =
+    retained &&
+    (() =>
+      carrierCurrent() &&
+      Object.getPrototypeOf(map) === Map.prototype &&
+      !Reflect.ownKeys(map).length &&
+      map.size === paintEntries.length &&
+      [...Map.prototype.entries.call(map)].every(
+        ([key, value], i) =>
+          Object.is(key, paintEntries[i][0]) && Object.is(value, paintEntries[i][1])
+      ) &&
+      retained())
+  if (
+    !keep ||
+    !equal(
+      workTransform.value,
+      nativeTransform.value.map((n) => n * 1.5)
+    ) ||
+    cells.some(
+      (cell) =>
+        cell.text ||
+        cell.sourceItems?.length ||
+        cell.sourceTokens?.length ||
+        cell.sourceRects?.length
+    )
+  )
+    return
+  // Native size/face repetition supplies a role template, not a content-name rule.
+  // Every role must be isolated and followed by visible records in all six lanes.
+  const whole = c.content.items.flatMap((r, index) =>
+      r.str?.trim()
+        ? [
+            tableTextToken(
+              { ...r, sourceItem: { pageNumber: pageNumber(table), index, text: r.str } },
+              c.viewport,
+              0
+            )
+          ]
+        : []
+    ),
+    packet = localPairPacket(page, whole, c, true)
+  if (!packet) return
+  const project = (r) => r.map((n) => n * 1.5),
+    nativeRecords = packet.records.filter((r) => inside(table.cropRect, project(r.rect))),
+    height = Math.max(...nativeRecords.map((r) => r.r.height)),
+    headings = nativeRecords.filter((r) => r.r.height === height),
+    others = nativeRecords.filter((r) => !headings.includes(r)),
+    otherHeight = Math.max(...others.map((r) => r.r.height))
+  if (
+    headings.length < 2 ||
+    headings.length > 4 ||
+    !(height > otherHeight * 1.2) ||
+    headings.some(
+      (r) =>
+        r.r.fontName !== headings[0].r.fontName ||
+        Math.abs(r.rect[0] - headings[0].rect[0]) > 0.02 ||
+        !/^\p{L}[\p{L}\p{M}\s-]+$/u.test(r.r.str) ||
+        r.r.str.trim().split(/\s+/u).length < 2
+    )
+  )
+    return
+  // Trimming a neighboring face requires all original body advances, complete
+  // actual ink and unchanged raw/render glyph carriers, including merged peers.
+  const completeBody = localPairPacket(
+    page,
+    whole,
+    c,
+    true,
+    new Set(nativeRecords.map((r) => r.index)),
+    false
+  )
+  if (
+    !completeBody ||
+    nativeRecords.some(
+      (r) => completeBody.records.find((q) => q.index === r.index)?.advanceComplete !== true
+    )
+  )
+    return
+
+  const full = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] >= table.cropRect[1] - height * 1.5 &&
+        r[1] <= table.cropRect[3] + height * 1.5 &&
+        Math.abs(r[0] - table.cropRect[0]) < height * 1.5 &&
+        r[2] - r[0] > (table.cropRect[2] - table.cropRect[0]) * 0.9
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (full.length !== 3) return
+  const header = nativeRecords.filter(
+      (r) => r.rect[3] * 1.5 > full[0][1] && r.rect[3] * 1.5 < full[1][1]
+    ),
+    lane = (r) =>
+      columnRects.flatMap((col, i) =>
+        inside([col[0], table.cropRect[1], col[2], table.cropRect[3]], project(r.rect)) ? [i] : []
+      )
+  if (
+    header.length !== 6 ||
+    header.some((r) => lane(r).length !== 1) ||
+    new Set(header.flatMap(lane)).size !== 6
+  )
+    return
+  const nativePaint = new Map(),
+    nativeOps = new Map(),
+    nativeRules = collectTableRules(c.operators, v, nativePaint, nativeOps),
+    rawPaint = new Map(),
+    rawOps = new Map(),
+    rawRules = collectTableRules(context.operators, v, rawPaint, rawOps),
+    nativeEvidence = { images: [], paths: new Map(), texts: new Map() },
+    rawEvidence = { images: [], paths: new Map(), texts: new Map() }
+  localRawEvidence(c.operators, c.viewport, nativeEvidence)
+  localRawEvidence(context.operators, c.viewport, rawEvidence)
+  const colors = (o) => {
+      const result = new Map(),
+        stack = []
+      let color = '#000000'
+      for (let i = 0; i < o.fnArray.length; i++) {
+        const op = o.fnArray[i],
+          args = o.argsArray[i]
+        if ([OPS.save, OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op)) stack.push(color)
+        else if ([OPS.restore, OPS.paintFormXObjectEnd, OPS.endGroup].includes(op)) {
+          if (!stack.length) return
+          color = stack.pop()
+        } else if (op === OPS.setStrokeRGBColor) color = args[0]
+        else if (
+          [
+            OPS.setStrokeColor,
+            OPS.setStrokeColorN,
+            OPS.setStrokeGray,
+            OPS.setStrokeCMYKColor
+          ].includes(op)
+        )
+          color = undefined
+        else if (op === OPS.constructPath) result.set(i, color)
+      }
+      return stack.length ? undefined : result
+    },
+    nativeColors = colors(c.operators),
+    rawColors = colors(context.operators)
+  if (!nativeColors || !rawColors) return
+  // Bind each used physical rail in both genuine programs. Unrelated path
+  // folding is never treated as whole-program byte equality.
+  for (const rail of full) {
+    const key = rail.join(','),
+      native = [...nativeOps].filter(([, keys]) => keys.has(key)),
+      raw = [...rawOps].filter(([, keys]) => keys.has(key))
+    if (
+      native.length !== 1 ||
+      raw.length !== 1 ||
+      !nativeRules.some((r) => equal(r, rail)) ||
+      !rawRules.some((r) => equal(r, rail)) ||
+      !equal(nativePaint.get(key), rawPaint.get(key)) ||
+      !equal(nativePaint.get(key), context.rulePaintBounds.get(key))
+    )
+      return
+    const state = nativeEvidence.paths.get(native[0][0]),
+      live = rawEvidence.paths.get(raw[0][0]),
+      color = nativeColors.get(native[0][0])
+    if (
+      !state ||
+      !live ||
+      !/^#[a-f0-9]{6}$/iu.test(color) ||
+      color.toLowerCase() === '#ffffff' ||
+      rawColors.get(raw[0][0]) !== color ||
+      state.strokeAlpha !== 1 ||
+      live.strokeAlpha !== 1 ||
+      state.solidStroke !== true ||
+      live.solidStroke !== true ||
+      state.lineWidth !== live.lineWidth ||
+      state.lineCap !== 0 ||
+      live.lineCap !== 0 ||
+      !(state.lineWidth > 0) ||
+      !equal(state.clip, live.clip) ||
+      !inside(
+        state.clip,
+        nativePaint.get(key).map((n) => n / 1.5)
+      )
+    )
+      return
+  }
+  const liveGlyphs = localGlyphObservations(context.sourceContent, context.operators),
+    actualGlyphs = localGlyphObservations(c.content, c.operators),
+    aliases = new Map(
+      context.sourceContent.items.map((r, i) => [r.fontName, c.content.items[i].fontName])
+    )
+  if (!liveGlyphs || !actualGlyphs) return
+  const glyphSignature = (g, live) =>
+    JSON.stringify([
+      g.glyph,
+      g.active,
+      g.transform,
+      g.size,
+      g.hScale,
+      g.start,
+      g.end,
+      live ? aliases.get(g.fontName) : g.fontName
+    ])
+  if (
+    nativeRecords.some((r) => {
+      const a = liveGlyphs.records.find((q) => q.index === r.index),
+        b = actualGlyphs.records.find((q) => q.index === r.index)
+      return (
+        !a ||
+        !b ||
+        a.glyphs.length !== b.glyphs.length ||
+        a.glyphs.some((g, i) => glyphSignature(g, true) !== glyphSignature(b.glyphs[i], false))
+      )
+    })
+  )
+    return
+  const recordInk = (r) =>
+    bounds([...new Set(r.part.map((z) => z.g))].map((g) => g.ink).filter(packet.valid))
+  const plans = [],
+    standaloneRoles = []
+  for (const heading of headings) {
+    const followingLimit = Math.min(
+        full[2][1] / 1.5,
+        ...headings.filter((r) => r.rect[3] > heading.rect[3]).map((r) => r.rect[1])
+      ),
+      following = others.filter((r) => r.rect[1] > heading.rect[3] && r.rect[3] < followingLimit),
+      visibleRecord = (r) => {
+        const q = completeBody.records.find((p) => p.index === r.index)
+        return (
+          q?.advanceComplete === true &&
+          completeBody.valid(q.ink) &&
+          q.part.every(
+            ({ g, c }) =>
+              c === ' ' ||
+              (!g.rendererSkipped &&
+                g.textPaint?.fillAlpha === 1 &&
+                /^#[a-f0-9]{6}$/iu.test(g.textPaint.fillColor) &&
+                g.textPaint.fillColor.toLowerCase() !== '#ffffff')
+          )
+        )
+      }
+    if (
+      new Set(following.filter(visibleRecord).flatMap(lane)).size !== 6 ||
+      header.some((r) => !visibleRecord(r))
+    )
+      continue
+    const nativeLine = nativeRecords.filter((r) => r.rect[3] === heading.rect[3]),
+      selected = new Set(nativeLine.map((r) => r.index)),
+      packet = localPairPacket(page, whole, c, true, selected, false)
+    if (!packet) continue
+    const sameLine = nativeLine.map((r) => packet.records.find((q) => q.index === r.index))
+    if (sameLine.some((r) => !r)) continue
+    const link = sameLine
+      .filter((r) => r.index !== heading.index)
+      .sort((a, b) => a.rect[0] - b.rect[0])
+
+    // Advance edges from different fonts need not be bit-identical. Whole
+    // source geometry stays exact; actual link ink must remain ordered/disjoint.
+    if (
+      link.length &&
+      (link.length !== 2 ||
+        link[0].r.str !== '§' ||
+        !/^\d+(?:\.\d+)*$/u.test(link[1].r.str) ||
+        link[0].rect[0] < heading.rect[2] ||
+        link[0].rect[0] - heading.rect[2] > height * 2 ||
+        !packet.valid(link[0].ink) ||
+        !packet.valid(link[1].ink) ||
+        link[1].ink[0] < link[0].ink[2] ||
+        link[1].rect[0] - link[0].rect[2] > link[0].r.height)
+    )
+      continue
+    const fonts = sameLine.map((r) =>
+      items.find(
+        (t) =>
+          t.sourceItem?.index === r.index &&
+          t.sourceItem.pageNumber === pageNumber(table) &&
+          t.text === r.r.str
+      )
+    )
+
+    if (
+      fonts.some((t, i) => {
+        if (!t) return true
+        const original = context.sourceContent.items[sameLine[i].index],
+          expected = tableTextToken(original, v, 0)
+        return (
+          expected.text !== t.text ||
+          !equal(expected.rect, t.rect) ||
+          expected.baseline !== t.baseline ||
+          expected.height !== t.height
+        )
+      }) ||
+      !proveNativeUniqueWholeFonts(fonts, inventory) ||
+      sameLine.some(
+        (r) =>
+          !r.advanceComplete ||
+          !packet.valid(r.ink) ||
+          r.part.some(
+            ({ g }) =>
+              g.rendererSkipped ||
+              g.textPaint?.fillAlpha !== 1 ||
+              !/^#[a-f0-9]{6}$/iu.test(g.textPaint.fillColor) ||
+              g.textPaint.fillColor.toLowerCase() === '#ffffff'
+          )
+      )
+    )
+      continue
+    if (
+      sameLine.some((r) => {
+        const a = liveGlyphs.records.find((q) => q.index === r.index),
+          b = actualGlyphs.records.find((q) => q.index === r.index)
+        return (
+          !a ||
+          !b ||
+          a.glyphs.length !== b.glyphs.length ||
+          a.glyphs.some((g, i) => glyphSignature(g, true) !== glyphSignature(b.glyphs[i], false))
+        )
+      })
+    )
+      continue
+    const ink = bounds(sameLine.map((r) => r.ink)),
+      adv = bounds(sameLine.map((r) => r.rect)),
+      band = [
+        table.cropRect[0],
+        Math.min(ink[1], adv[1]) * 1.5,
+        table.cropRect[2],
+        Math.max(ink[3], adv[3]) * 1.5
+      ],
+      nativeBand = band.map((n) => n / 1.5),
+      owned = new Set(sameLine.flatMap((r) => r.part.map((z) => z.g)))
+
+    if (
+      !inside(table.cropRect, band) ||
+      captions.some((cap) => hit(cap.rect, band)) ||
+      packet.evidence.images.some(
+        (image) => !packet.valid(image.rect) || hit(image.rect, nativeBand)
+      ) ||
+      packet.glyphs.some((g) => {
+        if (owned.has(g)) return false
+        const empty =
+          g.text === ' ' &&
+          packet.finite(g.ink, 4) &&
+          g.ink[0] === g.ink[2] &&
+          g.ink[1] === g.ink[3]
+        return !empty && (!packet.valid(g.ink) || hit(g.ink, nativeBand))
+      })
+    )
+      continue
+    let safe = true
+    for (const [op, state] of packet.evidence.paths) {
+      const paint = localPairPathPaint(
+        {
+          o: packet.o,
+          v: packet.v,
+          finite: packet.finite,
+          valid: packet.valid,
+          box: packet.box,
+          strokeMargins: packet.strokeMargins
+        },
+        op,
+        state
+      )
+      if (!paint || hit(paint.rect, nativeBand)) {
+        safe = false
+        break
+      }
+    }
+    if (
+      !safe ||
+      nativeRecords.filter((r) => !selected.has(r.index)).some((r) => hit(project(r.rect), band))
+    )
+      continue
+    standaloneRoles.push({ heading, band })
+    // No noncategory source or glyph may cross a new semantic row face.
+    // Existing horizontal merges stay intact on their proved side of that face.
+    const affected = rows.filter((row) => hit(row.rect, band)),
+      sides = new Map()
+    for (const row of affected) {
+      const body = nativeRecords.filter(
+        (r) => !selected.has(r.index) && hit(project(r.rect), row.rect)
+      )
+      if (
+        body.some((r) => r.rect[1] * 1.5 < band[1]) &&
+        body.some((r) => r.rect[3] * 1.5 > band[3])
+      ) {
+        safe = false
+        break
+      }
+      const side = !body.length
+        ? 'empty'
+        : body.every((r) => Math.max(r.rect[3], recordInk(r)[3]) * 1.5 <= band[1])
+          ? 'before'
+          : body.every((r) => Math.min(r.rect[1], recordInk(r)[1]) * 1.5 >= band[3])
+            ? 'after'
+            : undefined
+      if (!side) {
+        safe = false
+        break
+      }
+      sides.set(row, side)
+    }
+
+    if (
+      !safe ||
+      cells.some((cell) => {
+        if (!hit(cell.rect, band)) return false
+        if (
+          cell.rowSpan !== 1 ||
+          !Number.isInteger(cell.colSpan) ||
+          cell.colSpan < 1 ||
+          cell.column < 0 ||
+          cell.column + cell.colSpan > 6
+        )
+          return true
+        const side = sides.get(rows[cell.row]),
+          body = nativeRecords.filter(
+            (r) => !selected.has(r.index) && hit(project(r.rect), cell.rect)
+          )
+        return (
+          !side ||
+          body.some(
+            (r) =>
+              side === 'empty' ||
+              (side === 'before'
+                ? Math.max(r.rect[3], recordInk(r)[3]) * 1.5 > band[1]
+                : Math.min(r.rect[1], recordInk(r)[1]) * 1.5 < band[3])
+          )
+        )
+      })
+    )
+      continue
+    plans.push({ heading: heading.r.str, sources: [...selected], band, affected, sides })
+  }
+  if (
+    standaloneRoles.length < 2 ||
+    !plans.length ||
+    plans.some((p, i) => plans.slice(i + 1).some((q) => hit(p.band, q.band))) ||
+    !keep() ||
+    !localPairWitnessCurrent(witness)
+  )
+    return
+  // Prepare every row/cell/header change before a synchronous atomic commit.
+  // Only a category-only empty layout band is replaced, never body content.
+  const rowCopies = new Map(rows.map((row) => [row, { ...row, rect: [...row.rect] }])),
+    remove = new Set(),
+    added = []
+  for (const plan of plans) {
+    for (const row of plan.affected) {
+      const side = plan.sides.get(row),
+        copy = rowCopies.get(row)
+      if (side === 'empty') remove.add(row)
+      else if (side === 'before') copy.rect[3] = Math.min(copy.rect[3], plan.band[1])
+      else copy.rect[1] = Math.max(copy.rect[1], plan.band[3])
+    }
+    const row = { origin: 'source-text', section: true, rect: plan.band }
+    added.push(row)
+    plan.row = row
+  }
+  const entries = [...rowCopies]
+      .filter(([row]) => !remove.has(row))
+      .map(([key, row]) => ({ key, row }))
+      .concat(added.map((row) => ({ key: row, row })))
+      .sort((a, b) => a.row.rect[1] - b.row.rect[1]),
+    indexes = new Map(entries.map((e, i) => [e.key, i])),
+    nextRows = entries.map((e) => e.row),
+    oldHeaders = headerRows.map((i) => rows[i]),
+    nextHeaders = oldHeaders.map((row) => indexes.get(row))
+  const remap = (list) =>
+    list
+      .filter((cell) => !remove.has(rows[cell.row]))
+      .map((cell) => {
+        const old = rows[cell.row],
+          copy = rowCopies.get(old),
+          rect = [...cell.rect]
+        if (copy.rect[1] !== old.rect[1]) rect[1] = copy.rect[1]
+        if (copy.rect[3] !== old.rect[3]) rect[3] = copy.rect[3]
+        return { ...cell, row: indexes.get(old), rect }
+      })
+  const nextCells = remap(cells),
+    nextBase = remap(baseCells)
+  for (const plan of plans) {
+    const row = indexes.get(plan.row)
+    nextCells.push({
+      row,
+      column: 0,
+      rowSpan: 1,
+      colSpan: 6,
+      origin: 'source-section',
+      rect: plan.band,
+      items: []
+    })
+    for (let column = 0; column < 6; column++)
+      nextBase.push({
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        origin: 'model-grid',
+        rect: [columnRects[column][0], plan.band[1], columnRects[column][2], plan.band[3]]
+      })
+  }
+  if (
+    nextRows.some((row) => !packet.valid(row.rect)) ||
+    nextCells.some((cell) => !packet.valid(cell.rect) || !Number.isInteger(cell.row)) ||
+    nextHeaders.some((i) => !Number.isInteger(i)) ||
+    !keep() ||
+    !localPairWitnessCurrent(witness)
+  )
+    return
+  const writable = (list) =>
+    Array.isArray(list) &&
+    Object.isExtensible(list) &&
+    Object.getOwnPropertyDescriptor(list, 'length')?.writable &&
+    Object.keys(list).every((key) => {
+      const d = Object.getOwnPropertyDescriptor(list, key)
+      return d && Object.hasOwn(d, 'value') && d.writable && d.configurable
+    })
+  if (![rows, cells, baseCells, headerRows, repairs].every(writable)) return
+  Array.prototype.splice.call(rows, 0, rows.length, ...nextRows)
+  Array.prototype.splice.call(
+    cells,
+    0,
+    cells.length,
+    ...nextCells.sort((a, b) => a.row - b.row || a.column - b.column)
+  )
+  Array.prototype.splice.call(baseCells, 0, baseCells.length, ...nextBase)
+  Array.prototype.splice.call(headerRows, 0, headerRows.length, ...nextHeaders)
+  Array.prototype.push.apply(
+    repairs,
+    plans.map(() => 'native-typographic-category-row-recovered')
+  )
 }

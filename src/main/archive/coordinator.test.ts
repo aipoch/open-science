@@ -23,6 +23,78 @@ const session = {
 }
 
 describe('ArchiveCoordinator', () => {
+  it('rechecks local work admission across activity awaits and recovers from a failed check', async () => {
+    const checked = Promise.withResolvers<boolean>()
+    const isSessionLocallyBusy = vi
+      .fn<() => boolean | Promise<boolean>>()
+      .mockReturnValueOnce(checked.promise)
+      .mockRejectedValueOnce(new Error('activity unavailable'))
+      .mockResolvedValue(false)
+    const coordinator = new ArchiveCoordinator(
+      { get: async () => project, updateArchive: vi.fn() },
+      {
+        assertProjectArchivable: vi.fn(),
+        assertSessionAvailable: vi.fn(),
+        sessionProjectId: vi.fn(),
+        updateArchive: vi.fn()
+      },
+      {
+        isSessionBusy: () => true,
+        isSessionLocallyBusy,
+        isProjectBusy: () => true,
+        liveSessionProjectId: () => project.id
+      }
+    )
+    const checking = coordinator.isSessionLocallyBusy(project.id, session.id)
+    const release = coordinator.admitSessionWork(project.id, session.id)
+    checked.resolve(false)
+    await expect(checking).resolves.toBe(true)
+    await expect(coordinator.isSessionLocallyBusy(project.id, session.id)).resolves.toBe(true)
+    expect(isSessionLocallyBusy).toHaveBeenCalledOnce()
+    release()
+    await expect(coordinator.isSessionLocallyBusy(project.id, session.id)).rejects.toThrow(
+      'activity unavailable'
+    )
+    const next = coordinator.admitSessionWork(project.id, session.id)
+    next()
+    await expect(coordinator.isSessionLocallyBusy(project.id, session.id)).resolves.toBe(false)
+    await expect(coordinator.isSessionBusy(project.id, session.id)).resolves.toBe(true)
+  })
+
+  it.each([false, true])(
+    'preserves the activity receiver (local projection: %s)',
+    async (localProjection) => {
+      const runtime = {
+        busy: true,
+        isSessionBusy() {
+          return this.busy
+        },
+        isSessionLocallyBusy: localProjection
+          ? function (this: { busy: boolean }) {
+              return this.busy
+            }
+          : undefined,
+        isProjectBusy: () => true,
+        liveSessionProjectId: () => project.id
+      }
+      const coordinator = new ArchiveCoordinator(
+        { get: async () => project, updateArchive: vi.fn() },
+        {
+          assertProjectArchivable: vi.fn(),
+          assertSessionAvailable: vi.fn(),
+          sessionProjectId: vi.fn(),
+          updateArchive: vi.fn()
+        },
+        runtime
+      )
+      await expect(coordinator.isSessionBusy(project.id, session.id)).resolves.toBe(true)
+      await expect(coordinator.isSessionLocallyBusy(project.id, session.id)).resolves.toBe(true)
+      runtime.busy = false
+      await expect(coordinator.isSessionLocallyBusy(project.id, session.id)).resolves.toBe(false)
+      await expect(coordinator.isSessionBusy(project.id, session.id)).resolves.toBe(false)
+    }
+  )
+
   it.each(['success', 'failure'] as const)(
     'fences recovery deletion against pending and new work and releases after %s',
     async (outcome) => {

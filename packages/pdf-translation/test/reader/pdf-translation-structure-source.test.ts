@@ -841,9 +841,19 @@ describe('verified structure source bridge', () => {
           else element.caption!.regions = [{ ...element.regions[0] }]
         }
         const result = await applyCachedPdfStructureSources(f.args)
-        expect(result.retainedUnitIds).toEqual([])
-        expect(result.extraction).toBe(f.args.extraction)
-        expect(result.extraction.source.originalRegions).toBeUndefined()
+        if (kind === 'table' && (variant === 'mixed-prose' || variant === 'mixed-caption')) {
+          expect(result.retainedUnitIds).toEqual(['native-0', 'native-2', 'native-4', 'native-6'])
+          expect(result.retainedSourcePageNumbers).toEqual([1])
+          expect(result.extraction.source.units).toEqual(
+            f.args.extraction.source.units.map((u) =>
+              result.retainedUnitIds.includes(u.id) ? { ...u, sourceOnly: true } : u
+            )
+          )
+        } else {
+          expect(result.retainedUnitIds).toEqual([])
+          expect(result.extraction).toBe(f.args.extraction)
+        }
+        expect(result.extraction.source.originalRegions ?? []).toEqual([])
       } finally {
         await f.loading.destroy()
       }

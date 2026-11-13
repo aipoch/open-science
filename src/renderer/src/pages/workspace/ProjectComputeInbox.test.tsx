@@ -514,6 +514,79 @@ describe('Project Compute inbox', () => {
     expect(container.textContent).not.toContain('Fit remote model')
   })
 
+  it.each([
+    { execution_mode: 'direct_ssh' as const, expected: 'Unable to confirm cancellation' },
+    { execution_mode: undefined, expected: 'Unable to confirm cancellation' },
+    { execution_mode: 'slurm' as const, expected: 'Running' }
+  ])(
+    'keeps an old $execution_mode cancellation failure visible and openable as $expected',
+    async ({ execution_mode, expected }) => {
+      vi.useFakeTimers()
+      const now = Date.parse('2026-09-07T08:00:00.000Z')
+      vi.setSystemTime(now)
+      const openSession = vi.fn()
+      useNavigationStore.setState({ openSession })
+      const oldJob = computeJob({
+        execution_mode,
+        status: 'running',
+        created_at: now - 72 * 60 * 60 * 1_000,
+        started_at: now - 72 * 60 * 60 * 1_000,
+        finished_at: undefined,
+        cancellation_status: 'failed',
+        cancellation_error: {
+          code: 'cancel_confirmation_failed',
+          message: 'Remote cancellation could not be confirmed.'
+        }
+      })
+      const jobsList = vi.fn().mockResolvedValue([oldJob])
+      let onJobUpdated: ((job: JobSummary) => void) | undefined
+      Object.assign(window, {
+        api: {
+          notebook: {
+            getProjectActivity: vi.fn().mockResolvedValue({ kernels: [], backgroundRuns: [] }),
+            onChanged: vi.fn(() => () => undefined)
+          },
+          compute: {
+            jobsList,
+            onJobUpdated: (listener: typeof onJobUpdated) => {
+              onJobUpdated = listener
+              return () => undefined
+            }
+          }
+        }
+      })
+      const container = document.createElement('div')
+      document.body.append(container)
+      root = createRoot(container)
+
+      await act(async () => root?.render(<ProjectComputeInbox />))
+
+      // Mobile and desktop both report the unresolved cancellation, without expiring it
+      // as a completed job or removing the route to its Session and Retry action.
+      expect(container.querySelector('summary')?.textContent).toContain(expected)
+      expect(container.querySelector('dl.hidden')?.textContent).toContain(expected)
+      const goToSession = container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Go to Session"]'
+      )!
+      expect(goToSession.disabled).toBe(false)
+      act(() => goToSession.click())
+      expect(openSession).toHaveBeenCalledWith('project-1', 'session-attention', 'user')
+      await act(async () => vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1_000))
+      expect(jobsList).toHaveBeenCalledOnce()
+      expect(container.textContent).toContain('Fit remote model')
+
+      const retryingJob: JobSummary = {
+        ...oldJob,
+        cancellation_status: 'cancelling',
+        cancellation_error: undefined
+      }
+      jobsList.mockResolvedValue([retryingJob])
+      await act(async () => onJobUpdated?.(retryingJob))
+      expect(container.querySelector('summary')?.textContent).toContain('Cancelling')
+      expect(container.textContent).not.toContain('Unable to confirm cancellation')
+    }
+  )
+
   it('refreshes Kernel and Compute Job queries only from their matching Project events', async () => {
     const calls: string[] = []
     let notebookChanged: ((event: { projectId: string }) => void) | undefined

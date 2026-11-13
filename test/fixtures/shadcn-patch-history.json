@@ -100,5 +100,18 @@
       [15037, 0, ",s"]
     ],
     "pauseApi": true
+  },
+  {
+    "commit": "a5498d8ad",
+    "sha256": "c5e6eae72d422fe2561b00050271ca48376cdf7e16d120bd72a92cc79ed2e161",
+    "edits": [
+      [243, 0, "d:false,pause"],
+      [6207, 0, "&&e.paused===t.paused"],
+      [9696, 0, "{...s,paused:u.current===\"paused-by-interaction\",...("],
+      [9728, 5, ""],
+      [9744, 1, "{})}"],
+      [19361, 0, "||u.paused"]
+    ],
+    "pauseApi": true
   }
 ]

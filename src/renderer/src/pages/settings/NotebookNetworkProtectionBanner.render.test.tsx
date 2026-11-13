@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
+import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 let container: HTMLDivElement
 let root: Root
@@ -15,6 +16,7 @@ const flush = async (): Promise<void> => {
 }
 
 beforeEach(() => {
+  useSettingsStore.setState(createInitialSettingsState())
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -37,20 +39,44 @@ describe('NotebookNetworkProtectionBanner', () => {
     await act(async () => root.render(<NotebookNetworkProtectionBanner onOpen={onOpen} />))
     await flush()
 
-    expect(container.textContent).toContain('Network protection on')
-    expect(container.textContent).toContain(
-      'Notebook allows approved domains and restricted public HTTPS reads. GET and HEAD still send URLs; approved domains allow sending data.'
-    )
-    expect(
-      container
-        .querySelector('[data-testid="notebook-network-protection-banner"]')
-        ?.getAttribute('data-notice-inline')
-    ).toBe('true')
+    expect(container.querySelector('h3')?.textContent).toBe('Notebook network access')
+    expect(container.textContent).toContain('Relaxed mode')
+    expect(container.textContent).toContain('HTTPS domains connect directly')
+    expect(container.textContent).toContain('0 saved addresses')
+    expect(container.querySelectorAll('li')).toHaveLength(3)
+    expect(container.querySelector('button')?.textContent).toBe('Manage access')
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button')?.click()
     })
     expect(onOpen).toHaveBeenCalledOnce()
+  })
+
+  it('updates the runtime summary from the same saved strict rules and groups', async () => {
+    await act(async () => root.render(<NotebookNetworkProtectionBanner onOpen={() => {}} />))
+    await flush()
+    await act(async () =>
+      useSettingsStore.setState({
+        notebookNetwork: {
+          ...useSettingsStore.getState().notebookNetwork,
+          mode: 'strict',
+          strictWhitelist: [
+            {
+              id: 'one',
+              protocol: 'https',
+              hostnamePattern: 'example.org',
+              port: 443,
+              origin: 'manual'
+            }
+          ],
+          strictWhitelistGroups: [{ id: 'research', name: 'Research' }]
+        }
+      })
+    )
+    expect(container.textContent).toContain('Strict mode')
+    expect(container.textContent).toContain('Whitelist matches can connect')
+    expect(container.textContent).toContain('1 rule · 1 group')
+    expect(container.textContent).not.toContain('HTTPS domains connect directly')
   })
 
   it('keeps Windows standard execution available without claiming protection or requiring setup to run', async () => {
@@ -136,7 +162,7 @@ describe('NotebookNetworkProtectionBanner', () => {
     })
 
     expect(getStatus).toHaveBeenCalledTimes(2)
-    expect(container.textContent).toContain('Network protection on')
+    expect(container.textContent).toContain('Notebook network access')
     vi.useRealTimers()
   })
 })

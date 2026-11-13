@@ -4532,7 +4532,10 @@ const PdfReaderContent = ({
           </p>
         ) : null}
         {pdfBookmarkSourceUnavailable ? (
-          <p role="status" className="shrink-0 px-3 py-1 text-xs text-status-warning-foreground">
+          <p
+            role="status"
+            className="shrink-0 px-3 py-1 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground"
+          >
             {t('PDF annotations are unavailable for this source.')}
           </p>
         ) : null}

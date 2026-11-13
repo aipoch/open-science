@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- test fixtures */
 import { expect, it } from 'vitest'
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, StandardFonts, rgb, setCharacterSqueeze } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { createHash } from 'node:crypto'
 import { retainUnstructuredTablePages } from '../../src/reader/unstructured-table-retention.js'
@@ -13,33 +13,60 @@ async function setup(
   wrappedCaption = false,
   filledRails = false,
   openBottom = false,
-  headerCase?: string
+  headerCase?: string,
+  heading = 'Phase A'
 ) {
+  const centered = headerCase?.startsWith('centered'),
+    records = [
+      ['Setting', heading, 'Phase B'],
+      ['Mode', 'Alpha', 'Beta'],
+      ['Count', '4', '8'],
+      ['Variant', 'Short', 'Long']
+    ]
   const pdf = await PDFDocument.create(),
     page = pdf.addPage([200, 200]),
     font = await pdf.embedFont(StandardFonts.Helvetica)
   for (let row = 0; row < 4; row++)
-    for (let col = 0; col < 3; col++)
-      page.drawText(
-        headerCase && row === 0
+    for (let col = 0; col < 3; col++) {
+      if (headerCase === 'centered-shared' && row === 0 && col === 2) continue
+      const value = centered
+        ? headerCase === 'centered-shared' && row === 0 && col === 1
+          ? 'Phases A and B'
+          : records[row][col]
+        : headerCase && row === 0
           ? ['Type score', 'Rate', 'Group score'][col]
-          : `${row + 1}${col + 1}`,
-        {
-          x: headerCase === 'straddle' && row === 0 && col === 0 ? 60 : 25 + col * 50,
-          y:
-            170 -
-            row * 15 -
-            (headerCase && row === 0 && col === 1 && headerCase !== 'same-baseline' ? 5 : 0),
-          size: 8,
-          font
-        }
-      )
+          : `${row + 1}${col + 1}`
+      const naturalWidth = font.widthOfTextAtSize(value, 8),
+        width = centered && row === 0 && col === 1 ? Math.min(naturalWidth, 32) : naturalWidth
+      // Keep the complete hostile heading in its lane, so the native grammar must inspect it.
+      if (width < naturalWidth)
+        page.pushOperators(setCharacterSqueeze((width / naturalWidth) * 100))
+      page.drawText(value, {
+        x:
+          centered && col > 0
+            ? (headerCase === 'centered-shared' && row === 0 ? 127.5 : 100 + (col - 1) * 55) -
+              width / 2 +
+              (headerCase === 'centered-misaligned' && row === 2 && col === 2 ? 2 : 0)
+            : headerCase === 'straddle' && row === 0 && col === 0
+              ? 60
+              : 25 + col * 50,
+        y:
+          170 -
+          row * 15 -
+          (headerCase && !centered && row === 0 && col === 1 && headerCase !== 'same-baseline'
+            ? 5
+            : 0),
+        size: 8,
+        font
+      })
+      if (width < naturalWidth) page.pushOperators(setCharacterSqueeze(100))
+    }
   for (const y of openBottom ? [180, 150, 135] : terminalRule ? [180, 135, 120] : [180, 135]) {
     if (filledRails)
       page.drawRectangle({ x: 20, y: y - 0.4, width: 160, height: 0.8, color: rgb(0, 0, 0) })
     else page.drawLine({ start: { x: 20, y }, end: { x: 180, y }, thickness: 0.5 })
   }
-  for (const x of headerCase === 'missing-fence' ? [70] : [70, 120])
+  for (const x of centered ? [] : headerCase === 'missing-fence' ? [70] : [70, 120])
     page.drawLine({
       start: { x, y: headerCase === 'partial-band' && x === 120 ? 170 : terminalRule ? 120 : 135 },
       end: { x, y: 180 },
@@ -58,7 +85,11 @@ async function setup(
     rows = content.items.flatMap((item, index) =>
       'str' in item && item.str.trim() ? [{ item, index }] : []
     ),
-    body = headerCase ? rows.slice(0, 12) : rows.filter(({ item }) => /^\d\d$/u.test(item.str)),
+    body = centered
+      ? rows.filter(({ item }) => item.transform[5] >= 125)
+      : headerCase
+        ? rows.slice(0, 12)
+        : rows.filter(({ item }) => /^\d\d$/u.test(item.str)),
     fragments = (records: typeof body) => [
       {
         pageNumber: 1,
@@ -178,7 +209,14 @@ async function setup(
               : 'Table 1: Native record values',
             regions: [{ page: 1, x: 0.1, y: 0.5, width: 0.8, height: wrappedCaption ? 0.13 : 0.06 }]
           },
-          issues: [{ code: 'no-source-cell-grid', detail: 'no-source-cell-grid' }]
+          issues: (centered
+            ? [
+                'native-table-structure-ambiguous',
+                'no-source-cell-grid',
+                'native-centered-headed-record-lanes-collapsed'
+              ]
+            : ['no-source-cell-grid']
+          ).map((code) => ({ code, detail: code }))
         }
       ],
       thumbnails: [],
@@ -195,6 +233,70 @@ async function setup(
     }
   return { args, cached, body, task, owners }
 }
+
+it('retains independent centered record lanes without native column fences', async () => {
+  const f = await setup(true, false, false, false, 'centered')
+  try {
+    const out = await retainUnstructuredTablePages(f.args),
+      bodyIds = f.owners
+        .filter((owner) => !owner.id.startsWith('outside-'))
+        .map((owner) => owner.id)
+    expect(out.retainedUnitIds).toEqual(bodyIds)
+    expect(out.retainedSourcePageNumbers).toEqual([1])
+    expect(out.extraction.source.originalRegions).toBeUndefined()
+    expect(
+      out.extraction.source.units.filter((unit) => unit.sourceOnly).map((unit) => unit.id)
+    ).toEqual(bodyIds)
+    expect(out.extraction.source.units.map((unit) => ({ ...unit, sourceOnly: undefined }))).toEqual(
+      f.owners.map((unit) => ({ ...unit, sourceOnly: undefined }))
+    )
+    const projected = await applyCachedPdfStructureSources({
+      ...f.args,
+      preserveUnitIdentity: true
+    })
+    expect(projected.retainedUnitIds).toEqual(bodyIds)
+    expect(projected.retainedSourcePageNumbers).toEqual([1])
+    expect(projected.extraction.source.originalRegions ?? []).toEqual([])
+  } finally {
+    await f.task.destroy()
+  }
+})
+
+it.each([
+  ['AB12-3', true],
+  ['ÅB2', true],
+  ['A12', false],
+  ['AB--3', false],
+  ['AB' + '0'.repeat(96), true],
+  ['AB' + '0'.repeat(96) + '!', false]
+] as const)(
+  'rechecks complete native heading text before retaining lanes: %s',
+  async (heading, expected) => {
+    const f = await setup(true, false, false, false, 'centered', heading)
+    try {
+      const out = await retainUnstructuredTablePages(f.args)
+      expect(out.retainedSourcePageNumbers).toEqual(expected ? [1] : [])
+      if (!expected) expect(out.extraction).toBe(f.args.extraction)
+    } finally {
+      await f.task.destroy()
+    }
+  }
+)
+
+it.each(['centered-shared', 'centered-misaligned', 'centered-open-bottom'])(
+  'does not trust a centered-lane marker without the native family: %s',
+  async (kind) => {
+    const f = await setup(kind !== 'centered-open-bottom', false, false, false, kind)
+    try {
+      const out = await retainUnstructuredTablePages(f.args)
+      expect(out.extraction).toBe(f.args.extraction)
+      expect(out.retainedUnitIds).toEqual([])
+      expect(out.retainedSourcePageNumbers).toEqual([])
+    } finally {
+      await f.task.destroy()
+    }
+  }
+)
 
 it('retains complete packed table owners and its source page without inventing a crop', async () => {
   const f = await setup()

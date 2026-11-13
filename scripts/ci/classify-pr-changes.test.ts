@@ -315,6 +315,12 @@ describe('pull request change classification', () => {
     )
   })
 
+  it('checks the glossary on German README edits', () => {
+    const plan = classifyChanges([{ path: 'docs/de/README.md', status: 'modified' }])
+
+    expect(plan.lanes).toEqual(['policy', 'docs', 'i18n'])
+  })
+
   it.each([
     ['packages/open-science/CLI.md', 'cli_sdk'],
     ['packages/open-science/README.md', 'cli_sdk'],

@@ -1,8 +1,9 @@
 import type { ComputeConnectionLease } from './connection'
-import { isConnectionStdoutTruncated } from './connection'
+import { classifyConnectionFailure, isConnectionStdoutTruncated } from './connection'
 import { quoteRemotePath } from './remote-path-security'
 
 export type RemoteJobProcessOwnership = 'owned' | 'mismatch' | 'absent' | 'unknown'
+export type RemoteJobProcessTermination = 'terminated' | 'ownership-unknown' | 'unconfirmed'
 
 const validPid = (pid: number): void => {
   if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error('Invalid remote process id.')
@@ -51,24 +52,33 @@ export const remoteJobPidOwnershipFunctionLines = (): string[] => [
 // only -pid leaves timeout and its descendants running. All consumers share this boundary.
 export const remoteJobPidTerminationFunctionLines = (): string[] => [
   ...remoteJobPidOwnershipFunctionLines(),
+  'job_pid_remains_owned() {',
+  '  job_pid_is_owned "$1"',
+  '  ownership=$?',
+  // Keep the exit protocol used by deletion and timeout callers. Cancellation additionally
+  // needs to distinguish lost identity evidence from an owned workload that resists termination.
+  '  [ "$ownership" -ne 2 ] || job_ownership_unknown=1',
+  '  return "$ownership"',
+  '}',
   'kill_job_pid() {',
+  '  job_ownership_unknown=0',
   '  pid=$1',
   "  case $pid in ''|*[!0-9]*) return 2 ;; esac",
-  '  job_pid_is_owned "$pid"',
+  '  job_pid_remains_owned "$pid"',
   '  ownership=$?',
   '  [ "$ownership" -eq 0 ] || return "$ownership"',
   // The cwd witness must also belong to the original setsid session. Freeze its group so it
   // anchors session identity until the other groups have exited, even for an orphaned launcher.
-  '  members=$(job_session_processes) || return 2',
-  `  anchor_group=$(printf '%s\\n' "$members" | awk -v owner="$owner_pid" '$1 == owner { print $2 }') || return 2`,
-  '  [ -n "$anchor_group" ] || return 2',
+  '  members=$(job_session_processes) || { job_ownership_unknown=1; return 2; }',
+  `  anchor_group=$(printf '%s\\n' "$members" | awk -v owner="$owner_pid" '$1 == owner { print $2 }') || { job_ownership_unknown=1; return 2; }`,
+  '  [ -n "$anchor_group" ] || { job_ownership_unknown=1; return 2; }',
   '  kill -STOP -- -$anchor_group 2>/dev/null || return 2',
-  '  job_pid_is_owned "$pid" || return 2',
+  '  job_pid_remains_owned "$pid" || return 2',
   '  members=$(job_session_processes) || return 2',
   `  groups=$(printf '%s\\n' "$members" | awk -v anchor="$anchor_group" '$2 != anchor { print $2 }' | sort -u) || return 2`,
   '  for group in $groups; do',
   // The stopped cwd witness anchors session identity throughout workload termination.
-  '    job_pid_is_owned "$pid" || return 2',
+  '    job_pid_remains_owned "$pid" || return 2',
   '    members=$(job_session_processes) || return 2',
   `    printf '%s\\n' "$members" | awk -v group="$group" '$2 == group { found=1 } END { exit !found }' || continue`,
   // Send one final signal: TERM followed immediately by KILL can destroy the group and
@@ -83,7 +93,7 @@ export const remoteJobPidTerminationFunctionLines = (): string[] => [
   '    sleep 0.1',
   '  done',
   '  [ -z "$remaining" ] || return 2',
-  '  job_pid_is_owned "$pid" || return 2',
+  '  job_pid_remains_owned "$pid" || return 2',
   '  kill -KILL -- -$anchor_group 2>/dev/null || return 2',
   '  for attempt in 1 2 3 4 5; do',
   '    members=$(job_session_processes) || return 2',
@@ -117,7 +127,10 @@ const guardedTerminationCommand = (pid: number, workdir: string): string => {
   return [
     ...canonicalWorkdirLines(workdir),
     ...remoteJobPidTerminationFunctionLines(),
-    `kill_job_pid ${pid}`
+    `kill_job_pid ${pid}`,
+    'termination_status=$?',
+    'if [ "$termination_status" -ne 0 ] && [ "$job_ownership_unknown" = 1 ]; then echo ownership-unknown; fi',
+    'exit "$termination_status"'
   ].join('\n')
 }
 
@@ -126,43 +139,45 @@ export const probeRemoteJobProcessOwnership = async (
   workdir: string,
   connection: ComputeConnectionLease
 ): Promise<RemoteJobProcessOwnership> => {
-  let result
-  try {
-    result = await connection.run(ownershipProbeCommand(pid, workdir), {
-      timeoutMs: 10_000,
-      loginShell: false,
-      maxOutputBytes: 64
-    })
-  } catch {
-    return 'unknown'
-  }
-  if (result.timedOut || isConnectionStdoutTruncated(result) || result.exitCode !== 0)
-    return 'unknown'
+  const result = await connection.run(ownershipProbeCommand(pid, workdir), {
+    timeoutMs: 10_000,
+    loginShell: false,
+    maxOutputBytes: 64
+  })
+  const failure = classifyConnectionFailure(result, false)
+  if (failure) throw failure
+  if (isConnectionStdoutTruncated(result) || result.exitCode !== 0) return 'unknown'
   const ownership = result.stdout.trim()
   return ownership === 'owned' || ownership === 'mismatch' || ownership === 'absent'
     ? ownership
     : 'unknown'
 }
 
+export const terminateRemoteJobProcess = async (
+  pid: number,
+  workdir: string,
+  connection: ComputeConnectionLease
+): Promise<RemoteJobProcessTermination> => {
+  const result = await connection.run(guardedTerminationCommand(pid, workdir), {
+    timeoutMs: 10_000,
+    loginShell: false,
+    maxOutputBytes: 64
+  })
+  const failure = classifyConnectionFailure(result, false)
+  if (failure) throw failure
+  if (isConnectionStdoutTruncated(result)) return 'unconfirmed'
+  const evidence = result.stdout.trim()
+  if (result.exitCode === 0 && evidence === 'terminated') return 'terminated'
+  if (
+    (result.exitCode === 0 && evidence === 'unknown') ||
+    (result.exitCode === 2 && evidence === 'ownership-unknown')
+  )
+    return 'ownership-unknown'
+  return 'unconfirmed'
+}
+
 export const terminateRemoteJobProcessIfOwned = async (
   pid: number,
   workdir: string,
   connection: ComputeConnectionLease
-): Promise<boolean> => {
-  let result
-  try {
-    result = await connection.run(guardedTerminationCommand(pid, workdir), {
-      timeoutMs: 10_000,
-      loginShell: false,
-      maxOutputBytes: 64
-    })
-  } catch {
-    return false
-  }
-  return (
-    !result.timedOut &&
-    !isConnectionStdoutTruncated(result) &&
-    result.exitCode === 0 &&
-    result.stdout.trim() === 'terminated'
-  )
-}
+): Promise<boolean> => (await terminateRemoteJobProcess(pid, workdir, connection)) === 'terminated'

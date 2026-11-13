@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, readdir, rename, rm } from 'node:fs/promises'
+import { lstat, mkdir, readdir, rename, rm, rmdir } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 import type { ComputeJobSessionOwner } from '@aipoch/compute'
@@ -58,6 +58,7 @@ const createSafeDirectory = async (directory: string, label: string): Promise<vo
 }
 
 export class SessionCacheOwner {
+  private readonly startupCutoff = Date.now()
   private readonly storageRoot: string
   private readonly computeRoot: string
   private readonly root: string
@@ -184,6 +185,68 @@ export class SessionCacheOwner {
         }
       }
     }
+  }
+
+  async planSessionReconciliation(
+    sessions: readonly { sessionId: string; projectId: string }[]
+  ): Promise<Array<{ projectId: string; sessionId: string; apply(): Promise<void> }>> {
+    const present = new Set(
+      sessions.map(({ projectId, sessionId }) => this.sessionKey(projectId, sessionId))
+    )
+    const actions: Array<{ projectId: string; sessionId: string; apply(): Promise<void> }> = []
+    if (!(await this.assertSafePath())) return actions
+    for (const project of await readdir(this.root, { withFileTypes: true })) {
+      if (project.isSymbolicLink()) throw new Error('Unsafe Session cache Project directory.')
+      if (!project.isDirectory() || !isSafeSegment(project.name)) continue
+      const directory = join(this.root, project.name)
+      for (const session of await readdir(directory, { withFileTypes: true })) {
+        if (session.isSymbolicLink()) throw new Error('Unsafe Session cache Session directory.')
+        if (!session.isDirectory() || !isSafeSegment(session.name)) continue
+        const path = join(directory, session.name)
+        const before = await lstat(path)
+        const key = this.sessionKey(project.name, session.name)
+        const exists = present.has(key)
+        if (
+          !exists &&
+          (before.mtimeMs >= this.startupCutoff || before.ctimeMs >= this.startupCutoff)
+        )
+          continue
+        actions.push({
+          projectId: project.name,
+          sessionId: session.name,
+          apply: async () => {
+            // Native cache admission is synchronous, so checking and reserving this owner cannot race
+            // a new operation. Background absence never waits for or cancels live work.
+            if ((this.activeOperations.get(key)?.size ?? 0) > 0)
+              throw new Error('Session cache cleanup is waiting for live work.')
+            if (exists) {
+              await this.removeInterruptedOperations(project.name, session.name)
+              return
+            }
+            this.reconcilingSessions.add(key)
+            try {
+              if (!(await this.assertSafePath(project.name, session.name))) return
+              const current = await lstat(path)
+              if (
+                current.dev !== before.dev ||
+                current.ino !== before.ino ||
+                current.mtimeMs !== before.mtimeMs ||
+                current.ctimeMs !== before.ctimeMs
+              )
+                throw new Error('Session cache cleanup ownership changed.')
+              await rm(path, { recursive: true, force: true })
+              this.closedSessions.add(key)
+              await rmdir(directory).catch((error: NodeJS.ErrnoException) => {
+                if (error.code !== 'ENOTEMPTY' && error.code !== 'ENOENT') throw error
+              })
+            } finally {
+              this.reconcilingSessions.delete(key)
+            }
+          }
+        })
+      }
+    }
+    return actions
   }
 
   private registerOperation(projectId: string, sessionId: string): () => void {

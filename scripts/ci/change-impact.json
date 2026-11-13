@@ -150,6 +150,12 @@
       "capabilities": ["documentation"]
     },
     {
+      "id": "german_readme_glossary",
+      "role": "overlay",
+      "paths": ["docs/de/README.md"],
+      "capabilities": ["i18n_catalog"]
+    },
+    {
       "id": "issue_template",
       "role": "owner",
       "paths": [".github/ISSUE_TEMPLATE/*.yml", ".github/ISSUE_TEMPLATE/*.yaml"],
@@ -549,6 +555,8 @@
         "e2e/pdf-translation-performance.spec.ts",
         "e2e/runtime-approval.spec.ts",
         "e2e/network-destination-approval.spec.ts",
+        "e2e/notebook-network-entry.spec.ts",
+        "e2e/notebook-network-modes.spec.ts",
         "e2e/pi-harness.spec.ts",
         "e2e/builtin-harness.spec.ts",
         "e2e/session-wait-status.spec.ts",
