@@ -67,6 +67,7 @@ export const dataRootIdentity = (target: string): string => {
         entries(target).map((name) => [name, identity(join(target, name))]),
         entries(receipts).map((name) => {
           const path = join(receipts, name)
+          // Only the retirement directory is expected here. Other entries must be readable receipts.
           if (name === RETIRED_WORKSPACES_DIR) {
             if (!lstatSync(path).isDirectory()) throw new Error('Retired workspace path is unsafe.')
             return [
