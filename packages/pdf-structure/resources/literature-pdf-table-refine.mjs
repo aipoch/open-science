@@ -1299,7 +1299,14 @@ export function recoverRuledTerminalColumn(table, pageItems, rules, captions = [
 // closing rule spanning the extended crop. This proof runs before ordinary
 // crop reconciliation so the source tokens remain available to the native
 // record planners.
-export function recoverNativeRightmostNumericColumn(table, pageItems, rules, captions = []) {
+export function recoverNativeRightmostNumericColumn(
+  table,
+  pageItems,
+  rules,
+  captions = [],
+  recordGrid
+) {
+  if (recordGrid) return
   const crop = table?.cropRect,
     columns = table?.structure?.objects
       ?.filter((o) => o.label === 'table column')
@@ -1472,12 +1479,26 @@ export function normalizeNativeRightmostHeader({ cells, unassigned, issues, repa
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => /^drop\s*50%$/iu.test(item?.text ?? ''))
   if (exact.length !== 1) return false
+  const sameSource = (a, b) =>
+    a === b ||
+    (a?.text === b?.text &&
+      Array.isArray(a?.rect) &&
+      Array.isArray(b?.rect) &&
+      a.rect.length === 4 &&
+      b.rect.length === 4 &&
+      a.rect.every((value, index) => Math.abs(value - b.rect[index]) <= 0.05))
+  const exactItem = exact[0].item
   const extras = sourceItems.filter((item, index) => !exact.some((entry) => entry.index === index))
   if (!extras.length) return false
-  cell.text = exact[0].item.text
+  cell.text = exactItem.text
   cell.sourceRects = [sourceRects[exact[0].index]]
-  if (usingSourceItems) cell.sourceItems = [exact[0].item]
-  else if (Array.isArray(cell.sourceTokens)) cell.sourceTokens = [exact[0].item]
+  if (Array.isArray(cell.sourceItems))
+    cell.sourceItems = cell.sourceItems.filter((item) => sameSource(item, exactItem))
+  if (Array.isArray(cell.sourceTokens))
+    cell.sourceTokens = cell.sourceTokens.filter((item) => sameSource(item, exactItem))
+  if (usingSourceItems && !cell.sourceItems.length) cell.sourceItems = [exactItem]
+  if (!usingSourceItems && Array.isArray(cell.sourceTokens) && !cell.sourceTokens.length)
+    cell.sourceTokens = [exactItem]
   for (const item of extras)
     if (item?.text && !unassigned.includes(item.text)) unassigned.push(item.text)
   issues?.add?.('unassigned-source-text')
@@ -1776,6 +1797,7 @@ export function recoverNativeInlineGroupLabels({
       return false
     const items = unassigned.reconciliationItems
     if (!Array.isArray(items)) return false
+    const stub = columnRects[0]
     const candidates = items.filter(
       (item) =>
         item?.horizontal !== false &&
@@ -1788,7 +1810,9 @@ export function recoverNativeInlineGroupLabels({
         item.rect[2] <= right &&
         item.rect[1] >= top &&
         item.rect[3] <= bottom &&
-        /^(?:Hopper|Blackwell)$/u.test(item.text.trim())
+        /^(?:Hopper|Blackwell)$/u.test(item.text.trim()) &&
+        (item.rect[0] + item.rect[2]) / 2 >= stub[0] &&
+        (item.rect[0] + item.rect[2]) / 2 <= stub[2]
     )
     if (candidates.length !== 2 || new Set(candidates.map((item) => item.text.trim())).size !== 2)
       return false
@@ -1797,6 +1821,21 @@ export function recoverNativeInlineGroupLabels({
       .filter((height) => Number.isFinite(height) && height > 0)
     const height = heights[0]
     if (!(height > 0)) return false
+    const completePeerRow = (rowIndex) => {
+      const rowCells = cells.filter(
+        (cell) =>
+          cell.row === rowIndex &&
+          cell.rowSpan === 1 &&
+          cell.colSpan === 1 &&
+          cell.text?.trim() &&
+          (cell.sourceItems?.length || cell.sourceTokens?.length)
+      )
+      return (
+        rowCells.length === columnRects.length &&
+        new Set(rowCells.map((cell) => cell.column)).size === columnRects.length &&
+        rowCells.every((cell) => cell.column >= 0 && cell.column < columnRects.length)
+      )
+    }
     const frameRules = joinHorizontalTableRules(rules).filter(
       (rule) =>
         rule.every(Number.isFinite) &&
@@ -1827,6 +1866,13 @@ export function recoverNativeInlineGroupLabels({
         return Number.isFinite(peer) ? peer > baseline : row.rect?.[1] > item.rect[1]
       })
       const rowIndex = index < 0 ? rows.length : index
+      if (
+        rowIndex <= 0 ||
+        rowIndex >= rows.length ||
+        !completePeerRow(rowIndex - 1) ||
+        !completePeerRow(rowIndex)
+      )
+        return false
       const previous = rowIndex > 0 ? rowBaseline(rowIndex - 1) : undefined
       const next = rowIndex < rows.length ? rowBaseline(rowIndex) : undefined
       if (
@@ -1910,6 +1956,30 @@ export function recoverNativeUnassignedNumericCell({
     if (candidates.length !== 1) return false
     const item = candidates[0]
     const hasSource = (cell) => cell.sourceItems?.length || cell.sourceTokens?.length
+    const itemCenter = (item.rect[0] + item.rect[2]) / 2
+    const itemBaseline = Number.isFinite(item.baseline) ? item.baseline : item.rect[3]
+    const matchesCellRowAndColumn = (cell, peers) => {
+      if (!Array.isArray(cell.rect) || cell.rect.length !== 4) return false
+      if (itemCenter < cell.rect[0] || itemCenter > cell.rect[2]) return false
+      const rowTop = Math.min(cell.rect[1], ...peers.map((peer) => peer.rect[1]))
+      const rowBottom = Math.max(cell.rect[3], ...peers.map((peer) => peer.rect[3]))
+      const overlap = Math.max(
+        0,
+        Math.min(item.rect[3], rowBottom) - Math.max(item.rect[1], rowTop)
+      )
+      const rowHeight = Math.max(rowBottom - rowTop, item.height)
+      const baselineValues = peers
+        .flatMap((peer) => [...(peer.sourceItems ?? []), ...(peer.sourceTokens ?? [])])
+        .map((source) => (Number.isFinite(source?.baseline) ? source.baseline : source?.rect?.[3]))
+        .filter(Number.isFinite)
+      const rowBaseline = baselineValues.length
+        ? baselineValues.sort((a, b) => a - b)[Math.floor(baselineValues.length / 2)]
+        : (rowTop + rowBottom) / 2
+      return (
+        overlap >= Math.min(item.height, rowHeight) * 0.35 ||
+        Math.abs(itemBaseline - rowBaseline) <= Math.max(item.height, rowHeight) * 0.45
+      )
+    }
     const emptyCells = cells.filter(
       (cell) =>
         cell.row > 0 &&
@@ -1920,7 +1990,6 @@ export function recoverNativeUnassignedNumericCell({
         Array.isArray(cell.rect) &&
         cell.rect.every(Number.isFinite)
     )
-    const itemCenter = (item.rect[0] + item.rect[2]) / 2
     const targetCandidates = emptyCells
       .map((cell) => ({
         cell,
@@ -1934,7 +2003,10 @@ export function recoverNativeUnassignedNumericCell({
             /^\d[\d,]*(?:\.\d+)?\s*\(\d+(?:\.\d+)?%\)$/u.test(peer.text?.trim() ?? '')
         )
       }))
-      .filter(({ center, sameRow, peerRows }) => sameRow.length >= 5 && peerRows.length >= 2)
+      .filter(
+        ({ sameRow, peerRows, cell }) =>
+          sameRow.length >= 5 && peerRows.length >= 2 && matchesCellRowAndColumn(cell, sameRow)
+      )
       .sort((a, b) => Math.abs(a.center - itemCenter) - Math.abs(b.center - itemCenter))
     if (targetCandidates.length > 1) {
       const best = Math.abs(targetCandidates[0].center - itemCenter)
@@ -1949,7 +2021,14 @@ export function recoverNativeUnassignedNumericCell({
     let target = targetCandidates.length === 1 ? targetCandidates[0].cell : undefined
     if (!target && shapeFallback) {
       const exact = rowOneEmptyCells[0]
-      if (exact) target = exact
+      if (
+        exact &&
+        matchesCellRowAndColumn(
+          exact,
+          cells.filter((cell) => cell.row === 1 && cell.text?.trim())
+        )
+      )
+        target = exact
     }
     if (!target) return false
     const peerItems = cells
@@ -3187,32 +3266,7 @@ export function refineTable(
     table = rebaseTableCrop(table, independentTextRecords.cropRect)
   table = separateAdjacentNumericPanel(table, pageItems, rules)
   const originalCrop = table.cropRect
-  const rightmostNumericColumn = recoverNativeRightmostNumericColumn(
-    table,
-    pageItems,
-    rules,
-    captions
-  )
-  if (rightmostNumericColumn) {
-    table = rebaseTableCrop(table, rightmostNumericColumn.cropRect, true)
-    const lastColumn = table.structure.objects
-      .filter((o) => o.label === 'table column')
-      .sort((a, b) => a.rect[2] - b.rect[2])
-      .at(-1)
-    if (lastColumn) {
-      lastColumn.rect[2] = rightmostNumericColumn.left - table.cropRect[0]
-      table.structure.objects.push({
-        label: 'table column',
-        score: 1,
-        rect: [
-          rightmostNumericColumn.left - table.cropRect[0],
-          0,
-          rightmostNumericColumn.right - table.cropRect[0],
-          table.cropRect[3] - table.cropRect[1]
-        ]
-      })
-    }
-  }
+  let rightmostNumericColumn
   const ruledTerminalColumn = recoverRuledTerminalColumn(table, pageItems, rules, captions)
   if (ruledTerminalColumn) {
     table = rebaseTableCrop(table, ruledTerminalColumn.cropRect)
@@ -3982,6 +4036,40 @@ export function refineTable(
     recoverThresholdSweepGrid(table, pageItems) ??
     recordCandidate ??
     closedCellGrid
+  // Keep the rightmost-lane crop recovery on detector-owned tables. A native
+  // record grid has its own column geometry; mutating only the detector
+  // structure would leave the active grid unchanged and silently discard the
+  // recovered lane.
+  if (!recordGrid) {
+    rightmostNumericColumn = recoverNativeRightmostNumericColumn(
+      table,
+      pageItems,
+      rules,
+      captions,
+      recordGrid
+    )
+    if (rightmostNumericColumn) {
+      table = rebaseTableCrop(table, rightmostNumericColumn.cropRect, true)
+      const lastColumn = table.structure.objects
+        .filter((o) => o.label === 'table column')
+        .sort((a, b) => a.rect[2] - b.rect[2])
+        .at(-1)
+      if (lastColumn) {
+        lastColumn.rect[2] = rightmostNumericColumn.left - table.cropRect[0]
+        table.structure.objects.push({
+          label: 'table column',
+          score: 1,
+          rect: [
+            rightmostNumericColumn.left - table.cropRect[0],
+            0,
+            rightmostNumericColumn.right - table.cropRect[0],
+            table.cropRect[3] - table.cropRect[1]
+          ]
+        })
+      }
+      ;[left, top, right, bottom] = table.cropRect
+    }
+  }
   if (!recordGrid)
     pageItems = recoverNativeFencedScalarTokens(table, pageItems, sourceRules, observedRuns)
   if (
