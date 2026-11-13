@@ -3228,7 +3228,7 @@ export function recoverNativeThreeColumnParameterRows({
             .trim(),
           sourceTokens: lane,
           sourceRects: lane.map((item) => item.rect),
-          sourceItems: lane
+          sourceItems: lane.map((item) => item.sourceItem ?? item)
         })
         for (const item of lane) {
           const at = unassigned.indexOf(item.text)
@@ -3335,7 +3335,7 @@ export function recoverNativeCompleteNumericRows({
     )
     if (frameRules.length < 2) return false
     const numeric = (text) =>
-      /^(?:\(?\s*[<>≤≥−+\-]?\d[\d\s.,/%±*–−+\-]*\s*\)?|[<>≤≥−+\-]?\d[\d\s.,/%±*–−+]*)$/u.test(
+      /^(?:\(?\s*[<>≤≥−+-]?\d[\d\s.,/%±*–−+-]*\s*\)?|[<>≤≥−+-]?\d[\d\s.,/%±*–−+]*)$/u.test(
         text.trim()
       )
     const laneOf = (item) => {
@@ -3490,7 +3490,7 @@ export function recoverNativeCompleteNumericRows({
           text,
           sourceTokens: item ? [item] : [],
           sourceRects: item ? [item.rect] : [],
-          sourceItems: item ? [item] : []
+          sourceItems: item ? [item.sourceItem ?? item] : []
         })
         if (item) {
           const at = unassigned.indexOf(item.text)

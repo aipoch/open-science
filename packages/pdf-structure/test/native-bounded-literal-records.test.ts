@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- test fixtures */
 import { expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from './paths'
