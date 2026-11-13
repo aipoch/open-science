@@ -44,9 +44,21 @@ export type ResearchVideoWorkerMessage =
   | ResearchVideoSpeechResult
   | ResearchVideoSpeechDuration
   | { kind: 'result'; result: ResearchVideoGenerationResult }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; code?: string }
   | { kind: 'phase'; phase: 'voice' | 'build' }
   | { kind: 'progress'; progress: ResearchVideoStep }
+
+/** Worker identity survives the boundary without adding research content to diagnostic logs. */
+export class ResearchVideoWorkerError extends Error {
+  constructor(
+    error: unknown,
+    readonly workerRole: 'generation' | 'speech',
+    readonly lane?: number,
+    readonly exitCode?: number
+  ) {
+    super(error instanceof Error ? error.message : String(error), { cause: error })
+  }
+}
 
 /** The caller owns source authorization and Artifact publication; this owner only generates files. */
 export const createResearchVideoGenerator = (options: {
@@ -91,9 +103,17 @@ export const createResearchVideoGenerator = (options: {
       })
       const result = await new Promise<ResearchVideoGenerationResult>((resolve, reject) => {
         const abort = (): void => reject(signal.reason)
-        const exit = (): void =>
-          reject(new Error('Research video worker stopped before completion'))
-        const error = (failure: Error): void => reject(failure)
+        const exit = (code: number): void =>
+          reject(
+            new ResearchVideoWorkerError(
+              new Error('Research video worker stopped before completion'),
+              'generation',
+              undefined,
+              code
+            )
+          )
+        const error = (failure: Error): void =>
+          reject(new ResearchVideoWorkerError(failure, 'generation'))
         const message = (value: ResearchVideoWorkerMessage): void => {
           if (stopping || signal.aborted) return
           if (value.kind === 'synthesize' || value.kind === 'measure-duration') {
@@ -125,7 +145,14 @@ export const createResearchVideoGenerator = (options: {
                   if (['error', 'speech-result', 'speech-duration'].includes(reply.kind))
                     finishSpeechRequest(ownedSpeech)
                   if (stopping || signal.aborted) return
-                  if (reply.kind === 'error') reject(new Error(reply.message))
+                  if (reply.kind === 'error')
+                    reject(
+                      new ResearchVideoWorkerError(
+                        Object.assign(new Error(reply.message), { code: reply.code }),
+                        'speech',
+                        value.lane
+                      )
+                    )
                   else if (reply.kind === 'speech-result' || reply.kind === 'speech-duration') {
                     try {
                       if (reply.kind === 'speech-result')
@@ -138,11 +165,18 @@ export const createResearchVideoGenerator = (options: {
                 })
                 speech.once('error', (failure) => {
                   finishSpeechRequest(ownedSpeech)
-                  error(failure)
+                  reject(new ResearchVideoWorkerError(failure, 'speech', value.lane))
                 })
-                speech.once('exit', () => {
+                speech.once('exit', (code) => {
                   finishSpeechRequest(ownedSpeech)
-                  exit()
+                  reject(
+                    new ResearchVideoWorkerError(
+                      new Error('Research video worker stopped before completion'),
+                      'speech',
+                      value.lane,
+                      code
+                    )
+                  )
                 })
               }
               if (speechRequests.has(speech)) throw new Error('Speech worker already busy')
@@ -161,7 +195,13 @@ export const createResearchVideoGenerator = (options: {
               reject(error)
             }
           } else if (value.kind === 'result') resolve(value.result)
-          else if (value.kind === 'error') reject(new Error(value.message))
+          else if (value.kind === 'error')
+            reject(
+              new ResearchVideoWorkerError(
+                Object.assign(new Error(value.message), { code: value.code }),
+                'generation'
+              )
+            )
           else if (value.kind === 'phase' || value.kind === 'progress') {
             try {
               onProgress?.(value.kind === 'phase' ? { phase: value.phase } : value.progress)

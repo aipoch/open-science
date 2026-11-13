@@ -4,17 +4,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
-import { createComputeOutputPreviewKey, type JobSummary } from '../../../../shared/compute'
+import type { JobSummary } from '../../../../shared/compute'
 import type { NotebookProjectActivity } from '../../../../shared/notebook'
-import {
-  createProjectComputePreviewItem,
-  createInitialPreviewWorkbenchState,
-  usePreviewWorkbenchStore
-} from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { ProjectComputeInbox } from './ProjectComputeInbox'
-import { PreviewPanelSurface } from './PreviewPanel'
 
 vi.mock('react-i18next', () => createI18nTestStub())
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -304,87 +298,29 @@ describe('Project Compute inbox', () => {
     expect(getProjectActivity).toHaveBeenCalledWith({ projectId: 'project-1' })
   })
 
-  it('opens another Session’s archived text and downloads an unsupported file from the Compute tab', async () => {
+  it('does not show archived output files in the Compute tab', async () => {
     const h = await refreshHarness('jobs')
-    vi.useRealTimers()
-    const path = 'hpc/job-1/featured/results.bin'
-    const textPath = 'hpc/job-2/featured/report.txt'
-    h.read.mockResolvedValue([
-      computeJob({ harvested_at: Date.now(), featured_files: [path] }),
-      computeJob({ job_id: 'job-2', harvested_at: Date.now(), featured_files: [textPath] })
-    ])
-    const content = 'Archived result from the other Session'
-    const acquire = vi
-      .fn()
-      .mockResolvedValue({ id: 'output', size: content.length, url: 'https://preview.test/output' })
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response(content, { status: 206 }))
-    )
-    const save = vi.fn().mockResolvedValue({ saved: true })
-    Object.assign(window.api, {
-      saveManagedFile: save,
-      previewResources: { acquire, release: vi.fn().mockResolvedValue(undefined) },
-      getRuntimeVersions: () => ({ electron: '39.8.10' })
-    })
-    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
-    usePreviewWorkbenchStore.getState().activateProject('project-1')
-    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectComputePreviewItem())
-    await act(async () => root?.render(<PreviewPanelSurface />))
-    const output = [...h.container.querySelectorAll('button')].find(
-      (button) => button.textContent === 'results.bin'
-    )
-    expect(output).toBeDefined()
-    await act(async () => output!.click())
-    const key = createComputeOutputPreviewKey({
-      projectId: 'project-1',
-      sessionId: 'session-attention',
-      jobId: 'job-1',
-      path
-    })
-    const workbench = usePreviewWorkbenchStore.getState()
-    expect(workbench.items.find((item) => item.id === workbench.activeItemId)).toMatchObject({
-      projectId: 'project-1',
-      sessionId: 'session-attention',
-      path: key,
-      source: 'compute-output'
-    })
-    expect(useSessionStore.getState().selectedSessionId).toBe('session-current')
-    expect(h.container.textContent).toContain("This file type isn't supported for preview")
-    expect(h.container.querySelector('[aria-label^="Edit "]')).toBeNull()
-    const download = h.container.querySelector<HTMLButtonElement>(
-      '[aria-label="Download results.bin"]'
-    )
-    expect(download).not.toBeNull()
-    await act(async () => download!.click())
-    expect(save).toHaveBeenCalledWith({
-      source: 'compute-output',
-      path: key,
-      suggestedName: 'results.bin'
-    })
-    const computeTab = [...h.container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
-      (tab) => tab.textContent === 'Compute'
-    )
-    await act(async () => computeTab!.click())
-    const textFile = [...h.container.querySelectorAll('button')].find(
-      (button) => button.textContent === 'report.txt'
-    )
-    await act(async () => textFile!.click())
-    expect(h.container.textContent).toContain(content)
-    expect(h.container.querySelector('[aria-label="Edit report.txt"]')).toBeNull()
-    expect(acquire).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        projectId: 'project-1',
-        sessionId: 'session-attention',
-        source: 'compute-output',
-        path: createComputeOutputPreviewKey({
-          projectId: 'project-1',
-          sessionId: 'session-attention',
-          jobId: 'job-2',
-          path: textPath
-        })
+    h.read.mockResolvedValueOnce([
+      computeJob({
+        harvested_at: Date.now(),
+        featured_files: ['hpc/job-1/featured/result.csv'],
+        hidden_files: ['hpc/job-1/hidden/run.log']
+      }),
+      computeJob({
+        job_id: 'job-2',
+        intent: 'Second job',
+        harvested_at: Date.now(),
+        featured_files: ['hpc/job-2/featured/single.txt']
       })
-    )
+    ])
+    await act(async () => h.emit())
+
+    expect(h.container.textContent).toContain('Fit remote model')
+    expect(h.container.textContent).toContain('Second job')
+    expect(h.container.textContent).not.toContain('result.csv')
+    expect(h.container.textContent).not.toContain('run.log')
+    expect(h.container.textContent).not.toContain('single.txt')
+    expect(h.container.textContent).not.toContain('Outputs')
   })
 
   it('distinguishes identically named targets in compact and expanded layouts', async () => {
@@ -411,7 +347,7 @@ describe('Project Compute inbox', () => {
     const buttons = [...h.container.querySelectorAll('button')].map((button) =>
       button.textContent?.trim()
     )
-    expect(buttons.filter((name) => name === 'report.csv')).toHaveLength(1)
+    expect(buttons).not.toContain('report.csv')
     expect(buttons).not.toContain('unpublished.csv')
     const labels = ['Ray Jobs · Research', 'Modal Sandboxes · Research', 'Legacy']
     const details = h.container.querySelectorAll('details')

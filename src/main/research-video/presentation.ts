@@ -17,8 +17,12 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { LocalModelOwner, createLocalModelOwner } from '../local-models/owner'
 import type { createResearchVideoGenerator } from '@aipoch/research-film'
 import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
-import { generateResearchFilm, type ResearchFilmAuthor } from '@aipoch/research-film'
-import { createLogger } from '@aipoch/diagnostics/node'
+import {
+  generateResearchFilm,
+  ResearchVideoWorkerError,
+  type ResearchFilmAuthor
+} from '@aipoch/research-film'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 const log = createLogger('research-video')
 import {
   filmConversationDigest,
@@ -38,7 +42,11 @@ import {
   deleteStoredResearchFilms
 } from './stored-presentation'
 
-const filmAttempt = new AsyncLocalStorage<{ operationId: string; attempt: number }>()
+const filmAttempt = new AsyncLocalStorage<{
+  operationId: string
+  attempt: number
+  invocationId: string
+}>()
 export const currentFilmAttempt = (): ReturnType<typeof filmAttempt.getStore> =>
   filmAttempt.getStore()
 
@@ -130,6 +138,11 @@ export function createResearchVideoPresentationOwner(options: {
         }
       } catch (error) {
         state.preflightError = error instanceof Error ? error.message : String(error)
+        if (state.preflightError !== states.get(key)?.preflightError)
+          log.info('film preflight failed', {
+            sessionId: request.sessionId,
+            ...diagnosticErrorFields(error)
+          })
       }
       const currentProbe = preflights.get(key) === probe
       if (currentProbe) preflights.delete(key)
@@ -177,12 +190,21 @@ export function createResearchVideoPresentationOwner(options: {
     resume: boolean,
     prepared: () => void
   ): Promise<void> => {
+    const invocationId = randomUUID()
     const startedAt = Date.now()
     const started = performance.now()
     const stageMs: Record<string, number> = {}
     let stage = 'preparing',
       stageStarted = started
     let saved: PendingFilm | undefined
+    let activeBranchId = request.branchId
+    const context = (): Record<string, string | number | undefined> => ({
+      invocationId,
+      operationId: saved?.id ?? invocationId,
+      attempt: saved?.attempt,
+      sessionId: request.sessionId,
+      activeBranchId
+    })
     let base: string | undefined
     let writes = Promise.resolve()
     let filmStep = 1
@@ -211,13 +233,13 @@ export function createResearchVideoPresentationOwner(options: {
       const now = performance.now()
       stageMs[stage] = (stageMs[stage] ?? 0) + now - stageStarted
       log.info('film stage finished', {
-        operationId: saved?.id,
-        attempt: saved?.attempt,
+        ...context(),
         phase: stage,
         durationMs: Math.round(now - stageStarted)
       })
       stage = next
       stageStarted = now
+      if (next !== 'finished') log.info('film stage started', { ...context(), phase: next })
     }
     const report = (step: ResearchVideoStep): void => {
       measure(step.phase)
@@ -236,6 +258,7 @@ export function createResearchVideoPresentationOwner(options: {
     let lease: Awaited<ReturnType<LocalModelOwner['acquireUse']>> | undefined
     let job: string | undefined
     let completed = false
+    log.info('film invocation started', { ...context(), phase: stage })
     try {
       const session = await options.loadSession(request.projectId, request.sessionId)
       signal.throwIfAborted()
@@ -252,7 +275,9 @@ export function createResearchVideoPresentationOwner(options: {
                 : 'Research session is unavailable.'
         )
       let source = researchVideoSessionSource(session, request)
+      activeBranchId = source.provenance.branchId
       const checksums: string[] = []
+      measure('images')
       await stageResearchVideoSessionImages(
         source,
         session,
@@ -261,15 +286,23 @@ export function createResearchVideoPresentationOwner(options: {
         signal,
         checksums
       )
+      measure('readiness')
       await options.checkReadiness?.()
       signal.throwIfAborted()
       if (installNarration) {
         installingKey = key
         states.delete(key)
         prepared()
+        measure('narration-install')
         const snapshot = await options.models.installForUse(signal)
         signal.throwIfAborted()
         if (snapshot.availability !== 'ready' || snapshot.updateAvailable) {
+          log.info('film attempt stopped', {
+            ...context(),
+            phase: stage,
+            outcome: 'failed',
+            errorCategory: 'installation-incomplete'
+          })
           states.set(key, { error: 'Narration installation did not finish. Retry to continue.' })
           return
         }
@@ -280,6 +313,7 @@ export function createResearchVideoPresentationOwner(options: {
         await options.checkReadiness?.()
         signal.throwIfAborted()
       }
+      measure('narration-acquire')
       lease = await options.models.acquireUse()
       signal.throwIfAborted()
       const model = lease.assets.find((asset) => asset.file === 'model_quantized.onnx')
@@ -315,9 +349,7 @@ export function createResearchVideoPresentationOwner(options: {
       }
       const id = saved.id
       log.info('film attempt started', {
-        operationId: id,
-        sessionId: request.sessionId,
-        attempt: saved.attempt,
+        ...context(),
         step: String(saved.step),
         outcome: resume && saved.attempt > 1 ? 'resumed' : 'started'
       })
@@ -343,7 +375,8 @@ export function createResearchVideoPresentationOwner(options: {
         if (JSON.stringify(checksums) !== JSON.stringify(stagedChecksums))
           throw new Error('Research images changed during preparation.')
         await writeDurableJsonFile(join(job, 'session.json'), JSON.stringify(source))
-        const generated = await filmAttempt.run({ operationId: id, attempt: saved.attempt }, () =>
+        const attemptContext = { operationId: id, attempt: saved.attempt, invocationId }
+        const generated = await filmAttempt.run(attemptContext, () =>
           generateResearchFilm({
             source,
             directory: job!,
@@ -351,16 +384,14 @@ export function createResearchVideoPresentationOwner(options: {
             signal,
             checkpoint: filmAuthoringCheckpoint(job!, (outcome) =>
               log.info('film authoring unit', {
-                operationId: id,
-                attempt: saved?.attempt,
+                ...context(),
                 phase: stage,
                 outcome
               })
             ),
             onAnimations(completed, total) {
               log.info('film animation progress', {
-                operationId: id,
-                attempt: saved?.attempt,
+                ...context(),
                 phase: 'animations',
                 index: completed,
                 totalUnits: total
@@ -420,22 +451,43 @@ export function createResearchVideoPresentationOwner(options: {
       completed = true
       states.delete(key)
       await removePendingPointer(base).catch(() =>
-        log.info('film cleanup deferred', { operationId: id, phase: 'publishing' })
+        log.info('film cleanup deferred', { ...context(), phase: 'publishing' })
       )
     } catch (error) {
       await writes.catch(() => {})
       if (base && saved && (!signal.aborted || closed)) {
         saved.updatedAt = Date.now()
         await savePendingFilm(base, saved).catch(() =>
-          log.info('film checkpoint write failed', { operationId: saved?.id, phase: stage })
+          log.info('film checkpoint write failed', { ...context(), phase: stage })
         )
       }
+      const failure = error instanceof ResearchVideoWorkerError ? error.cause : error
+      let code: string | undefined
+      try {
+        code = (failure as NodeJS.ErrnoException | null)?.code
+      } catch {
+        // Diagnostics must tolerate errors with throwing accessors.
+      }
       log.info('film attempt stopped', {
-        operationId: saved?.id,
-        attempt: saved?.attempt,
+        ...context(),
         phase: stage,
         outcome: signal.aborted ? 'cancelled' : 'failed',
-        errorCategory: error instanceof Error ? error.name : 'unknown'
+        ...diagnosticErrorFields(failure),
+        ...([
+          'ENOENT',
+          'ENOTDIR',
+          'EACCES',
+          'EPERM',
+          'ENOSPC',
+          'ENOMEM',
+          'ETIMEDOUT',
+          'ERR_WORKER_OUT_OF_MEMORY'
+        ].includes(code ?? '')
+          ? { code }
+          : {}),
+        ...(error instanceof ResearchVideoWorkerError
+          ? { workerRole: error.workerRole, lane: error.lane, exitCode: error.exitCode }
+          : {})
       })
       states.set(
         key,
@@ -460,6 +512,7 @@ export function createResearchVideoPresentationOwner(options: {
       prepared()
       measure('finished')
       log.info('generation timing', {
+        ...context(),
         outcome: completed ? 'completed' : signal.aborted ? 'cancelled' : 'failed',
         totalMs: Math.round(performance.now() - started),
         stagesMs: Object.fromEntries(
@@ -467,8 +520,20 @@ export function createResearchVideoPresentationOwner(options: {
         )
       })
       if (base && job && !completed && signal.aborted && !closed) {
-        await rm(job, { recursive: true, force: true }).catch(() => {})
-        await removePendingPointer(base).catch(() => {})
+        await rm(job, { recursive: true, force: true }).catch((error) =>
+          log.info('film cleanup deferred', {
+            ...context(),
+            phase: 'cleanup',
+            ...diagnosticErrorFields(error)
+          })
+        )
+        await removePendingPointer(base).catch((error) =>
+          log.info('film cleanup deferred', {
+            ...context(),
+            phase: 'cleanup',
+            ...diagnosticErrorFields(error)
+          })
+        )
       }
       lease?.release()
     }
@@ -511,6 +576,10 @@ export function createResearchVideoPresentationOwner(options: {
         : run(request, key, controller.signal, installNarration, resume, finishPreparation)
       const done = operation
         .catch((error) => {
+          log.info('film lifecycle failed', {
+            sessionId: request.sessionId,
+            ...diagnosticErrorFields(error)
+          })
           states.set(key, { error: error instanceof Error ? error.message : String(error) })
         })
         .finally(() => {

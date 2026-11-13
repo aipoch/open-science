@@ -8,7 +8,10 @@ import { createResearchVideoPresentationOwner } from './presentation'
 import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
 
 const { timing } = vi.hoisted(() => ({ timing: vi.fn() }))
-vi.mock('@aipoch/diagnostics/node', () => ({ createLogger: () => ({ info: timing }) }))
+vi.mock('@aipoch/diagnostics/node', async (original) => ({
+  ...(await original<typeof import('@aipoch/diagnostics/node')>()),
+  createLogger: () => ({ info: timing })
+}))
 
 const roots: string[] = []
 afterEach(async () => {
@@ -130,10 +133,18 @@ it('generates a persistent presentation directly from read-only history without 
   expect(JSON.stringify(session)).toBe(before)
   await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
   expect(timing).toHaveBeenCalledWith('generation timing', {
+    invocationId: expect.any(String),
+    operationId: result!.id,
+    attempt: 1,
+    sessionId: request.sessionId,
+    activeBranchId: undefined,
     outcome: 'completed',
     totalMs: expect.any(Number),
     stagesMs: {
       preparing: expect.any(Number),
+      images: expect.any(Number),
+      readiness: expect.any(Number),
+      'narration-acquire': expect.any(Number),
       writing: expect.any(Number),
       animations: expect.any(Number),
       loading: expect.any(Number),
@@ -625,4 +636,57 @@ it('resumes a failed build after restart without requesting the screenplay again
   expect(f.options.generate).toHaveBeenCalledTimes(2)
   expect((await reopened.status(request)).canResume).toBeUndefined()
   await reopened.close()
+})
+
+it('correlates preparation failures without retaining private error text', async () => {
+  const f = await fixture()
+  const owner = createResearchVideoPresentationOwner({
+    ...f.options,
+    checkReadiness: async () => {
+      throw Object.assign(new Error('private research /private/path'), { code: 'EACCES' })
+    }
+  })
+  timing.mockClear()
+  await owner.start(request)
+  await owner.close()
+  const started = timing.mock.calls.find(([event]) => event === 'film invocation started')![1]
+  expect(started.invocationId).toBeTruthy()
+  expect(timing).toHaveBeenCalledWith(
+    'film attempt stopped',
+    expect.objectContaining({
+      invocationId: started.invocationId,
+      operationId: started.operationId,
+      sessionId: request.sessionId,
+      phase: 'readiness',
+      outcome: 'failed',
+      errorCategory: 'permission'
+    })
+  )
+  expect(timing).toHaveBeenCalledWith(
+    'generation timing',
+    expect.objectContaining({ invocationId: started.invocationId })
+  )
+  expect(JSON.stringify(timing.mock.calls)).not.toContain('private research')
+  expect(JSON.stringify(timing.mock.calls)).not.toContain('/private/path')
+})
+
+it('records an incomplete narration installation without starting authoring', async () => {
+  const f = await fixture()
+  f.options.models.installForUse = vi.fn(async () => ({
+    ...(await f.options.models.getSnapshot()),
+    availability: 'notInstalled' as const
+  }))
+  const owner = createResearchVideoPresentationOwner(f.options)
+  timing.mockClear()
+  await owner.start({ ...request, installNarration: true })
+  await owner.close()
+  expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+  expect(timing).toHaveBeenCalledWith(
+    'film attempt stopped',
+    expect.objectContaining({
+      sessionId: request.sessionId,
+      phase: 'narration-install',
+      errorCategory: 'installation-incomplete'
+    })
+  )
 })
