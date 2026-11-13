@@ -2061,7 +2061,8 @@ function nativeSourcePacketConflicts(table, owned, inventory, rules, context, me
     atomic = (f) => /^[\p{L}\p{N}_.+−-]{1,24}$/u.test(f.text),
     aligned = (a, b) =>
       Math.abs(a.rect[0] - b.rect[0]) < a.height * 0.05 ||
-      Math.abs(a.rect[0] + a.rect[2] - b.rect[0] - b.rect[2]) < a.height * 0.1
+      Math.abs(a.rect[2] - b.rect[2]) < a.height * 0.1 ||
+      Math.abs((a.rect[0] + a.rect[2]) / 2 - (b.rect[0] + b.rect[2]) / 2) < a.height * 0.05
   for (const left of body.filter((p) => p.fonts.length === 2)) {
     const right = body.find(
         (p) =>

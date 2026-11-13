@@ -347,7 +347,8 @@ async function nativeRecordSetup(
   broken = false,
   frame = true,
   wrappedField = false,
-  inkFrame?: 'inside' | 'outside'
+  inkFrame?: 'inside' | 'outside',
+  valueAlignment: 'left' | 'center' | 'right' = 'left'
 ) {
   const pdf = await PDFDocument.create()
   if (inkFrame) pdf.registerFontkit(fontkit)
@@ -407,7 +408,10 @@ async function nativeRecordSetup(
     } else
       labels.forEach((v, n) => {
         text(v, 100, 178 - n * 12)
-        text(values[n], 220, 178 - n * 12)
+        const width = normal.widthOfTextAtSize(values[n], 8)
+        const offset =
+          valueAlignment === 'right' ? width : valueAlignment === 'center' ? width / 2 : 0
+        text(values[n], 220 - offset, 178 - n * 12)
       })
   } else {
     ;['Field', 'Code', 'Meaning', 'Value'].forEach((v, c) =>
@@ -549,6 +553,20 @@ it.each(['tuple', 'section', 'group'] as const)(
           u.id === 'packed' ? { ...u, sourceOnly: true } : u
         )
       )
+    } finally {
+      await f.task.destroy()
+    }
+  }
+)
+
+it.each(['center', 'right'] as const)(
+  'retains unstructured section records with %s-aligned values',
+  async (alignment) => {
+    const f = await nativeRecordSetup('section', false, true, false, undefined, alignment)
+    try {
+      const out = await applyCachedPdfStructureSources({ ...f.args, preserveUnitIdentity: true })
+      expect(out.retainedSourcePageNumbers).toEqual([1])
+      expect(out.retainedUnitIds).toEqual(['packed'])
     } finally {
       await f.task.destroy()
     }

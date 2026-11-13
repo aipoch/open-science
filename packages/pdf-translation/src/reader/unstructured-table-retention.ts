@@ -63,7 +63,9 @@ const nativeRecordFamily = (
     sameFace = (a: Record, b: Record): boolean =>
       a.face === b.face && Math.abs(a.h - b.h) < a.h * 0.02,
     aligned = (a: Record, b: Record): boolean =>
-      Math.abs(a.x - b.x) < a.h * 0.05 || Math.abs(a.x + a.right - b.x - b.right) < a.h * 0.1,
+      Math.abs(a.x - b.x) < a.h * 0.05 ||
+      Math.abs(a.right - b.right) < a.h * 0.1 ||
+      Math.abs((a.x + a.right) / 2 - (b.x + b.right) / 2) < a.h * 0.05,
     rows: Record[][] = []
   for (const item of [...records].sort((a, b) => a.baseline - b.baseline || a.x - b.x)) {
     const row = rows.find((r) => sameRow(r[0], item))

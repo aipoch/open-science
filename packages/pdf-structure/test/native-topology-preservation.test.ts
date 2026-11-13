@@ -994,7 +994,7 @@ it.each([
   )
 })
 
-const sectionedPairRows = (cellMajor = false): Fixture => {
+const sectionedPairRows = (cellMajor = false, rightAligned = false): Fixture => {
   const f = topologyFixture()
   for (let c = 0; c < 3; c++) topologyOwner(f, 0, c, [['Heading', 10 + c * 100, 22]])
   topologyOwner(f, 1, 0, [['Controls', 10, 40]])
@@ -1002,8 +1002,15 @@ const sectionedPairRows = (cellMajor = false): Fixture => {
   f.table.grid[1] = ['Controls', '', '']
   const parts: Fixture[][] = [[], []]
   const add = (c: number, n: number): void => {
+    const width = rightAligned && c === 1 && n === 1 ? 24 : 35
     topologyOwner(f, 2, c + 1, [
-      [c ? ['ModeA', '0.02'][n] : ['Procedure', 'Step size'][n], 110 + c * 100, 55 + n * 12]
+      [
+        c ? ['ModeA', '0.02'][n] : ['Procedure', 'Step size'][n],
+        145 + c * 100 - width,
+        55 + n * 12,
+        10,
+        width
+      ]
     ])
     parts[c].push(f.table.cells.pop())
   }
@@ -1030,12 +1037,15 @@ const sectionedPairRows = (cellMajor = false): Fixture => {
   }
   return f
 }
-it('declines two complete row-major label/value records hidden in one category row', () => {
-  const f = sectionedPairRows()
-  expect(nativeTableLayoutConflicts(f.table, f.items, [], [], topologyContext(f))).toContain(
-    'native-section-label-value-records-merged'
-  )
-})
+it.each([false, true])(
+  'declines two complete row-major label/value records hidden in one category row (right aligned: %s)',
+  (rightAligned) => {
+    const f = sectionedPairRows(false, rightAligned)
+    expect(nativeTableLayoutConflicts(f.table, f.items, [], [], topologyContext(f))).toContain(
+      'native-section-label-value-records-merged'
+    )
+  }
+)
 it('preserves ordinary cell-major wrapped fields under a category heading', () => {
   const f = sectionedPairRows(true)
   expect(nativeTableLayoutConflicts(f.table, f.items, [], [], topologyContext(f))).not.toContain(
