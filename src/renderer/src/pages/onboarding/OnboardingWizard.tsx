@@ -16,13 +16,17 @@ import { AgentStep } from './AgentStep'
 import { EnvironmentStep } from './EnvironmentStep'
 import { LocationStep, type LocationDraft } from './LocationStep'
 import { NotebookStep } from './NotebookStep'
+import { OnboardingReadyStep, OnboardingWelcome } from './OnboardingEntry'
 import { onboardingErrorMessage } from './onboarding-error'
 import { ProviderStep } from './ProviderStep'
 
 type WizardStep = 'environment' | 'agent' | 'provider' | 'notebook' | 'location'
 type OnboardingWizardProps = {
   loadStorageInfo?: () => Promise<StorageInfo>
+  showWelcome?: boolean
 }
+
+type EntryPhase = 'welcome' | 'connect' | 'ready' | 'advanced'
 
 // Storage is chosen before either runtime step so a recommended Windows data drive is active when
 // the app-managed Notebook environment is installed.
@@ -169,7 +173,8 @@ const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element =
 // and validate a model provider, then optionally set up the notebook runtime — one focused step
 // each. Completed users repair later environment regressions from the relevant Settings panel.
 const OnboardingWizard = ({
-  loadStorageInfo = loadStorageInfoFromBridge
+  loadStorageInfo = loadStorageInfoFromBridge,
+  showWelcome = false
 }: OnboardingWizardProps): React.JSX.Element => {
   const { t } = useTranslation()
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
@@ -180,8 +185,15 @@ const OnboardingWizard = ({
   // already passed. The user explicitly continues to agent setup after reviewing it.
 
   const envInit = useNotebookEnvStore((s) => s.init)
+  const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
 
   const [step, setStep] = useState<WizardStep>('environment')
+  const [entryPhase, setEntryPhase] = useState<EntryPhase>(showWelcome ? 'welcome' : 'advanced')
+  const [entryMethod, setEntryMethod] = useState<'account' | 'api-key'>('account')
+  const [isSkipping, setIsSkipping] = useState(false)
+  const [skipError, setSkipError] = useState<string | undefined>(undefined)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const previousDialogFocus = useRef<HTMLElement | null>(null)
   const stepCard = useRef<HTMLDivElement>(null)
   const previousStep = useRef(step)
   useEffect(() => {
@@ -254,6 +266,95 @@ const OnboardingWizard = ({
   // Relaunching replaces the whole wizard with a bare screen — owned here because LocationStep
   // unmounts (and the layout disappears) while it is in flight.
   const [isRelaunching, setIsRelaunching] = useState(false)
+
+  const openAdvancedEntry = useCallback((): void => {
+    // Advanced setup starts with the user-controlled data location. The environment summary is
+    // still available from the original setup surface when this wizard is mounted directly.
+    setStep('location')
+    setEntryPhase('advanced')
+  }, [])
+  const openReadyEntry = useCallback((method: 'account' | 'api-key' = 'api-key'): void => {
+    setEntryMethod(method)
+    setEntryPhase('ready')
+  }, [])
+  const skipEntry = useCallback(async (): Promise<void> => {
+    if (isSkipping) return
+    setIsSkipping(true)
+    setSkipError(undefined)
+    try {
+      await completeOnboarding()
+    } catch (error) {
+      setSkipError(
+        onboardingErrorMessage(
+          error,
+          t('Could not skip setup. You can retry or use Advanced options.')
+        )
+      )
+      setIsSkipping(false)
+    }
+  }, [completeOnboarding, isSkipping, t])
+
+  const handleAdvancedProviderAdvance = useCallback(
+    (method: 'account' | 'api-key' = 'api-key'): void => {
+      setEntryMethod(method)
+      setStep('notebook')
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (!showWelcome) return
+    return () => {
+      previousDialogFocus.current?.focus()
+      previousDialogFocus.current = null
+    }
+  }, [showWelcome])
+
+  useEffect(() => {
+    if (!showWelcome || entryPhase === 'advanced') return
+
+    const dialog = dialogRef.current
+    if (!dialog) return
+    if (!previousDialogFocus.current && document.activeElement instanceof HTMLElement) {
+      previousDialogFocus.current = document.activeElement
+    }
+
+    const focusable = (): HTMLElement[] =>
+      Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+        )
+      )
+    const firstFocusable = focusable()[0]
+    ;(firstFocusable ?? dialog).focus()
+
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        void skipEntry()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const items = focusable()
+      if (items.length === 0) {
+        event.preventDefault()
+        dialog.focus()
+        return
+      }
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    dialog.addEventListener('keydown', handleKeyDown)
+    return () => dialog.removeEventListener('keydown', handleKeyDown)
+  }, [entryPhase, isSkipping, showWelcome, skipEntry])
 
   const didRequestCheck = useRef(false)
   const didKickEnv = useRef(false)
@@ -350,6 +451,50 @@ const OnboardingWizard = ({
     )
   }
 
+  if (showWelcome && entryPhase !== 'advanced') {
+    return (
+      <main className="onboarding-entry-root">
+        <div className="onboarding-entry-scrim" aria-hidden="true" />
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('Open-Science onboarding')}
+          tabIndex={-1}
+          className={cn(
+            'onboarding-entry-shell',
+            entryPhase === 'connect' && 'is-wide',
+            entryPhase === 'ready' && 'is-ready'
+          )}
+        >
+          {entryPhase === 'welcome' ? (
+            <OnboardingWelcome onNext={() => setEntryPhase('connect')} />
+          ) : entryPhase === 'connect' ? (
+            <ProviderStep
+              variant="quick"
+              formValue={providerDraft.value}
+              setFormValue={setFormValue}
+              providerId={providerDraft.providerId}
+              onProviderSaved={recordSavedProvider}
+              onBack={() => setEntryPhase('welcome')}
+              onAdvance={openReadyEntry}
+              onAdvanced={openAdvancedEntry}
+              onSkip={skipEntry}
+              isSkipping={isSkipping}
+              skipError={skipError}
+            />
+          ) : (
+            <OnboardingReadyStep
+              method={entryMethod}
+              onBack={() => setEntryPhase('connect')}
+              onStart={completeOnboarding}
+            />
+          )}
+        </div>
+      </main>
+    )
+  }
+
   return (
     <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
       <div className="mx-auto min-h-full w-full max-w-[1040px] px-4 py-5 sm:px-8 sm:py-7">
@@ -418,12 +563,13 @@ const OnboardingWizard = ({
                 providerId={providerDraft.providerId}
                 onProviderSaved={recordSavedProvider}
                 onBack={() => setStep('agent')}
-                onAdvance={() =>
-                  setStep((current) => (current === 'provider' ? 'notebook' : current))
-                }
+                onAdvance={handleAdvancedProviderAdvance}
               />
             ) : step === 'notebook' ? (
-              <NotebookStep onBack={() => setStep('provider')} />
+              <NotebookStep
+                onBack={() => setStep('provider')}
+                onComplete={showWelcome ? () => setEntryPhase('ready') : undefined}
+              />
             ) : null}
           </Card>
         </div>
