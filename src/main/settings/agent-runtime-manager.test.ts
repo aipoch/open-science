@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ClaudeInstallEvent } from '../../shared/settings'
 import type { ConnectorSettingsModule } from './connector-settings'
 import type { ClaudeDetectDeps } from './claude-detect'
+import { CODEBUDDY_VERSION } from './codebuddy-install'
 import type { CodexDetectDeps } from './codex-detect'
 import type { OpencodeDetectDeps } from './opencode-detect'
 import type { ProviderPreflightAccess } from './agent-runtime-manager'
@@ -318,6 +319,23 @@ describe('AgentRuntimeManager', () => {
   let managedAdapterPath: string
   let managedCodexPath: string
   let manager: InstanceType<typeof AgentRuntimeManager>
+
+  it('queries a shared npm directory once per environment check and detects each executable', async () => {
+    const resolveNpmBinDirs = vi.fn(async () => ['/custom/bin'])
+    const deps = { ...createOpencodeDeps(inventory), resolveNpmBinDirs }
+    manager = createManager({ opencodeDetectDeps: deps, codebuddyDetectDeps: deps })
+    await manager.checkEnvironment()
+    expect(resolveNpmBinDirs).toHaveBeenCalledTimes(1)
+
+    inventory.opencode.set('/custom/bin/opencode', '1.19.4')
+    inventory.opencode.set('/custom/bin/codebuddy', CODEBUDDY_VERSION)
+    await manager.checkEnvironment()
+    expect(resolveNpmBinDirs).toHaveBeenCalledTimes(2)
+    expect(await repository.getSettings()).toMatchObject({
+      opencodePath: '/custom/bin/opencode',
+      codebuddyPath: '/custom/bin/codebuddy'
+    })
+  })
 
   it('shares concurrent npm availability checks and rechecks failures and expired successes', async () => {
     const first = Promise.withResolvers<{ available: boolean }>()

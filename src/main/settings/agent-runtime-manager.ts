@@ -562,16 +562,32 @@ export class AgentRuntimeManager {
       signal.throwIfAborted()
       const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
       const runtimeProbe = this.takeReusableRuntimeProbe('environmentCheckRuntimeProbe', settings)
+      // OpenCode and CodeBuddy use the same host npm prefix unless supplied distinct resolvers.
+      const opencodeDeps = this.opencodeDetectDeps
+      const codebuddyDeps = this.codebuddyDetectDeps
+      let npmDirs: Promise<string[]> | undefined
+      const sharedNpmDirs = (): Promise<string[]> =>
+        (npmDirs ??= opencodeDeps.resolveNpmBinDirs(signal))
       const [claudeRuntime, opencodeRuntime, codebuddyRuntime, codexRuntime, piReady] =
         await Promise.all([
           this.trackDetection(() =>
             this.resolveClaudeRuntime(settings, runtimeProbe?.claudeVersion, signal)
           ),
           this.trackDetection(() =>
-            this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion, signal)
+            this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion, signal, {
+              ...opencodeDeps,
+              resolveNpmBinDirs: sharedNpmDirs
+            })
           ),
           this.trackDetection(() =>
-            this.resolveCodeBuddyRuntime(settings, runtimeProbe?.codebuddyVersion, signal)
+            this.resolveCodeBuddyRuntime(
+              settings,
+              runtimeProbe?.codebuddyVersion,
+              signal,
+              codebuddyDeps.resolveNpmBinDirs === opencodeDeps.resolveNpmBinDirs
+                ? { ...codebuddyDeps, resolveNpmBinDirs: sharedNpmDirs }
+                : codebuddyDeps
+            )
           ),
           this.trackDetection(() =>
             this.resolveCodexRuntime(settings, runtimeProbe?.codex, signal)
@@ -1469,13 +1485,14 @@ export class AgentRuntimeManager {
   private async resolveOpencodeRuntime(
     settings: StoredSettings,
     probedVersion: string | null | undefined,
-    signal: AbortSignal
+    signal: AbortSignal,
+    deps: OpencodeDetectDeps
   ): Promise<ClaudeDetectResult> {
     const cachedPath = settings.opencodePath
     if (cachedPath) {
       const version =
         probedVersion === undefined
-          ? await this.opencodeDetectDeps.getVersion(cachedPath, signal)
+          ? await deps.getVersion(cachedPath, signal)
           : (probedVersion ?? undefined)
       signal.throwIfAborted()
       if (version) {
@@ -1486,7 +1503,7 @@ export class AgentRuntimeManager {
       }
     }
 
-    const detected = await detectOpencode(this.opencodeDetectDeps, signal)
+    const detected = await detectOpencode(deps, signal)
     signal.throwIfAborted()
     if (detected) {
       await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
@@ -1502,13 +1519,14 @@ export class AgentRuntimeManager {
   private async resolveCodeBuddyRuntime(
     settings: StoredSettings,
     probedVersion: string | null | undefined,
-    signal: AbortSignal
+    signal: AbortSignal,
+    deps: CodeBuddyDetectDeps
   ): Promise<ClaudeDetectResult> {
     const cachedPath = settings.codebuddyPath
     if (cachedPath) {
       const version =
         probedVersion === undefined
-          ? await this.codebuddyDetectDeps.getVersion(cachedPath, signal)
+          ? await deps.getVersion(cachedPath, signal)
           : (probedVersion ?? undefined)
       signal.throwIfAborted()
       if (isSupportedCodeBuddyVersion(version)) {
@@ -1518,7 +1536,7 @@ export class AgentRuntimeManager {
         return { found: true, path: cachedPath, version }
       }
     }
-    const detected = await detectCodeBuddy(this.codebuddyDetectDeps, signal)
+    const detected = await detectCodeBuddy(deps, signal)
     signal.throwIfAborted()
     if (detected) {
       await this.repository.setCodeBuddyInfo(detected.resolvedPath, detected.version)

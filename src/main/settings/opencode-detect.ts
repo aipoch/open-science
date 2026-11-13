@@ -189,6 +189,8 @@ const resolveNpmBinDirs =
     }
   }
 
+const resolveHostNpmBinDirs = resolveNpmBinDirs(process.platform)
+
 // Production dependency bundle wired to real fs/child_process for the current host platform.
 const createDefaultDetectDeps = (): OpencodeDetectDeps => {
   const platform = process.platform
@@ -200,7 +202,7 @@ const createDefaultDetectDeps = (): OpencodeDetectDeps => {
     isExecutable: isExecutableFile(platform),
     getVersion: runOpencodeVersion(platform),
     probeVersion: runOpencodeVersion(platform, true),
-    resolveNpmBinDirs: resolveNpmBinDirs(platform)
+    resolveNpmBinDirs: resolveHostNpmBinDirs
   }
 }
 
