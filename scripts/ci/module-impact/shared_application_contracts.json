@@ -36,7 +36,10 @@
     "src/shared/session-event-hydrator.ts",
     "src/shared/session-event-hydrator.test.ts",
     "src/shared/runtime-startup.ts",
-    "src/shared/provider-url-policy.ts"
+    "src/shared/provider-url-policy.ts",
+    "src/shared/file-dialog-ui.ts",
+    "src/shared/file-save-name.ts",
+    "src/shared/file-save-target.ts"
   ],
   "interfacePaths": [
     "src/shared/agent-framework-id.ts",
@@ -67,7 +70,10 @@
     "src/shared/runtime-payload-client.ts",
     "src/shared/session-event-hydrator.ts",
     "src/shared/runtime-startup.ts",
-    "src/shared/provider-url-policy.ts"
+    "src/shared/provider-url-policy.ts",
+    "src/shared/file-dialog-ui.ts",
+    "src/shared/file-save-name.ts",
+    "src/shared/file-save-target.ts"
   ],
   "consumerModules": [
     "host_command_runtime",
@@ -104,7 +110,8 @@
       "src/main/windows-titlebar.test.ts",
       "src/main/literature/pdf-translation/index.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
-      "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx"
+      "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
+      "src/main/file-dialog-ui-state.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -1,5 +1,6 @@
 {
   "common": {
+    "Download failed": "Скачать не удалось",
     "The conversation changed. Close and reopen export to review it.": "Диалог изменён. Закройте и снова откройте окно экспорта, чтобы проверить его.",
     "Approval needed": "Требуется разрешение",
     "Cancel": "Отмена",
@@ -44,7 +45,8 @@
     "Close window": "Закрыть окно",
     "Review potentially destructive code": "Проверить потенциально разрушительный код",
     "Confirm Notebook kernel and environment": "Подтвердить ядро и окружение Notebook",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "При выходе незавершённые задачи будут прерваны. Сохранённые диалоги и файлы останутся."
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "При выходе незавершённые задачи будут прерваны. Сохранённые диалоги и файлы останутся.",
+    "Save file": "Сохранить файл"
   },
   "native": {
     "Local State is in use by another process.": "Local State используется другим процессом.",
@@ -98,7 +100,6 @@
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "Ваши данные в любом случае в безопасности, но при выходе сейчас перенос останется незавершённым и его, возможно, придётся начать заново. Не закрывайте приложение до завершения переноса.",
     "The app window stopped responding repeatedly.": "Окно приложения несколько раз переставало отвечать.",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "Автоматическое восстановление приостановлено. После перезагрузки это окно вернётся на главный экран; фоновые задачи могут продолжать выполняться.",
-    "Save file": "Сохранить файл",
     "Save artifact": "Сохранить артефакт",
     "Choose where to save artifacts": "Выберите, куда сохранить артефакты",
     "Export notebook": "Экспортировать Notebook",
@@ -1470,7 +1471,6 @@
     "Download and set up": "Скачать и установить",
     "Download artifacts…": "Скачать артефакты…",
     "Download as .ipynb": "Скачать как .ipynb",
-    "Download failed": "Скачать не удалось",
     "Download failed for {{name}}": "Скачать не удалось для {{name}}",
     "Download failed. Try again": "Скачать не удалось. Попробуйте снова",
     "Download file to OS Downloads folder": "Скачать файл в папку Downloads операционной системы",
@@ -8533,6 +8533,26 @@
     "Source URL": "URL источника",
     "Branch or tag": "Ветка или тег",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Укажите URL публичного репозитория GitHub или ветки, публикующей каталог маркетплейса специалистов.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Установленные навыки могут изменить поведение агентов. Доверяйте только знакомым источникам."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Установленные навыки могут изменить поведение агентов. Доверяйте только знакомым источникам.",
+    "Cannot open this folder. Check the path and permissions.": "Не удалось открыть папку. Проверьте путь и права доступа.",
+    "Enter a valid file name.": "Введите допустимое имя файла.",
+    "Enter a valid folder name.": "Введите допустимое имя папки.",
+    "Cannot use this destination. Choose another file or folder.": "Этот путь назначения недоступен. Выберите другой файл или папку.",
+    "The destination changed. Review it and save again.": "Объект назначения изменился. Проверьте его и сохраните снова.",
+    "Parent folder": "Родительская папка",
+    "Folders": "Папки",
+    "No subfolders": "Нет вложенных папок",
+    "Some folders are not listed. Enter the folder path to open them.": "Некоторые папки не показаны. Введите путь к папке, чтобы открыть её.",
+    "Replace existing file?": "Заменить существующий файл?",
+    "“{{name}}” already exists. Replace it?": "«{{name}}» уже существует. Заменить его?",
+    "Keep existing file": "Сохранить существующий файл",
+    "Replace": "Заменить",
+    "New folder": "Новая папка",
+    "Folder name": "Имя папки",
+    "Original file": "Исходный файл",
+    "Save path": "Путь сохранения",
+    "Browse": "Обзор",
+    "Hide folders": "Скрыть папки",
+    "File type: {{type}}; suggested name: “{{name}}”.": "Тип файла: {{type}}; рекомендуемое имя: «{{name}}»."
   }
 }

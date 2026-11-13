@@ -212,8 +212,10 @@ const createConversationExportService = (
     if (dialogResult.canceled || !dialogResult.filePath) return { saved: false }
 
     if (request.format === 'markdown') {
-      await deps.publishUserFile(dialogResult.filePath, (temporaryPath) =>
-        deps.writeFile(temporaryPath, renderConversationMarkdown(document))
+      await deps.publishUserFile(
+        dialogResult.filePath,
+        (temporaryPath) => deps.writeFile(temporaryPath, renderConversationMarkdown(document)),
+        { target: dialogResult.target }
       )
       return { saved: true, filePath: dialogResult.filePath }
     }
@@ -238,8 +240,10 @@ const createConversationExportService = (
           'Conversation PDF export timed out. Select fewer conversation turns.'
         )
       })
-      await deps.publishUserFile(dialogResult.filePath, (temporaryPath) =>
-        deps.writeFile(temporaryPath, pdf)
+      await deps.publishUserFile(
+        dialogResult.filePath,
+        (temporaryPath) => deps.writeFile(temporaryPath, pdf),
+        { target: dialogResult.target }
       )
       return { saved: true, filePath: dialogResult.filePath }
     } finally {

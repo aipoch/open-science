@@ -2520,6 +2520,30 @@ describe('file save IPC handlers', () => {
 })
 
 describe('file save blob handler', () => {
+  it('rejects a forged destination before publishing encoded bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-export-boundary-'))
+    try {
+      const destination = join(root, 'misleading.pdf')
+      await writeFile(destination, 'existing document')
+      showSaveDialog.mockResolvedValue({ canceled: false, filePath: destination })
+      const publish = vi.fn()
+      registerFileSaveHandlers({ publishUserFile: publish })
+      await expect(
+        handlers.get('file:save-blob')!(
+          { sender: {} },
+          {
+            suggestedName: 'plan.md',
+            mimeType: 'text/markdown',
+            data: new TextEncoder().encode('# Plan').buffer
+          }
+        )
+      ).rejects.toThrow('Export filename does not match its file type.')
+      expect(publish).not.toHaveBeenCalled()
+      expect(await readFile(destination, 'utf8')).toBe('existing document')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
   beforeEach(() => {
     handlers.clear()
     showSaveDialog.mockReset()

@@ -438,6 +438,30 @@ describe('Session Plan renderer surfaces', () => {
     expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
   })
 
+  it('shows a recoverable download failure and allows the next attempt', async () => {
+    const error = new Error('Native file dialog helper exited unexpectedly.')
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const onDownload = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined)
+    try {
+      render(<PlanPreviewSurface projection={projection} onDownload={onDownload} />)
+      const button = screen.getByRole('button', { name: 'Download Plan' }) as HTMLButtonElement
+      fireEvent.click(button)
+      fireEvent.click(button)
+      await waitFor(() =>
+        expect(screen.getByRole('alert').textContent).toContain('Download failed. Try again')
+      )
+      expect(onDownload).toHaveBeenCalledOnce()
+      expect(log).toHaveBeenCalledWith('[session-plan] download failed', error)
+      expect(button.disabled).toBe(false)
+      fireEvent.click(button)
+      await waitFor(() => expect(button.disabled).toBe(false))
+      expect(onDownload).toHaveBeenCalledTimes(2)
+      expect(screen.queryByRole('alert')).toBeNull()
+    } finally {
+      log.mockRestore()
+    }
+  })
+
   it('submits only the first Preview decision while its response is pending', () => {
     const onRespond = vi.fn(() => new Promise<void>(() => undefined))
     render(<PlanPreviewSurface projection={projection} onRespond={onRespond} />)

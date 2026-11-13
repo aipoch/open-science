@@ -3,7 +3,10 @@ import { createReadStream, existsSync } from 'node:fs'
 import { lstat, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
+import * as dialog from '../file-dialog-electron'
+import type { FileSaveSelection } from '../../shared/file-save-target'
+import { publishUserFile } from '../user-file-publisher'
 
 import { APP } from '../../shared/app-config'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
@@ -51,7 +54,7 @@ export type UpdateServiceDeps = {
   broadcast?: UpdateBroadcast
   // Resolves where to save the installer, or null if the user cancels. Injected in tests; the
   // default is platform-aware (see resolveSavePath).
-  promptSavePath?: (defaultFileName: string) => Promise<string | null>
+  promptSavePath?: (defaultFileName: string) => Promise<string | FileSaveSelection | null>
   // Resolves a deterministic target without opening a native dialog (CLI/headless downloads).
   defaultDownloadPath?: (defaultFileName: string) => string
   // Filesystem + shell hooks, injected in tests so apply never touches Electron/disk.
@@ -115,7 +118,9 @@ export class UpdateService implements UpdateStrategy {
   private readonly currentVersion: string
   private readonly manifestUrl: string
   private readonly broadcast: UpdateBroadcast
-  private readonly promptSavePath: (defaultFileName: string) => Promise<string | null>
+  private readonly promptSavePath: (
+    defaultFileName: string
+  ) => Promise<string | FileSaveSelection | null>
   private readonly defaultDownloadPath: (defaultFileName: string) => string
   private readonly fileExists: (path: string) => boolean
   private readonly openPath: (path: string) => Promise<string>
@@ -157,10 +162,11 @@ export class UpdateService implements UpdateStrategy {
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'installer' }
   }
 
-  // Platform-aware save location. Windows/Linux write straight to the Downloads folder (no OS
-  // permission gate). macOS Downloads is TCC-protected, so a native save panel grants access via
-  // implicit consent (no permission prompt) and lets the user confirm the location.
-  private async resolveSavePath(defaultFileName: string): Promise<string | null> {
+  // Windows/Linux retain automatic installer downloads. macOS lets the user review the target
+  // through the shared desktop picker; filesystem permissions are checked when writing.
+  private async resolveSavePath(
+    defaultFileName: string
+  ): Promise<string | FileSaveSelection | null> {
     const downloadsPath = join(app.getPath('downloads'), defaultFileName)
     if (this.platform !== 'darwin') return downloadsPath
 
@@ -173,7 +179,7 @@ export class UpdateService implements UpdateStrategy {
       ? await dialog.showSaveDialog(window, options)
       : await dialog.showSaveDialog(options)
 
-    return result.canceled || !result.filePath ? null : result.filePath
+    return result.canceled || !result.filePath ? null : result
   }
 
   getStatus(): UpdateStatus {
@@ -391,9 +397,16 @@ export class UpdateService implements UpdateStrategy {
         // leaves the status untouched (stays 'available').
         operation.phase('select-target')
         const defaultFileName = installerFileName(download.url)
-        const targetPath = options.nonInteractive
+        const selection = options.nonInteractive
           ? this.defaultDownloadPath(defaultFileName)
           : await this.promptSavePath(defaultFileName)
+        const targetPath =
+          typeof selection === 'string'
+            ? selection
+            : selection && !selection.canceled
+              ? selection.filePath
+              : undefined
+        const target = typeof selection === 'object' ? selection?.target : undefined
         if (!targetPath) {
           operation.cancel({ reason: 'target-selection' })
           return
@@ -414,7 +427,7 @@ export class UpdateService implements UpdateStrategy {
         // checksum and silently complete a cross-restart resume). Subsequent downloads to the same
         // path this session are left to the resilient core, which resumes only when its validator
         // sidecar binds the partial to the remote representation.
-        if (!this.freshTargets.has(targetPath)) {
+        if (!target && !this.freshTargets.has(targetPath)) {
           operation.phase('prepare-target')
           await this.removeFile(`${targetPath}.part`)
           await this.removeFile(`${targetPath}.part.meta`)
@@ -433,22 +446,34 @@ export class UpdateService implements UpdateStrategy {
           blockedBy: undefined
         })
         operation.phase('transfer')
-        const localPath = await downloadInstaller(download, targetPath, {
-          fetchImpl: this.fetchImpl,
-          onProgress: (progress) => {
-            if (abort.signal.aborted) return
-            this.setStatus({
-              ...this.status,
-              state: 'downloading',
-              progress: progress.percent ?? this.status.progress,
-              downloadedBytes: progress.transferred,
-              totalBytes: progress.total ?? this.status.totalBytes,
-              downloadProgress: progress
-            })
-            this.broadcast('update:progress', progress)
-          },
-          signal: abort.signal
-        })
+        const transfer = (path: string): Promise<string> =>
+          downloadInstaller(download, path, {
+            fetchImpl: this.fetchImpl,
+            onProgress: (progress) => {
+              if (abort.signal.aborted) return
+              this.setStatus({
+                ...this.status,
+                state: 'downloading',
+                progress: progress.percent ?? this.status.progress,
+                downloadedBytes: progress.transferred,
+                totalBytes: progress.total ?? this.status.totalBytes,
+                downloadProgress: progress
+              })
+              this.broadcast('update:progress', progress)
+            },
+            signal: abort.signal
+          })
+        // A reviewed desktop destination must keep its authorization through the network transfer.
+        // Download partials stay inside the publisher's private directory until final publication.
+        let localPath: string
+        if (target) {
+          await publishUserFile(targetPath, transfer, {
+            target,
+            signal: abort.signal,
+            userSelectedDestination: true
+          })
+          localPath = targetPath
+        } else localPath = await transfer(targetPath)
         if (abort.signal.aborted || this.downloadAbort !== abort) return
         const readyStatus: UpdateStatus = {
           ...this.status,

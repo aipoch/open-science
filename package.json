@@ -106,7 +106,7 @@
     "check:literature-packages": "node scripts/check-package-isolation.mjs --packages=literature-citations,journal-catalog,literature-discovery,literature-screening,literature-library,literature-reading",
     "typecheck:compiled": "npm run typecheck:node:compiled && npm run typecheck:web:compiled",
     "build:web:compiled": "npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts",
-    "build:backend:compiled": "node scripts/build-pi-acp.mjs && npm run build:backend-native && node scripts/build-backend.mjs",
+    "build:backend:compiled": "node scripts/build-pi-acp.mjs && node scripts/build-notebook-host.mjs && npm run build:backend-native && node scripts/build-backend.mjs",
     "check:packages": "node scripts/check-packages.mjs",
     "check:package-isolation": "node scripts/check-package-isolation.mjs",
     "build:environment": "node scripts/build-dev-packages.mjs --packages=environment",

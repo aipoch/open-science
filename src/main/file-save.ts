@@ -28,6 +28,7 @@ import type {
 } from '../shared/file-save'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import { toErrorMessage } from './error-message'
+import type { FileSaveTarget } from '../shared/file-save-target'
 import { publishUserFile } from './user-file-publisher'
 
 type RegisterFileSaveHandlersOptions = {
@@ -267,6 +268,7 @@ const appendArchiveChunk = async (handle: FileHandle, chunk: Uint8Array): Promis
 
 const writeProjectArtifactArchive = async (options: {
   destinationPath: string
+  target?: FileSaveTarget
   projectId: string
   files: SaveProjectArtifactsRequest['files']
   openManagedFileVersion: NonNullable<RegisterFileSaveHandlersOptions['openManagedFileVersion']>
@@ -400,8 +402,10 @@ const writeProjectArtifactArchive = async (options: {
     throwIfArchiveFailed()
     await archiveHandle.close()
     archiveHandleClosed = true
-    await options.publishUserFile(options.destinationPath, (temporaryPath) =>
-      copyFile(temporaryArchivePath, temporaryPath, constants.COPYFILE_EXCL)
+    await options.publishUserFile(
+      options.destinationPath,
+      (temporaryPath) => copyFile(temporaryArchivePath, temporaryPath, constants.COPYFILE_EXCL),
+      { target: options.target }
     )
     return true
   } catch (error) {
@@ -506,7 +510,23 @@ const copyToAvailableDestination = async (
 }
 
 const extensionForMime = (mimeType: string): string | undefined => {
-  switch (mimeType) {
+  switch (mimeType.split(';', 1)[0].trim().toLowerCase()) {
+    case 'application/json':
+      return 'json'
+    case 'application/pdf':
+      return 'pdf'
+    case 'application/zip':
+      return 'zip'
+    case 'application/x-ipynb+json':
+      return 'ipynb'
+    case 'image/jpeg':
+      return 'jpg'
+    case 'image/webp':
+      return 'webp'
+    case 'image/gif':
+      return 'gif'
+    case 'text/html':
+      return 'html'
     case 'image/svg+xml':
       return 'svg'
     case 'image/png':
@@ -678,10 +698,20 @@ export const createFileSaveCommands = (
       const dialogOptions = {
         defaultPath: request.suggestedName,
         filters: extension
-          ? [{ name: extension.toUpperCase(), extensions: [extension] }]
+          ? [
+              {
+                name: extension.toUpperCase(),
+                extensions:
+                  extension === 'jpg'
+                    ? ['jpg', 'jpeg']
+                    : extension === 'html'
+                      ? ['html', 'htm']
+                      : [extension]
+              }
+            ]
           : undefined
       }
-      const { canceled, filePath } = await desktopFileInteraction().chooseSavePath(
+      const { canceled, filePath, target } = await desktopFileInteraction().chooseSavePath(
         dialogOptions,
         invocation.callerContext.clientId
       )
@@ -691,8 +721,10 @@ export const createFileSaveCommands = (
         return { saved: false }
       }
 
-      await publish(filePath, (temporaryPath) =>
-        writeFile(temporaryPath, Buffer.from(request.data))
+      await publish(
+        filePath,
+        (temporaryPath) => writeFile(temporaryPath, Buffer.from(request.data)),
+        { target }
       )
       return { saved: true, filePath }
     },
@@ -746,7 +778,7 @@ export const createFileSaveCommands = (
         )
       }
       try {
-        const { canceled, filePath } = await desktopFileInteraction().chooseSavePath(
+        const { canceled, filePath, target } = await desktopFileInteraction().chooseSavePath(
           dialogOptions,
           invocation.callerContext.clientId
         )
@@ -769,6 +801,7 @@ export const createFileSaveCommands = (
           : pathManagedFile!
         try {
           await publish(filePath, (temporaryPath) => managedFile.copyTo(temporaryPath), {
+            target,
             ...(managedFile.assertCanCopyTo
               ? { validateDestination: () => managedFile.assertCanCopyTo!(filePath) }
               : {})
@@ -802,7 +835,7 @@ export const createFileSaveCommands = (
             defaultPath: join(runtimeMetadata().downloadsPath, safeName),
             title: (options.translate ?? englishNativeTranslator)('Save artifact')
           }
-          const { canceled, filePath } = await desktopFileInteraction().chooseSavePath(
+          const { canceled, filePath, target } = await desktopFileInteraction().chooseSavePath(
             dialogOptions,
             invocation.callerContext.clientId
           )
@@ -819,6 +852,7 @@ export const createFileSaveCommands = (
 
           try {
             await publish(filePath, (temporaryPath) => managedFile.copyTo(temporaryPath), {
+              target,
               ...(managedFile.assertCanCopyTo
                 ? { validateDestination: () => managedFile.assertCanCopyTo!(filePath) }
                 : {})
@@ -917,7 +951,7 @@ export const createFileSaveCommands = (
           dialogOptions,
           invocation.callerContext.clientId
         )
-        const { canceled, filePath } = dialogResult
+        const { canceled, filePath, target } = dialogResult
         assertTransferActive(invocation)
         if (canceled || !filePath) return { saved: false }
 
@@ -929,6 +963,7 @@ export const createFileSaveCommands = (
             operation.progress.completedFiles += 1
           },
           destinationPath: filePath,
+          target,
           projectId: request.projectId,
           files: request.files,
           openManagedFileVersion,

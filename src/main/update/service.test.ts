@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { UpdateManifest } from '../../shared/update'
 import type { Logger } from '@aipoch/diagnostics/node'
 import { UpdateService } from './service'
+import { snapshotFileTarget } from '../user-file-publisher'
 
 const VALID_SHA256 = 'a'.repeat(64)
 const manifest: UpdateManifest = {
@@ -379,6 +380,40 @@ describe('UpdateService.download', () => {
       expect.soft(defaultDownloadPath).not.toHaveBeenCalled()
       expect.soft(existsSync(target)).toBe(false)
       expect.soft(result.state).toBe('available')
+    }
+  )
+
+  it.each([false, true])(
+    'preserves reviewed installer target authorization during transfer (changed=%s)',
+    async (changed) => {
+      dir = await mkdtemp(join(tmpdir(), 'svc-reviewed-'))
+      const target = join(dir, 'installer.dmg')
+      await writeFile(target, 'original installer')
+      await writeFile(`${target}.part`, 'unrelated user file')
+      const authorization = await snapshotFileTarget(target)
+      const body = Buffer.from('installer-bytes')
+      const manifestForCheck = downloadManifest(
+        body.byteLength,
+        createHash('sha256').update(body).digest('hex')
+      )
+      const service = new UpdateService({
+        fetchImpl: (async (input) => {
+          if (String(input).endsWith('version.json')) return jsonResponse(manifestForCheck)
+          if (changed) await writeFile(target, 'external installer')
+          return installerResponse(body)
+        }) as typeof fetch,
+        platform: 'darwin',
+        arch: 'arm64',
+        currentVersion: '0.2.0',
+        manifestUrl: 'https://statics.aipoch.com/version.json',
+        broadcast: vi.fn(),
+        promptSavePath: async () => ({ canceled: false, filePath: target, target: authorization })
+      })
+      await service.check()
+      const result = await service.download()
+      expect(result.state).toBe(changed ? 'error' : 'ready')
+      expect(await readFile(target, 'utf8')).toBe(changed ? 'external installer' : body.toString())
+      expect(await readFile(`${target}.part`, 'utf8')).toBe('unrelated user file')
     }
   )
 

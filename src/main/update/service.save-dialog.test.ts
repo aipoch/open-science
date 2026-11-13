@@ -7,6 +7,7 @@ const electron = vi.hoisted(() => ({
   getPath: vi.fn(() => '/Users/example/Downloads')
 }))
 
+vi.mock('../file-dialog-electron', () => ({ showSaveDialog: electron.showSaveDialog }))
 vi.mock('electron', () => ({
   app: {
     getPath: electron.getPath,
@@ -40,7 +41,10 @@ describe('UpdateService installer save dialog', () => {
 
     const result = await service['resolveSavePath']('OpenScience.dmg')
 
-    expect(result).toBe('/Users/example/Downloads/OpenScience.dmg')
+    expect(result).toEqual({
+      canceled: false,
+      filePath: '/Users/example/Downloads/OpenScience.dmg'
+    })
     expect(translate).toHaveBeenCalledWith('Save the update installer')
     expect(electron.showSaveDialog).toHaveBeenCalledWith({
       defaultPath: join('/Users/example/Downloads', 'OpenScience.dmg'),

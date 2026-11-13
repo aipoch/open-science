@@ -138,6 +138,7 @@ export function createResearchVideoExportControl(
         current.htmlPath = undefined
         current.progress = { phase: 'publishing', startedAt: current.progress.startedAt }
         await publishUserFile(selected.filePath, (temporary) => copyFile(output, temporary), {
+          target: selected.target,
           signal
         })
         return { canceled: false }

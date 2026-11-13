@@ -12,6 +12,7 @@ import type { WebContents } from 'electron'
 import { writeFile, rm } from 'node:fs/promises'
 import type { DesktopNativeHandler } from './desktop-native-contract'
 import { desktopNativeRequestSchema } from './desktop-native-contract'
+import { showSaveDialog } from './file-dialog-electron'
 import { printConversationPdf } from './session-persistence/conversation-pdf-electron'
 
 // Only the authenticated main-process connection reaches this handler. No renderer-facing native
@@ -70,10 +71,12 @@ export function createDesktopNativeHandler(
         break
       }
       case 'save-dialog': {
-        const selected = await dialog.showSaveDialog(parent, request.options)
+        const selected = await showSaveDialog(parent, request.options, signal)
+        if (!selected.canceled && !selected.target)
+          throw new Error('Native save dialog returned a destination without a fingerprint.')
         result = {
           canceled: selected.canceled,
-          ...(selected.filePath ? { filePath: selected.filePath } : {})
+          ...(selected.filePath ? { filePath: selected.filePath, target: selected.target } : {})
         }
         break
       }

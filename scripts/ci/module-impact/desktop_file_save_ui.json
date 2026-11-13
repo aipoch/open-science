@@ -1,0 +1,46 @@
+{
+  "ownerPaths": [
+    "src/main/file-dialog-electron.ts",
+    "src/main/file-dialog-electron.test.ts",
+    "src/main/file-dialog-appearance.ts",
+    "src/main/file-dialog-downloads.ts",
+    "src/main/file-dialog-protocol.ts",
+    "src/main/file-dialog-save-window.ts",
+    "src/main/file-dialog-save-window.test.ts",
+    "src/main/file-dialog-ui-state.ts",
+    "src/main/file-dialog-ui-state.test.ts",
+    "src/main/file-dialog-filename.ts",
+    "src/preload/file-dialog.ts",
+    "src/renderer/file-dialog.html",
+    "src/renderer/src/file-dialog.tsx"
+  ],
+  "interfacePaths": [
+    "src/main/file-dialog-electron.ts",
+    "src/main/file-dialog-appearance.ts",
+    "src/main/file-dialog-downloads.ts",
+    "src/main/file-dialog-protocol.ts",
+    "src/main/file-dialog-filename.ts",
+    "src/preload/file-dialog.ts",
+    "src/renderer/file-dialog.html",
+    "src/renderer/src/file-dialog.tsx"
+  ],
+  "testFiles": {
+    "owner": [
+      "src/main/file-dialog-electron.test.ts",
+      "src/main/file-dialog-save-window.test.ts",
+      "src/main/file-dialog-ui-state.test.ts"
+    ],
+    "contract": [
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "src/renderer/src/i18n/resources.test.ts",
+      "test/config/electron.vite.config.test.ts",
+      "src/main/desktop-native-electron.test.ts",
+      "src/main/update/service.save-dialog.test.ts",
+      "src/main/ipc-surfaces/artifacts.test.ts"
+    ],
+    "consumer": []
+  },
+  "consumerModules": ["desktop_composition"],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

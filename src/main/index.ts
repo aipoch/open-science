@@ -102,6 +102,8 @@ import {
 import { connectDesktopRuntime, type DesktopRuntimeClient } from './desktop-runtime-client'
 import { installDesktopRuntimeElectronAdapter } from './desktop-runtime-electron-adapter'
 import { createDesktopNativeHandler } from './desktop-native-electron'
+import { showSaveDialog } from './file-dialog-electron'
+import { configureUserFileRecoveryRoot, recoverUserFilePublications } from './user-file-publisher'
 import { createElectronSessionDiagnosticsFallback } from './session-diagnostics/electron-fallback'
 import { parseWebModeOptions } from './web-service/options'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
@@ -422,6 +424,11 @@ async function startDesktop(): Promise<void> {
   }
   bootstrapPhase = 'electron-ready'
   await app.whenReady()
+  const fileRecoveryRoot = join(app.getPath('userData'), '.open-science-file-recovery')
+  configureUserFileRecoveryRoot(fileRecoveryRoot)
+  await recoverUserFilePublications(fileRecoveryRoot).catch((error: unknown) =>
+    bootstrapLog.warn('file recovery replay failed', diagnosticErrorFields(error))
+  )
   if (!ensureWindowsProtocolRegistration(app))
     bootstrapLog.warn('Windows open-science protocol association could not be repaired')
   if (process.platform === 'win32')
@@ -785,7 +792,7 @@ async function startDesktop(): Promise<void> {
           configRoot,
           dataRoot: client?.runtimeInfo().startupOptions.dataRoot ?? resolveDataRoot(),
           chooseDestination: async (defaultName) => {
-            const result = await dialog.showSaveDialog({ defaultPath: defaultName })
+            const result = await showSaveDialog({ defaultPath: defaultName })
             return result.canceled ? undefined : result.filePath
           }
         })

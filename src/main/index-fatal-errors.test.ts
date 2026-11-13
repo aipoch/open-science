@@ -9,6 +9,12 @@ vi.mock('./runtime-ownership', async (original) => ({
 vi.mock('./runtime-control', () => ({ startRuntimeControl: async () => ({ close: vi.fn() }) }))
 vi.mock('./desktop-interaction-electron', () => ({ installElectronInteraction: vi.fn() }))
 vi.mock('./runtime-network-electron', () => ({ installElectronNetwork: vi.fn() }))
+// Reach fatal-handler registration without accessing recovery receipts or changing its root.
+vi.mock('./user-file-publisher', async (original) => ({
+  ...(await original<typeof import('./user-file-publisher')>()),
+  configureUserFileRecoveryRoot: vi.fn(),
+  recoverUserFilePublications: vi.fn(async () => ({ restored: 0, retained: 0, removed: 0 }))
+}))
 vi.mock('./credential-identity/bootstrap', () => ({
   selectStartupCredentialIdentity: () => ({
     backend: 'mac-keychain',

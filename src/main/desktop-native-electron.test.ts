@@ -2,12 +2,13 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WebContents } from 'electron'
 import { createDesktopNativeHandler } from './desktop-native-electron'
 
 const mocks = vi.hoisted(() => ({
   metrics: vi.fn(),
+  html: vi.fn(),
   open: vi.fn(),
   save: vi.fn(),
   message: vi.fn(),
@@ -16,18 +17,33 @@ const mocks = vi.hoisted(() => ({
   parent: vi.fn(),
   openPath: vi.fn(),
   reveal: vi.fn(),
-  external: vi.fn()
+  external: vi.fn(),
+  log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }
 }))
+vi.mock('@aipoch/diagnostics/node', async (original) => ({
+  ...(await original<typeof import('@aipoch/diagnostics/node')>()),
+  createLogger: () => mocks.log
+}))
+vi.mock('./file-dialog-save-window', () => ({ showInProcessFileDialog: mocks.html }))
 vi.mock('electron', () => ({
   app: { getAppMetrics: mocks.metrics },
   shell: { openPath: mocks.openPath, showItemInFolder: mocks.reveal, openExternal: mocks.external },
-  BrowserWindow: { getAllWindows: mocks.windows, fromWebContents: mocks.parent },
+  BrowserWindow: {
+    getAllWindows: mocks.windows,
+    getFocusedWindow: mocks.parent,
+    fromWebContents: mocks.parent
+  },
+  nativeTheme: { shouldUseDarkColors: false },
   dialog: { showOpenDialog: mocks.open, showSaveDialog: mocks.save, showMessageBox: mocks.message }
 }))
 vi.mock('./session-persistence/conversation-pdf-electron', () => ({
   printConversationPdf: mocks.print
 }))
-beforeEach(() => vi.resetAllMocks())
+beforeEach(() => {
+  vi.resetAllMocks()
+})
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+afterEach(() => Object.defineProperty(process, 'platform', originalPlatform))
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function setup() {
@@ -42,24 +58,64 @@ function setup() {
 }
 
 describe('native operations requested by the Node runtime', () => {
-  it('parents native dialogs to the current document and strips Electron-only result fields', async () => {
-    const value = setup()
-    const path = join(tmpdir(), 'chosen.science')
-    mocks.save.mockResolvedValue({ canceled: false, filePath: path, bookmark: 'not-in-protocol' })
-    await expect(
-      value.handler(
-        {
-          kind: 'native-request',
-          id: 1,
-          clientId: value.clientId,
-          request: { operation: 'save-dialog', options: { title: 'Export' } }
-        },
-        value.signal.signal
+  it.each(['win32', 'darwin', 'linux'] as const)(
+    'uses the %s save dialog with a validated document',
+    async (platform) => {
+      Object.defineProperty(process, 'platform', { value: platform })
+      const value = setup()
+      const path = join(tmpdir(), 'chosen.science')
+      const native = mocks.save
+      const result = { canceled: false, filePath: path, target: { path, fingerprint: null } }
+      native.mockResolvedValue({ ...result, bookmark: 'not-in-protocol' })
+      if (platform === 'win32' || platform === 'darwin') mocks.html.mockResolvedValue(result)
+      await expect(
+        value.handler(
+          {
+            kind: 'native-request',
+            id: 1,
+            clientId: value.clientId,
+            request: { operation: 'save-dialog', options: { title: 'Export' } }
+          },
+          value.signal.signal
+        )
+      ).resolves.toEqual(result)
+      const htmlSave = platform === 'win32' || platform === 'darwin'
+      if (htmlSave) expect(native).not.toHaveBeenCalled()
+      else expect(native).toHaveBeenCalledWith(value.window, { title: 'Export' })
+      expect(value.resolve).toHaveBeenCalledWith(value.clientId)
+      if (htmlSave) {
+        expect(mocks.html).toHaveBeenCalledWith(
+          expect.objectContaining({
+            kind: 'save',
+            options: { title: 'Export' },
+            operationId: expect.any(String),
+            appearance: expect.objectContaining({ theme: 'light' })
+          }),
+          value.window,
+          value.signal.signal
+        )
+        return
+      }
+      expect(mocks.log.info).toHaveBeenCalledWith(
+        'operation started',
+        expect.objectContaining({
+          operation: 'native-file-dialog',
+          kind: 'save',
+          platform,
+          parented: true,
+          operationId: expect.any(String)
+        })
       )
-    ).resolves.toEqual({ canceled: false, filePath: path })
-    expect(mocks.save).toHaveBeenCalledWith(value.window, { title: 'Export' })
-    expect(value.resolve).toHaveBeenCalledWith(value.clientId)
-  })
+      expect(mocks.log.info).toHaveBeenCalledWith(
+        'operation completed',
+        expect.objectContaining({
+          outcome: 'completed',
+          durationMs: expect.any(Number)
+        })
+      )
+      expect(JSON.stringify(mocks.log.info.mock.calls)).not.toContain(path)
+    }
+  )
 
   it('does not fall back to another window for a released document', async () => {
     const value = setup()
@@ -105,6 +161,37 @@ describe('native operations requested by the Node runtime', () => {
       await result
     }
   )
+
+  it('records Linux native dialog cancellation and rejection without swallowing the error', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
+    const value = setup()
+    const request = {
+      kind: 'native-request' as const,
+      id: 1,
+      clientId: value.clientId,
+      request: { operation: 'save-dialog' as const, options: { defaultPath: 'private-name.json' } }
+    }
+    mocks.save.mockResolvedValueOnce({ canceled: true, filePath: '' })
+    await expect(value.handler(request, value.signal.signal)).resolves.toEqual({ canceled: true })
+    expect(mocks.log.warn).toHaveBeenCalledWith(
+      'operation cancelled',
+      expect.objectContaining({ outcome: 'cancelled' })
+    )
+    const error = new Error('Native dialog unavailable')
+    mocks.save.mockRejectedValueOnce(error)
+    await expect(value.handler(request, value.signal.signal)).rejects.toBe(error)
+    expect(mocks.log.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({ outcome: 'failed' })
+    )
+    expect(
+      JSON.stringify([
+        ...mocks.log.info.mock.calls,
+        ...mocks.log.warn.mock.calls,
+        ...mocks.log.error.mock.calls
+      ])
+    ).not.toContain('private-name.json')
+  })
 
   it('passes cancellation to the native message dialog', async () => {
     const value = setup()

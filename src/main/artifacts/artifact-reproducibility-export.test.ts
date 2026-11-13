@@ -399,7 +399,7 @@ describe('Artifact reproducibility verification export', () => {
       exporter.previewOutput({ ...scope, entityId: 'file-1', path: '/private/file' } as never)
     ).rejects.toThrow('Invalid')
     await exporter.export(undefined, { ...request(value), outputEntityId: 'file-1' })
-    expect(writeArchive).toHaveBeenLastCalledWith('/exports/selected', bytes)
+    expect(writeArchive).toHaveBeenLastCalledWith('/exports/selected', bytes, undefined)
     await exporter.export(undefined, request(value))
     const files = unzipSync(writeArchive.mock.calls.at(-1)![1])
     expect(Buffer.from(files['outputs/1/report-draft.csv']!)).toEqual(bytes)
@@ -542,7 +542,11 @@ describe('Artifact reproducibility verification export', () => {
         defaultPath: join('/downloads', verificationArchiveName('results.csv', value.completedAt))
       })
     )
-    expect(writeArchive).toHaveBeenCalledWith('/exports/verification.zip', expect.any(Uint8Array))
+    expect(writeArchive).toHaveBeenCalledWith(
+      '/exports/verification.zip',
+      expect.any(Uint8Array),
+      undefined
+    )
   })
 
   it('fails closed when a receipt references a missing check log', async () => {
@@ -905,7 +909,8 @@ describe('Artifact Environment lock export', () => {
     )
     expect(writeArchive).toHaveBeenCalledWith(
       '/exports/environment-lock.zip',
-      expect.any(Uint8Array)
+      expect.any(Uint8Array),
+      undefined
     )
   })
 

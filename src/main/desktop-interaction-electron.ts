@@ -16,6 +16,7 @@ import { configureDesktopReviewer } from './reviewer/paged-preview-host'
 import { createReviewerElectronPagedContentResolver } from './reviewer/paged-preview-electron'
 import { app, BrowserWindow, dialog, shell, webContents, Notification } from 'electron'
 import { configureDesktopInteraction } from './desktop-interaction'
+import { showSaveDialog } from './file-dialog-electron'
 
 export function installElectronInteraction(): void {
   configureOfficePreviewHost({
@@ -47,15 +48,15 @@ export function installElectronInteraction(): void {
     researchVideoProgress: async (request) => readResearchVideoExportProgress(request),
     printConversationPdf,
     chooseFiles: dialog.showOpenDialog.bind(dialog),
-    chooseSavePath: dialog.showSaveDialog.bind(dialog),
+    chooseSavePath: showSaveDialog,
     chooseSavePathForCaller: async (callerId, options) => {
-      if (callerId === undefined) return dialog.showSaveDialog(options)
+      if (callerId === undefined) return showSaveDialog(options)
       const id = Number(callerId)
       const sender = Number.isSafeInteger(id) && id > 0 ? webContents.fromId(id) : undefined
       const parent = sender && !sender.isDestroyed() ? BrowserWindow.fromWebContents(sender) : null
       if (!parent || parent.isDestroyed())
         throw new Error('Desktop command window is no longer available.')
-      return dialog.showSaveDialog(parent, options)
+      return showSaveDialog(parent, options)
     },
     confirm: dialog.showMessageBox.bind(dialog),
     confirmSync: dialog.showMessageBoxSync.bind(dialog),

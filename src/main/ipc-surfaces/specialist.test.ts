@@ -15,6 +15,9 @@ const native = vi.hoisted(() => ({
   open: vi.fn(),
   save: vi.fn()
 }))
+vi.mock('../file-dialog-electron', () => ({
+  showSaveDialog: native.save
+}))
 vi.mock('electron', () => ({
   app: { getVersion: native.getVersion, getAppPath: () => native.appPath },
   dialog: { showOpenDialog: native.open, showSaveDialog: native.save },

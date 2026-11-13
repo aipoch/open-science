@@ -156,8 +156,8 @@ export function createArtifactReproducibilityDependencies({
         lock,
         lockChecksum
       }),
-    writeArchive: (filePath, bytes) =>
-      publishUserFile(filePath, (temporaryPath) => writeFile(temporaryPath, bytes)),
+    writeArchive: (filePath, bytes, target) =>
+      publishUserFile(filePath, (temporaryPath) => writeFile(temporaryPath, bytes), { target }),
     translate
   })
   return {

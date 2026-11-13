@@ -46,6 +46,10 @@ export function createSettingsExportFiles(translate: NativeTranslator): Settings
         },
         {
           ...options,
+          signal: AbortSignal.any([
+            invocation.callerLease.signal,
+            ...(options?.signal ? [options.signal] : [])
+          ]),
           validateDestination: async () => {
             await options?.validateDestination?.()
             assertCaller(invocation)
@@ -83,8 +87,10 @@ export function createSettingsExportFiles(translate: NativeTranslator): Settings
       )
       assertCaller(invocation)
       if (selected.canceled || !selected.filePath) return false
-      await publish(invocation)(selected.filePath, (temporaryPath) =>
-        writeFile(temporaryPath, contents, 'utf8')
+      await publish(invocation)(
+        selected.filePath,
+        (temporaryPath) => writeFile(temporaryPath, contents, 'utf8'),
+        { target: selected.target }
       )
       return true
     },

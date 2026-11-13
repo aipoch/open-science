@@ -291,5 +291,8 @@
   "resources/compute-hf-auth.py": ["src/main/compute/compute-account-hf.ts"],
   "resources/compute-modal-auth.py": ["src/main/compute/modal-account-auth.ts"],
   "resources/compute-hf-check.py": ["src/main/compute/compute-python-runtime.ts"],
-  "resources/compute-modal-check.py": ["src/main/compute/compute-python-runtime.ts"]
+  "resources/compute-modal-check.py": ["src/main/compute/compute-python-runtime.ts"],
+  "src/preload/file-dialog.ts": ["src/main/file-dialog-save-window.ts"],
+  "src/renderer/file-dialog.html": ["src/main/file-dialog-save-window.ts"],
+  "src/renderer/src/file-dialog.tsx": ["src/main/file-dialog-save-window.ts"]
 }

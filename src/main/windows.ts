@@ -1,4 +1,6 @@
 import { installSourcePreviewWebviews } from './source-preview-webview'
+import { rememberFileDialogAppearance } from './file-dialog-appearance'
+import { installFileDialogDownloads } from './file-dialog-downloads'
 import {
   app,
   BrowserWindow,
@@ -329,6 +331,7 @@ const createMainWindow = (
   }
   mainWindows.add(window)
   installSourcePreviewWebviews(window)
+  installFileDialogDownloads(window, translate)
   if (opts) configureMainWindow(window, opts)
 
   // The renderer decides pane-vs-window, but only once it has a live, responsive listener. If main
@@ -496,6 +499,7 @@ const createMainWindow = (
   const onWindowFindAppearanceChanged = (event: IpcMainEvent, appearance: unknown): void => {
     if (event.sender !== window.webContents || !isWindowFindAppearance(appearance)) return
     windowFindAppearance = appearance
+    rememberFileDialogAppearance(window, appearance)
     findOverlay.updateAppearance(appearance)
     mainWindowCloseOptions.get(window)?.onAppearanceChanged?.(appearance)
   }
