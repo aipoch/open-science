@@ -14,7 +14,8 @@ const mocks = vi.hoisted(() => ({
     cancel: vi.fn(),
     fail: vi.fn()
   },
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  workArea: { x: 0, y: 0, width: 1200, height: 800 }
 }))
 
 class FakeParent {
@@ -73,11 +74,15 @@ const FakeBrowserWindow = vi.hoisted(() => {
     readonly webContents = Object.assign(new Events(), {
       mainFrame: { url: '' },
       session: { setPermissionRequestHandler: (): void => undefined },
+      getZoomFactor: () => this.zoom,
       setWindowOpenHandler: (): void => undefined
     })
     private visible = false
     private destroyed = false
     private bounds = { x: 0, y: 0, width: 600, height: 340 }
+    frameHeight = 0
+    zoom = 1
+    private minimumSize: [number, number] = [480, 252]
 
     constructor(options: Record<string, unknown>) {
       super()
@@ -131,12 +136,25 @@ const FakeBrowserWindow = vi.hoisted(() => {
     }
 
     getContentSize(): [number, number] {
-      return [this.bounds.width, this.bounds.height]
+      return [this.bounds.width, this.bounds.height - this.frameHeight]
     }
 
     setContentSize(width: number, height: number): void {
       this.bounds.width = width
-      this.bounds.height = height
+      this.bounds.height = height + this.frameHeight
+    }
+
+    getMinimumSize(): [number, number] {
+      return this.minimumSize
+    }
+
+    setMinimumSize(width: number, height: number): void {
+      this.minimumSize = [width, height]
+    }
+
+    setPosition(x: number, y: number): void {
+      this.bounds.x = x
+      this.bounds.y = y
     }
 
     isDestroyed(): boolean {
@@ -172,7 +190,9 @@ vi.mock('electron', () => ({
   },
   nativeTheme: { themeSource: 'light' },
   screen: {
-    getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1200, height: 800 } })
+    getDisplayMatching: () => ({ workArea: mocks.workArea }),
+    on: vi.fn(),
+    removeListener: vi.fn()
   }
 }))
 
@@ -184,6 +204,7 @@ describe('in-process save file dialog window', () => {
     FakeBrowserWindow.instances.length = 0
     mocks.windows.length = 0
     mocks.handler = undefined
+    mocks.workArea = { x: 0, y: 0, width: 1200, height: 800 }
   })
 
   it('creates a modal child and restores a hidden parent after cancel', async () => {
@@ -200,7 +221,7 @@ describe('in-process save file dialog window', () => {
     await vi.waitFor(() => expect(mocks.handler).toBeDefined())
     const window = FakeBrowserWindow.instances[0]
     const senderEvent = { sender: window.webContents, senderFrame: window.webContents.mainFrame }
-    await mocks.handler!(senderEvent, { type: 'ready' })
+    await mocks.handler!(senderEvent, { type: 'ready', height: 252 })
     await mocks.handler!(senderEvent, { type: 'cancel' })
 
     await expect(pending).resolves.toEqual({ canceled: true, filePath: '' })
@@ -216,10 +237,47 @@ describe('in-process save file dialog window', () => {
     expect(parent.focus).toHaveBeenCalledOnce()
     expect(mocks.operation.phase.mock.calls.map(([phase]) => phase)).toEqual([
       'created',
+      'resized',
       'renderer-ready',
       'shown',
       'cancelled',
       'closed'
     ])
+  })
+
+  it('fits zoomed content inside the full work area including the native window frame', async () => {
+    const pending = showInProcessFileDialog(
+      {
+        kind: 'save',
+        options: { defaultPath: '/tmp/output.txt' },
+        operationId: 'operation-size',
+        appearance: { theme: 'light', followsSystem: false, locale: 'en' }
+      },
+      new FakeParent() as never
+    )
+    const window = FakeBrowserWindow.instances[0]
+    window.frameHeight = 32
+    window.zoom = 1.5
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame }
+    await mocks.handler!(event, { type: 'ready', height: 260 })
+    expect(window.getContentSize()[1]).toBe(390)
+
+    window.setPosition(10, 700)
+    await mocks.handler!(event, { type: 'resize', height: 600 })
+    expect(window.getBounds()).toMatchObject({ y: 0, height: 800 })
+    expect(window.getContentSize()[1]).toBe(768)
+
+    // An invalid renderer measurement must not poison future display-change callbacks.
+    await expect(mocks.handler!(event, { type: 'resize', height: Infinity })).rejects.toThrow()
+    mocks.workArea.height = 180
+    window.emit('moved')
+    expect(window.getBounds().height).toBe(180)
+    expect(window.getMinimumSize()[1]).toBe(180)
+
+    mocks.workArea.height = 800
+    await mocks.handler!(event, { type: 'resize', height: 100 })
+    expect(window.getContentSize()[1]).toBe(252)
+    await mocks.handler!(event, { type: 'cancel' })
+    await expect(pending).resolves.toMatchObject({ canceled: true })
   })
 })

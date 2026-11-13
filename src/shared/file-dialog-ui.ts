@@ -30,8 +30,8 @@ export type FileDialogUiState = {
 
 export type FileDialogUiAction =
   | { type: 'init' }
-  | { type: 'ready' }
-  | { type: 'resize'; expanded: boolean }
+  | { type: 'ready'; height?: number }
+  | { type: 'resize'; height: number }
   | { type: 'failed' }
   | { type: 'browse'; path: string }
   | { type: 'mkdir'; directory: string; name: string }

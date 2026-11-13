@@ -13,8 +13,30 @@ import {
 
 type FileDialogOperation = ReturnType<typeof startDiagnosticOperation>
 
-const SAVE_DIALOG_CONTENT_HEIGHT = 252
+const SAVE_DIALOG_MIN_CONTENT_HEIGHT = 252
 let activeSaveDialog: BrowserWindow | undefined
+
+const resizeSaveDialog = (window: BrowserWindow, requestedHeight: number): void => {
+  const bounds = window.getBounds()
+  const workArea = screen.getDisplayMatching(bounds).workArea
+  const [contentWidth, currentHeight] = window.getContentSize()
+  // Electron uses DIP for window sizes; the renderer reports CSS pixels at its current zoom.
+  const desiredHeight = Math.ceil(requestedHeight * window.webContents.getZoomFactor())
+  const frameHeight = Math.max(0, bounds.height - currentHeight)
+  const maxHeight = Math.max(1, workArea.height - frameHeight)
+  const minHeight = Math.min(SAVE_DIALOG_MIN_CONTENT_HEIGHT, maxHeight)
+  const contentHeight = Math.min(maxHeight, Math.max(minHeight, desiredHeight))
+  const [minimumWidth, minimumHeight] = window.getMinimumSize()
+  if (minimumHeight !== minHeight + frameHeight)
+    window.setMinimumSize(minimumWidth, minHeight + frameHeight)
+  if (currentHeight !== contentHeight) window.setContentSize(contentWidth, contentHeight)
+  const resizedBounds = window.getBounds()
+  const y = Math.max(
+    workArea.y,
+    Math.min(resizedBounds.y, workArea.y + workArea.height - resizedBounds.height)
+  )
+  if (y !== resizedBounds.y) window.setPosition(resizedBounds.x, y)
+}
 
 const restoreParentWindow = (parent: BaseWindow): void => {
   if (parent.isDestroyed()) return
@@ -58,9 +80,9 @@ export async function showInProcessFileDialog(
     modal: true,
     title: request.options.title || 'Open-Science',
     width: 600,
-    height: SAVE_DIALOG_CONTENT_HEIGHT,
+    height: SAVE_DIALOG_MIN_CONTENT_HEIGHT,
     minWidth: 480,
-    minHeight: SAVE_DIALOG_CONTENT_HEIGHT,
+    minHeight: SAVE_DIALOG_MIN_CONTENT_HEIGHT,
     useContentSize: true,
     show: false,
     autoHideMenuBar: true,
@@ -86,6 +108,21 @@ export async function showInProcessFileDialog(
   let revealTimer: ReturnType<typeof setTimeout> | undefined
   let abort: (() => void) | undefined
   let parentClosed: (() => void) | undefined
+  let requestedContentHeight = SAVE_DIALOG_MIN_CONTENT_HEIGHT
+  const resize = (height = requestedContentHeight): void => {
+    if (window.isDestroyed()) return
+    if (!Number.isFinite(height) || height <= 0)
+      throw new Error('Invalid file dialog content height.')
+    requestedContentHeight = height
+    const previousHeight = window.getContentSize()[1]
+    resizeSaveDialog(window, requestedContentHeight)
+    const contentHeight = window.getContentSize()[1]
+    if (contentHeight !== previousHeight)
+      operation.phase('resized', { requestedHeight: requestedContentHeight, contentHeight })
+  }
+  const displayChanged = (): void => resize()
+  screen.on('display-metrics-changed', displayChanged)
+  window.on('moved', displayChanged)
   const reportWindow = (phase: 'created' | 'renderer-ready' | 'shown' | 'focused'): void => {
     operation.phase(phase, { visible: window.isVisible(), focused: window.isFocused() })
   }
@@ -168,6 +205,11 @@ export async function showInProcessFileDialog(
         return { type: 'done' }
       }
       if (action && typeof action === 'object' && 'type' in action && action.type === 'ready') {
+        const requestedHeight =
+          'height' in action && typeof action.height === 'number'
+            ? action.height
+            : SAVE_DIALOG_MIN_CONTENT_HEIGHT
+        resize(requestedHeight)
         if (!rendererReady) {
           rendererReady = true
           reportWindow('renderer-ready')
@@ -176,13 +218,9 @@ export async function showInProcessFileDialog(
         return { type: 'done' }
       }
       if (action && typeof action === 'object' && 'type' in action && action.type === 'resize') {
-        if (!('expanded' in action) || typeof action.expanded !== 'boolean')
+        if (!('height' in action) || typeof action.height !== 'number')
           throw new Error('Invalid dialog size request.')
-        const bounds = window.getBounds()
-        const area = screen.getDisplayMatching(bounds).workArea
-        const contentWidth = window.getContentSize()[0]
-        const contentHeight = action.expanded ? 412 : SAVE_DIALOG_CONTENT_HEIGHT
-        window.setContentSize(contentWidth, Math.min(contentHeight, area.height))
+        resize(action.height)
         return { type: 'done' }
       }
       if (busy) throw new Error('File dialog action is unavailable.')
@@ -230,6 +268,7 @@ export async function showInProcessFileDialog(
     clearTimeout(revealTimer)
     if (abort) signal?.removeEventListener('abort', abort)
     if (parentClosed) parent.removeListener('closed', parentClosed)
+    screen.removeListener('display-metrics-changed', displayChanged)
     ipcMain.removeHandler(FILE_DIALOG_UI_CHANNEL)
     if (activeSaveDialog === window) activeSaveDialog = undefined
     if (!window.isDestroyed()) window.destroy()

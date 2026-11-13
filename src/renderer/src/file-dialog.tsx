@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX } from 'react'
+import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import { createRoot } from 'react-dom/client'
 import { useTranslation } from 'react-i18next'
 import { Folder, ArrowUp, ChevronDown, X } from 'lucide-react'
@@ -51,7 +51,12 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
   )
   const [suggestedName, setSuggestedName] = useState<string | null>(null)
   const [confirmation, setConfirmation] = useState<{ token: string; filename: string } | null>(null)
-  const expanded = browsing
+  const headerRef = useRef<HTMLElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const footerRef = useRef<HTMLElement>(null)
+  const resizeFrame = useRef<number | undefined>(undefined)
+  const lastReportedHeight = useRef<number | undefined>(undefined)
+  const lastReportedPixelRatio = useRef<number | undefined>(undefined)
   const filenameError = errorOwner === 'name' ? error : null
   const pathError = errorOwner === 'path' ? error : null
   const newFolderError = newFolder !== null && errorOwner === 'new-folder' ? error : null
@@ -80,24 +85,68 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
     const suffix = matchingFileExtension(input.value, initial.format?.extensions ?? [])
     input.setSelectionRange(0, suffix ? input.value.length - suffix.length - 1 : input.value.length)
   }
+  const measureContentHeight = useCallback((): number => {
+    const header = headerRef.current
+    const content = contentRef.current
+    const footer = footerRef.current
+    if (!header || !content || !footer) return 0
+    // Measure the intrinsic content, not the scrolling viewport, so the window can also shrink.
+    const height =
+      header.getBoundingClientRect().height +
+      content.getBoundingClientRect().height +
+      footer.getBoundingClientRect().height
+    return Math.ceil(height)
+  }, [])
   useEffect(() => {
     // Keep the extension visible and select only the stem for the common rename gesture.
     selectStem()
+    const height = measureContentHeight()
+    lastReportedHeight.current = height
+    lastReportedPixelRatio.current = window.devicePixelRatio
     void window.fileDialog
-      .action({ type: 'ready' })
+      .action({ type: 'ready', height })
       .then(() => {
         setReady(true)
       })
       .catch(() => window.fileDialog.action({ type: 'failed' }))
     if (initial.appearance.followsSystem) return subscribeSystemTheme(applyTheme)
     return undefined
-    // The initial snapshot is immutable for the lifetime of this helper.
+    // The initial snapshot is immutable for the lifetime of this dialog.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [measureContentHeight])
   useEffect(() => {
     if (!ready) return
-    void window.fileDialog.action({ type: 'resize', expanded }).catch(() => undefined)
-  }, [expanded, ready])
+    const scheduleResize = (): void => {
+      // Coalesce layout changes into one IPC request per frame without delaying initial display.
+      if (resizeFrame.current !== undefined) return
+      resizeFrame.current = requestAnimationFrame(() => {
+        resizeFrame.current = undefined
+        const height = measureContentHeight()
+        if (
+          !height ||
+          (height === lastReportedHeight.current &&
+            window.devicePixelRatio === lastReportedPixelRatio.current)
+        )
+          return
+        lastReportedHeight.current = height
+        lastReportedPixelRatio.current = window.devicePixelRatio
+        void window.fileDialog.action({ type: 'resize', height }).catch(() => undefined)
+      })
+    }
+    scheduleResize()
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(scheduleResize)
+    for (const element of [headerRef.current, contentRef.current, footerRef.current]) {
+      if (element) resizeObserver?.observe(element)
+    }
+    window.addEventListener('resize', scheduleResize)
+    return () => {
+      if (resizeFrame.current !== undefined) cancelAnimationFrame(resizeFrame.current)
+      resizeFrame.current = undefined
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', scheduleResize)
+    }
+  }, [measureContentHeight, ready])
   const run = async (action: FileDialogUiAction): Promise<void> => {
     if (pending.current) return
     pending.current = true
@@ -141,7 +190,7 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
   const rowClass = 'grid grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3'
   return (
     <main
-      className="flex h-full min-h-0 flex-col bg-card text-foreground"
+      className="flex h-screen min-h-0 flex-col overflow-hidden bg-card text-foreground"
       onKeyDown={(event) => {
         if (
           event.key === 'Escape' &&
@@ -155,7 +204,7 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
         }
       }}
     >
-      <header className={dialogHeaderClassName}>
+      <header ref={headerRef} className={dialogHeaderClassName}>
         <h1 className={dialogTitleClassName}>
           {directoryMode ? t('Select folder') : t('Save file')}
         </h1>
@@ -172,230 +221,237 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
       </header>
       <fieldset
         disabled={busy || Boolean(confirmation)}
-        className={`${dialogBodyClassName} flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto`}
+        className="m-0 min-h-0 min-w-0 flex-1 overflow-y-auto border-0 p-0 [scrollbar-gutter:stable]"
       >
-        <div className="flex shrink-0 flex-col gap-1.5">
-          <div className={rowClass}>
-            <label htmlFor="save-path" className="text-sm text-muted-foreground">
-              {t('Save path')}
-            </label>
-            <div className="flex min-w-0 items-center gap-2">
-              <Input
-                id="save-path"
-                className={inputClass}
-                value={path}
-                spellCheck={false}
-                autoComplete="off"
-                aria-invalid={Boolean(pathError)}
-                aria-describedby={pathError ? 'save-path-hint' : undefined}
-                onChange={(event) => {
-                  setPath(event.target.value)
-                  setError(null)
-                  setSuggestedName(null)
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter') return
-                  event.preventDefault()
-                  if (event.nativeEvent.isComposing || event.keyCode === 229) return
-                  setBrowsing(true)
-                  void run({ type: 'browse', path })
-                }}
-              />
-              <Button
-                variant="outline"
-                className="h-9 shrink-0"
-                aria-expanded={browsing}
-                aria-controls="folder-browser"
-                onClick={() => {
-                  setBrowsing(!browsing)
-                  if (!browsing) void run({ type: 'browse', path })
-                }}
-              >
-                {t('Browse')}
-                <ChevronDown className={`size-4 ${browsing ? 'rotate-180' : ''}`} />
-              </Button>
-            </div>
-          </div>
-          {pathError && (
-            <div className={rowClass}>
-              <span aria-hidden="true" />
-              <p
-                id="save-path-hint"
-                role="alert"
-                className="text-sm leading-5 text-muted-foreground"
-              >
-                {errors[pathError]}
-              </p>
-            </div>
-          )}
-        </div>
-        {browsing && (
-          <section
-            id="folder-browser"
-            className="min-h-36 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
-            aria-label={t('Folders')}
-          >
-            <div className="flex items-center gap-2 border-b border-border px-2 py-1.5">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 shrink-0"
-                disabled={location.parent === location.path}
-                onClick={() => void run({ type: 'browse', path: location.parent })}
-              >
-                <ArrowUp className="size-4" />
-                {t('Parent folder')}
-              </Button>
-              <span
-                className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-                title={location.path}
-              >
-                {location.path}
-              </span>
-              <Button type="button" size="sm" variant="ghost" onClick={() => setNewFolder('')}>
-                {t('New folder')}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-7"
-                aria-label={t('Hide folders')}
-                onClick={() => setBrowsing(false)}
-              >
-                <X className="size-4" />
-              </Button>
-            </div>
-            {newFolder !== null && (
-              <form
-                className="flex flex-col gap-1.5 px-2 pt-2"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  void run({ type: 'mkdir', directory: location.path, name: newFolder })
-                }}
-              >
-                <div className="flex gap-2">
-                  <Input
-                    className={inputClass}
-                    autoFocus
-                    aria-label={t('Folder name')}
-                    value={newFolder}
-                    aria-invalid={Boolean(newFolderError)}
-                    aria-describedby={newFolderError ? 'new-folder-hint' : undefined}
-                    onChange={(event) => {
-                      setNewFolder(event.target.value)
-                      setError(null)
-                    }}
-                    onKeyDown={(event) => {
-                      if (
-                        event.key === 'Enter' &&
-                        (event.nativeEvent.isComposing || event.keyCode === 229)
-                      )
-                        event.preventDefault()
-                    }}
-                  />
-                  <Button type="submit" variant="outline">
-                    {t('Create')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      setNewFolder(null)
-                      setError(null)
-                    }}
-                  >
-                    {t('Cancel')}
-                  </Button>
-                </div>
-                {newFolderError && (
-                  <p
-                    id="new-folder-hint"
-                    role="alert"
-                    className="text-sm leading-5 text-muted-foreground"
-                  >
-                    {newFolderError === 'filename'
-                      ? t('Enter a valid folder name.')
-                      : errors[newFolderError]}
-                  </p>
-                )}
-              </form>
-            )}
-            <div className="max-h-44 overflow-y-auto p-1">
-              {location.folders.map((folder) => (
-                <button
-                  type="button"
-                  key={folder.path}
-                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent focus-visible:outline-ring"
-                  onClick={() => void run({ type: 'browse', path: folder.path })}
-                >
-                  <Folder className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{folder.name}</span>
-                </button>
-              ))}
-              {location.folders.length === 0 && (
-                <p className="p-3 text-sm text-muted-foreground">{t('No subfolders')}</p>
-              )}
-            </div>
-            {location.truncated && (
-              <p className="p-2 text-xs text-muted-foreground">
-                {t('Some folders are not listed. Enter the folder path to open them.')}
-              </p>
-            )}
-          </section>
-        )}
-        {!directoryMode && (
+        <div ref={contentRef} className={`${dialogBodyClassName} flex flex-col gap-4`}>
           <div className="flex shrink-0 flex-col gap-1.5">
             <div className={rowClass}>
-              <label htmlFor="save-name" className="text-sm text-muted-foreground">
-                {t('File name')}
+              <label htmlFor="save-path" className="text-sm text-muted-foreground">
+                {t('Save path')}
               </label>
-              <Input
-                id="save-name"
-                ref={nameInput}
-                className={inputClass}
-                autoFocus
-                value={filename}
-                spellCheck={false}
-                autoComplete="off"
-                aria-invalid={Boolean(filenameError)}
-                aria-describedby={filenameError ? 'save-name-hint' : undefined}
-                onChange={(event) => editName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter') return
-                  event.preventDefault()
-                  // Enter commits an IME candidate without accepting or saving the file.
-                  if (!event.nativeEvent.isComposing && event.keyCode !== 229) save()
-                }}
-              />
+              <div className="flex min-w-0 items-center gap-2">
+                <Input
+                  id="save-path"
+                  className={inputClass}
+                  value={path}
+                  spellCheck={false}
+                  autoComplete="off"
+                  aria-invalid={Boolean(pathError)}
+                  aria-describedby={pathError ? 'save-path-hint' : undefined}
+                  onChange={(event) => {
+                    setPath(event.target.value)
+                    setError(null)
+                    setSuggestedName(null)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter') return
+                    event.preventDefault()
+                    if (event.nativeEvent.isComposing || event.keyCode === 229) return
+                    setBrowsing(true)
+                    void run({ type: 'browse', path })
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  className="h-9 shrink-0"
+                  aria-expanded={browsing}
+                  aria-controls="folder-browser"
+                  onClick={() => {
+                    setBrowsing(!browsing)
+                    if (!browsing) void run({ type: 'browse', path })
+                  }}
+                >
+                  {t('Browse')}
+                  <ChevronDown className={`size-4 ${browsing ? 'rotate-180' : ''}`} />
+                </Button>
+              </div>
             </div>
-            {filenameError && (
+            {pathError && (
               <div className={rowClass}>
                 <span aria-hidden="true" />
-                <div>
-                  {filenameError && (
-                    <p
-                      id="save-name-hint"
-                      role="alert"
-                      className="text-sm font-normal leading-5 text-muted-foreground [overflow-wrap:anywhere]"
-                    >
-                      {errors[filenameError]}
-                    </p>
-                  )}
-                </div>
+                <p
+                  id="save-path-hint"
+                  role="alert"
+                  className="text-sm leading-5 text-muted-foreground"
+                >
+                  {errors[pathError]}
+                </p>
               </div>
             )}
           </div>
-        )}
-        {/* Reuse the body's remaining space; never append feedback after an empty spacer. */}
-        {destinationError && (
-          <div className="shrink-0" id="save-destination-hint">
-            <ErrorNotice inline description={errors[destinationError]} role="alert" level="error" />
-          </div>
-        )}
+          {browsing && (
+            <section
+              id="folder-browser"
+              className="min-h-36 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
+              aria-label={t('Folders')}
+            >
+              <div className="flex items-center gap-2 border-b border-border px-2 py-1.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 shrink-0"
+                  disabled={location.parent === location.path}
+                  onClick={() => void run({ type: 'browse', path: location.parent })}
+                >
+                  <ArrowUp className="size-4" />
+                  {t('Parent folder')}
+                </Button>
+                <span
+                  className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+                  title={location.path}
+                >
+                  {location.path}
+                </span>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setNewFolder('')}>
+                  {t('New folder')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-7"
+                  aria-label={t('Hide folders')}
+                  onClick={() => setBrowsing(false)}
+                >
+                  <X className="size-4" />
+                </Button>
+              </div>
+              {newFolder !== null && (
+                <form
+                  className="flex flex-col gap-1.5 px-2 pt-2"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void run({ type: 'mkdir', directory: location.path, name: newFolder })
+                  }}
+                >
+                  <div className="flex gap-2">
+                    <Input
+                      className={inputClass}
+                      autoFocus
+                      aria-label={t('Folder name')}
+                      value={newFolder}
+                      aria-invalid={Boolean(newFolderError)}
+                      aria-describedby={newFolderError ? 'new-folder-hint' : undefined}
+                      onChange={(event) => {
+                        setNewFolder(event.target.value)
+                        setError(null)
+                      }}
+                      onKeyDown={(event) => {
+                        if (
+                          event.key === 'Enter' &&
+                          (event.nativeEvent.isComposing || event.keyCode === 229)
+                        )
+                          event.preventDefault()
+                      }}
+                    />
+                    <Button type="submit" variant="outline">
+                      {t('Create')}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => {
+                        setNewFolder(null)
+                        setError(null)
+                      }}
+                    >
+                      {t('Cancel')}
+                    </Button>
+                  </div>
+                  {newFolderError && (
+                    <p
+                      id="new-folder-hint"
+                      role="alert"
+                      className="text-sm leading-5 text-muted-foreground"
+                    >
+                      {newFolderError === 'filename'
+                        ? t('Enter a valid folder name.')
+                        : errors[newFolderError]}
+                    </p>
+                  )}
+                </form>
+              )}
+              <div className="max-h-44 overflow-y-auto p-1">
+                {location.folders.map((folder) => (
+                  <button
+                    type="button"
+                    key={folder.path}
+                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent focus-visible:outline-ring"
+                    onClick={() => void run({ type: 'browse', path: folder.path })}
+                  >
+                    <Folder className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{folder.name}</span>
+                  </button>
+                ))}
+                {location.folders.length === 0 && (
+                  <p className="p-3 text-sm text-muted-foreground">{t('No subfolders')}</p>
+                )}
+              </div>
+              {location.truncated && (
+                <p className="p-2 text-xs text-muted-foreground">
+                  {t('Some folders are not listed. Enter the folder path to open them.')}
+                </p>
+              )}
+            </section>
+          )}
+          {!directoryMode && (
+            <div className="flex shrink-0 flex-col gap-1.5">
+              <div className={rowClass}>
+                <label htmlFor="save-name" className="text-sm text-muted-foreground">
+                  {t('File name')}
+                </label>
+                <Input
+                  id="save-name"
+                  ref={nameInput}
+                  className={inputClass}
+                  autoFocus
+                  value={filename}
+                  spellCheck={false}
+                  autoComplete="off"
+                  aria-invalid={Boolean(filenameError)}
+                  aria-describedby={filenameError ? 'save-name-hint' : undefined}
+                  onChange={(event) => editName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter') return
+                    event.preventDefault()
+                    // Enter commits an IME candidate without accepting or saving the file.
+                    if (!event.nativeEvent.isComposing && event.keyCode !== 229) save()
+                  }}
+                />
+              </div>
+              {filenameError && (
+                <div className={rowClass}>
+                  <span aria-hidden="true" />
+                  <div>
+                    {filenameError && (
+                      <p
+                        id="save-name-hint"
+                        role="alert"
+                        className="text-sm font-normal leading-5 text-muted-foreground [overflow-wrap:anywhere]"
+                      >
+                        {errors[filenameError]}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {/* Keep feedback in the measured content so validation can grow the window. */}
+          {destinationError && (
+            <div className="shrink-0" id="save-destination-hint">
+              <ErrorNotice
+                inline
+                description={errors[destinationError]}
+                role="alert"
+                level="error"
+              />
+            </div>
+          )}
+        </div>
       </fieldset>
-      <footer className={`${dialogFooterClassName} bg-background`}>
+      <footer ref={footerRef} className={`${dialogFooterClassName} bg-background`}>
         <Button
           variant="ghost"
           className={dialogCancelButtonClassName}
