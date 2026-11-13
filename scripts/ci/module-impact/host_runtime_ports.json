@@ -5,7 +5,6 @@
     "src/main/desktop-interaction.ts",
     "src/main/runtime-metadata.ts",
     "src/main/runtime-network.ts",
-    "src/main/process-birth-identity.ts",
     "src/main/desktop-native-contract.ts",
     "src/main/lifecycle-broadcast.ts",
     "src/main/cli-launcher-contract.ts"

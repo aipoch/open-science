@@ -1,11 +1,44 @@
 import { randomUUID } from 'node:crypto'
-import { renameSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
 import { retryFileReplacement } from '@aipoch/durable-files'
 import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from '../runtime-startup-options'
-import { processBirthIdentity } from '../process-birth-identity'
+
+const require = createRequire(__filename)
+
+// Keep update handoff identity evidence inside the update module. The shared desktop helper is
+// owned by the composition layer, and importing it here would create a runtime dependency cycle.
+function processBirthIdentity(pid: number): string | undefined {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return undefined
+  try {
+    if (process.platform === 'darwin') {
+      const native =
+        require('@aipoch/process-tree-native') as typeof import('@aipoch/process-tree-native')
+      const identity = native.getDarwinProcess(pid)
+      return identity?.uniqueId && identity.uniqueId !== '0'
+        ? `darwin-proc-uniqueid:${identity.uniqueId}`
+        : undefined
+    }
+    if (process.platform === 'linux') {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+      const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
+      const start = fields[19]
+      return start && /^\d+$/.test(start) ? `linux-proc-starttime:${start}` : undefined
+    }
+    if (process.platform === 'win32') {
+      const native =
+        require('@aipoch/process-tree-native') as typeof import('@aipoch/process-tree-native')
+      const value = native.getWindowsProcessCreationTime(pid)
+      return value && /^\d+$/.test(value) ? `windows-creation-time:${value}` : undefined
+    }
+  } catch {
+    /* Inability to inspect is not proof of death or ownership. */
+  }
+  return undefined
+}
 
 export const WINDOWS_UPDATE_OPERATION_ARG = '--open-science-update-operation='
 const operationIdSchema = z.string().uuid()
