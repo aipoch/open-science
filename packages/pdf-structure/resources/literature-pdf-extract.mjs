@@ -4984,7 +4984,7 @@ try {
               }
             }
           }
-          if (interiorFenceProof && !thumbnail && !fallbackDeferred) continue
+          if (!thumbnail && (interiorFenceProof || fallbackDeferred)) continue
           tables.push({
             ...result,
             cropRect: table.cropRect,

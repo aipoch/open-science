@@ -994,7 +994,11 @@ export function recoverUnassignedWideMetricGroupHeader({
   )
     return false
   const top = Math.min(...plans.map((plan) => plan.item.rect[1]))
-  const bottom = rows[0].rect[1]
+  const firstRow = rows[0]
+  if (!firstRow?.rect || firstRow.rect.length !== 4 || !firstRow.rect.every(Number.isFinite))
+    return false
+  const bottom = firstRow.rect[1]
+  if (!(bottom > top) || plans.some((plan) => plan.item.rect[3] > bottom)) return false
   const parentCells = plans.map((plan) => ({
     row: 0,
     column: plan.first,
@@ -1021,7 +1025,24 @@ export function recoverUnassignedWideMetricGroupHeader({
     if (index >= 0) unassigned.splice(index, 1)
   }
   if (!unassigned.length) issues?.delete?.('unassigned-source-text')
-  issues?.delete?.('unresolved-spanning-cells')
+  const occupied = new Set()
+  const completeGrid = cells.every((cell) => {
+    const row = cell.row ?? 0,
+      column = cell.column ?? 0,
+      rowSpan = cell.rowSpan ?? 1,
+      colSpan = cell.colSpan ?? 1
+    if (row < 0 || column < 0 || row + rowSpan > rows.length || column + colSpan > columns.length)
+      return false
+    for (let r = row; r < row + rowSpan; r++)
+      for (let c = column; c < column + colSpan; c++) {
+        const key = `${r}:${c}`
+        if (occupied.has(key)) return false
+        occupied.add(key)
+      }
+    return true
+  })
+  if (completeGrid && occupied.size === rows.length * columns.length)
+    issues?.delete?.('unresolved-spanning-cells')
   repairs.push('source-wide-metric-group-header-recovered')
   return true
 }
