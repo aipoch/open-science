@@ -181,7 +181,7 @@ export async function showInProcessFileDialog(
         const bounds = window.getBounds()
         const area = screen.getDisplayMatching(bounds).workArea
         const contentWidth = window.getContentSize()[0]
-        const contentHeight = action.expanded ? 536 : SAVE_DIALOG_CONTENT_HEIGHT
+        const contentHeight = action.expanded ? 412 : SAVE_DIALOG_CONTENT_HEIGHT
         window.setContentSize(contentWidth, Math.min(contentHeight, area.height))
         return { type: 'done' }
       }
