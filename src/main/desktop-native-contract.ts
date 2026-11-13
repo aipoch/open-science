@@ -2,7 +2,7 @@ import { researchVideoProgressSchema } from '@aipoch/research-film/contracts'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
-import { fileSaveTargetSchema } from './file-save-target'
+import { fileSaveTargetSchema } from '../shared/file-save-target'
 
 const text = z.string().max(32_768)
 const path = text.refine(isAbsolute, 'Expected an absolute local path.')

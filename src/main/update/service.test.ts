@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { UpdateManifest } from '../../shared/update'
 import type { Logger } from '@aipoch/diagnostics/node'
 import { UpdateService } from './service'
-import { snapshotFileTarget } from '../file-save-target'
+import { snapshotFileTarget } from '../user-file-publisher'
 
 const VALID_SHA256 = 'a'.repeat(64)
 const manifest: UpdateManifest = {

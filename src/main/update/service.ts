@@ -5,7 +5,7 @@ import { basename, join } from 'node:path'
 
 import { app, BrowserWindow, shell } from 'electron'
 import * as dialog from '../file-dialog-electron'
-import type { FileSaveSelection } from '../file-save-target'
+import type { FileSaveSelection } from '../../shared/file-save-target'
 import { publishUserFile } from '../user-file-publisher'
 
 import { APP } from '../../shared/app-config'

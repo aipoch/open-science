@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('./file-dialog-save-window', () => ({ showInProcessFileDialog: mocks.html }))
 vi.mock('./file-dialog-appearance', () => ({ getFileDialogAppearance: vi.fn() }))
-vi.mock('./file-save-target', () => ({ snapshotFileTarget: mocks.snapshot }))
+vi.mock('./user-file-publisher', () => ({ snapshotFileTarget: mocks.snapshot }))
 vi.mock('@aipoch/diagnostics/node', () => ({
   createLogger: () => mocks.logger,
   startDiagnosticOperation: () => mocks.operation

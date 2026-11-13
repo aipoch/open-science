@@ -1,4 +1,4 @@
-import type { FileSaveSelection } from '../../file-save-target'
+import type { FileSaveSelection } from '../../../shared/file-save-target'
 import type { PublishUserFileOptions } from '../../user-file-publisher'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'

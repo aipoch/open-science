@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { validFileBasename, saveFileFormat } from './file-dialog-filename'
 import { resolveSaveFileName } from '../shared/file-save-name'
 import { mkdir, opendir, stat } from 'node:fs/promises'
-import { fileFingerprint as fingerprint } from './file-save-target'
+import { fileFingerprint as fingerprint } from './user-file-publisher'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import type { FileDialogRequest, FileDialogSaveResult } from './file-dialog-protocol'
 import type {

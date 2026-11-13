@@ -180,11 +180,6 @@
     "src/main/desktop-runtime-transport.integration.test.ts",
     "src/main/desktop-native-electron.ts",
     "src/main/desktop-native-electron.test.ts",
-    "src/main/file-dialog-electron.ts",
-    "src/main/file-dialog-electron.test.ts",
-    "src/main/file-dialog-appearance.ts",
-    "src/main/file-dialog-downloads.ts",
-    "src/main/file-dialog-protocol.ts",
     "scripts/stage-node-runtime.mjs",
     "scripts/stage-node-runtime.test.ts",
     "build/node-runtime.json",
@@ -258,13 +253,7 @@
     "scripts/ocr/build.mjs",
     "scripts/ocr/worker.mjs",
     "src/main/composition/research-film.ts",
-    "src/main/composition/research-film.test.ts",
-    "src/main/file-dialog-save-window.ts",
-    "src/main/file-dialog-save-window.test.ts",
-    "src/main/file-dialog-ui-state.ts",
-    "src/main/file-dialog-ui-state.test.ts",
-    "src/main/file-dialog-filename.ts",
-    "src/main/file-save-target.ts"
+    "src/main/composition/research-film.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -420,8 +409,6 @@
       "src/main/desktop-runtime-electron-adapter.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/desktop-native-electron.test.ts",
-      "src/main/file-dialog-electron.test.ts",
-      "src/main/file-dialog-save-window.test.ts",
       "scripts/stage-node-runtime.test.ts",
       "src/main/backend-startup-log-retention.test.ts",
       "src/main/backend-startup-log-retention-probes.test.ts",
@@ -466,8 +453,7 @@
       "src/main/service-process-recovery.integration.test.ts",
       "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/composition/research-film.test.ts",
-      "src/main/composition/background-results.integration.test.ts",
-      "src/main/file-dialog-ui-state.test.ts"
+      "src/main/composition/background-results.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

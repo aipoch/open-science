@@ -982,5 +982,6 @@
   },
   "consumerModules": ["main_web_service"],
   "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "File publication now validates trusted destination snapshots and recovers filesystem replacement receipts across process restarts, with platform-specific errno diagnostics; retain full validation beyond the previously reviewed direct-runtime boundary."
 }

@@ -8,7 +8,7 @@ import type {
   desktopMessageOptionsSchema,
   DesktopNativeOperation
 } from './desktop-native-contract'
-import type { FileSaveSelection } from './file-save-target'
+import type { FileSaveSelection } from '../shared/file-save-target'
 import type { showSaveDialog } from './file-dialog-electron'
 import { assertSelectedSavePath } from './file-dialog-filename'
 import { readFile, rm } from 'node:fs/promises'

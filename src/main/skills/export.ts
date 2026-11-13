@@ -1,4 +1,4 @@
-import type { FileSaveSelection } from '../file-save-target'
+import type { FileSaveSelection } from '../../shared/file-save-target'
 import type { SkillExportArchive } from '@aipoch/skills/sources'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import { publishUserFile } from '../user-file-publisher'

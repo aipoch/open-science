@@ -335,7 +335,7 @@ describe('Artifact Electron surface', () => {
       const { owners, event, sender, importEnvironmentLock } = fixtures()
       const parent = hasParent ? { id: 'sender-window', isDestroyed: () => false } : null
       native.fromWebContents.mockReturnValue(parent)
-      const destination = join(native.root, 'environment')
+      const destination = join(native.root, 'environment.zip')
       native.saveDialog.mockResolvedValue({ canceled: false, filePath: destination })
       await install(owners)
       if (!hasParent) {
@@ -359,10 +359,10 @@ describe('Artifact Electron surface', () => {
         filters: [{ name: 'translated: ZIP archive', extensions: ['zip'] }]
       })
       expect(native.saveDialog).toHaveBeenCalledWith(...(hasParent ? [parent, options] : [options]))
-      const archive = unzipSync(await readFile(`${destination}.zip`))
+      const archive = unzipSync(await readFile(destination))
       expect(Object.values(archive).some((bytes) => strFromU8(bytes) === serializedLock)).toBe(true)
       expect((await readdir(native.root)).filter((name) => name.includes('.tmp'))).toEqual([])
-      native.openDialog.mockResolvedValue({ canceled: false, filePaths: [`${destination}.zip`] })
+      native.openDialog.mockResolvedValue({ canceled: false, filePaths: [destination] })
       await expect(
         invoke('artifacts:import-environment-lock', event, { projectId: scope.projectId })
       ).resolves.toEqual({

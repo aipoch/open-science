@@ -1,4 +1,4 @@
-import type { FileSaveSelection } from '../../file-save-target'
+import type { FileSaveSelection } from '../../../shared/file-save-target'
 import type { PublishUserFileOptions } from '../../user-file-publisher'
 import {
   SPECIALIST_PACKAGE_ARCHIVE_LIMITS,

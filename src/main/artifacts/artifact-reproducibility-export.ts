@@ -1,4 +1,4 @@
-import type { FileSaveSelection, FileSaveTarget } from '../file-save-target'
+import type { FileSaveSelection, FileSaveTarget } from '../../shared/file-save-target'
 import { publishUserFile } from '../user-file-publisher'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'

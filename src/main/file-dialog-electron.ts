@@ -11,7 +11,7 @@ import { getFileDialogAppearance } from './file-dialog-appearance'
 import { showInProcessFileDialog } from './file-dialog-save-window'
 import { assertSelectedSavePath } from './file-dialog-filename'
 import { usesHtmlSaveDialog, type FileDialogSaveResult } from './file-dialog-protocol'
-import { snapshotFileTarget } from './file-save-target'
+import { snapshotFileTarget } from './user-file-publisher'
 
 const runFileDialog = async <Result extends { canceled: boolean }>(
   parent: BaseWindow | undefined,

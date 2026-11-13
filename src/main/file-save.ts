@@ -28,7 +28,7 @@ import type {
 } from '../shared/file-save'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import { toErrorMessage } from './error-message'
-import type { FileSaveTarget } from './file-save-target'
+import type { FileSaveTarget } from '../shared/file-save-target'
 import { publishUserFile } from './user-file-publisher'
 
 type RegisterFileSaveHandlersOptions = {

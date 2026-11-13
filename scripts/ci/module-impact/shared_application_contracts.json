@@ -38,7 +38,8 @@
     "src/shared/runtime-startup.ts",
     "src/shared/provider-url-policy.ts",
     "src/shared/file-dialog-ui.ts",
-    "src/shared/file-save-name.ts"
+    "src/shared/file-save-name.ts",
+    "src/shared/file-save-target.ts"
   ],
   "interfacePaths": [
     "src/shared/agent-framework-id.ts",
@@ -71,7 +72,8 @@
     "src/shared/runtime-startup.ts",
     "src/shared/provider-url-policy.ts",
     "src/shared/file-dialog-ui.ts",
-    "src/shared/file-save-name.ts"
+    "src/shared/file-save-name.ts",
+    "src/shared/file-save-target.ts"
   ],
   "consumerModules": [
     "host_command_runtime",

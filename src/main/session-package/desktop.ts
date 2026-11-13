@@ -1,4 +1,4 @@
-import type { FileSaveTarget } from '../file-save-target'
+import type { FileSaveTarget } from '../../shared/file-save-target'
 import { downloadUseCase } from './use-case-download'
 import type { UseCaseSource } from '../../shared/use-cases'
 import { desktopShellInteraction, desktopFileInteraction } from '../desktop-interaction'

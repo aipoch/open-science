@@ -23,9 +23,9 @@ import { createFileDurability } from '@aipoch/durable-files'
 import {
   configureUserFileRecoveryRoot,
   publishUserFile,
-  recoverUserFilePublications
+  recoverUserFilePublications,
+  snapshotFileTarget
 } from './user-file-publisher'
-import { snapshotFileTarget } from './file-save-target'
 
 let root = ''
 

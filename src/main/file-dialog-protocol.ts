@@ -1,5 +1,5 @@
 import type { FileDialogAppearance } from '../shared/file-dialog-ui'
-import type { FileSaveTarget } from './file-save-target'
+import type { FileSaveTarget } from '../shared/file-save-target'
 import type { SaveDialogOptions, SaveDialogReturnValue } from 'electron'
 
 export const FILE_DIALOG_DISPLAY_TIMEOUT_MS = 15_000

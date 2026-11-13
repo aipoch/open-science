@@ -4,6 +4,7 @@ import {
   chmod,
   copyFile,
   link,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -14,19 +15,51 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { constants as osConstants } from 'node:os'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { defaultFileDurability, type FileDurability } from '@aipoch/durable-files'
 import { retryFileReplacement } from '@aipoch/durable-files'
 import { publishNoReplace as publishAnchoredNoReplace } from './uploads/atomic-no-replace-publisher'
 import { createLogger, startDiagnosticOperation } from '@aipoch/diagnostics/node'
-import {
-  assertFileTarget,
-  destinationChanged,
-  fileFingerprint,
-  matchesCapturedTarget,
-  type FileSaveTarget
-} from './file-save-target'
+import type { FileSaveTarget } from '../shared/file-save-target'
+
+// Null records an absent target; directories and symlinks must never authorize file replacement.
+export async function fileFingerprint(path: string): Promise<string | null> {
+  try {
+    const info = await lstat(path, { bigint: true })
+    if (!info.isFile()) throw new Error('Destination is not a regular file.')
+    return [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(':')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+}
+
+export async function snapshotFileTarget(path: string): Promise<FileSaveTarget> {
+  return { path: resolve(path), fingerprint: await fileFingerprint(path) }
+}
+
+function destinationChanged(): Error {
+  return Object.assign(new Error('The destination changed. Review it and save again.'), {
+    code: 'ESTALE'
+  })
+}
+
+async function assertFileTarget(path: string, target: FileSaveTarget): Promise<void> {
+  // Reuse the reviewed snapshot; taking a fresh one here would authorize a competing write.
+  if (resolve(path) !== target.path || (await fileFingerprint(path)) !== target.fingerprint)
+    throw destinationChanged()
+}
+
+// Moving the captured file can change ctime, but must not change its identity, length or mtime.
+function matchesCapturedTarget(fingerprint: string | null, target: FileSaveTarget): boolean {
+  return (
+    fingerprint !== null &&
+    target.fingerprint !== null &&
+    fingerprint.split(':').slice(0, 4).join(':') ===
+      target.fingerprint.split(':').slice(0, 4).join(':')
+  )
+}
 
 type PublishUserFileOptions = {
   target?: FileSaveTarget
