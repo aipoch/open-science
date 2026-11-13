@@ -11,6 +11,7 @@ import type {
 } from '../../shared/artifact-provenance'
 import type { FileDurability } from '@aipoch/durable-files'
 import { artifactFailureDiagnostic } from './pending-file-transaction'
+import { normalizeArtifactFilename } from './storage-layout'
 import type {
   ArtifactVersionProducerCapture,
   PreparedArtifactVersionPersistence
@@ -49,16 +50,6 @@ const assertChecksum = (value: string, label: string): string => {
   }
   return value
 }
-
-// JavaScript has no native toCaseFold. Locale-independent lowercase plus the multi-character and
-// positional folds that differ on supported filenames covers the portability cases that ordinary
-// lowercasing misses (notably German sharp-s and Greek final sigma).
-const normalizeArtifactFilename = (filename: string): string =>
-  filename
-    .normalize('NFC')
-    .toLocaleLowerCase('und')
-    .replace(/\u00df/gu, 'ss')
-    .replace(/\u03c2/gu, '\u03c3')
 
 const storageKey = (...segments: string[]): string => segments.join('/')
 const isRetryableLineageVersionConflict = (error: unknown): boolean => {
