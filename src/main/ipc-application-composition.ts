@@ -175,7 +175,9 @@ export type ApplicationRuntimeInterfaces = {
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   listTrayNavigationSessions: () => Promise<readonly TrayNavigationSession[]>
   prepareDesktopUpdate: import('./update/strategy').InstallGate
-  inspectDesktopUpdate: () => Promise<import('./update/strategy').InstallReadiness>
+  inspectDesktopUpdate: (
+    signal?: AbortSignal
+  ) => Promise<import('./update/strategy').InstallReadiness>
   abortDesktopUpdate: () => void
   hasActivePackageTransfer: () => boolean
   hasActiveReviewerWork: () => boolean
@@ -629,7 +631,8 @@ export const createApplicationModules = async (
   })
   const handoff = await composeHandoff({
     holdUpdateAdmission: () => applicationCommandComposition.holdUpdateAdmission(),
-    loadSessionSummaries: () => sessionFoundation.sessionRepository.loadSessionSummaries(),
+    loadSessionSummaries: (signal) =>
+      sessionFoundation.sessionRepository.loadSessionSummaries(signal),
     declareElectronAdapter,
     webSessionPersistenceFlush,
     ...settingsBootstrap,

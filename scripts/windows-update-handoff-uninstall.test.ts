@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { processBirthIdentity } from '../src/main/process-birth-identity'
 
 const roots: string[] = []
 afterEach(() => {
@@ -31,6 +32,8 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       'untrusted-other-installation',
       'untrusted-hidden-helper',
       'hidden-owner',
+      'hidden-owner-birth',
+      'reused-hidden-birth',
       'locked-helper',
       'inventory-failure',
       'foreign',
@@ -105,7 +108,15 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
                 ? process.pid
                 : scenario === 'reused-uninstaller-parent'
                   ? 2001
-                  : 2147483647,
+                  : scenario.endsWith('-birth')
+                    ? process.pid
+                    : 2147483647,
+          // Cross-producer identity: the token written by Electron main must match the script's.
+          ...(scenario === 'hidden-owner-birth'
+            ? { parentBirthToken: processBirthIdentity(process.pid) }
+            : scenario === 'reused-hidden-birth'
+              ? { parentBirthToken: 'windows-creation-time:1' }
+              : {}),
           ...(scenario === 'reused-helper' ? { helperPid: process.pid } : {}),
           ...(scenario === 'reused-successor' ? { successorPid: process.pid } : {}),
           applicationPath: join(
@@ -134,6 +145,8 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       const target = join(root, 'uninstall.ps1')
       // The cleanup script excludes its own ancestor chain. Model an active owner with a
       // non-ancestor WMI record so this fixture continues to exercise the active guard.
+      if (scenario === 'hidden-owner-birth')
+        expect(processBirthIdentity(process.pid)).toMatch(/^windows-creation-time:\d+$/)
       const processInventory =
         scenario === 'untrusted-hidden-helper' || scenario === 'hidden-owner'
           ? `@(
@@ -147,12 +160,16 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
               ? `@(
   [pscustomobject]@{ ProcessId = 2001; ParentProcessId = 0; ExecutablePath = '${process.execPath.replaceAll("'", "''")}' }
 )`
-              : scenario === 'reused-uninstaller-parent'
+              : scenario.endsWith('-birth')
                 ? `@(
+  [pscustomobject]@{ ProcessId = ${process.pid}; ParentProcessId = 0; ExecutablePath = $null }
+)`
+                : scenario === 'reused-uninstaller-parent'
+                  ? `@(
   [pscustomobject]@{ ProcessId = $PID; ParentProcessId = 2001; ExecutablePath = $null }
   [pscustomobject]@{ ProcessId = 2001; ParentProcessId = 0; ExecutablePath = $null }
 )`
-                : undefined
+                  : undefined
       writeFileSync(
         target,
         scenario === 'no-storage' || scenario === 'inventory-failure'
@@ -213,7 +230,7 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       } else if (scenario === 'inventory-failure') {
         expect(result.status).toBe(1)
         expect(result.stderr).toContain('No storage should not require WMI')
-      } else if (scenario === 'hidden-owner') {
+      } else if (scenario === 'hidden-owner' || scenario === 'hidden-owner-birth') {
         expect(result.status).toBe(1)
         expect(result.stdout).toContain('Could not inspect a recorded owner')
       } else expect(result.status, result.stderr || result.stdout).toBe(0)

@@ -13,6 +13,30 @@ if ($roots.Count -eq 0) { exit 0 }
 $installation = [IO.Path]::GetFullPath($InstallPath).TrimEnd('\')
 # Read-only process inventory. An unavailable inventory must not authorize deletion.
 $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+# Same token as process-birth-identity.ts: the kernel creation FILETIME at 100 ns resolution.
+# WMI CreationDate is only microsecond-precise, so it can never prove or disprove that identity.
+# Returns '' when the PID no longer exists and $null when the live process cannot be inspected.
+function Get-LiveProcessBirthToken([int]$ProcessId) {
+  try { $live = [Diagnostics.Process]::GetProcessById($ProcessId) }
+  catch {
+    $cause = if ($_.Exception.InnerException) { $_.Exception.InnerException } else { $_.Exception }
+    if ($cause -is [ArgumentException]) { return '' }
+    return $null
+  }
+  try { return 'windows-creation-time:' + $live.StartTime.ToFileTimeUtc() }
+  catch { return $null }
+  finally { $live.Dispose() }
+}
+# $PID is a read-only automatic variable, so the recorded PID must not be named $Pid.
+function Test-RecordedOwner($Process, $RecordedPid, $RecordedBirthToken) {
+  if (-not $RecordedPid -or $Process.ProcessId -ne $RecordedPid) { return $false }
+  # Records from older versions carry no birth identity; a matching PID remains possible ownership.
+  if ([string]::IsNullOrWhiteSpace([string]$RecordedBirthToken)) { return $true }
+  $actual = Get-LiveProcessBirthToken ([int]$RecordedPid)
+  # An uninspectable live process is uncertainty, not proof that the owner is gone.
+  if ($null -eq $actual) { return $true }
+  return $actual -ceq [string]$RecordedBirthToken
+}
 # The uninstaller invokes this script as a child of its own process. A historical update PID can
 # be reused by that process, and its executable identity may be hidden from the elevated WMI query.
 # Exclude the current cleanup process and its observed ancestors before evaluating recorded owners.
@@ -64,10 +88,11 @@ foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
     if ($_.ProcessId -eq $PID -or $ancestors.Contains([uint32]$_.ProcessId)) { return $false }
     # Historic PIDs can be reused by unrelated processes after an update or reboot. A readable
     # different executable is not an owner; preserve uncertainty only when its identity is hidden.
-    $recordedPid = $_.ProcessId -eq $request.parentPid -or
-      ($request.helperPid -and $_.ProcessId -eq $request.helperPid) -or
-      ($request.successorPid -and $_.ProcessId -eq $request.successorPid)
-    if (-not $_.ExecutablePath) { $recordedPid }
+    # Legacy helpers predate birth identity and are matched by PID alone.
+    $recordedOwner = (Test-RecordedOwner $_ $request.parentPid $request.parentBirthToken) -or
+      (Test-RecordedOwner $_ $request.helperPid $null) -or
+      (Test-RecordedOwner $_ $request.successorPid $request.successorBirthToken)
+    if (-not $_.ExecutablePath) { $recordedOwner }
     else {
       $_.ExecutablePath -ieq $helper -or $_.ExecutablePath -ieq $request.applicationPath -or
         $_.ExecutablePath -ieq $request.installerPath
