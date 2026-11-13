@@ -195,6 +195,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés."
   },
   "renderer": {
+    "Pros": "Avantages",
+    "Cons": "Limites",
     "Network protocol": "Protocole",
     "Delete address?": "Supprimer cette adresse ?",
     "The model returned no film content.": "Le modèle n’a renvoyé aucun contenu pour le film.",

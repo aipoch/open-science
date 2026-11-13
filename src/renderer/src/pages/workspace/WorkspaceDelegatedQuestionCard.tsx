@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { ElicitationOptionDetails } from './ElicitationOptionDetails'
 import { ChoiceKindChip } from './ChoiceKindChip'
 import type { ElicitationResponse } from '../../../../shared/acp'
 import type {
@@ -32,6 +33,7 @@ const WorkspaceDelegatedQuestionCard = ({
   onRespond
 }: Props): React.JSX.Element => {
   const { t } = useTranslation()
+  const optionDetailsId = useId()
   const [answers, setAnswers] = useState<DelegatedQuestionAnswer[]>(() => [...request.draftAnswers])
   const [questionIndex, setQuestionIndex] = useState(request.draftQuestionIndex)
   const [submitting, setSubmitting] = useState(false)
@@ -200,6 +202,11 @@ const WorkspaceDelegatedQuestionCard = ({
               key={option.label}
               type="button"
               aria-label={option.label}
+              aria-describedby={
+                option.description || option.pros || option.cons
+                  ? `${optionDetailsId}-${questionIndex}-${index}`
+                  : undefined
+              }
               aria-pressed={selected}
               className={cn(
                 'flex w-full items-start gap-3 border-b border-border-200 px-3 py-3 text-left hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40',
@@ -226,11 +233,11 @@ const WorkspaceDelegatedQuestionCard = ({
               >
                 {selected ? <Check className="size-4" aria-label={t('Selected')} /> : index + 1}
               </span>
-              <span>
-                <span className="block text-sm font-medium">{option.label}</span>
-                {option.description ? (
-                  <span className="mt-0.5 block text-sm text-text-100">{option.description}</span>
-                ) : null}
+              <span className="min-w-0 flex-1">
+                <span className="block break-words text-sm font-medium">{option.label}</span>
+                <span id={`${optionDetailsId}-${questionIndex}-${index}`}>
+                  <ElicitationOptionDetails option={option} />
+                </span>
               </span>
             </button>
           )

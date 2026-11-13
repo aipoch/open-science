@@ -34,6 +34,61 @@ afterEach(() => {
 })
 
 describe('WorkspaceDelegatedQuestionCard', () => {
+  it.each(['single-select', 'multi-select'] as const)(
+    'describes %s trade-offs and keeps explanation clicks on the option',
+    async (kind) => {
+      const onRespond = vi.fn().mockResolvedValue(undefined)
+      render(
+        <WorkspaceDelegatedQuestionCard
+          projectId="project-1"
+          sessionId="session-1"
+          request={{
+            ...request,
+            questions: [
+              {
+                question: 'Which approach?',
+                kind,
+                options: [
+                  { label: 'Both', description: 'Context', pros: '<b>Benefit</b>', cons: 'Cost' },
+                  { label: 'Pros only', pros: 'Benefit alone' },
+                  { label: 'Cons only', cons: 'Cost alone' },
+                  { label: 'Neither' }
+                ]
+              }
+            ]
+          }}
+          onRespond={onRespond}
+        />
+      )
+      for (const [label, description] of [
+        ['Both', 'ContextPros: <b>Benefit</b>Cons: Cost'],
+        ['Pros only', 'Pros: Benefit alone'],
+        ['Cons only', 'Cons: Cost alone']
+      ]) {
+        const button = screen.getByRole('button', { name: label })
+        const details = document.getElementById(button.getAttribute('aria-describedby')!)!
+        expect(details.textContent).toBe(description)
+        expect(details.querySelector('b')).toBeNull()
+      }
+      const neither = screen.getByRole('button', { name: 'Neither' })
+      expect(neither.getAttribute('aria-describedby')).toBeNull()
+      expect(neither.textContent).not.toMatch(/Pros:|Cons:/)
+      fireEvent.click(screen.getByRole('button', { name: 'Both' }).querySelector('span.mt-1')!)
+      expect(screen.getByRole('button', { name: 'Both' }).getAttribute('aria-pressed')).toBe('true')
+      fireEvent.click(screen.getByRole('button', { name: 'Finish' }))
+      await waitFor(() =>
+        expect(onRespond).toHaveBeenCalledWith(
+          expect.objectContaining({
+            delegatedQuestion: expect.objectContaining({
+              action: 'confirm',
+              answers: [{ questionIndex: 0, value: kind === 'multi-select' ? ['Both'] : 'Both' }]
+            })
+          })
+        )
+      )
+    }
+  )
+
   it('defaults legacy questions to single select and updates the chip when advancing to multi select', async () => {
     render(
       <WorkspaceDelegatedQuestionCard

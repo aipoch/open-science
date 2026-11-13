@@ -196,6 +196,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены."
   },
   "renderer": {
+    "Pros": "Преимущества",
+    "Cons": "Ограничения",
     "Network protocol": "Протокол",
     "Delete address?": "Удалить адрес?",
     "The model returned no film content.": "Модель не вернула содержимое фильма.",
