@@ -30,7 +30,7 @@ function Get-LiveProcessBirthToken([int]$ProcessId) {
 # $PID is a read-only automatic variable, so the recorded PID must not be named $Pid.
 function Test-RecordedOwner($Process, $RecordedPid, $RecordedBirthToken) {
   if (-not $RecordedPid -or $Process.ProcessId -ne $RecordedPid) { return $false }
-  # Schema 1 records carry no birth identity; a matching PID remains possible ownership.
+  # Records from older versions carry no birth identity; a matching PID remains possible ownership.
   if ([string]::IsNullOrWhiteSpace([string]$RecordedBirthToken)) { return $true }
   $actual = Get-LiveProcessBirthToken ([int]$RecordedPid)
   # An uninspectable live process is uncertainty, not proof that the owner is gone.
@@ -70,7 +70,7 @@ foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
   try {
     if ((Get-Item -LiteralPath $requestPath).Length -gt 16384) { continue }
     $request = Get-Content -LiteralPath $requestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (@(1, 2) -notcontains $request.schema -or $request.operationId -cne $directory.Name -or
+    if ($request.schema -ne 1 -or $request.operationId -cne $directory.Name -or
         -not [IO.Path]::IsPathRooted([string]$request.applicationPath) -or
         -not [IO.Path]::IsPathRooted([string]$request.installerPath) -or
         $request.parentPid -le 0) { continue }

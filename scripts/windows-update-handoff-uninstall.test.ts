@@ -99,7 +99,7 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       writeFileSync(
         join(directory, 'request.json'),
         JSON.stringify({
-          schema: scenario.endsWith('-birth') ? 2 : 1,
+          schema: 1,
           operationId,
           parentPid:
             scenario === 'active' || scenario === 'hidden-owner'

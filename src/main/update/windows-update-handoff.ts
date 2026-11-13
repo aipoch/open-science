@@ -11,7 +11,7 @@ export const WINDOWS_UPDATE_OPERATION_ARG = '--open-science-update-operation='
 const operationIdSchema = z.string().uuid()
 const requestSchema = z
   .object({
-    schema: z.union([z.literal(1), z.literal(2)]),
+    schema: z.literal(1),
     operationId: operationIdSchema,
     createdAt: z.number().int().nonnegative(),
     parentPid: z.number().int().positive(),
@@ -141,7 +141,7 @@ export async function createWindowsUpdateRequest(
     installerPath: input.installerPath,
     profilePath: input.profilePath,
     startupOptions: input.startupOptions,
-    schema: 2,
+    schema: 1,
     operationId: randomUUID(),
     createdAt: Date.now(),
     parentPid: process.pid,

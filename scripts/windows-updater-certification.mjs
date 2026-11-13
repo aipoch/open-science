@@ -253,7 +253,7 @@ const inspectUpdaterSuccessor = async ({
           .catch(() => undefined)
         if (
           !request ||
-          ![1, 2].includes(request.schema) ||
+          request.schema !== 1 ||
           request.operationId !== name ||
           request.parentPid !== parentPid ||
           request.targetVersion !== expectedVersion ||
