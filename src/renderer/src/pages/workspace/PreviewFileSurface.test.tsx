@@ -4766,6 +4766,15 @@ const managedHtmlItem: PreviewFileItem = {
   source: 'artifact'
 }
 
+const managedExtensionlessHtmlItem: PreviewFileItem = {
+  ...managedHtmlItem,
+  title: 'report',
+  name: 'report',
+  path: 'artifact-version:project-1/session-1/artifact-html-1/version-1',
+  format: 'html',
+  mimeType: 'text/html; charset=UTF-8'
+}
+
 const setupLocalApi = (): void => {
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
@@ -4959,6 +4968,22 @@ describe('PreviewFileSurface file header actions', () => {
     ).toContain('Open in browser')
     await clickMenuItem('Open in browser')
     expect(window.api.artifacts.openInBrowser).toHaveBeenLastCalledWith({
+      artifactId: 'artifact-html-1',
+      projectId: 'project-1',
+      versionId: 'version-1'
+    })
+  })
+
+  it('shows the browser action for extensionless managed HTML MIME previews', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedExtensionlessHtmlItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[aria-label="Open in browser"]')).not.toBeNull()
+    await click(container.querySelector('[aria-label="Open in browser"]'))
+    expect(window.api.artifacts.openInBrowser).toHaveBeenCalledWith({
       artifactId: 'artifact-html-1',
       projectId: 'project-1',
       versionId: 'version-1'

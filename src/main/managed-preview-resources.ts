@@ -71,10 +71,21 @@ const normalizeMimeType = (value: string | undefined): string | undefined => {
   return essence === 'text/html' ? 'text/html; charset=utf-8' : essence
 }
 
-const inferMimeType = (filePath: string, fallback?: string): string =>
-  MIME_TYPES_BY_EXTENSION[extname(filePath).toLowerCase()] ??
-  normalizeMimeType(fallback) ??
-  'application/octet-stream'
+const inferMimeType = (
+  filePath: string,
+  fallback?: string,
+  options?: { preferTrustedHtmlMime?: boolean }
+): string => {
+  const normalizedFallback = normalizeMimeType(fallback)
+  if (options?.preferTrustedHtmlMime && normalizedFallback === 'text/html; charset=utf-8') {
+    return normalizedFallback
+  }
+  return (
+    MIME_TYPES_BY_EXTENSION[extname(filePath).toLowerCase()] ??
+    normalizedFallback ??
+    'application/octet-stream'
+  )
+}
 
 type ManagedPreviewResourcesOptions = {
   resolvePath: (
@@ -278,7 +289,9 @@ class ManagedPreviewResources {
         throw new Error('Managed preview file changed after admission.')
       }
 
-      let mimeType = inferMimeType(filePath, request.mimeType)
+      let mimeType = inferMimeType(filePath, request.mimeType, {
+        preferTrustedHtmlMime: request.source === 'artifact' || request.source === 'upload'
+      })
       // Reused below as the resource's width/height, so consumers learn the exact geometry from
       // the same header read that enforces the decoded-pixel limit.
       let imageDimensions: RasterImageDimensions | undefined

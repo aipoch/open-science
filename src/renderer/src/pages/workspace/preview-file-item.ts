@@ -220,6 +220,7 @@ export const createPreviewFileItemForArtifactVersion = ({
   }),
   name: version.name,
   title: version.name,
+  mimeType: version.mimeType,
   size: version.size,
   mtimeMs: version.mtimeMs
 })
@@ -256,6 +257,7 @@ export const createPreviewFileItemForManagedVersion = ({
         }),
   name: version.displayName,
   title: version.displayName,
+  mimeType: version.contentType ?? undefined,
   size: version.sizeBytes
 })
 

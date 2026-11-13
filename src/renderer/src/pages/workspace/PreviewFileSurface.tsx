@@ -1115,7 +1115,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       [pdfPageCountKey, readingContextBindingId]
     )
     const stageLocalPath = window.api.uploads?.stageLocalPath
+    const normalizedMimeType = resolvedPreviewItem.mimeType?.split(';', 1)[0]?.trim().toLowerCase()
     const isHtmlFile =
+      normalizedMimeType === 'text/html' ||
       getFileExtension(resolvedPreviewItem.name) === 'html' ||
       getFileExtension(resolvedPreviewItem.name) === 'htm'
     const isLocalHtmlFile = resolvedPreviewItem.source === 'local' && isHtmlFile

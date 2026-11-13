@@ -392,6 +392,45 @@ describe('ManagedPreviewResources', () => {
     }
   )
 
+  it('keeps trusted text/html MIME metadata for extension-mismatched managed versions', async () => {
+    const trustedBytes = Buffer.from('<!doctype html><p>report</p>')
+    const resources = new ManagedPreviewResources({
+      openManagedFileVersion: vi.fn().mockResolvedValue({
+        path: '/managed/report.pdf',
+        size: trustedBytes.byteLength,
+        versionToken: 1,
+        snapshot: { dev: 1n, ino: 2n, size: BigInt(trustedBytes.byteLength), mtimeNs: 3n },
+        read: vi.fn(),
+        readRange: vi.fn(async (begin: number, end: number) => trustedBytes.subarray(begin, end)),
+        verifyUnchanged: vi.fn(),
+        close: vi.fn().mockResolvedValue(undefined)
+      })
+    })
+
+    const resource = await resources.acquire(17, {
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'artifact-1',
+      versionId: 'version-1',
+      mimeType: 'text/html; charset=UTF-8'
+    })
+
+    expect(resource.mimeType).toBe('text/html; charset=utf-8')
+  })
+
+  it('keeps extension precedence for untrusted path-backed MIME metadata', async () => {
+    const filePath = await createFile(Buffer.from('not html'), 'report.pdf')
+    const resources = new ManagedPreviewResources({ resolvePath: async () => filePath })
+
+    const resource = await resources.acquire(17, {
+      source: 'local',
+      path: filePath,
+      mimeType: 'text/html'
+    })
+
+    expect(resource.mimeType).toBe('application/pdf')
+  })
+
   it.each(['release', 'owner teardown', 'read failure'])(
     'keeps admitted protocol and IPC reads alive through %s, while rejecting new reads',
     async (reason) => {
