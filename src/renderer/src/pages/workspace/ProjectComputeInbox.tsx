@@ -9,7 +9,6 @@ import {
   isComputeProviderId,
   type JobSummary
 } from '../../../../shared/compute'
-import { ComputeJobOutputs } from '@/components/ComputeJobOutputs'
 import type {
   NotebookProjectActivity,
   NotebookProjectBackgroundRunActivity,
@@ -545,7 +544,6 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                       >
                         <ArrowUpRight aria-hidden="true" />
                       </Button>
-                      <ComputeJobOutputs job={job} />
                     </div>
                   )
                 })}
