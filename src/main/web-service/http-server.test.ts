@@ -1,3 +1,6 @@
+import { TaskSubmissions } from '../tasks/task-submissions'
+// @ts-expect-error The CLI is a published JavaScript entry.
+import { parseCliArgs, runTaskCommand } from '../../../packages/open-science/cli.mjs'
 // @ts-expect-error The published ESM entry uses a sibling index.d.ts.
 import { OpenScienceClient } from '../../../packages/open-science/index.mjs'
 import { createHash } from 'node:crypto'
@@ -5226,5 +5229,113 @@ it('preserves the existing Web single-frame framing allowance', async () => {
     expect(actual === text).toBe(true)
   } finally {
     socket.terminate()
+  }
+})
+
+it('recovers a lost submission response through the real SDK and CLI without starting twice', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'submission-http-'))
+  roots.push(root)
+  let finish!: () => void
+  const preparation = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  const run = {
+    id: 'run-receipt',
+    requestId: 'request-receipt',
+    projectId: 'project',
+    sessionId: 'session',
+    cwd: root,
+    status: 'completed' as const,
+    startedAt: 1,
+    completedAt: 2,
+    artifacts: [],
+    preferredComputeHostIds: []
+  }
+  const startRun = vi.fn(async () => {
+    await preparation
+    return run
+  })
+  const owner = new TaskSubmissions(root, { loadRuns: async () => [], startRun })
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot: root,
+    rpc: { channels: () => [], invoke: vi.fn() },
+    tasks: {
+      runWithCallerContext: (_context, operation) => operation(),
+      supportsSubmissions: () => true,
+      submitRun: (id, request) => owner.submit(id, request),
+      getSubmission: (id) => owner.get(id),
+      subscribeProgress: () => () => undefined,
+      listProjects: vi.fn(),
+      createProject: vi.fn(),
+      updateProject: vi.fn(),
+      listSessions: vi.fn(),
+      getSession: vi.fn(),
+      startRun: vi.fn(),
+      getRun: () => run,
+      cancelRun: vi.fn(),
+      listArtifacts: vi.fn(),
+      acquireArtifact: vi.fn(),
+      releaseArtifact: vi.fn()
+    },
+    externalAccess: {
+      authorizeHttp: async () => authorizedExternalAccess(),
+      authorizeWebSocket: vi.fn()
+    },
+    bootstrap: {
+      appName: 'Open-Science',
+      appVersion: 'test',
+      configRoot: root,
+      platform: 'test',
+      versions: { node: 'test' }
+    }
+  })
+  servers.push(server)
+  const baseUrl = `http://127.0.0.1:${server.port}`
+  const client = new OpenScienceClient({ baseUrl, token: 'test-token' })
+  const lostResponse = new OpenScienceClient({
+    baseUrl,
+    token: 'test-token',
+    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await fetch(input, init)
+      if (init?.method === 'PUT') {
+        await response.arrayBuffer()
+        throw Object.assign(new Error('Response connection lost after admission.'), {
+          code: 'timeout'
+        })
+      }
+      return response
+    }
+  })
+  try {
+    await expect(
+      lostResponse.startRun(
+        { project: 'project', prompt: 'Research' },
+        { requestId: 'request-receipt' }
+      )
+    ).rejects.toMatchObject({ code: 'timeout', requestId: 'request-receipt' })
+    expect(
+      await client.submitRun('request-receipt', { project: 'project', prompt: 'Research' })
+    ).toMatchObject({ status: 'pending' })
+    expect(startRun).toHaveBeenCalledOnce()
+    expect((await fetch(`${baseUrl}/api/v1/run-submissions/request-receipt`)).status).toBe(403)
+    finish()
+    const log = vi.fn()
+    await runTaskCommand(
+      parseCliArgs(['run', 'wait', '--request-id', 'request-receipt', '--json']),
+      {
+        connect: async () => client,
+        log,
+        stdinIsTTY: true
+      }
+    )
+    expect(log).toHaveBeenCalledOnce()
+    expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({ id: run.id, status: 'completed' })
+    expect(startRun).toHaveBeenCalledOnce()
+  } finally {
+    finish()
+    await owner.dispose()
   }
 })

@@ -146,6 +146,7 @@ const decodeRun = (value: unknown): TaskRunJournalEntry => {
     throw new DurableJsonRecoveryBarrierError('Task Run journal contains a non-object Run.')
   if (
     !identity.safeParse(value.id).success ||
+    (value.requestId !== undefined && !identity.safeParse(value.requestId).success) ||
     !identity.safeParse(value.sessionId).success ||
     !identity.safeParse(value.projectId).success ||
     typeof value.cwd !== 'string' ||

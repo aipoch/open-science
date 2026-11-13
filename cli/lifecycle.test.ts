@@ -537,6 +537,24 @@ describe('headless startup', () => {
     ).toEqual(['backend.cjs', '--development', '--password-store=gnome-libsecret', '--serve=44100'])
   })
 
+  it('allows a cold service to become ready after thirty seconds', async () => {
+    let now = 0
+    const deps = makeDeps({
+      now: vi.fn(() => now),
+      sleep: vi.fn(async (ms: number) => {
+        now += ms
+      }),
+      findServiceState: vi.fn(async () => (now >= 45_000 ? RUNNING_STATE : undefined))
+    })
+    await expect(waitForStartup('/tmp/os-config', new EventEmitter(), deps)).resolves.toEqual({
+      kind: 'ready',
+      state: RUNNING_STATE
+    })
+    expect(now).toBe(45_000)
+    expect(parseCliArgs(['start', '--timeout-ms', '60000']).options.timeoutMs).toBe(60_000)
+    expect(() => parseCliArgs(['start', '--timeout-ms', '1', '--cancel-on-timeout'])).toThrow()
+  })
+
   it('stops waiting as soon as the packaged app exits', async () => {
     const child = new EventEmitter()
     const deps = makeDeps({
