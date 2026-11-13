@@ -28,6 +28,7 @@ const outputSchema = z
   .strict()
 const sourceTooLarge = (item: LiteratureItemView): boolean =>
   item.item.title.length > 4000 || (item.item.abstract?.length ?? 0) > 100000
+const retrievalQuery = (field: ComparisonField): string => field.rule
 export class ComparisonGlobalError extends Error {}
 export class ComparisonExtractor {
   constructor(private readonly options: ExtractorOptions) {}
@@ -52,10 +53,7 @@ export class ComparisonExtractor {
     try {
       const evidence = await this.options.reader.classificationEvidence({
         ...source.document,
-        query: table.fields
-          .map((field) => field.name)
-          .join(' ')
-          .slice(0, 4000)
+        query: table.fields.map(retrievalQuery).join(' ').slice(0, 4000)
       })
       const current = await this.options.catalog.get(itemId)
       if (!current || literatureOverviewSource(current).key !== source.key)
@@ -103,7 +101,7 @@ export class ComparisonExtractor {
       const evidence = await this.options.reader
         .classificationEvidence({
           ...source.document,
-          query: field.name + ' ' + field.rule
+          query: retrievalQuery(field)
         })
         .catch(() => {
           signal.throwIfAborted()

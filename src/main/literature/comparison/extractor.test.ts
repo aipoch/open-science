@@ -130,6 +130,9 @@ it('admits readable PDFs when translated field names have no hits but the extrac
     status: 'available',
     coverage: 'passages'
   })
+  expect(f.reader.classificationEvidence).toHaveBeenLastCalledWith(
+    expect.objectContaining({ query: translatedField.rule })
+  )
   expect(f.infer).not.toHaveBeenCalled()
   expect(
     await f.extractor.extract(f.table, translatedField, 'paper', new AbortController().signal)
@@ -137,6 +140,9 @@ it('admits readable PDFs when translated field names have no hits but the extrac
     status: 'succeeded',
     evidence: [{ pageStart: 7, pageEnd: 7, quote: 'Sample comprised 20 patients.' }]
   })
+  expect(f.reader.classificationEvidence).toHaveBeenLastCalledWith(
+    expect.objectContaining({ query: translatedField.rule })
+  )
 })
 it('keeps empty search results as an extraction evidence gap rather than a readability failure', async () => {
   const f = fixture()
