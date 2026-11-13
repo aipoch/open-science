@@ -69,7 +69,14 @@ export const dataRootIdentity = (target: string): string => {
           const path = join(receipts, name)
           if (name === RETIRED_WORKSPACES_DIR) {
             if (!lstatSync(path).isDirectory()) throw new Error('Retired workspace path is unsafe.')
-            return [name, dataRootDirectoryIdentity(path), entries(path)]
+            return [
+              name,
+              dataRootDirectoryIdentity(path),
+              entries(path).map((child) => {
+                const entry = lstatSync(join(path, child))
+                return [child, entry.dev, entry.ino, entry.birthtimeMs, entry.isDirectory()]
+              })
+            ]
           }
           return [
             name,
