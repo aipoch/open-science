@@ -1382,7 +1382,7 @@ test('Notebook and Files header toggles preserve the advancing replay clock', as
 
 test('interactive history reaches the first message and preserves conversation and Notebook anchors', async ({
   page
-}) => {
+}, info) => {
   await page.goto(`${url}?panel=1&history=1`)
   const panel = page.getByTestId('replay-panel')
   const slider = panel.getByRole('slider')
@@ -1393,6 +1393,35 @@ test('interactive history reaches the first message and preserves conversation a
   await conversation.hover()
   await page.mouse.wheel(0, -100000)
   await expect.poll(() => conversation.evaluate((element) => element.scrollTop)).toBe(0)
+  const loadEarlier = conversation.getByRole('button', { name: 'Load earlier messages' })
+  let lightControl: { color: string; background: string; border: string } | undefined
+  for (const dark of [false, true]) {
+    await page.evaluate(
+      (enabled) => document.documentElement.classList.toggle('dark', enabled),
+      dark
+    )
+    const control = await loadEarlier.evaluate(async (element) => {
+      await Promise.all(
+        document
+          .getAnimations()
+          .filter((animation) => {
+            const end = animation.effect?.getComputedTiming().endTime
+            return typeof end === 'number' && Number.isFinite(end) && end <= 2000
+          })
+          .map((animation) => animation.finished.catch(() => {}))
+      )
+      const style = getComputedStyle(element)
+      return { color: style.color, background: style.backgroundColor, border: style.borderColor }
+    })
+    expect(control.color).toBe('rgb(32, 35, 33)')
+    expect(control.background).toBe('rgb(236, 236, 234)')
+    if (lightControl) expect(control).toEqual(lightControl)
+    else lightControl = control
+    await panel.getByTestId('replay-stage').screenshot({
+      path: info.outputPath(`replay-history-controls-${dark ? 'dark' : 'light'}.png`)
+    })
+  }
+  await page.evaluate(() => document.documentElement.classList.remove('dark'))
   const historyButton = await conversation
     .getByRole('button', { name: 'Load earlier messages' })
     .boundingBox()

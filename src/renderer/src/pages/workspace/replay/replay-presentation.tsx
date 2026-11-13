@@ -73,10 +73,17 @@ export const replayPresentationStyle = (config: ReplayPresentationConfig): CSSPr
     '--muted-foreground': 'hsl(90 3% 34%)',
     '--primary': 'oklch(0.47 0.105 184)',
     '--primary-foreground': 'oklch(0.985 0.008 180)',
+    '--secondary': '#ececea',
+    '--secondary-foreground': '#202321',
     '--danger-000': 'hsl(0 45% 38%)',
     '--danger-foreground': 'hsl(0 0% 100%)',
     '--destructive': 'oklch(0.52 0.19 25)',
-    '--success-000': 'hsl(145 45% 30%)'
+    '--success-000': 'hsl(145 45% 30%)',
+    '--accent': 'oklch(0.87 0.115 82)',
+    '--accent-foreground': 'oklch(0.2 0.03 62)',
+    '--border': '#dededa',
+    '--input': '#dededa',
+    '--ring': 'oklch(0.58 0.11 184)'
   }) as CSSProperties
 
 export const replayAutomaticEvent = (
