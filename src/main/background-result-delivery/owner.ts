@@ -13,6 +13,8 @@ import type {
 } from './source-resolver'
 
 const log = createLogger('background-result-delivery')
+const reportRecoveryFailure = (error: unknown): void =>
+  log.warn('Background result recovery failed', diagnosticErrorFields(error))
 
 type DeliveryRepository = {
   register(source: BackgroundResultSourceRef): Promise<BackgroundResultDelivery>
@@ -122,6 +124,9 @@ class BackgroundResultDeliveryOwner {
   private readonly projectFences = new Set<string>()
   private readonly claimRecoveryTimer: ReturnType<typeof setInterval>
   private authorityReady: Promise<void> | undefined
+  private catalogRecovery: Promise<void> | undefined
+  private claimRecovery: Promise<void> | undefined
+  private pendingRecovery: Promise<void> | undefined
   private disposed = false
 
   constructor(private readonly options: BackgroundResultDeliveryOwnerOptions) {
@@ -129,10 +134,7 @@ class BackgroundResultDeliveryOwner {
     this.now = options.now ?? Date.now
     this.maxDeliveryAttempts = Math.max(1, options.maxDeliveryAttempts ?? 3)
     this.claimRecoveryTimer = setInterval(
-      () =>
-        void this.recover().catch((error) =>
-          log.warn('Background result recovery failed', diagnosticErrorFields(error))
-        ),
+      () => this.recoverPeriodically(),
       options.claimRecoveryIntervalMs ?? 30_000
     )
     this.claimRecoveryTimer.unref?.()
@@ -159,7 +161,7 @@ class BackgroundResultDeliveryOwner {
     if (this.disposed || this.scheduled.has(sessionId)) return
     const timer = setTimeout(() => {
       this.scheduled.delete(sessionId)
-      void this.drainSession(sessionId)
+      void this.drainSession(sessionId).catch(reportRecoveryFailure)
     }, this.options.batchDelayMs ?? 250)
     timer.unref?.()
     this.scheduled.set(sessionId, timer)
@@ -269,36 +271,71 @@ class BackgroundResultDeliveryOwner {
 
   async recover(): Promise<void> {
     if (this.disposed) return
-    await this.waitForAuthority()
-    if (this.disposed) return
-    if (this.options.loadSessionCatalog) {
-      const ownership = await this.options.repository.listOwnership()
-      if (this.disposed) return
-      // There is nothing to reconcile against the on-disk Session catalog without owned rows.
-      // Keep lease recovery and pending delivery below live for concurrent admissions.
-      if (ownership.length > 0) {
-        const catalog = await this.options.loadSessionCatalog()
-        if (this.disposed) return
-        if (catalog.complete) {
-          const sessions = new Set(
-            catalog.sessions.map(({ projectId, sessionId }) =>
-              this.sessionKey(projectId, sessionId)
-            )
-          )
-          const orphanIds = ownership
-            .filter(
-              ({ projectId, sessionId }) => !sessions.has(this.sessionKey(projectId, sessionId))
-            )
-            .map(({ id }) => id)
-          await this.options.repository.deleteIds(orphanIds)
-        }
-      }
-    }
-    if (this.disposed) return
-    await this.options.repository.recoverExpiredClaims(this.now())
+    await Promise.all([this.reconcileCatalog(), this.recoverClaims()])
     if (this.disposed) return
     for (const sessionId of await this.options.repository.listPendingSessionIds())
       await this.drainSession(sessionId)
+  }
+
+  private recoverPeriodically(): void {
+    // A slow catalog must not stop claims from expiring. Do not attach new waiters to a
+    // recovery that is already in flight on every tick.
+    if (this.pendingRecovery) {
+      if (!this.claimRecovery) void this.recoverClaims().catch(reportRecoveryFailure)
+    } else {
+      this.pendingRecovery = this.schedulePending()
+        .catch(reportRecoveryFailure)
+        .finally(() => {
+          this.pendingRecovery = undefined
+        })
+    }
+  }
+
+  private async schedulePending(): Promise<void> {
+    // Keep the pass occupied until both lookups settle even if one rejects first.
+    const results = await Promise.allSettled([this.reconcileCatalog(), this.recoverClaims()])
+    for (const result of results) {
+      if (result.status === 'rejected') throw result.reason
+    }
+    if (this.disposed) return
+    // Reuse the per-Session scheduler rather than holding the recovery pass open through a turn.
+    for (const sessionId of await this.options.repository.listPendingSessionIds())
+      this.schedule(sessionId)
+  }
+
+  private async recoverClaims(): Promise<void> {
+    return (this.claimRecovery ??= this.waitForAuthority()
+      .then(async () => {
+        if (!this.disposed) await this.options.repository.recoverExpiredClaims(this.now())
+      })
+      .finally(() => {
+        this.claimRecovery = undefined
+      }))
+  }
+
+  private reconcileCatalog(): Promise<void> {
+    return (this.catalogRecovery ??= this.reconcileCatalogOnce().finally(() => {
+      this.catalogRecovery = undefined
+    }))
+  }
+
+  private async reconcileCatalogOnce(): Promise<void> {
+    if (this.disposed || !this.options.loadSessionCatalog) return
+    await this.waitForAuthority()
+    if (this.disposed) return
+    // Snapshot ownership before the catalog so newly registered rows cannot be deleted.
+    const ownership = await this.options.repository.listOwnership()
+    if (this.disposed || ownership.length === 0) return
+    const catalog = await this.options.loadSessionCatalog()
+    if (this.disposed || !catalog.complete) return
+    const sessions = new Set(
+      catalog.sessions.map(({ projectId, sessionId }) => this.sessionKey(projectId, sessionId))
+    )
+    await this.options.repository.deleteIds(
+      ownership
+        .filter(({ projectId, sessionId }) => !sessions.has(this.sessionKey(projectId, sessionId)))
+        .map(({ id }) => id)
+    )
   }
 
   async drainSession(
