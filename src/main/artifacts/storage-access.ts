@@ -246,7 +246,11 @@ class ArtifactStorageAccess {
   async resolveArtifactFilename(directory: string, filename: string): Promise<string> {
     try {
       const entries = await readdir(directory)
-      if (entries.includes(filename)) return filename
+      if (entries.includes(filename)) {
+        const exact = await lstat(join(directory, filename), { bigint: true })
+        if (!exact.isFile()) throw new Error('Artifact filename alias is unsupported.')
+        return filename
+      }
       const requested = await lstat(join(directory, filename), { bigint: true })
       // Do not retarget a symlink entry to the name of the file it references.
       if (!requested.isFile()) return filename

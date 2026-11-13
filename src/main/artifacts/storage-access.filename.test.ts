@@ -19,6 +19,10 @@ beforeEach(() => vi.resetAllMocks())
 
 it('keeps both physical names on a case-sensitive volume', async () => {
   filesystem.readdir.mockResolvedValue([filename, filename.toLowerCase()])
+  filesystem.lstat.mockImplementation(async (path: string) => {
+    if (path === join(directory, filename)) return { isFile: () => true }
+    throw Object.assign(new Error('not found'), { code: 'ENOENT' })
+  })
   expect(await access.resolveArtifactFilename(directory, filename)).toBe(filename)
   expect(await access.resolveArtifactFilename(directory, filename.toLowerCase())).toBe(
     filename.toLowerCase()
@@ -52,6 +56,14 @@ it('does not follow a symlink alias to its target filename', async () => {
   filesystem.lstat.mockResolvedValue({ isFile: () => false })
   expect(await access.resolveArtifactFilename(directory, filename.toLowerCase())).toBe(
     filename.toLowerCase()
+  )
+})
+
+it('rejects an exact symlink entry instead of accepting it as an artifact file', async () => {
+  filesystem.readdir.mockResolvedValue([filename])
+  filesystem.lstat.mockResolvedValue({ isFile: () => false })
+  await expect(access.resolveArtifactFilename(directory, filename)).rejects.toThrow(
+    'Artifact filename alias is unsupported.'
   )
 })
 
