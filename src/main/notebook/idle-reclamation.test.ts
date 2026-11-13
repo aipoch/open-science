@@ -210,6 +210,12 @@ describe('Notebook idle interpreter reclamation', () => {
     await vi.advanceTimersByTimeAsync(1000)
     expect(onFailure).toHaveBeenCalledOnce()
     expect(resources[0].release).not.toHaveBeenCalled()
+    const resource = resources[0]
+    isSessionBusy.mockResolvedValue(false)
+    await pool.check()
+    await vi.advanceTimersByTimeAsync(NOTEBOOK_SESSION_IDLE_MS)
+    expect(resource.release).toHaveBeenCalledOnce()
+    expect(onFailure).toHaveBeenCalledOnce()
     await pool.dispose()
   })
 })

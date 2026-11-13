@@ -291,6 +291,60 @@ describe('Project lifecycle composition', () => {
     }
   )
 
+  it('keeps Compute-owned jobs in archive and export checks but out of local activity', async () => {
+    const { dependencies: d } = fixture()
+    d.getActiveSideChatSessions.mockReturnValue([])
+    d.computeJobActivityRef.current.countNonTerminalBySession.mockResolvedValue(1)
+    const activity = mocks.archive.mock.calls[0][2]
+    expect(activity.isSessionLocallyBusy('project-1', 'session-1')).toBe(false)
+    await expect(activity.isSessionBusy('project-1', 'session-1')).resolves.toBe(true)
+    await expect(activity.isSessionExportBusy('project-1', 'session-1')).resolves.toBe(true)
+    // A database outage cannot turn local activity into a persistent execution fence.
+    d.computeJobActivityRef.current.countNonTerminalBySession.mockRejectedValue(
+      new Error('offline')
+    )
+    await expect(activity.isSessionBusy('project-1', 'session-1')).rejects.toThrow('offline')
+    expect(activity.isSessionLocallyBusy('project-1', 'session-1')).toBe(false)
+    d.computeJobActivityRef.current.countNonTerminalBySession.mockResolvedValue(0)
+    await expect(activity.isSessionBusy('project-1', 'session-1')).resolves.toBe(false)
+  })
+
+  it.each([
+    'prompt',
+    'permission',
+    'elicitation',
+    'side-chat-owner',
+    'side-chat-prompt',
+    'delegated',
+    'notebook'
+  ])('protects local %s activity and releases the protection when it settles', (kind) => {
+    const { dependencies: d, runtime } = fixture()
+    d.getActiveSideChatSessions.mockReturnValue([])
+    const active = [{ projectId: 'project-1', sessionId: 'session-1' }]
+    const activity = mocks.archive.mock.calls[0][2]
+    const source = {
+      prompt: runtime.getActivePromptSessions,
+      'side-chat-prompt': d.getActiveSideChatSessions,
+      delegated: d.getActiveDelegatedSessions,
+      notebook: d.notebookActivityRef.current.getActiveNotebookSessions
+    }[kind]
+    if (source) source.mockReturnValue(active as never)
+    else if (kind === 'side-chat-owner')
+      d.sideChatOwnerRef.current.hasForParent.mockReturnValue(true)
+    else
+      runtime.getSnapshot.mockReturnValue({
+        promptInFlightSessionIds: [],
+        [kind === 'permission' ? 'pendingPermissions' : 'pendingElicitations']: [
+          { sessionId: 'session-1' }
+        ]
+      })
+    expect(activity.isSessionLocallyBusy('project-1', 'session-1')).toBe(true)
+    if (source) source.mockReturnValue([])
+    d.sideChatOwnerRef.current.hasForParent.mockReturnValue(false)
+    runtime.getSnapshot.mockReturnValue({ promptInFlightSessionIds: [] })
+    expect(activity.isSessionLocallyBusy('project-1', 'session-1')).toBe(false)
+  })
+
   it('routes relays and file commands to the active owners with their original identities', async () => {
     const { dependencies: d, runtime } = fixture()
     const targetState = mocks.relay.mock.calls[0][0].targetState

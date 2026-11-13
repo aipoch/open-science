@@ -25,6 +25,7 @@ type SessionArchivePersistence = {
 
 type SessionRuntimeActivity = {
   isSessionBusy(projectId: string, sessionId: string): boolean | Promise<boolean>
+  isSessionLocallyBusy?(projectId: string, sessionId: string): boolean | Promise<boolean>
   isSessionExportBusy?(projectId: string, sessionId: string): boolean | Promise<boolean>
   isProjectBusy(projectId: string): boolean | Promise<boolean>
   liveSessionProjectId(sessionId: string): string | undefined
@@ -34,6 +35,15 @@ type SessionRuntimeActivity = {
 // archive/restore decision and the final runtime admission observe one consistent active state.
 // Prompt execution stays outside it; Task resume holds it only until the Session is durably running.
 class ArchiveCoordinator {
+  // Notebook reclamation needs local work and admission, independent of Compute-owned jobs.
+  // Older compositions retain the conservative archive check until they supply this projection.
+  async isSessionLocallyBusy(projectId: string, sessionId: string): Promise<boolean> {
+    if (this.pendingDispatches.has(sessionId)) return true
+    const check = this.runtime.isSessionLocallyBusy ?? this.runtime.isSessionBusy
+    const busy = await check.call(this.runtime, projectId, sessionId)
+    return busy || this.pendingDispatches.has(sessionId)
+  }
+
   async isSessionBusy(projectId: string, sessionId: string): Promise<boolean> {
     if (this.pendingDispatches.has(sessionId)) return true
     const busy = await this.runtime.isSessionBusy(projectId, sessionId)
