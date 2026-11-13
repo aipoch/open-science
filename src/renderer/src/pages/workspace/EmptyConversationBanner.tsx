@@ -34,6 +34,7 @@ const SessionPackageEntryRow = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const pickerRef = useRef<HTMLInputElement>(null)
+  const [guideOpen, setGuideOpen] = useState(false)
   const browse = (): void => pickerRef.current?.click()
 
   return (
@@ -81,13 +82,23 @@ const SessionPackageEntryRow = ({
         </span>
       </button>
       <TooltipProvider>
-        <Tooltip>
+        <Tooltip open={guideOpen} onOpenChange={setGuideOpen}>
           <TooltipTrigger asChild>
             <button
               type="button"
               aria-label={t('What is a .science research package?')}
               className="flex size-[22px] shrink-0 cursor-help items-center justify-center rounded-full text-text-300 transition-colors hover:bg-bg-300 hover:text-text-100 focus-visible:keyboard-focus"
-              onClick={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                // Keep tap access without pinning ordinary mouse or keyboard activation.
+                if (
+                  'pointerType' in event.nativeEvent &&
+                  event.nativeEvent.pointerType === 'touch'
+                ) {
+                  event.preventDefault()
+                  setGuideOpen(true)
+                }
+              }}
             >
               <Info className="size-3.5" aria-hidden="true" />
             </button>

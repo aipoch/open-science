@@ -43,6 +43,37 @@ for (const compact of [false, true]) {
   })
 }
 
+test('package guide supports touch without opening the file picker', async ({
+  browser,
+  baseURL
+}) => {
+  const page = await browser.newPage({
+    baseURL,
+    hasTouch: true,
+    viewport: { width: 390, height: 844 }
+  })
+  try {
+    await page.goto('/hover-bubble.html?package&compact')
+    let pickerOpened = false
+    page.on('filechooser', () => {
+      pickerOpened = true
+    })
+    const info = page.getByRole('button', { name: 'What is a .science research package?' })
+    const guide = page.getByRole('tooltip')
+    await info.tap()
+    await expect(guide).toContainText('read-only history')
+    await page.getByRole('button', { name: 'Outside', exact: true }).tap()
+    await expect(guide).toHaveCount(0)
+    await info.tap()
+    await expect(guide).toContainText('continue research')
+    await page.keyboard.press('Escape')
+    await expect(guide).toHaveCount(0)
+    expect(pickerOpened).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
 test('keeps usage avatars compact inside installed resource cards', async ({ page }) => {
   await page.goto('/hover-bubble.html')
   const card = page.locator('.resource-installed-card')
