@@ -585,7 +585,8 @@
     "packages/pdf-translation/test/script-atomicity-roundtrip.test.ts",
     "packages/pdf-translation/test/script-atomicity.test.ts",
     "packages/pdf-translation/test/short-tail-contract-roundtrip.test.ts",
-    "packages/pdf-translation/test/support/form-page.ts"
+    "packages/pdf-translation/test/support/form-page.ts",
+    "packages/pdf-translation/test/reader/reference-heading-ownership.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-translation/src/index.ts",
@@ -719,7 +720,8 @@
       "packages/pdf-translation/test/reader/pdf-translation-target-exclusions.test.ts",
       "packages/pdf-translation/test/script-atomicity-roundtrip.test.ts",
       "packages/pdf-translation/test/script-atomicity.test.ts",
-      "packages/pdf-translation/test/short-tail-contract-roundtrip.test.ts"
+      "packages/pdf-translation/test/short-tail-contract-roundtrip.test.ts",
+      "packages/pdf-translation/test/reader/reference-heading-ownership.test.ts"
     ],
     "contract": ["scripts/pdf-package-fixtures.test.ts"],
     "consumer": [

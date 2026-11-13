@@ -3,7 +3,7 @@ import type { PdfTranslationExtraction } from './extraction.js'
 import { createPdfTranslationSource, type PdfTranslationSource } from './source.js'
 
 const snapshots = new WeakMap<PdfTranslationSource, PdfTranslationLayoutSnapshot>()
-const currentParserVersion = 'pdfjs-paragraph-layout-14'
+const currentParserVersion = 'pdfjs-paragraph-layout-15'
 const parserOrigins = new WeakMap<PdfTranslationSource, string | undefined>()
 
 /** Only a completed native extraction establishes current parser provenance. */
