@@ -473,11 +473,22 @@ export function captionKind(text) {
   if (
     /^(?:(?:Supplementary|Supplemental)\s+)?(?:Figure|Fig\.?)\s+/i.test(text) &&
     new RegExp(
-      `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+(?:records|pairs|renders|tests|showcases|takes|supplements|encodes)\\s+(?:the|this|that|these|those|a|an|our|their|its|both|each|some|several|multiple|one|two|\\d+)\\s+\\p{L}`,
+      `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+(?:records|pairs|renders|tests|showcases|takes|supplements|encodes|expands|combines)\\s+(?:the|this|that|these|those|a|an|our|their|its|both|each|some|several|multiple|one|two|\\d+)\\s+\\p{L}`,
       'iu'
     ).test(text)
   )
     return undefined
+  // "Costs of ..." is a noun title; an unpunctuated table subject followed
+  // by "costs" and a determiner-led object is running prose.
+  if (
+    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Table|Tab\.?)\s+/i.test(text) &&
+    new RegExp(
+      `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+costs\\s+(?:the|this|that|these|those|our|their|its|a|an)\\s+\\p{L}`,
+      'iu'
+    ).test(text)
+  )
+    return undefined
+
   // A local side qualifier does not change a finite Figure subject into a title.
   if (
     /^(?:(?:Supplementary|Supplemental)\s+)?(?:Figure|Fig\.?)\s+/i.test(text) &&
@@ -9215,10 +9226,11 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
               line.text
             ) ||
               // A reference can end a statistical sentence and share its
-              // physical line with the next sentence. Bare "in" needs tight
-              // body leading, not the wider spacing allowed for explicit cues.
+              // physical line with the next sentence. Bare "in" or a semicolon
+              // followed by "see" needs tight body leading. Parenthesized
+              // references retain their separate source-closed ownership proof.
               (line.text.length > 40 &&
-                /\bin$/.test(line.text) &&
+                /(?:\bin|;\s+see)$/.test(line.text) &&
                 start.y - line.bottom <= start.fontSize * 0.5)) &&
             (Math.abs(line.x - start.x) <= 2 ||
               provesWrappedNativeColumn(
@@ -9737,10 +9749,23 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
           )
           .sort((a, b) => a.y - b.y)) {
           if (line.y - previous.bottom > start.fontSize * 1.6) break
+          // One isolated Greek parameter can interrupt otherwise uppercase
+          // IEEE prose. Keep its literal text and require the first centered
+          // title line to share the label's measured size and tight cadence.
+          const variableTitle =
+            title.length === 0 &&
+            (line.text.match(/[α-ω]/gu)?.length ?? 0) === 1 &&
+            /(?<=\s)[α-ω](?=\s)/u.test(line.text) &&
+            !/\p{Ll}/u.test(line.text.replace(/(?<=\s)[α-ω](?=\s)/u, '')) &&
+            line.text.split(/\s+/u).filter((word) => /\p{Lu}{2}/u.test(word)).length >= 3 &&
+            Math.abs(line.fontSize - start.fontSize) <= start.fontSize * 0.01 &&
+            line.y - start.y >= start.fontSize * 1.05 &&
+            line.y - start.y <= start.fontSize * 1.3 &&
+            Math.abs((line.x + line.right) / 2 - startCenter) <= start.fontSize * 0.1
           if (
             line.text.length < 12 ||
             !/\p{Lu}/u.test(line.text) ||
-            /\p{Ll}/u.test(line.text) ||
+            (/\p{Ll}/u.test(line.text) && !variableTitle) ||
             Math.abs((line.x + line.right) / 2 - startCenter) > start.fontSize * 3
           )
             break
@@ -10543,6 +10568,33 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
                 0.08 &&
               g.normalizedRect[3] * page.height <= start.y + page.height / 256
           )
+        // Raised native scripts may extend a grouped row above its regular font.
+        // Use that measured font's top for table leading only; retain every glyph box.
+        const tableSpacingTop =
+          captionKind(start.text) === 'table' &&
+          previous.fontSize === start.fontSize &&
+          previous.bottom - previous.y > previous.fontSize &&
+          page.lines.some(
+            (regular) =>
+              regular.fontSize === previous.fontSize &&
+              Math.abs(regular.height - regular.fontSize) < 1e-6 &&
+              regular.y > previous.y &&
+              Math.abs(regular.y + regular.height - previous.bottom) < 1e-6 &&
+              regular.x >= previous.x - 1e-6 &&
+              regular.x + regular.width <= previous.right + 1e-6 &&
+              page.lines.some(
+                (script) =>
+                  script.y === previous.y &&
+                  script.fontSize > 0 &&
+                  script.fontSize < previous.fontSize * 0.8 &&
+                  Math.abs(script.height - script.fontSize) < 1e-6 &&
+                  script.y + script.height < previous.bottom &&
+                  script.x >= previous.x - 1e-6 &&
+                  script.x + script.width <= previous.right + 1e-6
+              )
+          )
+            ? previous.bottom - previous.fontSize
+            : previous.y
         if (
           !next ||
           (outdented &&
@@ -10550,7 +10602,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             /[.!?]$/.test(previous.text) &&
             previous.right - previous.x < (start.right - outdented.x) * 0.6 &&
             next.x - outdented.x >= start.fontSize * 0.8) ||
-          next.y - previous.y >
+          next.y - tableSpacingTop >
             start.fontSize *
               (legendPage || boundedTableTail || isolatedFigureTail
                 ? 2.5

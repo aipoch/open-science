@@ -172,3 +172,63 @@ it('requires the full native closure proof before joining the bare label', () =>
     expect(first?.lines).toEqual(['TABLE I'])
   }
 })
+
+const makeVariableTitlePage = (): CaptionFixture['page'] => ({
+  pageNumber: 3,
+  width: 400,
+  height: 400,
+  rotation: 0,
+  invalidGraphicsBounds: 0,
+  graphicsBounds: [],
+  lines: [
+    { text: 'TABLE IV', x: 180, y: 60, width: 40, height: 8, fontSize: 8 },
+    {
+      text: 'MEASURED RATE γ PARAMETER RESPONSE',
+      x: 100,
+      y: 69,
+      width: 200,
+      height: 8,
+      fontSize: 8
+    }
+  ]
+})
+
+it('retains a literal Greek parameter in the first centered Roman table subtitle', () => {
+  const page = makeVariableTitlePage()
+  expect(candidates(page, [])[0]?.lines).toEqual(page.lines.map((line) => line.text))
+})
+
+it.each([
+  'Latin lowercase',
+  'Greek prose',
+  'multiple Greek parameters',
+  'Greek word',
+  'short header',
+  'different size',
+  'detached line',
+  'overlapping line',
+  'off-center line',
+  'not Roman',
+  'second subtitle'
+])('keeps the Roman variable subtitle join bounded: %s', (fault) => {
+  const page = makeVariableTitlePage()
+  const subtitle = page.lines[1]
+  if (fault === 'Latin lowercase') subtitle.text = 'MEASURED RATE γ PARAMETER response'
+  if (fault === 'Greek prose') subtitle.text = 'MEASURED RATE ελληνικό κείμενο RESPONSE'
+  if (fault === 'multiple Greek parameters') subtitle.text = 'MEASURED RATE γ PARAMETER α RESPONSE'
+  if (fault === 'Greek word') subtitle.text = 'MEASURED RATE γα PARAMETER RESPONSE'
+  if (fault === 'short header') subtitle.text = 'RATE γ VALUE'
+  if (fault === 'different size') subtitle.fontSize = 9
+  if (fault === 'detached line') subtitle.y = 80
+  if (fault === 'overlapping line') subtitle.y = 66
+  if (fault === 'off-center line') subtitle.x = 103
+  if (fault === 'not Roman') page.lines[0].text = 'Table 4'
+  if (fault === 'second subtitle') {
+    page.lines[1] = { ...subtitle, text: 'MEASURED PARAMETER RESPONSE' }
+    page.lines.push({ ...subtitle, y: 78 })
+  }
+  const found = candidates(page, [])
+  expect(found[0]?.lines).toEqual(
+    fault === 'second subtitle' ? [page.lines[0].text, page.lines[1].text] : [page.lines[0].text]
+  )
+})

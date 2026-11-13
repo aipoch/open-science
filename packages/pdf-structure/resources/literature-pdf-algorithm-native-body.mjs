@@ -3368,6 +3368,317 @@ function framedOutdentedConditionals(page, title, titles, context) {
   return [{ rect, caption: { page: page.pageNumber, lines: [title.text], rect: box(title) } }]
 }
 
+// A ruled column routine may print smaller, right-aligned line numbers without
+// colons. Its entire caption, signature and consecutive single-baseline packets
+// must fit the same three native strokes before the existing body proof runs.
+function framedColonlessRoutine(page, title, titles, lines, context) {
+  const inventory = nativeInventory(page, context),
+    operators = context.operators,
+    h = title.fontSize
+  if (
+    !inventory?.length ||
+    inventory.length > 16384 ||
+    inventory.some((t) => !t.valid || !t.horizontal) ||
+    !(h > 0) ||
+    !Array.isArray(operators?.fnArray) ||
+    !Array.isArray(operators.argsArray) ||
+    operators.fnArray.length !== operators.argsArray.length ||
+    operators.fnArray.length > 100000 ||
+    operators.fnArray.some((op) =>
+      [
+        OPS.paintFormXObjectBegin,
+        OPS.paintFormXObjectEnd,
+        OPS.beginGroup,
+        OPS.endGroup,
+        OPS.beginAnnotation,
+        OPS.endAnnotation
+      ].includes(op)
+    )
+  )
+    return
+  const paint = new Map(),
+    rules = collectTableRules(operators, context.viewport, paint)
+  if (rules.length > 4096 || !eq(rules, context.rules)) return
+  const tops = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      Math.abs(r[1] - title.y) < h &&
+      r[2] - r[0] > h * 12 &&
+      title.x >= r[0] - h * 0.1 &&
+      title.right <= r[2] + h * 0.1
+  )
+  if (tops.length !== 1) return
+  const top = tops[0],
+    frame = rules
+      .filter((r) => r[1] === r[3] && r[0] === top[0] && r[2] === top[2] && r[1] >= top[1])
+      .sort((a, b) => a[1] - b[1])
+  if (frame.length !== 3 || frame.some((r) => !valid(paint.get(r.join(','))))) return
+  const [, divider, bottom] = frame,
+    captionLines = lines
+      .filter(
+        (l) =>
+          l.y >= title.y - h * 0.1 &&
+          l.bottom < divider[1] &&
+          l.x >= top[0] - h * 0.1 &&
+          l.right <= top[2] + h * 0.1
+      )
+      .sort((a, b) => a.y - b.y)
+  if (
+    !captionLines.length ||
+    captionLines.length > 8 ||
+    captionLines[0] !== title ||
+    captionLines.some(
+      (l, i) =>
+        Math.abs(l.fontSize - h) > h * 0.05 ||
+        Math.abs(l.x - title.x) > h * 0.1 ||
+        (i && (l.y - captionLines[i - 1].y < h * 0.8 || l.y - captionLines[i - 1].y > h * 1.6))
+    ) ||
+    divider[1] - captionLines.at(-1).bottom > h * 2 ||
+    bottom[1] - divider[1] < h * 5
+  )
+    return
+  const captionRect = union(captionLines.map(box)),
+    body = inventory.filter((t) => overlap(t.rect, [top[0], divider[1], top[2], bottom[1]])),
+    numbers = body.filter(
+      (t) =>
+        /^[1-9]\d*$/u.test(t.text) &&
+        t.height >= h * 0.6 &&
+        t.height <= h * 0.9 &&
+        t.rect[0] > top[0] &&
+        t.rect[2] <= top[0] + h * 1.5
+    )
+  if (
+    numbers.length < 4 ||
+    numbers.length > 128 ||
+    numbers.some(
+      (n, i) =>
+        Number(n.text) !== i + 1 ||
+        n.height !== numbers[0].height ||
+        context.content.items[n.sourceItem.index].fontName !==
+          context.content.items[numbers[0].sourceItem.index].fontName ||
+        Math.abs(n.rect[2] - numbers[0].rect[2]) > h * 0.02 ||
+        (i && n.baseline <= numbers[i - 1].baseline)
+    )
+  )
+    return
+  const prefix = body.filter((t) => t.sourceItem.index < numbers[0].sourceItem.index)
+  if (
+    !prefix.length ||
+    !/^[A-Z][A-Z_0-9]*\([^()]+\)$/u.test(
+      prefix
+        .map((t) => t.text)
+        .join('')
+        .replace(/\s/gu, '')
+    ) ||
+    prefix.some((t) => t.baseline >= numbers[0].baseline)
+  )
+    return
+  const packets = numbers.map((n, i) =>
+      body.filter(
+        (t) =>
+          t.sourceItem.index > n.sourceItem.index &&
+          (!numbers[i + 1] || t.sourceItem.index < numbers[i + 1].sourceItem.index)
+      )
+    ),
+    text = packets.map((p) =>
+      p
+        .map((t) => t.text)
+        .join(' ')
+        .trim()
+    )
+  if (
+    packets.some(
+      (p, i) =>
+        !p.length ||
+        Math.abs(p[0].baseline - numbers[i].baseline) > h * 0.01 ||
+        Math.abs(p[0].height - h) > h * 0.01 ||
+        p[0].rect[0] <= numbers[i].rect[2] + h * 0.2 ||
+        p.some((t) => Math.abs(t.baseline - numbers[i].baseline) > h * 0.8)
+    ) ||
+    !text.some((t) => /[=←]/u.test(t)) ||
+    !/^return\b/iu.test(text.at(-1)) ||
+    !text.some((t) => /^if\b/iu.test(t)) ||
+    text.some(
+      (t, i) =>
+        /^if\b/iu.test(t) &&
+        (!packets[i + 1] || packets[i + 1][0].rect[0] < packets[i][0].rect[0] + h * 0.5)
+    )
+  )
+    return
+  const rect = union([
+      ...frame.map((r) => paint.get(r.join(','))),
+      captionRect,
+      ...body.flatMap((t) => [t.rect, t.labelRect])
+    ]),
+    ownedOperations = new Set(
+      page.graphicsBounds
+        .filter(
+          (g) =>
+            g.kind === 'path' &&
+            frame.some((r) =>
+              inside(
+                g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)),
+                r
+              )
+            )
+        )
+        .map((g) => g.operationIndex)
+    )
+  if (
+    ownedOperations.size !== 3 ||
+    !inside([0, 0, page.width, page.height], rect) ||
+    titles.some((other) => other !== title && overlap(box(other), rect)) ||
+    page.graphicsBounds.some(
+      (g) =>
+        !ownedOperations.has(g.operationIndex) &&
+        overlap(
+          g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)),
+          rect
+        )
+    )
+  )
+    return
+  const original = context.nativeGlyphContext,
+    native =
+      original &&
+      matchNativeFigureRenderContext(
+        original,
+        page.pageNumber,
+        context.content,
+        context.viewport,
+        page.graphicsBounds,
+        original.sourceSha256
+      ),
+    // The matcher has already proved this rename bijective, with identical
+    // native styles, text and advances. Keep every other operator argument exact.
+    fontAliases =
+      native &&
+      new Map(
+        context.content.items.map((item, index) => [
+          item.fontName,
+          native.content.items[index].fontName
+        ])
+      ),
+    sources = new Set(
+      inventory
+        .filter((t) => inside(captionRect, t.rect) || body.includes(t))
+        .map((t) => t.sourceItem.index)
+    ),
+    tokens = context.content.items
+      .filter((r) => r.str?.trim())
+      .map((r) => tableTextToken(r, context.viewport, 0)),
+    proof =
+      native &&
+      eq(native.operators.fnArray, operators.fnArray) &&
+      operators.argsArray.every((args, index) => {
+        const op = operators.fnArray[index],
+          mapped =
+            op === OPS.setFont
+              ? [fontAliases.get(args[0]), ...args.slice(1)]
+              : op === OPS.dependency
+                ? args.map((id) => fontAliases.get(id) ?? id)
+                : args
+        return eq(mapped, native.operators.argsArray[index])
+      }) &&
+      nativePageTextPacketInventory(page, tokens, native, false, sources),
+    selected = proof?.records?.filter((r) => sources.has(r.index)),
+    colors = strokeColors(operators)
+  if (
+    !selected ||
+    selected.length !== sources.size ||
+    !colors ||
+    selected.some(
+      (r) =>
+        !r.advanceComplete ||
+        !valid(r.ink) ||
+        r.part.some((z) => !valid(z.g.ink) || !visible(z.g.textPaint) || z.g.rendererSkipped)
+    )
+  )
+    return
+  for (const id of ownedOperations) {
+    const state = proof.evidence.paths.get(id),
+      a = operators.argsArray[id],
+      path = a?.[1]?.[0]
+    if (
+      operators.fnArray[id] !== OPS.constructPath ||
+      a?.[0] !== OPS.stroke ||
+      a[1]?.length !== 1 ||
+      path?.length !== 6 ||
+      path[0] !== 0 ||
+      path[3] !== 1 ||
+      !state ||
+      state.lineCap !== 0 ||
+      state.solidStroke !== true ||
+      state.strokeAlpha !== 1 ||
+      !valid(state.clip) ||
+      !colors.get(id) ||
+      colors.get(id).toLowerCase() === '#ffffff' ||
+      !frame.some(
+        (r) =>
+          inside(state.clip, paint.get(r.join(','))) &&
+          inside(
+            page.graphicsBounds
+              .find((g) => g.operationIndex === id)
+              .normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)),
+            r
+          )
+      )
+    )
+      return
+  }
+  const completeRect = union([rect, ...selected.map((r) => r.ink)]),
+    ownedGlyphs = new Set(selected.flatMap((r) => r.part.map((z) => z.g))),
+    foreignGlyphs = proof.glyphs
+      .filter((g) => !ownedGlyphs.has(g) && valid(g.ink))
+      .map((g) => g.ink),
+    foreign = nativeRasterForeignPaints(
+      {
+        ...proof,
+        records: [],
+        evidence: {
+          ...proof.evidence,
+          paths: new Map([...proof.evidence.paths].filter(([id]) => !ownedOperations.has(id)))
+        }
+      },
+      page,
+      [],
+      [],
+      native,
+      []
+    )
+  if (
+    !foreign ||
+    !inside([0, 0, page.width, page.height], completeRect) ||
+    foreignGlyphs.some((r) => overlap(r, completeRect)) ||
+    foreign.some((p) => !valid(p.rect) || overlap(p.rect, completeRect))
+  )
+    return
+  const candidate = proveNativeAlgorithmBody(
+    page,
+    {
+      rect: completeRect,
+      caption: { page: page.pageNumber, lines: captionLines.map((l) => l.text), rect: captionRect }
+    },
+    context
+  )
+  return (
+    candidate && {
+      ...candidate,
+      caption: {
+        ...candidate.caption,
+        rect: union([
+          candidate.caption.rect,
+          ...selected.filter((r) => inside(captionRect, r.rect)).map((r) => r.ink)
+        ])
+      },
+      scopedGlyphProof: {
+        foreignGlyphs,
+        foreignPaint: foreign.map((p) => ({ rect: p.rect, floor: p.floor }))
+      }
+    }
+  )
+}
+
 export function findNativeAlgorithmCandidates(page, context = {}) {
   const { rules = [] } = context,
     old = findAlgorithmCandidates(page, rules)
@@ -3387,6 +3698,9 @@ export function findNativeAlgorithmCandidates(page, context = {}) {
       : (wrappedNumberedFrame(page, candidate, lines, context) ?? candidate)
   )
   for (const title of titles) {
+    const colonless = framedColonlessRoutine(page, title, titles, lines, context)
+    if (colonless && !result.some((other) => overlap(other.rect, colonless.rect)))
+      result.push(colonless)
     for (const c of [
       ...framedIndentedOrdinals(page, title, titles, rules, context),
       ...framedSteps(page, title, titles, rules, context),

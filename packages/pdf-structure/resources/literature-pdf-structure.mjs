@@ -89,7 +89,7 @@ try {
       const renderRotation = readingRotation(page, content)
       const viewport = page.getViewport({ scale: 1, rotation: renderRotation })
       const structure = await page.getStructTree()
-      const operators = await page.getOperatorList()
+      let operators = await page.getOperatorList()
       content = excludePdfLineNumbers(await repairPdfSymbolText(page, content, operators), viewport)
       const roles = {}
       const visit = (node) => {
@@ -132,6 +132,12 @@ try {
       if (
         geometryPages ? geometryPages.includes(pageNumber) : captionStarts.length && rendered < 2
       ) {
+        // Drop the raw operator-list owner before creating the genuine render
+        // program. Real PDF.js pages expose the intent cache; the lightweight
+        // probe page used by lifecycle tests does not and is cleaned in finally.
+        operators = undefined
+        if (page?._intentStates instanceof Map)
+          assert(page.cleanup(), 'PDF operator cache cleanup is incomplete.')
         const scaled = page.getViewport({ scale: 1.5, rotation: renderRotation })
         if (Math.ceil(scaled.width) * Math.ceil(scaled.height) > 4_000_000)
           throw new Error('PDF render pixel budget exceeded')
