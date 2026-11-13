@@ -1848,6 +1848,41 @@ console.log('ok');\n`
     expect(await repository.getSettings()).not.toHaveProperty('enabledConnectorIds')
   })
 
+  it('aligns OpenCode public skill IDs and permission paths without enabling disabled skills', async () => {
+    const { ConnectorSettingsModule } = await import('./connector-settings')
+    const connectors = new ConnectorSettingsModule(repository)
+    const materializeSkills = vi.fn().mockResolvedValue(undefined)
+    const skills = {
+      materializeSkills,
+      listHostSkills: vi.fn().mockResolvedValue([
+        { id: 'imported-abstract-summarizer', name: 'abstract-summarizer', source: 'imported' },
+        { id: 'private', name: 'private-research', source: 'personal' }
+      ])
+    } as unknown as SkillCatalogModule
+    manager = createManager({ connectors, skills })
+    const settings = { ...(await repository.getSettings()), disabledSkillIds: ['private'] }
+    const root = join(storageRoot, 'opencode', 'config', 'opencode')
+    const options = { directoryLayout: 'agent-facing-shared' as const }
+    const discovery = await manager.prepareAgentSkillDiscovery(
+      settings,
+      root,
+      new Set(),
+      undefined,
+      options
+    )
+
+    expect(materializeSkills).toHaveBeenCalledWith(root, [], expect.any(Set), options)
+    expect(discovery.allowedNames).toContain('abstract-summarizer')
+    expect(discovery.allowedPaths).toContain(
+      join(root, 'skills', 'abstract-summarizer', 'SKILL.md')
+    )
+    expect(discovery.allowedNames).not.toContain('private-research')
+    expect(discovery.allowedPaths).not.toContain(
+      join(root, 'skills', 'private-research', 'SKILL.md')
+    )
+    expect(discovery.allowedPaths.some((path) => path.includes('os-imported-'))).toBe(false)
+  })
+
   it('synchronizes provisioned custom Connector docs into isolated agent Skill roots', async () => {
     const customSkillName = 'mcp-xt'
     const sourceDir = join(connectorSkillSourceDir(storageRoot), customSkillName)

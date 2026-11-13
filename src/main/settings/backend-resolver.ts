@@ -621,7 +621,11 @@ export class AgentBackendResolver {
             skillsRoot,
             forcedSkillIds,
             context.skillWhitelist,
-            ...(framework.id === 'codebuddy' ? [{ directoryLayout: 'agent-facing' as const }] : [])
+            ...(framework.id === 'codebuddy'
+              ? [{ directoryLayout: 'agent-facing' as const }]
+              : framework.id === 'opencode' && opencodeMajorVersion === 2
+                ? [{ directoryLayout: 'agent-facing-shared' as const }]
+                : [])
           )
         : skillDiscovery
       connectorInstructions = includeSkillAndConnectorContext ? renderConnectorInstructions() : ''

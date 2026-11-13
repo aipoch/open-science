@@ -18,7 +18,7 @@ const OS_SKILL_PREFIX = 'os-'
 // Skill loader ignores it.
 const VERSION_MANIFEST = '.os-versions.json'
 
-type SkillDirectoryLayout = 'app-owned' | 'agent-facing'
+type SkillDirectoryLayout = 'app-owned' | 'agent-facing' | 'agent-facing-shared'
 type SkillMaterializationOptions = Readonly<{ directoryLayout?: SkillDirectoryLayout }>
 
 // A matching content fingerprint is not enough for projections created before canonical Skill
@@ -103,7 +103,13 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
 
     await this.policy.beforeSync?.(skillsDir)
 
-    const wanted = new Map(enabled.map((skill) => [`${OS_SKILL_PREFIX}${skill.id}`, skill]))
+    // OpenCode 2.x identifies skills by directory name. Its persistent shared projection needs
+    // public names without the destructive rebuild used by isolated agent-facing projections.
+    const publicNames = options.directoryLayout === 'agent-facing-shared'
+    if (publicNames) this.validateAgentFacingNames(enabled)
+    const wanted = new Map(
+      enabled.map((skill) => [publicNames ? skill.name : `${OS_SKILL_PREFIX}${skill.id}`, skill])
+    )
 
     let existing: string[] = []
     try {
@@ -116,7 +122,12 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
 
     // Remove managed dirs that should no longer exist (disabled or removed skills).
     for (const name of existing) {
-      if (name.startsWith(OS_SKILL_PREFIX) && !wanted.has(name)) {
+      // The manifest owns canonical directories too, including when switching back to a 1.x
+      // app-owned projection. Untracked connector/user directories remain untouched.
+      if (
+        (name.startsWith(OS_SKILL_PREFIX) || Object.hasOwn(versions, name)) &&
+        !wanted.has(name)
+      ) {
         const stale = join(skillsDir, name)
         try {
           // Restore write bits first: a read-only dir cannot have its children unlinked.
@@ -143,7 +154,7 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
 
       const target = join(skillsDir, name)
       try {
-        await this.copySkill(target, skill)
+        await this.copySkill(target, skill, { synthesizeFrontmatter: publicNames })
         versions[name] = version
       } catch (error) {
         await rm(target, { recursive: true, force: true }).catch(() => undefined)
@@ -169,16 +180,7 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
     const skillsDir = join(configDir, 'skills')
     await mkdir(skillsDir, { recursive: true })
 
-    const names = new Set<string>()
-    for (const skill of enabled) {
-      if (!isUsableSkillName(skill.name)) {
-        throw new Error(`Refusing to project an unsafe Agent-facing Skill name: ${skill.name}`)
-      }
-      if (names.has(skill.name)) {
-        throw new Error(`Refusing to project duplicate Agent-facing Skill name: ${skill.name}`)
-      }
-      names.add(skill.name)
-    }
+    this.validateAgentFacingNames(enabled)
 
     for (const name of await readdir(skillsDir)) {
       const stale = join(skillsDir, name)
@@ -198,6 +200,19 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
           error
         })
       }
+    }
+  }
+
+  private validateAgentFacingNames(enabled: BundledSkill[]): void {
+    const names = new Set<string>()
+    for (const skill of enabled) {
+      if (!isUsableSkillName(skill.name)) {
+        throw new Error(`Refusing to project an unsafe Agent-facing Skill name: ${skill.name}`)
+      }
+      if (names.has(skill.name)) {
+        throw new Error(`Refusing to project duplicate Agent-facing Skill name: ${skill.name}`)
+      }
+      names.add(skill.name)
     }
   }
 
