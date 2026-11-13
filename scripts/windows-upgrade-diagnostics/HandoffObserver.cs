@@ -143,7 +143,7 @@ public class HandoffObserver : IDisposable {
     var request = new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(json);
     Guid id;
     object operation, parent, helper, requestedApp, requestedInstaller, schema;
-    if(!request.TryGetValue("schema",out schema) || Convert.ToInt32(schema)!=1 ||
+    if(!request.TryGetValue("schema",out schema) || (Convert.ToInt32(schema)!=1 && Convert.ToInt32(schema)!=2) ||
        !request.TryGetValue("operationId",out operation) || !Guid.TryParseExact(operation as string,"D",out id) ||
        !request.TryGetValue("parentPid",out parent) || Convert.ToInt32(parent)!=parentPid ||
        !request.TryGetValue("helperPid",out helper) || Convert.ToInt32(helper)!=helperPid ||
@@ -216,7 +216,7 @@ public class HandoffObserver : IDisposable {
     var request = new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(json);
     object operation, parent, successor, requestedApp, requestedInstaller, schema, created;
     Guid id; long createdMilliseconds;
-    if(!request.TryGetValue("schema",out schema) || Convert.ToInt32(schema)!=1 ||
+    if(!request.TryGetValue("schema",out schema) || (Convert.ToInt32(schema)!=1 && Convert.ToInt32(schema)!=2) ||
        !request.TryGetValue("operationId",out operation) || !Guid.TryParseExact(operation as string,"D",out id) ||
        !Same(Path.GetFullPath(directory),Path.Combine(handoffRoot,operation as string)) ||
        !request.TryGetValue("parentPid",out parent) || Convert.ToInt32(parent)!=parentPid ||

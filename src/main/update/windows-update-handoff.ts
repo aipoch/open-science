@@ -5,17 +5,21 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
 import { retryFileReplacement } from '@aipoch/durable-files'
 import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from '../runtime-startup-options'
+import { processBirthIdentity } from '../process-birth-identity'
 
 export const WINDOWS_UPDATE_OPERATION_ARG = '--open-science-update-operation='
 const operationIdSchema = z.string().uuid()
 const requestSchema = z
   .object({
-    schema: z.literal(1),
+    schema: z.union([z.literal(1), z.literal(2)]),
     operationId: operationIdSchema,
     createdAt: z.number().int().nonnegative(),
     parentPid: z.number().int().positive(),
+    parentBirthToken: z.string().min(1).optional(),
     helperPid: z.number().int().positive().optional(),
+    helperBirthToken: z.string().min(1).optional(),
     successorPid: z.number().int().positive().optional(),
+    successorBirthToken: z.string().min(1).optional(),
     targetVersion: z.string().min(1),
     applicationPath: z.string().refine(isAbsolute),
     installerPath: z.string().refine(isAbsolute),
@@ -138,10 +142,11 @@ export async function createWindowsUpdateRequest(
     installerPath: input.installerPath,
     profilePath: input.profilePath,
     startupOptions: input.startupOptions,
-    schema: 1,
+    schema: 2,
     operationId: randomUUID(),
     createdAt: Date.now(),
-    parentPid: process.pid
+    parentPid: process.pid,
+    parentBirthToken: processBirthIdentity(process.pid)
   })
   const root = await selectHandoffRoot(appData, input.applicationPath)
   const directory = join(root, request.operationId)
@@ -216,6 +221,7 @@ export async function resolveWindowsUpdateStartup(
   // Electron relaunch retains argv. Keep this configuration lease while that successor lives,
   // including startup repair, so later relaunches can consume the same operation safely.
   request.successorPid = process.pid
+  request.successorBirthToken = processBirthIdentity(process.pid)
   await writeWindowsUpdateFile(join(directory, 'request.json'), JSON.stringify(request))
   const readyPath = join(directory, 'ready.receipt')
   const confirmed = await lstat(readyPath)
@@ -261,13 +267,18 @@ export async function acknowledgeWindowsUpdateReady(
   return true
 }
 
-const processMayBeAlive = (pid: number): boolean => {
+const processMayBeAlive = (pid: number, birthToken?: string): boolean => {
   try {
     process.kill(pid, 0)
-    return true
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== 'ESRCH'
   }
+  if (!birthToken) return true
+  const actual = processBirthIdentity(pid)
+  if (actual === birthToken) return true
+  // The process exists but its birth identity could not be inspected. Preserve the record rather
+  // than treating an inaccessible process as an unrelated PID.
+  return actual === undefined
 }
 
 // Exact UUID requests prove the scope; live/PID-reused processes and unknown files are preserved.
@@ -296,9 +307,10 @@ async function cleanupWindowsUpdateHandoffRoot(root: string): Promise<void> {
     try {
       const request = await readRequest(directory, entry.name)
       if (
-        processMayBeAlive(request.parentPid) ||
-        (request.helperPid && processMayBeAlive(request.helperPid)) ||
-        (request.successorPid && processMayBeAlive(request.successorPid))
+        processMayBeAlive(request.parentPid, request.parentBirthToken) ||
+        (request.helperPid && processMayBeAlive(request.helperPid, request.helperBirthToken)) ||
+        (request.successorPid &&
+          processMayBeAlive(request.successorPid, request.successorBirthToken))
       )
         continue
       const files = await readdir(directory, { withFileTypes: true })

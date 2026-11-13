@@ -677,8 +677,13 @@ export async function captureInstallationManifestAsync(
     for await (const chunk of createReadStream(root, { signal })) hash.update(chunk)
     return { version, files: { '@image': hash.digest('hex') } }
   }
+  const regularFiles: Array<{ relativePath: string; path: string }> = []
+  const symlinks: Array<{ relativePath: string; target: string }> = []
   async function walk(directory: string): Promise<void> {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const entries = (await readdir(directory, { withFileTypes: true })).sort((left, right) =>
+      left.name.localeCompare(right.name)
+    )
+    for (const entry of entries) {
       signal?.throwIfAborted()
       const path = join(directory, entry.name)
       if (entry.isDirectory()) {
@@ -694,21 +699,48 @@ export async function captureInstallationManifestAsync(
       )
         throw new Error('Unsupported installation link or file.')
       if (entry.isSymbolicLink()) {
-        files[relative(root, path)] = `symlink:${await readlink(path)}`
+        symlinks.push({ relativePath: relative(root, path), target: await readlink(path) })
         continue
       }
-      const hash = createHash('sha256')
-      for await (const chunk of createReadStream(path, { signal })) hash.update(chunk)
-      files[relative(root, path)] = hash.digest('hex')
+      regularFiles.push({ relativePath: relative(root, path), path })
     }
   }
   await walk(root)
+  const hashingAbort = new AbortController()
+  const hashingSignal = signal
+    ? AbortSignal.any([signal, hashingAbort.signal])
+    : hashingAbort.signal
+  const hashes = new Array<string>(regularFiles.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const index = next++
+      if (index >= regularFiles.length) return
+      hashingSignal.throwIfAborted()
+      const hash = createHash('sha256')
+      for await (const chunk of createReadStream(regularFiles[index].path, {
+        signal: hashingSignal
+      }))
+        hash.update(chunk)
+      hashes[index] = hash.digest('hex')
+    }
+  }
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(8, Math.max(1, regularFiles.length)) }, () => worker())
+    )
+  } catch (error) {
+    hashingAbort.abort(error)
+    throw error
+  }
+  for (const [index, entry] of regularFiles.entries()) files[entry.relativePath] = hashes[index]
+  for (const entry of symlinks) files[entry.relativePath] = `symlink:${entry.target}`
   if (!Object.keys(files).length) throw new Error('Installation is empty.')
   return { version, files }
 }
 export async function beginInstallationUpdateAsync(
   options: Omit<Parameters<typeof beginInstallationUpdate>[0], 'allowedProcessIds'> & {
-    allowedProcessIds?: number[] | (() => number[] | Promise<number[]>)
+    allowedProcessIds?: number[] | ((signal?: AbortSignal) => number[] | Promise<number[]>)
   },
   signal?: AbortSignal
 ): Promise<InstallationUpdateRecord> {
@@ -724,7 +756,7 @@ export async function beginInstallationUpdateAsync(
   signal?.throwIfAborted()
   const allowedProcessIds =
     typeof options.allowedProcessIds === 'function'
-      ? await options.allowedProcessIds()
+      ? await options.allowedProcessIds(signal)
       : options.allowedProcessIds
   signal?.throwIfAborted()
   try {
@@ -947,7 +979,7 @@ export async function advanceInstallationUpdateAsync(
 export async function inspectInstallationAvailability(
   options: InstallationLocation & {
     runtime?: InstallationRuntime
-    allowedProcessIds?: number[] | (() => number[] | Promise<number[]>)
+    allowedProcessIds?: number[] | ((signal?: AbortSignal) => number[] | Promise<number[]>)
     inspectProcesses?: typeof inspectInstallationProcessesAsync
   },
   signal?: AbortSignal
@@ -978,7 +1010,7 @@ export async function inspectInstallationAvailability(
   signal?.throwIfAborted()
   const allowedProcessIds =
     typeof options.allowedProcessIds === 'function'
-      ? await options.allowedProcessIds()
+      ? await options.allowedProcessIds(signal)
       : options.allowedProcessIds
   signal?.throwIfAborted()
   let conflict: { otherRuntimePids: number[]; foreignProcessPids: number[] } | undefined

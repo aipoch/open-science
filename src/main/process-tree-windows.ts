@@ -31,10 +31,11 @@ export const reapWindowsOwnedJob = async (jobName: string): Promise<boolean> => 
 }
 
 /** Admission only: these processes must still be reaped before installation handoff. */
-export const inspectOwnedWindowsProcessIds = (): number[] => {
+export const inspectOwnedWindowsProcessIds = (signal?: AbortSignal): number[] => {
   if (process.platform !== 'win32') return []
   const pids = new Set<number>()
   for (const [name, reference] of activeJobs) {
+    signal?.throwIfAborted()
     // Only a live exclusive native Job grants admission; persisted names/PIDs never do.
     const handle = reference.deref()
     if (!handle) {
@@ -51,11 +52,12 @@ export const inspectOwnedWindowsProcessIds = (): number[] => {
 
 // Notebook hosts use their own supervisor Jobs. Include only their live, birth-checked ancestry
 // rooted in this backend, alongside Agent Job members that may outlive their original leader.
-export const inspectRuntimeWindowsProcessIds = (): number[] => {
+export const inspectRuntimeWindowsProcessIds = (signal?: AbortSignal): number[] => {
   if (process.platform !== 'win32') return []
+  signal?.throwIfAborted()
   return [
     ...new Set([
-      ...inspectOwnedWindowsProcessIds(),
+      ...inspectOwnedWindowsProcessIds(signal),
       ...binding().windowsCurrentProcessDescendants()
     ])
   ]

@@ -223,6 +223,39 @@ describe('desktop projection of application commands and events', () => {
     }
   )
 
+  it('cancels an in-flight host command in the runtime process', async () => {
+    let operationSignal: AbortSignal | undefined
+    const commands = {
+      commandNames: () => ['projects:list'],
+      invoke: async (_name: string, invocation: ApplicationInvocation<readonly unknown[]>) => {
+        operationSignal = invocation.callerLease.signal
+        await new Promise<void>((resolve) =>
+          operationSignal!.addEventListener('abort', () => resolve(), { once: true })
+        )
+        return []
+      }
+    }
+    const server = await startDesktopRuntimeTransport({
+      version: 'test',
+      events: new ApplicationEventHub(),
+      commands,
+      hostCommands: commands
+    })
+    cleanups.push(server.close)
+    const client = await connectDesktopRuntime({
+      endpoint: server.endpoint,
+      onEvent: vi.fn(),
+      onDisconnect: vi.fn()
+    })
+    cleanups.push(async () => client.close())
+    const cancellation = new AbortController()
+    const pending = client.invokeHost('projects:list', [], cancellation.signal)
+    await vi.waitFor(() => expect(operationSignal).toBeDefined())
+    cancellation.abort(new Error('cancel fixture'))
+    await expect(pending).rejects.toThrow('cancel fixture')
+    await vi.waitFor(() => expect(operationSignal?.aborted).toBe(true))
+  })
+
   it('connects the desktop client to the real transport and rejects pending calls on disconnect', async () => {
     const events = new ApplicationEventHub()
     const observed = vi.fn()

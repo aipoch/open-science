@@ -1591,8 +1591,8 @@ async function startDesktop(): Promise<void> {
     allowedProcessIds: allowedInstallationProcessIds,
     ...(process.platform === 'win32'
       ? {
-          ownedRuntimeProcessIds: async (runtime): Promise<number[]> => {
-            const pids = await runtime.invokeHost('desktop:update-owned-processes')
+          ownedRuntimeProcessIds: async (runtime, signal): Promise<number[]> => {
+            const pids = await runtime.invokeHost('desktop:update-owned-processes', [], signal)
             if (!Array.isArray(pids) || pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
               throw new Error('The service returned invalid process ownership evidence.')
             return pids as number[]

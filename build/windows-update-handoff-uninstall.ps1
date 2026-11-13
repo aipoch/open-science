@@ -13,6 +13,21 @@ if ($roots.Count -eq 0) { exit 0 }
 $installation = [IO.Path]::GetFullPath($InstallPath).TrimEnd('\')
 # Read-only process inventory. An unavailable inventory must not authorize deletion.
 $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+function Get-ProcessBirthToken($Process) {
+  if (-not $Process.CreationDate) { return $null }
+  try {
+    return ([System.Management.ManagementDateTimeConverter]::ToDateTime([string]$Process.CreationDate)).ToUniversalTime().ToFileTimeUtc().ToString()
+  }
+  catch { return $null }
+}
+function Test-RecordedProcessIdentity($Process, [int]$Pid, [string]$BirthToken) {
+  if ($Process.ProcessId -ne $Pid) { return $false }
+  if ([string]::IsNullOrWhiteSpace($BirthToken)) { return $true }
+  $actual = Get-ProcessBirthToken $Process
+  # Missing WMI creation data is uncertainty, not proof that the owner is gone.
+  if ([string]::IsNullOrWhiteSpace($actual)) { return $true }
+  return $actual -ceq $BirthToken
+}
 # The uninstaller invokes this script as a child of its own process. A historical update PID can
 # be reused by that process, and its executable identity may be hidden from the elevated WMI query.
 # Exclude the current cleanup process and its observed ancestors before evaluating recorded owners.
@@ -46,7 +61,7 @@ foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
   try {
     if ((Get-Item -LiteralPath $requestPath).Length -gt 16384) { continue }
     $request = Get-Content -LiteralPath $requestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($request.schema -ne 1 -or $request.operationId -cne $directory.Name -or
+    if (@(1, 2) -notcontains $request.schema -or $request.operationId -cne $directory.Name -or
         -not [IO.Path]::IsPathRooted([string]$request.applicationPath) -or
         -not [IO.Path]::IsPathRooted([string]$request.installerPath) -or
         $request.parentPid -le 0) { continue }
@@ -64,9 +79,9 @@ foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
     if ($_.ProcessId -eq $PID -or $ancestors.Contains([uint32]$_.ProcessId)) { return $false }
     # Historic PIDs can be reused by unrelated processes after an update or reboot. A readable
     # different executable is not an owner; preserve uncertainty only when its identity is hidden.
-    $recordedPid = $_.ProcessId -eq $request.parentPid -or
-      ($request.helperPid -and $_.ProcessId -eq $request.helperPid) -or
-      ($request.successorPid -and $_.ProcessId -eq $request.successorPid)
+    $recordedPid = (Test-RecordedProcessIdentity $_ $request.parentPid $request.parentBirthToken) -or
+      ($request.helperPid -and (Test-RecordedProcessIdentity $_ $request.helperPid $request.helperBirthToken)) -or
+      ($request.successorPid -and (Test-RecordedProcessIdentity $_ $request.successorPid $request.successorBirthToken))
     if (-not $_.ExecutablePath) { $recordedPid }
     else {
       $_.ExecutablePath -ieq $helper -or $_.ExecutablePath -ieq $request.applicationPath -or
