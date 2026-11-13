@@ -934,8 +934,10 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
     if (
       pixels &&
       !supplied &&
-      !((pixelType3.size || mode === nonisolatedGroupPixelMode || exteriorPixels) &&
-        part.every((p) => !p.group))
+      !(
+        (pixelType3.size || mode === nonisolatedGroupPixelMode || exteriorPixels) &&
+        part.every((p) => !p.group)
+      )
     )
       return
     if (
@@ -3178,22 +3180,7 @@ export function nativeNonisolatedGroupPixelCrop(
   exclusionProfile,
   compositeProfile
 ) {
-  const composite = nativeCompositeGroupProfileData(compositeProfile, page, tokens, context)
-  if (Array.isArray(composite) && composite.length === 1)
-    return renderedGroupPixelCrop(
-      page,
-      figure,
-      captions,
-      tables,
-      tokens,
-      context,
-      publishedRect,
-      live,
-      compositeGroupPixelMode,
-      compositeProfile
-    )
-  const descriptors = nativeNonisolatedGroupProfileData(profile, page, tokens, context)
-  if (!Array.isArray(descriptors) || descriptors.length !== 1) {
+  const renderExclusion = () => {
     const exclusion = nativeNonisolatedExclusionProfileData(exclusionProfile, page, tokens, context)
     return Array.isArray(exclusion) && exclusion.length === 1
       ? renderedGroupPixelCrop(
@@ -3210,6 +3197,22 @@ export function nativeNonisolatedGroupPixelCrop(
         )
       : undefined
   }
+  const composite = nativeCompositeGroupProfileData(compositeProfile, page, tokens, context)
+  if (Array.isArray(composite) && composite.length === 1)
+    return renderedGroupPixelCrop(
+      page,
+      figure,
+      captions,
+      tables,
+      tokens,
+      context,
+      publishedRect,
+      live,
+      compositeGroupPixelMode,
+      compositeProfile
+    )
+  const descriptors = nativeNonisolatedGroupProfileData(profile, page, tokens, context)
+  if (!Array.isArray(descriptors) || descriptors.length !== 1) return renderExclusion()
   const plan = renderedGroupPixelCrop(
       page,
       figure,
@@ -3223,8 +3226,7 @@ export function nativeNonisolatedGroupPixelCrop(
       profile
     ),
     proof = plan && groupPixelCertificates.get(plan)
-  if (!proof?.current()) return
-  return plan
+  return proof?.current() ? plan : renderExclusion()
 }
 function compactGroup(s) {
   return s.replace(/\s/gu, '')
