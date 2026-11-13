@@ -14,7 +14,10 @@ export const downloadUseCase = async (
     signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
     redirect: 'error'
   })
-  if (!manifest.ok) throw new Error('Could not load use cases.')
+  if (!manifest.ok) {
+    await manifest.body?.cancel().catch(() => undefined)
+    throw new Error('Could not load use cases.')
+  }
   const item = parseUseCases(await manifest.json()).find((item) => item.slug === slug)
   if (!item) throw new Error('Use case is unavailable.')
   const directory = await mkdtemp(join(tmpdir(), 'open-science-use-case-'))

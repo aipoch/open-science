@@ -119,6 +119,28 @@ it('reports first-load failure when no valid cached catalog is available', async
   await expect(catalog.refresh()).rejects.toThrow('offline')
 })
 
+it.each(['manifest', 'introduction'] as const)(
+  'cancels the response body after a failed %s request',
+  async (request) => {
+    await writeFile(
+      cachePath,
+      JSON.stringify([
+        { ...(manifest('Cached')[0] as object), introduction: { file_name: 'Intro.md' } }
+      ])
+    )
+    const cancel = vi.fn()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(new ReadableStream({ cancel }), { status: 503 }))
+    )
+    const catalog = new UseCaseCatalog(directory)
+    if (request === 'manifest')
+      await expect(catalog.refresh()).resolves.toMatchObject([{ title: 'Cached' }])
+    else await expect(catalog.introduction('research')).rejects.toThrow()
+    expect(cancel).toHaveBeenCalledOnce()
+  }
+)
+
 it('resolves introductions from the catalog, caches successful reads and retries failures', async () => {
   await writeFile(
     cachePath,

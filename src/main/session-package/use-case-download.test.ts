@@ -30,6 +30,17 @@ it('streams a verified archive to a native path and releases it after use', asyn
   await expect(access(source.path)).rejects.toThrow()
 })
 
+it('cancels a failed manifest response before opening an archive', async () => {
+  const cancel = vi.fn()
+  const fetcher = vi.fn(async () => new Response(new ReadableStream({ cancel }), { status: 503 }))
+  vi.stubGlobal('fetch', fetcher)
+  await expect(downloadUseCase('research', new AbortController().signal, () => {})).rejects.toThrow(
+    'Could not load use cases.'
+  )
+  expect(fetcher).toHaveBeenCalledOnce()
+  expect(cancel).toHaveBeenCalledOnce()
+})
+
 it.each(['checksum', 'size', 'unknown', 'http'])(
   'rejects %s failures before import',
   async (failure) => {
