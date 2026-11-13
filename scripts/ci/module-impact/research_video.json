@@ -3,6 +3,7 @@
     "src/main/research-video/export-control.test.ts",
     "src/main/research-video/export-control.ts",
     "src/main/research-video/export-electron.ts",
+    "src/main/research-video/export-electron.test.ts",
     "src/main/research-video/mcp-contract.test.ts",
     "src/renderer/src/components/local-narration-control.test.tsx",
     "src/renderer/src/components/local-narration-control.tsx",
@@ -47,6 +48,7 @@
   "testFiles": {
     "owner": [
       "src/main/research-video/export-control.test.ts",
+      "src/main/research-video/export-electron.test.ts",
       "src/renderer/src/components/local-narration-control.test.tsx",
       "src/shared/research-video-presentation.test.ts",
       "src/main/research-video/runtime.test.ts",
