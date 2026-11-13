@@ -255,28 +255,29 @@ export function composeProjectLifecycle({
     detectBlockingSessions(true)
   const detectSessionExportBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
     detectBlockingSessions(false)
-  const isSessionLocallyBusy = (projectId: string, sessionId: string): boolean => {
-    const snapshot = runtimeRef.current?.getSnapshot()
-    return (
-      snapshot?.pendingPermissions?.some((request) => request.sessionId === sessionId) === true ||
-      snapshot?.pendingElicitations?.some((request) => request.sessionId === sessionId) === true ||
-      sideChatOwnerRef.current?.hasForParent(sessionId) === true ||
-      detectArchiveBlockingSessions().some(
-        (session) => session.projectId === projectId && session.sessionId === sessionId
-      )
-    )
-  }
   const archiveCoordinator = new ArchiveCoordinator(
     projectRepository,
     sessionPersistenceCoordinator,
     {
-      isSessionLocallyBusy,
-      isSessionBusy: async (projectId, sessionId) => {
+      isSessionLocallyBusy(projectId, sessionId) {
+        const snapshot = runtimeRef.current?.getSnapshot()
+        return (
+          snapshot?.pendingPermissions?.some((request) => request.sessionId === sessionId) ===
+            true ||
+          snapshot?.pendingElicitations?.some((request) => request.sessionId === sessionId) ===
+            true ||
+          sideChatOwnerRef.current?.hasForParent(sessionId) === true ||
+          detectArchiveBlockingSessions().some(
+            (session) => session.projectId === projectId && session.sessionId === sessionId
+          )
+        )
+      },
+      async isSessionBusy(projectId, sessionId) {
         const computeJobs = computeJobActivityRef.current
         if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
         const jobs = await computeJobs.countNonTerminalBySession(sessionId)
         // Read synchronous activity after the database await so a newly active runtime is visible.
-        return jobs > 0 || isSessionLocallyBusy(projectId, sessionId)
+        return jobs > 0 || this.isSessionLocallyBusy!(projectId, sessionId)
       },
       isSessionExportBusy: async (projectId, sessionId) => {
         const computeJobs = computeJobActivityRef.current
