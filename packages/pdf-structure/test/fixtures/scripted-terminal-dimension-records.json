@@ -1,0 +1,321 @@
+{
+  "table": {
+    "id": "table",
+    "cropRect": [86, 110, 833, 305],
+    "readingRotation": 0,
+    "structure": {
+      "objects": [
+        {
+          "label": "table column",
+          "score": 0.9996140480781323,
+          "rect": [17.230713218450546, 24.34879034757614, 212.20157012343407, 153.12888890504837]
+        },
+        {
+          "label": "table column",
+          "score": 0.9980159114001445,
+          "rect": [245.89069390296936, 24.492519199848175, 546.0350539684296, 150.91356307268143]
+        },
+        {
+          "label": "table column",
+          "score": 0.9983292120982061,
+          "rect": [546.823430031538, 24.531101435422897, 728.1141267120838, 152.22112253308296]
+        },
+        {
+          "label": "table row",
+          "score": 0.8551893091219261,
+          "rect": [18.270586878061295, 137.16789342463017, 728.2766417562962, 152.43347011506557]
+        },
+        {
+          "label": "table column",
+          "score": 0.9909445241810039,
+          "rect": [212.06521332263947, 24.55585241317749, 253.72828245162964, 151.25275433063507]
+        }
+      ]
+    },
+    "rowCount": 1,
+    "columnCount": 4,
+    "spans": [],
+    "grid": [["", "", "", ""]]
+  },
+  "tokens": [
+    {
+      "text": "Record A",
+      "sourceItem": { "pageNumber": 1, "index": 0, "text": "Record A" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [95.862, 261.8019, 205.18034880000002, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "v",
+      "sourceItem": { "pageNumber": 1, "index": 1, "text": "v" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [209.88770879999998, 261.8019, 216.60174912, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "b",
+      "sourceItem": { "pageNumber": 1, "index": 2, "text": "b" },
+      "baseline": 269.538,
+      "height": 8.9664,
+      "rect": [217.08299999999997, 260.5716, 221.99389727999997, 269.538],
+      "horizontal": true
+    },
+    {
+      "text": "t",
+      "sourceItem": { "pageNumber": 1, "index": 3, "text": "t" },
+      "baseline": 277.61699999999996,
+      "height": 8.9664,
+      "rect": [216.59999999999997, 268.65059999999994, 220.87517951999996, 277.61699999999996],
+      "horizontal": true
+    },
+    {
+      "text": "3",
+      "sourceItem": { "pageNumber": 1, "index": 4, "text": "3" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [314.86199999999997, 261.8019, 321.5868, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "(",
+      "sourceItem": { "pageNumber": 1, "index": 5, "text": "(" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [350.1671999999999, 261.8019, 355.5430051199999, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "v",
+      "sourceItem": { "pageNumber": 1, "index": 6, "text": "v" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [355.5430051199999, 261.8019, 362.2570454399999, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "x",
+      "sourceItem": { "pageNumber": 1, "index": 7, "text": "x" },
+      "baseline": 276.7455,
+      "height": 8.9664,
+      "rect": [362.25449999999995, 267.77909999999997, 368.51215055999995, 276.7455],
+      "horizontal": true
+    },
+    {
+      "text": ", v",
+      "sourceItem": { "pageNumber": 1, "index": 8, "text": ", v" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [369.2594999999999, 261.8019, 382.1132827199999, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "y",
+      "sourceItem": { "pageNumber": 1, "index": 9, "text": "y" },
+      "baseline": 276.7455,
+      "height": 8.9664,
+      "rect": [382.11749999999995, 267.77909999999997, 387.79412783999993, 276.7455],
+      "horizontal": true
+    },
+    {
+      "text": ", v",
+      "sourceItem": { "pageNumber": 1, "index": 10, "text": ", v" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [388.86299999999994, 261.8019, 401.7167827199999, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "z",
+      "sourceItem": { "pageNumber": 1, "index": 11, "text": "z" },
+      "baseline": 276.7455,
+      "height": 8.9664,
+      "rect": [401.72099999999995, 267.77909999999997, 407.06587103999993, 276.7455],
+      "horizontal": true
+    },
+    {
+      "text": ")",
+      "sourceItem": { "pageNumber": 1, "index": 12, "text": ")" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [408.16499999999996, 261.8019, 413.54080511999996, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "(",
+      "sourceItem": { "pageNumber": 1, "index": 13, "text": "(" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [641.4846259199999, 261.8019, 646.8604310399999, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "v",
+      "sourceItem": { "pageNumber": 1, "index": 14, "text": "v" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [646.8604310399999, 261.8019, 653.5744713599998, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "x",
+      "sourceItem": { "pageNumber": 1, "index": 15, "text": "x" },
+      "baseline": 276.7455,
+      "height": 8.9664,
+      "rect": [653.574, 267.77909999999997, 659.83165056, 276.7455],
+      "horizontal": true
+    },
+    {
+      "text": ",",
+      "sourceItem": { "pageNumber": 1, "index": 16, "text": "," },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [660.579, 261.8019, 664.4188608, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "−",
+      "sourceItem": { "pageNumber": 1, "index": 17, "text": "−" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [666.7187423999999, 261.8019, 677.4703526399999, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "v",
+      "sourceItem": { "pageNumber": 1, "index": 18, "text": "v" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [677.4703526399999, 261.8019, 684.1843929599999, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "y",
+      "sourceItem": { "pageNumber": 1, "index": 19, "text": "y" },
+      "baseline": 276.7455,
+      "height": 8.9664,
+      "rect": [684.189, 267.77909999999997, 689.86562784, 276.7455],
+      "horizontal": true
+    },
+    {
+      "text": ", v",
+      "sourceItem": { "pageNumber": 1, "index": 20, "text": ", v" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [690.9345, 261.8019, 703.7882827199999, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "z",
+      "sourceItem": { "pageNumber": 1, "index": 21, "text": "z" },
+      "baseline": 276.7455,
+      "height": 8.9664,
+      "rect": [703.7925, 267.77909999999997, 709.1373710400001, 276.7455],
+      "horizontal": true
+    },
+    {
+      "text": ")",
+      "sourceItem": { "pageNumber": 1, "index": 22, "text": ")" },
+      "baseline": 275.25149999999996,
+      "height": 13.4496,
+      "rect": [710.2365, 261.8019, 715.61230512, 275.25149999999996],
+      "horizontal": true
+    },
+    {
+      "text": "Record B",
+      "sourceItem": { "pageNumber": 1, "index": 23, "text": "Record B" },
+      "baseline": 290.19449999999995,
+      "height": 13.4496,
+      "rect": [95.86199999999994, 276.7449, 132.47181119999993, 290.19449999999995],
+      "horizontal": true
+    },
+    {
+      "text": "a",
+      "sourceItem": { "pageNumber": 1, "index": 24, "text": "a" },
+      "baseline": 290.19449999999995,
+      "height": 13.4496,
+      "rect": [137.17917119999993, 276.7449, 144.50247839999992, 290.19449999999995],
+      "horizontal": true
+    },
+    {
+      "text": "t",
+      "sourceItem": { "pageNumber": 1, "index": 25, "text": "t" },
+      "baseline": 291.6899999999998,
+      "height": 8.9664,
+      "rect": [144.50249999999994, 282.7235999999998, 148.77767951999994, 291.6899999999998],
+      "horizontal": true
+    },
+    {
+      "text": "15",
+      "sourceItem": { "pageNumber": 1, "index": 26, "text": "15" },
+      "baseline": 290.19449999999995,
+      "height": 13.4496,
+      "rect": [311.4989999999999, 276.7449, 324.94859999999994, 290.19449999999995],
+      "horizontal": true
+    },
+    {
+      "text": "Plain record commands",
+      "sourceItem": { "pageNumber": 1, "index": 27, "text": "Plain record commands" },
+      "baseline": 290.19449999999995,
+      "height": 13.4496,
+      "rect": [350.16659999999996, 276.7449, 520.3309391999999, 290.19449999999995],
+      "horizontal": true
+    },
+    {
+      "text": "F",
+      "sourceItem": { "pageNumber": 1, "index": 28, "text": "F" },
+      "baseline": 290.19449999999995,
+      "height": 13.4496,
+      "rect": [641.4849359999998, 276.7449, 650.3105635199998, 290.19449999999995],
+      "horizontal": true
+    },
+    {
+      "text": "a",
+      "sourceItem": { "pageNumber": 1, "index": 29, "text": "a" },
+      "baseline": 291.6899999999998,
+      "height": 8.9664,
+      "rect": [650.31, 282.7235999999998, 656.3614233599999, 291.6899999999998],
+      "horizontal": true
+    },
+    {
+      "text": "(",
+      "sourceItem": { "pageNumber": 1, "index": 30, "text": "(" },
+      "baseline": 290.19449999999995,
+      "height": 13.4496,
+      "rect": [657.1095, 276.7449, 662.48530512, 290.19449999999995],
+      "horizontal": true
+    },
+    {
+      "text": "a",
+      "sourceItem": { "pageNumber": 1, "index": 31, "text": "a" },
+      "baseline": 290.19449999999995,
+      "height": 13.4496,
+      "rect": [662.48530512, 276.7449, 669.8086123200001, 290.19449999999995],
+      "horizontal": true
+    },
+    {
+      "text": "t",
+      "sourceItem": { "pageNumber": 1, "index": 32, "text": "t" },
+      "baseline": 291.6899999999998,
+      "height": 8.9664,
+      "rect": [669.8069999999999, 282.7235999999998, 674.08217952, 291.6899999999998],
+      "horizontal": true
+    },
+    {
+      "text": ")",
+      "sourceItem": { "pageNumber": 1, "index": 33, "text": ")" },
+      "baseline": 290.19449999999995,
+      "height": 13.4496,
+      "rect": [674.8304999999999, 276.7449, 680.2063051199999, 290.19449999999995],
+      "horizontal": true
+    }
+  ],
+  "captions": [],
+  "rules": [
+    [86.895, 119.42250000000013, 831.103511352539, 119.42250000000013],
+    [86.895, 134.96550000000002, 831.103511352539, 134.96550000000002],
+    [86.895, 263.01150000000007, 831.103511352539, 263.01150000000007],
+    [86.895, 294.9765, 831.103511352539, 294.9765]
+  ]
+}
