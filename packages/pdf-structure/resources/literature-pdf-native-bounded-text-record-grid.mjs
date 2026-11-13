@@ -3451,9 +3451,11 @@ export function recoverNativeCompleteNumericRows({
       const previousBaseline = index > 0 ? baselineForRow(index - 1) : undefined
       const nextBaseline = index < rows.length ? baselineForRow(index) : undefined
       if (
-        (Number.isFinite(previousBaseline) &&
-          candidate.baseline - previousBaseline < height * 0.35) ||
-        (Number.isFinite(nextBaseline) && nextBaseline - candidate.baseline < height * 0.35)
+        !Number.isFinite(previousBaseline) ||
+        !Number.isFinite(nextBaseline) ||
+        !(previousBaseline < candidate.baseline && candidate.baseline < nextBaseline) ||
+        candidate.baseline - previousBaseline < height * 0.35 ||
+        nextBaseline - candidate.baseline < height * 0.35
       )
         continue
       const row = {

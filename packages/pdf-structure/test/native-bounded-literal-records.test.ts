@@ -312,6 +312,78 @@ it('keeps a partial wide numeric band unassigned', () => {
   expect(repairs).toEqual([])
 })
 
+it('rejects a complete numeric band outside the peer-row interval', () => {
+  const item = (text: string, column: number, y: number) => ({
+    text,
+    rect: [column * 20 + 1, y, column * 20 + 10, y + 8],
+    baseline: y + 8,
+    height: 8,
+    horizontal: true,
+    pageNumber: 1,
+    index: column + y * 10
+  })
+  const columnRects = Array.from({ length: 9 }, (_, column) => [
+    column * 20,
+    0,
+    column * 20 + 20,
+    120
+  ])
+  const peers = [
+    [1, 2, 3, 4, 5, 6, 7, 8].map((value, column) => item(String(value), column + 1, 20)),
+    [9, 10, 11, 12, 13, 14, 15, 16].map((value, column) => item(String(value), column + 1, 60))
+  ]
+  const trailing = [1, 2, 3, 4, 5, 6, 7, 8].map((value, column) =>
+    item(String(value + 16), column + 1, 80)
+  )
+  const cells = peers.flatMap((row, rowIndex) => [
+    {
+      row: rowIndex,
+      column: 0,
+      rowSpan: 1,
+      colSpan: 1,
+      text: '',
+      sourceItems: [],
+      sourceTokens: [],
+      sourceRects: []
+    },
+    ...row.map((source, column) => ({
+      row: rowIndex,
+      column: column + 1,
+      rowSpan: 1,
+      colSpan: 1,
+      text: source.text,
+      sourceItems: [source],
+      sourceTokens: [source],
+      sourceRects: [source.rect]
+    }))
+  ])
+  const unassigned = trailing.map((source) => source.text)
+  const repairs: string[] = []
+  const issues = new Set(['unassigned-source-text'])
+  expect(
+    recoverNativeCompleteNumericRows({
+      table: { cropRect: [0, 0, 180, 100] },
+      items: [...peers.flat(), ...trailing],
+      rows: [
+        { rect: [0, 12, 180, 32], origin: 'model' },
+        { rect: [0, 52, 180, 72], origin: 'model' }
+      ],
+      cells,
+      baseCells: [],
+      columnRects,
+      rules: [
+        [0, 0, 180, 0],
+        [0, 100, 180, 100]
+      ],
+      unassigned,
+      issues,
+      repairs
+    })
+  ).toBe(false)
+  expect(unassigned).toEqual(trailing.map((source) => source.text))
+  expect(repairs).toEqual([])
+})
+
 it('rebuilds a complete six-column microbenchmark row set from native lanes', () => {
   let index = 0
   const item = (text: string, column: number, y: number) => ({
