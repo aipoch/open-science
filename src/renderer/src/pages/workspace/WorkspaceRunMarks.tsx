@@ -48,6 +48,15 @@ type RunMarkRailPosition = {
   top: number
 }
 
+const scrollViewportTo = (
+  viewport: HTMLDivElement,
+  top: number,
+  behavior: ScrollBehavior
+): void => {
+  if (typeof viewport.scrollTo === 'function') viewport.scrollTo({ top, behavior })
+  else viewport.scrollTop = top
+}
+
 const WorkspaceRunMarks = ({
   items,
   viewport,
@@ -76,6 +85,7 @@ const WorkspaceRunMarks = ({
   const pointerFrameRef = useRef<number | undefined>(undefined)
   const pointerPositionRef = useRef(0)
   const pointerFocusRef = useRef(false)
+  const pendingRevealRef = useRef<string | undefined>(undefined)
   const cancelPointerFrame = (): void => {
     if (pointerFrameRef.current !== undefined) {
       window.cancelAnimationFrame(pointerFrameRef.current)
@@ -277,26 +287,54 @@ const WorkspaceRunMarks = ({
     updateRailScroll(currentPositionRef.current)
   }, [marks, railPosition, updateRailScroll, viewport, visibleIndices])
 
-  const scrollToRun = (mark: RunMark, index: number): void => {
-    if (!viewport) return
-    const target = findMessageTarget(viewport, mark.id)
-    onRevealMessage?.(mark.id)
-    if (!target) {
+  const scrollToMountedRun = useCallback(
+    (mark: RunMark, index: number): boolean => {
+      if (!viewport) return false
+      const target = findMessageTarget(viewport, mark.id)
+      if (!target) return false
+
+      const viewportTop = viewport.getBoundingClientRect().top
+      const targetTop = target.getBoundingClientRect().top
+      const maximumScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+      const nextScrollTop = Math.min(
+        Math.max(0, viewport.scrollTop + targetTop - viewportTop - RUN_MARK_TOP_OFFSET_PX),
+        maximumScrollTop
+      )
+      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+      scrollViewportTo(viewport, nextScrollTop, reduceMotion ? 'auto' : 'smooth')
       setCurrentIndex(index)
+      return true
+    },
+    [viewport]
+  )
+
+  const scrollToRun = (mark: RunMark, index: number): void => {
+    const targetMounted = viewport ? findMessageTarget(viewport, mark.id) !== undefined : false
+    onRevealMessage?.(mark.id)
+    if (targetMounted) {
+      pendingRevealRef.current = undefined
+      scrollToMountedRun(mark, index)
       return
     }
-
-    const viewportTop = viewport.getBoundingClientRect().top
-    const targetTop = target.getBoundingClientRect().top
-    const maximumScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-    const nextScrollTop = Math.min(
-      Math.max(0, viewport.scrollTop + targetTop - viewportTop - RUN_MARK_TOP_OFFSET_PX),
-      maximumScrollTop
-    )
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    viewport.scrollTo({ top: nextScrollTop, behavior: reduceMotion ? 'auto' : 'smooth' })
+    if (onRevealMessage) pendingRevealRef.current = mark.id
     setCurrentIndex(index)
   }
+
+  useLayoutEffect(() => {
+    const pendingId = pendingRevealRef.current
+    if (!onRevealMessage) {
+      pendingRevealRef.current = undefined
+      return
+    }
+    if (!pendingId) return
+    const pendingIndex = marks.findIndex((mark) => mark.id === pendingId)
+    if (pendingIndex < 0) {
+      pendingRevealRef.current = undefined
+      return
+    }
+    const pendingMark = marks[pendingIndex]!
+    if (scrollToMountedRun(pendingMark, pendingIndex)) pendingRevealRef.current = undefined
+  }, [items, marks, onRevealMessage, scrollToMountedRun, visibleIndices])
 
   if (marks.length < 4 || !railPosition || typeof document === 'undefined') return null
 

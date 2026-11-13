@@ -706,6 +706,34 @@ describe('WorkspaceRunMarks interaction', () => {
     }
   )
 
+  it('scrolls to a target after the reveal callback mounts it', async () => {
+    const items = Array.from({ length: 4 }, (_, index) =>
+      createMessageItem({ id: `prompt-${index}` }, index)
+    )
+    const scrollTo = vi.fn()
+    viewport.scrollTo = scrollTo
+    const reveal = vi.fn()
+    const { rerender } = render(
+      <WorkspaceRunMarks items={items} viewport={viewport} onRevealMessage={reveal} />
+    )
+
+    expect(viewport.querySelector('[data-message-id="prompt-1"]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Go to run 2/u }))
+    expect(reveal).toHaveBeenCalledWith('prompt-1')
+    expect(scrollTo).not.toHaveBeenCalled()
+
+    appendMessageTarget(viewport, 'prompt-1', 600)
+    await act(async () =>
+      rerender(
+        <WorkspaceRunMarks items={[...items]} viewport={viewport} onRevealMessage={reveal} />
+      )
+    )
+
+    await waitFor(() => {
+      expect(scrollTo).toHaveBeenCalledWith({ top: 492, behavior: 'smooth' })
+    })
+  })
+
   it('tracks the last mark above the viewport reading boundary', () => {
     appendMessageTarget(viewport, 'prompt-1', 80)
     appendMessageTarget(viewport, 'prompt-2', 125)
