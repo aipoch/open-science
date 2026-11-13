@@ -10529,7 +10529,29 @@ function extractPage(
           streamFonts = new Set(
             block.items.map((entry) => entry.fontName).filter((name): name is string => !!name)
           ),
-          carriesBothStreams = [...streamFonts].filter((name) => anchorFonts.has(name)).length >= 2
+          anchorIndexGap = Math.abs(item.index - other.index),
+          anchorBaselineGap = Math.abs(item.originalBaseline - other.originalBaseline),
+          carriesBothStreams =
+            [...streamFonts].filter((name) => anchorFonts.has(name)).length >= 2 ||
+            block.items.some((left, index) =>
+              block.items.slice(index + 1).some((right) => {
+                const pairFont = Math.max(left.font, right.font),
+                  sameNativeGap =
+                    Math.abs(Math.abs(left.index - right.index) - anchorIndexGap) <=
+                    Math.max(4, anchorIndexGap * 0.15),
+                  sameBaselineGap =
+                    Math.abs(
+                      Math.abs(left.originalBaseline - right.originalBaseline) - anchorBaselineGap
+                    ) <=
+                    pairFont * 0.35,
+                  sameAnchorX =
+                    (Math.abs(left.x - item.x) <= pairFont * 0.8 &&
+                      Math.abs(right.x - other.x) <= pairFont * 0.8) ||
+                    (Math.abs(left.x - other.x) <= pairFont * 0.8 &&
+                      Math.abs(right.x - item.x) <= pairFont * 0.8)
+                return sameNativeGap && sameBaselineGap && sameAnchorX
+              })
+            )
         return (
           (block.items.includes(item) || block.items.includes(other) || carriesBothStreams) &&
           block.x < right + font * 0.8 &&
