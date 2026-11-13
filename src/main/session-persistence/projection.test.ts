@@ -1840,6 +1840,44 @@ describe('Session projection', () => {
     })
   })
 
+  it('repairs an unindexed historical Session when a ready projection drifts', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-ready-drift-backfill-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+
+    const files = new SessionRepository(storageRoot)
+    const indexed = await files.saveSession({ ...session('indexed', 100), number: 1 })
+    await files.saveSession(session('missing-number', 200))
+
+    const projection = new SessionProjectionRepository(async () => client!)
+    await projection.replaceAll([indexed])
+    const repository = new SessionRepository(storageRoot, {}, projection)
+
+    const initialized = await repository.ensureSessionProjection(() => files.loadAll())
+
+    expect(initialized.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'indexed', number: 1 }),
+        expect.objectContaining({ id: 'missing-number', number: 2 })
+      ])
+    )
+    await expect(repository.loadSession('project-1', 'missing-number')).resolves.toMatchObject({
+      number: 2
+    })
+    const repairedFile = JSON.parse(
+      await readFile(join(storageRoot, 'sessions', 'project-1', 'missing-number.json'), 'utf8')
+    ) as { session: PersistedChatSession }
+    expect(repairedFile.session.number).toBe(2)
+    await expect(projection.list()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'indexed', number: 1 }),
+        expect.objectContaining({ id: 'missing-number', number: 2 })
+      ])
+    )
+  })
+
   it('scans historical Session authority once while building the projection', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-single-scan-backfill-'))
     initDataRoot(storageRoot)
