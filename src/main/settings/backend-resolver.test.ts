@@ -1269,6 +1269,22 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     })
   })
 
+  it('uses loadable skill names as directory IDs for OpenCode 2.x', async () => {
+    const harness = makeHarness({ settings: makeSettings({ agentFrameworkId: 'opencode' }) })
+    harness.runtime.probeOpencodeVersion.mockResolvedValue('2.2.7')
+
+    const backend = await harness.resolver.resolveActiveBackend()
+
+    expect(harness.runtime.prepareAgentSkillDiscovery).toHaveBeenCalledWith(
+      expect.anything(),
+      '/storage/opencode/config/opencode',
+      expect.any(Set),
+      undefined,
+      { directoryLayout: 'agent-facing-shared' }
+    )
+    await backend.providerTransportLease?.release()
+  })
+
   it('does not pass removed listener flags to OpenCode 2.x ACP', async () => {
     const harness = makeHarness({ settings: makeSettings({ agentFrameworkId: 'opencode' }) })
     harness.runtime.probeOpencodeVersion.mockResolvedValue('2.1.4')
