@@ -322,7 +322,7 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(reads.map((read) => read.mock.calls.length)).toEqual(items.map(() => 1))
   })
 
-  it('keeps visible marks dark at rest while hover tapers mark lengths independently', () => {
+  it('keeps visible marks dark at rest while hover tapers mark lengths independently', async () => {
     const items = [0, 1, 2, 3, 4].map((index) => {
       const messageId = `prompt-${index}`
       appendMessageTarget(viewport, messageId, 120 + index * 100)
@@ -349,9 +349,12 @@ describe('WorkspaceRunMarks interaction', () => {
 
     fireEvent.pointerLeave(buttons[2]!)
     fireEvent.pointerLeave(screen.getByRole('list'))
-    expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-[0.4]'))).toBe(
-      true
-    )
+    expect(indicators[2]?.classList.contains('scale-x-100')).toBe(true)
+    await waitFor(() => {
+      expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-[0.4]'))).toBe(
+        true
+      )
+    })
   })
 
   it('coalesces fractional pointer positions and cancels a pending wave on dismissal', async () => {

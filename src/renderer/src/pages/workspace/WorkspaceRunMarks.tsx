@@ -75,6 +75,7 @@ const WorkspaceRunMarks = ({
   } | null>(null)
   const pointerFrameRef = useRef<number | undefined>(undefined)
   const pointerPositionRef = useRef(0)
+  const pointerFocusRef = useRef(false)
   const cancelPointerFrame = (): void => {
     if (pointerFrameRef.current !== undefined) {
       window.cancelAnimationFrame(pointerFrameRef.current)
@@ -354,7 +355,7 @@ const WorkspaceRunMarks = ({
           }}
           onPointerLeave={() => {
             cancelPointerFrame()
-            if (!railRef.current?.contains(document.activeElement)) setHighlightedIndex(null)
+            if (!railRef.current?.contains(document.activeElement)) schedulePreviewClose()
           }}
           onScroll={updateRailWindow}
           style={railStyle}
@@ -404,9 +405,16 @@ const WorkspaceRunMarks = ({
                       setFocusedId(null)
                       schedulePreviewClose()
                     }}
+                    onPointerDown={(event) => {
+                      if (event.button !== 0) return
+                      // Keep the pressed target still until click; keyboard focus may scroll it.
+                      pointerFocusRef.current = true
+                      event.currentTarget.focus({ preventScroll: true })
+                      pointerFocusRef.current = false
+                    }}
                     onFocus={(event) => {
                       setFocusedId(mark.id)
-                      updateRailScroll(index)
+                      if (!pointerFocusRef.current) updateRailScroll(index)
                       showPreview(mark, index, event.currentTarget)
                     }}
                     onKeyDown={(event) => {
