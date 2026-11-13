@@ -4138,12 +4138,22 @@ export function reviewFinalNativeTableSources(table, inventory, rules, measuredR
 // The source proves separate fields but not every shared/multiline span. Keep
 // the original graphic instead of publishing a known collapsed copyable grid.
 export function retainNativeCenteredRecordGraphic(table, inventory, rules, measuredRuns, context) {
-  if (
-    !nativeTableLayoutConflicts(table, inventory, rules, measuredRuns, context).includes(
-      'native-centered-headed-record-lanes-collapsed'
-    )
+  // Keep the existing publication boundary for other proved record contradictions.
+  const conflicts = nativeTableLayoutConflicts(
+    table,
+    inventory,
+    rules,
+    measuredRuns,
+    context
+  ).filter((code) =>
+    [
+      'native-centered-headed-record-lanes-collapsed',
+      'native-fused-tuple-crosses-cell-wall',
+      'native-section-label-value-records-merged',
+      'native-group-heading-merged-with-record'
+    ].includes(code)
   )
-    return table
+  if (!conflicts.length) return table
   return {
     id: table.id,
     page: table.page,
@@ -4163,7 +4173,7 @@ export function retainNativeCenteredRecordGraphic(table, inventory, rules, measu
         ...(table.issues ?? []),
         'native-table-structure-ambiguous',
         'no-source-cell-grid',
-        'native-centered-headed-record-lanes-collapsed'
+        ...conflicts
       ])
     ]
   }

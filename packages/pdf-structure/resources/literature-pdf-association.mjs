@@ -51,6 +51,10 @@ import {
   nativeTableDividerGraphic
 } from './literature-pdf-native-owned-figure-labels.mjs'
 import { nativeRasterCaptionColumn } from './literature-pdf-native-raster-column.mjs'
+import {
+  nativeRasterPeerOwnership,
+  nativeRasterCaptionPacket
+} from './literature-pdf-native-raster-peer-ownership.mjs'
 import { nativeOpenAxisArray } from './literature-pdf-native-open-axis-array.mjs'
 import { nativeOpenAxisBottomEvidence } from './literature-pdf-figure-native-open-axis-bottom.mjs'
 import { nativeCrossPageProse } from './literature-pdf-figure-cross-page-prose.mjs'
@@ -3030,7 +3034,12 @@ function associateNativeFigures(
 }
 
 export function associateFigures(...args) {
-  const figures = associateNativeFigures(...args)
+  const peers = nativeRasterPeerOwnership(args[0], args[1], args[2] ?? [], args[5])
+  if (peers) return peers
+  const figures = associateNativeFigures(...args).map(
+    (figure) =>
+      nativeRasterCaptionPacket(args[0], figure.caption, args[1], args[2] ?? [], args[5]) ?? figure
+  )
   if (!args[6]) return figures
   const completed = figures.map((figure, index) => {
     const closedSave = nativeClosedSaveFigureCrop(

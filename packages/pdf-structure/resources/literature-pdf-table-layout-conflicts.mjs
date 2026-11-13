@@ -1982,6 +1982,168 @@ function nativeSourcePacketConflicts(table, owned, inventory, rules, context, me
     count = table.grid[0].length,
     heads = leaves.filter((p) => p.cell.row === 0),
     conflicts = []
+  // These are contradictions only: a whole source claim is not permission to
+  // move punctuation or split a multiline field without independent row proof.
+  const tuple = (s) => /^\([+−-]?\d+(?:\.\d+)?(?:,[+−-]?\d+(?:\.\d+)?)+\)$/u.test(compact(s)),
+    sameBaseline = (a, b) => Math.abs(a.baseline - b.baseline) < a.height * 0.05,
+    sameFace = (a, b) =>
+      font(a)?.fontName === font(b)?.fontName && Math.abs(a.height - b.height) < a.height * 0.02,
+    // These contradictions concern source records, not replacement ink bounds.
+    // Bind every packet owner above, then inspect all original native items so
+    // an unrelated font envelope cannot obscure a complete adjacent record.
+    sourcePacketClosed = (ff) => {
+      const b = bounds(ff),
+        ids = new Set(ff.map((f) => f.sourceItem.index)),
+        lo = Math.min(...ids),
+        hi = Math.max(...ids)
+      return content.items.every((item, index) => {
+        if (!('str' in item) || !item.str.trim() || ids.has(index)) return true
+        if (
+          (index > lo && index < hi) ||
+          !Array.isArray(item.transform) ||
+          item.transform.length !== 6 ||
+          !item.transform.every(Number.isFinite) ||
+          !(item.transform[0] > 0) ||
+          item.transform[1] !== 0 ||
+          item.transform[2] !== 0 ||
+          !(item.transform[3] > 0) ||
+          !Number.isFinite(item.width) ||
+          item.width < 0 ||
+          !Number.isFinite(item.height) ||
+          !(item.height > 0)
+        )
+          return false
+        const x = item.transform[4] * transform[0] + transform[4],
+          y = item.transform[5] * transform[3] + transform[5],
+          scale = transform[0]
+        return (
+          x >= b[2] ||
+          x + item.width * scale <= b[0] ||
+          y - item.height * scale >= b[3] ||
+          y <= b[1]
+        )
+      })
+    }
+  for (const right of body)
+    for (const seam of right.fonts.filter((f) => /^\)\s+\($/u.test(f.text))) {
+      const left = body.find(
+        (p) => p.cell.row === right.cell.row && p.cell.column + 1 === right.cell.column
+      )
+      if (!left) continue
+      const prefix = [...left.fonts].sort((a, b) => a.rect[0] - b.rect[0]),
+        suffix = right.fonts.filter((f) => f !== seam).sort((a, b) => a.rect[0] - b.rect[0]),
+        all = [...prefix, seam, ...suffix]
+      if (
+        !prefix.length ||
+        !suffix.length ||
+        !all.every((f) => sameBaseline(f, seam)) ||
+        prefix.at(-1).rect[2] > seam.rect[0] + 0.02 ||
+        suffix[0].rect[0] < seam.rect[2] - 0.02 ||
+        !tuple(prefix.map((f) => f.text).join('') + ')') ||
+        !tuple('(' + suffix.map((f) => f.text).join('')) ||
+        !sourcePacketClosed(all)
+      )
+        continue
+      if (
+        rules.some(
+          (r) =>
+            rect(r) &&
+            r[0] === r[2] &&
+            r[0] > seam.rect[0] &&
+            r[0] < seam.rect[2] &&
+            r[1] <= seam.baseline - seam.height * 0.75 &&
+            r[3] >= seam.baseline
+        )
+      )
+        conflicts.push('native-fused-tuple-crosses-cell-wall')
+    }
+  const single = (p) => p?.fonts.length === 1 && font(p.fonts[0]),
+    atomic = (f) => /^[\p{L}\p{N}_.+−-]{1,24}$/u.test(f.text),
+    aligned = (a, b) =>
+      Math.abs(a.rect[0] - b.rect[0]) < a.height * 0.05 ||
+      Math.abs(a.rect[0] + a.rect[2] - b.rect[0] - b.rect[2]) < a.height * 0.1
+  for (const left of body.filter((p) => p.fonts.length === 2)) {
+    const right = body.find(
+        (p) =>
+          p.cell.row === left.cell.row &&
+          p.cell.column === left.cell.column + 1 &&
+          p.fonts.length === 2
+      ),
+      label = [...left.fonts].sort((a, b) => a.baseline - b.baseline),
+      value = right?.fonts.slice().sort((a, b) => a.baseline - b.baseline),
+      section = owned.find(
+        (p) =>
+          p.cell.row === left.cell.row - 1 &&
+          p.cell.column === 0 &&
+          p.cell.colSpan === count &&
+          p.cell.rowSpan === 1 &&
+          single(p)
+      )
+    if (
+      !value ||
+      !section ||
+      !label.every((f) => /\p{L}{2}/u.test(f.text)) ||
+      !value.every(atomic) ||
+      ![...label, ...value].every((f) => sameFace(f, label[0])) ||
+      !label.every((f, n) => sameBaseline(f, value[n])) ||
+      !aligned(label[0], label[1]) ||
+      !aligned(value[0], value[1]) ||
+      label[1].baseline - label[0].baseline <= label[0].height ||
+      label[1].baseline - label[0].baseline >= label[0].height * 1.8 ||
+      !(
+        label[0].sourceItem.index < value[0].sourceItem.index &&
+        value[0].sourceItem.index < label[1].sourceItem.index &&
+        label[1].sourceItem.index < value[1].sourceItem.index
+      ) ||
+      !foreignFree([...label, ...value])
+    )
+      continue
+    const peers = body.filter((p) => {
+      const q = body.find((q) => q.cell.row === p.cell.row && q.cell.column === right.cell.column)
+      return (
+        p.cell.row !== left.cell.row &&
+        p.cell.column === left.cell.column &&
+        single(p) &&
+        single(q) &&
+        /\p{L}{2}/u.test(p.fonts[0].text) &&
+        atomic(q.fonts[0]) &&
+        sameFace(p.fonts[0], label[0]) &&
+        sameFace(q.fonts[0], value[0]) &&
+        sameBaseline(p.fonts[0], q.fonts[0]) &&
+        aligned(p.fonts[0], label[0]) &&
+        aligned(q.fonts[0], value[0])
+      )
+    })
+    if (new Set(peers.map((p) => p.cell.row)).size >= 2)
+      conflicts.push('native-section-label-value-records-merged')
+  }
+  for (const stub of body.filter((p) => p.cell.column === 0 && p.fonts.length === 2)) {
+    const [heading, start] = [...stub.fonts].sort((a, b) => a.baseline - b.baseline),
+      peers = body.filter((p) => p.cell.row === stub.cell.row && p.cell.column > 0)
+    if (
+      !/\p{L}{2}/u.test(heading.text) ||
+      !/\p{L}{2}/u.test(start.text) ||
+      sameFace(heading, start) ||
+      !aligned(heading, start) ||
+      start.baseline - heading.baseline <= heading.height ||
+      start.baseline - heading.baseline >= heading.height * 1.8 ||
+      peers.length < 2 ||
+      !peers.every((p) => p.fonts.some((f) => sameBaseline(f, start))) ||
+      peers.some((p) => p.fonts.some((f) => f.baseline < start.baseline - f.height * 0.3)) ||
+      !sourcePacketClosed([heading, start, ...peers.flatMap((p) => p.fonts)])
+    )
+      continue
+    const independent = body.some(
+      (p) =>
+        p.cell.row !== stub.cell.row &&
+        p.cell.column === 0 &&
+        single(p) &&
+        sameFace(p.fonts[0], heading) &&
+        aligned(p.fonts[0], heading) &&
+        !owned.some((q) => q.cell.row === p.cell.row && q.cell.column > 0 && q.fonts.length)
+    )
+    if (independent) conflicts.push('native-group-heading-merged-with-record')
+  }
   conflicts.push(
     ...nativeCalibratedRecordPackets(table, inventory, font, rules, context),
     ...nativeCalibratedValueLaneSplit(table, inventory, font),
