@@ -373,7 +373,7 @@ function ordinaryAcademicHeading(source: string): string | undefined {
     .trim()
     .replace(/\s+/gu, ' ')
     .replace(/^(?:[A-Z]|\d+)(?:\.\d+)+\.?\s+/iu, '')
-  return /^(?:ethics statement|open science(?: statement)?|training details|additional results|implementation details|data availability|ethical considerations|ablation study)$/iu.test(
+  return /^(?:ethics statement|open science(?: statement)?|training details|additional results|implementation details|data availability|ethical considerations|ablation study|related work)$/iu.test(
     heading
   )
     ? heading
@@ -387,6 +387,14 @@ function ordinaryAcademicHeading(source: string): string | undefined {
 function isOrdinaryScientificLabel(source: string): boolean {
   source = source.trim().replace(/^#\s*(params?|parameters)\.?$/i, '$1')
   if (ordinaryAcademicHeading(source) || scientificApiRole.test(source)) return true
+  // Complete descriptive labels only; a containing organization or method
+  // name cannot borrow an exemption from an ordinary word.
+  if (
+    /^(?:commutative algebra|(?:date|chl) range|input sequence|atom attention encoder|physical validity constraints)$/iu.test(
+      source
+    )
+  )
+    return true
   // Publication labels and clinical table summaries are not proper names.
   if (
     /^(?:open[ -]access|original (?:article|research)|research article|review article|systematic review|case report|brief report|short communication|editorial|letter to the editor|edited by|reviewed by|additional information|supplemental material|(?:competing interests|contributorship) statement)$/iu.test(
@@ -434,7 +442,7 @@ function isOrdinaryScientificLabel(source: string): boolean {
     return false
   const words = source.match(/[A-Za-z]+/g) ?? []
   const ordinary =
-    /^(?:attention|type|multi|single|head|heads|query|queries|caption|image|retrieval|local|global|beam|search|training|model|steps?|scores?|error|rate|average|mean|median|standard|deviation|stddev|inference|stage|exploding|vanishing|gradient|gradients|normalization|batch|index|noise|strengths?|limitations?|and|layer|loss|accuracy|test|validation|log|epoch|conv|convolution|depthwise|separable|pointwise|with|activation|param|params|parameters|covariate|shift|without|physical|therapy|assessment|group|comparison|other|studies|future|research|directions|author|contributions|ethics|approval|clinical|trial|registration|object|detection|finegrain|fine|grained|classification|landmark|recognition|filter|shape|input|size|fully|connected|mult|adds|shallow|train|concepts?|coordinates?|overall|rendered|defen[cs]e|settings?|the|code|gaussian|map)$/i
+    /^(?:attention|type|multi|single|head|heads|query|queries|caption|image|retrieval|local|global|beam|search|training|model|steps?|scores?|error|rate|average|mean|median|standard|deviation|stddev|inference|stage|exploding|vanishing|gradient|gradients|normalization|batch|index|noise|strengths?|limitations?|and|layer|loss|accuracy|test|validation|log|epoch|conv|convolution|depthwise|separable|pointwise|with|activation|param|params|parameters?|covariate|shift|without|physical|therapy|assessment|group|comparison|other|studies|future|research|directions|author|contributions|ethics|approval|clinical|trial|registration|object|detection|finegrain|fine|grained|classification|landmark|recognition|filter|shape|input|size|fully|connected|mult|adds|shallow|train|concepts?|coordinates?|overall|rendered|defen[cs]e|settings?|larger|backbones?|ablated|aspects?|modules?|locations?|load|balance|coefficients?|definitions?|analys(?:is|es)|topological|spaces?|equivalence|class|representative|nodes?|subjects?|structure|optimized|recovery|delay|oriented|bandlimited|interference|cancellation|table|the|code|gaussian|map)$/i
   return (
     words.length > 0 &&
     words.length <= 8 &&

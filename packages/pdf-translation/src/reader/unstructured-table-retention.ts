@@ -52,6 +52,7 @@ export async function retainUnstructuredTablePages(
     const candidates: {
       result: ReturnType<typeof parsePdfStructureResult>
       element: ReturnType<typeof parsePdfStructureResult>['elements'][number]
+      centered: boolean
     }[] = []
     const allElements: ReturnType<typeof parsePdfStructureResult>['elements'][number][] = []
     const batches = new Map<string, string>()
@@ -75,7 +76,14 @@ export async function retainUnstructuredTablePages(
       if (cacheBytes > 32 * 1024 ** 2 || elementCount > 512) return empty
       batches.set(result.extractionId, serialized)
       allElements.push(...result.elements)
-      for (const element of result.elements)
+      for (const element of result.elements) {
+        const centered =
+          element.issues.length === 3 &&
+          [
+            'native-table-structure-ambiguous',
+            'no-source-cell-grid',
+            'native-centered-headed-record-lanes-collapsed'
+          ].every((code) => element.issues.some((issue) => issue.code === code))
         if (
           element.kind === 'table' &&
           !element.table &&
@@ -84,10 +92,11 @@ export async function retainUnstructuredTablePages(
           !element.sourceItems &&
           element.regions.length === 1 &&
           element.caption?.regions.length === 1 &&
-          element.issues.length === 1 &&
-          element.issues[0].code === 'no-source-cell-grid'
+          (centered ||
+            (element.issues.length === 1 && element.issues[0].code === 'no-source-cell-grid'))
         )
-          candidates.push({ result, element })
+          candidates.push({ result, element, centered })
+      }
     }
     if (!candidates.length || candidates.length > 16 || !(await digest()) || !current())
       return empty
@@ -99,7 +108,7 @@ export async function retainUnstructuredTablePages(
           if (owners.has(key)) return empty
           owners.set(key, unit)
         }
-    for (const { result, element } of candidates) {
+    for (const { result, element, centered } of candidates) {
       const region = element.regions[0],
         number = region.page,
         page = await document.getPage(number),
@@ -181,7 +190,7 @@ export async function retainUnstructuredTablePages(
           )
         )
       })
-      if (!multirow && !layered.length) continue
+      if (!centered && !multirow && !layered.length) continue
       const selectedBoxes = [...selected].map((i) => fonts.get(i)!),
         left = Math.min(region.x, ...selectedBoxes.map((b) => b.x)),
         top = Math.min(region.y, ...selectedBoxes.map((b) => b.y)),
@@ -264,6 +273,62 @@ export async function retainUnstructuredTablePages(
         )
       )
         continue
+      if (centered) {
+        // Recheck independent native heading/value lanes. The cache diagnostic
+        // selects this family; it cannot itself suppress ordinary prose.
+        if (selected.size > 512) continue
+        const records = [...selected].flatMap((index) => {
+            const item = content.items[index]
+            return 'str' in item ? [item] : []
+          }),
+          h = records[0].height,
+          top = Math.max(...records.map((item) => item.transform[5])),
+          heads = records
+            .filter((item) => Math.abs(item.transform[5] - top) < h * 0.02)
+            .sort((a, b) => a.transform[4] - b.transform[4]),
+          center = (item: (typeof records)[number]): number => item.transform[4] + item.width / 2
+        if (
+          heads.length !== 3 ||
+          heads.some(
+            (item) =>
+              Math.abs(item.height - h) > h * 0.02 ||
+              !/^\p{L}{2}[\p{L}\d]*(?:[ -][\p{L}\d]+)*$/u.test(item.str.trim())
+          ) ||
+          heads[0].transform[4] + heads[0].width >= heads[1].transform[4] - h ||
+          heads[2].transform[4] - heads[1].transform[4] - heads[1].width < h * 0.6
+        )
+          continue
+        const baselines: number[] = []
+        for (const left of records) {
+          const y = left.transform[5],
+            sameRow = (item: (typeof records)[number]): boolean =>
+              Math.abs(item.transform[5] - y) < h * 0.02 && Math.abs(item.height - h) < h * 0.02
+          if (
+            y >= top - h * 0.5 ||
+            Math.abs(left.height - h) > h * 0.02 ||
+            !/^[\p{L}\d.+−-]{1,24}$/u.test(left.str.trim()) ||
+            Math.abs(center(left) - center(heads[1])) >= h * 0.02
+          )
+            continue
+          const right = records.filter(
+              (item) =>
+                sameRow(item) &&
+                /^[\p{L}\d.+−-]{1,24}$/u.test(item.str.trim()) &&
+                Math.abs(center(item) - center(heads[2])) < h * 0.02 &&
+                item.transform[4] - left.transform[4] - left.width >= h
+            ),
+            labels = records.filter(
+              (item) => sameRow(item) && item.transform[4] + item.width < left.transform[4] - h
+            )
+          if (
+            right.length === 1 &&
+            labels.length === 1 &&
+            !baselines.some((before) => Math.abs(before - y) < h * 0.02)
+          )
+            baselines.push(y)
+        }
+        if (baselines.length < 3) continue
+      }
       // Re-read native observations after all asynchronous proof work below.
       const readText = page.getTextContent,
         readViewport = page.getViewport,
@@ -393,12 +458,26 @@ export async function retainUnstructuredTablePages(
         !valid ||
         stack.length ||
         horizontals.length < 2 ||
-        new Set(verticals.map((r) => r[0])).size < 2
+        (!centered && new Set(verticals.map((r) => r[0])).size < 2)
       )
         continue
+      const nativeFrame =
+        centered &&
+        horizontals.some(
+          ([x, y, right]) =>
+            x <= Math.min(...selectedBoxes.map((b) => b.x)) &&
+            right >= Math.max(...selectedBoxes.map((b) => b.x + b.width)) &&
+            y < Math.min(...selectedBoxes.map((b) => b.y))
+        ) &&
+        horizontals.some(
+          ([x, y, right]) =>
+            x <= Math.min(...selectedBoxes.map((b) => b.x)) &&
+            right >= Math.max(...selectedBoxes.map((b) => b.x + b.width)) &&
+            y >= Math.max(...selectedBoxes.map((b) => b.y + b.height))
+        )
+      if (centered && !nativeFrame) continue
       const retainBody =
-        multirow &&
-        lastRule >= body.y + body.height &&
+        (nativeFrame || (multirow && lastRule >= body.y + body.height)) &&
         captionItems.every(([, b]) => b.y > lastRule)
       // A layered header can cross native column fences while its outer cell
       // remains open. Only suppress the unsafe whole owner; the selected crop

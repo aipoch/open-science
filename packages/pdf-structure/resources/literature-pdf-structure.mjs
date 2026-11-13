@@ -48,7 +48,8 @@ export const nativeFigureRenderContexts = new Map()
 export const nativePageRasterFiles = new Set()
 const assetRoot = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))
 const task = getDocument({
-  data: new Uint8Array(bytes),
+  // PDF.js needs a Uint8Array, but copying the whole source duplicates large PDFs.
+  data: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
   standardFontDataUrl: `${join(assetRoot, 'standard_fonts')}/`,
   cMapUrl: `${join(assetRoot, 'cmaps')}/`,
   wasmUrl: `${join(assetRoot, 'wasm')}/`,
@@ -222,6 +223,10 @@ try {
     } finally {
       if (canvas) canvas.width = canvas.height = 1
       page?.cleanup()
+      // Page cleanup leaves shared decoded images in the document cache.
+      await document.cleanup().catch((error) => {
+        if (!auxiliary) throw error
+      })
     }
   }
   const summary = {

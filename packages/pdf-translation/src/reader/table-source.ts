@@ -382,9 +382,27 @@ function partitionCellText(cellText: string, origins: readonly string[]): string
   return solutions.length === 1 ? solutions[0] : undefined
 }
 
-const tableRetention = new WeakMap<PdfTranslationExtraction, () => boolean>()
+type TableOriginalRetention = Readonly<{
+  retainedUnitIds: readonly string[]
+  retainedSourcePageNumbers: readonly number[]
+}>
+const tableRetention = new WeakMap<
+  PdfTranslationExtraction,
+  TableOriginalRetention & { current: () => boolean }
+>()
+export function getPdfTableOriginalRetention(
+  extraction: PdfTranslationExtraction
+): TableOriginalRetention | undefined {
+  const proof = tableRetention.get(extraction)
+  return proof?.current()
+    ? Object.freeze({
+        retainedUnitIds: proof.retainedUnitIds,
+        retainedSourcePageNumbers: proof.retainedSourcePageNumbers
+      })
+    : undefined
+}
 export function isCurrentPdfTableSources(extraction: PdfTranslationExtraction): boolean {
-  return tableRetention.get(extraction)?.() ?? true
+  return tableRetention.get(extraction)?.current() ?? true
 }
 
 /** Before publication only. Invalid provenance fails closed; known structural conflicts retain native units. */
@@ -567,7 +585,8 @@ export async function applyCachedPdfTableSources({
     ])
     const tableOrigins = new Map<string, Set<string>>()
     const blockedTables = new Set<string>(),
-      unreliableMathUnits = new Set<string>()
+      unreliableMathUnits = new Set<string>(),
+      incompleteOriginalUnits = new Set<string>()
     for (const result of results)
       for (const element of result.elements) {
         const tables =
@@ -781,6 +800,222 @@ export async function applyCachedPdfTableSources({
       const proved = await proveBlockedUnits()
       current()
       if (!proved) return retainOriginal()
+      // A captioned native record grid can be uncertain without becoming prose.
+      // Only complete owners inside its proved cells lose eligibility; this
+      // evidence never authorizes a crop, a cell replacement or local painting.
+      for (const result of results)
+        for (const element of result.elements) {
+          const caption = element.caption,
+            captionOwner =
+              caption &&
+              source.units.find(
+                (unit) =>
+                  normalizeSourceText(unit.source.normalize('NFKC')) ===
+                  normalizeSourceText(caption.text.normalize('NFKC'))
+              )
+          if (
+            !caption ||
+            !captionOwner ||
+            !/^(?:Table|TABLE|Tab\.)\s+(?:[1-9]\d*|[IVXLCDM]+)[.:]\s/u.test(caption.text) ||
+            captionOwner.fragments.length !== 1 ||
+            !captionOwner.fragments.every((fragment) =>
+              caption.regions.some(
+                (region) =>
+                  region.page === fragment.pageNumber &&
+                  Math.abs(region.x - fragment.rect.x) < 1e-6 &&
+                  Math.abs(region.width - fragment.rect.width) < 1e-6 &&
+                  Math.min(region.y + region.height, fragment.rect.y + fragment.rect.height) -
+                    Math.max(region.y, fragment.rect.y) >
+                    Math.min(region.height, fragment.rect.height) * 0.5
+              )
+            )
+          )
+            continue
+          let captionProved = true
+          for (const fragment of captionOwner.fragments)
+            for (const item of fragment.items)
+              if (!(await proveOrigin({ pageNumber: fragment.pageNumber, ...item }, result)))
+                captionProved = false
+          if (!captionProved) continue
+          const tables =
+            element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
+          for (const [part, table] of tables.entries()) {
+            const key = `${result.extractionId}:${element.id}:${part}`,
+              origins = tableOrigins.get(key)!
+            if (
+              !blockedTables.has(key) ||
+              table.rowCount < 3 ||
+              table.columnCount < 2 ||
+              table.cells.filter((cell) => cell.row === 0 && /[A-Za-z]{3,}/u.test(cell.text))
+                .length < 2 ||
+              table.cells.some(
+                (cell) =>
+                  cell.sourceSegments ||
+                  (cell.text.trim()
+                    ? !cell.sourceItems?.length ||
+                      normalizeSourceText(
+                        cell.sourceItems.map((origin) => origin.text).join('')
+                      ) !== normalizeSourceText(cell.text)
+                    : !!cell.sourceItems?.length || !!cell.regions.length)
+              )
+            )
+              continue
+            let geometryProved = true
+            for (const cell of table.cells) {
+              const remaining = [...cell.regions]
+              for (const origin of cell.sourceItems ?? []) {
+                const page = pages.get(origin.pageNumber)!,
+                  raw = page.content.items[origin.index]
+                const rect =
+                    raw &&
+                    'str' in raw &&
+                    nativeRect(raw, page.content.styles[raw.fontName], page.viewport),
+                  matched = rect
+                    ? findNativeRegionGroup(
+                        remaining.map((region, index) => ({ region, index })),
+                        rect,
+                        origin.pageNumber
+                      )
+                    : undefined
+                if (!matched?.length) {
+                  geometryProved = false
+                  break
+                }
+                for (const index of [...matched].sort((a, b) => b - a)) remaining.splice(index, 1)
+              }
+              if (remaining.length) geometryProved = false
+            }
+            if (!geometryProved) continue
+            const simpleGrid = table.cells.every(
+              (cell) => cell.sourceItems?.length && cell.rowSpan === 1 && cell.columnSpan === 1
+            )
+            // Spanning headers do not prove a body grid. Protect only a complete
+            // native header row crossing cells above independently aligned numeric records.
+            const sameNativeRow = (
+              items: readonly { pageNumber: number; index: number }[]
+            ): boolean => {
+              if (!items.length) return false
+              const native = items.map(
+                  (origin) => pages.get(origin.pageNumber)!.content.items[origin.index] as TextItem
+                ),
+                first = native[0]
+              return native.every(
+                (item, index) =>
+                  items[index].pageNumber === items[0].pageNumber &&
+                  item.fontName === first.fontName &&
+                  Math.abs(item.height - first.height) < 1e-6 &&
+                  [0, 1, 2, 3, 5].every(
+                    (axis) => Math.abs(item.transform[axis] - first.transform[axis]) < 1e-6
+                  ) &&
+                  item.transform[0] > 0 &&
+                  item.transform[3] > 0 &&
+                  Math.abs(item.transform[1]) < 1e-6 &&
+                  Math.abs(item.transform[2]) < 1e-6 &&
+                  (!index ||
+                    item.transform[4] >= native[index - 1].transform[4] + native[index - 1].width)
+              )
+            }
+            const numericByRow = new Map<number, (typeof table.cells)[number][]>()
+            if (!simpleGrid)
+              for (const cell of table.cells) {
+                if (
+                  cell.rowSpan !== 1 ||
+                  cell.columnSpan !== 1 ||
+                  cell.sourceItems?.length !== 1 ||
+                  !/^[+−-]?\d[\d,.]*%?$/u.test(cell.text)
+                )
+                  continue
+                const row = numericByRow.get(cell.row) ?? []
+                row.push(cell)
+                numericByRow.set(cell.row, row)
+              }
+            const numericRows = [...numericByRow.values()].filter(
+              (row) =>
+                new Set(row.map((cell) => cell.column)).size >= 2 &&
+                sameNativeRow(row.flatMap((cell) => cell.sourceItems!))
+            )
+            const rowItem = (row: (typeof numericRows)[number]): TextItem => {
+              const origin = row[0].sourceItems![0]
+              return pages.get(origin.pageNumber)!.content.items[origin.index] as TextItem
+            }
+            if (
+              !simpleGrid &&
+              (numericRows.length < 2 ||
+                numericRows.some(
+                  (row) =>
+                    row[0].sourceItems![0].pageNumber !==
+                    numericRows[0][0].sourceItems![0].pageNumber
+                ) ||
+                numericRows.some((row, index) =>
+                  numericRows
+                    .slice(index + 1)
+                    .some(
+                      (other) =>
+                        Math.abs(rowItem(row).transform[5] - rowItem(other).transform[5]) <=
+                        rowItem(row).height * 0.75
+                    )
+                ))
+            )
+              continue
+            for (const unit of source.units) {
+              if (
+                !blockedUnits.has(unit.id) ||
+                !unit.fragments.every(
+                  (fragment) =>
+                    element.regions.some((region) =>
+                      structureRegionContains(region, {
+                        page: fragment.pageNumber,
+                        ...fragment.rect
+                      })
+                    ) &&
+                    fragment.items.every((item) =>
+                      origins.has(`${fragment.pageNumber}:${item.index}`)
+                    )
+                )
+              )
+                continue
+              if (!simpleGrid) {
+                const items = unit.fragments.flatMap((fragment) =>
+                    fragment.items.map((item) => ({ pageNumber: fragment.pageNumber, ...item }))
+                  ),
+                  selected = new Set(items.map((item) => `${item.pageNumber}:${item.index}`)),
+                  headerCells = items.map((item) =>
+                    table.cells.filter(
+                      (cell) =>
+                        cell.row < Math.min(...numericRows.map((row) => row[0].row)) &&
+                        /[A-Za-z]{3,}/u.test(cell.text) &&
+                        cell.sourceItems?.some(
+                          (origin) =>
+                            origin.pageNumber === item.pageNumber && origin.index === item.index
+                        )
+                    )
+                  ),
+                  cells = [...new Set(headerCells.flat())]
+                if (
+                  unit.fragments.length !== 1 ||
+                  unit.fragments[0].pageNumber !== numericRows[0][0].sourceItems![0].pageNumber ||
+                  !sameNativeRow(items) ||
+                  headerCells.some((matches) => matches.length !== 1) ||
+                  new Set(cells.map((cell) => cell.column)).size < 2 ||
+                  cells.some((cell) =>
+                    cell.sourceItems!.some(
+                      (origin) => !selected.has(`${origin.pageNumber}:${origin.index}`)
+                    )
+                  ) ||
+                  normalizeSourceText(items.map((item) => item.text).join(' ')) !==
+                    normalizeSourceText(unit.source) ||
+                  (pages.get(items[0].pageNumber)!.content.items[items[0].index] as TextItem)
+                    .transform[5] <=
+                    Math.max(...numericRows.map((row) => rowItem(row).transform[5])) +
+                      rowItem(numericRows[0]).height * 0.5
+                )
+                  continue
+              }
+              incompleteOriginalUnits.add(unit.id)
+            }
+          }
+        }
+      current()
       // Typed cell evidence identifies only the affected mathematical sources.
       // Verify their complete native geometry before protecting whole owners;
       // ordinary structural conflicts retain their existing eligibility.
@@ -853,12 +1088,14 @@ export async function applyCachedPdfTableSources({
       }
       warningOnly = Object.freeze({
         ...extraction,
-        ...(unreliableMathUnits.size
+        ...(unreliableMathUnits.size || incompleteOriginalUnits.size
           ? {
               source: createPdfTranslationSource({
                 ...source,
                 units: source.units.map((unit) =>
-                  unreliableMathUnits.has(unit.id) ? { ...unit, sourceOnly: true as const } : unit
+                  unreliableMathUnits.has(unit.id) || incompleteOriginalUnits.has(unit.id)
+                    ? { ...unit, sourceOnly: true as const }
+                    : unit
                 )
               })
             }
@@ -872,6 +1109,31 @@ export async function applyCachedPdfTableSources({
           )
         })
       })
+      if (incompleteOriginalUnits.size) {
+        // This exclusion must survive an independent cell-replacement failure,
+        // including a saved snapshot that already contains those cell IDs.
+        const native = await verifiedPdfTableRegions(source, [], new Map(pages), [], {
+          document,
+          nativeDocumentFactory,
+          sourceIdentity: identity,
+          signal
+        })
+        current()
+        if (!native.current()) return extraction
+        tableRetention.set(warningOnly, {
+          current: native.current,
+          retainedUnitIds: Object.freeze([...incompleteOriginalUnits]),
+          retainedSourcePageNumbers: Object.freeze(
+            [
+              ...new Set(
+                source.units
+                  .filter((unit) => incompleteOriginalUnits.has(unit.id))
+                  .flatMap((unit) => unit.fragments.map((fragment) => fragment.pageNumber))
+              )
+            ].sort((a, b) => a - b)
+          )
+        })
+      }
     }
     for (const result of results)
       for (const element of result.elements) {
@@ -1379,6 +1641,7 @@ export async function applyCachedPdfTableSources({
             if (!(await proveOrigin({ pageNumber: fragment.pageNumber, ...item })))
               return retainOriginal()
       current()
+      for (const unit of incompleteUnits) incompleteOriginalUnits.add(unit.id)
       const rejectedReplacements = new Set<number>()
       for (const [key, claim] of claims)
         if (incompleteTables.has(claim.tableKey)) {
@@ -1581,14 +1844,32 @@ export async function applyCachedPdfTableSources({
           ...source.units
             .filter((u) => !removed.has(u.id))
             .map((unit) =>
-              unreliableMathUnits.has(unit.id) ? { ...unit, sourceOnly: true as const } : unit
+              unreliableMathUnits.has(unit.id) || incompleteOriginalUnits.has(unit.id)
+                ? { ...unit, sourceOnly: true as const }
+                : unit
             ),
           ...replacements.filter((_, index) => !retainedReplacements.has(index))
         ]
       })
     })
     if (!regionProof.current()) return retainOriginal()
-    tableRetention.set(result, regionProof.current)
+    // Negative eligibility only: no crop or authority to repaint these owners.
+    tableRetention.set(
+      result,
+      Object.freeze({
+        current: regionProof.current,
+        retainedUnitIds: Object.freeze([...incompleteOriginalUnits]),
+        retainedSourcePageNumbers: Object.freeze(
+          [
+            ...new Set(
+              source.units
+                .filter((unit) => incompleteOriginalUnits.has(unit.id))
+                .flatMap((unit) => unit.fragments.map((fragment) => fragment.pageNumber))
+            )
+          ].sort((a, b) => a - b)
+        )
+      })
+    )
     return result
   } catch {
     signal.throwIfAborted()

@@ -169,3 +169,7 @@
 {"name":"wrapped figure prefix rejects changed subpanel","source":"See (Fig 3b).","translation":"参见（图 3）。","label":"Fig","target":"图","offset":5,"accepted":false}
 {"name":"wrapped table prefix rejects collapsed repeated references","source":"Table 2 and Table 2","translation":"表 2","label":"Table","target":"表","offset":12,"accepted":false}
 {"name":"wrapped URL never accepts an incomplete address prefix","source":"A www. and B www.","translation":"甲 www. 和乙 www.","label":"www.","target":"www.","offset":13,"accepted":false}
+{"name":"lowercase prose figure panel keeps its linked digit","source":"See figure 2(a).","translation":"参见图 2(a)。","label":"2","target":"2","offset":11,"expectedStart":4,"accepted":true}
+{"name":"lowercase figure panel rejects a changed panel letter","source":"See figure 2(a).","translation":"参见图 2(b)。","label":"2","target":"2","offset":11,"accepted":false}
+{"name":"lowercase figure panel keeps letter case significant","source":"See figure 2(a).","translation":"参见图 2(A)。","label":"2","target":"2","offset":11,"accepted":false}
+{"name":"localized panel maps back to a lowercase prose prefix","source":"参见图 2(a)。","translation":"See figure 2(a).","label":"2","target":"2","offset":4,"expectedStart":11,"accepted":true}

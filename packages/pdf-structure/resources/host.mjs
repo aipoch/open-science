@@ -18,6 +18,31 @@ let lastPhase = 'startup'
 let heapLimitDetected = false
 let heapLimitReported = false
 let stopping
+let startedAt
+const resourceLimits = {
+  heapMb: 512,
+  rssBytes: 2 * 1024 ** 3,
+  scratchBytes: 256 * 1024 ** 2,
+  deadlineMs: 120000
+}
+const reportResourceLimit = (reason, measurements = {}) => {
+  const stats = {
+    elapsedMs: Math.max(0, Date.now() - startedAt),
+    rssBytes: process.memoryUsage().rss,
+    ...measurements,
+    workerHeapLimitMb: resourceLimits.heapMb,
+    rssLimitBytes: resourceLimits.rssBytes,
+    scratchLimitBytes: resourceLimits.scratchBytes,
+    deadlineMs: resourceLimits.deadlineMs
+  }
+  // Keep diagnostics bounded and independent of PDF contents or file paths.
+  const observed = Object.fromEntries(
+    Object.entries(stats).filter(([, value]) => Number.isSafeInteger(value) && value >= 0)
+  )
+  console.error(
+    `PDF execution resource limit exceeded. Last phase: ${lastPhase}. Reason: ${reason}. Stats: ${JSON.stringify(observed)}`
+  )
+}
 const isHeapLimitError = (message) =>
   /(?:JavaScript|JS) heap out of memory|reached heap limit|reaching memory limit/i.test(message)
 const reportWorkerError = (message) => {
@@ -25,7 +50,7 @@ const reportWorkerError = (message) => {
     heapLimitDetected = true
     if (heapLimitReported) return
     heapLimitReported = true
-    console.error(`PDF execution resource limit exceeded. Last phase: ${lastPhase}`)
+    reportResourceLimit('worker-heap')
     return
   }
   console.error(message)
@@ -62,6 +87,7 @@ process.stdin.on('data', (chunk) => {
   if (!input.endsWith('\n')) return
   try {
     request = JSON.parse(input)
+    startedAt = Date.now()
     worker = new Worker(new URL('./literature-pdf-extract.mjs', import.meta.url), {
       argv: [
         request.input,
@@ -74,13 +100,13 @@ process.stdin.on('data', (chunk) => {
       execArgv: [],
       stdout: true,
       stderr: true,
-      resourceLimits: { maxOldGenerationSizeMb: 512 }
+      resourceLimits: { maxOldGenerationSizeMb: resourceLimits.heapMb }
     })
     worker.stdout.pipe(process.stdout)
     worker.stdout.on('data', (chunk) => {
       for (const line of chunk.toString('utf8').split(/\r?\n/u)) {
         const match = line.match(/\{"phase":"([^"]+)"/u)
-        if (match) lastPhase = match[1]
+        if (match) lastPhase = match[1].slice(0, 160)
       }
     })
     worker.stderr.on('data', (chunk) => {
@@ -103,7 +129,7 @@ process.stdin.on('data', (chunk) => {
     deadline = setTimeout(() => {
       console.error(`PDF execution deadline exceeded. Last phase: ${lastPhase}`)
       void stop(1)
-    }, 120000)
+    }, resourceLimits.deadlineMs)
     let inspecting = false
     interval = setInterval(async () => {
       if (inspecting || stopping) return
@@ -111,11 +137,15 @@ process.stdin.on('data', (chunk) => {
       try {
         // RSS includes the inference Worker and native/WASM allocations. This is a sampled watchdog,
         // not a kernel-enforced allocation limit. Input/pixel/output bounds complement it.
-        if (
-          process.memoryUsage().rss > 2 * 1024 ** 3 ||
-          (await inspectScratch(request.output)) > 256 * 1024 ** 2
-        ) {
-          console.error(`PDF execution resource limit exceeded. Last phase: ${lastPhase}`)
+        const rssBytes = process.memoryUsage().rss
+        if (rssBytes > resourceLimits.rssBytes) {
+          reportResourceLimit('process-rss', { rssBytes })
+          void stop(1)
+          return
+        }
+        const scratchBytes = await inspectScratch(request.output)
+        if (scratchBytes > resourceLimits.scratchBytes) {
+          reportResourceLimit('scratch-bytes', { rssBytes, scratchBytes })
           void stop(1)
         }
       } catch (error) {

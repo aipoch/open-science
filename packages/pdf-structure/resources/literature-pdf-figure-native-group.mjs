@@ -307,7 +307,8 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
   const groups = [],
     stack = [],
     chars = [],
-    outsideGlyphs = []
+    outsideGlyphs = [],
+    outsidePaint = []
   let state = {
       ctm: [1, 0, 0, 1, 0, 0],
       font: undefined,
@@ -551,7 +552,7 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
           (pixels ? state.charSpacing + (glyph.isSpace ? state.wordSpacing : 0) : 0)
       }
     } else if (op === OPS.constructPath || op === OPS.paintImageXObject) {
-      if (text || !group) return
+      if (text || (!group && !nonisolatedPixels)) return
       if (
         pixels &&
         op === OPS.constructPath &&
@@ -586,7 +587,7 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
       if (op === OPS.constructPath && a?.[0] === OPS.endPath) continue
       const g = paint.get(i)
       if (!g) {
-        if (pixels && op === OPS.constructPath) continue
+        if (pixels && group && op === OPS.constructPath) continue
         return
       }
       if (
@@ -594,6 +595,22 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
         (!pixels && !inside(group.rect, g.rect))
       )
         return
+      if (!group) {
+        // Later body rules do not belong to the clipped picture. Keep their
+        // complete native paint bounds for the final raster-halo exclusion.
+        if (
+          !nonisolatedPixels ||
+          op !== OPS.constructPath ||
+          groups.length !== 1 ||
+          !Number.isInteger(groups[0].end) ||
+          i <= groups[0].end ||
+          intersection(g.rect, groups[0].rect) > 0
+        )
+          return
+        outsidePaint.push(g.rect)
+        paint.delete(i)
+        continue
+      }
       group.paint.push(g)
       paint.delete(i)
     } else if (pixels && op === OPS.beginMarkedContent) {
@@ -744,10 +761,15 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
     const token = tableTextToken(r, viewport, 0),
       bounds = union(part.map((p) => p.advance)),
       supplied = byIndex.get(index)
-    // The CLI omits removed margin tokens. This new crop-only Type3 branch
-    // still reads every original raw record and every exterior live outline.
+    // Margin filtering does not remove original records or live outlines from
+    // the crop-only Type3 and nonisolated-group proofs below.
     // No missing internal label is admitted and no text claim is produced.
-    if (pixels && !supplied && !(pixelType3.size && part.every((p) => !p.group))) return
+    if (
+      pixels &&
+      !supplied &&
+      !((pixelType3.size || mode === nonisolatedGroupPixelMode) && part.every((p) => !p.group))
+    )
+      return
     if (
       (!valid(token.rect) && !internalZero) ||
       (!pixels && bounds.some((n, i) => Math.abs(n - token.rect[i]) > 0.02)) ||
@@ -791,7 +813,7 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
     context.glyphBounds ?? (pixels && pixelType3.size ? context.partialFontGlyphBounds : undefined)
   if (!Array.isArray(exteriorBounds)) return
   const fonts = new Map(),
-    outsideInk = [],
+    outsideInk = [...outsidePaint],
     strokeEnvelopes = []
   for (const f of exteriorBounds) {
     if (typeof f?.fontName !== 'string' || fonts.has(f.fontName) || !Array.isArray(f.glyphs)) return

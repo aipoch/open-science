@@ -10,7 +10,8 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import {
   createAuxiliaryNativeInkReader,
   createAuxiliaryNativeCaptionInkReader,
-  createNativeInkReader
+  createNativeInkReader,
+  createAuxiliaryNativeNegativeReader
 } from '../../src/reader/auxiliary-native-ink.js'
 import type { AuxiliaryNativeInkReader } from '../../src/reader/auxiliary-native-ink.js'
 import { getPdfTranslationTextContent } from '../../src/reader/text-content.js'
@@ -29,7 +30,11 @@ let task: ReturnType<typeof getDocument>,
   request: Request,
   identity: { sourceChecksum: string; sourceSizeBytes: number }
 
-async function anonymousDocument(width = 400, zeroWidth = false): Promise<Fixture> {
+async function anonymousDocument(
+  width = 400,
+  zeroWidth = false,
+  multiple = false
+): Promise<Fixture> {
   const pdf = await PDFDocument.create()
   pdf.registerFontkit(fontkit)
   const font = await pdf.embedFont(
@@ -56,7 +61,14 @@ async function anonymousDocument(width = 400, zeroWidth = false): Promise<Fixtur
     fontKey = page.node.Resources()!.lookup(PDFName.of('Font'), PDFDict).keys()[0].toString()
   page.node.set(
     PDFName.of('Contents'),
-    pdf.context.register(pdf.context.flateStream(`BT ${fontKey} 12 Tf 40 440 Td ${encoded} Tj ET`))
+    pdf.context.register(
+      pdf.context.flateStream(
+        `BT ${fontKey} 12 Tf 40 440 Td ${encoded} Tj ET` +
+          (multiple
+            ? `\nBT ${fontKey} 12 Tf 40 410 Td ${font.encodeText('Neighbor.').toString()} Tj ET`
+            : '')
+      )
+    )
   )
   if (zeroWidth) {
     await font.embed()
@@ -414,6 +426,59 @@ it.each(['unchanged', 'render-font', 'render-outline', 'read-font', 'dispose-out
       else await reader.dispose()
     } finally {
       await reader.dispose().catch(() => undefined)
+      vi.unstubAllGlobals()
+    }
+  }
+)
+
+it.each(['exact', 'extra-key', 'missing-key', 'changed-font'])(
+  'keeps selected-only exclusion distinct from complete positive ink: %s',
+  async (fault) => {
+    const f = await anonymousDocument(400, false, true),
+      primary = withoutOutlineCache(f.document, f.request),
+      selected = new Set([[...f.request.selected][0]]),
+      request = { ...primary.request, selected },
+      read = async (
+        ...args: Parameters<typeof nativeAlgorithmInkRegions>
+      ): Promise<Awaited<ReturnType<typeof nativeAlgorithmInkRegions>>> => {
+        const complete = await nativeAlgorithmInkRegions(...args)
+        if (!complete) return
+        if (fault === 'changed-font') (await mutateInk(args[0], false))()
+        return new Map(
+          [...complete].filter(
+            ([index]) => fault === 'extra-key' || (fault !== 'missing-key' && selected.has(index))
+          )
+        )
+      }
+    vi.stubGlobal('document', { createElement: () => createCanvas(1, 1) })
+    const negative = createAuxiliaryNativeNegativeReader(
+        {
+          document: primary.document,
+          nativeDocumentFactory: getDocument,
+          sourceIdentity: f.identity
+        },
+        read
+      ),
+      positive = createNativeInkReader(
+        {
+          document: primary.document,
+          nativeDocumentFactory: getDocument,
+          sourceIdentity: f.identity
+        },
+        read
+      )
+    try {
+      expect('read' in negative).toBe(false)
+      const result = await negative.readNegativeSelection(request)
+      if (fault === 'exact') {
+        expect(result?.negativeOnly).toBe(true)
+        expect([...result!.items.keys()]).toEqual([...selected])
+        expect(await positive.read(request)).toBeUndefined()
+      } else expect(result).toBeUndefined()
+    } finally {
+      await negative.dispose()
+      await positive.dispose()
+      await f.task.destroy()
       vi.unstubAllGlobals()
     }
   }

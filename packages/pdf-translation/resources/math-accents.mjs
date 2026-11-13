@@ -182,3 +182,78 @@ export const resolveNativeLatinAccents = (objects) => {
   }
   return result
 }
+
+// A separately painted CMSY slash must move with its complete native equality.
+// Neither a detached mark nor source spelling alone proves a negated relation.
+export const resolveNativeNegatedEqualities = (objects) => {
+  const result = [],
+    used = new Set()
+  for (const slash of objects) {
+    if (
+      slash.text.trim() !== '\u0338' ||
+      !/^(?:[A-Z]{6}\+)?CMSY(?:5|6|7|8|9|10|12)$/u.test(slash.fontName ?? '') ||
+      !(slash.size > 0) ||
+      !Number.isFinite(slash.baseline)
+    )
+      continue
+    const candidates = objects.filter((base) => {
+      if (
+        base.i !== slash.i + 1 ||
+        base.text.trim() !== '=' ||
+        !/^(?:[A-Z]{6}\+)?CMR(?:5|6|7|8|9|10|12)$/u.test(base.fontName ?? '') ||
+        base.size !== slash.size ||
+        !Number.isFinite(base.baseline) ||
+        Math.abs(base.baseline - slash.baseline) > 0.01
+      )
+        return false
+      const [left, bottom, right, top] = slash.bounds,
+        [x, y, end, upper] = base.bounds,
+        width = end - x,
+        height = top - bottom
+      return (
+        [...slash.bounds, ...base.bounds].every(Number.isFinite) &&
+        width > 0 &&
+        upper > y &&
+        right > left &&
+        height > 0 &&
+        left >= x &&
+        right <= end &&
+        bottom < y &&
+        top > upper &&
+        height < slash.size * 1.1 &&
+        height > slash.size * 0.7 &&
+        Math.abs(left + right - x - end) < width * 0.2
+      )
+    })
+    if (candidates.length !== 1 || used.has(candidates[0].i)) continue
+    const base = candidates[0],
+      bounds = [
+        Math.min(slash.bounds[0], base.bounds[0]),
+        slash.bounds[1],
+        Math.max(slash.bounds[2], base.bounds[2]),
+        slash.bounds[3]
+      ]
+    if (
+      objects.some(
+        (other) =>
+          other !== slash &&
+          other !== base &&
+          other.text.trim() &&
+          other.bounds[0] < bounds[2] &&
+          other.bounds[2] > bounds[0] &&
+          other.bounds[1] < bounds[3] &&
+          other.bounds[3] > bounds[1]
+      )
+    )
+      continue
+    used.add(base.i)
+    result.push({
+      indices: [slash.i, base.i],
+      label: '\u0338=',
+      baseline: base.baseline,
+      negatedEquality: true,
+      bounds
+    })
+  }
+  return result
+}

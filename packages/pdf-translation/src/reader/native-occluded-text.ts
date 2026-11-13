@@ -2,6 +2,7 @@ import type { PDFPageProxy } from 'pdfjs-dist'
 import { nativeOutlineBox } from './native-source-geometry.js'
 import { nativeInkPageCurrent, nativeInkPageIdentity } from './auxiliary-native-ink.js'
 import { getPdfTranslationTextContent } from './text-content.js'
+import { readNativeFormClippedText } from './native-form-clipped-text.js'
 
 type Box = [number, number, number, number]
 type Content = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
@@ -58,7 +59,7 @@ function rectangle(paths: ArrayLike<number>[]): Box | undefined {
  * Forms, groups, unknown state and unsupported text stop the proof. A source is
  * bound to one complete text-show occurrence; equal strings never deduplicate.
  * Missing outlines abstain; no font metric or navigation box substitutes ink. */
-export async function readNativeOccludedText(
+async function readNativeSolidFillOccludedText(
   page: PDFPageProxy,
   content: Content,
   viewport: ReturnType<PDFPageProxy['getViewport']>
@@ -353,5 +354,34 @@ export async function readNativeOccludedText(
     }
   } catch {
     return
+  }
+}
+
+export async function readNativeOccludedText(
+  page: PDFPageProxy,
+  content: Content,
+  viewport: ReturnType<PDFPageProxy['getViewport']>,
+  readAuxiliaryExclusions?: () => Promise<Proof | undefined>
+): Promise<Proof | undefined> {
+  let clipped: Proof | undefined = await readNativeFormClippedText(page, content, viewport)
+  if (!clipped && readAuxiliaryExclusions) {
+    try {
+      const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+      const operators = await page.getOperatorList()
+      if (
+        operators.fnArray.length <= 100000 &&
+        operators.fnArray.includes(OPS.paintFormXObjectBegin)
+      )
+        clipped = await readAuxiliaryExclusions()
+    } catch {
+      /* Unknown native observations do not exclude source text. */
+    }
+  }
+  const covered = await readNativeSolidFillOccludedText(page, content, viewport)
+  const proofs = [clipped, covered].filter((proof): proof is Proof => !!proof)
+  if (!proofs.length || proofs.some((proof) => !proof.current())) return
+  return {
+    indexes: new Set(proofs.flatMap((proof) => [...proof.indexes])),
+    current: () => proofs.every((proof) => proof.current())
   }
 }

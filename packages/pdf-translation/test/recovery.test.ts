@@ -404,6 +404,28 @@ it.each([
   expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(true)
 })
 
+it.each([
+  ['Related Work', '相关工作'],
+  ['Input Sequence', '输入序列'],
+  ['Atom Attention Encoder', '原子注意力编码器'],
+  ['Physical Validity Constraints', '物理有效性约束'],
+  ['Date Range', '日期范围'],
+  ['Chl Range', 'Chl 范围'],
+  ['COMMUTATIVE ALGEBRA', '交换代数']
+])('translates a complete ordinary scientific label: %s', (source, target) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(false)
+  expect(pdfTranslationCopiesEnglishProse(source, source, 'Chinese')).toBe(true)
+})
+
+it.each([
+  ['Related Work Institute', '相关工作研究所'],
+  ['Input Sequence NimbusNet', '输入序列'],
+  ['Physical Validity Foundation', '物理有效性基金会'],
+  ['Date Range Research', '日期范围研究']
+])('keeps names containing ordinary label words protected: %s', (source, target) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(true)
+})
+
 it('rejects a translated standalone proper name', () => {
   expect(pdfTranslationDropsStandaloneProperName('Hugging Face', '抱抱脸')).toBe(true)
   expect(pdfTranslationDropsStandaloneProperName('Hugging Face', 'Hugging Face')).toBe(false)
@@ -427,6 +449,26 @@ it('rejects a translated standalone proper name', () => {
   expect(pdfTranslationDropsStandaloneProperName('Open Access Institute', '开放获取研究所')).toBe(
     true
   )
+})
+
+it.each(
+  readPdfTranslationCases<{
+    name: string
+    source: string
+    translation: string
+    negativeTranslation?: string
+  }>('scientific-role-heading-labels.jsonl')
+)('$name', ({ source, translation, negativeTranslation }) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, translation)).toBe(false)
+  expect(
+    reconcilePdfTranslationCheckpoint(
+      { ...saved, sources: [source], translatedSourceIndices: [0], translations: [translation] },
+      'fp',
+      [source]
+    )?.translations
+  ).toEqual([translation])
+  if (negativeTranslation)
+    expect(pdfTranslationDropsStandaloneProperName(source, negativeTranslation)).toBe(true)
 })
 
 it.each([

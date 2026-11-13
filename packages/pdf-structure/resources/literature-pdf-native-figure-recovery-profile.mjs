@@ -583,8 +583,19 @@ export function createNativeFigureRecoveryProfile(page, tokens, context) {
 }
 export function createNativeNonisolatedGroupCropProfile(page, tokens, context) {
   try {
-    const o = context?.operators,
-      v = context?.viewport,
+    const own = nativeRecoveryOwnValues(context),
+      witness =
+        own?.runningHeadWitness === undefined
+          ? undefined
+          : nativeRecoveryOwnValues(own.runningHeadWitness)
+    if (
+      !own ||
+      (own.runningHeadWitness !== undefined &&
+        (!witness || !witness.witnessViewport || typeof witness.witnessViewport !== 'object'))
+    )
+      return
+    const o = own.operators,
+      v = own.viewport,
       groups = nonisolatedCropGroup(page, context)
     if (
       !groups ||
@@ -604,7 +615,11 @@ export function createNativeNonisolatedGroupCropProfile(page, tokens, context) {
       v.height !== page.height
     )
       return
-    const unchanged = retainReferences([page, tokens, context], v),
+    const unchanged = retainReferences(
+        [page, tokens, context],
+        own.viewport,
+        witness?.witnessViewport
+      ),
       converter = viewportConverter(v)
     if (!unchanged || !converter) return
     const profile = Object.freeze({})
