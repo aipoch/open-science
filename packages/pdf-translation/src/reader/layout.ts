@@ -10514,8 +10514,13 @@ function extractPage(
       if (!block.items.length) continue
       const anchor = duplicateCaptionAnchors.find(({ item, other }) => {
         const top = Math.min(item.y, other.y),
-          bottom = Math.max(item.bottom, other.bottom)
+          bottom = Math.max(item.bottom, other.bottom),
+          left = Math.min(item.x, other.x),
+          right = Math.max(item.right, other.right),
+          font = Math.max(item.font, other.font)
         return (
+          block.x < right + font * 0.8 &&
+          block.right > left - font * 0.8 &&
           block.y < bottom + Math.max(item.font, other.font) * 1.8 &&
           block.bottom > top - Math.max(item.font, other.font) * 1.8
         )

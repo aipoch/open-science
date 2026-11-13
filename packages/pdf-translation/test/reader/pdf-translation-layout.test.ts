@@ -87,6 +87,14 @@ test('preserves a caption whose PDF contains duplicate figure label streams', ()
         360,
         'Body',
         true
+      ),
+      item(
+        'This adjacent column paragraph remains independently available for translation.',
+        300,
+        388,
+        240,
+        'Body',
+        true
       )
     ]
   }
@@ -96,6 +104,10 @@ test('preserves a caption whose PDF contains duplicate figure label streams', ()
   expect(caption?.sourceOnly).toBe(true)
   expect(
     result.units.find((unit) => unit.source.startsWith('This ordinary paragraph'))?.sourceOnly
+  ).not.toBe(true)
+  expect(
+    result.units.find((unit) => unit.source.startsWith('This adjacent column paragraph'))
+      ?.sourceOnly
   ).not.toBe(true)
 })
 
