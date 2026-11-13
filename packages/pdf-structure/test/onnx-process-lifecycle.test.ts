@@ -76,7 +76,8 @@ it.each(['success', 'throw', 'nonzero', 'sink-error', 'sink-throws', 'cancel'])(
           if (mode === 'sink-throws') throw Error('sink threw')
           setTimeout(() => {
             events.push('sink-finished')
-            done(mode === 'sink-error' ? Error('sink failed') : undefined)
+            // The host logs its phase before the inference worker can report its PID.
+            done(mode === 'sink-error' && pid ? Error('sink failed') : undefined)
           }, 30)
         }
       }),
@@ -118,6 +119,7 @@ it.each(['success', 'throw', 'nonzero', 'sink-error', 'sink-throws', 'cancel'])(
       await Promise.all([owner.stop(), owner.stop()])
     }
     await settled
+    if (mode === 'sink-error') expect(pid).toBeGreaterThan(0)
     if (!pid && mode !== 'sink-throws') pid = Number(await readFile(join(root, 'pid'), 'utf8'))
     if (pid) {
       expect(pid).not.toBe(process.pid)
