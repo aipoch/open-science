@@ -217,6 +217,14 @@ test('saves strict whitelist edits immediately and enforces them in a real Noteb
       timeout: 60_000
     })
     expect(requests).toBe(1)
+    await page.getByRole('button', { name: 'Open notebook', exact: true }).click()
+    const notebookPane = page.getByTestId('kernel-notebook-pane')
+    await expect(notebookPane).toBeVisible()
+    await expect(notebookPane.getByTestId('notebook-network-mode')).toHaveText('Strict mode')
+    await notebookPane.screenshot({
+      path: testInfo.outputPath('notebook-network-mode-strict.png'),
+      animations: 'disabled'
+    })
     const audit = await page.evaluate(() =>
       window.api.network.queryNotebookLogs({ mode: 'strict' })
     )

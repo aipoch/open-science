@@ -564,6 +564,23 @@ describe('NotebookPreview per-kernel tabs', () => {
     })
   }
 
+  it('shows the current Notebook network mode in the pane header', async () => {
+    await mountWithRuns([makeRun({ runId: 'network-mode', kernelKind: 'python' })])
+
+    expect(screen.getByTestId('notebook-network-mode').textContent).toBe('Relaxed mode')
+
+    act(() => {
+      useSettingsStore.setState({
+        notebookNetwork: {
+          ...useSettingsStore.getState().notebookNetwork,
+          mode: 'strict'
+        }
+      })
+    })
+
+    expect(screen.getByTestId('notebook-network-mode').textContent).toBe('Strict mode')
+  })
+
   it.each([
     {
       name: 'a root after the child in the frame list',

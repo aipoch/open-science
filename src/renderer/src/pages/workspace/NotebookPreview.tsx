@@ -590,6 +590,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const retryProvision = useNotebookEnvStore((s) => s.retry)
   const provision = useNotebookEnvStore((s) => s.provision)
   const openSettingsToPanel = useSettingsStore((s) => s.openSettingsToPanel)
+  const notebookNetworkMode = useSettingsStore((s) => s.notebookNetwork.mode ?? 'relaxed')
   const isPreparingR =
     provisionUi.kind === 'preparing' &&
     provisionUi.scope === 'r' &&
@@ -1537,6 +1538,19 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
               )
             )}
           </div>
+          <span
+            className={cn(
+              'ml-2 inline-flex shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium',
+              notebookNetworkMode === 'strict'
+                ? 'notebook-network-strict'
+                : 'notebook-network-relaxed'
+            )}
+            role="status"
+            aria-label={t('Network mode')}
+            data-testid="notebook-network-mode"
+          >
+            {notebookNetworkMode === 'strict' ? t('Strict mode') : t('Relaxed mode')}
+          </span>
           {activeDataLanguage ? (
             <>
               <Tooltip>
