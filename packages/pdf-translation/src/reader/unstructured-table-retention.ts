@@ -21,6 +21,15 @@ const recordIssues = [
   'native-group-heading-merged-with-record'
 ] as const
 type RecordIssue = (typeof recordIssues)[number]
+const centeredIssue = 'native-centered-headed-record-lanes-collapsed'
+const ambiguousIssue = 'native-table-structure-ambiguous'
+const missingGridIssue = 'no-source-cell-grid'
+const knownIssues: readonly string[] = [
+  ambiguousIssue,
+  missingGridIssue,
+  centeredIssue,
+  ...recordIssues
+]
 
 // This proves a native record family, never replacement cells or paint bounds.
 const nativeRecordFamily = (
@@ -200,7 +209,7 @@ export async function retainUnstructuredTablePages(
       result: ReturnType<typeof parsePdfStructureResult>
       element: ReturnType<typeof parsePdfStructureResult>['elements'][number]
       centered: boolean
-      record?: RecordIssue
+      records: readonly RecordIssue[]
     }[] = []
     const allElements: ReturnType<typeof parsePdfStructureResult>['elements'][number][] = []
     const batches = new Map<string, string>()
@@ -225,20 +234,13 @@ export async function retainUnstructuredTablePages(
       batches.set(result.extractionId, serialized)
       allElements.push(...result.elements)
       for (const element of result.elements) {
-        const centered =
-            element.issues.length === 3 &&
-            [
-              'native-table-structure-ambiguous',
-              'no-source-cell-grid',
-              'native-centered-headed-record-lanes-collapsed'
-            ].every((code) => element.issues.some((issue) => issue.code === code)),
-          record =
-            element.issues.length === 3 &&
-            ['native-table-structure-ambiguous', 'no-source-cell-grid'].every((code) =>
-              element.issues.some((i) => i.code === code)
-            )
-              ? recordIssues.find((code) => element.issues.some((i) => i.code === code))
-              : undefined
+        const codes = element.issues.map((issue) => issue.code),
+          knownRecordIssues =
+            codes.includes(ambiguousIssue) &&
+            codes.includes(missingGridIssue) &&
+            codes.every((code) => knownIssues.includes(code)),
+          centered = knownRecordIssues && codes.includes(centeredIssue),
+          records = knownRecordIssues ? recordIssues.filter((code) => codes.includes(code)) : []
         if (
           element.kind === 'table' &&
           !element.table &&
@@ -247,11 +249,9 @@ export async function retainUnstructuredTablePages(
           !element.sourceItems &&
           element.regions.length === 1 &&
           element.caption?.regions.length === 1 &&
-          (centered ||
-            record ||
-            (element.issues.length === 1 && element.issues[0].code === 'no-source-cell-grid'))
+          (centered || records.length || (codes.length === 1 && codes[0] === missingGridIssue))
         )
-          candidates.push({ result, element, centered, record })
+          candidates.push({ result, element, centered, records })
       }
     }
     if (!candidates.length || candidates.length > 16 || !(await digest()) || !current())
@@ -264,8 +264,9 @@ export async function retainUnstructuredTablePages(
           if (owners.has(key)) return empty
           owners.set(key, unit)
         }
-    for (const { result, element, centered, record } of candidates) {
+    for (const { result, element, centered, records } of candidates) {
       const region = element.regions[0],
+        record = records.length > 0,
         number = region.page,
         page = await document.getPage(number),
         viewport = page.getViewport({ scale: 1 }),
@@ -450,10 +451,10 @@ export async function retainUnstructuredTablePages(
         )
       )
         continue
-      if (centered) {
+      const proveCenteredLanes = (): boolean => {
         // Recheck independent native heading/value lanes. The cache diagnostic
         // selects this family; it cannot itself suppress ordinary prose.
-        if (selected.size > 512) continue
+        if (selected.size > 512) return false
         const records = [...selected].flatMap((index) => {
             const item = content.items[index]
             return 'str' in item ? [item] : []
@@ -474,7 +475,7 @@ export async function retainUnstructuredTablePages(
           heads[0].transform[4] + heads[0].width >= heads[1].transform[4] - h ||
           heads[2].transform[4] - heads[1].transform[4] - heads[1].width < h * 0.6
         )
-          continue
+          return false
         const baselines: number[] = []
         for (const left of records) {
           const y = left.transform[5],
@@ -504,8 +505,10 @@ export async function retainUnstructuredTablePages(
           )
             baselines.push(y)
         }
-        if (baselines.length < 3) continue
+        return baselines.length >= 3
       }
+      const centeredProved = centered && proveCenteredLanes()
+      if (centered && !centeredProved && !record) continue
       // Re-read native observations after all asynchronous proof work below.
       const readText = page.getTextContent,
         readViewport = page.getViewport,
@@ -651,7 +654,8 @@ export async function retainUnstructuredTablePages(
             right >= Math.max(...boxes.map((b) => b.x + b.width)) &&
             y >= Math.max(...boxes.map((b) => b.y + b.height))
         )
-      let nativeFrame = (centered || !!record) && encloses(selectedBoxes)
+      const advanceFrame = (centeredProved || record) && encloses(selectedBoxes)
+      let nativeFrame = advanceFrame
       if (record && (zero || !nativeFrame)) {
         const keys = new Set<string>(),
           stack: string[] = []
@@ -693,11 +697,13 @@ export async function retainUnstructuredTablePages(
         if (!current()) return empty
         nativeFrame = boxes.length === selected.size && encloses(boxes)
       }
-      if ((centered || record) && !nativeFrame) continue
-      if (record && !nativeRecordFamily(record, content, selected, viewport, rules)) continue
+      const recordProved =
+        nativeFrame &&
+        records.some((code) => nativeRecordFamily(code, content, selected, viewport, rules))
+      if ((centered || record) && !recordProved && !(centeredProved && advanceFrame)) continue
       const retainBody =
-        (!!record && nativeFrame) ||
-        ((nativeFrame || (multirow && lastRule >= body.y + body.height)) &&
+        recordProved ||
+        ((advanceFrame || (multirow && lastRule >= body.y + body.height)) &&
           captionItems.every(([, b]) => b.y > lastRule))
       // A layered header can cross native column fences while its outer cell
       // remains open. Only suppress the unsafe whole owner; the selected crop

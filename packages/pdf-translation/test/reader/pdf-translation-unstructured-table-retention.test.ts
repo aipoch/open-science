@@ -587,6 +587,42 @@ it.each(['tuple', 'section', 'group'] as const)(
   }
 )
 
+it.each([
+  ['recognized markers', recordMarkers.section, true],
+  ['centered and section markers', 'native-centered-headed-record-lanes-collapsed', true],
+  ['no matching native family', recordMarkers.group, false],
+  ['unrecognized marker', 'unknown-diagnostic', false]
+] as const)(
+  'validates the native evidence for multiple record diagnostics (%s)',
+  async (_name, marker, retained) => {
+    const f = await nativeRecordSetup('section')
+    try {
+      const issues = f.cached.elements[0].issues
+      issues[2] = { code: recordMarkers.tuple, detail: '' }
+      issues.push({ code: marker, detail: '' })
+      if (
+        marker === 'unknown-diagnostic' ||
+        marker === 'native-centered-headed-record-lanes-collapsed'
+      )
+        issues.push({ code: recordMarkers.section, detail: '' })
+      const out = await retainUnstructuredTablePages(f.args)
+      expect(out.retainedSourcePageNumbers).toEqual(retained ? [1] : [])
+    } finally {
+      await f.task.destroy()
+    }
+  }
+)
+
+it('retains centered lanes when the cache also reports another recognized record conflict', async () => {
+  const f = await setup(true, false, false, false, 'centered')
+  try {
+    f.cached.elements[0].issues.push({ code: recordMarkers.section, detail: '' })
+    expect((await retainUnstructuredTablePages(f.args)).retainedSourcePageNumbers).toEqual([1])
+  } finally {
+    await f.task.destroy()
+  }
+})
+
 it.each(['tuple', 'section', 'group'] as const)(
   'requires a complete native frame and matching marker for %s records',
   async (family) => {
