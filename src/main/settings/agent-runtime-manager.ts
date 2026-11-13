@@ -4,8 +4,8 @@ import { nodeRuntimeEnvironment } from '../node-process-host'
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
 import { execFile } from 'node:child_process'
 import { constants, existsSync } from 'node:fs'
-import { access, mkdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { access, mkdir, stat } from 'node:fs/promises'
+import { dirname, isAbsolute, join } from 'node:path'
 import { createServer } from 'node:net'
 import { promisify } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
@@ -126,7 +126,7 @@ import { runEnvironmentCheck } from './environment-check'
 import { computePreflight } from './preflight'
 import { isEncryptionAvailable } from './crypto'
 import { getCredentialStore } from './credential-store-mode'
-import { augmentedPathEnv } from './shell-path'
+import { augmentedPathEnv, npmBinDirsForCheck } from './shell-path'
 import { buildProviderEnv, type ResolvedProvider } from './provider-env'
 import { resolveSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
 import type { ProviderAccountsModule } from './provider-accounts'
@@ -371,6 +371,9 @@ export class AgentRuntimeManager {
   private readonly activeDetections = new Set<Promise<unknown>>()
   private environmentCheckRuntimeProbe: ReusableRuntimeProbe | undefined
   private preflightRuntimeProbe: ReusableRuntimeProbe | undefined
+  private pendingNpmAvailability?: Promise<boolean>
+  private npmAvailableUntil = 0
+  private lastOpencodeLaunchProbe?: { executableKey: string; version: string; expiresAt: number }
   private readonly installManagedClaudeImpl: (
     options: InstallManagedClaudeOptions
   ) => Promise<ManagedInstallOutcome>
@@ -401,7 +404,7 @@ export class AgentRuntimeManager {
     this.shutdownAbort.abort()
     const completion = this.activeInstallCompletion
     this.activeInstallAbort?.abort()
-    await Promise.allSettled([...(completion ? [completion] : []), ...this.activeDetections])
+    await Promise.allSettled([completion, this.pendingNpmAvailability, ...this.activeDetections])
     const cleanupFailure = await completion
     if (cleanupFailure) throw cleanupFailure
   }
@@ -559,19 +562,39 @@ export class AgentRuntimeManager {
       signal.throwIfAborted()
       const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
       const runtimeProbe = this.takeReusableRuntimeProbe('environmentCheckRuntimeProbe', settings)
+      const opencodeDeps = this.opencodeDetectDeps
+      const codebuddyDeps = this.codebuddyDetectDeps
+      const codexDeps = this.codexDetectDeps
+      const sharedNpmDirs = npmBinDirsForCheck(opencodeDeps.resolveNpmBinDirs, signal)
       const [claudeRuntime, opencodeRuntime, codebuddyRuntime, codexRuntime, piReady] =
         await Promise.all([
           this.trackDetection(() =>
             this.resolveClaudeRuntime(settings, runtimeProbe?.claudeVersion, signal)
           ),
           this.trackDetection(() =>
-            this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion, signal)
+            this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion, signal, {
+              ...opencodeDeps,
+              resolveNpmBinDirs: sharedNpmDirs
+            })
           ),
           this.trackDetection(() =>
-            this.resolveCodeBuddyRuntime(settings, runtimeProbe?.codebuddyVersion, signal)
+            this.resolveCodeBuddyRuntime(
+              settings,
+              runtimeProbe?.codebuddyVersion,
+              signal,
+              codebuddyDeps.resolveNpmBinDirs === opencodeDeps.resolveNpmBinDirs
+                ? { ...codebuddyDeps, resolveNpmBinDirs: sharedNpmDirs }
+                : codebuddyDeps
+            )
           ),
           this.trackDetection(() =>
-            this.resolveCodexRuntime(settings, runtimeProbe?.codex, signal)
+            this.resolveCodexRuntime(settings, runtimeProbe?.codex, signal, {
+              ...codexDeps,
+              resolveNpmBinDirs:
+                codexDeps.resolveNpmBinDirs === opencodeDeps.resolveNpmBinDirs
+                  ? sharedNpmDirs
+                  : npmBinDirsForCheck(codexDeps.resolveNpmBinDirs, signal)
+            })
           ),
           agentFrameworkId === 'pi'
             ? isPiRuntimeReady({ configRoot: this.configRoot })
@@ -713,7 +736,14 @@ export class AgentRuntimeManager {
 
   async detectCodex(signal?: AbortSignal): Promise<void> {
     return this.trackDetection(async (operationSignal) => {
-      const detected = await detectCodex(this.codexDetectDeps, operationSignal)
+      const deps = {
+        ...this.codexDetectDeps,
+        resolveNpmBinDirs: npmBinDirsForCheck(
+          this.codexDetectDeps.resolveNpmBinDirs,
+          operationSignal
+        )
+      }
+      const detected = await detectCodex(deps, operationSignal)
       operationSignal.throwIfAborted()
 
       if (detected) {
@@ -724,7 +754,7 @@ export class AgentRuntimeManager {
           nativeVersion: detected.nativeCodexVersion
         })
       } else {
-        const components = await detectCodexComponents(this.codexDetectDeps, operationSignal)
+        const components = await detectCodexComponents(deps, operationSignal)
         operationSignal.throwIfAborted()
         if (
           components.adapterPath &&
@@ -1097,8 +1127,20 @@ export class AgentRuntimeManager {
   }
 
   async isNpmAvailable(): Promise<boolean> {
-    const { available } = await detectNpmAvailable()
-    return available
+    const signal = this.shutdownAbort.signal
+    if (signal.aborted) return false
+    if (performance.now() < this.npmAvailableUntil) return true
+
+    // Startup settings and environment refresh both request the same host capability.
+    this.pendingNpmAvailability ??= detectNpmAvailable(undefined, signal)
+      .then(({ available }) => {
+        if (available) this.npmAvailableUntil = performance.now() + RUNTIME_PROBE_REUSE_WINDOW_MS
+        return available
+      })
+      .finally(() => {
+        this.pendingNpmAvailability = undefined
+      })
+    return this.pendingNpmAvailability
   }
 
   async reserveOpenCodeUsagePort(): Promise<number> {
@@ -1274,7 +1316,32 @@ export class AgentRuntimeManager {
 
   async probeOpencodeVersion(executablePath: string): Promise<string | undefined> {
     const probe = this.opencodeDetectDeps.probeVersion ?? this.opencodeDetectDeps.getVersion
-    return probe(executablePath)
+    if (!isAbsolute(executablePath)) return probe(executablePath)
+    const file = await stat(executablePath, { bigint: true }).catch(() => undefined)
+    if (!file?.isFile()) return probe(executablePath)
+
+    // The first turn and its metadata job each resolve a backend. Reuse only a completed probe.
+    const executableKey = [
+      executablePath,
+      file.dev,
+      file.ino,
+      file.size,
+      file.mtimeNs,
+      file.ctimeNs
+    ].join(':')
+    const cached = this.lastOpencodeLaunchProbe
+    if (cached?.executableKey === executableKey && performance.now() < cached.expiresAt)
+      return cached.version
+
+    const version = await probe(executablePath)
+    if (version) {
+      this.lastOpencodeLaunchProbe = {
+        executableKey,
+        version,
+        expiresAt: performance.now() + RUNTIME_PROBE_REUSE_WINDOW_MS
+      }
+    }
+    return version
   }
 
   async resolveCodeBuddyExecutable(storedPath: string | undefined): Promise<string> {
@@ -1429,13 +1496,14 @@ export class AgentRuntimeManager {
   private async resolveOpencodeRuntime(
     settings: StoredSettings,
     probedVersion: string | null | undefined,
-    signal: AbortSignal
+    signal: AbortSignal,
+    deps: OpencodeDetectDeps
   ): Promise<ClaudeDetectResult> {
     const cachedPath = settings.opencodePath
     if (cachedPath) {
       const version =
         probedVersion === undefined
-          ? await this.opencodeDetectDeps.getVersion(cachedPath, signal)
+          ? await deps.getVersion(cachedPath, signal)
           : (probedVersion ?? undefined)
       signal.throwIfAborted()
       if (version) {
@@ -1446,7 +1514,7 @@ export class AgentRuntimeManager {
       }
     }
 
-    const detected = await detectOpencode(this.opencodeDetectDeps, signal)
+    const detected = await detectOpencode(deps, signal)
     signal.throwIfAborted()
     if (detected) {
       await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
@@ -1462,13 +1530,14 @@ export class AgentRuntimeManager {
   private async resolveCodeBuddyRuntime(
     settings: StoredSettings,
     probedVersion: string | null | undefined,
-    signal: AbortSignal
+    signal: AbortSignal,
+    deps: CodeBuddyDetectDeps
   ): Promise<ClaudeDetectResult> {
     const cachedPath = settings.codebuddyPath
     if (cachedPath) {
       const version =
         probedVersion === undefined
-          ? await this.codebuddyDetectDeps.getVersion(cachedPath, signal)
+          ? await deps.getVersion(cachedPath, signal)
           : (probedVersion ?? undefined)
       signal.throwIfAborted()
       if (isSupportedCodeBuddyVersion(version)) {
@@ -1478,7 +1547,7 @@ export class AgentRuntimeManager {
         return { found: true, path: cachedPath, version }
       }
     }
-    const detected = await detectCodeBuddy(this.codebuddyDetectDeps, signal)
+    const detected = await detectCodeBuddy(deps, signal)
     signal.throwIfAborted()
     if (detected) {
       await this.repository.setCodeBuddyInfo(detected.resolvedPath, detected.version)
@@ -1491,14 +1560,15 @@ export class AgentRuntimeManager {
   private async resolveCodexRuntime(
     settings: StoredSettings,
     probedRuntime: ConfiguredCodexRuntimeProbe | undefined,
-    signal: AbortSignal
+    signal: AbortSignal,
+    deps: CodexDetectDeps
   ): Promise<ClaudeDetectResult> {
     const cached = settings.codex
     const configuredProbe =
       probedRuntime ?? (await this.probeConfiguredCodexRuntime(cached, signal))
     signal.throwIfAborted()
     const cachedVersions = codexVersionsFromProbe(configuredProbe)
-    const detectDeps = this.memoizedCodexDetectDeps(configuredProbe)
+    const detectDeps = this.memoizedCodexDetectDeps(configuredProbe, deps)
     if (cached?.resolvedPath && cachedVersions) {
       await this.repository.setCodexInfo({ ...cached, ...cachedVersions })
       let nativeCliFound = !!cached.nativePath
@@ -1653,8 +1723,10 @@ export class AgentRuntimeManager {
     }
   }
 
-  private memoizedCodexDetectDeps(probe: ConfiguredCodexRuntimeProbe): CodexDetectDeps {
-    const deps = this.codexDetectDeps
+  private memoizedCodexDetectDeps(
+    probe: ConfiguredCodexRuntimeProbe,
+    deps: CodexDetectDeps
+  ): CodexDetectDeps {
     const adapterVersions = new Map<string, Promise<string | undefined>>()
     const nativeVersions = new Map<string, Promise<string | undefined>>()
     const smokeResults = new Map<string, Promise<boolean>>()

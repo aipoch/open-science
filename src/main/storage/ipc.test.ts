@@ -1,7 +1,7 @@
 import { RUNTIME_LOCK_FILE } from '../runtime-ownership'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { existsSync, rmSync, readdirSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
@@ -233,6 +233,25 @@ describe('storage IPC handlers', () => {
       expect(isMigrationPending()).toBe(false)
     }
   )
+
+  it('invalidates a preview when a retired workspace is replaced under the same name', async () => {
+    initDataRoot(dataRoot)
+    const retired = join(target, 'workspaces', '.ownership', '.retired-workspaces')
+    const detached = join(retired, '00000000-0000-4000-8000-000000000000')
+    await mkdir(detached, { recursive: true })
+    await writeFile(join(target, 'workspaces', 'history.json'), '{}')
+    const deps = fakeDeps()
+    const owner = createStorageCommandOwner(deps)
+    const preview = await owner.inspectDataRoot({ parent: targetParent })
+    expect(preview.kind).toBe('adopt')
+    expect(preview.selection).toBeDefined()
+    await rename(detached, join(targetParent, 'previous'))
+    await mkdir(detached)
+    expect(
+      await owner.setDataRootAndRelaunch({ parent: preview.dataRoot, selection: preview.selection })
+    ).toMatchObject({ ok: false })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+  })
 
   it('refuses a changed move target after handoff preparation before entering the copy engine', async () => {
     initDataRoot(dataRoot)

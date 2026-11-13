@@ -922,13 +922,19 @@ const verifyWindowsReplLifecycle = async (sessionId) =>
 
 const verifyGlobalNpmTools = async (sessionId, mode) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    // Hosted Windows runners can spend 30-80s launching each AppContainer-backed
+    // Shell operation. Keep the MCP request alive for the certification cell budget.
     const execute = async (command) => {
       const result = toolResult(
         'bash_execute',
-        await client.callTool({
-          name: 'bash_execute',
-          arguments: { command }
-        })
+        await client.callTool(
+          {
+            name: 'bash_execute',
+            arguments: { command }
+          },
+          undefined,
+          { timeout: 240_000 }
+        )
       )
       if (result.exitCode !== 0)
         throw new Error(`npm application check failed: ${JSON.stringify(result)}`)
