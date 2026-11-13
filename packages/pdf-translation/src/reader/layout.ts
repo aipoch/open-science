@@ -10517,8 +10517,21 @@ function extractPage(
           bottom = Math.max(item.bottom, other.bottom),
           left = Math.min(item.x, other.x),
           right = Math.max(item.right, other.right),
-          font = Math.max(item.font, other.font)
+          font = Math.max(item.font, other.font),
+          anchorFonts = new Set(
+            blocks
+              .filter(
+                (candidate) => candidate.items.includes(item) || candidate.items.includes(other)
+              )
+              .flatMap((candidate) => candidate.items.map((entry) => entry.fontName))
+              .filter((name): name is string => !!name)
+          ),
+          streamFonts = new Set(
+            block.items.map((entry) => entry.fontName).filter((name): name is string => !!name)
+          ),
+          carriesBothStreams = [...streamFonts].filter((name) => anchorFonts.has(name)).length >= 2
         return (
+          (block.items.includes(item) || block.items.includes(other) || carriesBothStreams) &&
           block.x < right + font * 0.8 &&
           block.right > left - font * 0.8 &&
           block.y < bottom + Math.max(item.font, other.font) * 1.8 &&
