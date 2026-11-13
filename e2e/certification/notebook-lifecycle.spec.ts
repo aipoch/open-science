@@ -77,7 +77,7 @@ test('installs global npm tools through the app and reuses them across Sessions 
     page,
     'Verify application npm global install.',
     'Application npm install verified',
-    ['node -e "eval(Buffer.from('],
+    ['node -e "eval(Buffer.from(', 'npm', 'npm', 'os-npm-app-fixture'],
     90_000
   )
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
@@ -86,16 +86,23 @@ test('installs global npm tools through the app and reuses them across Sessions 
     page,
     'Verify application npm shared tool and local install.',
     'Application npm local verified',
-    ['node -e "eval(Buffer.from(', 'node -e "eval(Buffer.from('],
+    [
+      'node -e "eval(Buffer.from(',
+      'npm',
+      'npm',
+      'node -e "eval(Buffer.from(',
+      'os-npm-app-fixture'
+    ],
     90_000
   )
   await captureLifecycleEvidence(page, 'npm-across-sessions.png')
   page = await app.restart()
   await openRecentSession(page, 'Verify application npm shared tool and local install.')
-  await sendPrompt(
+  await sendReviewedPrompt(
     page,
     'Verify application npm tool after restart.',
     'Application npm restart verified',
+    ['os-npm-app-fixture'],
     90_000
   )
   await captureLifecycleEvidence(page, 'npm-after-app-restart.png')
@@ -141,10 +148,11 @@ test('installs global npm tools through the app and reuses them across Sessions 
   expect(discarded).toEqual({ ok: true })
   // The runtime ownership inode must survive discard; all copied data must be gone.
   expect(await readdir(staged.dataRoot)).toEqual([RUNTIME_LOCK_FILE])
-  await sendPrompt(
+  await sendReviewedPrompt(
     page,
     'Verify application npm tool after restart.',
     'Application npm restart verified',
+    ['os-npm-app-fixture'],
     90_000
   )
 })
