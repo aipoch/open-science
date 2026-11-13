@@ -37,6 +37,7 @@ export function Fixture(): React.JSX.Element {
     return (
       <main className="min-h-screen bg-background p-8 text-foreground">
         <button>Outside</button>
+        <p onPointerDown={(event) => event.preventDefault()}>Outside text</p>
         <div className="mt-64">
           <SessionPackageEntryRow projectId="fixture" compact={params.has('compact')} />
         </div>

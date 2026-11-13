@@ -62,8 +62,12 @@ test('package guide supports touch without opening the file picker', async ({
     const guide = page.getByRole('tooltip')
     await info.tap()
     await expect(guide).toContainText('read-only history')
-    await page.getByRole('button', { name: 'Outside', exact: true }).tap()
+    await expect(info).toBeFocused()
+    // The non-focusable target prevents focus transfer, exercising Radix's outside-pointer
+    // dismissal without relying on the trigger's blur handler.
+    await page.getByText('Outside text', { exact: true }).tap()
     await expect(guide).toHaveCount(0)
+    await expect(info).toBeFocused()
     await info.tap()
     await expect(guide).toContainText('continue research')
     await page.keyboard.press('Escape')
