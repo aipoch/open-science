@@ -29,4 +29,22 @@ describe('buildAuthenticatedArtifactContentUrl', () => {
       versionId: 'version 2'
     })
   })
+
+  it('allows the server to resolve the latest version when no version is selected', async () => {
+    await expect(
+      buildAuthenticatedArtifactContentUrl('/config-latest', 44123, {
+        artifactId: 'artifact-latest',
+        projectId: 'project-latest'
+      })
+    ).resolves.toBe(
+      'http://127.0.0.1:44123/api/v1/artifacts/artifact-latest/content?disposition=inline&token=long-lived-token'
+    )
+    expect(
+      resolveAuthenticatedArtifactBrowserBinding(
+        '/config-latest',
+        'long-lived-token',
+        'artifact-latest'
+      )
+    ).toEqual({ projectId: 'project-latest' })
+  })
 })

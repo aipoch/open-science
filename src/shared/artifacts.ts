@@ -152,7 +152,7 @@ export type OpenArtifactFileRequest = {
 export type OpenArtifactInBrowserRequest = {
   projectId: string
   artifactId: string
-  versionId: string
+  versionId?: string
 }
 
 // Renderer request for a bounded text preview of one managed artifact.

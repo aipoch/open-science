@@ -316,6 +316,15 @@ it.each(['historical', 'native'] as const)(
       )
       expect(boundInline.status).toBe(200)
       expect(await boundInline.text()).toBe('newer content')
+      registerAuthenticatedArtifactBrowserBinding(fixture.storageRoot, 'synthetic-download-token', {
+        artifactId: version.artifactId,
+        projectId: session.projectId
+      })
+      const latestInline = await fetch(
+        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&token=synthetic-download-token`
+      )
+      expect(latestInline.status).toBe(200)
+      expect(await latestInline.text()).toBe('newer content')
       for (const url of [
         inlineUrl(newer.versionId, 'missing-project'),
         inlineUrl(newer.versionId, session.projectId, 'missing-file'),

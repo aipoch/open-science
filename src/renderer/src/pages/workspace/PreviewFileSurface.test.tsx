@@ -4990,6 +4990,25 @@ describe('PreviewFileSurface file header actions', () => {
     })
   })
 
+  it('opens the latest managed HTML version when no version is selected', async () => {
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...managedExtensionlessHtmlItem, selectedVersionId: undefined }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await click(container.querySelector('[aria-label="Open in browser"]'))
+    expect(window.api.artifacts.openInBrowser).toHaveBeenCalledWith({
+      artifactId: 'artifact-html-1',
+      projectId: 'project-1'
+    })
+  })
+
   it.each([undefined, 'html-v1'])(
     'opens the rendered managed HTML Version with selection %s',
     async (selection) => {

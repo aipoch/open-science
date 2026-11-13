@@ -1332,10 +1332,10 @@ const handleTaskApiRequest = async (
         const selectedVersionId = versionId ?? browserBinding?.versionId
         // Scoped browser reads must not change the default Task artifact download contract.
         const artifact =
-          inline && selectedProjectId && selectedVersionId
+          inline && selectedProjectId
             ? await tasks.acquireArtifact(artifactId, {
                 projectId: selectedProjectId,
-                versionId: selectedVersionId
+                ...(selectedVersionId ? { versionId: selectedVersionId } : {})
               })
             : await tasks.acquireArtifact(artifactId)
         try {

@@ -595,8 +595,14 @@ class HeadlessTaskApi {
     }
     const version =
       inspection.value.selectedVersion ??
-      inspection.value.versions.find((candidate) => candidate.id === selection.versionId)
-    if (!version || version.id !== selection.versionId || version.fileId !== artifactId) {
+      (selection.versionId
+        ? inspection.value.versions.find((candidate) => candidate.id === selection.versionId)
+        : undefined)
+    if (
+      !version ||
+      version.fileId !== artifactId ||
+      (selection.versionId !== undefined && version.id !== selection.versionId)
+    ) {
       throw new TaskRunnerError('artifact_not_found', 'Artifact Version not found.')
     }
     const resource = (await this.invoke('preview-resources:acquire', {
