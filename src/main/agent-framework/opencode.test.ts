@@ -524,7 +524,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     {
       name: 'reported output larger than context',
       limits: { contextWindow: 64_000, maxOutputTokens: 128_000 },
-      expected: { context: 64_000, output: 64_000 }
+      expected: { context: 64_000, input: 64_000, output: 64_000 }
     }
   ])('projects $name into both authoritative OpenCode config layers', ({ limits, expected }) => {
     const config = opencodeFramework.prepareModelConfig(
@@ -801,7 +801,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     const expectedModels = {
       'deepseek-v4-pro': {
         options: { reasoningEffort: 'high', thinking: { type: 'enabled' } },
-        limit: { context: 128_000, output: 128_000 }
+        limit: { context: 128_000, input: 128_000, output: 128_000 }
       },
       'deepseek-v3.2': {
         attachment: true,

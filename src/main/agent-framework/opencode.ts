@@ -349,6 +349,14 @@ const buildOpencodeModelConfig = (
   const baseModelWithoutLimit = { ...baseModel }
   delete baseModelWithoutLimit.limit
   const modelCapabilities = buildModelCapabilities(provider, reasoningEffort)
+  const output = opencodeOutputLimit(provider)
+  // Without an input limit, OpenCode v1 uses context minus max output as its compaction
+  // threshold. Raising its process ceiling must not turn that threshold into zero.
+  const input =
+    provider.maxInputTokens ??
+    (output > OPENCODE_DEFAULT_OUTPUT_LIMIT && output === provider.contextWindow
+      ? provider.contextWindow
+      : undefined)
   return {
     ...baseModelWithoutLimit,
     ...modelCapabilities,
@@ -365,8 +373,8 @@ const buildOpencodeModelConfig = (
       : {
           limit: {
             context: provider.contextWindow,
-            ...(provider.maxInputTokens === undefined ? {} : { input: provider.maxInputTokens }),
-            output: opencodeOutputLimit(provider)
+            ...(input === undefined ? {} : { input }),
+            output
           }
         })
   }
