@@ -4946,6 +4946,7 @@ try {
                     : true),
               !!ownedInkProof
             ))
+          let fallbackDeferred = false
           if (ownedInkProof && !bodyThumbnail && !graphicalThumbnail) {
             const certificate = thumbnail && certifiedCrops.get(thumbnail)
             if (thumbnail && !certificate?.current()) {
@@ -4957,19 +4958,37 @@ try {
               finalTableCropChecks.push(() => certificate.current())
             } else {
               const fallbackCrop = getNativeOwnedGlyphOverhangCropFallback(ownedInkProof, table)
-              assert(fallbackCrop, 'Owned table crop source changed before fallback.')
-              table = { ...table, cropRect: fallbackCrop }
-              const fallbackTable = table
-              thumbnail = await crop(
-                fallbackCrop.map((v) => v / 1.5),
-                table.id
-              )
-              finalTableCropChecks.push(
-                () => !!getNativeOwnedGlyphOverhangCropFallback(ownedInkProof, fallbackTable)
-              )
+              if (fallbackCrop) {
+                table = { ...table, cropRect: fallbackCrop }
+                const fallbackTable = table
+                thumbnail = await crop(
+                  fallbackCrop.map((v) => v / 1.5),
+                  table.id
+                )
+                finalTableCropChecks.push(
+                  () => !!getNativeOwnedGlyphOverhangCropFallback(ownedInkProof, fallbackTable)
+                )
+              } else {
+                fallbackDeferred = true
+                thumbnail = await crop(
+                  table.cropRect.map((v) => v / 1.5),
+                  table.id
+                )
+                const note = {
+                  text: 'Native table crop ownership proof became stale; detector crop retained for review.',
+                  rect: table.cropRect
+                }
+                table = {
+                  ...table,
+                  notes: [...(table.notes ?? []), note],
+                  repairs: [...(table.repairs ?? []), 'native-owned-crop-fallback-deferred']
+                }
+                result.notes = table.notes
+                result.repairs = table.repairs
+              }
             }
           }
-          if (interiorFenceProof && !thumbnail) continue
+          if (!thumbnail && (interiorFenceProof || fallbackDeferred)) continue
           tables.push({
             ...result,
             cropRect: table.cropRect,

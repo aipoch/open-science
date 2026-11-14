@@ -336,6 +336,28 @@ it('retains complete packed table owners and its source page without inventing a
   }
 })
 
+it('keeps a complete graphical table marker on the strict fallback when no source cell grid exists', async () => {
+  const f = await setup()
+  try {
+    // A graphical table can have complete native text while the detector has
+    // no reliable cell grid. The fallback must preserve source ownership
+    // instead of manufacturing cells or dropping the page.
+    Object.assign(f.cached.elements[0], {
+      grid: [],
+      cells: [],
+      sourceItems: [],
+      issues: [{ code: 'no-source-cell-grid', detail: 'no-source-cell-grid' }]
+    })
+    const out = await retainUnstructuredTablePages(f.args)
+    expect(out.extraction).toBe(f.args.extraction)
+    expect(out.retainedSourcePageNumbers).toEqual([])
+    expect(out.retainedUnitIds).toEqual([])
+    expect(out.extraction.source.units.every((unit) => !unit.sourceOnly)).toBe(true)
+  } finally {
+    await f.task.destroy()
+  }
+})
+
 type RecordFamily = 'tuple' | 'section' | 'group'
 const recordMarkers: Record<RecordFamily, string> = {
   tuple: 'native-fused-tuple-crosses-cell-wall',

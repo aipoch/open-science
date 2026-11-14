@@ -2987,6 +2987,531 @@ export function recoverNativeTypographicCategoryRows(a) {
   }
 }
 
+// A complete three-lane parameter table can contain source rows that the
+// detector folds into a neighboring row.  Recover only rows whose native
+// baselines are fully inside the table frame, map to exactly one of the three
+// model columns, and remain unassigned after the ordinary text pass.  This is
+// deliberately independent of the six-lane category planner above: the
+// latter reconstructs typographic section bands, while this helper restores
+// omitted parameter records before downstream ownership repairs run.
+export function recoverNativeThreeColumnParameterRows({
+  table,
+  items,
+  rows,
+  cells,
+  baseCells,
+  columnRects,
+  headerRows = [],
+  rules = [],
+  unassigned,
+  issues,
+  repairs
+}) {
+  try {
+    if (
+      !table ||
+      !Array.isArray(table.cropRect) ||
+      table.cropRect.length !== 4 ||
+      !Array.isArray(items) ||
+      !Array.isArray(rows) ||
+      !Array.isArray(cells) ||
+      !Array.isArray(columnRects) ||
+      columnRects.length !== 3 ||
+      !Array.isArray(unassigned) ||
+      !Array.isArray(rules) ||
+      !Array.isArray(repairs)
+    )
+      return false
+    if (table.readingRotation && table.readingRotation !== 0) return false
+    const [left, top, right, bottom] = table.cropRect
+    if (![left, top, right, bottom].every(Number.isFinite) || right <= left || bottom <= top)
+      return false
+    const columns = columnRects
+      .map((rect) => (Array.isArray(rect) ? rect.slice() : null))
+      .filter(Boolean)
+      .sort((a, b) => a[0] - b[0])
+    if (
+      columns.length !== 3 ||
+      columns.some(
+        (rect) =>
+          rect.length !== 4 ||
+          !rect.every(Number.isFinite) ||
+          rect[0] < left - 1 ||
+          rect[2] > right + 1 ||
+          rect[2] <= rect[0]
+      ) ||
+      columns.some((rect, index) => index && rect[0] < columns[index - 1][2] - 0.5)
+    )
+      return false
+
+    const source = items.filter(
+      (item) =>
+        item?.horizontal !== false &&
+        typeof item?.text === 'string' &&
+        item.text.trim() &&
+        Array.isArray(item.rect) &&
+        item.rect.length === 4 &&
+        item.rect.every(Number.isFinite) &&
+        item.rect[0] >= left &&
+        item.rect[2] <= right &&
+        item.rect[1] >= top &&
+        item.rect[3] <= bottom
+    )
+    if (source.length < 5) return false
+    const heights = source
+      .map((item) => item.height)
+      .filter((height) => Number.isFinite(height) && height > 0)
+      .sort((a, b) => a - b)
+    const height = heights[Math.floor(heights.length / 2)]
+    if (!(height > 0)) return false
+    const horizontalRules = rules.filter(
+      (rule) =>
+        Array.isArray(rule) &&
+        rule.length === 4 &&
+        rule.every(Number.isFinite) &&
+        rule[1] === rule[3] &&
+        rule[0] <= left + height &&
+        rule[2] >= right - height &&
+        rule[2] - rule[0] >= (right - left) * 0.85
+    )
+    const structureFrame = (table.structure?.objects ?? [])
+      .filter((object) => object.label === 'table' && Array.isArray(object.rect))
+      .some(
+        (object) =>
+          object.rect.length === 4 &&
+          object.rect.every(Number.isFinite) &&
+          object.rect[2] - object.rect[0] >= (right - left) * 0.85 &&
+          object.rect[3] - object.rect[1] >= (bottom - top) * 0.85
+      )
+    if (horizontalRules.length < 2 && !structureFrame) return false
+
+    const laneOf = (item) => {
+      const center = (item.rect[0] + item.rect[2]) / 2
+      const lane = columns.findIndex(
+        (column) =>
+          item.rect[0] >= column[0] - height * 0.2 &&
+          item.rect[2] <= column[2] + height * 0.2 &&
+          center >= column[0] &&
+          center <= column[2]
+      )
+      return lane
+    }
+    if (source.some((item) => laneOf(item) < 0)) return false
+    const groups = []
+    for (const item of source.sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+      const previous = groups.at(-1)
+      if (previous && Math.abs(previous.baseline - item.baseline) <= height * 0.65) {
+        previous.items.push(item)
+        previous.baseline = (previous.baseline + item.baseline) / 2
+      } else groups.push({ baseline: item.baseline, items: [item] })
+    }
+    const header = groups.find((group) => {
+      const byLane = Array.from({ length: 3 }, () => [])
+      for (const item of group.items) byLane[laneOf(item)].push(item)
+      return (
+        byLane.every((lane) => lane.length === 1) &&
+        byLane.map((lane) => lane[0].text.trim()).join('|') === 'Parameter|Value|Notes'
+      )
+    })
+    if (!header) return false
+    const headerBaseline = header.baseline
+    const key = (item) =>
+      `${item.pageNumber ?? item.sourceItem?.pageNumber ?? ''}:${item.index ?? item.sourceItem?.index ?? ''}:${item.text}:${item.rect?.join(',')}`
+    const shapeKey = (item) => `${item.text}:${item.rect?.join(',')}`
+    const owned = new Set(),
+      owners = new Map(),
+      movableOwned = new Set(),
+      movableOwners = new Map()
+    for (const cell of cells) {
+      for (const item of cell.sourceTokens ?? []) {
+        const tokenKey = key(item)
+        owned.add(tokenKey)
+        owners.set(tokenKey, cell)
+        if (/^cls$/iu.test(item.text?.trim() ?? '') && /^cls\b/iu.test(cell.text?.trim() ?? '')) {
+          const shape = shapeKey(item)
+          movableOwned.add(shape)
+          movableOwners.set(shape, cell)
+        }
+      }
+      for (const item of cell.sourceItems ?? []) {
+        const tokenKey = key(item)
+        owned.add(tokenKey)
+        owners.set(tokenKey, cell)
+      }
+    }
+    const available = new Map()
+    for (const text of unassigned) available.set(text, (available.get(text) ?? 0) + 1)
+    const candidates = groups
+      .filter((group) => group.baseline > headerBaseline + height * 0.4)
+      .map((group) => {
+        const byLane = Array.from({ length: 3 }, () => [])
+        for (const item of group.items) byLane[laneOf(item)].push(item)
+        return { ...group, byLane }
+      })
+      .filter(({ byLane }) => {
+        const populated = byLane.filter((lane) => lane.length)
+        return (
+          byLane[0].length > 0 &&
+          byLane[1].length > 0 &&
+          populated
+            .flat()
+            .every((item) => !owned.has(key(item)) || movableOwned.has(shapeKey(item))) &&
+          populated.flat().every((item) => {
+            if (movableOwned.has(shapeKey(item))) return true
+            const count = available.get(item.text) ?? 0
+            return count > 0
+          })
+        )
+      })
+    if (!candidates.length) return false
+
+    const consumed = new Set()
+    for (const candidate of candidates) {
+      const rowTop = Math.max(
+        top,
+        Math.min(...candidate.items.map((item) => item.rect[1])) - height * 0.15
+      )
+      const rowBottom = Math.min(
+        bottom,
+        Math.max(...candidate.items.map((item) => item.rect[3])) + height * 0.15
+      )
+      if (!(rowBottom > rowTop)) continue
+      const insertAt = rows.findIndex((row) => row.rect?.[1] > rowTop)
+      const index = insertAt < 0 ? rows.length : insertAt
+      const row = { rect: [left, rowTop, right, rowBottom], origin: 'source-parameter-row' }
+      for (const cell of cells) if (cell.row >= index) cell.row += 1
+      if (Array.isArray(baseCells)) {
+        for (const cell of baseCells) if (cell.row >= index) cell.row += 1
+        for (let column = 0; column < 3; column++)
+          baseCells.push({
+            row: index,
+            column,
+            rowSpan: 1,
+            colSpan: 1,
+            origin: 'source-parameter-row',
+            rect: [columns[column][0], rowTop, columns[column][2], rowBottom]
+          })
+      }
+      for (const headerIndex of headerRows)
+        if (headerIndex >= index) headerRows[headerRows.indexOf(headerIndex)] += 1
+      rows.splice(index, 0, row)
+      for (let column = 0; column < 3; column++) {
+        const lane = candidate.byLane[column]
+        for (const item of lane) {
+          const tokenKey = key(item)
+          const shape = shapeKey(item)
+          if (!movableOwned.has(shape)) continue
+          const owner = movableOwners.get(shape) ?? owners.get(tokenKey)
+          if (!owner) continue
+          owner.sourceTokens = (owner.sourceTokens ?? []).filter(
+            (token) => shapeKey(token) !== shape
+          )
+          owner.sourceItems = (owner.sourceItems ?? []).filter((token) => shapeKey(token) !== shape)
+          owner.sourceRects = (owner.sourceRects ?? []).filter(
+            (rect) => rect.join(',') !== item.rect.join(',')
+          )
+          owner.text = (owner.sourceTokens ?? [])
+            .map((token) => token.text)
+            .join(' ')
+            .trim()
+        }
+        cells.push({
+          row: index,
+          column,
+          rowSpan: 1,
+          colSpan: 1,
+          origin: 'source-parameter-row',
+          rect: [columns[column][0], rowTop, columns[column][2], rowBottom],
+          text: lane
+            .map((item) => item.text)
+            .join(' ')
+            .trim(),
+          sourceTokens: lane,
+          sourceRects: lane.map((item) => item.rect),
+          sourceItems: lane.map((item) => item.sourceItem ?? item)
+        })
+        for (const item of lane) {
+          const at = unassigned.indexOf(item.text)
+          if (at >= 0) unassigned.splice(at, 1)
+          if (available.has(item.text))
+            available.set(item.text, Math.max(0, (available.get(item.text) ?? 1) - 1))
+          consumed.add(item)
+        }
+      }
+      repairs.push('native-three-column-parameter-row-recovered')
+    }
+    if (!consumed.size) return false
+    cells.sort((a, b) => a.row - b.row || a.column - b.column)
+    if (!unassigned.length && issues?.delete) issues.delete('unassigned-source-text')
+    return true
+  } catch {
+    return false
+  }
+}
+
+// A wide numeric table can lose one complete body band even when every native
+// glyph remains inside the table crop.  Recover only an exact, unassigned
+// numeric band that occupies every model column (or every column after an
+// intentionally blank leading stub), sits between existing peer rows, and is
+// fenced by the native table frame.  The gate deliberately rejects partial,
+// textual, or caption-like runs so ordinary ambiguity remains reviewable.
+export function recoverNativeCompleteNumericRows({
+  table,
+  items,
+  rows,
+  cells,
+  baseCells,
+  columnRects,
+  headerRows = [],
+  rules = [],
+  unassigned,
+  issues,
+  repairs
+}) {
+  try {
+    if (
+      !table ||
+      !Array.isArray(table.cropRect) ||
+      table.cropRect.length !== 4 ||
+      !Array.isArray(items) ||
+      !Array.isArray(rows) ||
+      !Array.isArray(cells) ||
+      !Array.isArray(columnRects) ||
+      columnRects.length < 9 ||
+      !Array.isArray(unassigned) ||
+      !Array.isArray(rules) ||
+      !Array.isArray(repairs)
+    )
+      return false
+    const [left, top, right, bottom] = table.cropRect
+    if (![left, top, right, bottom].every(Number.isFinite) || right <= left || bottom <= top)
+      return false
+    const columns = columnRects
+      .map((rect) => (Array.isArray(rect) ? rect.slice() : null))
+      .filter(Boolean)
+      .sort((a, b) => a[0] - b[0])
+    if (
+      columns.length !== columnRects.length ||
+      columns.some(
+        (rect) =>
+          rect.length !== 4 ||
+          !rect.every(Number.isFinite) ||
+          rect[0] < left - 1 ||
+          rect[2] > right + 1 ||
+          rect[2] <= rect[0]
+      ) ||
+      columns.some((rect, index) => index && rect[0] < columns[index - 1][2] - 0.5)
+    )
+      return false
+    const source = items.filter(
+      (item) =>
+        item?.horizontal !== false &&
+        typeof item?.text === 'string' &&
+        item.text.trim() &&
+        Array.isArray(item.rect) &&
+        item.rect.length === 4 &&
+        item.rect.every(Number.isFinite) &&
+        item.rect[0] >= left &&
+        item.rect[2] <= right &&
+        item.rect[1] >= top &&
+        item.rect[3] <= bottom
+    )
+    if (source.length < columns.length) return false
+    const heights = source
+      .map((item) => item.height)
+      .filter((height) => Number.isFinite(height) && height > 0)
+      .sort((a, b) => a - b)
+    const height = heights[Math.floor(heights.length / 2)]
+    if (!(height > 0)) return false
+    const frameRules = rules.filter(
+      (rule) =>
+        Array.isArray(rule) &&
+        rule.length === 4 &&
+        rule.every(Number.isFinite) &&
+        rule[1] === rule[3] &&
+        rule[0] <= left + height &&
+        rule[2] >= right - height &&
+        rule[2] - rule[0] >= (right - left) * 0.85
+    )
+    if (frameRules.length < 2) return false
+    const numeric = (text) =>
+      /^(?:\(?\s*[<>≤≥−+-]?\d[\d\s.,/%±*–−+-]*\s*\)?|[<>≤≥−+-]?\d[\d\s.,/%±*–−+]*)$/u.test(
+        text.trim()
+      )
+    const laneOf = (item) => {
+      const center = (item.rect[0] + item.rect[2]) / 2
+      return columns.findIndex(
+        (column) =>
+          item.rect[0] >= column[0] - height * 0.2 &&
+          item.rect[2] <= column[2] + height * 0.2 &&
+          center >= column[0] &&
+          center <= column[2]
+      )
+    }
+    const key = (item) =>
+      `${item.pageNumber ?? item.sourceItem?.pageNumber ?? ''}:${item.index ?? item.sourceItem?.index ?? ''}:${item.text}:${item.rect?.join(',')}`
+    const owned = new Set()
+    for (const cell of cells) {
+      for (const item of [...(cell.sourceTokens ?? []), ...(cell.sourceItems ?? [])])
+        owned.add(key(item))
+    }
+    const available = new Map()
+    for (const text of unassigned) available.set(text, (available.get(text) ?? 0) + 1)
+    const candidateSource = source.filter(
+      (item) => !owned.has(key(item)) && (available.get(item.text) ?? 0) > 0
+    )
+    const groups = []
+    for (const item of candidateSource.slice().sort((a, b) => {
+      const ay = Number.isFinite(a.baseline) ? a.baseline : a.rect[3]
+      const by = Number.isFinite(b.baseline) ? b.baseline : b.rect[3]
+      return ay - by || a.rect[0] - b.rect[0]
+    })) {
+      const baseline = Number.isFinite(item.baseline) ? item.baseline : item.rect[3]
+      const previous = groups.at(-1)
+      if (previous && Math.abs(previous.baseline - baseline) <= height * 0.55) {
+        previous.items.push(item)
+        previous.baseline = (previous.baseline + baseline) / 2
+      } else groups.push({ baseline, items: [item] })
+    }
+    const population = (row) => {
+      const occupied = new Set()
+      for (const cell of cells) {
+        if (cell.row !== row || !cell.text?.trim()) continue
+        for (let column = cell.column; column < cell.column + (cell.colSpan ?? 1); column++)
+          occupied.add(column)
+      }
+      return occupied
+    }
+    const baselineForRow = (rowIndex) => {
+      const values = cells
+        .filter((cell) => cell.row === rowIndex)
+        .flatMap((cell) => [...(cell.sourceTokens ?? []), ...(cell.sourceItems ?? [])])
+        .map((item) => item?.baseline)
+        .filter((value) => Number.isFinite(value))
+        .sort((a, b) => a - b)
+      return values.length ? values[Math.floor(values.length / 2)] : undefined
+    }
+    const peerMasks = new Map()
+    for (let row = 0; row < rows.length; row++) {
+      const mask = [...population(row)].sort((a, b) => a - b).join(',')
+      if (mask) peerMasks.set(mask, (peerMasks.get(mask) ?? 0) + 1)
+    }
+    const candidates = groups
+      .map((group) => {
+        const byLane = Array.from({ length: columns.length }, () => [])
+        let invalid = false
+        for (const item of group.items) {
+          const lane = laneOf(item)
+          if (lane < 0) {
+            invalid = true
+            break
+          }
+          byLane[lane].push(item)
+        }
+        const occupied = byLane
+          .map((lane, column) => (lane.length ? column : -1))
+          .filter((c) => c >= 0)
+        const mask = occupied.join(',')
+        return { ...group, byLane, occupied, mask, invalid }
+      })
+      .filter(({ byLane, occupied, items: groupItems, invalid }) => {
+        const full = occupied.length === columns.length
+        const leadingStub =
+          occupied.length === columns.length - 1 &&
+          occupied[0] === 1 &&
+          occupied.every((column, index) => column === index + 1)
+        return (
+          !invalid &&
+          (full || leadingStub) &&
+          byLane.every((lane) => lane.length <= 1) &&
+          groupItems.every(
+            (item) => !owned.has(key(item)) && (available.get(item.text) ?? 0) > 0
+          ) &&
+          groupItems.every((item) => numeric(item.text)) &&
+          peerMasks.get(occupied.join(',')) >= 2
+        )
+      })
+    if (!candidates.length) return false
+    let recovered = false
+    for (const candidate of candidates) {
+      const rowTop = Math.max(
+        top,
+        Math.min(...candidate.items.map((item) => item.rect[1])) - height * 0.18
+      )
+      const rowBottom = Math.min(
+        bottom,
+        Math.max(...candidate.items.map((item) => item.rect[3])) + height * 0.18
+      )
+      if (!(rowBottom > rowTop)) continue
+      const insertAt = rows.findIndex((row, rowIndex) => {
+        const baseline = baselineForRow(rowIndex)
+        return Number.isFinite(baseline) ? baseline > candidate.baseline : row.rect?.[1] > rowTop
+      })
+      const index = insertAt < 0 ? rows.length : insertAt
+      const previousBaseline = index > 0 ? baselineForRow(index - 1) : undefined
+      const nextBaseline = index < rows.length ? baselineForRow(index) : undefined
+      if (
+        !Number.isFinite(previousBaseline) ||
+        !Number.isFinite(nextBaseline) ||
+        !(previousBaseline < candidate.baseline && candidate.baseline < nextBaseline) ||
+        candidate.baseline - previousBaseline < height * 0.35 ||
+        nextBaseline - candidate.baseline < height * 0.35
+      )
+        continue
+      const row = {
+        rect: [left, rowTop, right, rowBottom],
+        origin: 'source-native-complete-numeric-row',
+        numericRecord: true
+      }
+      for (const cell of cells) if (cell.row >= index) cell.row += 1
+      if (Array.isArray(baseCells)) {
+        for (const cell of baseCells) if (cell.row >= index) cell.row += 1
+        for (let column = 0; column < columns.length; column++)
+          baseCells.push({
+            row: index,
+            column,
+            rowSpan: 1,
+            colSpan: 1,
+            origin: 'source-native-complete-numeric-row',
+            rect: [columns[column][0], rowTop, columns[column][2], rowBottom]
+          })
+      }
+      for (let n = 0; n < headerRows.length; n++) if (headerRows[n] >= index) headerRows[n] += 1
+      rows.splice(index, 0, row)
+      for (let column = 0; column < columns.length; column++) {
+        const lane = candidate.byLane[column]
+        const item = lane[0]
+        const text = item?.text?.trim() ?? ''
+        cells.push({
+          row: index,
+          column,
+          rowSpan: 1,
+          colSpan: 1,
+          origin: 'source-native-complete-numeric-row',
+          rect: [columns[column][0], rowTop, columns[column][2], rowBottom],
+          text,
+          sourceTokens: item ? [item] : [],
+          sourceRects: item ? [item.rect] : [],
+          sourceItems: item ? [item.sourceItem ?? item] : []
+        })
+        if (item) {
+          const at = unassigned.indexOf(item.text)
+          if (at >= 0) unassigned.splice(at, 1)
+          available.set(item.text, Math.max(0, (available.get(item.text) ?? 1) - 1))
+        }
+      }
+      repairs.push('native-complete-numeric-row-recovered')
+      recovered = true
+    }
+    if (!recovered) return false
+    cells.sort((a, b) => a.row - b.row || a.column - b.column)
+    if (!unassigned.length && issues?.delete) issues.delete('unassigned-source-text')
+    return true
+  } catch {
+    return false
+  }
+}
+
 function planNativeCategoryLayout({
   table,
   items,
