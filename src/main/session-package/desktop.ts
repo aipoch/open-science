@@ -492,6 +492,7 @@ export class SessionPackageDesktop {
         const pid = Number(match[1])
         if (pid === process.pid || pid > 0x7fff_ffff) continue
         try {
+          // Hosts sharing this temp directory must also share a PID namespace.
           process.kill(pid, 0)
           continue
         } catch (error) {
