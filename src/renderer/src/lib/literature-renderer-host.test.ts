@@ -1,4 +1,5 @@
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
+import { libraryLeaveGuardScope, previewLeaveGuards } from '@/stores/preview-leave-guard'
 import { expect, it, vi } from 'vitest'
 import { literatureRendererHost } from './literature-renderer-host'
 import type { ManagedPreviewResource } from '../../../shared/preview-resources'
@@ -49,6 +50,33 @@ it('notifies recovery subscribers only when connected again and releases the sub
   } finally {
     dispose()
     useDesktopRuntimeRecoveryStore.setState(previous, true)
+  }
+})
+
+it('protects Library drafts through the shared leave coordinator and releases the guard', () => {
+  let dirty = true
+  const canLeave = vi.fn(() => !dirty)
+  const leave = vi.fn()
+  const dispose = literatureRendererHost.registerLibraryLeaveGuard(canLeave, () => dirty)
+  try {
+    expect(previewLeaveGuards.hasUnsavedChanges()).toBe(true)
+    expect(previewLeaveGuards.request(libraryLeaveGuardScope, leave)).toBe(false)
+    expect(canLeave).toHaveBeenCalledTimes(1)
+    expect(leave).not.toHaveBeenCalled()
+
+    dirty = false
+    expect(previewLeaveGuards.hasUnsavedChanges()).toBe(false)
+    expect(previewLeaveGuards.request(libraryLeaveGuardScope, leave)).toBe(true)
+    expect(leave).toHaveBeenCalledTimes(1)
+
+    dirty = true
+    dispose()
+    expect(previewLeaveGuards.hasUnsavedChanges()).toBe(false)
+    expect(previewLeaveGuards.request(libraryLeaveGuardScope, leave)).toBe(true)
+    expect(canLeave).toHaveBeenCalledTimes(2)
+    expect(leave).toHaveBeenCalledTimes(2)
+  } finally {
+    dispose()
   }
 })
 

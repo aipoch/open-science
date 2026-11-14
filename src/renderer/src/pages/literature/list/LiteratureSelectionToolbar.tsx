@@ -25,6 +25,7 @@ import {
   MoreHorizontal,
   RotateCcw,
   Search,
+  Table2,
   Trash2,
   X
 } from 'lucide-react'
@@ -40,6 +41,7 @@ import type { ReferenceExportRequest } from '@aipoch/literature-library/client'
 const LITERATURE_BATCH_COMMAND_SIZE = 200
 
 export function LiteratureSelectionToolbar({
+  onAddToComparison,
   overviewActions,
   overviewMenuAction,
   selectedItemCount,
@@ -80,6 +82,7 @@ export function LiteratureSelectionToolbar({
   runLifecycleAction,
   requestPermanentDeletion
 }: {
+  onAddToComparison?: () => void
   overviewActions?: React.ReactNode
   overviewMenuAction?: React.ReactNode
   selectedItemCount: number
@@ -254,6 +257,20 @@ export function LiteratureSelectionToolbar({
             <LiteratureHoverMenuGroup>
               <div className="flex flex-col">
                 {overviewMenuAction && <PopoverClose asChild>{overviewMenuAction}</PopoverClose>}
+                {section === 'library' && onAddToComparison ? (
+                  <PopoverClose asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={isBatching}
+                      onClick={onAddToComparison}
+                    >
+                      <Table2 className="size-3.5" aria-hidden="true" />
+                      {t('Create comparison table')}
+                    </Button>
+                  </PopoverClose>
+                ) : null}
                 {section === 'library' ? (
                   <Button
                     type="button"

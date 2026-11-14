@@ -1,3 +1,4 @@
+import type { ComparisonRequest, ComparisonResult } from '../literature-comparison'
 import type { OverviewBatchRequest, OverviewBatch } from '../literature-overview-batch'
 import type { CollectorRequest, CollectorResult } from '../literature-collector'
 import type { LiteratureOverviewRequest, LiteratureOverviewResult } from '../literature-overview'
@@ -83,6 +84,10 @@ import {
 } from './definition'
 
 export const contracts = {
+  'literature.comparisons': callable<(request: ComparisonRequest) => Promise<ComparisonResult>>()(
+    'literature',
+    ['literature:comparisons', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'literature.collect': callable<(request: CollectorRequest) => Promise<CollectorResult>>()(
     'literature',
     ['literature:collect', WEB, undefined, undefined, RUNTIME_VALIDATED]

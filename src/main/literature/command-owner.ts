@@ -1,3 +1,4 @@
+import type { LiteratureComparisons } from './comparison/owner'
 import type { LiteratureOverviewBatch } from './overview-batch'
 import type { LiteratureOverviewService } from './overview'
 import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
@@ -41,6 +42,7 @@ import {
 } from '../../shared/literature-collector'
 
 type LiteratureCommandServices = Readonly<{
+  literatureComparisons: Pick<LiteratureComparisons, 'run'>
   literatureOverviewBatch: Pick<LiteratureOverviewBatch, 'run'>
   literatureOverview: Pick<LiteratureOverviewService, 'run'>
   journalAttributes: Pick<JournalAttributes, 'run'>
@@ -85,6 +87,7 @@ type LiteratureCommandServices = Readonly<{
 }>
 
 export const createLiteratureCommandOwner = ({
+  literatureComparisons,
   literatureOverview,
   literatureOverviewBatch,
   journalAttributes,
@@ -105,6 +108,7 @@ export const createLiteratureCommandOwner = ({
   literatureCollector,
   contentRepository
 }: LiteratureCommandServices): LiteratureCommandOwner => ({
+  comparisons: (request) => literatureComparisons.run(request),
   collect: async (request, signal) => {
     try {
       return await literatureCollector.run(request, signal)

@@ -151,14 +151,14 @@ L’ancien onglet Modèle devient **Capacités locales** et regroupe l’extract
 
 ## Que pouvez-vous faire avec AIPOCH Open-Science ?
 
-| Tâche                             | Marche à suivre                                                                                                                                                               |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Examiner la littérature           | Importez des références Zotero, sélectionnez les articles selon vos critères et consultez le PDF original pour vérifier un résultat.                                          |
-| Analyser des données              | Exécutez Python ou R dans un Notebook et examinez les tableaux et figures à côté des fichiers sources.                                                                        |
-| Retrouver l’origine d’un résultat | Consultez les entrées, le code et l’historique d’une version dans la vue de provenance. Relancez le calcul si la procédure, les entrées et l’environnement sont disponibles.  |
-| Transmettre un résultat           | Partagez un [paquet `.science`](#share-your-research) pour permettre l’examen des étapes et des versions de fichiers utilisées.                                               |
-| Enrichir un processus             | Activez des connecteurs de données scientifiques, choisissez des compétences intégrées ou installez des compétences et des spécialistes depuis les catalogues.                |
-| Choisir un modèle                 | Connectez un fournisseur compatible, une passerelle personnalisée ou un abonnement Claude ou Codex pris en charge. Les protocoles disponibles dépendent du moteur de l’agent. |
+| Tâche                             | Marche à suivre                                                                                                                                                                                                  |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Examiner la littérature           | Importez des références Zotero, sélectionnez les articles selon vos critères et consultez le PDF original pour vérifier un résultat. Comparer les résultats des références et exporter le tableau au format CSV. |
+| Analyser des données              | Exécutez Python ou R dans un Notebook et examinez les tableaux et figures à côté des fichiers sources.                                                                                                           |
+| Retrouver l’origine d’un résultat | Consultez les entrées, le code et l’historique d’une version dans la vue de provenance. Relancez le calcul si la procédure, les entrées et l’environnement sont disponibles.                                     |
+| Transmettre un résultat           | Partagez un [paquet `.science`](#share-your-research) pour permettre l’examen des étapes et des versions de fichiers utilisées.                                                                                  |
+| Enrichir un processus             | Activez des connecteurs de données scientifiques, choisissez des compétences intégrées ou installez des compétences et des spécialistes depuis les catalogues.                                                   |
+| Choisir un modèle                 | Connectez un fournisseur compatible, une passerelle personnalisée ou un abonnement Claude ou Codex pris en charge. Les protocoles disponibles dépendent du moteur de l’agent.                                    |
 
 <a id="performances-aux-benchmarks"></a>
 

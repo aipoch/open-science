@@ -2,7 +2,7 @@
 import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
 import { setI18nLocale } from '@/i18n'
 import { useLocaleStore } from '@/stores/locale-store'
-import { act, cleanup, fireEvent, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { LiteratureJobSummary } from '@aipoch/literature-discovery/jobs'
 import { LiteratureBackgroundTasks } from './LiteratureBackgroundTasks'
@@ -351,4 +351,200 @@ it('keeps unsearched references discoverable after a partial application is mark
     }
   ])
   expect(screen.queryByRole('button', { name: 'Background tasks' })).not.toBeNull()
+})
+
+it('shows comparison progress from summaries without reading table contents', async () => {
+  const onOpenItem = vi.fn()
+  const onOpenComparison = vi.fn()
+  const comparisons = vi.fn().mockResolvedValue({
+    tables: [],
+    summaries: [
+      {
+        id: 'comparison',
+        name: 'Bounded comparison',
+        state: 'running',
+        memberCount: 100,
+        total: 1200,
+        succeeded: 321,
+        pending: 878,
+        running: 1,
+        failed: 0,
+        unavailable: 0,
+        pendingItemIds: ['repair-reference']
+      }
+    ]
+  })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: {
+      literature: { jobs: vi.fn().mockResolvedValue({ jobs: [], summaries: [] }), comparisons }
+    }
+  })
+  await act(async () => {
+    render(
+      <LiteratureBackgroundTasks
+        onOpen={vi.fn()}
+        onOpenComparison={onOpenComparison}
+        onOpenItem={onOpenItem}
+      />
+    )
+  })
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Background tasks' }))
+  expect(screen.getByText('Bounded comparison')).toBeTruthy()
+  expect(screen.getByText(/321 \/ 1200/)).toBeTruthy()
+  expect(comparisons.mock.calls.every(([request]) => request.action === 'list')).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: 'Pause after current cell' }))
+  await waitFor(() =>
+    expect(comparisons).toHaveBeenCalledWith({ action: 'pause', tableId: 'comparison' })
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Open reference' }))
+  await waitFor(() =>
+    expect(onOpenItem).toHaveBeenCalledExactlyOnceWith('repair-reference', expect.any(Function))
+  )
+  expect(onOpenComparison).not.toHaveBeenCalled()
+  expect(screen.queryByRole('dialog')).toBeNull()
+})
+
+it.each([1, 0])(
+  'describes a paused comparison with %s in-flight cells accurately',
+  async (running) => {
+    const comparisons = vi.fn().mockResolvedValue({
+      tables: [],
+      summaries: [
+        {
+          id: 'comparison',
+          name: 'Paused comparison',
+          state: 'paused',
+          memberCount: 2,
+          total: 2,
+          succeeded: 1,
+          pending: 1 - running,
+          running,
+          failed: 0,
+          unavailable: 0
+        }
+      ]
+    })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        literature: { jobs: vi.fn().mockResolvedValue({ jobs: [], summaries: [] }), comparisons }
+      }
+    })
+    await act(async () => {
+      render(<LiteratureBackgroundTasks onOpen={vi.fn()} onOpenComparison={vi.fn()} />)
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Background tasks' }))
+    const row = screen.getByText('Paused comparison').closest('li')!
+    expect(row.textContent).toContain(
+      running ? 'Saving the current cell before pausing…' : 'Paused'
+    )
+    expect(within(row).queryByRole('button', { name: 'Pause after current cell' })).toBeNull()
+  }
+)
+
+it('names the exact task reference and restores task-list scroll and focus after detail closes', async () => {
+  const onOpenItem = vi.fn()
+  const onOpenComparison = vi.fn()
+  const summary = {
+    id: 'comparison',
+    name: 'Reading queue',
+    state: 'running',
+    memberCount: 2,
+    total: 2,
+    succeeded: 0,
+    pending: 1,
+    running: 1,
+    failed: 0,
+    unavailable: 0,
+    pendingItemIds: ['queued'],
+    reference: { itemId: 'running', title: 'Running report' }
+  }
+  const comparisons = vi.fn().mockResolvedValue({ tables: [], summaries: [summary] })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: {
+      literature: { jobs: vi.fn().mockResolvedValue({ jobs: [], summaries: [] }), comparisons }
+    }
+  })
+  await act(async () => {
+    render(
+      <LiteratureBackgroundTasks
+        onOpen={vi.fn()}
+        onOpenItem={onOpenItem}
+        onOpenComparison={onOpenComparison}
+      />
+    )
+  })
+  fireEvent.click(await screen.findByRole('button', { name: 'Background tasks' }))
+  const task = screen.getByRole('dialog', { name: 'Background tasks' })
+  const reference = within(task).getByRole('button', { name: 'Open reference: Running report' })
+  const list = reference.closest('ul')!.parentElement!
+  list.scrollTop = 185
+  fireEvent.click(reference)
+  await waitFor(() => expect(onOpenItem).toHaveBeenCalledWith('running', expect.any(Function)))
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(onOpenComparison).not.toHaveBeenCalled()
+  comparisons.mockResolvedValue({
+    tables: [],
+    summaries: [{ ...summary, reference: { itemId: 'next', title: 'Next report' } }]
+  })
+  await act(async () => {
+    window.dispatchEvent(new Event('literature-comparisons-changed'))
+  })
+  await act(async () => {
+    onOpenItem.mock.calls[0][1]()
+  })
+  const restored = await screen.findByRole('dialog', { name: 'Background tasks' })
+  const returnedReference = within(restored).getByRole('button', {
+    name: 'Open reference: Next report'
+  })
+  await waitFor(() => expect(document.activeElement).toBe(returnedReference))
+  expect(returnedReference.closest('ul')!.parentElement!.scrollTop).toBe(185)
+  fireEvent.click(
+    within(restored).getByRole('button', { name: 'Open comparison table: Reading queue' })
+  )
+  expect(onOpenComparison).toHaveBeenCalledExactlyOnceWith('comparison')
+  expect(comparisons.mock.calls.every(([request]) => request.action === 'list')).toBe(true)
+})
+
+it('restores the task list with an error when the reference is unavailable', async () => {
+  const onOpenItem = vi.fn().mockRejectedValue(new Error('Reference unavailable'))
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: {
+      literature: {
+        jobs: vi.fn().mockResolvedValue({ jobs: [], summaries: [] }),
+        comparisons: vi.fn().mockResolvedValue({
+          tables: [],
+          summaries: [
+            {
+              id: 'comparison',
+              name: 'Reading queue',
+              state: 'interrupted',
+              memberCount: 1,
+              total: 1,
+              succeeded: 0,
+              pending: 1,
+              running: 0,
+              failed: 0,
+              unavailable: 0,
+              pendingItemIds: ['removed'],
+              reference: { itemId: 'removed', title: 'Removed report' }
+            }
+          ]
+        })
+      }
+    }
+  })
+  await act(async () => {
+    render(<LiteratureBackgroundTasks onOpen={vi.fn()} onOpenItem={onOpenItem} />)
+  })
+  fireEvent.click(await screen.findByRole('button', { name: 'Background tasks' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Open reference: Removed report' }))
+  expect(await screen.findByText('This reference is no longer in your Library.')).toBeTruthy()
+  expect(screen.getByRole('dialog', { name: 'Background tasks' })).toBeTruthy()
 })

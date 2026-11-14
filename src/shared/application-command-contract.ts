@@ -9,6 +9,7 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'settings-invalid',
   'settings-credential-unavailable',
   'session-details-conflict',
+  'comparison-config-changed',
   'session-size-limit',
   'session-package-source-unavailable',
   'session-package-invalid-archive',

@@ -1,3 +1,5 @@
+import { LiteratureComparisons } from '../literature/comparison/owner'
+import { ComparisonExtractor } from '../literature/comparison/extractor'
 import { LiteratureOverviewBatch } from '../literature/overview-batch'
 import { LiteratureOverviewService, LiteratureOverviewStore } from '../literature/overview'
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
@@ -82,6 +84,7 @@ export async function composeResearchCatalog({
   tagService: TagService
   memoryService: MemoryService
   literatureCatalog: LiteratureCatalog
+  literatureComparisons: LiteratureComparisons
   literatureOverviewBatch: LiteratureOverviewBatch
   literatureOverview: LiteratureOverviewService
   journalAttributes: JournalAttributes
@@ -200,6 +203,41 @@ export async function composeResearchCatalog({
         outputLimitBytes: 24_000
       })
   })
+  const comparisonSources = { catalog: literatureCatalog, reader: literatureDocumentReader }
+  const literatureComparisons = new LiteratureComparisons({
+    sourceRevision: () => smartCollectionRevision,
+    path: () => join(resolveDataRoot(), 'literature', 'comparisons-v1.json'),
+    extractor: new ComparisonExtractor({
+      ...comparisonSources,
+      infer: async () => {
+        throw new Error('Not an inference owner.')
+      }
+    }),
+    capture: async () => {
+      const target = await settingsService.captureActiveExplicitAgentBackendTarget()
+      return new ComparisonExtractor({
+        ...comparisonSources,
+        infer: ({ prompt, systemPrompt, signal }) =>
+          overviewRunner.run({
+            prompt,
+            systemPrompt,
+            signal,
+            target,
+            agentName: 'open-science-comparison',
+            description: 'Extract one evidence-grounded comparison field without tools.',
+            outputLimitBytes: 100_000
+          })
+      })
+    },
+    onError: (error) =>
+      literatureContextLog.error('Literature comparison checkpoint failed', errorLogFields(error))
+  })
+  await modules.add(literatureComparisons, (owner) => ({
+    name: 'literature-comparisons',
+    capability: owner,
+    start: () => owner.start(),
+    dispose: () => owner.dispose()
+  }))
   const literatureOverviewBatch = new LiteratureOverviewBatch(
     () => join(resolveDataRoot(), 'literature', 'snapshot-batch.json'),
     literatureOverview
@@ -321,6 +359,7 @@ export async function composeResearchCatalog({
     journalAttributes,
     literatureCatalog,
     literatureOverview,
+    literatureComparisons,
     literatureOverviewBatch,
     literatureCitationFormatter,
     literatureCitationDocument,

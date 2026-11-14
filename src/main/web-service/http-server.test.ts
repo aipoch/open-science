@@ -26,7 +26,12 @@ vi.mock('electron', () => ({
 }))
 
 import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
-import { ApplicationCommandError } from '../../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  unwrapApplicationCommandOutcome
+} from '../../shared/application-command-contract'
+import { comparisonRequestSchema } from '../../shared/literature-comparison'
+import { LiteratureComparisons } from '../literature/comparison/owner'
 import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
 import {
   isWebRpcChannel,
@@ -206,6 +211,101 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it('preserves a real comparison configuration conflict across Web RPC without exposing internal errors', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'comparison-web-conflict-'))
+    roots.push(root)
+    const path = join(root, 'tables.json')
+    const owner = new LiteratureComparisons({
+      path: () => path,
+      extractor: {
+        member: async (itemId) => ({ itemId, title: itemId, abstract: 'text', sourceKey: 'source' })
+      },
+      capture: async () => {
+        throw new Error('not running')
+      }
+    })
+    await owner.start()
+    try {
+      const table = (
+        await owner.run({
+          action: 'create',
+          name: 'Concurrent configuration',
+          language: 'en',
+          sourcePolicy: 'abstract',
+          fields: [{ id: 'outcome', name: 'Outcome', rule: 'Original rule' }],
+          itemIds: ['paper']
+        })
+      ).tables[0]
+      const invoke = vi.fn(async (_channel: string, _caller: CallerContext, args: unknown[]) =>
+        owner.run(comparisonRequestSchema.parse(args[0]))
+      )
+      const server = await startTestWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'test-token',
+        staticRoot: '/unused',
+        rpc: { channels: () => ['literature:comparisons'], invoke },
+        bootstrap: {
+          appName: 'Open-Science',
+          appVersion: '0.0.0',
+          configRoot: root,
+          platform: 'test',
+          versions: { electron: '1', chrome: '1', node: '1' }
+        }
+      })
+      servers.push(server)
+      const update = {
+        action: 'update',
+        tableId: table.id,
+        expectedRevision: table.revision,
+        name: table.name,
+        sourcePolicy: table.sourcePolicy,
+        fields: [{ id: 'outcome', name: 'Outcome', rule: 'Saved by another client' }]
+      }
+      const post = (request: unknown): Promise<Response> =>
+        fetch(`http://127.0.0.1:${server.port}/rpc/literature%3Acomparisons`, {
+          method: 'POST',
+          headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+          body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [request] })
+        })
+      expect((await post(update)).status).toBe(200)
+      const saved = await readFile(path, 'utf8')
+      const response = await post({ ...update, name: 'Stale client title' })
+      expect(response.status).toBe(409)
+      const outcome = await response.json()
+      expect(outcome).toMatchObject({
+        ok: false,
+        error: {
+          code: 'comparison-config-changed',
+          message: 'comparison-config-changed'
+        }
+      })
+      // The same decoder used by the client must retain the renderer's conflict discriminator.
+      expect(() => unwrapApplicationCommandOutcome(outcome)).toThrow(
+        expect.objectContaining({
+          code: 'comparison-config-changed',
+          message: 'comparison-config-changed'
+        })
+      )
+      expect(await readFile(path, 'utf8')).toBe(saved)
+      // Ablation: removing the public error type reproduces the original lost discriminator.
+      invoke.mockRejectedValueOnce(new Error('comparison-config-changed'))
+      const untyped = await post(update)
+      expect(untyped.status).toBe(500)
+      const untypedOutcome = await untyped.json()
+      expect(untypedOutcome).toMatchObject({ ok: false, error: { code: 'command-failed' } })
+      expect(JSON.stringify(untypedOutcome)).not.toContain('comparison-config-changed')
+      invoke.mockRejectedValueOnce(new Error('private-storage-path-marker'))
+      const internal = await post(update)
+      expect(internal.status).toBe(500)
+      const redacted = await internal.json()
+      expect(redacted).toMatchObject({ ok: false, error: { code: 'command-failed' } })
+      expect(JSON.stringify(redacted)).not.toContain('private-storage-path-marker')
+    } finally {
+      await owner.dispose()
+    }
+  })
+
   it.each([0, 1, 2])(
     'finishes one remote revocation request even when its caller is batch item %s',
     async (callerIndex) => {
