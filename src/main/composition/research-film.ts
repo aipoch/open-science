@@ -42,26 +42,6 @@ import type { createDefaultSessionRepository } from '../session-persistence/ipc'
 import type { SettingsService } from '../settings/service'
 import { resolveDataRoot } from '../storage-root'
 
-function filmAuthoringPrompt(
-  systemPrompt: string,
-  maxOutputTokens: number | undefined,
-  replaceIncomplete: boolean
-): string {
-  const screenplay = systemPrompt === RESEARCH_VIDEO_SCREENPLAY_PROMPT
-  const defaultTarget = screenplay ? 6000 : 4000
-  // A configured cap can also count reasoning. The visible target is advisory across runtimes.
-  const initialTarget =
-    maxOutputTokens === undefined
-      ? defaultTarget
-      : Math.min(defaultTarget, Math.max(1, Math.floor(maxOutputTokens / 2)))
-  if (!replaceIncomplete && initialTarget === defaultTarget) return systemPrompt
-  const target = replaceIncomplete ? Math.max(1, Math.floor(initialTarget / 2)) : initialTarget
-  const compact = screenplay
-    ? 'Use 3–4 short scenes and one caption per scene. Keep the opening title and animation and the closing end_card; use at most one evidence panel per scene and omit optional fields that add no evidence. Preserve exact numbers, source references and the key limitation.'
-    : 'Use a simple drawing and reuse supplied helpers where applicable. Drop decorative detail while preserving the subject and any evidence in the scene.'
-  return `${systemPrompt}\n\nCompact output: aim for at most ${target} visible tokens. This target and the following brevity instructions override the default length and density above. Return a complete result. ${compact}`
-}
-
 /** Button-owned generation: no conversation tools, Artifact publication or Notebook transport. */
 export async function composeResearchFilm({
   configRoot,
@@ -125,7 +105,6 @@ export async function composeResearchFilm({
   const capture = async (): Promise<{
     target: Awaited<ReturnType<SettingsService['captureActiveExplicitAgentBackendTarget']>>
     budget: number
-    maxOutputTokens: number | undefined
     count: (text: string) => number
   }> => {
     const target = await settingsService.captureActiveExplicitAgentBackendTarget()
@@ -136,7 +115,6 @@ export async function composeResearchFilm({
     return {
       target,
       budget: researchFilmInputBudget(provider, model),
-      maxOutputTokens: provider.maxOutputTokens,
       count: researchFilmTokenCounter({
         ...target,
         model: model ? { kind: 'required', id: model } : target.model
@@ -153,7 +131,7 @@ export async function composeResearchFilm({
   ): Promise<string> => {
     signal.throwIfAborted()
     if (!targets.has(source)) targets.set(source, capture())
-    const { target, budget, maxOutputTokens, count } = await targets.get(source)!.catch((error) => {
+    const { target, budget, count } = await targets.get(source)!.catch((error) => {
       filmLog.info('film model target failed', {
         ...currentFilmAttempt(),
         sessionId: source.provenance.sessionId,
@@ -167,14 +145,6 @@ export async function composeResearchFilm({
     const started = performance.now()
     const correction =
       payload && typeof payload === 'object' && 'correction' in payload ? payload.correction : null
-    // The author discards incomplete drafts; a validation correction carries the actual draft.
-    const replaceIncomplete = Boolean(
-      correction &&
-      typeof correction === 'object' &&
-      'draft' in correction &&
-      correction.draft === ''
-    )
-    const authoringPrompt = filmAuthoringPrompt(systemPrompt, maxOutputTokens, replaceIncomplete)
     const fields = {
       ...currentFilmAttempt(),
       requestId,
@@ -190,11 +160,10 @@ export async function composeResearchFilm({
       .then(() =>
         researchVideoInference.run({
           target,
-          prompt: prepareResearchFilmPrompt(payload, authoringPrompt, budget, count),
-          systemPrompt: authoringPrompt,
+          prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
+          systemPrompt,
           agentName: 'Research explanation',
           description: 'Generate a research explanation from a frozen session',
-          outputLimitBytes: 64 * 1024,
           signal: AbortSignal.any([signal, AbortSignal.timeout(300_000)])
         })
       )
@@ -219,8 +188,6 @@ export async function composeResearchFilm({
             usage
           })
         signal.throwIfAborted()
-        if (error instanceof RestrictedInferenceError && error.code === 'output-limit')
-          throw new ResearchFilmOutputLimitError(error.message)
         throw error
       })
     filmLog.info('film model response', {
@@ -306,13 +273,7 @@ export async function composeResearchFilm({
       const budget = researchFilmInputBudget(provider, model)
       if (
         budget <
-        Math.max(
-          count(
-            filmAuthoringPrompt(RESEARCH_VIDEO_SCREENPLAY_PROMPT, provider.maxOutputTokens, false)
-          ),
-          count(filmAuthoringPrompt(animationInstructions, provider.maxOutputTokens, false))
-        ) +
-          512
+        Math.max(count(RESEARCH_VIDEO_SCREENPLAY_PROMPT), count(animationInstructions)) + 512
       )
         throw new Error(
           'The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.'

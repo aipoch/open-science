@@ -41,7 +41,7 @@ export async function writeWithResearchFilmCorrection<T>(
       correction = {
         draft: incomplete ? '' : output!,
         error: incomplete
-          ? 'The previous response was incomplete. Return a substantially shorter, complete replacement. Simplify presentation and code, preserve evidence and qualifications, and omit commentary. Do not continue the partial response.'
+          ? 'The previous response was incomplete. Return a complete replacement. Simplify presentation and code where possible, preserve evidence and qualifications, and omit commentary. Do not continue the partial response.'
           : error instanceof Error
             ? error.message
             : String(error)

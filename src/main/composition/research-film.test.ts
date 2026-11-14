@@ -57,7 +57,6 @@ const outcomes = [
   'unvalidated-interface',
   'max_tokens',
   'max_turn_requests',
-  'output-limit',
   'transport',
   'recovered',
   'refusal',
@@ -123,14 +122,6 @@ it.each(outcomes)(
         stopReason: outcome === 'empty' ? 'end_turn' : outcome,
         usage: { inputTokens: 10, outputTokens: 16384 }
       })
-    if (outcome === 'output-limit')
-      mocks.run.mockRejectedValue(
-        new RestrictedInferenceError('output-limit', 'byte output limit', {
-          inputTokens: 10,
-          outputTokens: 16384,
-          cacheTokens: 0
-        })
-      )
     if (outcome === 'transport')
       mocks.run.mockRejectedValue(
         new RestrictedInferenceError('transport-unavailable', 'transport unavailable', {
@@ -188,7 +179,7 @@ it.each(outcomes)(
               type: 'custom',
               model: outcome === 'refusal' ? 'claude-test' : 'test',
               contextWindow: outcome === 'input-unavailable' ? 9000 : 200_000,
-              ...(outcome === 'recovered' ? { maxOutputTokens: 2048 } : {})
+              ...(outcome === 'recovered' ? { maxOutputTokens: 200_000 } : {})
             }
           ]
         })),
@@ -293,6 +284,10 @@ it.each(outcomes)(
           (await owner.status({ ...request, checkReadiness: true })).preflightError
         ).toBeUndefined()
       }
+      if (outcome === 'recovered')
+        expect(
+          (await owner.status({ ...request, checkReadiness: true })).preflightError
+        ).toBeUndefined()
       if (outcome === 'target-unavailable') {
         input.settingsService.captureActiveExplicitAgentBackendTarget.mockRejectedValueOnce(
           new Error('private target failure')
@@ -357,48 +352,40 @@ it.each(outcomes)(
         expect(status.error).toContain(
           outcome === 'transport'
             ? 'transport unavailable'
-            : outcome === 'output-limit'
-              ? 'byte output limit'
-              : outcome === 'max_tokens'
-                ? 'output token limit'
-                : outcome === 'max_turn_requests'
-                  ? 'max_turn_requests'
-                  : outcome === 'empty'
-                    ? 'no research film content'
-                    : 'refusal'
+            : outcome === 'max_tokens'
+              ? 'output token limit'
+              : outcome === 'max_turn_requests'
+                ? 'max_turn_requests'
+                : outcome === 'empty'
+                  ? 'no research film content'
+                  : 'refusal'
         )
         expect(status.result).toBeUndefined()
         const calls =
           outcome === 'recovered'
             ? 4
-            : ['max_tokens', 'max_turn_requests', 'empty', 'output-limit'].includes(outcome)
+            : ['max_tokens', 'max_turn_requests', 'empty'].includes(outcome)
               ? 2
               : 1
         expect(mocks.run).toHaveBeenCalledTimes(calls)
         expect(input.recordAuxiliaryUsage).toHaveBeenCalledTimes(calls)
         expect(input.settingsService.captureActiveExplicitAgentBackendTarget).toHaveBeenCalledOnce()
-        expect(input.settingsService.getSettingsView).toHaveBeenCalledTimes(2)
+        expect(input.settingsService.getSettingsView).toHaveBeenCalledTimes(
+          outcome === 'recovered' ? 3 : 2
+        )
         expect(new Set(mocks.run.mock.calls.map(([request]) => request.target)).size).toBe(1)
         if (calls > 1) {
           const correction = JSON.parse(mocks.run.mock.calls[1][0].prompt).correction
-          expect(correction).toMatchObject({ draft: '', error: expect.stringContaining('shorter') })
-        }
-        if (outcome === 'max_tokens' || outcome === 'recovered') {
-          const targets = mocks.run.mock.calls.map(([{ systemPrompt }]) =>
-            systemPrompt.match(/at most \d+ (?:visible|output) tokens/g)?.at(-1)
-          )
-          expect(targets).toEqual(
-            outcome === 'recovered'
-              ? [
-                  'at most 1024 visible tokens',
-                  'at most 512 visible tokens',
-                  'at most 1024 visible tokens',
-                  'at most 512 visible tokens'
-                ]
-              : ['at most 6000 output tokens', 'at most 3000 visible tokens']
-          )
+          expect(correction).toMatchObject({
+            draft: '',
+            error: expect.stringContaining('complete replacement')
+          })
         }
         if (outcome === 'recovered') {
+          for (const [call] of mocks.run.mock.calls) {
+            expect(call.outputLimitBytes).toBeUndefined()
+            expect(call.systemPrompt).not.toMatch(/at most \d+ (?:visible|output) tokens/)
+          }
           const animationCorrection = JSON.parse(mocks.run.mock.calls[3][0].prompt)
           expect(animationCorrection).toMatchObject({
             path: 'anims/hook.js',
