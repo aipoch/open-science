@@ -770,12 +770,14 @@ const buildLiteratureLibraryToolSummary = (
   const presentation = outputs.map(presentationRecord).find(Boolean)
   const cachedSearch =
     action === 'search'
-      ? outputs.find(
-          (output) =>
-            output.coverageKind === 'cached-text-only' &&
-            output.incomplete === true &&
-            !(output.recordCount === 0 && output.totalRecordCount === 0)
-        )
+      ? [...outputs, presentation?.cachedSearch]
+          .filter(isRecord)
+          .find(
+            (output) =>
+              output.coverageKind === 'cached-text-only' &&
+              output.incomplete === true &&
+              !(output.recordCount === 0 && output.totalRecordCount === 0)
+          )
       : undefined
   const limitations = Array.isArray(cachedSearch?.limitations) ? cachedSearch.limitations : []
   const cachedCoverage = isRecord(cachedSearch?.coverage) ? cachedSearch.coverage : undefined

@@ -445,7 +445,49 @@ const literaturePresentationText = (value: unknown): string | undefined => {
         ]
       })
     : []
+  const cachedSearchSource = isRecord(source.cachedSearch) ? source.cachedSearch : undefined
+  const cachedCoverage = isRecord(cachedSearchSource?.coverage)
+    ? cachedSearchSource.coverage
+    : undefined
+  const cachedLimitations = cachedSearchSource?.limitations
+  const cachedSearch =
+    cachedSearchSource?.coverageKind === 'cached-text-only' &&
+    typeof cachedSearchSource.incomplete === 'boolean'
+      ? {
+          coverageKind: 'cached-text-only',
+          incomplete: cachedSearchSource.incomplete,
+          recordCount: nonNegativeInteger(cachedSearchSource.recordCount),
+          totalRecordCount: nonNegativeInteger(cachedSearchSource.totalRecordCount),
+          scannedSources: nonNegativeInteger(cachedSearchSource.scannedSources),
+          nextOffset: nonNegativeInteger(cachedSearchSource.nextOffset),
+          sourceSelectionTruncated: cachedSearchSource.sourceSelectionTruncated === true,
+          truncated: cachedSearchSource.truncated === true,
+          coverage: cachedCoverage
+            ? Object.fromEntries(
+                [
+                  'requestedDocuments',
+                  'cachedDocuments',
+                  'notCachedDocuments',
+                  'unavailableDocuments'
+                ].map((key) => [key, nonNegativeInteger(cachedCoverage[key])])
+              )
+            : undefined,
+          limitations: Array.isArray(cachedLimitations)
+            ? [
+                'cached-pages-unverified',
+                'more-records',
+                'source-limit',
+                'not-cached',
+                'unavailable-sources',
+                'unavailable-reader',
+                'stale-results',
+                'result-limit'
+              ].filter((reason) => cachedLimitations.includes(reason))
+            : []
+        }
+      : undefined
   const presentation = {
+    ...(cachedSearch ? { cachedSearch } : {}),
     ...(retrievalMode ? { retrievalMode } : {}),
     ...(documentNames.length > 0 ? { documentNames } : {}),
     ...(textCoverage.length > 0 ? { textCoverage } : {}),

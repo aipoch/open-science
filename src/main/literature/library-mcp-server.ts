@@ -286,6 +286,19 @@ type LiteratureLibraryPresentation = Readonly<{
   pageStart?: number
   pageEnd?: number
   retrievalMode?: 'bm25' | 'fallback'
+  cachedSearch?: Pick<
+    LiteratureLibraryFullTextSearchResult,
+    | 'coverageKind'
+    | 'incomplete'
+    | 'recordCount'
+    | 'totalRecordCount'
+    | 'scannedSources'
+    | 'coverage'
+    | 'nextOffset'
+    | 'sourceSelectionTruncated'
+    | 'truncated'
+    | 'limitations'
+  >
 }>
 
 const presentationText = (
@@ -1080,7 +1093,7 @@ const createLiteratureLibraryMcpServer = (
     {
       title: 'Search literature library',
       description:
-        "Browse or search metadata records in the user's Open-Science Literature Library. Does not search external providers or read PDF full text. Omit query to browse. scope: project (default) returns records linked to the current Project; library searches the whole Library, only when the user asks for it; collection requires collectionId for a Collection the user selected; items requires itemIds the user selected. collectionId and itemIds are rejected with any other scope. Pages hold at most 20 records (also the default), and fewer when the response would exceed about 38,000 characters, so abstractPreview may be shortened (abstractTruncated). Continue while hasMore is true by passing nextOffset as offset. authors lists only authors; creatorCount counts all contributors. Optional citationHref cites metadata only; it does not establish paper contents and may be omitted to preserve the page response budget.",
+        'Find Library records by metadata, including titles, authors and abstracts, or browse without a query. Does not search external providers or read PDF full text. Omit query to browse. scope: project (default) returns records linked to the current Project; library searches the whole Library, only when the user asks for it; collection requires collectionId for a Collection the user selected; items requires itemIds the user selected. collectionId and itemIds are rejected with any other scope. Pages hold at most 20 records (also the default), and fewer when the response would exceed about 38,000 characters, so abstractPreview may be shortened (abstractTruncated). Continue while hasMore is true by passing nextOffset as offset. authors lists only authors; creatorCount counts all contributors. Optional citationHref cites metadata only; it does not establish paper contents and may be omitted to preserve the page response budget.',
       inputSchema: {
         query: z
           .string()
@@ -1132,7 +1145,7 @@ const createLiteratureLibraryMcpServer = (
       {
         title: 'Search Library PDF text',
         description:
-          'Search existing cached PDF text only in the current Library scope, without extraction or OCR. Follow nextOffset with offset to continue. Inspect coverage, incomplete and limitations: uncached/unavailable sources and unverified page coverage prevent a complete full-text claim, even with zero matches. This finds cached body-only matches that metadata search cannot see. Results are discovery passages, not citation receipts; call read_library_pdf with the returned itemId and attachmentId before citing.',
+          'Discover Library records by matching body text in existing PDF indexes within the selected scope. Unindexed PDFs are skipped; this never extracts, OCRs or builds indexes. Use search_library for metadata and abstract discovery, or read_library_pdf when the target record is already known. Follow nextOffset with offset to continue. Inspect coverage, incomplete and limitations: uncached/unavailable sources and unverified page coverage prevent a complete full-text claim, even with zero matches. This finds cached body-only matches that metadata search cannot see. Results are discovery passages, not citation receipts; call read_library_pdf with the returned itemId and attachmentId before citing.',
         inputSchema: {
           query: z.string().trim().min(1).max(2_000),
           scope: z.enum(LITERATURE_LIBRARY_SCOPES).optional(),
@@ -1161,6 +1174,18 @@ const createLiteratureLibraryMcpServer = (
                 libraryScope: scope,
                 resultCount: result.matches.length,
                 totalCount: result.totalRecordCount,
+                cachedSearch: {
+                  coverageKind: result.coverageKind,
+                  incomplete: result.incomplete,
+                  recordCount: result.recordCount,
+                  totalRecordCount: result.totalRecordCount,
+                  scannedSources: result.scannedSources,
+                  coverage: result.coverage,
+                  nextOffset: result.nextOffset,
+                  sourceSelectionTruncated: result.sourceSelectionTruncated,
+                  truncated: result.truncated,
+                  limitations: result.limitations
+                },
                 ...(result.nextOffset === undefined ? {} : { nextOffset: result.nextOffset })
               }),
               { type: 'text' as const, text: JSON.stringify(result) }
@@ -1285,7 +1310,7 @@ const createLiteratureLibraryMcpServer = (
     {
       title: 'Read literature abstracts',
       description:
-        'Read the complete abstract of one Literature Library record (itemId), or bounded abstracts of up to five records (itemIds); pass exactly one of the two. Use it when search previews are insufficient, not for every search result. Batch abstracts over 5,000 characters are compacted and marked abstractTruncated. Reads metadata only, not PDF full text. Pass the same scope and collectionId as the search that returned the records. An optional query selects sourceCitation and bounded matching excerpts in citations. Copy the specific excerpt href verbatim only for claims supported by its quote or context; these links cite abstract evidence only.',
+        'Read abstract evidence for known Library records: the complete abstract of one record (itemId), or bounded abstracts of up to five records (itemIds); pass exactly one of the two. Use it when search previews are insufficient, not for every search result. Batch abstracts over 5,000 characters are compacted and marked abstractTruncated. Reads metadata only, not PDF full text. Pass the same scope and collectionId as the search that returned the records. An optional query selects sourceCitation and bounded matching excerpts in citations. Copy the specific excerpt href verbatim only for claims supported by its quote or context; these links cite abstract evidence only.',
       inputSchema: {
         query: z
           .string()
@@ -1389,9 +1414,16 @@ const createLiteratureLibraryMcpServer = (
     {
       title: 'Read literature PDF evidence',
       description:
-        'Retrieve relevant passages with page numbers from the PDF attached to one Literature Library record. Use it only when full text could materially affect the answer, after finding the record with search_library (hasPdf: true). Each call reads one record on demand and reuses extraction for the same file version; it does not index the whole Library. Returns prose, not verified table cells or images; do not infer visual evidence from these passages. Pass the same scope and collectionId as the search that returned the record. itemId is a Library record identifier, not a linked-PDF documentId for list_pdf_elements. citations contains up to six bounded source excerpts with immutable source versions and tool-generated hrefs; copy the href verbatim for supported claims. Excerpts retain adjoining text within an 800-character page-boundary window and do not certify complete sentence meaning or full-PDF context. Empty citations means no excerpt fits the bounded source window and receipt budget; raw passages remain available.',
+        'Retrieve relevant passages with page numbers from the PDF attached to one Literature Library record. Use a known itemId, including records discovered by search_library (hasPdf: true) or search_library_full_text, when full text could materially affect the answer. Each call reads one record on demand, reuses extraction for the same file version, and may create its search index; it does not index the whole Library. Returns prose, not verified table cells or images; do not infer visual evidence from these passages. Pass the same scope and collectionId as the search that returned the record. itemId is a Library record identifier, not a linked-PDF documentId for Reading read_document or list_pdf_elements. citations contains up to six bounded source excerpts with immutable source versions and tool-generated hrefs; copy the href verbatim for supported claims. Excerpts retain adjoining text within an 800-character page-boundary window and do not certify complete sentence meaning or full-PDF context. Empty citations means no excerpt fits the bounded source window and receipt budget; raw passages remain available.',
       inputSchema: {
-        itemId: z.string().trim().min(1).max(512).describe('Library itemId from search_library.'),
+        itemId: z
+          .string()
+          .trim()
+          .min(1)
+          .max(512)
+          .describe(
+            'Known Library itemId, including results from search_library or search_library_full_text.'
+          ),
         attachmentId: z
           .string()
           .trim()

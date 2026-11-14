@@ -85,7 +85,7 @@ const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
   tool(
     LITERATURE_LIBRARY_MCP_SERVER_NAME,
     LITERATURE_LIBRARY_SEARCH_FULL_TEXT_TOOL_NAME,
-    'Search only existing cached PDF text in the current Library scope for body-only matches; this never extracts, OCRs or indexes PDFs. Inspect coverage, incomplete and limitations; fullTextCoverage stays unverified. Pass nextOffset as offset to continue. Empty or truncated results do not prove absent evidence or complete full-text coverage. Passages are discovery evidence; call read_library_pdf before citing.',
+    'Discover Library records by matching body text in existing PDF indexes within the selected scope. Unindexed PDFs are skipped; this never extracts, OCRs or builds indexes. Use search_library for metadata and abstract discovery, or read_library_pdf when the target record is already known. Inspect coverage, incomplete and limitations; fullTextCoverage stays unverified. Pass nextOffset as offset to continue. Empty or truncated results do not prove absent evidence or complete full-text coverage. Passages are discovery evidence; call read_library_pdf before citing.',
     z.object({
       query: z.string().trim().min(1).max(2_000),
       scope: libraryScope.optional(),
@@ -98,7 +98,7 @@ const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
   tool(
     LITERATURE_LIBRARY_MCP_SERVER_NAME,
     LITERATURE_LIBRARY_SEARCH_TOOL_NAME,
-    "Browse or search the user's Open-Science Literature Library. Scope defaults to the trusted current Project.",
+    'Find Library records by metadata, including titles, authors and abstracts, or browse without a query. Does not search PDF bodies or external providers. Scope defaults to the trusted current Project.',
     z.object({
       query: z.string().trim().min(1).max(2_000).optional(),
       scope: libraryScope.optional(),
@@ -111,7 +111,7 @@ const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
   tool(
     LITERATURE_LIBRARY_MCP_SERVER_NAME,
     LITERATURE_LIBRARY_READ_ABSTRACT_TOOL_NAME,
-    'Read one complete Library abstract or a bounded batch of up to five abstracts. Pass exactly one of itemId or itemIds. An optional focused query selects sourceCitation and may add bounded matching excerpts in citations. Cite the specific excerpt href verbatim only for claims supported by its quote or context; these links are abstract evidence.',
+    'Read abstract evidence for known Library records: one complete abstract or a bounded batch of up to five abstracts. Does not read PDF full text. Pass exactly one of itemId or itemIds. An optional focused query selects sourceCitation and may add bounded matching excerpts in citations. Cite the specific excerpt href verbatim only for claims supported by its quote or context; these links are abstract evidence.',
     z.object({
       itemId: itemId.optional(),
       itemIds: z.array(itemId).min(1).max(5).optional(),
@@ -123,7 +123,7 @@ const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
   tool(
     LITERATURE_LIBRARY_MCP_SERVER_NAME,
     LITERATURE_LIBRARY_READ_PDF_TOOL_NAME,
-    'Retrieve bounded prose passages with page numbers from one Library PDF after finding the record with search_library. Citation excerpts preserve adjoining text within an 800-character page-boundary window but do not certify complete sentence meaning or full-PDF context; retain material qualifications from the returned passages.',
+    'Read PDF evidence for a known Library itemId, including records discovered by search_library or search_library_full_text. Returns bounded prose passages, page numbers and citation hrefs. May extract text and create the selected PDF search index on demand. Reading read_document instead uses documentIds of PDFs explicitly linked to the message. Citation excerpts preserve adjoining text within an 800-character page-boundary window but do not certify complete sentence meaning or full-PDF context; retain material qualifications from the returned passages.',
     z.object({
       itemId,
       attachmentId: itemId.optional(),

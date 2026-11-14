@@ -761,6 +761,65 @@ describe('ACP runtime event normalization', () => {
     }
   )
 
+  it('bounds cached search diagnostics and drops unknown fields from retained presentations', () => {
+    const event = toAcpRuntimeEvent(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'cached-search',
+          status: 'completed',
+          rawOutput: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  openScienceLiteraturePresentation: {
+                    libraryAction: 'search',
+                    cachedSearch: {
+                      coverageKind: 'cached-text-only',
+                      incomplete: true,
+                      recordCount: -1,
+                      totalRecordCount: '20',
+                      scannedSources: 2.5,
+                      nextOffset: -20,
+                      truncated: 'true',
+                      sourceSelectionTruncated: true,
+                      coverage: {
+                        requestedDocuments: 2,
+                        cachedDocuments: 1,
+                        notCachedDocuments: -1,
+                        unavailableDocuments: '1',
+                        secret: 'private'
+                      },
+                      limitations: Array(100).fill('not-cached').concat('private'),
+                      matches: [{ content: 'private' }]
+                    }
+                  }
+                })
+              }
+            ]
+          }
+        }
+      },
+      'cached-search-event'
+    )
+    const retained = event.toolContent?.[0]
+    expect(retained?.type).toBe('content')
+    if (retained?.type !== 'content' || retained.content.type !== 'text')
+      throw new Error('Missing presentation')
+    expect(
+      JSON.parse(retained.content.text).openScienceLiteraturePresentation.cachedSearch
+    ).toEqual({
+      coverageKind: 'cached-text-only',
+      incomplete: true,
+      sourceSelectionTruncated: true,
+      truncated: false,
+      coverage: { requestedDocuments: 2, cachedDocuments: 1 },
+      limitations: ['not-cached']
+    })
+  })
+
   it('sanitizes malformed and noncanonical hrefs out of the retained source citation receipt', () => {
     const href = createLiteratureSourceCitationHref({
       itemId: 'item-1',
