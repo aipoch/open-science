@@ -471,10 +471,11 @@ it.each(outcomes)(
       }
       expect((await owner.status(request)).progress?.phase).toBe('writing')
       await runtime.dispose()
+      // Start inference shutdown before waiting for Film cleanup, which can stall on I/O.
       expect(mocks.events).toEqual([
         'aborted',
-        'release',
         'shutdown',
+        'release',
         'close:video-export',
         'close:research-narration'
       ])

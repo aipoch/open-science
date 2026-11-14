@@ -347,8 +347,7 @@ export async function composeResearchFilm({
         )
     },
     dispose: async () => {
-      await owner.close()
-      await researchVideoInference.shutdown()
+      await Promise.all([owner.close(), researchVideoInference.shutdown()])
     }
   }))
   return { researchNarrationModels, videoExportModels, videoExportTools, researchVideoPresentation }

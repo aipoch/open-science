@@ -686,7 +686,7 @@ it('times out a stalled readiness check before the Film starts', async () => {
   }
 })
 
-it('lets another session generate while a stalled checkpoint write retains its own files', async () => {
+it('lets another session generate while a stalled write retains its files and is still awaited at shutdown', async () => {
   const f = await fixture()
   const write = vi.mocked(writeDurableJsonFile)
   const original = write.getMockImplementation()!
@@ -742,9 +742,14 @@ it('lets another session generate while a stalled checkpoint write retains its o
     await vi.advanceTimersByTimeAsync(5000)
     vi.useRealTimers()
     await expect(owner.start(other)).rejects.toThrow(/waiting for the disk/i)
+    const closed = vi.fn()
+    const closing = owner.close().then(closed)
     secondDisk.resolve()
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(2))
+    expect(closed).not.toHaveBeenCalled()
     disk.resolve()
-    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(3))
+    await closing
+    expect(f.release).toHaveBeenCalledTimes(3)
     expect(f.options.writeScreenplay).toHaveBeenCalledOnce()
   } finally {
     vi.useRealTimers()

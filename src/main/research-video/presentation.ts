@@ -123,6 +123,8 @@ export function createResearchVideoPresentationOwner(options: {
   let removing = false
   let closed = false
   let operationRevision = 0
+  // A parked attempt releases the generation slot, but still owns resources until it settles.
+  const attempts = new Set<Promise<void>>()
   const draining = new Map<
     string,
     { error: Error; status: ResearchVideoPresentationStatus; kind: 'disk' | 'build' }
@@ -133,7 +135,6 @@ export function createResearchVideoPresentationOwner(options: {
     | {
         key: string
         controller: AbortController
-        done: Promise<void>
         prepared: Promise<void>
         blockedStatus?: ResearchVideoPresentationStatus
       }
@@ -893,7 +894,6 @@ export function createResearchVideoPresentationOwner(options: {
       const prepared = new Promise<void>((resolve) => {
         finishPreparation = resolve
       })
-      const released = Promise.withResolvers<void>()
       const park = (
         error: Error,
         status: ResearchVideoPresentationStatus,
@@ -908,7 +908,6 @@ export function createResearchVideoPresentationOwner(options: {
         draining.set(session, { error, status, kind })
         active = undefined
         finishPreparation()
-        released.resolve()
       }
       const operation = options.lifecycle
         ? options.lifecycle.run(request.projectId, request.sessionId, (signal) =>
@@ -923,7 +922,7 @@ export function createResearchVideoPresentationOwner(options: {
             )
           )
         : run(request, key, controller.signal, installNarration, resume, finishPreparation, park)
-      void operation
+      const done = operation
         .catch((error) => {
           log.info('film lifecycle failed', {
             sessionId: request.sessionId,
@@ -935,9 +934,10 @@ export function createResearchVideoPresentationOwner(options: {
           finishPreparation()
           draining.delete(session)
           if (active?.controller === controller) active = undefined
-          released.resolve()
+          attempts.delete(done)
         })
-      active = { key, controller, done: released.promise, prepared }
+      attempts.add(done)
+      active = { key, controller, prepared }
       await prepared
       return status(request)
     },
@@ -985,7 +985,7 @@ export function createResearchVideoPresentationOwner(options: {
       operationRevision++
       closed = true
       active?.controller.abort(new Error('Application is closing.'))
-      await active?.done
+      await Promise.all(attempts)
     }
   }
 }
