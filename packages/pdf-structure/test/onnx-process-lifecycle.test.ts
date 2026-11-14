@@ -1,9 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Writable } from 'node:stream'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, expect, it } from 'vitest'
 import { nodeProcessRuntime } from '../src/node-runtime.js'
 
@@ -17,7 +16,10 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 async function fixture(program: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'onnx-process-'))
+  // The Windows host preloads Canvas using its own module resolution.
+  const temporary = fileURLToPath(new URL('../tmp/', import.meta.url))
+  await mkdir(temporary, { recursive: true })
+  const root = await mkdtemp(join(temporary, 'onnx-process-'))
   directories.push(root)
   for (const name of [
     'onnx-process.mjs',
@@ -162,7 +164,7 @@ async function startHost(mode: string): Promise<{
   await writeFile(join(job, 'snapshot.pdf'), 'snapshot')
   await writeFile(
     join(root, 'literature-pdf-extract.mjs'),
-    `import{parentPort}from'node:worker_threads';import{requestOnnxProcess}from'./onnx-process.mjs';const pending=requestOnnxProcess(parentPort);${mode === 'worker-exit' ? 'setTimeout(()=>process.exit(9),250);' : ''}await pending;${mode === 'connected-success' ? `const {readFileSync,writeFileSync}=await import('node:fs');const pid=Number(readFileSync(new URL('pid',import.meta.url)));let alive=false;try{process.kill(pid,0);alive=true}catch{};writeFileSync(new URL('geometry-proof.json',import.meta.url),JSON.stringify({priorProcessAlive:alive}));` : ''}console.log('geometry');`
+    `import{parentPort}from'node:worker_threads';import{requestOnnxProcess}from'./onnx-process.mjs';const pending=requestOnnxProcess(parentPort);${mode === 'worker-exit' ? "const {existsSync}=await import('node:fs');const exit=new URL('exit-worker',import.meta.url);setInterval(()=>{if(existsSync(exit))process.exit(9)},20);" : ''}await pending;${mode === 'connected-success' ? `const {readFileSync,writeFileSync}=await import('node:fs');const pid=Number(readFileSync(new URL('pid',import.meta.url)));let alive=false;try{process.kill(pid,0);alive=true}catch{};writeFileSync(new URL('geometry-proof.json',import.meta.url),JSON.stringify({priorProcessAlive:alive}));` : ''}console.log('geometry');`
   )
   const host =
     mode === 'adapter-stop'
@@ -202,6 +204,7 @@ it.each(['stdin-close', 'host-killed', 'worker-exit', 'stdout-close', 'adapter-s
     if (mode === 'adapter-stop') await nodeProcessRuntime.stop(host)
     if (mode === 'stdin-close') host.stdin.end()
     if (mode === 'host-killed') host.kill('SIGKILL')
+    if (mode === 'worker-exit') await writeFile(join(root, 'exit-worker'), '')
     if (mode === 'stdout-close') host.stdout.destroy()
     await closed
     await gone(childPid)
@@ -235,7 +238,10 @@ it('forcibly reclaims a child whose inference ignores cancellation', async () =>
     }),
     owner = createOnnxProcess([], () => {}, sink, sink) as Owner
   owners.push(owner)
-  const rejected = expect(owner.result).rejects.toThrow('SIGKILL')
+  // The child can kill itself before the parent's fallback. Windows reports that exit as code 1.
+  const rejected = expect(owner.result).rejects.toThrow(
+    process.platform === 'win32' ? /\((?:SIGKILL|1)\)$/ : '(SIGKILL)'
+  )
   await expect.poll(() => pid).toBeGreaterThan(0)
   await owner.stop()
   await rejected

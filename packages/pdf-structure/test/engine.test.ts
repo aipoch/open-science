@@ -140,7 +140,7 @@ it.each([
       undefined,
       undefined,
       '1',
-      'scratch/inference',
+      join('scratch', 'inference'),
       'production'
     ])
     expect(childStop).toHaveBeenCalledOnce()
