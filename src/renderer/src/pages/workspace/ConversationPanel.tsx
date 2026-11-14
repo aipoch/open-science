@@ -3383,7 +3383,7 @@ const ConversationPanel = ({
                               </span>
                             ) : null}
 
-                            <div className="flex-1" />
+                            <div className="ms-auto" />
 
                             {/* Context-window usage for the active session (renders nothing when the
                             framework doesn't report usage). Sits with the model it pertains to. */}
@@ -3395,14 +3395,15 @@ const ConversationPanel = ({
                               onCompact={onCompactContext}
                             />
 
-                            {/* Model/provider switcher; hides itself unless more than one is configured.
-                            Grouped on the right with Send, mirroring the reference composer layout. */}
-                            <ComposerModelPicker
-                              configuration={modelConfiguration}
-                              unavailable={modelUnavailable}
-                              includeAllClaudeSubscriptions={activeSession !== undefined}
-                              onChange={changeModelConfiguration}
-                            />
+                            {/* Give wrapping the picker's icon width; its label uses the remaining space. */}
+                            <div className="flex min-w-0 max-w-[220px] flex-[1_1_3.75rem] justify-end empty:hidden">
+                              <ComposerModelPicker
+                                configuration={modelConfiguration}
+                                unavailable={modelUnavailable}
+                                includeAllClaudeSubscriptions={activeSession !== undefined}
+                                onChange={changeModelConfiguration}
+                              />
+                            </div>
 
                             <Popover
                               open={specialistUnavailableOpen}
