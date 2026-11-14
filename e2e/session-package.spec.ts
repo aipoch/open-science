@@ -76,6 +76,7 @@ test('preserves transfer outcomes while showing pending temporary cleanup', asyn
     await app.emitSessionPackageProgress({ ...operation, cleanupPending: false })
     await expect(dialog.getByRole('button', { name: 'Retry cleanup', exact: true })).toHaveCount(0)
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(dialog).toHaveCount(0)
   }
 })
 

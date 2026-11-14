@@ -53,7 +53,10 @@ test('keeps the tooltip hoverable and dismisses stale inspection on scroll and r
   await tooltip.hover()
   await page.waitForTimeout(160) // Beyond the pointer-transfer grace period.
   await expect(tooltip).toBeVisible()
-  await page.mouse.wheel(0, 150)
+  // A wheel event over the tooltip can be consumed by its own scroll container.
+  const scrollBefore = await page.evaluate(() => window.scrollY)
+  await page.evaluate(() => window.scrollBy(0, 150))
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(scrollBefore)
   await expect(tooltip).toHaveCount(0)
   await plot.getByRole('button').last().hover()
   await expect(tooltip).toContainText('2026-10-02')
@@ -97,9 +100,9 @@ test('interpolates pointer position only, and disables motion for reduced motion
   await expect(tooltip).toBeVisible()
   await expect(tooltip).toHaveCSS('transition-duration', '0s')
   const samples = await page.evaluate(
-    async ({ x, y, selector }) => {
+    ({ x, y, selector, tooltipSelector }) => {
       const plot = document.querySelector(selector)!
-      const tooltip = document.querySelector('[data-slot="token-usage-inspection"]')!
+      const tooltip = document.querySelector(tooltipSelector)!
       const before = tooltip.getBoundingClientRect().x
       plot.dispatchEvent(
         new PointerEvent('pointermove', {
@@ -109,13 +112,21 @@ test('interpolates pointer position only, and disables motion for reduced motion
           clientY: y + 30
         })
       )
-      await new Promise(requestAnimationFrame)
-      await new Promise((resolve) => setTimeout(resolve, 40))
+      // Sample the actual CSS transition independently of the runner's frame scheduling.
+      const transition = tooltip
+        .getAnimations()
+        .find(
+          (animation) =>
+            animation instanceof CSSTransition && animation.transitionProperty === 'transform'
+        )
+      if (!transition?.effect) throw new Error('Tooltip did not start a transform transition.')
+      transition.pause()
+      transition.currentTime = transition.effect.getComputedTiming().endTime / 2
       const during = tooltip.getBoundingClientRect().x
-      await new Promise((resolve) => setTimeout(resolve, 150))
+      transition.finish()
       return { before, during, after: tooltip.getBoundingClientRect().x }
     },
-    { x: bounds.x, y: bounds.y, selector: plotSelector }
+    { x: bounds.x, y: bounds.y, selector: plotSelector, tooltipSelector }
   )
   expect(samples.during).toBeGreaterThan(samples.before)
   expect(samples.during).toBeLessThan(samples.after)
