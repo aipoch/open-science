@@ -50,8 +50,7 @@ import {
   type ProviderRuntimeTarget,
   type RuntimeProviderModelSelection
 } from './provider-accounts'
-import type { ResolvedProvider } from './provider-env'
-import { buildProviderEnv } from './provider-env'
+import { buildProviderEnv, resolveProviderOutputLimit, type ResolvedProvider } from './provider-env'
 import {
   ProviderTransportOwner,
   type ProviderTransportOwnerOptions
@@ -74,6 +73,8 @@ export type AgentBackendResolutionContext = {
   includeSkillAndConnectorContext?: boolean
   forceCodexNativeResponsesCompatibility?: boolean
   isolateConfiguration?: boolean
+  // A disposable single-target runtime can set a process-wide output budget safely.
+  useResolvedModelOutputLimit?: boolean
 }
 
 const userSkillDirectorySystemPromptAppend = (storageRoot: string): string =>
@@ -568,6 +569,10 @@ export class AgentBackendResolver {
         context.skillWhitelist,
         context.isolateConfiguration
       )
+      const outputLimit =
+        context.useResolvedModelOutputLimit && usesAppProviderTransport(target.provider.type)
+          ? resolveProviderOutputLimit({ ...target.provider, model: target.effectiveModel })
+          : undefined
       const transport = await this.transports.acquire({ activeTarget: target, plan })
       return {
         framework,
@@ -576,7 +581,13 @@ export class AgentBackendResolver {
         backendId: `${framework.id}:${target.providerId}`,
         modelRoute,
         executablePath: claudeExecutablePath,
-        env: { ...envOverrides, ...(transport.environment ?? {}) },
+        env: {
+          ...envOverrides,
+          ...(transport.environment ?? {}),
+          ...(outputLimit === undefined
+            ? {}
+            : { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(outputLimit) })
+        },
         sessionOptions,
         sessionEffort,
         contextWindow,

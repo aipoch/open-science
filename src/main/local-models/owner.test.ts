@@ -132,6 +132,44 @@ it('uses the proxy-aware mirror downloader and activates only the complete verif
 })
 
 describe('local model use leases', () => {
+  it('does not start an install if its caller cancelled during initialization', async () => {
+    const root = await prepare()
+    await seed(root, 'v1')
+    const receiptRead = Promise.withResolvers<void>()
+    const continueRead = Promise.withResolvers<void>()
+    const download = vi.fn(installFile)
+    const readReceipt = durableJson.readFileWithinLimit
+    const spy = vi
+      .spyOn(durableJson, 'readFileWithinLimit')
+      .mockImplementationOnce(async (...args) => {
+        receiptRead.resolve()
+        await continueRead.promise
+        return readReceipt(...args)
+      })
+    const owner = createLocalModelOwner({
+      dataRoot: () => root,
+      revisions: [revision('v2'), revision('v1')],
+      download
+    })
+    const controller = new AbortController()
+    try {
+      const cancelled = expect(owner.installForUse(controller.signal)).rejects.toThrow()
+      await receiptRead.promise
+      controller.abort()
+      continueRead.resolve()
+      await cancelled
+      expect(download).not.toHaveBeenCalled()
+      expect(await owner.getSnapshot()).toMatchObject({
+        installedRevision: 'v1',
+        updateAvailable: true
+      })
+    } finally {
+      continueRead.resolve()
+      await owner.close()
+      spy.mockRestore()
+    }
+  })
+
   it('lets parsing join an initial install without starting a duplicate download', async () => {
     const root = await prepare()
     let finishDownload!: () => void

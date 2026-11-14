@@ -71,8 +71,7 @@ export async function writeResearchVideoAnimations(
     }
     const validate = (raw: string): string => {
       const code = raw.trim().replace(/^```(?:javascript|js)?\s*\n([\s\S]*?)\n```$/u, '$1')
-      if (!code || Buffer.byteLength(code) > 64 * 1024)
-        throw new Error('Animation source must contain 1–65536 bytes.')
+      if (!code) throw new Error('Animation source must not be empty.')
       const required = panels
         .filter((p) => p.script === name)
         .flatMap((p) => (Array.isArray(p.use) ? (p.use as string[]) : []))

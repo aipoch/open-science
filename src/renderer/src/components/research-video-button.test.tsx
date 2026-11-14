@@ -89,6 +89,17 @@ it('starts directly from the session button without a chat or fork API, and supp
   expect(api.researchVideo.cancel).toHaveBeenCalledExactlyOnceWith(request)
 })
 
+it('continues a checkpoint without waiting for the narration model', async () => {
+  status = { canResume: true, preflightError: 'Runtime unavailable' }
+  snapshot = { ...snapshot, availability: 'notInstalled' }
+  await act(async () => vi.advanceTimersByTimeAsync(750))
+  await click('Generate research film')
+  api.localModels.getSnapshot.mockClear()
+  await click('Continue generation')
+  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith({ ...request, resume: true })
+  expect(api.localModels.getSnapshot).not.toHaveBeenCalled()
+})
+
 it('keeps raw generation errors in collapsed details and copies the full message', async () => {
   const error = JSON.stringify(
     [{ code: 'invalid_union', message: 'multiple errors'.repeat(300) }],
@@ -149,6 +160,30 @@ it('keeps the trigger in a loading state until the initial presentation status i
 
   expect(trigger.textContent).toBe('View research film')
   expect(trigger.disabled).toBe(false)
+})
+
+it('opens Film after a status RPC never returns without stacking requests', async () => {
+  let resolveStatus!: (next: ResearchVideoPresentationStatus) => void
+  api.researchVideo.status.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveStatus = resolve
+      })
+  )
+  await act(async () => root.render(<ResearchVideoButton {...request} sessionId="stalled" />))
+  const calls = api.researchVideo.status.mock.calls.length
+  await act(async () => vi.advanceTimersByTimeAsync(120_000))
+  expect(container.querySelector('button')?.disabled).toBe(false)
+  await click('Generate research film')
+  expect(document.querySelector('[role="alert"]')).not.toBeNull()
+  expect(api.researchVideo.status).toHaveBeenCalledTimes(calls)
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+  await act(async () => resolveStatus({}))
+  await click('Generate research film')
+  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith({
+    ...request,
+    sessionId: 'stalled'
+  })
 })
 
 it('keeps the trigger loading after a status failure until a retry succeeds', async () => {

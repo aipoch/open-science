@@ -52,13 +52,24 @@ it.each(['```json\n', '```\n', '```json \r\n\t\n'])(
   }
 )
 
-it('rejects an unterminated fence with long whitespace and preserves the source size limit', () => {
+it('rejects an unterminated fence with long whitespace', () => {
   expect(() => parseResearchVideoScreenplay('```\n' + '\n\t'.repeat(50_000) + '{}', 1)).toThrow(
     SyntaxError
   )
-  expect(() =>
-    parseResearchVideoScreenplay(JSON.stringify({ text: 'a'.repeat(128 * 1024) }), 1)
-  ).toThrow('Explanation source exceeds 128 KiB')
+})
+
+it('accepts a valid screenplay and scripts larger than the former response limits', async () => {
+  const json = JSON.stringify(original)
+  const spec = parseResearchVideoScreenplay(json.replace('{', '{' + ' '.repeat(128 * 1024)), 1)
+  const root = await directory()
+  const helper = 'function satellite(k) {\n' + 'void 0;\n'.repeat(9000) + '}'
+  await writeResearchVideoAnimations(
+    spec,
+    root,
+    async ({ shared }) => (shared ? helper : 'satellite(k);'),
+    new AbortController().signal
+  )
+  expect(await readFile(join(root, 'anims/satellite.js'), 'utf8')).toBe(helper)
 })
 
 it('preserves original skill fields and bundles generated shared and scene scripts into the player', async () => {
@@ -181,7 +192,7 @@ it.each(['complete', 'invalid', 'truncated', 'cancelled'])(
     }
     expect(writer.mock.calls[1][2]).toMatchObject({
       draft: '',
-      error: expect.stringContaining('shorter')
+      error: expect.stringContaining('complete replacement')
     })
   }
 )

@@ -1,3 +1,4 @@
+import { ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
@@ -5,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { ExportModelPort } from './ports.js'
-import { createVideoExportTools } from './ffmpeg.js'
+import { createVideoExportTools, findSystemVideoEncoders } from './ffmpeg.js'
 import { VIDEO_EXPORT_REVISIONS } from './ffmpeg-catalog.js'
 
 vi.mock('./ffmpeg-catalog.js', async (original) => ({
@@ -57,6 +58,60 @@ it('does not install on discovery and reuses compatible system tools', async () 
     )
   ).toBe(false)
 })
+it.skipIf(process.platform === 'win32')(
+  'does not start another system capability check while a killed process has not exited',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'film-encoder-discovery-'))
+    roots.push(root)
+    const path = join(root, 'ffmpeg')
+    const ready = join(root, 'ready')
+    const controller = new AbortController()
+    await writeFile(
+      path,
+      `#!${process.execPath}
+require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready');
+setTimeout(() => {}, 4000);`,
+      { mode: 0o700 }
+    )
+    const kill = ChildProcess.prototype.kill
+    const observed = new Set<ChildProcess>()
+    const spy = vi.spyOn(ChildProcess.prototype, 'kill').mockImplementation(function (
+      this: ChildProcess,
+      signal
+    ) {
+      if (this.spawnfile !== path) return kill.call(this, signal)
+      observed.add(this)
+      return true
+    })
+    vi.stubEnv('PATH', root)
+    const settled = vi.fn()
+    const result = findSystemVideoEncoders(controller.signal).then(settled, settled)
+    try {
+      await vi.waitFor(() => readFile(ready))
+      vi.useFakeTimers()
+      controller.abort()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(settled).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringMatching(/did not confirm shutdown/i) })
+      )
+      await expect(findSystemVideoEncoders(new AbortController().signal)).rejects.toThrow(
+        /did not confirm shutdown/i
+      )
+      expect(observed.size).toBe(1)
+    } finally {
+      vi.useRealTimers()
+      vi.unstubAllEnvs()
+      spy.mockRestore()
+      const child = observed.values().next().value
+      if (child && child.exitCode === null && child.signalCode === null) {
+        const exited = new Promise<void>((resolve) => child?.once('exit', () => resolve()))
+        kill.call(child, 'SIGKILL')
+        await exited
+      }
+      await result
+    }
+  }
+)
 it('verifies extracted binaries and holds the model lease until the export releases it', async () => {
   const root = await mkdtemp(join(tmpdir(), 'video-tools-'))
   roots.push(root)

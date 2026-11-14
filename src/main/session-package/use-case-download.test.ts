@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { readFile, access } from 'node:fs/promises'
+import * as storageUsage from '../storage/usage'
 import { downloadUseCase } from './use-case-download'
 
 const bytes = Buffer.from('example archive')
@@ -16,6 +17,20 @@ const entry = {
 }
 afterEach(() => vi.unstubAllGlobals())
 
+it('does not request the archive if the staging volume lacks capacity', async () => {
+  const available = vi.spyOn(storageUsage, 'availableBytes').mockResolvedValue(0)
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json([entry]))
+  vi.stubGlobal('fetch', fetcher)
+  try {
+    await expect(
+      downloadUseCase('research', new AbortController().signal, () => {})
+    ).rejects.toMatchObject({ freeBytes: 0, message: expect.stringContaining('disk space') })
+    expect(fetcher).toHaveBeenCalledOnce()
+  } finally {
+    available.mockRestore()
+  }
+})
+
 it('streams a verified archive to a native path and releases it after use', async () => {
   vi.stubGlobal(
     'fetch',
@@ -28,6 +43,17 @@ it('streams a verified archive to a native path and releases it after use', asyn
   expect(await readFile(source.path)).toEqual(bytes)
   await source.release()
   await expect(access(source.path)).rejects.toThrow()
+})
+
+it('cancels a failed manifest response before opening an archive', async () => {
+  const cancel = vi.fn()
+  const fetcher = vi.fn(async () => new Response(new ReadableStream({ cancel }), { status: 503 }))
+  vi.stubGlobal('fetch', fetcher)
+  await expect(downloadUseCase('research', new AbortController().signal, () => {})).rejects.toThrow(
+    'Could not load use cases.'
+  )
+  expect(fetcher).toHaveBeenCalledOnce()
+  expect(cancel).toHaveBeenCalledOnce()
 })
 
 it.each(['checksum', 'size', 'unknown', 'http'])(

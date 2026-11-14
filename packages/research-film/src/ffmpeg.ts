@@ -6,14 +6,42 @@ import { constants } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { createGunzip } from 'node:zlib'
-import { promisify } from 'node:util'
-import type { ExportModelSnapshot } from './ports.js'
-import type { ExportModelPort } from './ports.js'
+import type { ExportModelPort, ExportModelSnapshot, VideoEncoderPaths } from './ports.js'
 import { videoExportBinaries, videoExportTarget } from './ffmpeg-catalog.js'
 
-const execute = promisify(execFile)
-import type { VideoEncoderPaths } from './ports.js'
+import {
+  assertVideoEncoderReady,
+  ownVideoProcess,
+  reapVideoProcesses,
+  ResearchVideoEncoderCleanupError,
+  waitForVideoProcess
+} from './encoder-process.js'
+
 export type { VideoEncoderPaths } from './ports.js'
+
+let discovery: Promise<void> | undefined
+
+async function readEncoderCapabilities(
+  path: string,
+  args: string[],
+  signal: AbortSignal
+): Promise<string> {
+  signal.throwIfAborted()
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(5000)])
+  const { promise, resolve, reject } = Promise.withResolvers<string>()
+  const child = execFile(
+    path,
+    args,
+    { maxBuffer: 1024 * 1024, killSignal: 'SIGKILL', windowsHide: true },
+    (error, stdout) => (error ? reject(error) : resolve(stdout))
+  )
+  const owned = ownVideoProcess(child)
+  try {
+    return await waitForVideoProcess(promise, deadline)
+  } finally {
+    await reapVideoProcesses([owned])
+  }
+}
 
 export async function findSystemVideoEncoders(
   signal: AbortSignal
@@ -26,10 +54,10 @@ export async function findSystemVideoEncoders(
       const path = join(directory, name + (process.platform === 'win32' ? '.exe' : ''))
       try {
         await access(path, constants.X_OK)
-        const { stdout } = await execute(
+        const stdout = await readEncoderCapabilities(
           path,
           name === 'ffmpeg' ? ['-hide_banner', '-encoders'] : ['-version'],
-          { signal, timeout: 5000, maxBuffer: 1024 * 1024, windowsHide: true }
+          signal
         )
         if (
           name === 'ffmpeg'
@@ -37,14 +65,28 @@ export async function findSystemVideoEncoders(
             : /^ffprobe version /m.test(stdout)
         )
           return path
-      } catch {
+      } catch (error) {
+        if (error instanceof ResearchVideoEncoderCleanupError) throw error
         signal.throwIfAborted()
       }
     }
     return undefined
   }
-  const [encoderPath, probePath] = await Promise.all([find('ffmpeg'), find('ffprobe')])
-  return encoderPath && probePath ? { encoderPath, probePath } : undefined
+  // Only one discovery can own subprocesses. Other callers can still cancel their wait.
+  while (discovery) await waitForVideoProcess(discovery, signal)
+  signal.throwIfAborted()
+  assertVideoEncoderReady()
+  const { promise, resolve } = Promise.withResolvers<void>()
+  discovery = promise
+  try {
+    const encoderPath = await find('ffmpeg')
+    if (!encoderPath) return undefined
+    const probePath = await find('ffprobe')
+    return probePath ? { encoderPath, probePath } : undefined
+  } finally {
+    discovery = undefined
+    resolve()
+  }
 }
 
 export function createVideoExportTools<T extends ExportModelSnapshot>(

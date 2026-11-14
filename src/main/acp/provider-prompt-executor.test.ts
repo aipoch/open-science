@@ -285,93 +285,108 @@ describe('AcpProviderPromptExecutor', () => {
     await probe.cancel()
   })
 
-  it('captures one OpenCode generation API for both usage snapshots', async () => {
-    const api = { baseUrl: 'https://usage.example/v1', authorization: 'Bearer generation-1' }
-    const openCodeUsageApi = vi.fn(() => api)
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify([
-            {
-              info: {
-                id: 'assistant-1',
-                role: 'assistant',
-                tokens: { input: 4, output: 2, cache: { read: 1, write: 0 } }
-              }
-            }
-          ]),
-          { status: 200 }
+  it.each([
+    ['stop', 'end_turn', true, 'end_turn'],
+    ['length', 'end_turn', true, 'max_tokens'],
+    ['length', 'cancelled', true, 'cancelled'],
+    ['length', 'end_turn', false, 'end_turn']
+  ] as const)(
+    'captures one OpenCode API for model finish %s, ACP stop %s and recovery %s',
+    async (finish, stopReason, recoverOutputTruncation, expectedStop) => {
+      const api = { baseUrl: 'https://usage.example/v1', authorization: 'Bearer generation-1' }
+      const openCodeUsageApi = vi.fn(() => api)
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify([{ info: { id: 'old', role: 'assistant', finish: 'length' } }])
+          )
         )
-      )
-    const response: PromptResponse = { stopReason: 'end_turn' }
-    const session = {
-      sessionId: 'provider-1',
-      prompt: vi.fn(async () => undefined),
-      nextUpdate: vi.fn(async () => stop(response))
-    } as unknown as ProviderPromptExecutionInput['session']
-    const executor = new AcpProviderPromptExecutor({
-      backendGeneration: {
-        openCodeUsageApi,
-        current: {
-          adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
-        }
-      },
-      opencodeUsageFetch: fetchImpl
-    })
-
-    const outcome = await executor.execute({
-      session,
-      content: 'prompt',
-      cwd: '/workspace',
-      frameworkId: 'opencode',
-      isCurrent: () => true,
-      beforeDispatch: async () => 'active',
-      captureStop: () => true,
-      onAccepted: () => undefined,
-      routeNotification: () => undefined
-    })
-
-    expect(openCodeUsageApi).toHaveBeenCalledOnce()
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
-    expect(fetchImpl.mock.calls.map(([, init]) => init?.headers)).toEqual([
-      { authorization: 'Bearer generation-1' },
-      { authorization: 'Bearer generation-1' }
-    ])
-    expect(outcome).toMatchObject({
-      kind: 'stopped',
-      facts: {
-        turnUsage: {
-          inputTokens: 4,
-          cacheTokens: 1,
-          cachedReadTokens: 1,
-          cachedWriteTokens: 0,
-          outputTokens: 2
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify([
+              {
+                info: {
+                  id: 'assistant-1',
+                  role: 'assistant',
+                  finish,
+                  tokens: { input: 4, output: 2, cache: { read: 1, write: 0 } }
+                }
+              }
+            ]),
+            { status: 200 }
+          )
+        )
+      const response: PromptResponse = { stopReason }
+      const session = {
+        sessionId: 'provider-1',
+        prompt: vi.fn(async () => undefined),
+        nextUpdate: vi.fn(async () => stop(response))
+      } as unknown as ProviderPromptExecutionInput['session']
+      const executor = new AcpProviderPromptExecutor({
+        backendGeneration: {
+          openCodeUsageApi,
+          current: {
+            adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+          }
         },
-        modelTurnCount: 1,
-        modelCalls: [
-          {
-            sourceInvocationId: 'assistant-1',
+        opencodeUsageFetch: fetchImpl,
+        recoverOutputTruncation
+      })
+
+      const outcome = await executor.execute({
+        session,
+        content: 'prompt',
+        cwd: '/workspace',
+        frameworkId: 'opencode',
+        isCurrent: () => true,
+        beforeDispatch: async () => 'active',
+        captureStop: () => true,
+        onAccepted: () => undefined,
+        routeNotification: () => undefined
+      })
+
+      expect(openCodeUsageApi).toHaveBeenCalledOnce()
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      expect(fetchImpl.mock.calls.map(([, init]) => init?.headers)).toEqual([
+        { authorization: 'Bearer generation-1' },
+        { authorization: 'Bearer generation-1' }
+      ])
+      expect(outcome).toMatchObject({
+        kind: 'stopped',
+        response: { stopReason: expectedStop },
+        facts: {
+          turnUsage: {
             inputTokens: 4,
             cacheTokens: 1,
             cachedReadTokens: 1,
             cachedWriteTokens: 0,
-            outputTokens: 2,
-            contextUsedTokens: 5
+            outputTokens: 2
+          },
+          modelTurnCount: 1,
+          modelCalls: [
+            {
+              sourceInvocationId: 'assistant-1',
+              inputTokens: 4,
+              cacheTokens: 1,
+              cachedReadTokens: 1,
+              cachedWriteTokens: 0,
+              outputTokens: 2,
+              contextUsedTokens: 5
+            }
+          ],
+          contextUsedTokens: 5,
+          lastModelStepUsage: {
+            inputTokens: 4,
+            cacheTokens: 1,
+            cachedReadTokens: 1,
+            cachedWriteTokens: 0,
+            outputTokens: 2
           }
-        ],
-        contextUsedTokens: 5,
-        lastModelStepUsage: {
-          inputTokens: 4,
-          cacheTokens: 1,
-          cachedReadTokens: 1,
-          cachedWriteTokens: 0,
-          outputTokens: 2
         }
-      }
-    })
-  })
+      })
+    }
+  )
 
   it.each([true, false])(
     'keeps compaction usage unknown without inventing a partial total (ACP aggregate: %s)',

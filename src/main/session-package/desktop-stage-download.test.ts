@@ -1,8 +1,10 @@
 import { afterAll, afterEach, expect, it, vi } from 'vitest'
 import { dialog } from 'electron'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { basename, dirname, extname, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { englishNativeTranslator } from '../locale/main-process-messages'
 import type { SessionPackageRequest } from '../../shared/session-package'
 import { SessionPackageDesktop } from './desktop'
@@ -262,6 +264,58 @@ it('isolates hosts and prunes only their own expired export directories', async 
   } finally {
     await first.close()
     await second.close()
+  }
+})
+
+it('reclaims an exited host download root without touching a live host or legacy files', async () => {
+  const exportTo: ExportTo = async (_request, archive, options) => {
+    await selectEverything(options, 'Web Session')
+    await writeArchive(archive)
+  }
+  const previous = createDesktop(exportTo).desktop
+  const other = createDesktop(exportTo).desktop
+  const next = createDesktop(exportTo).desktop
+  const legacy = await mkdtemp(join(stagingDirectory, 'open-science-package-exports-'))
+  const legacyArchive = join(legacy, 'legacy.science')
+  const host = spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
+    stdio: ['pipe', 'ignore', 'ignore']
+  })
+  const exited = once(host, 'close')
+  // Observe launch errors even if a fixture operation fails before we await the exit.
+  void exited.catch(() => {})
+  let abandoned: string | undefined
+  try {
+    const oldDownload = await previous.export(request, undefined, undefined, {
+      stageDownload: true
+    })
+    const oldRoot = dirname(dirname(oldDownload.filePath!))
+    const otherRoot = join(
+      stagingDirectory,
+      basename(oldRoot).replace(`-${process.pid}-`, `-${host.pid}-`)
+    )
+    if (otherRoot !== oldRoot) await rename(oldRoot, otherRoot)
+    abandoned = otherRoot
+    await writeArchive(legacyArchive)
+
+    await other.export(request, undefined, undefined, { stageDownload: true })
+    const oldArchive = join(
+      otherRoot,
+      basename(dirname(oldDownload.filePath!)),
+      basename(oldDownload.filePath!)
+    )
+    expect(await readFile(oldArchive, 'utf8')).toBe('package-bytes')
+    host.stdin.end()
+    expect((await exited)[0]).toBe(0)
+
+    await next.export(request, undefined, undefined, { stageDownload: true })
+    await expect(stat(otherRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(legacyArchive, 'utf8')).toBe('package-bytes')
+  } finally {
+    host.stdin.end()
+    await exited.catch(() => {})
+    await Promise.all([previous.close(), other.close(), next.close()])
+    if (abandoned) await rm(abandoned, { recursive: true, force: true })
+    await rm(legacy, { recursive: true, force: true })
   }
 })
 

@@ -5,6 +5,7 @@ import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
 
 export type OpenCodeUsageSnapshot = {
   assistantMessageIds: Set<string>
+  lastTruncatedAssistantId?: string
   usageByMessageId: Map<string, AcpTurnTokenUsage>
   compactionByMessageId?: Map<string, { succeeded: boolean; error?: string }>
 }
@@ -82,6 +83,7 @@ export const fetchOpenCodeUsageSnapshot = async (
     const assistantMessageIds = new Set<string>()
     const usageByMessageId = new Map<string, AcpTurnTokenUsage>()
     const compactionByMessageId = new Map<string, { succeeded: boolean; error?: string }>()
+    let lastTruncatedAssistantId: string | undefined
     for (const message of messages) {
       if (typeof message !== 'object' || message === null || Array.isArray(message)) continue
       if (api.version === 2 && message.type === 'compaction' && typeof message.id === 'string') {
@@ -111,11 +113,19 @@ export const fetchOpenCodeUsageSnapshot = async (
           ...(typeof error === 'string' ? { error: error.slice(0, 2000) } : {})
         })
       }
+      if (api.version !== 2 && info.summary !== true) {
+        lastTruncatedAssistantId = info.finish === 'length' ? info.id : undefined
+      }
       const usage = messageUsage(info.tokens)
       if (usage) usageByMessageId.set(info.id, usage)
     }
 
-    return { assistantMessageIds, usageByMessageId, compactionByMessageId }
+    return {
+      assistantMessageIds,
+      usageByMessageId,
+      compactionByMessageId,
+      ...(lastTruncatedAssistantId ? { lastTruncatedAssistantId } : {})
+    }
   } catch {
     return undefined
   }

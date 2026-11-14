@@ -1,10 +1,11 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import type {
-  ModelProtocol,
-  OfficialVendorId,
-  CustomReasoningEffortTransport
+import {
+  getOfficialVendor,
+  type ModelProtocol,
+  type OfficialVendorId,
+  type CustomReasoningEffortTransport
 } from '@aipoch/providers'
 
 import type {
@@ -52,6 +53,20 @@ export type ResolvedProvider = {
   supportsImageInput?: boolean
   // Explicit only for user-defined gateways; official providers use vendorId for transport mapping.
   reasoningEffortTransport?: CustomReasoningEffortTransport
+}
+
+// A context window is not a model's output limit; leave unlisted models to their runtime.
+export const resolveProviderOutputLimit = (
+  provider: Pick<ResolvedProvider, 'vendorId' | 'model' | 'maxOutputTokens'>
+): number | undefined => {
+  const published = provider.vendorId
+    ? getOfficialVendor(provider.vendorId)?.models.find((entry) => entry.id === provider.model)
+        ?.maxOutputTokens
+    : undefined
+  const configured = provider.maxOutputTokens
+  return published === undefined || configured === undefined
+    ? (configured ?? published)
+    : Math.min(configured, published)
 }
 
 export type ProviderEnvOptions = {

@@ -41,6 +41,7 @@ type RestrictedInferenceRunnerOptions = Readonly<{
       storageRoot: string
       systemPromptAppends: string[]
       includeSkillAndConnectorContext: false
+      useResolvedModelOutputLimit?: true
       forceCodexNativeResponsesCompatibility?: true
     }
   ) => Promise<ResolvedAgentBackend>
@@ -155,6 +156,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
     let backendTransferred = false
     let deferredProfileCleanup = false
     let runtime: RestrictedInferenceRuntime | undefined
+    let runtimeShutdown: Promise<unknown> | undefined
     let sessionId: string | undefined
     let toolLessBridgeScopeRegistered = false
     let toolViolation = false
@@ -166,10 +168,14 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
     const cancelPrompt = (): void => {
       if (runtime && sessionId) void runtime.cancelPrompt({ sessionId }).catch(() => undefined)
     }
+    const shutdownRuntime = (): Promise<unknown> | undefined => {
+      if (runtime) runtimeShutdown ??= runtime.shutdownForQuit().catch(() => undefined)
+      return runtimeShutdown
+    }
     const onAbort = (): void => {
       cancelPrompt()
-      // Also interrupt initialize/session creation; cancellation alone only reaches a live prompt.
-      if (this.options.preserveModelRoute) void runtime?.shutdownForQuit().catch(() => undefined)
+      // ACP cancellation requires a session id; while connecting, stop the disposable runtime.
+      if (!sessionId || this.options.preserveModelRoute) void shutdownRuntime()
     }
     active.controller.signal.addEventListener('abort', onAbort, { once: true })
     const ensureActive = (): void => {
@@ -222,37 +228,38 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
         storageRoot: profileRoot,
         systemPromptAppends: [],
         includeSkillAndConnectorContext: false,
+        ...(input.target.frameworkId === 'claude-code'
+          ? { useResolvedModelOutputLimit: true }
+          : {}),
         ...(nativeCodexSubscriptionAllowed || this.options.preserveModelRoute
           ? {}
           : { forceCodexNativeResponsesCompatibility: true })
       })
-      if (this.options.preserveModelRoute) {
-        const signal = active.controller.signal
-        let abortResolution = (): void => undefined
-        const cancelled = new Promise<never>((_resolve, reject) => {
-          abortResolution = () =>
-            reject(new RestrictedInferenceError('cancelled', 'Restricted inference was cancelled.'))
-          signal.addEventListener('abort', abortResolution, { once: true })
-          if (signal.aborted) abortResolution()
-        })
-        try {
-          backend = await Promise.race([resolvingBackend, cancelled])
-        } catch (error) {
-          if (signal.aborted) {
-            // A non-cancellable version probe/config writer may finish later. Never launch it;
-            // release its acquired transports before removing the profile it may still write to.
-            deferredProfileCleanup = true
-            const abandonedRoot = jobRoot
-            void resolvingBackend
-              .then(releaseUnattachedBackend, () => undefined)
-              .finally(() => rm(abandonedRoot, { recursive: true, force: true }))
-              .catch(() => log.warn('Abandoned validation profile cleanup failed'))
-          }
-          throw error
-        } finally {
-          signal.removeEventListener('abort', abortResolution)
+      const signal = active.controller.signal
+      let abortResolution = (): void => undefined
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        abortResolution = () =>
+          reject(new RestrictedInferenceError('cancelled', 'Restricted inference was cancelled.'))
+        signal.addEventListener('abort', abortResolution, { once: true })
+        if (signal.aborted) abortResolution()
+      })
+      try {
+        backend = await Promise.race([resolvingBackend, cancelled])
+      } catch (error) {
+        if (signal.aborted) {
+          // A non-cancellable version probe/config writer may finish later. Never launch it;
+          // release its acquired transports before removing the profile it may still write to.
+          deferredProfileCleanup = true
+          const abandonedRoot = jobRoot
+          void resolvingBackend
+            .then(releaseUnattachedBackend, () => undefined)
+            .finally(() => rm(abandonedRoot, { recursive: true, force: true }))
+            .catch(() => log.warn('Abandoned restricted inference profile cleanup failed'))
         }
-      } else backend = await resolvingBackend
+        throw error
+      } finally {
+        signal.removeEventListener('abort', abortResolution)
+      }
       ensureActive()
       const resolvedBackend = await prepareRestrictedBackend(backend, profileRoot, {
         taskOnly: this.options.taskOnly,
@@ -286,6 +293,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion: this.options.appVersion,
         separateProviderNotices: true,
+        recoverOutputTruncation: true,
         sessionCapabilityPolicy: this.options.taskOnly
           ? { role: 'restricted-inference', delegation: 'denied' }
           : undefined,
@@ -307,7 +315,12 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       }
       runtime = this.runtimeFactory(runtimeOptions)
       ensureActive()
-      const created = await runtime.createSession({ cwd, permissionProfile: 'ask' })
+      const created = await runtime
+        .createSession({ cwd, permissionProfile: 'ask' })
+        .catch((error) => {
+          ensureActive()
+          throw error
+        })
       sessionId = created.sessionId
       ensureActive()
       if (bridge?.registerToolLessSession && bridge.unregisterToolLessSession) {
@@ -382,7 +395,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       if (sessionId && toolLessBridgeScopeRegistered) {
         backend?.responsesTransportLease?.unregisterToolLessSession?.(sessionId)
       }
-      await runtime?.shutdownForQuit().catch(() => undefined)
+      await shutdownRuntime()
       if (backend && !backendTransferred) await releaseUnattachedBackend(backend)
       if (jobRoot && !deferredProfileCleanup)
         await rm(jobRoot, { recursive: true, force: true }).catch(() => undefined)

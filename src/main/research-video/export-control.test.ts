@@ -22,7 +22,7 @@ const content = Buffer.from(
   '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="open-science-research-video" content="1"><title>Heat &amp; Light: Where?</title><style>body{}</style><div id="root">player</div></html>'
 )
 it.each([
-  ['generated document', content],
+  ['generated document over two chunks', Buffer.concat([content, Buffer.alloc(1024 * 1024)])],
   [
     'explicit head element',
     Buffer.from(
@@ -107,13 +107,50 @@ it('cancels the owning export without publishing, and cannot cancel another call
   }
 })
 
+it('cancels an export while its first source read is stalled', async () => {
+  const entered = Promise.withResolvers<void>()
+  const disk = Promise.withResolvers<{
+    begin: number
+    end: number
+    total: number
+    data: Uint8Array
+  }>()
+  const control = createResearchVideoExportControl(
+    {
+      readRange: () => {
+        entered.resolve()
+        return disk.promise
+      }
+    },
+    tools
+  )
+  const owner = lease('owner')
+  const settled = vi.fn()
+  const task = control.export(owner, { resourceId: 'r' }).then(settled, settled)
+  const saveDialogs = native.chooseSavePath.mock.calls.length
+  try {
+    await entered.promise
+    control.cancel(owner, { resourceId: 'r' })
+    await vi.waitFor(
+      () => expect(settled).toHaveBeenCalledWith(new Error('Video export cancelled')),
+      { timeout: 300 }
+    )
+    await expect(control.export(owner, { resourceId: 'r' })).rejects.toThrow(/still waiting/)
+    expect(native.chooseSavePath).toHaveBeenCalledTimes(saveDialogs)
+  } finally {
+    disk.resolve({ begin: 0, end: 0, total: 0, data: new Uint8Array() })
+    await task
+    await control.close()
+  }
+})
+
 it('offers installation only after authorizing the preview, without opening a save dialog', async () => {
-  const readRange = vi.fn(async (_owner, request) => ({
-    begin: request.begin,
-    end: request.end,
-    total: content.length,
-    data: content.subarray(request.begin, request.end)
-  }))
+  const total = 16 * 1024 * 1024
+  const readRange = vi.fn(async (_owner, { begin, end }) => {
+    const data = Buffer.alloc(end - begin)
+    content.copy(data, 0, Math.min(begin, content.length), Math.min(end, content.length))
+    return { begin, end, total, data }
+  })
   const chooseCalls = native.chooseSavePath.mock.calls.length
   const missing = { ...tools, available: vi.fn(async () => false) }
   const control = createResearchVideoExportControl({ readRange }, missing)
@@ -121,7 +158,9 @@ it('offers installation only after authorizing the preview, without opening a sa
     canceled: false,
     needsInstallation: { downloadBytes: 42 }
   })
-  expect(readRange).toHaveBeenCalled()
+  expect(
+    readRange.mock.calls.reduce((bytes, [, { begin, end }]) => bytes + end - begin, 0)
+  ).toBeLessThanOrEqual(4097)
   expect(native.chooseSavePath).toHaveBeenCalledTimes(chooseCalls)
   await control.close()
 })

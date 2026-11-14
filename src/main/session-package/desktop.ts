@@ -10,9 +10,9 @@ import {
 import { ForkRecoveryRequiredError } from './fork-session'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { formatPackageBytes, packageImportPercent } from '../../shared/session-package'
-import { randomUUID } from 'node:crypto'
-import { mkdtemp, readdir, realpath, rm, stat } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { createHash, randomUUID } from 'node:crypto'
+import { lstat, mkdtemp, opendir, readdir, realpath, rm, stat } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type {
   PackageFileSelection,
@@ -465,9 +465,7 @@ export class SessionPackageDesktop {
   // Local Web callers hand the returned path to the renderer for a browser download, so the
   // archive lands in private per-host and per-export directories.
   private async stageDownloadPath(title: string): Promise<string> {
-    const root = (this.downloadDirectory ??= await mkdtemp(
-      join(tmpdir(), 'open-science-package-exports-')
-    ))
+    const root = (this.downloadDirectory ??= await this.createDownloadDirectory())
     await this.pruneStaleDownloads(root)
     const directory = await mkdtemp(join(root, 'export-'))
     const today = new Date()
@@ -478,6 +476,45 @@ export class SessionPackageDesktop {
     ].join('-')
     const base = `${sanitizeExportFilename(title || 'Session', 220)}-${date}`
     return join(directory, `${base}.science`)
+  }
+
+  private async createDownloadDirectory(): Promise<string> {
+    const parent = tmpdir()
+    const uid = process.getuid?.()
+    const user =
+      uid ?? createHash('sha256').update(homedir().toLowerCase()).digest('hex').slice(0, 16)
+    const prefix = `open-science-package-exports-v1-${user}-`
+    try {
+      for await (const entry of await opendir(parent)) {
+        if (!entry.isDirectory() || !entry.name.startsWith(prefix)) continue
+        const match = /^([1-9]\d{0,9})-[A-Za-z0-9]{6}$/.exec(entry.name.slice(prefix.length))
+        if (!match) continue
+        const pid = Number(match[1])
+        if (pid === process.pid || pid > 0x7fff_ffff) continue
+        try {
+          // Hosts sharing this temp directory must also share a PID namespace.
+          process.kill(pid, 0)
+          continue
+        } catch (error) {
+          // A reused PID or an inconclusive liveness check preserves the directory.
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') continue
+        }
+        const path = join(parent, entry.name)
+        try {
+          const info = await lstat(path)
+          if (
+            info.isDirectory() &&
+            (uid === undefined || (info.uid === uid && !(info.mode & 0o077)))
+          )
+            await rm(path, { recursive: true, force: true })
+        } catch {
+          // Another host may already have cleaned the directory, or a file is still open.
+        }
+      }
+    } catch {
+      // An unreadable temp listing must not block a new export.
+    }
+    return mkdtemp(join(parent, `${prefix}${process.pid}-`))
   }
 
   // Staged downloads are ephemeral: drop anything a previous caller never claimed.

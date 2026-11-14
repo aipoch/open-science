@@ -6,7 +6,7 @@ import { z } from 'zod'
 import type { FilmAuthoringCheckpoint, ResearchVideoSessionSource } from '@aipoch/research-film'
 import { researchFilmReceiptSchema } from './stored-presentation'
 
-const pendingFilm = z.object({
+export const pendingFilmSchema = z.object({
   version: z.literal(1),
   id: z.string().uuid(),
   conversation: z.string().regex(/^[a-f0-9]{64}$/),
@@ -19,7 +19,29 @@ const pendingFilm = z.object({
   total: z.number().int().positive().optional(),
   built: researchFilmReceiptSchema.optional()
 })
-export type PendingFilm = z.infer<typeof pendingFilm>
+export type PendingFilm = z.infer<typeof pendingFilmSchema>
+export const PENDING_FILM_OWNER = 'pending-owner.json'
+const identity = z.string().min(1).max(512)
+export const pendingFilmOwnerSchema = z
+  .object({
+    version: z.literal(1),
+    id: z.string().uuid(),
+    projectId: identity,
+    sessionId: identity,
+    branchId: identity.optional()
+  })
+  .strict()
+
+export function savePendingFilmOwner(
+  directory: string,
+  owner: Omit<z.infer<typeof pendingFilmOwnerSchema>, 'version'>
+): Promise<void> {
+  return writeDurableJsonFile(
+    join(directory, PENDING_FILM_OWNER),
+    JSON.stringify({ version: 1, ...owner })
+  )
+}
+
 export const digestFilmInput = (value: string): string =>
   createHash('sha256').update(value).digest('hex')
 
@@ -36,7 +58,7 @@ export async function readPendingFilm(base: string): Promise<PendingFilm | undef
   if (!info?.isFile() || info.size > 4096) return undefined
   let parsed
   try {
-    parsed = pendingFilm.safeParse(JSON.parse(await readFileWithinLimit(path, 4096)))
+    parsed = pendingFilmSchema.safeParse(JSON.parse(await readFileWithinLimit(path, 4096)))
   } catch (error) {
     if (error instanceof SyntaxError) return undefined
     throw error
@@ -53,6 +75,9 @@ export function savePendingFilm(base: string, value: PendingFilm): Promise<void>
   return writeDurableJsonFile(join(base, 'pending.json'), JSON.stringify(value))
 }
 
+// Budget for the serialized recovery file, independent of the model response size.
+const MAX_AUTHORING_CHECKPOINT_BYTES = 8 * 1024 * 1024
+
 /** Each validated unit has its own atomic file, including independent concurrent scenes. */
 export function filmAuthoringCheckpoint(
   directory: string,
@@ -65,9 +90,9 @@ export function filmAuthoringCheckpoint(
       const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error
       })
-      if (!info?.isFile() || info.size > 512 * 1024) return undefined
+      if (!info?.isFile() || info.size > MAX_AUTHORING_CHECKPOINT_BYTES) return undefined
       try {
-        const entry = JSON.parse(await readFileWithinLimit(path, 512 * 1024))
+        const entry = JSON.parse(await readFileWithinLimit(path, MAX_AUTHORING_CHECKPOINT_BYTES))
         if (typeof entry?.value === 'string' && digestFilmInput(entry.value) === entry.digest) {
           event('reused')
           return entry.value
@@ -78,10 +103,10 @@ export function filmAuthoringCheckpoint(
       return undefined
     },
     async save(key, value) {
-      await writeDurableJsonFile(
-        file(key),
-        JSON.stringify({ digest: digestFilmInput(value), value })
-      )
+      if (Buffer.byteLength(value) > MAX_AUTHORING_CHECKPOINT_BYTES) return
+      const entry = JSON.stringify({ digest: digestFilmInput(value), value })
+      if (Buffer.byteLength(entry) > MAX_AUTHORING_CHECKPOINT_BYTES) return
+      await writeDurableJsonFile(file(key), entry)
       event('saved')
     }
   }
