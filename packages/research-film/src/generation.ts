@@ -74,6 +74,14 @@ export type ResearchVideoGenerate = (
   onProgress?: (progress: ResearchVideoStep) => void
 ) => Promise<ResearchVideoGenerationResult>
 
+export class ResearchVideoBuildCleanupError extends Error {
+  constructor(readonly exited: Promise<void>) {
+    super('Film build worker did not confirm shutdown. Wait for it to exit before trying again.')
+  }
+}
+
+const GENERATION_IDLE_TIMEOUT_MS = 4 * 60_000
+
 /** The caller owns source authorization and Artifact publication; this owner only generates files. */
 export const createResearchVideoGenerator = (options: {
   temporaryRoot: string
@@ -85,7 +93,7 @@ export const createResearchVideoGenerator = (options: {
     options.createWorker ??
     ((options: WorkerOptions) => new Worker(researchFilmResources().workerPath, options))
   let active = false
-  let pendingExit: ResearchVideoSpeechCleanupError | undefined
+  let pendingExit: ResearchVideoSpeechCleanupError | ResearchVideoBuildCleanupError | undefined
   const assertReady = (): void => {
     if (pendingExit) throw pendingExit
     if (active) throw new Error('Another research explanation is being generated.')
@@ -103,24 +111,62 @@ export const createResearchVideoGenerator = (options: {
     const speechConcurrency =
       input.speechConcurrency ??
       (availableParallelism() >= 4 && totalmem() >= 16 * 1024 ** 3 ? 2 : 1)
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
     let removeAbortListener = (): void => {}
-    const cleanup = async (): Promise<void> => {
-      const [build, narration] = await Promise.allSettled([worker?.terminate(), speech?.stop()])
-      if (narration.status === 'rejected') {
-        const error: unknown = narration.reason
-        if (error instanceof ResearchVideoSpeechCleanupError) {
-          pendingExit = error
-          void error.exited.then(async () => {
-            pendingExit = undefined
-            await rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 3 }).catch(
-              () => {}
+    const buildExit = Promise.withResolvers<void>()
+    const stopBuild = async (): Promise<void> => {
+      if (!worker) return
+      // Node resolves terminate() only after the worker exits. Keep the exit listener in
+      // case requesting termination fails and the worker eventually exits on its own.
+      void worker.terminate().then(
+        () => buildExit.resolve(),
+        () => {}
+      )
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          buildExit.promise,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new ResearchVideoBuildCleanupError(buildExit.promise)),
+              5000
             )
           })
-        }
-        throw error
+        ])
+      } finally {
+        clearTimeout(timer)
       }
-      if (build.status === 'rejected') throw build.reason
-      await rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 3 })
+    }
+    const removeScratch = (): Promise<void> =>
+      rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 3 })
+    const cleanup = async (): Promise<void> => {
+      const [build, narration] = await Promise.allSettled([stopBuild(), speech?.stop()])
+      const narrationError: unknown = narration.status === 'rejected' ? narration.reason : undefined
+      const buildError: unknown = build.status === 'rejected' ? build.reason : undefined
+      const exit =
+        buildError instanceof ResearchVideoBuildCleanupError
+          ? new ResearchVideoBuildCleanupError(
+              Promise.all([
+                buildError.exited,
+                narrationError instanceof ResearchVideoSpeechCleanupError
+                  ? narrationError.exited
+                  : undefined
+              ]).then(() => {})
+            )
+          : narrationError instanceof ResearchVideoSpeechCleanupError
+            ? narrationError
+            : undefined
+      if (exit) {
+        pendingExit = exit
+        void exit.exited.then(() => {
+          pendingExit = undefined
+          void removeScratch().catch(() => {})
+        })
+        throw exit
+      }
+      if (narrationError) throw narrationError
+      if (buildError) throw buildError
+      await removeScratch()
     }
     try {
       signal.throwIfAborted()
@@ -135,6 +181,15 @@ export const createResearchVideoGenerator = (options: {
         } satisfies ResearchVideoWorkerInput
       })
       const result = await new Promise<ResearchVideoGenerationResult>((resolve, reject) => {
+        const armIdleDeadline = (phase: string): void => {
+          clearTimeout(idleTimer)
+          idleTimer = setTimeout(() => {
+            const error = Object.assign(new Error(`Film ${phase} timed out without progress.`), {
+              code: 'ETIMEDOUT'
+            })
+            reject(new ResearchVideoWorkerError(error, 'generation'))
+          }, GENERATION_IDLE_TIMEOUT_MS)
+        }
         const abort = (): void => reject(signal.reason)
         const exit = (code: number): void =>
           reject(
@@ -157,10 +212,12 @@ export const createResearchVideoGenerator = (options: {
                 value.lane >= speechConcurrency
               )
                 throw new Error('Invalid speech worker lane')
+              armIdleDeadline('narration preparation')
               speech ??= ownSpeechProcess(
                 (options.createSpeechProcess ?? forkSpeechProcess)(),
                 (reply) => {
                   if (stopping || signal.aborted) return
+                  armIdleDeadline('narration preparation')
                   if (reply.kind === 'speech-result')
                     worker!.postMessage(reply, [reply.audio.samples.buffer as ArrayBuffer])
                   else worker!.postMessage(reply)
@@ -194,6 +251,7 @@ export const createResearchVideoGenerator = (options: {
           else if (value.kind === 'phase' || value.kind === 'progress') {
             try {
               const progress = value.kind === 'phase' ? { phase: value.phase } : value.progress
+              armIdleDeadline(progress.phase)
               // Narration no longer owns work once the build starts.
               if (progress.phase === 'build') void speech?.stop().catch(reject)
               onProgress?.(progress)
@@ -202,13 +260,18 @@ export const createResearchVideoGenerator = (options: {
             }
           }
         }
+        armIdleDeadline('preparation')
         worker!.on('message', message)
         worker!.once('error', error)
-        worker!.once('exit', exit)
+        worker!.once('exit', (code) => {
+          buildExit.resolve()
+          exit(code)
+        })
         signal.addEventListener('abort', abort, { once: true })
         if (signal.aborted) abort()
         removeAbortListener = () => signal.removeEventListener('abort', abort)
       })
+      clearTimeout(idleTimer)
       // Confirm narration exit before copying output into the caller's persistent job.
       await speech?.stop()
       signal.throwIfAborted()
@@ -227,6 +290,7 @@ export const createResearchVideoGenerator = (options: {
       }
     } finally {
       stopping = true
+      clearTimeout(idleTimer)
       removeAbortListener()
       await cleanup()
     }

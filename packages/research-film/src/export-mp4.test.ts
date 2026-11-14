@@ -93,9 +93,9 @@ describe('research video export', () => {
     }
   )
 
-  it.skipIf(process.platform === 'win32')(
-    'joins the verifier on cancellation even if it ignores SIGTERM',
-    async () => {
+  it.skipIf(process.platform === 'win32').each(['cancel', 'timeout'] as const)(
+    'joins a stuck verifier on %s',
+    async (reason) => {
       const root = await mkdtemp(join(tmpdir(), 'video-export-probe-'))
       const controller = new AbortController()
       const encoderPath = join(root, 'encoder')
@@ -110,7 +110,7 @@ describe('research video export', () => {
         )
         await writeFile(
           probePath,
-          `#!${process.execPath}\nprocess.on('SIGTERM', () => {});\nrequire('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));\nsetTimeout(() => process.exit(0), 5000);`,
+          `#!${process.execPath}\nprocess.on('SIGTERM', () => {});\nrequire('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));\nsetTimeout(() => process.exit(0), 1500);`,
           { mode: 0o700 }
         )
         const result = exportResearchVideoMp4({
@@ -122,18 +122,29 @@ describe('research video export', () => {
           width: 2,
           height: 2,
           duration: 1 / 30,
-          signal: controller.signal
+          signal: controller.signal,
+          onPhase: (phase) => {
+            if (phase === 'verifying' && reason === 'timeout') vi.useFakeTimers()
+          }
         }).catch((error: unknown) => error)
         const pid = await vi.waitFor(async () => {
           const pid = Number(await readFile(pidPath, 'utf8'))
           expect(pid).toBeGreaterThan(0)
           return pid
         })
-        controller.abort()
-        expect(await result).toMatchObject({ code: 'ABORT_ERR' })
+        if (reason === 'cancel') {
+          controller.abort()
+          expect(await result).toMatchObject({ code: 'ABORT_ERR' })
+        } else {
+          await vi.advanceTimersByTimeAsync(120_000)
+          expect(await result).toMatchObject({
+            message: expect.stringMatching(/verification timed out/i)
+          })
+        }
         expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
         expect(await readdir(root)).not.toContain('output.mp4')
       } finally {
+        vi.useRealTimers()
         controller.abort()
         await rm(root, { recursive: true, force: true })
       }

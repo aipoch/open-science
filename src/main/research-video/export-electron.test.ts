@@ -128,3 +128,70 @@ it('keeps a completed export when browser data cleanup fails', async () => {
     await rm(root, { force: true, recursive: true })
   }
 })
+
+it('cancels a player load that never settles after its window is destroyed', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-stuck-window-'))
+  const htmlPath = join(root, 'player.html')
+  const loading = Promise.withResolvers<void>()
+  const load = Promise.withResolvers<void>()
+  const controller = new AbortController()
+  const settled = vi.fn()
+  electron.loadURL.mockImplementationOnce(() => {
+    loading.resolve()
+    return load.promise
+  })
+  await writeFile(htmlPath, '<meta name="open-science-research-video" content="1">')
+  const task = renderResearchVideoMp4(
+    { htmlPath, encoderPath: '', probePath: '' },
+    controller.signal
+  ).then(settled, settled)
+  try {
+    await loading.promise
+    const reason = new Error('Cancelled during load')
+    controller.abort(reason)
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(reason), { timeout: 300 })
+  } finally {
+    load.resolve()
+    await task
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+it('bounds partition cleanup without mounting another player on a dirty partition', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-stuck-reset-'))
+  const htmlPath = join(root, 'player.html')
+  const clearing = Promise.withResolvers<void>()
+  const cleared = Promise.withResolvers<void>()
+  const start = (): Promise<unknown> =>
+    renderResearchVideoMp4(
+      { htmlPath, encoderPath: '', probePath: '' },
+      new AbortController().signal
+    ).catch((error: unknown) => error)
+  electron.clearData.mockImplementationOnce(() => {
+    vi.useFakeTimers()
+    clearing.resolve()
+    return cleared.promise
+  })
+  await writeFile(htmlPath, '<meta name="open-science-research-video" content="1">')
+  const first = start()
+  try {
+    await clearing.promise
+    const mounted = electron.BrowserWindow.mock.calls.length
+    const resets = electron.clearData.mock.calls.length
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(await first).toEqual(new Error('Invalid research video stage'))
+    // The prior reset is still pending; trying again must not start a second reset or window.
+    expect(await start()).toEqual(new Error('Film export browser cleanup timed out.'))
+    expect(electron.clearData).toHaveBeenCalledTimes(resets)
+    expect(electron.BrowserWindow).toHaveBeenCalledTimes(mounted)
+    cleared.resolve()
+    vi.useRealTimers()
+    expect(await start()).toEqual(new Error('Invalid research video stage'))
+    expect(electron.BrowserWindow).toHaveBeenCalledTimes(mounted + 1)
+  } finally {
+    cleared.resolve()
+    vi.useRealTimers()
+    await first
+    await rm(root, { force: true, recursive: true })
+  }
+})

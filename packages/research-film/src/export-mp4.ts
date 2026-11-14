@@ -4,6 +4,9 @@ import { mkdtemp, rm, link } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
+const ENCODER_IDLE_TIMEOUT_MS = 120_000
+const PROBE_TIMEOUT_MS = 120_000
+
 export type VideoFrameRenderer = {
   /** Return a PNG of the stage alone at exactly width × height, after drawing this time. */
   capture(seconds: number, signal: AbortSignal): Promise<Uint8Array>
@@ -23,7 +26,14 @@ export async function exportResearchVideoMp4(options: {
   onProgress?: (frames: number, total: number) => void
   onPhase?: (phase: 'encoding' | 'verifying') => void
 }): Promise<void> {
-  const { width, height, duration, signal } = options
+  const { width, height, duration } = options
+  const deadline = new AbortController()
+  const signal = AbortSignal.any([options.signal, deadline.signal])
+  let idleTimer: ReturnType<typeof setTimeout> | undefined
+  const armDeadline = (message: string, timeout: number): void => {
+    clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => deadline.abort(new Error(message)), timeout)
+  }
   if (
     ![width, height].every((n) => Number.isInteger(n) && n > 0 && n <= 4096 && n % 2 === 0) ||
     !Number.isFinite(duration) ||
@@ -40,7 +50,26 @@ export async function exportResearchVideoMp4(options: {
   let feed: Promise<void> | undefined
   let probe: ReturnType<typeof spawn> | undefined
   let probeClosed: Promise<void> | undefined
+  const reap = async (
+    child: ReturnType<typeof spawn> | undefined,
+    closed?: Promise<void>
+  ): Promise<void> => {
+    if (!child) return
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        // A signal error cannot authorize deleting files the process may still be using.
+      }
+    }
+    // These are direct children; owned stdio can be closed without waiting for further output.
+    child.stdin?.destroy()
+    child.stdout?.destroy()
+    child.stderr?.destroy()
+    await closed
+  }
   try {
+    armDeadline('Video encoding timed out without progress', ENCODER_IDLE_TIMEOUT_MS)
     encoder = spawn(
       options.encoderPath,
       [
@@ -114,6 +143,7 @@ export async function exportResearchVideoMp4(options: {
           if (abort) frameSignal.removeEventListener('abort', abort)
         }
         yield png
+        armDeadline('Video encoding timed out without progress', ENCODER_IDLE_TIMEOUT_MS)
         options.onProgress?.(frame + 1, frames)
       }
       options.onPhase?.('encoding')
@@ -123,6 +153,7 @@ export async function exportResearchVideoMp4(options: {
     await Promise.all([completion, feed])
     signal.throwIfAborted()
     options.onPhase?.('verifying')
+    armDeadline('Video verification timed out', PROBE_TIMEOUT_MS)
     const verifier = spawn(
       options.probePath,
       ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', temporaryPath],
@@ -138,7 +169,7 @@ export async function exportResearchVideoMp4(options: {
       const text = chunk.toString()
       if (output.length + text.length > 1024 * 1024) {
         outputTooLarge = true
-        verifier.kill('SIGKILL')
+        deadline.abort(new Error('Video verification output exceeds the limit'))
       } else output += text
     })
     verifier.stderr.on('data', (chunk) => {
@@ -152,6 +183,8 @@ export async function exportResearchVideoMp4(options: {
           : reject(new Error(`Video verification failed: ${probeError}`))
       )
     })
+    clearTimeout(idleTimer)
+    signal.throwIfAborted()
     const metadata = JSON.parse(output) as {
       streams: Array<{
         codec_type: string
@@ -179,12 +212,13 @@ export async function exportResearchVideoMp4(options: {
     signal.throwIfAborted()
     // Same-filesystem exclusive publication preserves an existing output on retries or failure.
     await link(temporaryPath, options.outputPath)
+  } catch (error) {
+    if (deadline.signal.aborted && signal.reason === deadline.signal.reason) throw signal.reason
+    throw error
   } finally {
-    // Abort emits an error before the verifier has exited; join it before removing its input.
-    if (probe && probe.exitCode === null && probe.signalCode === null) probe.kill('SIGKILL')
-    await probeClosed
-    if (encoder && encoder.exitCode === null && encoder.signalCode === null) encoder.kill('SIGKILL')
-    await encoderClosed
+    clearTimeout(idleTimer)
+    // Abort emits an error before a process has exited; join both before removing their input.
+    await Promise.all([reap(probe, probeClosed), reap(encoder, encoderClosed)])
     await feed?.catch(() => {})
     await rm(directory, { recursive: true, force: true })
   }

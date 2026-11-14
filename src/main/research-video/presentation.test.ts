@@ -1,3 +1,4 @@
+import { writeDurableJsonFile } from '@aipoch/durable-files'
 import {
   parseResearchVideoScreenplay,
   ResearchVideoSpeechCleanupError
@@ -16,6 +17,11 @@ vi.mock('@aipoch/diagnostics/node', async (original) => ({
   ...(await original<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({ info: timing })
 }))
+
+vi.mock('@aipoch/durable-files', async (original) => {
+  const actual = await original<typeof import('@aipoch/durable-files')>()
+  return { ...actual, writeDurableJsonFile: vi.fn(actual.writeDurableJsonFile) }
+})
 
 const roots: string[] = []
 afterEach(async () => {
@@ -613,6 +619,88 @@ it('times out a stalled readiness check before the Film starts', async () => {
   } finally {
     timeout.mockRestore()
     probe.resolve()
+    await owner.close()
+  }
+})
+
+it('reports a stalled checkpoint write without letting a retry race it', async () => {
+  const f = await fixture()
+  const write = vi.mocked(writeDurableJsonFile)
+  const original = write.getMockImplementation()!
+  const entered = Promise.withResolvers<void>()
+  const disk = Promise.withResolvers<void>()
+  write.mockImplementation(async (...args) => {
+    if (!args[0].endsWith('session.json')) return original(...args)
+    vi.useFakeTimers()
+    entered.resolve()
+    await disk.promise
+    await original(...args)
+  })
+  const owner = createResearchVideoPresentationOwner(f.options)
+  try {
+    await owner.start(request)
+    await entered.promise
+    owner.cancel(request)
+    await vi.advanceTimersByTimeAsync(5000)
+    vi.useRealTimers()
+    await vi.waitFor(
+      async () => {
+        expect(await owner.status(request)).toMatchObject({
+          progress: { phase: 'failed' },
+          error: expect.stringMatching(/still waiting for the disk/i)
+        })
+      },
+      { timeout: 400 }
+    )
+    await expect(owner.start(request)).rejects.toThrow(/still waiting for the disk/i)
+    expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+    disk.resolve()
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+    expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+    disk.resolve()
+    await owner.close()
+    write.mockImplementation(original)
+  }
+})
+
+it('cancels a stalled prepublication session read without discarding the built Film', async () => {
+  const f = await fixture()
+  const lookup = Promise.withResolvers<PersistedChatSession>()
+  const entered = Promise.withResolvers<void>()
+  let stall = true
+  const generate = f.options.generate.getMockImplementation()!
+  f.options.generate.mockImplementation(async (...args) => {
+    const result = await generate(...args)
+    if (stall)
+      vi.mocked(f.options.loadSession).mockImplementationOnce(() => {
+        entered.resolve()
+        return lookup.promise
+      })
+    return result
+  })
+  const owner = createResearchVideoPresentationOwner(f.options)
+  try {
+    await owner.start(request)
+    await entered.promise
+    owner.cancel(request)
+    await vi.waitFor(
+      async () => {
+        expect(await owner.status(request)).toMatchObject({
+          progress: { phase: 'cancelled' },
+          canResume: true
+        })
+        expect(f.release).toHaveBeenCalledOnce()
+      },
+      { timeout: 400 }
+    )
+    stall = false
+    await owner.start({ ...request, resume: true })
+    await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+    expect(f.options.generate).toHaveBeenCalledOnce()
+  } finally {
+    lookup.resolve(session)
     await owner.close()
   }
 })

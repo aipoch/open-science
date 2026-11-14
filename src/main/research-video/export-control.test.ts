@@ -107,6 +107,43 @@ it('cancels the owning export without publishing, and cannot cancel another call
   }
 })
 
+it('cancels an export while its first source read is stalled', async () => {
+  const entered = Promise.withResolvers<void>()
+  const disk = Promise.withResolvers<{
+    begin: number
+    end: number
+    total: number
+    data: Uint8Array
+  }>()
+  const control = createResearchVideoExportControl(
+    {
+      readRange: () => {
+        entered.resolve()
+        return disk.promise
+      }
+    },
+    tools
+  )
+  const owner = lease('owner')
+  const settled = vi.fn()
+  const task = control.export(owner, { resourceId: 'r' }).then(settled, settled)
+  const saveDialogs = native.chooseSavePath.mock.calls.length
+  try {
+    await entered.promise
+    control.cancel(owner, { resourceId: 'r' })
+    await vi.waitFor(
+      () => expect(settled).toHaveBeenCalledWith(new Error('Video export cancelled')),
+      { timeout: 300 }
+    )
+    await expect(control.export(owner, { resourceId: 'r' })).rejects.toThrow(/still waiting/)
+    expect(native.chooseSavePath).toHaveBeenCalledTimes(saveDialogs)
+  } finally {
+    disk.resolve({ begin: 0, end: 0, total: 0, data: new Uint8Array() })
+    await task
+    await control.close()
+  }
+})
+
 it('offers installation only after authorizing the preview, without opening a save dialog', async () => {
   const total = 16 * 1024 * 1024
   const readRange = vi.fn(async (_owner, { begin, end }) => {

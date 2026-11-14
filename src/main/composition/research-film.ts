@@ -32,9 +32,9 @@ import { createLocalModelOwner } from '../local-models/owner'
 import type { ResearchFilmLifecycle } from '../research-video/lifecycle'
 import {
   createResearchVideoPresentationOwner,
-  currentFilmAttempt,
-  waitForFilmStep
+  currentFilmAttempt
 } from '../research-video/presentation'
+import { waitForFilmStep } from '../research-video/wait'
 import { runtimeMetadata } from '../runtime-metadata'
 import type { SessionPackageService } from '../session-package/service'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'

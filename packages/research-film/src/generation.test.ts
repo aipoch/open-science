@@ -80,6 +80,82 @@ describe('research video worker ownership', () => {
   })
 })
 
+it('times out a build worker that stops sending progress', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-stuck-build-'))
+  const worker = stubWorker()
+  const controller = new AbortController()
+  const building = Promise.withResolvers<void>()
+  const generate = createResearchVideoGenerator({
+    temporaryRoot: root,
+    createWorker: () => {
+      vi.useFakeTimers()
+      queueMicrotask(() =>
+        worker.emit('message', { kind: 'progress', progress: { phase: 'build' } })
+      )
+      return worker as unknown as Worker
+    }
+  })
+  const failed = vi.fn()
+  const result = generate(input(root), controller.signal, () => building.resolve()).catch(failed)
+  try {
+    await building.promise
+    await vi.advanceTimersByTimeAsync(4 * 60_000)
+    expect(worker.terminate).toHaveBeenCalledOnce()
+    await result
+    expect(failed).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringMatching(/build.*timed out/i) })
+    )
+    expect(await readdir(root)).toEqual([])
+  } finally {
+    controller.abort()
+    await result
+    vi.useRealTimers()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('reports unconfirmed build shutdown and keeps scratch reserved until termination', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-stuck-build-exit-'))
+  const worker = stubWorker()
+  const controller = new AbortController()
+  const stopping = Promise.withResolvers<number>()
+  worker.terminate.mockReturnValue(stopping.promise)
+  const entered = Promise.withResolvers<void>()
+  const generate = createResearchVideoGenerator({
+    temporaryRoot: root,
+    createWorker: () => {
+      vi.useFakeTimers()
+      queueMicrotask(() => entered.resolve())
+      return worker as unknown as Worker
+    }
+  })
+  const failed = vi.fn()
+  const task = generate(input(root), controller.signal).catch(failed)
+  try {
+    await entered.promise
+    controller.abort()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(failed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringMatching(/build worker did not confirm shutdown/i)
+      })
+    )
+    expect(await readdir(root)).toHaveLength(1)
+    expect(generate.assertReady).toThrow(/shutdown/i)
+    stopping.resolve(1)
+    vi.useRealTimers()
+    await vi.waitFor(async () => {
+      expect(generate.assertReady).not.toThrow()
+      expect(await readdir(root)).toEqual([])
+    })
+  } finally {
+    stopping.resolve(1)
+    await task
+    vi.useRealTimers()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 it('reaps the one real child even when neither narration lane answers', async () => {
   const root = await mkdtemp(join(tmpdir(), 'film-stuck-narration-'))
   const path = join(root, 'stuck.cjs')

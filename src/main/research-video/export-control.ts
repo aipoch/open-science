@@ -18,6 +18,7 @@ import { callerLeaseOwnershipKey } from '../caller-lifecycle'
 import { desktopFileInteraction } from '../desktop-interaction'
 import { currentDesktopCaller, withDesktopCaller } from '../desktop-native-contract'
 import { publishUserFile } from '../user-file-publisher'
+import { waitForFilmStep } from './wait'
 
 const requestSchema = z.object({ resourceId: z.string().min(1).max(200) })
 export function createResearchVideoExportControl(
@@ -46,6 +47,7 @@ export function createResearchVideoExportControl(
       htmlPath?: string
     }
   >()
+  const pendingSourceReads = new Set<string>()
   return {
     async progress(lease, rawRequest) {
       const { resourceId } = requestSchema.parse(rawRequest)
@@ -61,6 +63,8 @@ export function createResearchVideoExportControl(
       const { resourceId } = requestSchema.parse(rawRequest)
       const key = callerLeaseOwnershipKey(lease)
       if (active.has(key)) throw new Error('A research video export is already running')
+      if (pendingSourceReads.has(key))
+        throw new Error('The previous Film export is still waiting for its source file.')
       const controller = new AbortController()
       const signal = AbortSignal.any([lease.signal, controller.signal])
       let settle!: () => void
@@ -78,11 +82,20 @@ export function createResearchVideoExportControl(
       let directory: string | undefined
       let releaseTools: (() => void) | undefined
       try {
-        const { total } = await previews.readRange(lease, { resourceId, begin: 0, end: 1 })
+        const readRange = (begin: number, end: number): ReturnType<typeof previews.readRange> => {
+          const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+          return waitForFilmStep(deadline, () => {
+            pendingSourceReads.add(key)
+            return Promise.resolve()
+              .then(() => previews.readRange(lease, { resourceId, begin, end }))
+              .finally(() => pendingSourceReads.delete(key))
+          })
+        }
+        const { total } = await readRange(0, 1)
         if (total > 200 * 1024 * 1024) throw new Error('Research video player exceeds 200 MiB')
         const read = async (begin: number, end: number): Promise<Uint8Array> => {
           signal.throwIfAborted()
-          const chunk = await previews.readRange(lease, { resourceId, begin, end })
+          const chunk = await readRange(begin, end)
           if (chunk.total !== total || chunk.data.byteLength !== end - begin)
             throw new Error('Research video source changed')
           return chunk.data

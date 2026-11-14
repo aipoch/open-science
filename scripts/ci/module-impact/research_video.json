@@ -25,7 +25,8 @@
     "src/main/research-video/lifecycle.test.ts",
     "src/main/research-video/stored-presentation.ts",
     "src/main/research-video/input-context.ts",
-    "src/main/research-video/input-context.test.ts"
+    "src/main/research-video/input-context.test.ts",
+    "src/main/research-video/wait.ts"
   ],
   "interfacePaths": [
     "src/main/research-video/export-control.ts",

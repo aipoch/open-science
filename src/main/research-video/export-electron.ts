@@ -4,6 +4,7 @@ import { BrowserWindow, session } from 'electron'
 import { readFile, writeFile, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { exportResearchVideoMp4 } from '@aipoch/research-film/export'
+import { waitForFilmStep } from './wait'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 const log = createLogger('research-video')
@@ -12,6 +13,8 @@ const renderWaiters = new Set<() => void>()
 let renderActive = false
 let renderSession: Electron.Session | undefined
 let needsReset = false
+let resetting: Promise<void> | undefined
+let resetTimedOut = false
 let playerMounted = false
 let activePlayerUrl: string | undefined
 
@@ -36,14 +39,36 @@ const acquireRenderSlot = async (signal: AbortSignal): Promise<void> => {
   })
 }
 
-const resetRenderSession = async (isolated: Electron.Session): Promise<void> => {
-  activePlayerUrl = undefined
-  if (playerMounted) {
-    isolated.protocol.unhandle('https')
-    playerMounted = false
-  }
-  await isolated.clearData()
-  needsReset = false
+const resetRenderSession = async (
+  isolated: Electron.Session,
+  signal?: AbortSignal
+): Promise<void> => {
+  signal?.throwIfAborted()
+  const error = new Error('Film export browser cleanup timed out.')
+  if (resetTimedOut) throw error
+  const pending = (resetting ??= Promise.resolve()
+    .then(async () => {
+      activePlayerUrl = undefined
+      if (playerMounted) {
+        isolated.protocol.unhandle('https')
+        playerMounted = false
+      }
+      await isolated.clearData()
+      needsReset = false
+    })
+    .finally(() => {
+      resetting = undefined
+      resetTimedOut = false
+    }))
+  const deadline = new AbortController()
+  const timer = setTimeout(() => {
+    resetTimedOut = true
+    deadline.abort(error)
+  }, 5_000)
+  return waitForFilmStep(
+    signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal,
+    () => pending
+  ).finally(() => clearTimeout(timer))
 }
 
 const createRenderSession = (): Electron.Session => {
@@ -80,30 +105,30 @@ async function renderWithSlot(
   request: { htmlPath: string } & VideoEncoderPaths,
   parentSignal: AbortSignal
 ): Promise<string> {
-  const controller = new AbortController()
-  const signal = AbortSignal.any([parentSignal, controller.signal])
+  const timeout = new AbortController()
+  const signal = AbortSignal.any([parentSignal, timeout.signal])
   const { encoderPath, probePath } = request
   const startedAt = Date.now()
   const report = (step: ResearchVideoStep): void => {
     activeProgress.set(request.htmlPath, { ...step, startedAt })
   }
   signal.throwIfAborted()
-  const html = await readFile(request.htmlPath, { encoding: 'utf8', signal })
+  const setupSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+  const html = await waitForFilmStep(setupSignal, () =>
+    readFile(request.htmlPath, { encoding: 'utf8', signal: setupSignal })
+  )
   if (
     Buffer.byteLength(html) > 200 * 1024 * 1024 ||
     !html.includes('<meta name="open-science-research-video" content="1">')
   )
     throw new Error('Not a supported research video player')
   const isolated = (renderSession ??= createRenderSession())
-  if (needsReset) await resetRenderSession(isolated)
+  if (needsReset) await resetRenderSession(isolated, signal)
   signal.throwIfAborted()
   const playerUrl = `https://research-video.invalid/player?render&ratio=16x9&job=${randomUUID()}`
   const audioPath = `${request.htmlPath}.wav`,
     outputPath = `${request.htmlPath}.mp4`
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let abort: (() => void) | undefined
   let activeWindow: BrowserWindow | undefined
-  let work: Promise<void> | undefined
   let completed = false
   needsReset = true
   try {
@@ -138,10 +163,17 @@ async function renderWithSlot(
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', (event) => event.preventDefault())
     report({ phase: 'preparing' })
-    work = (async () => {
-      await window.loadURL(playerUrl)
+    const timer = setTimeout(
+      () => timeout.abort(new Error('Video export timed out')),
+      60 * 60 * 1000
+    )
+    const renderCall = <T>(call: () => Promise<T>): Promise<T> => waitForFilmStep(setupSignal, call)
+    try {
+      await renderCall(() => window.loadURL(playerUrl))
       signal.throwIfAborted()
-      const metadata = (await window.webContents.executeJavaScript('window.__ready')) as {
+      const metadata = (await renderCall(() =>
+        window.webContents.executeJavaScript('window.__ready')
+      )) as {
         duration: number
         W: number
         H: number
@@ -155,9 +187,9 @@ async function renderWithSlot(
       )
         throw new Error('Invalid research video stage')
       signal.throwIfAborted()
-      const audio = (await window.webContents.executeJavaScript(
-        "window.VIDEO_ASSETS['mix.wav']"
-      )) as unknown
+      const audio: unknown = await renderCall(() =>
+        window.webContents.executeJavaScript("window.VIDEO_ASSETS['mix.wav']")
+      )
       if (
         typeof audio !== 'string' ||
         !audio.startsWith('data:audio/wav;base64,') ||
@@ -198,24 +230,13 @@ async function renderWithSlot(
         onPhase: (phase) => report({ phase })
       })
       completed = true
-    })()
-    await Promise.race([
-      work,
-      new Promise<never>((_resolve, reject) => {
-        abort = () => reject(signal.reason)
-        signal.addEventListener('abort', abort, { once: true })
-        if (signal.aborted) abort()
-        timer = setTimeout(() => reject(new Error('Video export timed out')), 60 * 60 * 1000)
-      })
-    ])
+    } finally {
+      clearTimeout(timer)
+    }
     return outputPath
   } finally {
-    clearTimeout(timer)
-    if (abort) signal.removeEventListener('abort', abort)
-    controller.abort(new Error('Video export finished'))
     try {
       if (activeWindow && !activeWindow.isDestroyed()) activeWindow.destroy()
-      await work?.catch(() => {})
       await resetRenderSession(isolated).catch((error: unknown) => {
         // Preserve the export result. The next export still has to reset before mounting a player.
         log.warn('Failed to clear Film export browser data', diagnosticErrorFields(error))
