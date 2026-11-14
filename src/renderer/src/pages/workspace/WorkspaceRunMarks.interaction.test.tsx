@@ -322,7 +322,7 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(reads.map((read) => read.mock.calls.length)).toEqual(items.map(() => 1))
   })
 
-  it('keeps visible marks dark at rest while hover tapers mark lengths independently', () => {
+  it('keeps visible marks dark at rest while hover tapers mark lengths independently', async () => {
     const items = [0, 1, 2, 3, 4].map((index) => {
       const messageId = `prompt-${index}`
       appendMessageTarget(viewport, messageId, 120 + index * 100)
@@ -349,9 +349,12 @@ describe('WorkspaceRunMarks interaction', () => {
 
     fireEvent.pointerLeave(buttons[2]!)
     fireEvent.pointerLeave(screen.getByRole('list'))
-    expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-[0.4]'))).toBe(
-      true
-    )
+    expect(indicators[2]?.classList.contains('scale-x-100')).toBe(true)
+    await waitFor(() => {
+      expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-[0.4]'))).toBe(
+        true
+      )
+    })
   })
 
   it('coalesces fractional pointer positions and cancels a pending wave on dismissal', async () => {
@@ -595,7 +598,10 @@ describe('WorkspaceRunMarks interaction', () => {
       fireEvent.click(source === 'preview' ? preview : mark)
       expect(queryPreview()).toBeNull()
       if (source === 'preview') expect(document.activeElement).toBe(mark)
-      expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' })
+      expect(scrollTo).toHaveBeenCalledWith({
+        top: 800,
+        behavior: source === 'mark' ? 'auto' : 'smooth'
+      })
     }
   )
 
@@ -702,6 +708,34 @@ describe('WorkspaceRunMarks interaction', () => {
       expect(queryPreview()).toBeNull()
     }
   )
+
+  it('scrolls to a target after the reveal callback mounts it', async () => {
+    const items = Array.from({ length: 4 }, (_, index) =>
+      createMessageItem({ id: `prompt-${index}` }, index)
+    )
+    const scrollTo = vi.fn()
+    viewport.scrollTo = scrollTo
+    const reveal = vi.fn()
+    const { rerender } = render(
+      <WorkspaceRunMarks items={items} viewport={viewport} onRevealMessage={reveal} />
+    )
+
+    expect(viewport.querySelector('[data-message-id="prompt-1"]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Go to run 2/u }))
+    expect(reveal).toHaveBeenCalledWith('prompt-1')
+    expect(scrollTo).not.toHaveBeenCalled()
+
+    appendMessageTarget(viewport, 'prompt-1', 600)
+    await act(async () =>
+      rerender(
+        <WorkspaceRunMarks items={[...items]} viewport={viewport} onRevealMessage={reveal} />
+      )
+    )
+
+    await waitFor(() => {
+      expect(scrollTo).toHaveBeenCalledWith({ top: 492, behavior: 'auto' })
+    })
+  })
 
   it('tracks the last mark above the viewport reading boundary', () => {
     appendMessageTarget(viewport, 'prompt-1', 80)
