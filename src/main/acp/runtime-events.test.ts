@@ -2,6 +2,10 @@ import type { SessionNotification, ToolCallContent } from '@agentclientprotocol/
 import { describe, expect, it, vi } from 'vitest'
 
 import { MAX_ACP_MESSAGE_IMAGE_BYTES } from '../../shared/acp'
+import {
+  createLiteratureSourceCitationHref,
+  resolveLiteratureSourceCitationHref
+} from '../../shared/literature-source-citation'
 import { sanitizeToolActivity } from '../../shared/session-persistence'
 import {
   extractProviderToolName,
@@ -673,12 +677,21 @@ describe('ACP runtime event normalization', () => {
   it.each(['native-result', 'mcp-result', 'json-result', 'acp-text', 'acp-array'])(
     'preserves Library read metadata through the %s transport before truncation',
     (transport) => {
+      const href = createLiteratureSourceCitationHref({
+        itemId: 'item-1',
+        title: 'Paper A',
+        kind: 'abstract',
+        quote: 'The abstract reports a limited follow-up.',
+        citationId: '0123456789abcdef',
+        context: 'The abstract reports a limited follow-up. Longer outcomes remain unknown.'
+      })
       const presentation = {
         openScienceLiteraturePresentation: {
           libraryAction: 'read',
           libraryScope: 'project',
           itemTitles: ['Paper A'],
-          resultCount: 5
+          resultCount: 5,
+          sourceCitationHrefs: [href]
         }
       }
       const result = {
@@ -728,8 +741,77 @@ describe('ACP runtime event normalization', () => {
       })
       expect(event.rawOutput).toBeUndefined()
       expect(JSON.stringify(event.toolContent?.[0])).not.toContain('private abstract')
+      const persisted = sanitizeToolActivity({
+        ...event,
+        sortIndex: 1,
+        eventIds: [event.id],
+        createdAt: event.timestamp,
+        updatedAt: event.timestamp
+      })
+      expect(persisted?.toolContent?.[0]).toEqual(event.toolContent?.[0])
+      const restored = JSON.parse(JSON.stringify(persisted))
+      const receipts = JSON.parse(restored.toolContent[0].content.text)
+        .openScienceLiteraturePresentation.sourceCitationHrefs
+      expect(
+        resolveLiteratureSourceCitationHref('#library-cite=0123456789abcdef', receipts)
+      ).toMatchObject({
+        citationId: '0123456789abcdef',
+        context: 'The abstract reports a limited follow-up. Longer outcomes remain unknown.'
+      })
     }
   )
+
+  it('sanitizes malformed and noncanonical hrefs out of the retained source citation receipt', () => {
+    const href = createLiteratureSourceCitationHref({
+      itemId: 'item-1',
+      title: 'Paper A',
+      kind: 'metadata',
+      quote: ''
+    })
+    const event = toAcpRuntimeEvent(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'library-receipt',
+          status: 'completed',
+          content: [
+            {
+              type: 'content',
+              content: {
+                type: 'text',
+                text: JSON.stringify({
+                  openScienceLiteraturePresentation: {
+                    libraryAction: 'search',
+                    sourceCitationHrefs: [
+                      href,
+                      href,
+                      href.replace('%7B', '%7b'),
+                      '#library-source=%',
+                      'https://example.test'
+                    ]
+                  }
+                })
+              }
+            }
+          ]
+        }
+      },
+      'event-library-receipt'
+    )
+    expect(event.toolContent?.[0]).toEqual({
+      type: 'content',
+      content: {
+        type: 'text',
+        text: JSON.stringify({
+          openScienceLiteraturePresentation: {
+            libraryAction: 'search',
+            sourceCitationHrefs: [href]
+          }
+        })
+      }
+    })
+  })
 
   it('preserves a bounded Library presentation across sanitized ACP tool identities', () => {
     const presentation = JSON.stringify({

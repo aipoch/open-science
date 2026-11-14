@@ -1,11 +1,21 @@
 {
   "ownerPaths": [
     "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx",
-    "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.tsx"
+    "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.tsx",
+    "src/renderer/src/pages/workspace/LibrarySourceCitationLink.tsx",
+    "src/renderer/src/pages/workspace/LibrarySourceCitationLink.test.tsx",
+    "src/renderer/src/pages/workspace/literature-source-citations.test.ts"
   ],
-  "interfacePaths": ["src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.tsx"],
+  "interfacePaths": [
+    "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.tsx",
+    "src/renderer/src/pages/workspace/LibrarySourceCitationLink.tsx"
+  ],
   "testFiles": {
-    "owner": ["src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx"],
+    "owner": [
+      "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx",
+      "src/renderer/src/pages/workspace/LibrarySourceCitationLink.test.tsx",
+      "src/renderer/src/pages/workspace/literature-source-citations.test.ts"
+    ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/main/literature/library-tool-contracts.test.ts",
@@ -117,5 +127,6 @@
   },
   "consumerModules": [],
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Library source excerpts and immutable PDF citation navigation expand the reviewed literature presentation boundary; retain full CI validation until the new renderer sources and reveal contracts are reviewed."
 }

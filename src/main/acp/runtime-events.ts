@@ -6,6 +6,7 @@ import {
   sanitizeAcpMessageImage
 } from '../../shared/acp-image-contract'
 import { sanitizeRawToolPayload } from '../../shared/tool-detail-sanitizer'
+import { collectLiteratureSourceCitationHrefs } from '../../shared/literature-source-citation'
 import { isRecord } from '../value-guards'
 
 // Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
@@ -408,6 +409,7 @@ const literaturePresentationText = (value: unknown): string | undefined => {
   const nextOffset = nonNegativeInteger(source.nextOffset)
   const candidateCount = nonNegativeInteger(source.candidateCount)
   const savedCount = nonNegativeInteger(source.savedCount)
+  const sourceCitationHrefs = collectLiteratureSourceCitationHrefs(source.sourceCitationHrefs)
   const textCoverage = Array.isArray(source.textCoverage)
     ? source.textCoverage.slice(0, 3).flatMap((entry) => {
         if (!isRecord(entry)) return []
@@ -463,9 +465,17 @@ const literaturePresentationText = (value: unknown): string | undefined => {
     ...(savedCount !== undefined ? { savedCount } : {})
   }
 
-  return Object.keys(presentation).length > 0
-    ? JSON.stringify({ openScienceLiteraturePresentation: presentation })
-    : undefined
+  const text = (): string =>
+    JSON.stringify({
+      openScienceLiteraturePresentation: {
+        ...presentation,
+        ...(sourceCitationHrefs.length > 0 ? { sourceCitationHrefs } : {})
+      }
+    })
+  while (sourceCitationHrefs.length > 0 && text().length > MAX_RUNTIME_RAW_PAYLOAD_CHARS) {
+    sourceCitationHrefs.pop()
+  }
+  return Object.keys(presentation).length > 0 || sourceCitationHrefs.length > 0 ? text() : undefined
 }
 
 const isLiteratureReadDocumentUpdate = (update: ToolCallUpdate): boolean =>

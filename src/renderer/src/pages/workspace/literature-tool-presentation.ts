@@ -1,5 +1,10 @@
 import { literatureCatalogReceiptSchema } from '@aipoch/literature-library/contracts'
 import { summarizeLiteratureSaveReceipts } from '../../../../shared/literature-save'
+import { collectLiteratureSourceCitationHrefs } from '../../../../shared/literature-source-citation'
+import type {
+  PersistedToolActivity,
+  PersistedChatMessage
+} from '../../../../shared/session-message-contract'
 
 type LiteratureToolAction = 'format' | 'read' | 'search' | 'save'
 
@@ -44,6 +49,10 @@ type LiteratureToolSummary = Readonly<{
     missing: readonly number[]
     unverified?: readonly number[]
   }>[]
+  cachedTextCoverage?: Readonly<{
+    preparePdf: boolean
+    hasMore: boolean
+  }>
   pdfElements?: Readonly<{
     caption?: string
     elementCount?: number
@@ -429,7 +438,9 @@ const getLiteratureLibraryToolAction = (
     }
     if (
       normalized === 'open-science-library/search-library' ||
-      normalized === 'open-science-library-search-library'
+      normalized === 'open-science-library-search-library' ||
+      normalized === 'open-science-library/search-library-full-text' ||
+      normalized === 'open-science-library-search-library-full-text'
     ) {
       return 'search'
     }
@@ -475,6 +486,57 @@ const presentationRecord = (output: UnknownRecord | undefined): UnknownRecord | 
   output && isRecord(output.openScienceLiteraturePresentation)
     ? output.openScienceLiteraturePresentation
     : undefined
+
+const EMPTY_SOURCE_CITATION_HREFS: readonly string[] = []
+
+// Receipts belong to a completed built-in tool and its exact originating prompt. Assistant
+// prose, input arguments and unrelated tools cannot promote their own links to source evidence.
+const literatureSourceCitationHrefsByPrompt = (
+  activities: readonly Pick<
+    PersistedToolActivity,
+    'status' | 'promptMessageId' | 'providerToolName' | 'title' | 'toolContent'
+  >[]
+): ReadonlyMap<string, readonly string[]> => {
+  const byPrompt = new Map<string, string[]>()
+  for (const activity of activities) {
+    const action = getLiteratureLibraryToolAction(activity.providerToolName ?? activity.title)
+    if (
+      activity.status !== 'completed' ||
+      !activity.promptMessageId ||
+      (action !== 'read' && action !== 'search')
+    )
+      continue
+    const presentation = collectOutputRecords(activity.toolContent)
+      .map(presentationRecord)
+      .find(Boolean)
+    const hrefs = collectLiteratureSourceCitationHrefs(presentation?.sourceCitationHrefs)
+    if (hrefs.length)
+      byPrompt.set(activity.promptMessageId, [
+        ...new Set([...(byPrompt.get(activity.promptMessageId) ?? []), ...hrefs])
+      ])
+  }
+  return byPrompt
+}
+
+type CitationMessage = Pick<PersistedChatMessage, 'id' | 'role' | 'responseToMessageId'>
+
+const literatureSourceCitationHrefsForMessage = (
+  message: CitationMessage,
+  messages: ReadonlyMap<string, CitationMessage>,
+  receipts: ReadonlyMap<string, readonly string[]>
+): readonly string[] => {
+  if (message.role !== 'agent') return EMPTY_SOURCE_CITATION_HREFS
+  const seen = new Set<string>([message.id])
+  let parentId = message.responseToMessageId
+  while (parentId && !seen.has(parentId)) {
+    seen.add(parentId)
+    const parent = messages.get(parentId)
+    if (!parent) break
+    if (parent.role === 'user') return receipts.get(parent.id) ?? EMPTY_SOURCE_CITATION_HREFS
+    parentId = parent.responseToMessageId
+  }
+  return EMPTY_SOURCE_CITATION_HREFS
+}
 
 const isLiteratureOutputRecord = (output: UnknownRecord): boolean =>
   isRecord(output.document) ||
@@ -706,6 +768,36 @@ const buildLiteratureLibraryToolSummary = (
   const input = unwrapArguments(inputValue)
   const outputs = collectOutputRecords(outputValue)
   const presentation = outputs.map(presentationRecord).find(Boolean)
+  const cachedSearch =
+    action === 'search'
+      ? outputs.find(
+          (output) =>
+            output.coverageKind === 'cached-text-only' &&
+            output.incomplete === true &&
+            !(output.recordCount === 0 && output.totalRecordCount === 0)
+        )
+      : undefined
+  const limitations = Array.isArray(cachedSearch?.limitations) ? cachedSearch.limitations : []
+  const cachedCoverage = isRecord(cachedSearch?.coverage) ? cachedSearch.coverage : undefined
+  const cachedTextCoverage = cachedSearch
+    ? {
+        preparePdf:
+          (asNonNegativeInteger(cachedCoverage?.notCachedDocuments) ?? 0) > 0 ||
+          (asNonNegativeInteger(cachedCoverage?.unavailableDocuments) ?? 0) > 0 ||
+          ((asNonNegativeInteger(cachedSearch.recordCount) ?? 0) > 0 &&
+            cachedSearch.scannedSources === 0) ||
+          limitations.some((reason) =>
+            ['not-cached', 'unavailable-sources', 'unavailable-reader'].includes(reason)
+          ),
+        hasMore:
+          asNonNegativeInteger(cachedSearch.nextOffset) !== undefined ||
+          cachedSearch.sourceSelectionTruncated === true ||
+          cachedSearch.truncated === true ||
+          limitations.some((reason) =>
+            ['more-records', 'source-limit', 'result-limit'].includes(reason)
+          )
+      }
+    : undefined
   const presentedTitles = Array.isArray(presentation?.itemTitles)
     ? presentation.itemTitles.flatMap((title) => {
         const normalized = asString(title)
@@ -822,6 +914,7 @@ const buildLiteratureLibraryToolSummary = (
       : undefined
   return {
     action,
+    ...(cachedTextCoverage ? { cachedTextCoverage } : {}),
     ...(action !== 'save' && asString(input.query) ? { query: asString(input.query) } : {}),
     documentNames,
     documentCount: documentNames.length,
@@ -870,6 +963,8 @@ const buildLiteratureLibraryToolSummary = (
 }
 
 export {
+  literatureSourceCitationHrefsByPrompt,
+  literatureSourceCitationHrefsForMessage,
   buildLiteratureLibraryToolSummary,
   buildLiteratureToolSummary,
   buildPdfElementToolSummary,

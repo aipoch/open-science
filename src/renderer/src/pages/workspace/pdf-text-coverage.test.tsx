@@ -1,13 +1,110 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
-import { buildLiteratureToolSummary } from './literature-tool-presentation'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  buildLiteratureLibraryToolSummary,
+  buildLiteratureToolSummary,
+  getLiteratureLibraryToolAction
+} from './literature-tool-presentation'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 
 vi.mock('./LiteratureToolReferenceList', () => ({ LiteratureToolReferenceList: () => null }))
 vi.mock('./LiteratureCandidateStatus', () => ({ LiteratureCandidateStatus: () => null }))
 
 afterEach(cleanup)
+
+describe('cached PDF search guidance', () => {
+  const missingPdf =
+    'Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.'
+  const verifyPdf =
+    'Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.'
+  const continueSearch =
+    'Continue searching the remaining references or refine the query within the selected scope.'
+  const cachedResult = {
+    scope: 'project',
+    coverageKind: 'cached-text-only',
+    fullTextCoverage: 'unverified',
+    incomplete: true,
+    recordCount: 2,
+    totalRecordCount: 2,
+    scannedSources: 0,
+    coverage: {
+      requestedDocuments: 0,
+      cachedDocuments: 0,
+      notCachedDocuments: 0,
+      unavailableDocuments: 0
+    },
+    limitations: ['cached-pages-unverified'],
+    matches: []
+  }
+  const showResult = (output: unknown) => {
+    const summary = buildLiteratureLibraryToolSummary('search', { scope: 'project' }, output)
+    render(<WorkspaceLiteratureToolCard summary={summary} />)
+    return summary
+  }
+
+  it.each([
+    'mcp__open-science-library__search_library_full_text',
+    'open-science-library/search_library_full_text',
+    'open_science_library_search_library_full_text'
+  ])('recognizes the cached PDF search tool as a Library card: %s', (identity) => {
+    expect(getLiteratureLibraryToolAction(identity)).toBe('search')
+  })
+
+  it('shows a stable next step for the actual zero-source A05 result without claiming absence', () => {
+    showResult({ structuredContent: cachedResult })
+    expect(screen.getByRole('status').textContent).toContain(missingPdf)
+    expect(screen.queryByText(continueSearch)).toBeNull()
+  })
+
+  it.each(['notCachedDocuments', 'unavailableDocuments'])(
+    'offers PDF preparation when some sources are missing: %s',
+    (reason) => {
+      showResult({
+        ...cachedResult,
+        scannedSources: 2,
+        coverage: { ...cachedResult.coverage, requestedDocuments: 2, [reason]: 1 }
+      })
+      expect(screen.getByText(missingPdf)).toBeTruthy()
+    }
+  )
+
+  it.each([
+    { nextOffset: 20, limitations: ['more-records'] },
+    { sourceSelectionTruncated: true, limitations: ['source-limit'] },
+    { truncated: true, limitations: ['result-limit'] }
+  ])('keeps continuation within the selected scope for bounded results: %j', (limits) => {
+    showResult({
+      ...cachedResult,
+      scannedSources: 2,
+      coverage: { ...cachedResult.coverage, requestedDocuments: 2, cachedDocuments: 2 },
+      ...limits
+    })
+    expect(screen.getByText(continueSearch)).toBeTruthy()
+    expect(screen.queryByText(missingPdf)).toBeNull()
+  })
+
+  it('requests source verification without mislabelling cached documents as missing', () => {
+    showResult({
+      ...cachedResult,
+      scannedSources: 2,
+      coverage: { ...cachedResult.coverage, requestedDocuments: 2, cachedDocuments: 2 }
+    })
+    expect(screen.getByText(verifyPdf)).toBeTruthy()
+    expect(screen.queryByText(missingPdf)).toBeNull()
+    expect(screen.queryByText(continueSearch)).toBeNull()
+  })
+
+  it.each([
+    { ...cachedResult, incomplete: false },
+    { items: [], totalCount: 0 },
+    { ...cachedResult, recordCount: 0, totalRecordCount: 0 },
+    { coverageKind: 'cached-text-only', matches: [] }
+  ])('does not invent missing caches for complete, empty or historical results: %j', (output) => {
+    expect(showResult(output).cachedTextCoverage).toBeUndefined()
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+})
 
 it('shows retained ACP coverage when the passage JSON is truncated', () => {
   const summary = buildLiteratureToolSummary({}, [

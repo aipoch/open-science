@@ -28,6 +28,9 @@ import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProv
 import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { LibrarySourceCitationLink } from '../../LibrarySourceCitationLink'
+import * as annotationReveal from '../../annotations/annotation-reveal'
 import { createPreviewResourceKey } from '../preview-resource-key'
 import { createPdfTranslationSource } from '@aipoch/pdf-translation/reader'
 import * as pdfTranslations from '@aipoch/pdf-translation/reader'
@@ -3875,6 +3878,168 @@ describe('PdfPreviewContent', () => {
       expect(useSessionStore.getState().selectedSessionId).toBe(
         selectedProject ? 'other-session' : undefined
       )
+    }
+  )
+
+  it.each(['original', 'replacement'] as const)(
+    'reveals a cited global Library PDF page with an existing %s version tab without saving an annotation',
+    async (existingVersion) => {
+      const previousProject = useNavigationStore.getState().activeProjectId
+      const previousWorkbench = usePreviewWorkbenchStore.getState()
+      const originalSource = {
+        kind: 'literature-attachment-version' as const,
+        sourceFileId: 'citation-attachment',
+        versionId: 'original-version',
+        name: 'study.pdf',
+        path: 'literature-attachment-version:original-version',
+        checksum: 'a'.repeat(64)
+      }
+      const originalAlreadyOpen = existingVersion === 'original'
+      const replacementPath = 'literature-attachment-version:replacement-version'
+      const initialItem = {
+        id: originalAlreadyOpen ? 'literature:original-version' : originalSource.sourceFileId,
+        projectId: 'citation-project',
+        sessionId: 'literature-preview',
+        title: originalSource.name,
+        name: originalSource.name,
+        path: originalAlreadyOpen ? originalSource.path : replacementPath,
+        type: 'file' as const,
+        format: 'pdf' as const,
+        source: 'literature' as const,
+        createdAt: 1,
+        updatedAt: 1,
+        managedFileId: originalSource.sourceFileId,
+        selectedVersionId: originalAlreadyOpen ? originalSource.versionId : 'replacement-version',
+        ...(originalAlreadyOpen ? { size: 80 * 1024 * 1024, mtimeMs: 1700000000123 } : {})
+      }
+      const createAnnotation = vi.fn()
+      const updateAnnotation = vi.fn()
+      const deleteAnnotation = vi.fn()
+      const reveal = vi.spyOn(annotationReveal, 'requestPdfSourceReveal')
+      const activatePreview = vi.fn(previousWorkbench.upsertAndActivateItem)
+      window.api = {
+        ...window.api,
+        pdfAnnotations: {
+          list: vi.fn(async ({ literatureVersionId }: { literatureVersionId: string }) => ({
+            items: [],
+            total: 0,
+            source:
+              literatureVersionId === originalSource.versionId
+                ? originalSource
+                : {
+                    ...originalSource,
+                    versionId: 'replacement-version',
+                    path: replacementPath,
+                    checksum: 'b'.repeat(64)
+                  }
+          })),
+          create: createAnnotation,
+          update: updateAnnotation,
+          delete: deleteAnnotation
+        },
+        tags: { snapshot: vi.fn().mockResolvedValue({ revision: 0, tags: [], assignments: [] }) }
+      } as unknown as Window['api']
+      function CitationWorkbench(): React.JSX.Element {
+        const item = usePreviewWorkbenchStore((state) =>
+          state.items.find((candidate) => candidate.id === state.activeItemId)
+        )
+        return (
+          <>
+            <LibrarySourceCitationLink
+              citation={{
+                itemId: 'cited-paper',
+                title: 'Captured study',
+                kind: 'pdf',
+                quote: 'Evidence from the original PDF.',
+                source: {
+                  attachmentId: originalSource.sourceFileId,
+                  versionId: originalSource.versionId,
+                  checksum: originalSource.checksum,
+                  name: originalSource.name
+                },
+                pageStart: 2,
+                pageEnd: 2
+              }}
+            >
+              1
+            </LibrarySourceCitationLink>
+            {item?.type === 'file' ? <PdfPreviewRenderer key={item.id} item={item} /> : null}
+          </>
+        )
+      }
+      try {
+        useNavigationStore.setState({ activeProjectId: initialItem.projectId })
+        usePreviewWorkbenchStore.setState({
+          items: [initialItem],
+          activeItemId: initialItem.id,
+          activeProjectId: initialItem.projectId,
+          upsertAndActivateItem: activatePreview
+        })
+        await act(async () => root.render(<CitationWorkbench />))
+        await vi.waitFor(() =>
+          expect(window.api.previewResources.acquire).toHaveBeenCalledWith(
+            expect.objectContaining({ source: 'literature', path: initialItem.path })
+          )
+        )
+        await vi.waitFor(() =>
+          expect(
+            container.querySelector<HTMLButtonElement>('[aria-label="Annotate selected text"]')
+              ?.disabled
+          ).toBe(false)
+        )
+        const initialResourceRequests = vi.mocked(window.api.previewResources.acquire).mock.calls
+          .length
+        await act(async () =>
+          fireEvent.click(screen.getByRole('button', { name: 'Source excerpt' }))
+        )
+        await act(async () =>
+          fireEvent.click(screen.getByRole('button', { name: 'View source page' }))
+        )
+        await waitFor(() =>
+          expect(screen.queryByRole('button', { name: 'View source page' })).toBeNull()
+        )
+        expect(reveal).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            kind: 'pdf',
+            source: originalSource,
+            selector: { kind: 'page-note', pageNumber: 2, pageRotation: 0, coordinateVersion: 1 }
+          }),
+          expect.objectContaining({ projectId: initialItem.projectId })
+        )
+        await expect(reveal.mock.results[0].value.result).resolves.toBe('revealed')
+        expect(container.querySelector('[data-pdf-page-control]')?.textContent).toBe('2/2')
+        expect(window.api.previewResources.acquire).toHaveBeenLastCalledWith(
+          expect.objectContaining({ source: 'literature', path: originalSource.path })
+        )
+        expect(usePreviewWorkbenchStore.getState().items).toEqual([
+          expect.objectContaining({
+            projectId: initialItem.projectId,
+            path: originalSource.path,
+            selectedVersionId: originalSource.versionId
+          })
+        ])
+        if (originalAlreadyOpen) {
+          expect(activatePreview).toHaveBeenCalledOnce()
+          expect(activatePreview.mock.calls[0][0]).toBe(initialItem)
+          expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(initialItem.id)
+          expect(usePreviewWorkbenchStore.getState().items[0]).toEqual(
+            expect.objectContaining({
+              id: 'literature:original-version',
+              size: initialItem.size,
+              mtimeMs: initialItem.mtimeMs
+            })
+          )
+          expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(initialResourceRequests)
+        }
+        expect(createAnnotation).not.toHaveBeenCalled()
+        expect(updateAnnotation).not.toHaveBeenCalled()
+        expect(deleteAnnotation).not.toHaveBeenCalled()
+      } finally {
+        await act(async () => {
+          useNavigationStore.setState({ activeProjectId: previousProject })
+          usePreviewWorkbenchStore.setState(previousWorkbench)
+        })
+      }
     }
   )
 

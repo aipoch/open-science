@@ -1,5 +1,71 @@
 import { expect, test } from '@playwright/test'
 
+test('altered source snapshots cannot become evidence cards', async ({ page }) => {
+  await page.goto('/library-workbench.html?qa&forged')
+  await expect(
+    page.getByText('The finding requires further validation.', { exact: false })
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Source excerpt', exact: true })).toHaveCount(0)
+  await expect(page.locator('[data-library-source-citation]')).toHaveCount(0)
+  await expect(page.locator('a[href^="#library-source="]')).toHaveCount(0)
+  await expect(page.locator('a[href^="#library-cite="]')).toHaveCount(0)
+})
+
+for (const withDraft of [false, true]) {
+  test(`direct scoped questions use the ordinary composer; existing draft: ${withDraft}`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize({ width: 375, height: 850 })
+    await page.goto(`/library-workbench.html?qa${withDraft ? '&draft' : ''}`)
+    await page.getByRole('button', { name: 'Ask about this project' }).click()
+    const editor = page.getByRole('textbox', { name: 'Message', exact: true })
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(editor).toBeFocused()
+    const scope = editor.locator('[data-mention-type="literature-scope"]')
+    await expect(scope).toHaveCount(1)
+    await expect(page.locator('output')).toBeEmpty()
+    if (withDraft) await expect(editor).toContainText('My unsent research question')
+    await page.getByRole('button', { name: 'Ask about this project' }).click()
+    await expect(scope).toHaveCount(1)
+    await expect(editor).toBeFocused()
+    await page.keyboard.type('What are the limitations?')
+    await expect(editor).toContainText('What are the limitations?')
+    await expect(page.locator('output')).toBeEmpty()
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect(page.locator('output')).toContainText('"scope":"project"')
+    await expect(page.locator('output')).toContainText('What are the limitations?')
+    if (withDraft) {
+      await expect(page.locator('output')).toContainText('My unsent research question')
+      return
+    }
+    const citation = page.getByRole('button', { name: 'Source excerpt', exact: true })
+    await citation.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByText('Abstract only', { exact: true })).toBeVisible()
+    await expect(page.locator('blockquote')).toHaveText(
+      'The intervention improved reproducibility (in this cohort), but external validation remains necessary.'
+    )
+    const surrounding = page.locator('details').filter({ hasText: 'View surrounding text' })
+    await expect(surrounding).not.toHaveAttribute('open')
+    await expect(surrounding.locator('p')).not.toBeVisible()
+    const summary = surrounding.locator('summary')
+    await summary.focus()
+    await page.keyboard.press('Enter')
+    await expect(surrounding).toHaveAttribute('open')
+    await expect(surrounding.locator('p')).toContainText(
+      'Reproducibility was assessed over six months.'
+    )
+    await expect(page.locator('blockquote')).toHaveText(
+      'The intervention improved reproducibility (in this cohort), but external validation remains necessary.'
+    )
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('library-qa-citation-mobile.png') })
+    await page.keyboard.press('Escape')
+    await expect(page.locator('blockquote')).not.toBeVisible()
+    await expect(citation).toBeFocused()
+  })
+}
+
 for (const width of [320, 375, 414, 768]) {
   for (const dark of [false, true]) {
     test(`Library Preview fits ${width}px in ${dark ? 'dark' : 'light'} mode`, async ({

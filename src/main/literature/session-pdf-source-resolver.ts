@@ -38,7 +38,17 @@ type ResolvedSessionPdfVersion = ResolvedSessionPdfVersionBase &
 
 type SessionPdfSourceResolverOptions = Readonly<{
   inputs: Pick<ImmutableInputAuthority, 'resolveVersion' | 'openContent'>
-  literature: Pick<LiteratureAttachmentAuthority, 'resolveVersion' | 'openContent'>
+  literature: Pick<LiteratureAttachmentAuthority, 'resolveVersion' | 'openContent'> &
+    Partial<Pick<LiteratureAttachmentAuthority, 'resolveCachedVersion'>>
+}>
+type ResolvedCachedSessionPdfVersion = Readonly<{
+  sourceKind: 'literature-attachment-version'
+  sourceFileId: string
+  sourceVersionId: string
+  filename: string
+  contentType: string
+  sizeBytes: number
+  checksum: string
 }>
 
 const resolvedLiteratureVersion = (
@@ -56,6 +66,37 @@ const resolvedLiteratureVersion = (
 
 class SessionPdfSourceResolver {
   constructor(private readonly options: SessionPdfSourceResolverOptions) {}
+
+  async resolveCachedVersion(request: {
+    projectId: string
+    sourceKind: SessionPdfSourceKind
+    sourceVersionId: string
+    expectedSourceFileId?: string
+    signal?: AbortSignal
+  }): Promise<ResolvedCachedSessionPdfVersion | undefined> {
+    request.signal?.throwIfAborted()
+    if (request.sourceKind !== 'literature-attachment-version') return undefined
+    const version = await this.options.literature.resolveCachedVersion?.(
+      request.sourceVersionId,
+      request.signal
+    )
+    request.signal?.throwIfAborted()
+    if (
+      !version ||
+      version.versionId !== request.sourceVersionId ||
+      (request.expectedSourceFileId && version.attachmentId !== request.expectedSourceFileId)
+    )
+      return undefined
+    return {
+      sourceKind: 'literature-attachment-version',
+      sourceFileId: version.attachmentId,
+      sourceVersionId: version.versionId,
+      filename: version.filename,
+      contentType: version.contentType,
+      sizeBytes: version.sizeBytes,
+      checksum: version.checksum
+    }
+  }
 
   async resolveDocumentSource(value: PdfDocumentSource): Promise<PdfDocumentSource | undefined> {
     const source = sanitizePdfDocumentSource(value)
@@ -154,4 +195,8 @@ class SessionPdfSourceResolver {
 }
 
 export { SessionPdfSourceResolver }
-export type { ResolvedSessionPdfVersion, SessionPdfSourceResolverOptions }
+export type {
+  ResolvedSessionPdfVersion,
+  ResolvedCachedSessionPdfVersion,
+  SessionPdfSourceResolverOptions
+}

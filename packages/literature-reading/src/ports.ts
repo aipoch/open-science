@@ -3,6 +3,11 @@ export type LiteratureIndexCandidate = Omit<LiteratureSearchResult, 'relativeSco
 /** Optional search backend. The consumer owns storage, schema, connections and ranking implementation. */
 export interface LiteratureIndexStore {
   hasExtraction(extractionId: string): Promise<boolean>
+  /** Latest indexed byte identity for this verified document and extractor configuration. */
+  findExtraction?(
+    documentChecksum: string,
+    extractorFingerprint: string
+  ): Promise<string | undefined>
   deleteExtraction(extractionId: string): Promise<void>
   /** Atomically replace all chunks of one extraction; failures retain the previous value. */
   replace(input: ReplaceLiteratureIndexInput): Promise<void>
@@ -11,6 +16,7 @@ export interface LiteratureIndexStore {
     extractionIds: readonly string[]
     terms: readonly string[]
     limit: number
+    signal?: AbortSignal
   }): Promise<LiteratureIndexCandidate[]>
   touch(extractionIds: readonly string[]): Promise<void>
   purgeExpired(): Promise<void>
@@ -19,6 +25,8 @@ export interface LiteratureIndexStore {
 export type IndexOptions = {
   /** Return a ready handle; clean up partial resources if opening or migration fails. */
   open(): Promise<LiteratureIndexStore>
+  /** Open an existing compatible index read-only, without creation or migration. */
+  openExisting?(): Promise<LiteratureIndexStore | undefined>
   exists(): Promise<boolean>
   maintenance?(operation: () => Promise<void>): Promise<void>
   log?(message: string, fields: Record<string, unknown>): void

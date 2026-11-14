@@ -16,6 +16,7 @@ type ResolvedLiteratureAttachmentVersion = Readonly<{
   storageKey: string
   path: string
 }>
+type ResolvedCachedLiteratureAttachmentVersion = Omit<ResolvedLiteratureAttachmentVersion, 'path'>
 
 type LiteratureAttachmentAuthorityOptions = Readonly<{
   getClient: () => Promise<PrismaClient>
@@ -30,6 +31,72 @@ class LiteratureAttachmentUnavailableError extends Error {}
 
 class LiteratureAttachmentAuthority {
   constructor(private readonly options: LiteratureAttachmentAuthorityOptions) {}
+
+  /** Metadata admission for cached evidence; this never verifies or opens the original blob. */
+  async resolveCachedVersion(
+    versionId: string,
+    signal?: AbortSignal
+  ): Promise<ResolvedCachedLiteratureAttachmentVersion | undefined> {
+    signal?.throwIfAborted()
+    const client = await this.options.getClient()
+    signal?.throwIfAborted()
+    const version = await client.literatureAttachmentVersion.findUnique({
+      where: { id: versionId },
+      include: {
+        attachment: {
+          select: {
+            itemId: true,
+            item: { select: { deletedAt: true, mergedIntoItemId: true } },
+            versions: { select: { id: true }, orderBy: { versionNumber: 'desc' }, take: 1 }
+          }
+        },
+        contentBlob: {
+          select: {
+            id: true,
+            state: true,
+            checksum: true,
+            sizeBytes: true,
+            contentType: true,
+            storageKey: true
+          }
+        }
+      }
+    })
+    signal?.throwIfAborted()
+    if (
+      !version ||
+      version.id !== versionId ||
+      version.attachment.item.deletedAt ||
+      version.attachment.item.mergedIntoItemId ||
+      version.attachment.versions[0]?.id !== versionId
+    )
+      return undefined
+    const blob = version.contentBlob
+    if (
+      blob.state !== 'available' ||
+      blob.id !== version.contentBlobId ||
+      blob.checksum !== version.checksum ||
+      blob.sizeBytes !== version.sizeBytes ||
+      (blob.contentType !== null && blob.contentType !== version.contentType) ||
+      !blob.storageKey ||
+      !/^[a-f0-9]{64}$/.test(version.checksum) ||
+      !Number.isSafeInteger(Number(version.sizeBytes)) ||
+      version.sizeBytes <= 0n
+    )
+      return undefined
+    return {
+      itemId: version.attachment.itemId,
+      attachmentId: version.attachmentId,
+      versionId: version.id,
+      versionNumber: version.versionNumber,
+      filename: version.filename,
+      contentType: version.contentType,
+      sizeBytes: Number(version.sizeBytes),
+      checksum: version.checksum,
+      ...(version.pageCount === null ? {} : { pageCount: version.pageCount }),
+      storageKey: blob.storageKey
+    }
+  }
 
   async openReference(reference: string): Promise<ContentReadLease> {
     const versionId = parseLiteratureAttachmentVersionReference(reference)
@@ -105,4 +172,8 @@ class LiteratureAttachmentAuthority {
 }
 
 export { LiteratureAttachmentAuthority, LiteratureAttachmentUnavailableError }
-export type { LiteratureAttachmentAuthorityOptions, ResolvedLiteratureAttachmentVersion }
+export type {
+  LiteratureAttachmentAuthorityOptions,
+  ResolvedLiteratureAttachmentVersion,
+  ResolvedCachedLiteratureAttachmentVersion
+}

@@ -26,6 +26,81 @@ import type {
 import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { SessionMessageMarkdown } from '@/pages/workspace/SessionMessageMarkdown'
+import { ComposerEditor } from '@/pages/workspace/composer/ComposerEditor'
+import {
+  appendLiteratureScope,
+  docToMessageParts,
+  type ComposerDoc
+} from '@/pages/workspace/composer/composer-doc'
+import { createLiteratureSourceCitationHref } from '../../../src/shared/literature-source-citation'
+
+function QuestionFixture(): React.JSX.Element {
+  const [doc, setDoc] = useState<ComposerDoc>(() => ({
+    nodes: params.has('draft') ? [{ type: 'text', text: 'My unsent research question' }] : []
+  }))
+  const [focusRequest, setFocusRequest] = useState(0)
+  const [submitted, setSubmitted] = useState('')
+  const citation = {
+    itemId: 'sample-paper',
+    citationId: '0123456789abcdef',
+    title: 'Example reference: assessing reproducibility across scientific workflows',
+    kind: 'abstract' as const,
+    quote:
+      'The intervention improved reproducibility (in this cohort), but external validation remains necessary.',
+    context:
+      'Reproducibility was assessed over six months. The intervention improved reproducibility (in this cohort), but external validation remains necessary. Larger studies should confirm the finding.'
+  }
+  const citationHref = createLiteratureSourceCitationHref(citation)
+  const answerHref = params.has('forged')
+    ? createLiteratureSourceCitationHref({
+        ...citation,
+        quote: 'The intervention is universally effective.',
+        context: 'The intervention is universally effective.'
+      })
+    : `#library-cite=${citation.citationId}`
+  return (
+    <main className="mx-auto max-w-2xl space-y-4 p-4">
+      <button
+        type="button"
+        onClick={() => {
+          const next = appendLiteratureScope(doc, { type: 'literature-scope', scope: 'project' })
+          if (!next) return
+          setDoc(next)
+          setFocusRequest((current) => current + 1)
+        }}
+      >
+        Ask about this project
+      </button>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          setSubmitted(JSON.stringify(docToMessageParts(doc)))
+        }}
+      >
+        <ComposerEditor
+          doc={doc}
+          onDocChange={setDoc}
+          onSubmit={() => setSubmitted(JSON.stringify(docToMessageParts(doc)))}
+          onPaste={() => undefined}
+          placeholder="Ask a question"
+          ariaLabel="Message"
+          allowedSkillIds={[]}
+          focusRequest={focusRequest}
+        />
+        <button type="submit">Send</button>
+      </form>
+      <output>{submitted}</output>
+      <SessionMessageMarkdown
+        content={`The finding requires further validation. [1](${answerHref})`}
+        sourceCitationHrefs={[citationHref]}
+        artifacts={[]}
+        onPreviewArtifact={() => undefined}
+        onPreviewArtifactModal={() => undefined}
+      />
+    </main>
+  )
+}
 
 const params = new URLSearchParams(location.search)
 const mode = params.get('mode') ?? 'populated'
@@ -263,6 +338,7 @@ export function Fixture(): React.JSX.Element {
   })
   const [added, setAdded] = useState('')
   const [active, setActive] = useState(true)
+  if (params.has('qa')) return <QuestionFixture />
   if (params.has('card-design'))
     return (
       <main className="mx-auto max-w-xl space-y-3 p-4">

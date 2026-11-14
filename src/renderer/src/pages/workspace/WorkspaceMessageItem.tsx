@@ -148,6 +148,7 @@ type WorkspaceMessageItemProps = {
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
   fileReferences?: MessageArtifact[]
   artifacts?: MessageArtifact[]
+  sourceCitationHrefs?: readonly string[]
   // Inline editing is only enabled once the session's run settles; confirming forks the
   // conversation at this message and resends the adjusted doc as a fresh turn.
   canEditMessage?: boolean
@@ -1354,6 +1355,7 @@ const WorkspaceMessageItemImpl = ({
   subsequentTurns = 0,
   revisionNavigation,
   artifacts = [],
+  sourceCitationHrefs,
   fileReferences = artifacts,
   staticParts,
   onPresentationChange,
@@ -1972,6 +1974,7 @@ const WorkspaceMessageItemImpl = ({
                       content={assistantPresentation.content}
                       isAnimating={isAssistantPresenting}
                       artifacts={fileReferences}
+                      sourceCitationHrefs={sourceCitationHrefs}
                       workspaceCwd={workspaceCwd}
                       notebookReference={notebookReference}
                       onPreviewArtifact={onPreviewArtifact}
@@ -1983,6 +1986,7 @@ const WorkspaceMessageItemImpl = ({
                     content={assistantPresentation.content}
                     isAnimating={isAssistantPresenting}
                     artifacts={fileReferences}
+                    sourceCitationHrefs={sourceCitationHrefs}
                     workspaceCwd={workspaceCwd}
                     notebookReference={notebookReference}
                     onPreviewArtifact={onPreviewArtifact}
@@ -2100,6 +2104,11 @@ const areWorkspaceMessageItemPropsEqual = (
   next: WorkspaceMessageItemProps
 ): boolean =>
   previous.message === next.message &&
+  (previous.sourceCitationHrefs === next.sourceCitationHrefs ||
+    ((previous.sourceCitationHrefs?.length ?? 0) === (next.sourceCitationHrefs?.length ?? 0) &&
+      (previous.sourceCitationHrefs ?? []).every(
+        (href, index) => href === next.sourceCitationHrefs?.[index]
+      ))) &&
   previous.projectId === next.projectId &&
   previous.workspaceCwd === next.workspaceCwd &&
   previous.notebookReference === next.notebookReference &&

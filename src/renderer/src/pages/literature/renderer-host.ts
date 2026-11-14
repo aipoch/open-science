@@ -98,7 +98,7 @@ export type LiteratureNavigation = {
   startLiteratureReviewConversation(
     projectId: string,
     scope: LiteratureScopeReference,
-    prompt: string
+    prompt?: string
   ): boolean
   startPdfReadingConversation(
     projectId: string,

@@ -2227,6 +2227,8 @@
     "Open the {{appName}} website": "Abrir el sitio web de {{appName}}",
     "Open this computer from the signed-in mobile app. Open-Science creates and maintains the local service automatically after this computer is added once.": "Abra este equipo desde la aplicación móvil en la que inició sesión. Una vez agregado el equipo, Open-Science creará y mantendrá el servicio local automáticamente.",
     "Open {{name}}": "Abrir {{name}}",
+    "Open reference literature {{name}}": "Abrir la literatura de referencia {{name}}",
+    "Reference literature: {{name}}": "Literatura de referencia: {{name}}",
     "Open {{name}} configuration": "Abrir la configuración de {{name}}",
     "Open {{scope}}": "Abrir {{scope}}",
     "Open-source coding agent for the terminal.": "Agente de programación de código abierto para la terminal.",
@@ -8497,6 +8499,19 @@
     "This task is running. Wait for it to finish or stop the current run before deleting it.": "Esta tarea se está ejecutando. Espere a que termine o detenga la ejecución actual antes de eliminarla.",
     "Task deleted": "Tarea eliminada",
     "Delete task": "Eliminar tarea",
+    "Agent Session cleanup did not complete.": "La limpieza de la sesión del agente no se completó.",
+    "View surrounding text": "Ver el texto circundante",
+    "Source excerpt": "Extracto de la fuente",
+    "PDF evidence": "Pruebas del PDF",
+    "View reference": "Ver referencia",
+    "View source page": "Ver página de origen",
+    "The source could not be opened.": "No se pudo abrir la fuente.",
+    "Ask about this project": "Preguntar sobre las referencias de este proyecto",
+    "Ask about this collection": "Preguntar sobre las referencias de esta colección",
+    "Choose a project for this conversation.": "Seleccione un proyecto para esta conversación.",
+    "Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.": "Las pruebas del texto completo están incompletas. Compruebe que las referencias seleccionadas tengan archivos PDF y prepare su texto antes de volver a intentarlo.",
+    "Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.": "El texto en caché no garantiza una cobertura completa del texto íntegro. Compruebe el PDF original antes de sacar conclusiones por la falta de pruebas.",
+    "Continue searching the remaining references or refine the query within the selected scope.": "Continúe buscando en las referencias restantes o ajuste la consulta dentro del ámbito seleccionado.",
     "Edit presentation": "Editar presentación",
     "New text": "Texto nuevo",
     "Add text box": "Añadir cuadro de texto",
@@ -8622,6 +8637,7 @@
     "System details": "Detalles del sistema",
     "About monitoring": "Acerca de la supervisión",
     "Sum of current kernel uptimes, including idle time.": "Suma de los tiempos de actividad de los Kernels actuales, incluido el tiempo de inactividad.",
-    "Total kernel uptime: {{duration}}": "Tiempo total de actividad de los Kernels: {{duration}}"
+    "Total kernel uptime: {{duration}}": "Tiempo total de actividad de los Kernels: {{duration}}",
+    "The original PDF is unavailable in this Session package.": "El PDF original no está disponible en este paquete de sesión."
   }
 }

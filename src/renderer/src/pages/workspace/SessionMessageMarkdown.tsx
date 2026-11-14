@@ -1,6 +1,8 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { SessionMessageLink } from '@/components/streamdown/SessionMessageLink'
+import { resolveLiteratureSourceCitationHref } from '../../../../shared/literature-source-citation'
+import { LibrarySourceCitationLink } from './LibrarySourceCitationLink'
 import {
   createContext,
   memo,
@@ -41,6 +43,7 @@ type SessionMessageMarkdownProps = {
   content: string
   isAnimating?: boolean
   artifacts: MessageArtifact[]
+  sourceCitationHrefs?: readonly string[]
   workspaceCwd?: string
   notebookReference?: NotebookSessionReference
   onPreviewArtifact: (artifact: MessageArtifact) => void
@@ -52,6 +55,7 @@ type SessionMessageMarkdownProps = {
 const SessionArtifactContext = createContext<Pick<
   SessionMessageMarkdownProps,
   | 'artifacts'
+  | 'sourceCitationHrefs'
   | 'workspaceCwd'
   | 'notebookReference'
   | 'onPreviewArtifact'
@@ -276,6 +280,7 @@ const SessionMessageMarkdown = memo(
     content,
     isAnimating = false,
     artifacts,
+    sourceCitationHrefs,
     workspaceCwd,
     notebookReference,
     onPreviewArtifact,
@@ -298,6 +303,20 @@ const SessionMessageMarkdown = memo(
         }: SessionMessageLinkComponentProps) {
           const context = useContext(SessionArtifactContext)
           if (!context) return null
+          if (href?.startsWith('#library-source') || href?.startsWith('#library-cite')) {
+            const citation = resolveLiteratureSourceCitationHref(
+              href,
+              context.sourceCitationHrefs ?? []
+            )
+            if (!citation) {
+              return <span className={className}>{children}</span>
+            }
+            return (
+              <LibrarySourceCitationLink key={href} citation={citation} className={className}>
+                {children}
+              </LibrarySourceCitationLink>
+            )
+          }
           const { artifacts, notebookReference, onPreviewArtifact } = context
           const artifact = resolveMessageArtifactReference(href, artifacts)
           if (!artifact || artifact.kind !== 'managed-file') {
@@ -398,12 +417,20 @@ const SessionMessageMarkdown = memo(
     const artifactContext = useMemo(
       () => ({
         artifacts,
+        sourceCitationHrefs,
         workspaceCwd,
         notebookReference,
         onPreviewArtifact,
         onPreviewArtifactModal
       }),
-      [artifacts, workspaceCwd, notebookReference, onPreviewArtifact, onPreviewArtifactModal]
+      [
+        artifacts,
+        sourceCitationHrefs,
+        workspaceCwd,
+        notebookReference,
+        onPreviewArtifact,
+        onPreviewArtifactModal
+      ]
     )
 
     return (

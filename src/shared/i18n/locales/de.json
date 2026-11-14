@@ -2036,6 +2036,8 @@
     "Open the {{appName}} website": "{{appName}}-Website öffnen",
     "Open this computer from the signed-in mobile app. Open-Science creates and maintains the local service automatically after this computer is added once.": "Öffnen Sie diesen Computer über die angemeldete mobile App. Open-Science erstellt und verwaltet den lokalen Dienst automatisch, nachdem dieser Computer einmal hinzugefügt wurde.",
     "Open {{name}}": "{{name}} öffnen",
+    "Open reference literature {{name}}": "Referenzliteratur {{name}} öffnen",
+    "Reference literature: {{name}}": "Referenzliteratur: {{name}}",
     "Open {{name}} configuration": "{{name}}-Konfiguration öffnen",
     "Open {{scope}}": "{{scope}} öffnen",
     "Open-source coding agent for the terminal.": "Open-Source-Coding-Agent für das Terminal.",
@@ -8319,6 +8321,19 @@
     "This task is running. Wait for it to finish or stop the current run before deleting it.": "Diese Aufgabe wird ausgeführt. Warten Sie auf den Abschluss oder stoppen Sie die aktuelle Ausführung, bevor Sie sie löschen.",
     "Task deleted": "Aufgabe gelöscht",
     "Delete task": "Aufgabe löschen",
+    "Agent Session cleanup did not complete.": "Die Bereinigung der Agentensitzung wurde nicht abgeschlossen.",
+    "View surrounding text": "Umliegenden Text anzeigen",
+    "Source excerpt": "Quellenauszug",
+    "PDF evidence": "Belege aus dem PDF",
+    "View reference": "Referenz anzeigen",
+    "View source page": "Quellenseite anzeigen",
+    "The source could not be opened.": "Die Quelle konnte nicht geöffnet werden.",
+    "Ask about this project": "Zu den Referenzen dieses Projekts fragen",
+    "Ask about this collection": "Zu den Referenzen dieser Sammlung fragen",
+    "Choose a project for this conversation.": "Wählen Sie ein Projekt für diese Konversation.",
+    "Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.": "Die Volltextbelege sind unvollständig. Prüfen Sie, ob die ausgewählten Literaturquellen PDFs enthalten, und bereiten Sie deren Text vor einem erneuten Versuch auf.",
+    "Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.": "Zwischengespeicherter Text belegt keine vollständige Volltextabdeckung. Prüfen Sie die Original-PDF, bevor Sie aus fehlenden Belegen Schlüsse ziehen.",
+    "Continue searching the remaining references or refine the query within the selected scope.": "Durchsuchen Sie die übrigen Literaturquellen oder präzisieren Sie die Suchanfrage innerhalb des ausgewählten Bereichs.",
     "Edit presentation": "Präsentation bearbeiten",
     "New text": "Neuer Text",
     "Add text box": "Textfeld hinzufügen",
@@ -8442,6 +8457,7 @@
     "System details": "Systemdetails",
     "About monitoring": "Über die Überwachung",
     "Sum of current kernel uptimes, including idle time.": "Summe der Laufzeiten der aktuellen Kernel, einschließlich Leerlaufzeit.",
-    "Total kernel uptime: {{duration}}": "Gesamtlaufzeit der Kernel: {{duration}}"
+    "Total kernel uptime: {{duration}}": "Gesamtlaufzeit der Kernel: {{duration}}",
+    "The original PDF is unavailable in this Session package.": "Die PDF-Originaldatei ist in diesem Sitzungspaket nicht verfügbar."
   }
 }

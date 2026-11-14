@@ -16,6 +16,8 @@ export type ReadingOptions<Reference extends DocumentReference> = {
   index?: LiteratureIndex
   /** Resolve current authority first, then return a loader for verified bounded text. */
   authorize(reference: Reference): Promise<() => Promise<TextExtraction>>
+  /** Cache admission must only read authoritative metadata, without opening source bytes. */
+  authorizeCached?(reference: Reference, signal?: AbortSignal): Promise<void>
   /** Stable identity for every extraction-affecting option owned by the caller. */
   extractionFingerprint?(reference: Reference): string
   log?(message: string, fields: Record<string, unknown>): void
@@ -35,6 +37,8 @@ export type ReadDocumentResult = {
   passage: { pageStart: number; pageEnd: number; text: string } & LayoutEvidence
   nextCursor: string | null
 }
+/** Trusted physical page ranges, clipped to a returned text window; UTF-16 offsets are absolute. */
+export type PassagePageSpan = Readonly<{ page: number; textStart: number; textEnd: number }>
 type RetrievedPassage = {
   documentId: string
   documentName: string
@@ -43,6 +47,16 @@ type RetrievedPassage = {
   textStart: number
   textEnd: number
   sectionTitle?: string
+  pageSpans?: readonly PassagePageSpan[]
+  /** Adjacent original bytes, with page locations from physical extraction boundaries. */
+  precedingText?: {
+    content: string
+    pageStart: number
+    pageEnd: number
+    textStart: number
+    textEnd: number
+    pageSpans?: readonly PassagePageSpan[]
+  }
   content: string
 }
 export type SearchDocumentsResult = {
@@ -65,6 +79,18 @@ export type SearchDocumentsResult = {
       passages: (RetrievedPassage & { relevance: { lexicalRank: number; lexicalScore: number } })[]
     }
 )
+export type CachedTextSearchResult = {
+  status: 'available' | 'unavailable'
+  retrievalMode: 'bm25'
+  coverage: {
+    requestedDocuments: number
+    cachedDocuments: number
+    notCachedDocuments: number
+    unavailableDocuments: number
+  }
+  passages: RetrievedPassage[]
+  truncated: boolean
+}
 const EXTRACTOR_FINGERPRINT = createHash('sha256')
   .update('literature-reading-provided-text-v2')
   .digest('hex')
@@ -160,6 +186,41 @@ const pageRangeForOffsets = (
   return {
     pageStart: pageAt(start),
     pageEnd: pageAt(Math.max(start, end - 1))
+  }
+}
+
+// Only extractor-owned boundaries can certify per-page spans. A legacy marker-derived range
+// remains useful to existing display consumers but cannot certify multi-page citation attribution.
+const physicalPageSpans = (
+  document: ExtractedDocument,
+  start: number,
+  end: number
+): readonly PassagePageSpan[] | undefined => {
+  if (!document.pageStarts?.length || end <= start) return undefined
+  const spans = document.pageStarts.flatMap(({ page, offset }, index) => {
+    const textStart = Math.max(start, offset)
+    const textEnd = Math.min(end, document.pageStarts![index + 1]?.offset ?? document.text.length)
+    return textEnd > textStart ? [{ page, textStart, textEnd }] : []
+  })
+  // Keep provenance bounded along with the 800-character adjoining source window.
+  return spans.length > 0 && spans.length <= 64 ? spans : undefined
+}
+
+const precedingText = (
+  document: ExtractedDocument,
+  end: number
+): RetrievedPassage['precedingText'] => {
+  if (end <= 0) return undefined
+  let start = Math.max(0, end - 800)
+  while (start > 0 && start < end && !/\s/u.test(document.text[start - 1]!)) start += 1
+  if (start === end) return undefined
+  const pageSpans = physicalPageSpans(document, start, end)
+  return {
+    content: document.text.slice(start, end),
+    ...pageRangeForOffsets(document.text, start, end, document.pageStarts),
+    textStart: start,
+    textEnd: end,
+    ...(pageSpans ? { pageSpans } : {})
   }
 }
 
@@ -287,6 +348,110 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
       await Promise.all(references.map((reference) => this.resolveDocument(reference))),
       query
     )
+  }
+
+  /** Discover only already indexed evidence; authority never implies extraction permission. */
+  async searchCachedDocuments(
+    references: readonly Reference[],
+    query: string,
+    limit = SEARCH_RESULT_LIMIT,
+    signal?: AbortSignal
+  ): Promise<CachedTextSearchResult> {
+    signal?.throwIfAborted()
+    const coverage = {
+      requestedDocuments: references.length,
+      cachedDocuments: 0,
+      notCachedDocuments: 0,
+      unavailableDocuments: 0
+    }
+    const response: CachedTextSearchResult = {
+      status: 'unavailable',
+      retrievalMode: 'bm25',
+      coverage,
+      passages: [],
+      truncated: references.length > 100
+    }
+    const authorized: { reference: Reference; fingerprint: string; baseId: string }[] = []
+    for (const reference of references.slice(0, 100)) {
+      signal?.throwIfAborted()
+      try {
+        // Do not invoke the returned loader, even when no index is present.
+        if (this.options.authorizeCached) await this.options.authorizeCached(reference, signal)
+        else await this.options.authorize(reference)
+        signal?.throwIfAborted()
+        const fingerprint = this.options.extractionFingerprint?.(reference) ?? EXTRACTOR_FINGERPRINT
+        const baseId = createHash('sha256')
+          .update(`${reference.checksum}:${fingerprint}`)
+          .digest('hex')
+        authorized.push({ reference, fingerprint, baseId })
+      } catch (error) {
+        signal?.throwIfAborted()
+        if (error instanceof Error && error.name === 'AbortError') throw error
+        coverage.unavailableDocuments += 1
+      }
+    }
+    coverage.unavailableDocuments += Math.max(0, references.length - 100)
+    let index: LiteratureFullTextIndex | undefined
+    try {
+      index = await this.options.index?.openExisting()
+      signal?.throwIfAborted()
+      if (!index) {
+        coverage.unavailableDocuments += authorized.length
+        return response
+      }
+      response.status = 'available'
+      const byExtractionId = new Map<string, Reference[]>()
+      for (const { reference, fingerprint, baseId } of authorized) {
+        signal?.throwIfAborted()
+        const extractionId =
+          (await index.findExtraction(reference.checksum, fingerprint)) ??
+          ((await index.hasExtraction(baseId)) ? baseId : undefined)
+        signal?.throwIfAborted()
+        if (!extractionId) {
+          coverage.notCachedDocuments += 1
+          continue
+        }
+        coverage.cachedDocuments += 1
+        const associated = byExtractionId.get(extractionId) ?? []
+        associated.push(reference)
+        byExtractionId.set(extractionId, associated)
+      }
+      const resultLimit = Number.isFinite(limit)
+        ? Math.min(Math.max(Math.floor(limit), 1), 20)
+        : SEARCH_RESULT_LIMIT
+      const passages = await index.search({
+        extractionIds: [...byExtractionId.keys()],
+        query,
+        limit: Math.min(resultLimit + 1, 20),
+        signal
+      })
+      signal?.throwIfAborted()
+      const associatedPassages = passages.flatMap((passage) =>
+        (byExtractionId.get(passage.extractionId) ?? []).map((reference) => ({
+          documentId: reference.bindingId,
+          documentName: reference.name,
+          pageStart: passage.pageStart,
+          pageEnd: passage.pageEnd,
+          textStart: passage.textStart,
+          textEnd: passage.textEnd,
+          ...(passage.sectionTitle ? { sectionTitle: passage.sectionTitle } : {}),
+          content: passage.content
+        }))
+      )
+      response.passages = associatedPassages.slice(0, resultLimit)
+      response.truncated ||= associatedPassages.length > resultLimit
+      return response
+    } catch (error) {
+      signal?.throwIfAborted()
+      if (error instanceof Error && error.name === 'AbortError') throw error
+      this.options.onIndexError?.(error)
+      coverage.cachedDocuments = 0
+      coverage.notCachedDocuments = 0
+      coverage.unavailableDocuments = references.length
+      return { ...response, status: 'unavailable', passages: [] }
+    } finally {
+      await index?.close()
+    }
   }
   async classificationEvidence(
     reference: Reference,
@@ -525,20 +690,28 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
           if (!associatedDocuments) {
             throw new Error('Literature fallback returned an unknown document.')
           }
-          return associatedDocuments.map((document) => ({
-            documentId: document.context.bindingId,
-            documentName: document.context.name,
-            pageStart: passage.pageStart,
-            pageEnd: passage.pageEnd,
-            textStart: passage.textStart,
-            textEnd: passage.textEnd,
-            relevance: {
-              lexicalRank: passage.lexicalRank,
-              lexicalScore: passage.lexicalScore
-            },
-            ...(passage.sectionTitle ? { sectionTitle: passage.sectionTitle } : {}),
-            content: passage.content
-          }))
+          return associatedDocuments.map((document) => {
+            const pageSpans =
+              document.text.slice(passage.textStart, passage.textEnd) === passage.content
+                ? physicalPageSpans(document, passage.textStart, passage.textEnd)
+                : undefined
+            return {
+              documentId: document.context.bindingId,
+              documentName: document.context.name,
+              pageStart: passage.pageStart,
+              pageEnd: passage.pageEnd,
+              textStart: passage.textStart,
+              textEnd: passage.textEnd,
+              ...(pageSpans ? { pageSpans } : {}),
+              precedingText: precedingText(document, passage.textStart),
+              relevance: {
+                lexicalRank: passage.lexicalRank,
+                lexicalScore: passage.lexicalScore
+              },
+              ...(passage.sectionTitle ? { sectionTitle: passage.sectionTitle } : {}),
+              content: passage.content
+            }
+          })
         })
       }
     }
@@ -581,20 +754,28 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
           const associatedDocuments = byExtractionId.get(passage.extractionId)
           if (!associatedDocuments)
             throw new Error('Literature search returned an unknown document.')
-          return associatedDocuments.map((document) => ({
-            documentId: document.context.bindingId,
-            documentName: document.context.name,
-            pageStart: passage.pageStart,
-            pageEnd: passage.pageEnd,
-            textStart: passage.textStart,
-            textEnd: passage.textEnd,
-            relevance: {
-              bm25Rank: passage.rank,
-              relativeScore: passage.relativeScore
-            },
-            ...(passage.sectionTitle ? { sectionTitle: passage.sectionTitle } : {}),
-            content: passage.content
-          }))
+          return associatedDocuments.map((document) => {
+            const pageSpans =
+              document.text.slice(passage.textStart, passage.textEnd) === passage.content
+                ? physicalPageSpans(document, passage.textStart, passage.textEnd)
+                : undefined
+            return {
+              documentId: document.context.bindingId,
+              documentName: document.context.name,
+              pageStart: passage.pageStart,
+              pageEnd: passage.pageEnd,
+              textStart: passage.textStart,
+              textEnd: passage.textEnd,
+              ...(pageSpans ? { pageSpans } : {}),
+              precedingText: precedingText(document, passage.textStart),
+              relevance: {
+                bm25Rank: passage.rank,
+                relativeScore: passage.relativeScore
+              },
+              ...(passage.sectionTitle ? { sectionTitle: passage.sectionTitle } : {}),
+              content: passage.content
+            }
+          })
         })
       }
     } catch (error) {

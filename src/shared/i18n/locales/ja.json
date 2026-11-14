@@ -2156,6 +2156,8 @@
     "Open the {{appName}} website": "{{appName}} ウェブサイトを開く",
     "Open this computer from the signed-in mobile app. Open-Science creates and maintains the local service automatically after this computer is added once.": "サインインしているモバイルアプリからこのコンピューターを開きます。このコンピューターが一度追加されると、Open-Science はローカルサービスを自動的に作成して維持します。",
     "Open {{name}}": "{{name}}を開く",
+    "Open reference literature {{name}}": "参照文献 {{name}} を開く",
+    "Reference literature: {{name}}": "参照文献: {{name}}",
     "Open {{name}} configuration": "{{name}} 構成を開く",
     "Open {{scope}}": "{{scope}}を開く",
     "Open-source coding agent for the terminal.": "ターミナル用のオープンソースのコーディングエージェント。",
@@ -8149,6 +8151,19 @@
     "This task is running. Wait for it to finish or stop the current run before deleting it.": "このタスクは実行中です。完了を待つか、現在の実行を停止してから削除してください。",
     "Task deleted": "タスクは削除されました",
     "Delete task": "タスクを削除",
+    "Agent Session cleanup did not complete.": "エージェントセッションのクリーンアップが完了しませんでした。",
+    "View surrounding text": "前後の文章を表示",
+    "Source excerpt": "出典の抜粋",
+    "PDF evidence": "PDFの根拠",
+    "View reference": "文献を表示",
+    "View source page": "出典ページを表示",
+    "The source could not be opened.": "出典を開けませんでした。",
+    "Ask about this project": "このプロジェクトの文献について質問",
+    "Ask about this collection": "このコレクションの文献について質問",
+    "Choose a project for this conversation.": "この会話のプロジェクトを選択してください。",
+    "Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.": "全文の根拠が不完全です。選択した文献に PDF が添付されていることを確認し、本文を準備してから再試行してください。",
+    "Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.": "キャッシュされたテキストだけでは全文を網羅しているとは限りません。根拠が見つからないことから結論を出す前に、元の PDF を確認してください。",
+    "Continue searching the remaining references or refine the query within the selected scope.": "残りの文献を検索するか、選択した範囲内で検索語を調整してください。",
     "Edit presentation": "プレゼンテーションを編集",
     "New text": "新しいテキスト",
     "Add text box": "テキストボックスを追加",
@@ -8270,6 +8285,7 @@
     "System details": "システムの詳細",
     "About monitoring": "監視について",
     "Sum of current kernel uptimes, including idle time.": "現在の各カーネルの稼働時間の合計です。アイドル時間を含みます。",
-    "Total kernel uptime: {{duration}}": "カーネルの合計稼働時間：{{duration}}"
+    "Total kernel uptime: {{duration}}": "カーネルの合計稼働時間：{{duration}}",
+    "The original PDF is unavailable in this Session package.": "このセッションパッケージでは元の PDF を利用できません。"
   }
 }

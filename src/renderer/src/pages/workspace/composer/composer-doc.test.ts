@@ -7,6 +7,7 @@ import type { LiteratureReference } from '../../../../../shared/session-persiste
 import {
   appendArtifactMention,
   appendLiteratureMentions,
+  appendLiteratureScope,
   applyDocToDom,
   createPastedTextAnchor,
   docArtifactCount,
@@ -1051,5 +1052,73 @@ describe('appendLiteratureMentions', () => {
         (node) => node.type === 'literature'
       )
     ).toHaveLength(MAX_COMPOSER_ARTIFACT_MENTIONS)
+  })
+})
+
+describe('appendLiteratureScope', () => {
+  const project = { type: 'literature-scope', scope: 'project' } as const
+  const collection = {
+    type: 'literature-scope',
+    scope: 'collection',
+    collectionId: 'collection-a',
+    name: 'Original collection'
+  } as const
+  it('prepares only a scope for a new question and supplies review text only to an empty draft', () => {
+    expect(appendLiteratureScope(emptyDoc, project)).toEqual({ nodes: [project] })
+    expect(appendLiteratureScope(emptyDoc, collection, 'Default review')).toEqual({
+      nodes: [collection, { type: 'text', text: ' Default review' }]
+    })
+    const original: ComposerDoc = {
+      nodes: [
+        { type: 'text', text: 'My question ' },
+        { type: 'skill', id: 'skill-a', name: 'Research' }
+      ]
+    }
+    const next = appendLiteratureScope(original, project, 'Default review')!
+    expect(next.nodes.slice(0, 2)).toEqual(original.nodes)
+    expect(next.nodes.slice(2)).toEqual([{ type: 'text', text: ' ' }, project])
+    expect(original.nodes).toHaveLength(2)
+  })
+  it('deduplicates project and collection identities while preserving existing snapshots and unrelated scopes', () => {
+    const doc: ComposerDoc = { nodes: [project, { type: 'text', text: ' Compare ' }, collection] }
+    expect(appendLiteratureScope(doc, project)).toBe(doc)
+    expect(appendLiteratureScope(doc, { ...collection, name: 'Updated name' })).toBe(doc)
+    const other = { ...collection, collectionId: 'collection-b' }
+    const next = appendLiteratureScope(doc, other)!
+    expect(next.nodes.slice(0, 3)).toEqual(doc.nodes)
+    expect(next.nodes.at(-1)).toBe(other)
+  })
+  it('counts file, reference and scope chips together and accepts an existing scope even at the cap', () => {
+    const nodes: ComposerDoc['nodes'] = Array.from({ length: 8 }, (_, index) => ({
+      type: 'artifact',
+      id: `file-${index}`,
+      name: `${index}`,
+      path: `/file/${index}`,
+      source: 'artifact'
+    }))
+    nodes.push({
+      type: 'literature',
+      itemId: 'paper-a',
+      metadataRevision: 1,
+      item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Paper' })
+    })
+    const doc: ComposerDoc = { nodes }
+    const full = appendLiteratureScope(doc, collection)!
+    expect(docArtifactCount(full)).toBe(10)
+    expect(appendLiteratureScope(full, { ...collection, name: 'Renamed' })).toBe(full)
+    expect(appendLiteratureScope(full, project)).toBeUndefined()
+    expect(docArtifactCount(doc)).toBe(9)
+  })
+  it('keeps the prepared scope and editable text round-trippable through the ordinary Composer DOM', () => {
+    const doc = appendLiteratureScope(emptyDoc, collection)!
+    const root = document.createElement('div')
+    applyDocToDom(root, doc)
+    expect(root.querySelector('[data-mention-type="literature-scope"]')?.textContent).toBe(
+      '@Original collection'
+    )
+    root.appendChild(document.createTextNode(' What supports this conclusion?'))
+    expect(domToDoc(root)).toEqual({
+      nodes: [collection, { type: 'text', text: ' What supports this conclusion?' }]
+    })
   })
 })

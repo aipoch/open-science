@@ -8,14 +8,17 @@
     "src/shared/literature-search-text.ts",
     "src/shared/pdf-structure.ts",
     "src/shared/pdf-translation.test.ts",
-    "src/shared/pdf-translation.ts"
+    "src/shared/pdf-translation.ts",
+    "src/shared/literature-source-citation.ts",
+    "src/shared/literature-source-citation.test.ts"
   ],
   "interfacePaths": [
     "src/shared/annotations.ts",
     "src/shared/literature-attachment-reference.ts",
     "src/shared/literature-deletion.ts",
     "src/shared/literature-search-text.ts",
-    "src/shared/pdf-structure.ts"
+    "src/shared/pdf-structure.ts",
+    "src/shared/literature-source-citation.ts"
   ],
   "consumerModules": [
     "desktop_composition",
@@ -27,7 +30,8 @@
     "owner": [
       "src/shared/annotations.test.ts",
       "src/shared/literature-deletion.test.ts",
-      "src/shared/pdf-translation.test.ts"
+      "src/shared/pdf-translation.test.ts",
+      "src/shared/literature-source-citation.test.ts"
     ],
     "contract": [],
     "consumer": [

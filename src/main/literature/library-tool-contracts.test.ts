@@ -13,6 +13,7 @@ import type { AcpRuntimeOptions } from '../acp/runtime'
 import { createAcpRuntime, type AcpRuntimeCompositionOptions } from '../acp/runtime-composition'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { LiteratureCatalog } from './catalog'
+import type { LiteratureDocumentReader } from './document-reader'
 import type {
   LiteratureLibraryDiscovery,
   LiteratureLibraryMcpHandler,
@@ -47,12 +48,18 @@ vi.mock('../acp/runtime-session-composition', () => ({
   composeAcpRuntimeSessionOwners: () => ({})
 }))
 vi.mock('../acp/runtime', () => ({ AcpRuntime: class {} }))
-const production = <K extends 'saveToInbox' | 'searchLibrary' | 'readCandidateFile'>(
+const production = <
+  K extends 'saveToInbox' | 'searchLibrary' | 'readCandidateFile' | 'searchLibraryFullText'
+>(
   name: K,
-  catalog: LiteratureCatalog
+  catalog: LiteratureCatalog,
+  literatureReader?: Partial<
+    Pick<LiteratureDocumentReader, 'searchCachedAttachments' | 'searchAttachment'>
+  >
 ): NonNullable<AcpRuntimeOptions['literatureLibrary']>[K] => {
   createAcpRuntime({
     literatureCatalog: catalog,
+    literatureReader,
     fixedBackend: {},
     settingsService: {}
   } as unknown as AcpRuntimeCompositionOptions)
@@ -126,6 +133,235 @@ const presentation = (result: Awaited<ReturnType<Client['callTool']>>): { savedC
   const content = result.content as { type: string; text: string }[]
   return JSON.parse(content[0].text).openScienceLiteraturePresentation as { savedCount: number }
 }
+
+const cachedPdfView = (index: number): LiteratureItemView => ({
+  ...view(item(`Cached paper ${index}`), `cached-item-${index}`),
+  projectIds: ['project-1'],
+  attachments: [
+    {
+      id: `attachment-${index}`,
+      kind: 'fullText',
+      title: '',
+      sortOrder: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      versions: [
+        {
+          id: `version-${index}`,
+          versionNumber: 1,
+          filename: `paper-${index}.pdf`,
+          contentType: 'application/pdf',
+          sizeBytes: 100,
+          checksum: 'a'.repeat(64),
+          availability: 'available',
+          createdAt: 1
+        }
+      ]
+    }
+  ]
+})
+
+const cachedCatalog = (records: LiteratureItemView[]): LiteratureCatalog =>
+  ({
+    searchForAgent: vi.fn(async (request: Parameters<LiteratureCatalog['searchForAgent']>[0]) => {
+      const itemIds = request.itemIds
+      const selected = itemIds ? records.filter((record) => itemIds.includes(record.id)) : records
+      const offset = request.offset ?? 0
+      const entries = selected.slice(offset, offset + (request.limit ?? 20))
+      return {
+        entries,
+        totalCount: selected.length,
+        ...(offset + entries.length < selected.length
+          ? { nextOffset: offset + entries.length }
+          : {})
+      }
+    })
+  }) as unknown as LiteratureCatalog
+
+it('production full-text discovery exposes the unsearched page and reaches a body-only hit on record 21', async () => {
+  const catalog = cachedCatalog(Array.from({ length: 21 }, (_, index) => cachedPdfView(index + 1)))
+  const reader = {
+    searchAttachment: vi.fn(async () => {
+      throw new Error('Cache discovery must not extract PDFs')
+    }),
+    searchCachedAttachments: vi.fn<LiteratureDocumentReader['searchCachedAttachments']>(
+      async (request) => ({
+        status: 'available',
+        retrievalMode: 'bm25',
+        coverage: {
+          requestedDocuments: request.attachments.length,
+          cachedDocuments: request.attachments.length,
+          notCachedDocuments: 0,
+          unavailableDocuments: 0
+        },
+        passages: request.attachments
+          .filter((source) => source.attachmentVersionId === 'version-21')
+          .map(() => ({
+            documentId: 'version-21',
+            documentName: 'paper-21.pdf',
+            pageStart: 2,
+            pageEnd: 2,
+            content: 'The body-only finding is on record twenty-one.',
+            textStart: 0,
+            textEnd: 46
+          })),
+        truncated: false
+      })
+    )
+  }
+  const search = production('searchLibraryFullText', catalog, reader)!
+  const api = await open({
+    searchLibraryFullText: (request) => search({ ...request, projectId: 'project-1' })
+  })
+  try {
+    const first = await api.client.callTool({
+      name: 'search_library_full_text',
+      arguments: { query: 'body-only' }
+    })
+    expect(first.structuredContent).toMatchObject({
+      recordCount: 20,
+      totalRecordCount: 21,
+      nextOffset: 20,
+      scannedSources: 20,
+      matches: [],
+      incomplete: true,
+      fullTextCoverage: 'unverified',
+      limitations: expect.arrayContaining(['more-records'])
+    })
+    const second = await api.client.callTool({
+      name: 'search_library_full_text',
+      arguments: { query: 'body-only', offset: 20 }
+    })
+    expect(second.structuredContent).toMatchObject({
+      recordCount: 1,
+      totalRecordCount: 21,
+      matches: [expect.objectContaining({ itemId: 'cached-item-21', pageStart: 2 })]
+    })
+    expect(second.structuredContent).not.toHaveProperty('nextOffset')
+    expect(reader.searchAttachment).not.toHaveBeenCalled()
+  } finally {
+    await api.close()
+  }
+})
+
+it('production full-text discovery reports unavailable and uncached sources even when no passage matches', async () => {
+  const catalog = cachedCatalog([cachedPdfView(1), cachedPdfView(2)])
+  const reader = {
+    searchCachedAttachments: vi.fn<LiteratureDocumentReader['searchCachedAttachments']>(
+      async () => ({
+        status: 'available',
+        retrievalMode: 'bm25',
+        coverage: {
+          requestedDocuments: 2,
+          cachedDocuments: 0,
+          notCachedDocuments: 1,
+          unavailableDocuments: 1
+        },
+        passages: [],
+        truncated: false
+      })
+    )
+  }
+  const result = await production('searchLibraryFullText', catalog, reader)!({
+    projectId: 'project-1',
+    query: 'finding'
+  })
+  expect(result).toMatchObject({
+    scannedSources: 0,
+    matches: [],
+    incomplete: true,
+    limitations: expect.arrayContaining([
+      'not-cached',
+      'unavailable-sources',
+      'cached-pages-unverified'
+    ])
+  })
+  const unavailable = await production('searchLibraryFullText', catalog)!({
+    projectId: 'project-1',
+    query: 'finding'
+  })
+  expect(unavailable).toMatchObject({
+    status: 'unavailable',
+    scannedSources: 0,
+    limitations: expect.arrayContaining(['unavailable-reader'])
+  })
+})
+
+it('production full-text discovery reports PDFs rejected by the catalog before Reader admission', async () => {
+  const view = cachedPdfView(1)
+  const unavailable = {
+    ...view,
+    attachments: view.attachments.map((attachment) => ({
+      ...attachment,
+      versions: attachment.versions.map((version) => ({
+        ...version,
+        availability: 'unavailable' as const
+      }))
+    }))
+  }
+  const reader = {
+    searchCachedAttachments: vi.fn<LiteratureDocumentReader['searchCachedAttachments']>(
+      async (request) => {
+        expect(request.attachments).toEqual([])
+        return {
+          status: 'available',
+          retrievalMode: 'bm25',
+          coverage: {
+            requestedDocuments: 0,
+            cachedDocuments: 0,
+            notCachedDocuments: 0,
+            unavailableDocuments: 0
+          },
+          passages: [],
+          truncated: false
+        }
+      }
+    )
+  }
+  const result = await production('searchLibraryFullText', cachedCatalog([unavailable]), reader)!({
+    projectId: 'project-1',
+    query: 'finding'
+  })
+  expect(result).toMatchObject({
+    coverage: { requestedDocuments: 1, unavailableDocuments: 1 },
+    scannedSources: 0,
+    matches: [],
+    incomplete: true,
+    limitations: expect.arrayContaining(['unavailable-sources'])
+  })
+})
+
+it('production cached discovery rejects late results after cancellation and never dispatches extraction', async () => {
+  const controller = new AbortController()
+  const catalog = cachedCatalog([cachedPdfView(1)])
+  const reader = {
+    searchCachedAttachments: vi.fn<LiteratureDocumentReader['searchCachedAttachments']>(
+      async ({ signal }) => {
+        expect(signal).toBe(controller.signal)
+        controller.abort()
+        return {
+          status: 'available',
+          retrievalMode: 'bm25',
+          coverage: {
+            requestedDocuments: 1,
+            cachedDocuments: 1,
+            notCachedDocuments: 0,
+            unavailableDocuments: 0
+          },
+          passages: [],
+          truncated: false
+        }
+      }
+    )
+  }
+  await expect(
+    production('searchLibraryFullText', catalog, reader)!({
+      projectId: 'project-1',
+      query: 'finding',
+      signal: controller.signal
+    })
+  ).rejects.toMatchObject({ name: 'AbortError' })
+})
 
 it('retains committed receipts when a later candidate fails', async () =>
   db(async (catalog, dbClient) => {
@@ -491,6 +727,83 @@ it('intersects selected IDs with ordinary search and paginates the filtered memb
     expect(new Set([...page.items, ...next.items].map(({ id }) => id))).toEqual(new Set(ids))
     expect(next.hasMore).toBe(false)
     expect(await search({ ...request, itemIds: [] })).toMatchObject({ items: [], totalCount: 0 })
+  }))
+
+it('ranks Agent keyword coverage before pagination while keeping scope, lifecycle and ordinary phrase search', async () =>
+  db(async (catalog, client) => {
+    const broad = await catalog.transact({
+      kind: 'create-item',
+      item: item('Cancer patient notes')
+    })
+    const precise = await catalog.transact({
+      kind: 'create-item',
+      item: item('A focused study', { abstract: 'Targeted therapy affects cancer cells.' })
+    })
+    const deleted = await catalog.transact({
+      kind: 'create-item',
+      item: item('Cancer targeted therapy results')
+    })
+    await catalog.transact({ kind: 'create-item', item: item('Cancer targeted therapy') })
+    for (const id of [broad.id, precise.id, deleted.id])
+      await catalog.transact({
+        kind: 'set-project-item',
+        projectId: 'project-1',
+        itemId: id,
+        included: true,
+        source: 'test'
+      })
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [deleted.id], state: 'deleted' })
+    await client.literatureItem.update({
+      where: { id: precise.id },
+      data: { updatedAt: new Date('2020-01-01') }
+    })
+    const request = {
+      scope: 'library' as const,
+      projectId: 'project-1',
+      query: 'cancer targeted therapy',
+      limit: 1
+    }
+    const first = await catalog.searchForAgent(request)
+    expect(first.entries.map((entry) => ('id' in entry ? entry.id : ''))).toEqual([precise.id])
+    expect(first.totalCount).toBe(2)
+    expect(first.nextOffset).toBe(1)
+    const second = await catalog.searchForAgent({ ...request, offset: first.nextOffset })
+    expect(second.entries.map((entry) => ('id' in entry ? entry.id : ''))).toEqual([broad.id])
+    expect(second.nextOffset).toBeUndefined()
+    expect(
+      (await catalog.searchForAgent({ ...request, searchSort: 'recent' })).entries.map((entry) =>
+        'id' in entry ? entry.id : ''
+      )
+    ).toEqual([broad.id])
+    expect((await catalog.search({ ...request })).entries).toEqual([])
+    expect(
+      (
+        await catalog.searchForAgent({ scope: 'library', projectId: 'project-1', limit: 1 })
+      ).entries.map((entry) => ('id' in entry ? entry.id : ''))
+    ).toEqual([broad.id])
+  }))
+
+it('preserves Agent exact-identifier lookup and supports separated CJK keywords', async () =>
+  db(async (catalog) => {
+    const exact = await catalog.transact({
+      kind: 'create-item',
+      item: item('文献标识', {
+        identifiers: [{ scheme: 'doi', value: '10.1234/ABC', isPrimary: true }],
+        abstract: '本研究的治疗降低了死亡率。'
+      })
+    })
+    await catalog.transact({ kind: 'create-item', item: item('10.1234 other metadata') })
+    expect(
+      (
+        await catalog.searchForAgent({ scope: 'library', query: 'https://doi.org/10.1234/abc' })
+      ).entries.map((entry) => ('id' in entry ? entry.id : ''))
+    ).toEqual([exact.id])
+    expect(
+      (await catalog.searchForAgent({ scope: 'library', query: '治疗 死亡率' })).entries.map(
+        (entry) => ('id' in entry ? entry.id : '')
+      )
+    ).toEqual([exact.id])
+    expect((await catalog.search({ scope: 'library', query: '治疗 死亡率' })).entries).toEqual([])
   }))
 
 it('reports the production candidate-file size limit as a read failure, without disclosing its path', async () =>
