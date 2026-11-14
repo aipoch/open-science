@@ -4,7 +4,9 @@ import { BrowserWindow, session } from 'electron'
 import { readFile, writeFile, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { exportResearchVideoMp4 } from '@aipoch/research-film/export'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
+const log = createLogger('research-video')
 const activeProgress = new Map<string, ResearchVideoProgress>()
 const renderWaiters = new Set<() => void>()
 let renderActive = false
@@ -214,7 +216,10 @@ async function renderWithSlot(
     try {
       if (activeWindow && !activeWindow.isDestroyed()) activeWindow.destroy()
       await work?.catch(() => {})
-      await resetRenderSession(isolated)
+      await resetRenderSession(isolated).catch((error: unknown) => {
+        // Preserve the export result. The next export still has to reset before mounting a player.
+        log.warn('Failed to clear Film export browser data', diagnosticErrorFields(error))
+      })
     } finally {
       activeProgress.delete(request.htmlPath)
       await rm(audioPath, { force: true })
