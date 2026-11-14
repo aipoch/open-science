@@ -1878,6 +1878,30 @@ describe('Session projection', () => {
     )
   })
 
+  it('keeps the ready projection when drift includes an invalid historical Session', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-ready-invalid-drift-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+
+    const files = new SessionRepository(storageRoot)
+    const indexed = await files.saveSession({ ...session('indexed', 100), number: 1 })
+    await files.saveSession(sessionWithInvalidProjection('invalid', 200))
+
+    const projection = new SessionProjectionRepository(async () => client!)
+    await projection.replaceAll([indexed])
+    const repository = new SessionRepository(storageRoot, {}, projection)
+
+    await expect(repository.ensureSessionProjection(() => files.loadAll())).resolves.toMatchObject({
+      sessions: [expect.objectContaining({ id: indexed.id, number: 1 })]
+    })
+    await expect(projection.list()).resolves.toEqual([
+      expect.objectContaining({ id: indexed.id, number: 1 })
+    ])
+    await expect(projection.isReady()).resolves.toBe(true)
+  })
+
   it('scans historical Session authority once while building the projection', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-single-scan-backfill-'))
     initDataRoot(storageRoot)

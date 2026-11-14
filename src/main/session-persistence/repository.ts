@@ -868,6 +868,21 @@ class SessionRepository {
     for (const number of used) nextNumber = Math.max(nextNumber, number + 1)
 
     const repairedById = new Map<string, PersistedChatSession>()
+    const numberSession = async (
+      session: PersistedChatSession,
+      number: number
+    ): Promise<PersistedChatSession> => {
+      const numbered = { ...session, number }
+      try {
+        assertSessionProjectionStorageShape(numbered)
+      } catch {
+        // Keep an invalid historical row in the rebuild input with its allocated number. The
+        // projection repository will skip it and preserve an already indexed row, while a new
+        // invalid row remains isolated from the rest of the catalog.
+        return numbered
+      }
+      return this.saveSessionNow(numbered)
+    }
     for (const session of ordered) {
       const existing = existingNumbers.get(session.id)
       const number = candidateNumber(session)
@@ -884,15 +899,15 @@ class SessionRepository {
       }
 
       if (valid && existing !== undefined) {
-        repairedById.set(session.id, await this.saveSessionNow({ ...session, number: existing }))
+        repairedById.set(session.id, await numberSession(session, existing))
         continue
       }
 
       while (used.has(nextNumber)) nextNumber += 1
-      const persisted = await this.saveSessionNow({ ...session, number: nextNumber })
+      const persisted = await numberSession(session, nextNumber)
       repairedById.set(session.id, persisted)
-      used.add(persisted.number!)
-      nextNumber = persisted.number! + 1
+      used.add(nextNumber)
+      nextNumber += 1
     }
     return sessions.map((session) => repairedById.get(session.id) ?? session)
   }
