@@ -37,7 +37,7 @@ describe('cached PDF search guidance', () => {
     limitations: ['cached-pages-unverified'],
     matches: []
   }
-  const showResult = (output: unknown) => {
+  const showResult = (output: unknown): ReturnType<typeof buildLiteratureLibraryToolSummary> => {
     const summary = buildLiteratureLibraryToolSummary('search', { scope: 'project' }, output)
     render(<WorkspaceLiteratureToolCard summary={summary} />)
     return summary

@@ -355,12 +355,16 @@ it('retires the generation after a failed published stop even when disk compensa
   const { lifetime, stop, configRoot, options } = await fixture()
   lifetime.connect('a', 'socket-a')
   const compensation = Promise.withResolvers<void>()
+  const compensationFinished = Promise.withResolvers<void>()
   const failure = Object.assign(new Error('directory sync failed after rename'), { code: 'EIO' })
   persistence.beforeWrite = vi
     .fn()
     .mockResolvedValueOnce(undefined)
     .mockImplementationOnce(() => compensation.promise)
-  persistence.afterWrite = vi.fn().mockRejectedValueOnce(failure)
+  persistence.afterWrite = vi
+    .fn()
+    .mockRejectedValueOnce(failure)
+    .mockImplementationOnce(() => compensationFinished.promise)
   await expect(lifetime.leave('a', 'socket-a')).rejects.toBe(failure)
   expect(await readServiceLifetime(configRoot)).toMatchObject({
     stopping: true,
@@ -375,7 +379,11 @@ it('retires the generation after a failed published stop even when disk compensa
   await vi.waitFor(async () =>
     expect(await readServiceLifetime(configRoot)).toMatchObject({ stopping: false })
   )
-  expect(() => lifetime.connect('b', 'socket-b')).toThrow('stopping')
+  // Atomic replacement can expose the rollback before its durable write has settled.
+  expect(() => lifetime.connect('b', 'socket-b')).toThrow('stop intent')
+  await expect(lifetime.start()).rejects.toThrow('stop intent')
+  compensationFinished.resolve()
+  await vi.waitFor(() => expect(() => lifetime.connect('b', 'socket-b')).toThrow('stopping'))
   await expect(lifetime.start()).rejects.toThrow('stopping')
   expect(stop).not.toHaveBeenCalled()
   await lifetime.stop()
