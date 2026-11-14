@@ -8035,6 +8035,7 @@
     "Source URL": "소스 URL",
     "Branch or tag": "브랜치 또는 태그",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "스페셜리스트 마켓플레이스 카탈로그를 게시하는 공개 GitHub 저장소 또는 브랜치 URL을 사용하세요.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "설치한 스킬은 에이전트 동작을 변경할 수 있습니다. 신뢰할 수 있는 소스만 추가하세요."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "설치한 스킬은 에이전트 동작을 변경할 수 있습니다. 신뢰할 수 있는 소스만 추가하세요.",
+    "Open in browser": "브라우저에서 열기"
   }
 }

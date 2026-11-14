@@ -231,6 +231,7 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'artifacts:list-reproducibility-receipts',
   'artifacts:start-reproducibility-check',
   'artifacts:cancel-reproducibility-check',
+  'artifacts:open-in-browser',
 
   'locale:initialize',
   'locale:set-preference',
@@ -309,6 +310,7 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'reviewer:run',
   'artifacts:finalize-run',
   'artifacts:resolve-version-descriptors',
+  'managed-file-versions:inspect',
   'preview-resources:acquire',
   'preview-resources:release'
 ])

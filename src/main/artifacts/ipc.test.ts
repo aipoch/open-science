@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { resolveDataRoot } from '../storage-root'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { ProvenanceIntegrityError } from '../../shared/provenance-read-result'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -907,6 +907,26 @@ describe('artifact IPC handlers', () => {
     )
   })
 
+  it('opens the requested artifact through the configured browser URL action', async () => {
+    const openInBrowser = vi.fn().mockResolvedValue(undefined)
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      openInBrowser
+    })
+
+    await handlers.openInBrowser({
+      artifactId: 'artifact-html-1',
+      projectId: 'project-1',
+      versionId: 'version-1'
+    })
+
+    expect(openInBrowser).toHaveBeenCalledOnce()
+    expect(openInBrowser).toHaveBeenCalledWith({
+      artifactId: 'artifact-html-1',
+      projectId: 'project-1',
+      versionId: 'version-1'
+    })
+  })
+
   it('reads only bounded preview text from managed artifact files', async () => {
     const openLatestManagedFile = vi
       .fn()
@@ -1229,6 +1249,7 @@ describe('artifact IPC handler registration', () => {
       'artifacts:get-version-provenance',
       'artifacts:get-version-review',
       'artifacts:open-file',
+      'artifacts:open-in-browser',
       'artifacts:read-preview',
       'artifacts:reconcile-pending',
       'artifacts:resolve-version-descriptors'
@@ -1334,6 +1355,7 @@ describe('artifact IPC handler registration', () => {
       finalizeRunArtifacts: vi.fn(),
       reconcilePendingArtifacts: vi.fn(),
       openFile: vi.fn(),
+      openInBrowser: vi.fn(),
       readPreview: vi.fn(),
       getLineage: vi.fn(),
       getVersionProvenance: vi.fn(),
@@ -1669,6 +1691,41 @@ describe('artifact IPC handler registration', () => {
     expect(openPath).toHaveBeenCalledWith(latestPath)
     expect(resolveVersionContent).not.toHaveBeenCalled()
     expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('opens a managed file copy with its suggested extension when storage has no extension', async () => {
+    const temporarySource = '/managed/latest/a36320db'
+    const close = vi.fn().mockResolvedValue(undefined)
+    const copyTo = vi.fn().mockImplementation(async (destinationPath: string) => {
+      await mkdir(dirname(destinationPath), { recursive: true })
+    })
+    const openLatestManagedFile = vi.fn().mockResolvedValue({
+      path: temporarySource,
+      filename: 'immersive-showcase.html',
+      copyTo,
+      close
+    })
+    const openPath = vi.fn().mockResolvedValue('')
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      openPath,
+      openLatestManagedFile
+    } as never)
+
+    await handlers.openFile({
+      path: createArtifactVersionLocator({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: 'artifact-1',
+        versionId: 'version-1'
+      }),
+      suggestedName: 'immersive-showcase.html'
+    })
+
+    const openedPath = openPath.mock.calls[0]?.[0] as string
+    expect(openedPath).toMatch(/open-science-browser-[^/]+\/immersive-showcase\.html$/u)
+    expect(copyTo).toHaveBeenCalledWith(openedPath, { exclusive: true })
+    expect(close).toHaveBeenCalledOnce()
+    await rm(dirname(openedPath), { recursive: true, force: true })
   })
 })
 

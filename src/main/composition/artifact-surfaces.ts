@@ -42,6 +42,7 @@ import {
 import { RuntimeWriterOwner } from '../session-persistence/runtime-writer'
 import { withDataRootWrite } from '../storage/migration-state'
 import { createUploadCommandOwner } from '../uploads/command-owner'
+import { createArtifactBrowserOpener } from '../artifacts/browser'
 
 export function composeArtifactSurfaces({
   reportReproducibilityCheck,
@@ -111,6 +112,7 @@ export function composeArtifactSurfaces({
   sessionDeletionOwner: SessionDeletionOwner
   runtimeWriter: RuntimeWriterOwner
 } {
+  const openArtifactInBrowser = createArtifactBrowserOpener()
   const artifactHandlers = createArtifactHandlers(artifactRepository, artifactRunRegistry, {
     onPublished: (artifacts) => {
       for (const artifact of artifacts) {
@@ -153,7 +155,8 @@ export function composeArtifactSurfaces({
     commitRecoveredArtifacts: (request, artifacts) =>
       sessionPersistenceCoordinator.commitRecoveredArtifactReferences(request, artifacts),
     recoverPendingArtifacts: (request) =>
-      sessionPersistenceCoordinator.retryArtifactFinalization(request)
+      sessionPersistenceCoordinator.retryArtifactFinalization(request),
+    openInBrowser: openArtifactInBrowser
   })
   artifactHandlersRef.current = artifactHandlers
   const reproducibilityCommands = createArtifactReproducibilityCommands(

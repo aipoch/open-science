@@ -33,6 +33,7 @@ import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { SessionRepository } from '../session-persistence/repository'
 import { startWebHttpServer } from './http-server'
 import { HeadlessTaskApi } from './task-api'
+import { registerAuthenticatedArtifactBrowserBinding } from './artifact-url'
 
 it.each(['historical', 'native'] as const)(
   'downloads a %s Task artifact by its listed Version id through HTTP',
@@ -106,6 +107,12 @@ it.each(['historical', 'native'] as const)(
               args[0] as ResolveArtifactVersionDescriptorsRequest
             )
           }
+          if (name === 'managed-file-versions:inspect') {
+            return {
+              ok: true,
+              value: await versions.inspect(args[0] as Parameters<typeof versions.inspect>[0])
+            }
+          }
           if (name === 'preview-resources:acquire') {
             const resource = await owners.acquire(
               callerLease,
@@ -141,7 +148,7 @@ it.each(['historical', 'native'] as const)(
         projectId: session.projectId,
         sessionId: session.id,
         runId: 'run-1',
-        filename: 'report.md',
+        filename: 'report.html',
         source: { kind: 'inline', content, encoding: 'utf8' }
       })
       const version = await provenance.createVersion({
@@ -152,8 +159,8 @@ it.each(['historical', 'native'] as const)(
         writeOperationId: 'write-1',
         writeRequestChecksum: 'a'.repeat(64),
         ...context,
-        filename: 'report.md',
-        contentType: 'text/markdown'
+        filename: 'report.html',
+        contentType: 'text/html'
       })
       const finalization = {
         projectId: session.projectId,
@@ -190,7 +197,7 @@ it.each(['historical', 'native'] as const)(
         projectId: session.projectId,
         sessionId: session.id,
         runId: 'run-2',
-        filename: 'report.md',
+        filename: 'report.html',
         source: { kind: 'inline', content: 'newer content', encoding: 'utf8' }
       })
       const newer = await provenance.createVersion({
@@ -201,8 +208,8 @@ it.each(['historical', 'native'] as const)(
         writeOperationId: 'write-2',
         writeRequestChecksum: 'b'.repeat(64),
         ...context,
-        filename: 'report.md',
-        contentType: 'text/markdown'
+        filename: 'report.html',
+        contentType: 'text/html'
       })
       const newerFinalization = {
         ...finalization,
@@ -261,7 +268,7 @@ it.each(['historical', 'native'] as const)(
       const bytes = Buffer.from(await response.arrayBuffer())
       expect(bytes.toString()).toBe(content)
       expect(createHash('sha256').update(bytes).digest('hex')).toBe(version.checksum)
-      expect(response.headers.get('content-disposition')).toContain('report.md')
+      expect(response.headers.get('content-disposition')).toContain('report.html')
       const output = join(fixture.storageRoot, 'downloaded-report.md')
       await runTaskCommand(
         {
@@ -277,13 +284,77 @@ it.each(['historical', 'native'] as const)(
       for (const resourceId of acquiredIds) {
         await expect(resources.resolveProtocolResource(resourceId)).rejects.toThrow()
       }
+      // The head is absent from the Task list, but browser previews resolve its exact managed identity.
+      const inlineUrl = (
+        versionId: string,
+        projectId = session.projectId,
+        fileId = version.artifactId
+      ): string =>
+        `${baseUrl}/api/v1/artifacts/${fileId}/content?disposition=inline&projectId=${projectId}&versionId=${versionId}&token=synthetic-download-token`
+      for (const [versionId, expected] of [
+        [version.versionId, content],
+        [newer.versionId, 'newer content']
+      ]) {
+        const inline = await fetch(inlineUrl(versionId))
+        expect(inline.status).toBe(200)
+        expect(await inline.text()).toBe(expected)
+        expect(inline.headers.get('content-type')).toBe('text/html; charset=utf-8')
+        expect(inline.headers.get('content-disposition')).toBe('inline')
+        const head = await fetch(inlineUrl(versionId), { method: 'HEAD' })
+        expect(head.status).toBe(200)
+        for (const header of ['content-type', 'content-disposition', 'content-length']) {
+          expect(head.headers.get(header)).toBe(inline.headers.get(header))
+        }
+      }
+      registerAuthenticatedArtifactBrowserBinding(fixture.storageRoot, 'synthetic-download-token', {
+        artifactId: version.artifactId,
+        projectId: session.projectId,
+        versionId: newer.versionId
+      })
+      const boundInline = await fetch(
+        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&token=synthetic-download-token`
+      )
+      expect(boundInline.status).toBe(200)
+      expect(await boundInline.text()).toBe('newer content')
+      registerAuthenticatedArtifactBrowserBinding(fixture.storageRoot, 'synthetic-download-token', {
+        artifactId: version.artifactId,
+        projectId: session.projectId
+      })
+      const latestInline = await fetch(
+        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&token=synthetic-download-token`
+      )
+      expect(latestInline.status).toBe(200)
+      expect(await latestInline.text()).toBe('newer content')
+      for (const url of [
+        inlineUrl(newer.versionId, 'missing-project'),
+        inlineUrl(newer.versionId, session.projectId, 'missing-file'),
+        inlineUrl('missing-version')
+      ]) {
+        expect((await fetch(url)).ok).toBe(false)
+      }
+      for (const method of ['GET', 'HEAD']) {
+        for (const omitted of ['projectId', 'versionId']) {
+          const malformed = new URL(inlineUrl(newer.versionId))
+          malformed.searchParams.delete(omitted)
+          expect((await fetch(malformed, { method })).status).toBe(400)
+        }
+      }
+      const downloadWithScope = await fetch(
+        inlineUrl(newer.versionId).replace('disposition=inline', 'disposition=attachment')
+      )
+      expect(downloadWithScope.status).toBe(404)
+      for (const resourceId of acquiredIds) {
+        await expect(resources.resolveProtocolResource(resourceId)).rejects.toThrow()
+      }
+      const successfulAcquisitions = acquiredIds.length
       // The same Session record must not make finalized-but-unpublished bytes downloadable.
       await fixture.client.artifactVersion.update({
         where: { id: version.versionId },
         data: { managedVisibleAt: null }
       })
       await expect(client.downloadArtifact(listed[0].id)).rejects.toMatchObject({ status: 500 })
-      expect(acquiredIds).toHaveLength(3)
+      expect((await fetch(inlineUrl(version.versionId))).ok).toBe(false)
+      expect(acquiredIds).toHaveLength(successfulAcquisitions)
       await fixture.client.artifactVersion.update({
         where: { id: version.versionId },
         data: { managedVisibleAt: new Date() }
@@ -298,7 +369,8 @@ it.each(['historical', 'native'] as const)(
       })
       // A listed id and a known path cannot grant access across the Session's Project boundary.
       await expect(client.downloadArtifact(listed[0].id)).rejects.toMatchObject({ status: 500 })
-      expect(acquiredIds).toHaveLength(3)
+      expect((await fetch(inlineUrl(version.versionId))).ok).toBe(false)
+      expect(acquiredIds).toHaveLength(successfulAcquisitions)
       // Download must not repair historical records by writing back to Session storage.
       expect((await sessions.loadSession(session.projectId, session.id))?.artifacts).toEqual(
         session.artifacts

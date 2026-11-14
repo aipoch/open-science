@@ -4744,6 +4744,157 @@ describe('startWebHttpServer', () => {
     expect(await nextResponse.json()).toMatchObject({ appName: 'Open-Science' })
   })
 
+  it('serves HTML artifacts inline while keeping the default download disposition', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    const tasks = {
+      runWithCallerContext,
+      subscribeProgress: () => () => undefined,
+      listProjects: vi.fn(),
+      createProject: vi.fn(),
+      updateProject: vi.fn(),
+      listSessions: vi.fn(),
+      getSession: vi.fn(),
+      startRun: vi.fn(),
+      getRun: vi.fn(),
+      cancelRun: vi.fn(),
+      listArtifacts: vi.fn(),
+      acquireArtifact: vi.fn().mockResolvedValue({
+        resourceId: 'resource-html',
+        url: 'open-science-preview://resource-html/report.html',
+        name: 'report.html',
+        mimeType: 'text/html',
+        size: 14
+      }),
+      releaseArtifact: vi.fn().mockResolvedValue(undefined)
+    }
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: { channels: () => [], invoke: vi.fn(), releaseClient: vi.fn(), dispose: vi.fn() },
+      tasks,
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const endpoint = `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-html/content`
+    const headers = { authorization: 'Bearer test-token' }
+
+    vi.mocked(net.fetch).mockResolvedValue(
+      new Response('<!doctype html>', {
+        headers: { 'content-type': 'text/plain', 'content-length': '15' }
+      })
+    )
+    const download = await fetch(endpoint, { headers })
+    expect(download.status).toBe(200)
+    expect(download.headers.get('content-disposition')).toContain('attachment')
+    expect(download.headers.get('content-type')).toBe('text/plain')
+
+    vi.mocked(net.fetch).mockResolvedValue(
+      new Response('<!doctype html>', {
+        headers: { 'content-type': 'text/plain', 'content-length': '15' }
+      })
+    )
+    const inline = await fetch(`${endpoint}?disposition=inline`, { headers })
+    expect(inline.status).toBe(200)
+    expect(inline.headers.get('content-disposition')).toBe('inline')
+    expect(inline.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    const inlineBody = await inline.text()
+    expect(inlineBody).toContain('<title>Open-Science | HTML Preview</title>')
+    expect(inlineBody).toContain('data-open-science-favicon="true"')
+
+    tasks.acquireArtifact.mockResolvedValueOnce({
+      resourceId: 'resource-html-mime',
+      url: 'open-science-preview://resource-html-mime/report.txt',
+      name: 'report.txt',
+      mimeType: 'text/html; charset=utf-8',
+      size: 14
+    })
+    vi.mocked(net.fetch).mockResolvedValue(
+      new Response('<!doctype html>', {
+        headers: { 'content-type': 'application/octet-stream', 'content-length': '16' }
+      })
+    )
+    const mimeInline = await fetch(`${endpoint}?disposition=inline`, { headers })
+    expect(mimeInline.status).toBe(200)
+    expect(mimeInline.headers.get('content-disposition')).toBe('inline')
+    expect(mimeInline.headers.get('content-type')).toBe('text/html; charset=utf-8')
+
+    vi.mocked(net.fetch).mockResolvedValue(
+      new Response(null, {
+        status: 200,
+        headers: { 'content-type': 'text/plain', 'content-length': '16' }
+      })
+    )
+    const head = await fetch(`${endpoint}?disposition=inline`, { method: 'HEAD', headers })
+    expect(head.status).toBe(200)
+    expect(head.headers.get('content-disposition')).toBe(inline.headers.get('content-disposition'))
+    expect(head.headers.get('content-type')).toBe(inline.headers.get('content-type'))
+  })
+
+  it('rejects inline display for non-HTML artifacts', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    const tasks = {
+      runWithCallerContext,
+      subscribeProgress: () => () => undefined,
+      listProjects: vi.fn(),
+      createProject: vi.fn(),
+      updateProject: vi.fn(),
+      listSessions: vi.fn(),
+      getSession: vi.fn(),
+      startRun: vi.fn(),
+      getRun: vi.fn(),
+      cancelRun: vi.fn(),
+      listArtifacts: vi.fn(),
+      acquireArtifact: vi.fn().mockResolvedValue({
+        resourceId: 'resource-text',
+        url: 'open-science-preview://resource-text/report.txt',
+        name: 'report.txt',
+        mimeType: 'text/plain',
+        size: 4
+      }),
+      releaseArtifact: vi.fn().mockResolvedValue(undefined)
+    }
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: { channels: () => [], invoke: vi.fn(), releaseClient: vi.fn(), dispose: vi.fn() },
+      tasks,
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-text/content?disposition=inline`,
+      { headers: { authorization: 'Bearer test-token' } }
+    )
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'invalid_request',
+        message: 'Inline artifact display is only supported for HTML files.'
+      }
+    })
+    expect(tasks.releaseArtifact).toHaveBeenCalledWith('resource-text')
+  })
+
   it('cancels the artifact stream and releases its capability when the client disconnects', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)

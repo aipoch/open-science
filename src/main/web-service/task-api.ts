@@ -7,8 +7,14 @@ import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import type {
   FinalizeRunArtifactsRequest,
-  FinalizeRunArtifactsResult
+  FinalizeRunArtifactsResult,
+  OpenArtifactInBrowserRequest
 } from '../../shared/artifacts'
+import type {
+  ManagedFileVersionInspectResult,
+  ManagedFileVersionIpcResult
+} from '../../shared/managed-file-versions'
+import type { ManagedPreviewResource } from '../../shared/preview-resources'
 import type { Project } from '../../shared/projects'
 import type { ReviewRunResult, ReviewWithChecks } from '../../shared/reviewer'
 import type {
@@ -607,8 +613,44 @@ class HeadlessTaskApi {
     return this.runner.listArtifacts(sessionId)
   }
 
-  acquireArtifact(artifactId: string): Promise<AcquiredTaskArtifact> {
-    return this.runner.acquireArtifact(artifactId)
+  async acquireArtifact(
+    artifactId: string,
+    selection?: Omit<OpenArtifactInBrowserRequest, 'artifactId'>
+  ): Promise<AcquiredTaskArtifact> {
+    if (!selection) return this.runner.acquireArtifact(artifactId)
+    // Browser previews can include Versions absent from the Task completion projection.
+    // Resolve metadata and bytes through the same Project/File/Version authority as the preview.
+    const identity = { source: 'artifact' as const, fileId: artifactId, ...selection }
+    const inspection = (await this.invoke(
+      'managed-file-versions:inspect',
+      identity
+    )) as ManagedFileVersionIpcResult<ManagedFileVersionInspectResult>
+    if (!inspection.ok) {
+      throw new TaskRunnerError('artifact_not_found', inspection.error.message)
+    }
+    const version =
+      inspection.value.selectedVersion ??
+      (selection.versionId
+        ? inspection.value.versions.find((candidate) => candidate.id === selection.versionId)
+        : undefined)
+    if (
+      !version ||
+      version.fileId !== artifactId ||
+      (selection.versionId !== undefined && version.id !== selection.versionId)
+    ) {
+      throw new TaskRunnerError('artifact_not_found', 'Artifact Version not found.')
+    }
+    const resource = (await this.invoke('preview-resources:acquire', {
+      ...identity,
+      ...(version.contentType ? { mimeType: version.contentType } : {})
+    })) as ManagedPreviewResource
+    return {
+      resourceId: resource.id,
+      url: resource.url,
+      name: version.displayName,
+      mimeType: resource.mimeType,
+      size: resource.size
+    }
   }
 
   releaseArtifact(resourceId: string): Promise<void> {

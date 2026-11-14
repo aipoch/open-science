@@ -1076,6 +1076,20 @@ describe('HeadlessTaskApi adapter', () => {
         return { sessions: [session], manifest: { version: 1 } }
       }
       if (channel === 'artifacts:resolve-version-descriptors') return []
+      if (channel === 'managed-file-versions:inspect') {
+        return {
+          ok: true,
+          value: {
+            selectedVersion: {
+              id: 'artifact-query-version',
+              fileId: 'artifact-query',
+              displayName: 'query.csv',
+              contentType: 'text/csv'
+            },
+            versions: []
+          }
+        }
+      }
       if (channel === 'preview-resources:acquire') {
         return {
           id: 'resource-query',
@@ -1108,6 +1122,12 @@ describe('HeadlessTaskApi adapter', () => {
     await expect(api.getSession(session.id)).resolves.toMatchObject({ title: session.title })
     await expect(api.listArtifacts(session.id)).resolves.toEqual(session.artifacts)
     await expect(api.acquireArtifact('artifact-query')).resolves.toMatchObject({
+      resourceId: 'resource-query',
+      name: 'query.csv'
+    })
+    await expect(
+      api.acquireArtifact('artifact-query', { projectId: project.id })
+    ).resolves.toMatchObject({
       resourceId: 'resource-query',
       name: 'query.csv'
     })

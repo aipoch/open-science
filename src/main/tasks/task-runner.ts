@@ -1175,12 +1175,10 @@ class TaskRunner {
 
   async acquireArtifact(artifactId: string): Promise<AcquiredTaskArtifact> {
     const sessions = await this.dependencies.sessions.list()
-    const owner = sessions
-      .map((session) => ({
-        session,
-        artifact: (session.artifacts ?? []).find((candidate) => candidate.id === artifactId)
-      }))
-      .find((candidate) => candidate.artifact)
+    const candidates = sessions.flatMap((session) =>
+      (session.artifacts ?? []).map((artifact) => ({ session, artifact }))
+    )
+    const owner = candidates.find((candidate) => candidate.artifact.id === artifactId)
     if (!owner?.artifact) {
       throw new TaskRunnerError('artifact_not_found', `Artifact not found: ${artifactId}`)
     }

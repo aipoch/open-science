@@ -20,6 +20,8 @@ describe('preview action model', () => {
   const allBindings: PreviewActionBindings = {
     'pdf-context': { execute },
     'copy-path': { execute },
+    'open-in-browser': { execute },
+    'reveal-in-folder': { execute },
     'save-as-artifact': { execute },
     provenance: { execute },
     'view-in-context': { execute },
@@ -61,6 +63,8 @@ describe('preview action model', () => {
 
     expect(entries.map((entry) => (entry.kind === 'action' ? entry.action : entry.kind))).toEqual([
       'copy-path',
+      'open-in-browser',
+      'reveal-in-folder',
       'save-as-artifact',
       'separator',
       'provenance',
@@ -86,6 +90,7 @@ describe('preview action model', () => {
       'provenance',
       'view-in-context',
       'open-fullscreen',
+      'open-in-browser',
       'download',
       'close'
     ])

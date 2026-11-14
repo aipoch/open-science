@@ -8533,6 +8533,7 @@
     "Source URL": "URL источника",
     "Branch or tag": "Ветка или тег",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Укажите URL публичного репозитория GitHub или ветки, публикующей каталог маркетплейса специалистов.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Установленные навыки могут изменить поведение агентов. Доверяйте только знакомым источникам."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Установленные навыки могут изменить поведение агентов. Доверяйте только знакомым источникам.",
+    "Open in browser": "Открыть в браузере"
   }
 }

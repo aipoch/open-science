@@ -74,9 +74,11 @@ import {
   projectWebRendererEvent
 } from './application-event-projections'
 import { authenticateRequest, persistAuthCookie } from './auth'
+import { resolveAuthenticatedArtifactBrowserBinding } from './artifact-url'
 import { InternalWebEventStream } from './internal-web-event-stream'
 import { PublicTaskEventStream } from './public-task-event-stream'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
+import { brandHtmlPreviewDocument } from './html-branding'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 // Preserve one maximum-size request per logical client while leaving the same amount of capacity
@@ -914,7 +916,8 @@ const streamPreviewResource = async (
   response: ServerResponse,
   fetchPreview: WebServerOptions['fetchPreview'],
   resourceUrl: string,
-  responseOverrides: Record<string, string> = {}
+  responseOverrides: Record<string, string> = {},
+  transformBody?: (body: string) => string
 ): Promise<void> => {
   const abortController = new AbortController()
   const abortOnDisconnect = (): void => {
@@ -940,9 +943,19 @@ const streamPreviewResource = async (
         responseHeaders[key] = value
     })
     Object.assign(responseHeaders, responseOverrides)
+    let transformedBody: Buffer | undefined
+    if (transformBody && upstream.ok && upstream.body) {
+      transformedBody = Buffer.from(transformBody(await upstream.text()), 'utf8')
+      delete responseHeaders['content-encoding']
+      responseHeaders['content-length'] = String(transformedBody.byteLength)
+    }
     response.writeHead(upstream.status, responseHeaders)
-    if (!upstream.body || request.method === 'HEAD') {
+    if ((!upstream.body && !transformedBody) || request.method === 'HEAD') {
       response.end()
+      return
+    }
+    if (transformedBody) {
+      response.end(transformedBody)
       return
     }
     try {
@@ -954,6 +967,39 @@ const streamPreviewResource = async (
   } finally {
     response.off('close', abortOnDisconnect)
     response.off('error', abortOnDisconnect)
+  }
+}
+
+const isHtmlArtifact = (artifact: { name: string; mimeType?: string }): boolean => {
+  const extension = artifact.name.slice(artifact.name.lastIndexOf('.')).toLowerCase()
+  const mimeType = artifact.mimeType?.split(';', 1)[0]?.trim().toLowerCase()
+  return extension === '.html' || extension === '.htm' || mimeType === 'text/html'
+}
+
+const artifactContentResponseOverrides = (
+  artifact: { name: string; mimeType?: string },
+  disposition: string | null
+): Record<string, string> => {
+  if (disposition === 'inline') {
+    if (!isHtmlArtifact(artifact)) {
+      throw new TaskApiError(
+        'invalid_request',
+        'Inline artifact display is only supported for HTML files.'
+      )
+    }
+    return {
+      'content-disposition': 'inline',
+      'content-type': 'text/html; charset=utf-8'
+    }
+  }
+  if (disposition !== null && disposition !== 'attachment') {
+    throw new TaskApiError(
+      'invalid_request',
+      'Artifact disposition must be either attachment or inline.'
+    )
+  }
+  return {
+    'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(artifact.name)}`
   }
 }
 
@@ -969,7 +1015,8 @@ const handleTaskApiRequest = async (
   idempotencyRegistry: TaskIdempotencyRegistry,
   externalAuthorization?: ExternalWebAccessAuthorization,
   waitUntilTasksReady?: () => Promise<void>,
-  fetchPreview?: WebServerOptions['fetchPreview']
+  fetchPreview?: WebServerOptions['fetchPreview'],
+  artifactBrowserBindingContext?: { configRoot: string; token: string }
 ): Promise<boolean> =>
   tasks.runWithCallerContext(callerContext, async () => {
     try {
@@ -1311,11 +1358,43 @@ const handleTaskApiRequest = async (
       const artifactMatch = url.pathname.match(/^\/api\/v1\/artifacts\/([^/]+)\/content$/)
       if (artifactMatch && (request.method === 'GET' || request.method === 'HEAD')) {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        const artifact = await tasks.acquireArtifact(decodeURIComponent(artifactMatch[1]))
+        const artifactId = decodeURIComponent(artifactMatch[1])
+        const inline = url.searchParams.get('disposition') === 'inline'
+        const projectId = url.searchParams.get('projectId')
+        const versionId = url.searchParams.get('versionId')
+        if (inline && (projectId !== null || versionId !== null) && (!projectId || !versionId)) {
+          throw new TaskApiError(
+            'invalid_request',
+            'Inline Version requests require projectId and versionId.'
+          )
+        }
+        const browserBinding =
+          inline && projectId === null && versionId === null
+            ? resolveAuthenticatedArtifactBrowserBinding(
+                artifactBrowserBindingContext?.configRoot ?? '',
+                artifactBrowserBindingContext?.token ?? '',
+                artifactId
+              )
+            : undefined
+        const selectedProjectId = projectId ?? browserBinding?.projectId
+        const selectedVersionId = versionId ?? browserBinding?.versionId
+        // Scoped browser reads must not change the default Task artifact download contract.
+        const artifact =
+          inline && selectedProjectId
+            ? await tasks.acquireArtifact(artifactId, {
+                projectId: selectedProjectId,
+                ...(selectedVersionId ? { versionId: selectedVersionId } : {})
+              })
+            : await tasks.acquireArtifact(artifactId)
         try {
-          await streamPreviewResource(request, response, fetchPreview, artifact.url, {
-            'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(artifact.name)}`
-          })
+          await streamPreviewResource(
+            request,
+            response,
+            fetchPreview,
+            artifact.url,
+            artifactContentResponseOverrides(artifact, url.searchParams.get('disposition')),
+            url.searchParams.get('disposition') === 'inline' ? brandHtmlPreviewDocument : undefined
+          )
         } finally {
           await tasks.releaseArtifact(artifact.resourceId)
         }
@@ -1585,7 +1664,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           taskIdempotencyRegistry,
           externalAuthorization,
           options.waitUntilTasksReady,
-          options.fetchPreview
+          options.fetchPreview,
+          { configRoot: options.bootstrap.configRoot, token: options.token }
         ))
       ) {
         return

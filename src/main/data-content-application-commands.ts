@@ -394,6 +394,7 @@ const dataContentApplicationCommands = Object.freeze({
   ),
   artifactGetVersionReview: artifactCommand('artifacts:get-version-review', 'getVersionReview'),
   artifactOpenFile: artifactCommand('artifacts:open-file', 'openFile'),
+  artifactOpenInBrowser: artifactCommand('artifacts:open-in-browser', 'openInBrowser'),
   artifactReadPreview: artifactCommand('artifacts:read-preview', 'readPreview'),
   artifactReconcilePending: artifactCommand(
     'artifacts:reconcile-pending',
@@ -726,6 +727,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.artifactGetVersionProvenance,
     dataContentApplicationCommands.artifactGetVersionReview,
     dataContentApplicationCommands.artifactOpenFile,
+    dataContentApplicationCommands.artifactOpenInBrowser,
     dataContentApplicationCommands.artifactReadPreview,
     dataContentApplicationCommands.artifactReconcilePending,
     dataContentApplicationCommands.artifactResolveVersionDescriptors
@@ -984,6 +986,10 @@ const registerDataContentApplicationCommands = (
       'artifacts:open-file': (invocation) => {
         assertLocalCaller(invocation, dataContentApplicationCommands.artifactOpenFile.name)
         return dependencies.artifacts.openFile(invocation.args[0])
+      },
+      'artifacts:open-in-browser': (invocation) => {
+        assertLocalCaller(invocation, dataContentApplicationCommands.artifactOpenInBrowser.name)
+        return dependencies.artifacts.openInBrowser(invocation.args[0])
       },
       'artifacts:read-preview': ({ args }) => dependencies.artifacts.readPreview(args[0]),
       'artifacts:reconcile-pending': ({ args }) =>

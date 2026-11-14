@@ -73,6 +73,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'artifacts.importEnvironmentLock',
   'artifacts.listReproducibilityReceipts',
   'artifacts.onReproducibilityCheckChanged',
+  'artifacts.openInBrowser',
   'artifacts.startReproducibilityCheck',
   'artifacts.sessionReproducibility',
   'packagePresentation.getState',

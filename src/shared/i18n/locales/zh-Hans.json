@@ -8037,6 +8037,7 @@
     "Source URL": "来源地址",
     "Branch or tag": "分支或标签",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "使用发布专家市场目录的公开 GitHub 仓库或分支链接。",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安装的技能可能改变智能体的行为。请仅信任您认可的来源。"
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安装的技能可能改变智能体的行为。请仅信任您认可的来源。",
+    "Open in browser": "在浏览器中打开"
   }
 }

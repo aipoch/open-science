@@ -8383,6 +8383,7 @@
     "Source URL": "URL de la source",
     "Branch or tag": "Branche ou tag",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Utilisez l’URL d’un dépôt GitHub public ou d’une branche publiant un catalogue de la place de marché des spécialistes.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Les compétences installées peuvent modifier le comportement des agents. Ne faites confiance qu’aux sources que vous connaissez."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Les compétences installées peuvent modifier le comportement des agents. Ne faites confiance qu’aux sources que vous connaissez.",
+    "Open in browser": "Ouvrir dans le navigateur"
   }
 }
