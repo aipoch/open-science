@@ -1,4 +1,7 @@
-import { parseResearchVideoScreenplay } from '@aipoch/research-film'
+import {
+  parseResearchVideoScreenplay,
+  ResearchVideoSpeechCleanupError
+} from '@aipoch/research-film'
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
 import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -207,6 +210,38 @@ it('cancels the background authoring operation and releases the model lease', as
   expect(f.options.generate).not.toHaveBeenCalled()
   expect(f.release).toHaveBeenCalledOnce()
 })
+it('preserves Film recovery and its model lease when narration shutdown is unconfirmed', async () => {
+  const f = await fixture()
+  const exited = Promise.withResolvers<void>()
+  const cleanup = new ResearchVideoSpeechCleanupError(exited.promise)
+  const entered = Promise.withResolvers<void>()
+  f.options.generate.mockImplementation((_input, signal) => {
+    entered.resolve()
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(cleanup), { once: true })
+    })
+  })
+  const owner = createResearchVideoPresentationOwner(f.options)
+  try {
+    await owner.start(request)
+    await entered.promise
+    owner.cancel(request)
+    await vi.waitFor(async () => {
+      expect(await owner.status(request)).toMatchObject({
+        progress: { phase: 'failed' },
+        error: cleanup.message,
+        canResume: true
+      })
+    })
+    expect(f.release).not.toHaveBeenCalled()
+    exited.resolve()
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+  } finally {
+    exited.resolve()
+    await owner.close()
+  }
+})
+
 it('fails closed on missing source messages or model-authored code and unsupported panels', () => {
   expect(() => parseResearchVideoScreenplay(script, 1)).toThrow('missing source message')
   expect(() =>

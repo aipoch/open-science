@@ -1,11 +1,19 @@
 import { researchFilmResources } from './resources.js'
 import type { ResearchVideoStep } from './progress.js'
+import type { ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { lstat, readdir, mkdtemp, readFile, writeFile, rm, mkdir, copyFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { Worker, type WorkerOptions } from 'node:worker_threads'
 import { availableParallelism, totalmem } from 'node:os'
 import type { SpeechSynthesizer } from './narration.js'
+import {
+  forkSpeechProcess,
+  ownSpeechProcess,
+  ResearchVideoSpeechCleanupError
+} from './speech-client.js'
+
+export { ResearchVideoSpeechCleanupError } from './speech-client.js'
 
 export type ResearchVideoGenerationInput = {
   retainNarration?: boolean
@@ -60,16 +68,28 @@ export class ResearchVideoWorkerError extends Error {
   }
 }
 
+export type ResearchVideoGenerate = (
+  input: ResearchVideoGenerationInput,
+  signal: AbortSignal,
+  onProgress?: (progress: ResearchVideoStep) => void
+) => Promise<ResearchVideoGenerationResult>
+
 /** The caller owns source authorization and Artifact publication; this owner only generates files. */
 export const createResearchVideoGenerator = (options: {
   temporaryRoot: string
   createWorker?: (options: WorkerOptions) => Worker
-}) => {
+  createSpeechProcess?: () => ChildProcess
+}): ResearchVideoGenerate & { assertReady: () => void } => {
   const { temporaryRoot } = options
   const createWorker =
     options.createWorker ??
     ((options: WorkerOptions) => new Worker(researchFilmResources().workerPath, options))
   let active = false
+  let pendingExit: ResearchVideoSpeechCleanupError | undefined
+  const assertReady = (): void => {
+    if (pendingExit) throw pendingExit
+    if (active) throw new Error('Another research explanation is being generated.')
+  }
   const generate = async (
     input: ResearchVideoGenerationInput,
     signal: AbortSignal,
@@ -79,16 +99,29 @@ export const createResearchVideoGenerator = (options: {
     const temporaryDirectory = await mkdtemp(join(temporaryRoot, 'research-video-'))
     let worker: Worker | undefined
     let stopping = false
-    const speechWorkers = new Map<number, Worker>()
-    const speechRequests = new Map<Worker, { done: Promise<void>; finish: () => void }>()
-    const finishSpeechRequest = (speech: Worker): void => {
-      speechRequests.get(speech)?.finish()
-      speechRequests.delete(speech)
-    }
+    let speech: ReturnType<typeof ownSpeechProcess> | undefined
     const speechConcurrency =
       input.speechConcurrency ??
       (availableParallelism() >= 4 && totalmem() >= 16 * 1024 ** 3 ? 2 : 1)
     let removeAbortListener = (): void => {}
+    const cleanup = async (): Promise<void> => {
+      const [build, narration] = await Promise.allSettled([worker?.terminate(), speech?.stop()])
+      if (narration.status === 'rejected') {
+        const error: unknown = narration.reason
+        if (error instanceof ResearchVideoSpeechCleanupError) {
+          pendingExit = error
+          void error.exited.then(async () => {
+            pendingExit = undefined
+            await rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 3 }).catch(
+              () => {}
+            )
+          })
+        }
+        throw error
+      }
+      if (build.status === 'rejected') throw build.reason
+      await rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 3 })
+    }
     try {
       signal.throwIfAborted()
       worker = createWorker({
@@ -124,73 +157,29 @@ export const createResearchVideoGenerator = (options: {
                 value.lane >= speechConcurrency
               )
                 throw new Error('Invalid speech worker lane')
-              let speech = speechWorkers.get(value.lane)
-              if (!speech) {
-                speech = createWorker({
-                  execArgv: [],
-                  resourceLimits: { maxOldGenerationSizeMb: 1024 },
-                  workerData: {
-                    kind: 'speech',
-                    modelDirectory: input.modelDirectory,
-                    runtimeDirectory: join(temporaryDirectory, `runtime-${value.lane}`),
-                    threads: Math.max(
-                      1,
-                      Math.floor(Math.min(4, availableParallelism()) / speechConcurrency)
-                    )
-                  } satisfies ResearchVideoSpeechInput
-                })
-                speechWorkers.set(value.lane, speech)
-                const ownedSpeech = speech
-                speech.on('message', (reply: ResearchVideoWorkerMessage) => {
-                  if (['error', 'speech-result', 'speech-duration'].includes(reply.kind))
-                    finishSpeechRequest(ownedSpeech)
+              speech ??= ownSpeechProcess(
+                (options.createSpeechProcess ?? forkSpeechProcess)(),
+                (reply) => {
                   if (stopping || signal.aborted) return
-                  if (reply.kind === 'error')
-                    reject(
-                      new ResearchVideoWorkerError(
-                        Object.assign(new Error(reply.message), { code: reply.code }),
-                        'speech',
-                        value.lane
-                      )
-                    )
-                  else if (reply.kind === 'speech-result' || reply.kind === 'speech-duration') {
-                    try {
-                      if (reply.kind === 'speech-result')
-                        worker!.postMessage(reply, [reply.audio.samples.buffer as ArrayBuffer])
-                      else worker!.postMessage(reply)
-                    } catch (error) {
-                      reject(error)
-                    }
-                  }
-                })
-                speech.once('error', (failure) => {
-                  finishSpeechRequest(ownedSpeech)
-                  reject(new ResearchVideoWorkerError(failure, 'speech', value.lane))
-                })
-                speech.once('exit', (code) => {
-                  finishSpeechRequest(ownedSpeech)
-                  reject(
-                    new ResearchVideoWorkerError(
-                      new Error('Research video worker stopped before completion'),
-                      'speech',
-                      value.lane,
-                      code
-                    )
+                  if (reply.kind === 'speech-result')
+                    worker!.postMessage(reply, [reply.audio.samples.buffer as ArrayBuffer])
+                  else worker!.postMessage(reply)
+                },
+                (error, lane, exitCode) =>
+                  reject(new ResearchVideoWorkerError(error, 'speech', lane, exitCode))
+              )
+              speech.send({
+                ...value,
+                input: {
+                  kind: 'speech',
+                  modelDirectory: input.modelDirectory,
+                  runtimeDirectory: join(temporaryDirectory, `runtime-${value.lane}`),
+                  threads: Math.max(
+                    1,
+                    Math.floor(Math.min(4, availableParallelism()) / speechConcurrency)
                   )
-                })
-              }
-              if (speechRequests.has(speech)) throw new Error('Speech worker already busy')
-              let finish!: () => void
-              const done = new Promise<void>((resolve) => {
-                finish = resolve
+                }
               })
-              speechRequests.set(speech, { done, finish })
-              try {
-                speech.postMessage(value)
-              } catch (failure) {
-                finishSpeechRequest(speech)
-                throw failure
-              }
             } catch (error) {
               reject(error)
             }
@@ -204,7 +193,10 @@ export const createResearchVideoGenerator = (options: {
             )
           else if (value.kind === 'phase' || value.kind === 'progress') {
             try {
-              onProgress?.(value.kind === 'phase' ? { phase: value.phase } : value.progress)
+              const progress = value.kind === 'phase' ? { phase: value.phase } : value.progress
+              // Narration no longer owns work once the build starts.
+              if (progress.phase === 'build') void speech?.stop().catch(reject)
+              onProgress?.(progress)
             } catch (error) {
               reject(error)
             }
@@ -217,6 +209,8 @@ export const createResearchVideoGenerator = (options: {
         if (signal.aborted) abort()
         removeAbortListener = () => signal.removeEventListener('abort', abort)
       })
+      // Confirm narration exit before copying output into the caller's persistent job.
+      await speech?.stop()
       signal.throwIfAborted()
       await mkdir(input.outputDirectory, { recursive: false })
       try {
@@ -234,24 +228,12 @@ export const createResearchVideoGenerator = (options: {
     } finally {
       stopping = true
       removeAbortListener()
-      // Terminating a worker inside native ONNX execution can abort the entire host process.
-      await Promise.all([
-        worker?.terminate(),
-        ...[...speechWorkers.values()].map(async (speech) => {
-          await speechRequests.get(speech)?.done
-          await speech.terminate()
-        })
-      ])
-      await rm(temporaryDirectory, { recursive: true, force: true })
+      await cleanup()
     }
   }
 
-  return async (
-    input: ResearchVideoGenerationInput,
-    signal: AbortSignal,
-    onProgress?: (progress: ResearchVideoStep) => void
-  ): Promise<ResearchVideoGenerationResult> => {
-    if (active) throw new Error('Another research explanation is being generated.')
+  const run: ResearchVideoGenerate = async (input, signal, onProgress) => {
+    assertReady()
     active = true
     try {
       return await generate(input, signal, onProgress)
@@ -259,6 +241,7 @@ export const createResearchVideoGenerator = (options: {
       active = false
     }
   }
+  return Object.assign(run, { assertReady })
 }
 
 export async function generateResearchVideoInWorker(

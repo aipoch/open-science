@@ -15,12 +15,13 @@ import {
 import type { ResearchVideoStep } from '@aipoch/research-film/contracts'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { LocalModelOwner, createLocalModelOwner } from '../local-models/owner'
-import type { createResearchVideoGenerator } from '@aipoch/research-film'
 import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
 import {
   generateResearchFilm,
   ResearchVideoWorkerError,
-  type ResearchFilmAuthor
+  ResearchVideoSpeechCleanupError,
+  type ResearchFilmAuthor,
+  type ResearchVideoGenerate
 } from '@aipoch/research-film'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 const log = createLogger('research-video')
@@ -110,7 +111,8 @@ export function createResearchVideoPresentationOwner(options: {
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
   writeScreenplay: ResearchFilmAuthor['writeScreenplay']
   writeAnimation?: ResearchFilmAuthor['writeAnimation']
-  generate: ReturnType<typeof createResearchVideoGenerator>
+  generate: ResearchVideoGenerate
+  checkGenerationAdmission?: () => void
   engineDirectory: string
   loadImportedFilm?: (
     request: ResearchVideoPresentationRequest,
@@ -334,6 +336,7 @@ export function createResearchVideoPresentationOwner(options: {
     let lease: Awaited<ReturnType<LocalModelOwner['acquireUse']>> | undefined
     let job: string | undefined
     let completed = false
+    let cancelled = false
     log.info('film invocation started', { ...context(), phase: stage })
     try {
       const session = await checkFilmReadiness(
@@ -547,8 +550,15 @@ export function createResearchVideoPresentationOwner(options: {
         log.info('film cleanup deferred', { ...context(), phase: 'publishing' })
       )
     } catch (error) {
+      const cleanupUnconfirmed = error instanceof ResearchVideoSpeechCleanupError
+      cancelled = signal.aborted && !cleanupUnconfirmed
+      if (cleanupUnconfirmed && lease) {
+        const held = lease
+        lease = undefined
+        void error.exited.then(() => held.release())
+      }
       await writes.catch(() => {})
-      if (base && saved && (!signal.aborted || closed)) {
+      if (base && saved && (!cancelled || closed)) {
         saved.updatedAt = Date.now()
         await savePendingFilm(base, saved).catch(() =>
           log.info('film checkpoint write failed', { ...context(), phase: stage })
@@ -564,7 +574,7 @@ export function createResearchVideoPresentationOwner(options: {
       log.info('film attempt stopped', {
         ...context(),
         phase: stage,
-        outcome: signal.aborted ? 'cancelled' : 'failed',
+        outcome: cancelled ? 'cancelled' : 'failed',
         ...diagnosticErrorFields(failure),
         ...([
           'ENOENT',
@@ -580,22 +590,24 @@ export function createResearchVideoPresentationOwner(options: {
           : {}),
         ...(error instanceof ResearchVideoWorkerError
           ? { workerRole: error.workerRole, lane: error.lane, exitCode: error.exitCode }
-          : {})
+          : cleanupUnconfirmed
+            ? { workerRole: 'speech', errorCategory: 'narration-exit-unconfirmed' }
+            : {})
       })
       states.set(
         key,
-        !admitted && !signal.aborted
+        !admitted && !cancelled
           ? {
               preflightError: error instanceof Error ? error.message : String(error)
             }
           : {
               filmStep,
               progress: {
-                phase: signal.aborted ? 'cancelled' : 'failed',
+                phase: cancelled ? 'cancelled' : 'failed',
                 startedAt,
                 endedAt: Date.now()
               },
-              ...(!signal.aborted
+              ...(!cancelled
                 ? { error: error instanceof Error ? error.message : String(error) }
                 : {})
             }
@@ -606,13 +618,13 @@ export function createResearchVideoPresentationOwner(options: {
       measure('finished')
       log.info('generation timing', {
         ...context(),
-        outcome: completed ? 'completed' : signal.aborted ? 'cancelled' : 'failed',
+        outcome: completed ? 'completed' : cancelled ? 'cancelled' : 'failed',
         totalMs: Math.round(performance.now() - started),
         stagesMs: Object.fromEntries(
           Object.entries(stageMs).map(([name, ms]) => [name, Math.round(ms)])
         )
       })
-      if (base && job && !completed && signal.aborted && !closed) {
+      if (base && job && !completed && cancelled && !closed) {
         await rm(job, { recursive: true, force: true }).catch((error) =>
           log.info('film cleanup deferred', {
             ...context(),
@@ -649,6 +661,7 @@ export function createResearchVideoPresentationOwner(options: {
         }
         throw new Error('Another research explanation is being generated. Wait for it to finish.')
       }
+      options.checkGenerationAdmission?.()
       operationRevision++
       const controller = new AbortController()
       let finishPreparation!: () => void

@@ -69,6 +69,8 @@
     "packages/research-film/src/screenplay.ts",
     "packages/research-film/src/skill-video.schema.json",
     "packages/research-film/src/source.ts",
+    "packages/research-film/src/speech-client.ts",
+    "packages/research-film/src/speech-process.ts",
     "packages/research-film/src/timeline.test.ts",
     "packages/research-film/src/timeline.ts",
     "packages/research-film/test/packed-runtime.mjs",

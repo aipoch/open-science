@@ -1,10 +1,48 @@
-import { EventEmitter } from 'node:events'
+import { fork, type ChildProcess } from 'node:child_process'
+import { EventEmitter, once } from 'node:events'
 import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Worker } from 'node:worker_threads'
 import { describe, expect, it, vi } from 'vitest'
-import { createResearchVideoGenerator, generateResearchVideoInWorker } from './generation.js'
+import {
+  createResearchVideoGenerator,
+  generateResearchVideoInWorker,
+  ResearchVideoSpeechCleanupError
+} from './generation.js'
+
+const stubWorker = (): EventEmitter & {
+  terminate: ReturnType<typeof vi.fn>
+  postMessage: ReturnType<typeof vi.fn>
+} =>
+  Object.assign(new EventEmitter(), {
+    terminate: vi.fn(async () => 1),
+    postMessage: vi.fn()
+  })
+
+const stubChild = (): EventEmitter & {
+  pid: number
+  connected: boolean
+  send: ReturnType<typeof vi.fn>
+  disconnect: ReturnType<typeof vi.fn>
+  kill: ReturnType<typeof vi.fn>
+  unref: ReturnType<typeof vi.fn>
+} =>
+  Object.assign(new EventEmitter(), {
+    pid: 1234,
+    connected: true,
+    send: vi.fn(),
+    disconnect: vi.fn(),
+    kill: vi.fn(() => true),
+    unref: vi.fn()
+  })
+const input = (root: string): Parameters<ReturnType<typeof createResearchVideoGenerator>>[0] => ({
+  speechConcurrency: 2,
+  specPath: 'unused',
+  modelDirectory: 'unused',
+  engineDirectory: 'unused',
+  outputDirectory: join(root, 'output')
+})
 
 describe('research video worker ownership', () => {
   it('terminates CPU work and removes temporary files on cancellation', async () => {
@@ -42,75 +80,102 @@ describe('research video worker ownership', () => {
   })
 })
 
-it.each(['cancel', 'failure'] as const)(
-  'terminates every owned worker on %s before cleanup',
-  async (reason) => {
-    const root = await mkdtemp(join(tmpdir(), 'parallel-workers-'))
-    try {
-      const controller = new AbortController()
-      let stopped!: () => void
-      const stopping = new Promise<void>((resolve) => {
-        stopped = resolve
-      })
-      const workers: Array<
-        EventEmitter & {
-          terminate: ReturnType<typeof vi.fn>
-          postMessage: ReturnType<typeof vi.fn>
-        }
-      > = []
-      const generate = createResearchVideoGenerator({
-        temporaryRoot: root,
-        createWorker: () => {
-          const worker = Object.assign(new EventEmitter(), {
-            terminate: vi.fn(async () => 1),
-            postMessage: vi.fn()
-          })
-          workers.push(worker)
-          if (workers.length === 1)
-            queueMicrotask(() => {
-              worker.emit('message', { kind: 'synthesize', lane: 0, text: 'First' })
-              worker.emit('message', { kind: 'synthesize', lane: 1, text: 'Second' })
-              if (reason === 'cancel') controller.abort(new Error('cancelled'))
-              else workers[2].emit('error', new Error('speech failed'))
-              stopped()
-            })
-          return worker as unknown as Worker
-        }
-      })
-      const result = generate(
-        {
-          speechConcurrency: 2,
-          specPath: 'unused',
-          modelDirectory: 'unused',
-          engineDirectory: 'unused',
-          outputDirectory: join(root, 'output')
-        },
-        controller.signal
-      ).catch((error) => error)
-      await stopping
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      expect(workers[1].terminate).not.toHaveBeenCalled()
-      expect(await readdir(root)).toHaveLength(1)
-      workers[0].emit('message', { kind: 'synthesize', lane: 0, text: 'Ignored after stop' })
-      workers[1].emit('message', { kind: 'speech-duration', lane: 0, duration: 1 })
-      if (reason === 'cancel')
-        workers[2].emit('message', { kind: 'speech-duration', lane: 1, duration: 1 })
-      expect(await result).toMatchObject({
-        message: reason === 'cancel' ? 'cancelled' : 'speech failed'
-      })
-      if (reason === 'failure')
-        expect(await result).toMatchObject({ workerRole: 'speech', lane: 1 })
-      expect(workers[0].postMessage).not.toHaveBeenCalled()
-      expect(workers[1].postMessage).toHaveBeenCalledOnce()
-      expect(workers).toHaveLength(3)
-      for (const worker of workers) expect(worker.terminate).toHaveBeenCalledOnce()
-      expect(workers[2].postMessage).toHaveBeenCalledTimes(1)
-      expect(await readdir(root)).toEqual([])
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
+it('reaps the one real child even when neither narration lane answers', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-stuck-narration-'))
+  const path = join(root, 'stuck.cjs')
+  const controller = new AbortController()
+  const worker = stubWorker()
+  const started = Promise.withResolvers<ChildProcess>()
+  let child: ChildProcess | undefined
+  let exited: Promise<unknown> | undefined
+  try {
+    await writeFile(
+      path,
+      `
+      let requests = 0
+      process.on('disconnect', () => setInterval(() => {}, 1000))
+      process.on('message', () => { if (++requests === 2) process.send('stuck') })
+    `
+    )
+    const createSpeechProcess = vi.fn(() => {
+      const owned = fork(path, [], { execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
+      child = owned
+      exited = once(owned, 'exit')
+      owned.once('message', () => started.resolve(owned))
+      owned.once('error', started.reject)
+      return owned
+    })
+    const generate = createResearchVideoGenerator({
+      temporaryRoot: root,
+      createSpeechProcess,
+      createWorker: () => {
+        queueMicrotask(() => {
+          for (const lane of [0, 1])
+            worker.emit('message', { kind: 'synthesize', lane, text: 'Unanswered' })
+        })
+        return worker as unknown as Worker
+      }
+    })
+    const result = generate(input(root), controller.signal).catch((error) => error)
+    await started.promise
+    controller.abort(new Error('cancelled'))
+    expect(await result).toMatchObject({ message: 'cancelled' })
+    const [code, signal] = (await exited) as [number | null, string | null]
+    expect(
+      signal === 'SIGKILL' || (process.platform === 'win32' && code !== null && code !== 0)
+    ).toBe(true)
+    expect(createSpeechProcess).toHaveBeenCalledOnce()
+    expect(worker.terminate).toHaveBeenCalledOnce()
+    expect(await readdir(root)).toEqual(['stuck.cjs'])
+  } finally {
+    child?.kill('SIGKILL')
+    await exited?.catch(() => {})
+    await rm(root, { recursive: true, force: true })
   }
-)
+})
+
+it('bounds a stuck request and fences the generator until the child reports exit', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-unconfirmed-exit-'))
+  const worker = stubWorker()
+  const child = stubChild()
+  const controller = new AbortController()
+  try {
+    const entered = Promise.withResolvers<void>()
+    child.send.mockImplementation(() => entered.resolve())
+    const createSpeechProcess = vi.fn(() => child as unknown as ChildProcess)
+    const generate = createResearchVideoGenerator({
+      temporaryRoot: root,
+      createSpeechProcess,
+      createWorker: () => {
+        vi.useFakeTimers()
+        queueMicrotask(() =>
+          worker.emit('message', { kind: 'synthesize', lane: 0, text: 'Unanswered' })
+        )
+        return worker as unknown as Worker
+      }
+    })
+    const result = generate(input(root), controller.signal).catch((error) => error)
+    await entered.promise
+    await vi.advanceTimersByTimeAsync(180_000)
+    expect(child.disconnect).toHaveBeenCalledOnce()
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    await vi.advanceTimersByTimeAsync(5000)
+    const error = await result
+    expect(error).toBeInstanceOf(ResearchVideoSpeechCleanupError)
+    expect(await readdir(root)).toHaveLength(1)
+    await expect(generate(input(root), controller.signal)).rejects.toBe(error)
+    expect(createSpeechProcess).toHaveBeenCalledOnce()
+    expect(child.unref).toHaveBeenCalledOnce()
+    child.emit('exit', null, 'SIGKILL')
+    await error.exited
+    expect(generate.assertReady).not.toThrow()
+    vi.useRealTimers()
+    await vi.waitFor(async () => expect(await readdir(root)).toEqual([]))
+  } finally {
+    vi.useRealTimers()
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 it('rejects a missing session image before any speech inference', async () => {
   const root = await mkdtemp(join(tmpdir(), 'video-preflight-'))
@@ -151,28 +216,23 @@ it('routes scalar probes without PCM and transfers owned audio buffers to the ge
   const root = await mkdtemp(join(tmpdir(), 'probe-worker-'))
   try {
     const controller = new AbortController()
-    const workers: Array<
-      EventEmitter & { postMessage: ReturnType<typeof vi.fn>; terminate: ReturnType<typeof vi.fn> }
-    > = []
+    const worker = stubWorker()
+    const child = stubChild()
+    child.kill.mockImplementation(() => child.emit('exit', null, 'SIGKILL'))
     const samples = new Float32Array(240)
     const duration = { kind: 'speech-duration', lane: 0, duration: 0.01 }
     const audio = { kind: 'speech-result', lane: 1, audio: { samples, sampleRate: 24000 } }
     const generate = createResearchVideoGenerator({
       temporaryRoot: root,
+      createSpeechProcess: () => child as unknown as ChildProcess,
       createWorker: () => {
-        const worker = Object.assign(new EventEmitter(), {
-          postMessage: vi.fn(),
-          terminate: vi.fn(async () => 1)
+        queueMicrotask(() => {
+          worker.emit('message', { kind: 'measure-duration', lane: 0, text: 'one' })
+          worker.emit('message', { kind: 'synthesize', lane: 1, text: 'one two' })
+          child.emit('message', duration)
+          child.emit('message', audio)
+          controller.abort(new Error('finished routing check'))
         })
-        workers.push(worker)
-        if (workers.length === 1)
-          queueMicrotask(() => {
-            worker.emit('message', { kind: 'measure-duration', lane: 0, text: 'one' })
-            worker.emit('message', { kind: 'synthesize', lane: 1, text: 'one two' })
-            workers[1].emit('message', duration)
-            workers[2].emit('message', audio)
-            controller.abort(new Error('finished routing check'))
-          })
         return worker as unknown as Worker
       }
     })
@@ -188,14 +248,12 @@ it('routes scalar probes without PCM and transfers owned audio buffers to the ge
         controller.signal
       )
     ).rejects.toThrow('finished routing check')
-    expect(workers[1].postMessage).toHaveBeenCalledWith({
-      kind: 'measure-duration',
-      lane: 0,
-      text: 'one'
-    })
-    expect(workers[0].postMessage).toHaveBeenCalledWith(duration)
-    expect(workers[0].postMessage).toHaveBeenCalledWith(audio, [samples.buffer])
-    for (const worker of workers) expect(worker.terminate).toHaveBeenCalledOnce()
+    expect(child.send).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'measure-duration', lane: 0, text: 'one' }),
+      expect.any(Function)
+    )
+    expect(worker.postMessage).toHaveBeenCalledWith(duration)
+    expect(worker.postMessage).toHaveBeenCalledWith(audio, [samples.buffer])
     expect(await readdir(root)).toEqual([])
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -247,21 +305,18 @@ it.each(['generation', 'speech'] as const)(
   async (role) => {
     const root = await mkdtemp(join(tmpdir(), 'film-exit-'))
     try {
-      const workers: EventEmitter[] = []
+      const worker = stubWorker()
+      const child = stubChild()
       const generate = createResearchVideoGenerator({
         temporaryRoot: root,
+        createSpeechProcess: () => child as unknown as ChildProcess,
         createWorker: () => {
-          const worker = Object.assign(new EventEmitter(), {
-            terminate: vi.fn(async () => 1),
-            postMessage: vi.fn()
+          queueMicrotask(() => {
+            if (role === 'speech')
+              worker.emit('message', { kind: 'synthesize', lane: 0, text: 'private narration' })
+            const exiting = role === 'speech' ? child : worker
+            exiting.emit('exit', 23)
           })
-          workers.push(worker)
-          if (workers.length === 1)
-            queueMicrotask(() => {
-              if (role === 'speech')
-                worker.emit('message', { kind: 'synthesize', lane: 0, text: 'private narration' })
-              workers.at(-1)!.emit('exit', 23)
-            })
           return worker as unknown as Worker
         }
       })
@@ -276,10 +331,8 @@ it.each(['generation', 'speech'] as const)(
           new AbortController().signal
         )
       ).rejects.toMatchObject({
-        message: 'Research video worker stopped before completion',
         workerRole: role,
-        exitCode: 23,
-        lane: role === 'speech' ? 0 : undefined
+        exitCode: 23
       })
       expect(await readdir(root)).toEqual([])
     } finally {

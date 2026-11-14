@@ -332,6 +332,7 @@ export async function composeResearchFilm({
       return result.status === 'found' ? result.session : undefined
     },
     generate: researchVideoGenerate,
+    checkGenerationAdmission: researchVideoGenerate.assertReady,
     engineDirectory: researchVideoEngineDirectory,
     ...createResearchFilmAuthor(inferResearchVideo)
   })
