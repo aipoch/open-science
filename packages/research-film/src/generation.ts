@@ -157,6 +157,7 @@ export const createResearchVideoGenerator = (options: {
             ? narrationError
             : undefined
       if (exit) {
+        if (buildError instanceof ResearchVideoBuildCleanupError) worker?.unref()
         pendingExit = exit
         void exit.exited.then(() => {
           pendingExit = undefined

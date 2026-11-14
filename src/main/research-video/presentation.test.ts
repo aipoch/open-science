@@ -1,6 +1,7 @@
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import {
   parseResearchVideoScreenplay,
+  ResearchVideoBuildCleanupError,
   ResearchVideoSpeechCleanupError
 } from '@aipoch/research-film'
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
@@ -9,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { filmAuthoringCheckpoint, PENDING_FILM_OWNER } from './checkpoint'
+import { createResearchFilmLifecycle } from './lifecycle'
 import { createResearchVideoPresentationOwner } from './presentation'
 import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
 import { researchFilmScopeKey } from './stored-presentation'
@@ -684,20 +686,35 @@ it('times out a stalled readiness check before the Film starts', async () => {
   }
 })
 
-it('reports a stalled checkpoint write without letting a retry race it', async () => {
+it('lets another session generate while a stalled checkpoint write retains its own files', async () => {
   const f = await fixture()
   const write = vi.mocked(writeDurableJsonFile)
   const original = write.getMockImplementation()!
   const entered = Promise.withResolvers<void>()
   const disk = Promise.withResolvers<void>()
+  const secondEntered = Promise.withResolvers<void>()
+  const secondDisk = Promise.withResolvers<void>()
+  const other = { ...request, sessionId: 'other' }
+  const scope = researchFilmScopeKey(request)
+  const second = { ...request, sessionId: 'second-stall' }
+  const pendingSession = (key: string): string =>
+    join(f.options.dataRoot(), 'research-video-presentations', key, 'pending', 'session.json')
   write.mockImplementation(async (...args) => {
-    if (!args[0].endsWith('session.json')) return original(...args)
-    vi.useFakeTimers()
-    entered.resolve()
-    await disk.promise
+    if (args[0] === pendingSession(scope)) {
+      vi.useFakeTimers()
+      entered.resolve()
+      await disk.promise
+    } else if (args[0] === pendingSession(researchFilmScopeKey(second))) {
+      vi.useFakeTimers()
+      secondEntered.resolve()
+      await secondDisk.promise
+    }
     await original(...args)
   })
-  const owner = createResearchVideoPresentationOwner(f.options)
+  const owner = createResearchVideoPresentationOwner({
+    ...f.options,
+    loadSession: async (_projectId, sessionId) => ({ ...session, id: sessionId })
+  })
   try {
     await owner.start(request)
     await entered.promise
@@ -714,15 +731,88 @@ it('reports a stalled checkpoint write without letting a retry race it', async (
       { timeout: 400 }
     )
     await expect(owner.start(request)).rejects.toThrow(/still waiting for the disk/i)
+    await expect(owner.remove(request)).rejects.toThrow(/waiting for the disk/i)
     expect(f.options.writeScreenplay).not.toHaveBeenCalled()
-    disk.resolve()
+    await owner.start(other)
+    await vi.waitFor(async () => expect((await owner.status(other)).result).toBeDefined())
     await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
-    expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+    await owner.start(second)
+    await secondEntered.promise
+    owner.cancel(second)
+    await vi.advanceTimersByTimeAsync(5000)
+    vi.useRealTimers()
+    await expect(owner.start(other)).rejects.toThrow(/waiting for the disk/i)
+    secondDisk.resolve()
+    disk.resolve()
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(3))
+    expect(f.options.writeScreenplay).toHaveBeenCalledOnce()
   } finally {
     vi.useRealTimers()
+    secondDisk.resolve()
     disk.resolve()
     await owner.close()
     write.mockImplementation(original)
+  }
+})
+
+it('publishes another already built checkpoint without spawning while a worker exit is unconfirmed', async () => {
+  const f = await fixture()
+  const other = { ...request, sessionId: 'other' }
+  const ready = Promise.withResolvers<void>()
+  const lookup = Promise.withResolvers<PersistedChatSession>()
+  const exited = Promise.withResolvers<void>()
+  const cleanup = new ResearchVideoBuildCleanupError(exited.promise)
+  let blocking = false
+  const lifecycle = createResearchFilmLifecycle({ dataRoot: f.options.dataRoot })
+  const loadSession = vi.fn(async (_projectId, sessionId) => ({ ...session, id: sessionId }))
+  const build = f.options.generate.getMockImplementation()!
+  f.options.generate
+    .mockImplementationOnce(async (...args) => {
+      const result = await build(...args)
+      loadSession.mockImplementationOnce(() => {
+        ready.resolve()
+        return lookup.promise
+      })
+      return result
+    })
+    .mockImplementationOnce(async () => {
+      blocking = true
+      throw cleanup
+    })
+  const owner = createResearchVideoPresentationOwner({
+    ...f.options,
+    loadSession,
+    lifecycle,
+    checkGenerationAdmission: () => {
+      if (blocking) throw cleanup
+    }
+  })
+  try {
+    await owner.start(other)
+    await ready.promise
+    owner.cancel(other)
+    await vi.waitFor(async () => expect((await owner.status(other)).canResume).toBe(true))
+    await owner.start(request)
+    await vi.waitFor(async () => expect((await owner.status(request)).error).toBe(cleanup.message))
+    await expect(owner.start({ ...request, resume: true })).rejects.toBe(cleanup)
+    await expect(owner.remove(request)).rejects.toBe(cleanup)
+    expect(f.release).toHaveBeenCalledOnce()
+
+    await owner.start({ ...other, resume: true })
+    await vi.waitFor(async () => expect((await owner.status(other)).result).toBeDefined())
+    expect(f.options.generate).toHaveBeenCalledTimes(2)
+    expect(f.options.writeScreenplay).toHaveBeenCalledTimes(2)
+    expect(f.options.models.acquireUse).toHaveBeenCalledTimes(2)
+    blocking = false
+    exited.resolve()
+    await vi.waitFor(async () => expect((await owner.status(request)).canResume).toBe(true))
+    await owner.start({ ...request, resume: true })
+    await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+    expect(f.options.writeScreenplay).toHaveBeenCalledTimes(2)
+  } finally {
+    exited.resolve()
+    lookup.resolve({ ...session, id: other.sessionId })
+    await owner.close()
   }
 })
 

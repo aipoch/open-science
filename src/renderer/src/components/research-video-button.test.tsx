@@ -89,6 +89,17 @@ it('starts directly from the session button without a chat or fork API, and supp
   expect(api.researchVideo.cancel).toHaveBeenCalledExactlyOnceWith(request)
 })
 
+it('continues a checkpoint without waiting for the narration model', async () => {
+  status = { canResume: true, preflightError: 'Runtime unavailable' }
+  snapshot = { ...snapshot, availability: 'notInstalled' }
+  await act(async () => vi.advanceTimersByTimeAsync(750))
+  await click('Generate research film')
+  api.localModels.getSnapshot.mockClear()
+  await click('Continue generation')
+  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith({ ...request, resume: true })
+  expect(api.localModels.getSnapshot).not.toHaveBeenCalled()
+})
+
 it('keeps raw generation errors in collapsed details and copies the full message', async () => {
   const error = JSON.stringify(
     [{ code: 'invalid_union', message: 'multiple errors'.repeat(300) }],

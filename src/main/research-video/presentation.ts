@@ -123,6 +123,12 @@ export function createResearchVideoPresentationOwner(options: {
   let removing = false
   let closed = false
   let operationRevision = 0
+  const draining = new Map<
+    string,
+    { error: Error; status: ResearchVideoPresentationStatus; kind: 'disk' | 'build' }
+  >()
+  const sessionKey = (request: ResearchVideoPresentationRequest): string =>
+    scopeKey({ ...request, branchId: undefined })
   let active:
     | {
         key: string
@@ -278,6 +284,9 @@ export function createResearchVideoPresentationOwner(options: {
     const key = scopeKey(request)
     const current = active?.key === key ? active : undefined
     if (current?.blockedStatus) return current.blockedStatus
+    const held = draining.get(sessionKey(request))
+    if (held && held.status === states.get(key))
+      return { ...held.status, result: held.status.result ?? knownFilms.get(key) }
     const pending = statusReads.get(key)
     if (!checkReadiness) {
       if (pending) return pending
@@ -320,7 +329,8 @@ export function createResearchVideoPresentationOwner(options: {
     callerSignal: AbortSignal,
     installNarration: boolean,
     resume: boolean,
-    prepared: () => void
+    prepared: () => void,
+    park: (error: Error, status: ResearchVideoPresentationStatus, kind: 'disk' | 'build') => void
   ): Promise<void> => {
     const diskController = new AbortController()
     const signal = AbortSignal.any([callerSignal, diskController.signal])
@@ -345,17 +355,18 @@ export function createResearchVideoPresentationOwner(options: {
     let replayStep = 0
     let diskFailure: Error | undefined
     const markDiskStalled = (): void => {
-      if (diskFailure || completed) return
+      if (diskFailure) return
       diskFailure = new Error(
         'Film is still waiting for the disk. Try again after the disk responds.'
       )
-      const failure: ResearchVideoPresentationStatus = {
-        filmStep,
-        progress: { phase: 'failed', startedAt, endedAt: Date.now() },
-        error: diskFailure.message
-      }
-      if (active?.key === key) active.blockedStatus = failure
-      states.set(key, failure)
+      const status: ResearchVideoPresentationStatus = completedResult
+        ? { result: completedResult }
+        : {
+            filmStep,
+            progress: { phase: 'failed', startedAt, endedAt: Date.now() },
+            error: diskFailure.message
+          }
+      park(diskFailure, status, 'disk')
       log.info('film disk operation stalled', { ...context(), phase: stage })
       diskController.abort(diskFailure)
     }
@@ -432,7 +443,7 @@ export function createResearchVideoPresentationOwner(options: {
     let lease: Awaited<ReturnType<LocalModelOwner['acquireUse']>> | undefined
     let job: string | undefined
     let checkpointStarted = false
-    let completed = false
+    let completedResult: ResearchVideoPresentation | undefined
     let cancelled = false
     log.info('film invocation started', { ...context(), phase: stage })
     try {
@@ -468,7 +479,7 @@ export function createResearchVideoPresentationOwner(options: {
         )
         preparation.throwIfAborted()
         measure('readiness')
-        await options.checkReadiness?.(preparation)
+        if (!resume || installNarration) await options.checkReadiness?.(preparation)
       }, signal)
       signal.throwIfAborted()
       if (installNarration) {
@@ -506,42 +517,69 @@ export function createResearchVideoPresentationOwner(options: {
         }, signal)
         signal.throwIfAborted()
       }
-      measure('narration-acquire')
-      const narration = await checkFilmReadiness(async (preparation) => {
-        const acquired = await options.models.acquireUse()
-        if (preparation.aborted) {
-          acquired.release()
-          preparation.throwIfAborted()
-        }
-        lease = acquired
-        return acquired
-      }, signal)
-      signal.throwIfAborted()
-      const model = narration.assets.find((asset) => asset.file === 'model_quantized.onnx')
-      if (!model) throw new Error('Install the research narration model before generating.')
+      const scope = { ...request, branchId: source.provenance.branchId }
+      const conversation = filmConversationDigest(source)
+      const fingerprint = digestFilmInput(JSON.stringify([conversation, checksums]))
+      const existingBase = await diskStep(() => directory(scopeKey(scope)))
+      const previous = existingBase
+        ? await diskStep(() => readPendingFilm(existingBase))
+        : undefined
+      let corruptLatest = false
+      const published = existingBase
+        ? await diskStep(() =>
+            readResearchFilmReceipt(existingBase).catch((error: unknown) => {
+              if (!(error instanceof CorruptResearchFilmReceiptError)) throw error
+              corruptLatest = true
+              return knownFilms.get(scopeKey(scope))
+            })
+          )
+        : undefined
+      let newPending = false
+      const resumable =
+        resume && previous?.source === fingerprint && previous.id !== published?.id
+          ? previous
+          : undefined
+      const pending =
+        resumable?.built && (await diskStep(() => filmPathInfo(join(existingBase!, 'pending'))))
+      const hasBuiltOutput =
+        resumable?.built &&
+        (await diskStep(() =>
+          hasResearchFilmOutputs(join(existingBase!, pending ? 'pending' : resumable.id))
+        ))
+      // Publishing a verified checkpoint does not start a generator.
+      if (resume && !hasBuiltOutput) {
+        options.checkGenerationAdmission?.()
+        if (!installNarration)
+          await checkFilmReadiness(
+            async (preparation) => options.checkReadiness?.(preparation),
+            signal
+          )
+      }
+      if (!hasBuiltOutput) {
+        measure('narration-acquire')
+        await checkFilmReadiness(async (preparation) => {
+          const acquired = await options.models.acquireUse()
+          if (preparation.aborted) {
+            acquired.release()
+            preparation.throwIfAborted()
+          }
+          lease = acquired
+        }, signal)
+        signal.throwIfAborted()
+      }
+      const model = lease?.assets.find((asset) => asset.file === 'model_quantized.onnx')
+      if (!hasBuiltOutput && !model)
+        throw new Error('Install the research narration model before generating.')
       installingKey = undefined
       admitted = true
       report({ phase: 'preparing' })
       prepared()
-      const scope = { ...request, branchId: source.provenance.branchId }
-      base = (await diskStep(() => directory(scopeKey(scope), true)))!
+      base = existingBase ?? (await diskStep(() => directory(scopeKey(scope), true)))!
       const publishBase = base
-      const conversation = filmConversationDigest(source)
-      const fingerprint = digestFilmInput(JSON.stringify([conversation, checksums]))
-      const previous = await diskStep(() => readPendingFilm(publishBase))
-      let corruptLatest = false
-      const published = await diskStep(() =>
-        readResearchFilmReceipt(publishBase).catch((error: unknown) => {
-          if (!(error instanceof CorruptResearchFilmReceiptError)) throw error
-          corruptLatest = true
-          return knownFilms.get(scopeKey(scope))
-        })
-      )
       job = join(base, 'pending')
-      let newPending = false
-      if (resume && previous?.source === fingerprint && previous.id !== published?.id) {
-        saved = { ...previous, attempt: previous.attempt + 1 }
-        replayStep = previous.step
+      if (resumable) {
+        saved = { ...resumable, attempt: resumable.attempt + 1 }
+        replayStep = resumable.step
       } else {
         await diskStep(() => removePendingPointer(publishBase))
         await diskStep(() => rm(job!, { recursive: true, force: true }))
@@ -559,28 +597,25 @@ export function createResearchVideoPresentationOwner(options: {
       }
       checkpointStarted = Boolean(saved.built) || (resume && previous?.id === saved.id)
       let outputJob = join(publishBase, saved.id)
-      if (saved.built) {
-        const pending = await diskStep(() => filmPathInfo(job!))
-        if (!(await diskStep(() => hasResearchFilmOutputs(pending ? job! : outputJob)))) {
-          // A crash can leave the unpublished job already renamed. Move it back to reuse units.
-          if (!pending) {
-            const moved = await diskStep(() => filmPathInfo(outputJob))
-            if (moved && !corruptLatest) await diskStep(() => rename(outputJob, job!))
-            else if (moved) {
-              // The damaged index cannot prove this directory was never published.
-              saved.id = randomUUID()
-              outputJob = join(publishBase, saved.id)
-              newPending = true
-            }
+      if (saved.built && !hasBuiltOutput) {
+        // A crash can leave the unpublished job already renamed. Move it back to reuse units.
+        if (!pending) {
+          const moved = await diskStep(() => filmPathInfo(outputJob))
+          if (moved && !corruptLatest) await diskStep(() => rename(outputJob, job!))
+          else if (moved) {
+            // The damaged index cannot prove this directory was never published.
+            saved.id = randomUUID()
+            outputJob = join(publishBase, saved.id)
+            newPending = true
           }
-          delete saved.built
-          saved.step = 1
-          delete saved.completed
-          delete saved.total
-          replayStep = 0
-          await diskStep(() => mkdir(job!, { recursive: true, mode: 0o700 }))
-          await diskStep(() => savePendingFilm(publishBase, saved!))
         }
+        delete saved.built
+        saved.step = 1
+        delete saved.completed
+        delete saved.total
+        replayStep = 0
+        await diskStep(() => mkdir(job!, { recursive: true, mode: 0o700 }))
+        await diskStep(() => savePendingFilm(publishBase, saved!))
       }
       const id = saved.id
       log.info('film attempt started', {
@@ -663,8 +698,8 @@ export function createResearchVideoPresentationOwner(options: {
               })
             },
             generate: options.generate,
-            modelDirectory: dirname(model.path),
-            modelRevision: narration.revision,
+            modelDirectory: dirname(model!.path),
+            modelRevision: lease!.revision,
             engineDirectory: options.engineDirectory,
             onProgress: report
           })
@@ -691,11 +726,21 @@ export function createResearchVideoPresentationOwner(options: {
       const receipt = JSON.stringify(saved.built)
       signal.throwIfAborted()
       await diskStep(() => writeDurableJsonFile(join(publishBase, 'latest.json'), receipt), true)
-      completed = true
+      completedResult = {
+        ...saved.built!,
+        playerPath: join(outputJob, 'output', 'player.html'),
+        sourcePath: join(outputJob, 'output', 'sources.zip')
+      }
+      // Publication already committed. Do not start more I/O after a timeout.
+      if (diskFailure) {
+        states.delete(key)
+        return
+      }
       await diskStep(() => removePendingPointer(publishBase), true).catch(() =>
         log.info('film cleanup deferred', { ...context(), phase: 'publishing' })
       )
       states.delete(key)
+      if (diskFailure) return
       await diskStep(async () => {
         for (const name of await readdir(outputJob)) {
           if (name.startsWith('unit-') || name === 'speech' || name === PENDING_FILM_OWNER)
@@ -703,9 +748,9 @@ export function createResearchVideoPresentationOwner(options: {
         }
       }, true).catch(() => log.info('film cleanup deferred', { ...context(), phase: 'publishing' }))
     } catch (error) {
-      const buildUnconfirmed = error instanceof ResearchVideoBuildCleanupError
+      const buildUnconfirmed = saved && error instanceof ResearchVideoBuildCleanupError
       const cleanupUnconfirmed =
-        buildUnconfirmed || error instanceof ResearchVideoSpeechCleanupError
+        buildUnconfirmed || (saved && error instanceof ResearchVideoSpeechCleanupError)
       cancelled = callerSignal.aborted && !cleanupUnconfirmed && !diskFailure
       const reported = diskFailure ?? error
       if (cleanupUnconfirmed && lease) {
@@ -713,8 +758,7 @@ export function createResearchVideoPresentationOwner(options: {
         lease = undefined
         void error.exited.then(() => held.release())
       }
-      states.set(
-        key,
+      const failureStatus: ResearchVideoPresentationStatus =
         !admitted && !cancelled
           ? {
               preflightError: reported instanceof Error ? reported.message : String(reported)
@@ -730,15 +774,15 @@ export function createResearchVideoPresentationOwner(options: {
                 ? { error: reported instanceof Error ? reported.message : String(reported) }
                 : {})
             }
-      )
+      if (!diskFailure) states.set(key, failureStatus)
       if (buildUnconfirmed) {
-        if (active?.key === key) active.blockedStatus = states.get(key)
+        park(error, failureStatus, 'build')
         // The thread can still touch the pending job. Keep the lifecycle reservation alive so
         // session deletion and a new attempt cannot race a late write.
         await error.exited
       }
       await writes.catch(() => {})
-      if (base && saved && (!cancelled || closed)) {
+      if (base && saved && !diskFailure && (!cancelled || closed)) {
         saved.updatedAt = Date.now()
         await diskStep(() => savePendingFilm(base!, saved!), true).catch(() =>
           log.info('film checkpoint write failed', { ...context(), phase: stage })
@@ -778,18 +822,26 @@ export function createResearchVideoPresentationOwner(options: {
             : {})
       })
     } finally {
-      installingKey = undefined
+      if (installingKey === key) installingKey = undefined
       prepared()
       measure('finished')
       log.info('generation timing', {
         ...context(),
-        outcome: completed ? 'completed' : cancelled ? 'cancelled' : 'failed',
+        outcome: completedResult ? 'completed' : cancelled ? 'cancelled' : 'failed',
         totalMs: Math.round(performance.now() - started),
         stagesMs: Object.fromEntries(
           Object.entries(stageMs).map(([name, ms]) => [name, Math.round(ms)])
         )
       })
-      if (base && job && !completed && !checkpointStarted && cancelled && !closed) {
+      if (
+        base &&
+        job &&
+        !completedResult &&
+        !checkpointStarted &&
+        cancelled &&
+        !closed &&
+        !diskFailure
+      ) {
         await diskStep(() => rm(job!, { recursive: true, force: true }), true).catch((error) =>
           log.info('film cleanup deferred', {
             ...context(),
@@ -819,6 +871,9 @@ export function createResearchVideoPresentationOwner(options: {
         key = scopeKey(request)
       if (removing) throw new Error('Research film deletion is in progress.')
       if (closed) throw new Error('Research presentation generation is closed.')
+      const session = sessionKey(request)
+      const held = draining.get(session)
+      if (held) throw held.error
       if (active) {
         const previousFailure = states.get(active.key)
         if (previousFailure?.progress?.phase === 'failed' && previousFailure.error)
@@ -831,13 +886,30 @@ export function createResearchVideoPresentationOwner(options: {
       }
       if (installNarration && narrationInstall)
         throw new Error('Local model management is in progress.')
-      options.checkGenerationAdmission?.()
+      if (!resume) options.checkGenerationAdmission?.()
       operationRevision++
       const controller = new AbortController()
       let finishPreparation!: () => void
       const prepared = new Promise<void>((resolve) => {
         finishPreparation = resolve
       })
+      const released = Promise.withResolvers<void>()
+      const park = (
+        error: Error,
+        status: ResearchVideoPresentationStatus,
+        kind: 'disk' | 'build'
+      ): void => {
+        if (active?.controller !== controller) return
+        active.blockedStatus = status
+        states.set(key, status)
+        // At most one stalled disk attempt can release its slot. Further stalls still throttle
+        // admission, so repeated retries cannot build up hung I/O and model leases indefinitely.
+        if ([...draining.values()].some((attempt) => attempt.kind === kind)) return
+        draining.set(session, { error, status, kind })
+        active = undefined
+        finishPreparation()
+        released.resolve()
+      }
       const operation = options.lifecycle
         ? options.lifecycle.run(request.projectId, request.sessionId, (signal) =>
             run(
@@ -846,11 +918,12 @@ export function createResearchVideoPresentationOwner(options: {
               AbortSignal.any([signal, controller.signal]),
               installNarration,
               resume,
-              finishPreparation
+              finishPreparation,
+              park
             )
           )
-        : run(request, key, controller.signal, installNarration, resume, finishPreparation)
-      const done = operation
+        : run(request, key, controller.signal, installNarration, resume, finishPreparation, park)
+      void operation
         .catch((error) => {
           log.info('film lifecycle failed', {
             sessionId: request.sessionId,
@@ -860,14 +933,18 @@ export function createResearchVideoPresentationOwner(options: {
         })
         .finally(() => {
           finishPreparation()
-          active = undefined
+          draining.delete(session)
+          if (active?.controller === controller) active = undefined
+          released.resolve()
         })
-      active = { key, controller, done, prepared }
+      active = { key, controller, done: released.promise, prepared }
       await prepared
       return status(request)
     },
     async remove(rawRequest) {
       const request = researchVideoPresentationRequestSchema.parse(rawRequest)
+      const held = draining.get(sessionKey(request))
+      if (held) throw held.error
       if (closed || active || removing)
         throw new Error('Wait for the current research film operation to finish.')
       operationRevision++

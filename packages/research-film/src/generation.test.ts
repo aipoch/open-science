@@ -14,10 +14,12 @@ import {
 const stubWorker = (): EventEmitter & {
   terminate: ReturnType<typeof vi.fn>
   postMessage: ReturnType<typeof vi.fn>
+  unref: ReturnType<typeof vi.fn>
 } =>
   Object.assign(new EventEmitter(), {
     terminate: vi.fn(async () => 1),
-    postMessage: vi.fn()
+    postMessage: vi.fn(),
+    unref: vi.fn()
   })
 
 const stubChild = (): EventEmitter & {
@@ -141,6 +143,7 @@ it('reports unconfirmed build shutdown and keeps scratch reserved until terminat
       })
     )
     expect(await readdir(root)).toHaveLength(1)
+    expect(worker.unref).toHaveBeenCalledOnce()
     expect(generate.assertReady).toThrow(/shutdown/i)
     stopping.resolve(1)
     vi.useRealTimers()

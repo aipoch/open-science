@@ -296,7 +296,7 @@ export function ResearchVideoButton({
     setPending(true)
     setError(undefined)
     try {
-      const current = await readFilmStatus(request, true)
+      const current = await readFilmStatus(request, !resume)
       if (!live.current) return
       setStatus(current)
       if (
@@ -304,20 +304,23 @@ export function ResearchVideoButton({
         (current.result && !current.canResume && !regenerate && !resume)
       )
         return
-      if (current.generationBlock || current.preflightError) return
+      if (current.generationBlock || (!resume && current.preflightError)) return
       if (
         current.progress &&
         !['completed', 'failed', 'cancelled'].includes(current.progress.phase)
       )
         return
+      // The owner can publish a complete checkpoint without loading the narration model.
+      if (resume) {
+        if (current.canResume)
+          setStatus(await window.api.researchVideo.start({ ...request, resume: true }))
+        return
+      }
       const snapshot = await window.api.localModels.getSnapshot('research-narration')
       if (!live.current) return
       setModel(snapshot)
-      if (current.canResume && !regenerate && !resume) return
-      if (narrationReady(snapshot))
-        setStatus(
-          await window.api.researchVideo.start(resume ? { ...request, resume: true } : request)
-        )
+      if (current.canResume && !regenerate) return
+      if (narrationReady(snapshot)) setStatus(await window.api.researchVideo.start(request))
     } catch (caught) {
       if (live.current) setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -547,7 +550,7 @@ export function ResearchVideoButton({
                     {status.canResume && (
                       <Button
                         size="sm"
-                        disabled={pending || Boolean(blocked)}
+                        disabled={pending || Boolean(status.generationBlock)}
                         onClick={() => void generate(false, true)}
                       >
                         {t('Continue generation')}
