@@ -33,6 +33,8 @@ import {
   filmConversationDigest,
   readPendingFilm,
   savePendingFilm,
+  savePendingFilmOwner,
+  PENDING_FILM_OWNER,
   digestFilmInput,
   filmAuthoringCheckpoint,
   removePendingPointer,
@@ -527,6 +529,7 @@ export function createResearchVideoPresentationOwner(options: {
         })
       )
       job = join(base, 'pending')
+      let newPending = false
       if (resume && previous?.source === fingerprint && previous.id !== published?.id) {
         saved = { ...previous, attempt: previous.attempt + 1 }
         replayStep = previous.step
@@ -543,6 +546,7 @@ export function createResearchVideoPresentationOwner(options: {
           startedAt,
           updatedAt: startedAt
         }
+        newPending = true
       }
       checkpointStarted = Boolean(saved.built) || (resume && previous?.id === saved.id)
       let outputJob = join(publishBase, saved.id)
@@ -557,6 +561,7 @@ export function createResearchVideoPresentationOwner(options: {
               // The damaged index cannot prove this directory was never published.
               saved.id = randomUUID()
               outputJob = join(publishBase, saved.id)
+              newPending = true
             }
           }
           delete saved.built
@@ -582,6 +587,11 @@ export function createResearchVideoPresentationOwner(options: {
         await diskStep(() =>
           writeDurableJsonFile(join(job!, 'session.json'), JSON.stringify(source))
         )
+        // Resuming an older checkpoint does not opt it into startup cleanup.
+        if (newPending) {
+          const { projectId, sessionId, branchId } = source.provenance
+          await diskStep(() => savePendingFilmOwner(job!, { id, projectId, sessionId, branchId }))
+        }
         await diskStep(() => savePendingFilm(publishBase, saved!))
         checkpointStarted = true
         for (const file of ['files', 'anims', 'video.json', 'output'])
@@ -675,7 +685,7 @@ export function createResearchVideoPresentationOwner(options: {
       states.delete(key)
       await diskStep(async () => {
         for (const name of await readdir(outputJob)) {
-          if (name.startsWith('unit-') || name === 'speech')
+          if (name.startsWith('unit-') || name === 'speech' || name === PENDING_FILM_OWNER)
             await rm(join(outputJob, name), { recursive: true, force: true })
         }
       }, true).catch(() => log.info('film cleanup deferred', { ...context(), phase: 'publishing' }))

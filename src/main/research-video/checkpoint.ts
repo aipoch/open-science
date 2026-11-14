@@ -6,7 +6,7 @@ import { z } from 'zod'
 import type { FilmAuthoringCheckpoint, ResearchVideoSessionSource } from '@aipoch/research-film'
 import { researchFilmReceiptSchema } from './stored-presentation'
 
-const pendingFilm = z.object({
+export const pendingFilmSchema = z.object({
   version: z.literal(1),
   id: z.string().uuid(),
   conversation: z.string().regex(/^[a-f0-9]{64}$/),
@@ -19,7 +19,29 @@ const pendingFilm = z.object({
   total: z.number().int().positive().optional(),
   built: researchFilmReceiptSchema.optional()
 })
-export type PendingFilm = z.infer<typeof pendingFilm>
+export type PendingFilm = z.infer<typeof pendingFilmSchema>
+export const PENDING_FILM_OWNER = 'pending-owner.json'
+const identity = z.string().min(1).max(512)
+export const pendingFilmOwnerSchema = z
+  .object({
+    version: z.literal(1),
+    id: z.string().uuid(),
+    projectId: identity,
+    sessionId: identity,
+    branchId: identity.optional()
+  })
+  .strict()
+
+export function savePendingFilmOwner(
+  directory: string,
+  owner: Omit<z.infer<typeof pendingFilmOwnerSchema>, 'version'>
+): Promise<void> {
+  return writeDurableJsonFile(
+    join(directory, PENDING_FILM_OWNER),
+    JSON.stringify({ version: 1, ...owner })
+  )
+}
+
 export const digestFilmInput = (value: string): string =>
   createHash('sha256').update(value).digest('hex')
 
@@ -36,7 +58,7 @@ export async function readPendingFilm(base: string): Promise<PendingFilm | undef
   if (!info?.isFile() || info.size > 4096) return undefined
   let parsed
   try {
-    parsed = pendingFilm.safeParse(JSON.parse(await readFileWithinLimit(path, 4096)))
+    parsed = pendingFilmSchema.safeParse(JSON.parse(await readFileWithinLimit(path, 4096)))
   } catch (error) {
     if (error instanceof SyntaxError) return undefined
     throw error

@@ -8,9 +8,10 @@ import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { filmAuthoringCheckpoint } from './checkpoint'
+import { filmAuthoringCheckpoint, PENDING_FILM_OWNER } from './checkpoint'
 import { createResearchVideoPresentationOwner } from './presentation'
 import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
+import { researchFilmScopeKey } from './stored-presentation'
 
 const { timing } = vi.hoisted(() => ({ timing: vi.fn() }))
 vi.mock('@aipoch/diagnostics/node', async (original) => ({
@@ -335,6 +336,11 @@ it('resumes an interrupted scene after restart using the validated screenplay an
   })
   const generate = f.options.generate.getMockImplementation()!
   f.options.generate.mockImplementation(async (...args) => {
+    await expect(
+      readFile(join(dirname(args[0].specPath), PENDING_FILM_OWNER))
+    ).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
     const spec = JSON.parse(await readFile(args[0].specPath, 'utf8'))
     expect(spec.scenes[0].panels[1].script).toBe('anims/hook.js')
     expect(await readFile(join(args[0].specPath, '..', 'anims/hook.js'), 'utf8')).toBe('rain(k);')
@@ -345,6 +351,16 @@ it('resumes an interrupted scene after restart using the validated screenplay an
   await first.start(request)
   await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
   await first.close()
+  const base = join(
+    f.options.dataRoot(),
+    'research-video-presentations',
+    researchFilmScopeKey(request)
+  )
+  const ownerPath = join(base, 'pending', PENDING_FILM_OWNER)
+  const { id } = JSON.parse(await readFile(join(base, 'pending.json'), 'utf8'))
+  expect(JSON.parse(await readFile(ownerPath, 'utf8'))).toEqual({ version: 1, id, ...request })
+  // Simulate a checkpoint from before ownership receipts were introduced.
+  await rm(ownerPath)
   const owner = createResearchVideoPresentationOwner({ ...f.options, writeAnimation })
   try {
     expect(await owner.status(request)).toMatchObject({

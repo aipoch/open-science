@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, lstat } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rename, rm, symlink, lstat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it } from 'vitest'
@@ -41,6 +41,64 @@ const exists = (path: string): Promise<boolean> =>
     () => true,
     () => false
   )
+
+const pending = async (
+  root: string,
+  sessionId: string,
+  marked = true
+): Promise<{ directory: string; pointer: string; latest: string }> => {
+  const saved = await presentation(root, sessionId, 'branch')
+  const id = basename(saved.directory)
+  const directory = join(saved.base, 'pending')
+  const pointer = join(saved.base, 'pending.json')
+  const latest = join(saved.base, 'latest.json')
+  await rename(saved.directory, directory)
+  await rm(latest)
+  await writeFile(
+    pointer,
+    JSON.stringify({
+      version: 1,
+      id,
+      conversation: 'a'.repeat(64),
+      source: 'b'.repeat(64),
+      step: 3,
+      startedAt: 1,
+      updatedAt: 2,
+      attempt: 1
+    })
+  )
+  if (marked)
+    await writeFile(
+      join(directory, 'pending-owner.json'),
+      JSON.stringify({ version: 1, id, projectId: 'project', sessionId, branchId: 'branch' })
+    )
+  return { directory, pointer, latest }
+}
+
+it('reclaims only marked orphan pending jobs during startup reconciliation', async () => {
+  const { root } = await fixture()
+  const orphan = await pending(root, 'gone')
+  const archived = await pending(root, 'archived')
+  const legacy = await pending(root, 'legacy', false)
+  const mismatched = await pending(root, 'mismatched')
+  const pointer = JSON.parse(await readFile(mismatched.pointer, 'utf8'))
+  await writeFile(mismatched.pointer, JSON.stringify({ ...pointer, id: randomUUID() }))
+  // Keep an older receipt distinct from the pending attempt.
+  const oldFilm = JSON.stringify({ id: randomUUID(), title: 'Private', duration: 1 })
+  await writeFile(orphan.latest, oldFilm)
+  await new Promise((resolve) => setTimeout(resolve, 2))
+  const owner = createResearchFilmLifecycle({ dataRoot: () => root })
+  const plans = await owner.planSessionReconciliation(['archived'])
+  expect(plans.map(({ sessionId }) => sessionId)).toEqual(['gone'])
+  await plans[0].apply()
+  await expect(lstat(orphan.directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(lstat(orphan.pointer)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await readFile(orphan.latest, 'utf8')).toBe(oldFilm)
+  for (const retained of [archived, legacy, mismatched]) {
+    expect(await exists(join(retained.directory, 'session.json'))).toBe(true)
+    expect(await exists(retained.pointer)).toBe(true)
+  }
+})
 
 it('removes all deleted-session branches and retained tool jobs while preserving other sessions and user exports', async () => {
   const { root, owner } = await fixture()
@@ -247,33 +305,35 @@ it('rejects imported-film symlinks without deleting local films and allows an ex
   expect(await readFile(join(outside, 'player.html'), 'utf8')).toBe('keep')
 })
 
-it('does not cancel a live film admitted after orphan planning and rejects changed owner evidence', async () => {
-  const { root } = await fixture()
-  const saved = await presentation(root, 'gone')
-  await new Promise((resolve) => setTimeout(resolve, 2))
-  const owner = createResearchFilmLifecycle({ dataRoot: () => root })
-  const plans = await owner.planSessionReconciliation([])
-  expect(plans).toHaveLength(1)
-  let release!: () => void
-  let aborted = false
-  const live = owner.run('project', 'gone', async (signal) => {
-    signal.addEventListener('abort', () => {
-      aborted = true
+it.each(['published', 'pending'] as const)(
+  'does not cancel a live film admitted after orphan planning and rejects changed %s evidence',
+  async (kind) => {
+    const { root } = await fixture()
+    const saved =
+      kind === 'pending' ? await pending(root, 'gone') : await presentation(root, 'gone')
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    const owner = createResearchFilmLifecycle({ dataRoot: () => root })
+    const plans = await owner.planSessionReconciliation([])
+    expect(plans).toHaveLength(1)
+    let release!: () => void
+    let aborted = false
+    const live = owner.run('project', 'gone', async (signal) => {
+      signal.addEventListener('abort', () => {
+        aborted = true
+      })
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
     })
-    await new Promise<void>((resolve) => {
-      release = resolve
-    })
-  })
-  await Promise.resolve()
-  await expect(plans[0].apply()).rejects.toThrow('live work')
-  expect(aborted).toBe(false)
-  release()
-  await live
-  await writeFile(
-    join(saved.directory, 'session.json'),
-    JSON.stringify({ provenance: { projectId: 'project', sessionId: 'new-owner' } })
-  )
-  await expect(plans[0].apply()).rejects.toThrow('receipt changed')
-  expect(await exists(join(saved.directory, 'session.json'))).toBe(true)
-  await expect(owner.run('project', 'gone', async () => 'available')).resolves.toBe('available')
-})
+    await Promise.resolve()
+    await expect(plans[0].apply()).rejects.toThrow('live work')
+    expect(aborted).toBe(false)
+    release()
+    await live
+    const receipt = 'pointer' in saved ? saved.pointer : join(saved.directory, 'session.json')
+    await writeFile(receipt, '{}')
+    await expect(plans[0].apply()).rejects.toThrow('receipt changed')
+    expect(await exists(join(saved.directory, 'session.json'))).toBe(true)
+    await expect(owner.run('project', 'gone', async () => 'available')).resolves.toBe('available')
+  }
+)
