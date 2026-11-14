@@ -3952,13 +3952,13 @@ const useSessionPersistence = (): SessionPersistenceState => {
           loadingSessionContent.add(selected.id)
           void loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id })
             .then((session) => {
+              if (!isMounted) return
               setSessionLoadErrorsBySession((current) => {
                 const next = { ...current }
                 delete next[`${selected.projectId}\0${selected.id}`]
                 return next
               })
               if (!session) throw new Error('Selected Session JSON is missing.')
-              if (!isMounted) return
               const unchangedSummary =
                 useSessionStore
                   .getState()
