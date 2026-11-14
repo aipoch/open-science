@@ -774,7 +774,6 @@ class SessionRepository {
       const assignments = await this.projection!.numberAssignments()
       const existingNumberById = new Map(assignments.map(({ id, number }) => [id, number]))
       const existingIdByNumber = new Map(assignments.map(({ id, number }) => [number, id]))
-      await this.projection!.clearForRebuild()
       const ordered = [...freshResult.sessions].sort(
         (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
       )
@@ -802,13 +801,31 @@ class SessionRepository {
           (!owner || owner === session.id) &&
           numberCounts.get(number) === 1
         ) {
-          const numbered =
-            session.number === number ? session : await this.saveSessionNow({ ...session, number })
-          rebuiltById.set(session.id, numbered)
+          try {
+            const numbered =
+              session.number === number
+                ? session
+                : await this.saveSessionNow({ ...session, number })
+            rebuiltById.set(session.id, numbered)
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              error.message !== 'Cannot save a Session for a deleted Project.'
+            )
+              throw error
+          }
           continue
         }
-        const persisted = await this.saveSessionNow({ ...session, number: undefined })
-        rebuiltById.set(session.id, persisted)
+        try {
+          const persisted = await this.saveSessionNow({ ...session, number: undefined })
+          rebuiltById.set(session.id, persisted)
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            error.message !== 'Cannot save a Session for a deleted Project.'
+          )
+            throw error
+        }
       }
       const rebuilt = freshResult.sessions.map((session) => rebuiltById.get(session.id) ?? session)
       await this.projection!.replaceAll(rebuilt)

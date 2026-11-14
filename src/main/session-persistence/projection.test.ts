@@ -2132,6 +2132,35 @@ describe('Session projection', () => {
     ])
   })
 
+  it('keeps healthy sessions available when rebuild sees an orphaned Project', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-orphan-rebuild-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.createMany({
+      data: [
+        { id: 'project-1', name: 'Project 1' },
+        { id: 'project-2', name: 'Project 2' }
+      ]
+    })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const healthy = await repository.saveSession(session('healthy', 100))
+    const files = new SessionRepository(storageRoot)
+    await files.saveSession({ ...session('orphan', 200), projectId: 'project-2' })
+    await client.project.update({ where: { id: 'project-2' }, data: { deletedAt: new Date() } })
+    await projection.replaceAll([healthy])
+    await client.sessionProjectionState.update({
+      where: { id: 'session-projection' },
+      data: { projectionVersion: 1 }
+    })
+
+    await expect(repository.ensureSessionProjection(() => files.loadAll())).resolves.toMatchObject({
+      sessions: [expect.objectContaining({ id: healthy.id })]
+    })
+    await expect(projection.isReady()).resolves.toBe(true)
+  })
+
   it('publishes a fresh authority scan when a Session save overlaps initial backfill', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-backfill-race-'))
     initDataRoot(storageRoot)

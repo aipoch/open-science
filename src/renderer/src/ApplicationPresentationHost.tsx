@@ -405,6 +405,8 @@ const ApplicationPresentationContent = ({
                   <WorkspacePage
                     isSessionPersistenceHydrated={sessions.isHydrated}
                     isSessionPersistenceReady={sessions.isReady}
+                    sessionLoadErrorsBySession={sessions.sessionLoadErrorsBySession}
+                    retrySessionLoad={sessions.retrySessionLoad}
                     persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
                     persistenceWriteIssues={sessions.writeIssues}
                     onReviewPersistence={sessions.reviewWriteIssues}
