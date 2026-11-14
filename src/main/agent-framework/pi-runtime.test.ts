@@ -3,7 +3,7 @@ import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import { mkdtemp, mkdir, readFile, rm, copyFile, writeFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, expect, it, vi } from 'vitest'
 import {
@@ -14,6 +14,7 @@ import {
   piBootstrapPath,
   resolvePiExecutable
 } from './pi-runtime'
+import { getAgentFramework } from './registry'
 
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>())
@@ -151,5 +152,35 @@ it.each(['compatible', 'wrong-version', 'invalid-json', 'timeout'] as const)(
       )
     }
     await expect(stat(temporary!)).rejects.toMatchObject({ code: 'ENOENT' })
+  }
+)
+
+it.each(['messages', 'chat-completions', 'responses'] as const)(
+  'keeps known and user-configured output budgets in the Pi %s catalog',
+  (wire) => {
+    const provider = {
+      type: 'custom' as const,
+      vendorId: 'anthropic' as const,
+      model: 'claude-haiku-4-5-20251001',
+      agentProviderId: 'catalog-model',
+      baseUrl: 'http://127.0.0.1:12345',
+      apiEndpoints: [wire]
+    }
+    const config = getAgentFramework('pi').prepareModelConfig(provider, {
+      storageRoot: resolve('data'),
+      executablePath: resolve('bin.js'),
+      piModelBridge: { token: 'test-key' },
+      providerModelCatalog: [
+        { provider },
+        { provider: { ...provider, agentProviderId: 'configured-model', maxOutputTokens: 12_000 } },
+        { provider: { ...provider, agentProviderId: 'unknown-model', model: 'unknown-model' } }
+      ]
+    })
+    const models = JSON.parse(config.configFiles![0].content).providers['open-science'].models
+    expect(models.map((model: { maxTokens?: number }) => model.maxTokens)).toEqual([
+      64_000,
+      12_000,
+      undefined
+    ])
   }
 )

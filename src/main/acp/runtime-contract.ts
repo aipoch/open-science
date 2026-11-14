@@ -90,6 +90,8 @@ export type AcpRuntimeOptions = {
   callbacks?: AcpRuntimeCallbacks
   // Restricted inference classifies operational notices; ordinary chat keeps its presentation.
   separateProviderNotices?: boolean
+  // Restricted inference can recover a provider's truncated response from its turn observations.
+  recoverOutputTruncation?: boolean
   auxiliaryUsage?: Readonly<{
     projectIdForSession: (sessionId: string) => Promise<string | undefined>
     record: (

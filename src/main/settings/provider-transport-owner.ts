@@ -7,11 +7,8 @@ import type {
   ProviderFailureObserver
 } from './provider-failure-observation'
 
-import {
-  getOfficialVendor,
-  usesVendorMessagesApiKeyHeader,
-  type ModelReasoningEffort
-} from '@aipoch/providers'
+import { usesVendorMessagesApiKeyHeader, type ModelReasoningEffort } from '@aipoch/providers'
+import { resolveProviderOutputLimit } from './provider-env'
 
 import {
   CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID,
@@ -608,17 +605,10 @@ class ProviderTransportOwner {
     const targetId = JSON.stringify(['codebuddy', input.activeTarget.providerId, model])
     const transport = input.plan.transport
     const usesXaiOAuth = provider.type === 'xai-subscription'
-    const modelOutputTokens =
-      transport.kind === 'codebuddy-provider-compatibility' &&
-      transport.wire === 'messages' &&
-      provider.vendorId
-        ? getOfficialVendor(provider.vendorId)?.models.find((entry) => entry.id === model)
-            ?.maxOutputTokens
-        : undefined
     const maxOutputTokens =
-      provider.maxOutputTokens === undefined || modelOutputTokens === undefined
-        ? (provider.maxOutputTokens ?? modelOutputTokens)
-        : Math.min(provider.maxOutputTokens, modelOutputTokens)
+      transport.kind === 'codebuddy-provider-compatibility' && transport.wire === 'messages'
+        ? resolveProviderOutputLimit({ ...provider, model })
+        : undefined
     const bridge: ChatCompletionsCompatibilityBridgePort =
       transport.kind === 'codebuddy-provider-compatibility'
         ? this.createChatCompletionsCompatibilityBridge({

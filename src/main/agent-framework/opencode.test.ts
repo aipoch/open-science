@@ -549,6 +549,44 @@ describe('opencodeFramework.prepareModelConfig', () => {
     }
   })
 
+  it('passes the largest known catalog budget through OpenCode 1.x without lowering other models', () => {
+    const provider = {
+      type: 'custom' as const,
+      baseUrl: 'https://gateway.example/v1',
+      model: 'model-a',
+      contextWindow: 200_000,
+      maxOutputTokens: 12_000
+    }
+    const context = {
+      storageRoot: '/data',
+      executablePath: '/bin/opencode',
+      providerModelCatalog: [
+        { provider },
+        {
+          provider: {
+            ...provider,
+            vendorId: 'anthropic' as const,
+            model: 'claude-haiku-4-5-20251001',
+            maxOutputTokens: undefined
+          }
+        }
+      ]
+    }
+    const v1 = opencodeFramework.prepareModelConfig(provider, {
+      ...context,
+      nativeVersion: '1.18.3'
+    })
+    const v2 = opencodeFramework.prepareModelConfig(provider, {
+      ...context,
+      nativeVersion: '2.1.4'
+    })
+
+    expect(v1.env?.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX).toBe('64000')
+    const models = JSON.parse(v1.env!.OPENCODE_CONFIG_CONTENT).provider.anthropic.models
+    expect(models['model-a'].limit.output).toBe(12_000)
+    expect(v2.env).not.toHaveProperty('OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX')
+  })
+
   it('declares image capability in the pinned layer for a multimodal model', () => {
     const config = opencodeFramework.prepareModelConfig(
       {
@@ -763,7 +801,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     const expectedModels = {
       'deepseek-v4-pro': {
         options: { reasoningEffort: 'high', thinking: { type: 'enabled' } },
-        limit: { context: 128_000, output: 32_000 }
+        limit: { context: 128_000, output: 128_000 }
       },
       'deepseek-v3.2': {
         attachment: true,

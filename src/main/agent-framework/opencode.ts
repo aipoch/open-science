@@ -20,7 +20,7 @@ import {
   resolveChatReasoningTransport
 } from '@aipoch/providers/protocol'
 import { augmentedPathEnv } from '../settings/shell-path'
-import type { ResolvedProvider } from '../settings/provider-env'
+import { resolveProviderOutputLimit, type ResolvedProvider } from '../settings/provider-env'
 
 import type {
   AgentFramework,
@@ -109,8 +109,11 @@ const OPENCODE_ENDPOINT_ORDER = ['chat-completions', 'messages'] as const
 // the generated config remains valid and OpenCode can calculate its native compaction threshold.
 const OPENCODE_DEFAULT_OUTPUT_LIMIT = 32_000
 
-const opencodeOutputLimit = (contextWindow: number, configured?: number): number =>
-  Math.min(configured ?? OPENCODE_DEFAULT_OUTPUT_LIMIT, contextWindow)
+const opencodeOutputLimit = (provider: ResolvedProvider): number =>
+  Math.min(
+    resolveProviderOutputLimit(provider) ?? OPENCODE_DEFAULT_OUTPUT_LIMIT,
+    provider.contextWindow ?? Infinity
+  )
 
 const opencodeApiKeyEnv = (provider: ResolvedProvider): string =>
   provider.agentProviderId
@@ -363,7 +366,7 @@ const buildOpencodeModelConfig = (
           limit: {
             context: provider.contextWindow,
             ...(provider.maxInputTokens === undefined ? {} : { input: provider.maxInputTokens }),
-            output: opencodeOutputLimit(provider.contextWindow, provider.maxOutputTokens)
+            output: opencodeOutputLimit(provider)
           }
         })
   }
@@ -577,6 +580,15 @@ export const createOpencodeFramework = ({
     const v2PluginDir = ctx.nativeVersion?.startsWith('2.')
       ? join(opencodeDir, 'open-science-v2')
       : undefined
+    // OpenCode 1.x independently clamps requests to 32k, even with a higher model limit.
+    // Raise its process ceiling only as far as the configured catalog needs; each model still
+    // supplies its own limit. OpenCode 2.x handles output limits per model.
+    const runtimeOutputLimit = v2PluginDir
+      ? undefined
+      : opencodeModelCatalog(provider, ctx.reasoningEffort, ctx.providerModelCatalog).reduce(
+          (limit, entry) => Math.max(limit, opencodeOutputLimit(entry.provider)),
+          OPENCODE_DEFAULT_OUTPUT_LIMIT
+        )
     const configFiles: NonNullable<AgentModelConfig['configFiles']> = [
       { path: configPath, content: '' },
       {
@@ -643,6 +655,9 @@ export const createOpencodeFramework = ({
       env: {
         XDG_CONFIG_HOME: configHome,
         XDG_DATA_HOME: dataHome,
+        ...(runtimeOutputLimit !== undefined && runtimeOutputLimit > OPENCODE_DEFAULT_OUTPUT_LIMIT
+          ? { OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: String(runtimeOutputLimit) }
+          : {}),
         // Redirect opencode's Global.Path.home (= `OPENCODE_TEST_HOME ?? os.homedir()`) to an app-owned,
         // empty dir so the user's `~/.opencode` cannot inject config/providers/permissions — the last
         // non-repo override surface left after OPENCODE_DISABLE_PROJECT_CONFIG closes project config. This

@@ -176,7 +176,7 @@ export function createMessagesModel(input: MessagesModelOptions): AgentModel {
       }
       let content = '',
         thinking: { type: 'thinking'; thinking: string; signature: string } | undefined,
-        stop: 'end_turn' | 'tool_use' | 'max_tokens' | undefined,
+        stop: string | undefined,
         usage: ModelUsage | undefined,
         active: { id: string; name: string; arguments: string; input: unknown } | undefined
       const pendingCalls: Array<{
@@ -282,7 +282,7 @@ export function createMessagesModel(input: MessagesModelOptions): AgentModel {
         }
         if (type === 'message_delta') {
           const delta = object(event.delta)
-          if (typeof delta.stop_reason === 'string') stop = delta.stop_reason as typeof stop
+          if (typeof delta.stop_reason === 'string') stop = delta.stop_reason
           if (event.usage) updateUsage(event.usage)
           continue
         }
@@ -290,8 +290,9 @@ export function createMessagesModel(input: MessagesModelOptions): AgentModel {
         if (type === 'error') return fail()
       }
       if (!stop || active || thinking) return fail()
-      if (stop !== 'end_turn' && stop !== 'tool_use' && stop !== 'max_tokens') return fail()
-      if (stop !== 'max_tokens') {
+      const lengthLimited = stop === 'max_tokens' || stop === 'model_context_window_exceeded'
+      if (stop !== 'end_turn' && stop !== 'tool_use' && !lengthLimited) return fail()
+      if (!lengthLimited) {
         for (const call of pendingCalls) {
           const args = call.arguments ? JSON.parse(call.arguments) : call.input
           json(args)
@@ -300,7 +301,7 @@ export function createMessagesModel(input: MessagesModelOptions): AgentModel {
       }
       yield {
         type: 'finish',
-        reason: stop === 'tool_use' ? 'tools' : stop === 'max_tokens' ? 'length' : 'complete',
+        reason: stop === 'tool_use' ? 'tools' : lengthLimited ? 'length' : 'complete',
         content: content ? [{ type: 'text', text: content }] : [],
         ...(calls.length ? { calls } : {}),
         ...(usage ? { usage } : {}),
