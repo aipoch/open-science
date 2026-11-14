@@ -184,6 +184,23 @@ const searchIdentifiers = (
   })
 }
 
+const AGENT_QUERY_STOP_WORDS = new Set(
+  'a an and are as at be been being but by can could did do does for from had has have how in into is it its may more most not of on or our than that the their these this those to was were what when where which who will with would'.split(
+    ' '
+  )
+)
+const agentQueryTerms = (query: string | undefined): readonly string[] | undefined => {
+  const text = normalizeSpace(query ?? '')
+  // Identifiers retain the existing exact normalization and lookup contract.
+  if (!text || searchIdentifiers(text).length) return undefined
+  const terms = [
+    ...new Set(normalizeSearchText(text).match(/[\p{L}\p{N}]+(?:[._-][\p{L}\p{N}]+)*/gu) ?? [])
+  ]
+    .filter((term) => !AGENT_QUERY_STOP_WORDS.has(term))
+    .slice(0, 8)
+  return terms.length ? terms : undefined
+}
+
 // Deletion intents are independent recovery records, not a Project foreign-key relation.
 const availableProjectWhere = async (
   client: Pick<Prisma.TransactionClient, 'projectDeletionIntent'>
@@ -989,7 +1006,14 @@ class LiteratureCatalog {
         )
       : undefined
     return client.$transaction(
-      (transaction) => this.searchLibrary(request, transaction, false, journalFilterIds),
+      (transaction) =>
+        this.searchLibrary(
+          request,
+          transaction,
+          false,
+          journalFilterIds,
+          agentQueryTerms(request.query)
+        ),
       { timeout: 30_000 }
     )
   }
@@ -998,7 +1022,8 @@ class LiteratureCatalog {
     request: LiteratureCatalogSearchRequest,
     client: Prisma.TransactionClient,
     boundResponse = true,
-    journalFilterIds?: string[]
+    journalFilterIds?: string[],
+    agentTerms?: readonly string[]
   ): Promise<LiteratureCatalogSearchPage> {
     const offset = Math.max(0, request.offset ?? 0)
     const limit = Math.min(100, Math.max(1, request.limit ?? 50))
@@ -1028,12 +1053,21 @@ class LiteratureCatalog {
       SELECT 1 FROM "LiteratureItemCreator" ic JOIN "LiteratureCreator" c ON c.id = ic."creatorId"
       WHERE ic."itemId" = i.id AND (${contains(Prisma.sql`c."normalizedName"`, text)}
         OR ${contains(Prisma.sql`c."normalizedDisplayName"`, text)}))`
-    for (const text of [request.query, filter?.query].filter(
-      (value): value is string => !!value?.trim()
-    )) {
+    for (const [text, terms] of [
+      [request.query, agentTerms],
+      [filter?.query, undefined]
+    ] as const) {
+      if (!text?.trim()) continue
       const alternatives = [
-        contains(Prisma.sql`i."normalizedTitle"`, text),
-        contains(Prisma.sql`i."normalizedAbstract"`, text),
+        ...(terms?.length
+          ? terms.flatMap((term) => [
+              contains(Prisma.sql`i."normalizedTitle"`, term),
+              contains(Prisma.sql`i."normalizedAbstract"`, term)
+            ])
+          : [
+              contains(Prisma.sql`i."normalizedTitle"`, text),
+              contains(Prisma.sql`i."normalizedAbstract"`, text)
+            ]),
         contains(Prisma.sql`i."normalizedContainerTitle"`, text),
         contains(Prisma.sql`i."normalizedPersonalNote"`, text),
         creatorMatches(text)
@@ -1340,6 +1374,28 @@ class LiteratureCatalog {
             : request.sortBy === 'created'
               ? Prisma.sql`i."createdAt" ${direction}, i.id ASC`
               : Prisma.sql`i."updatedAt" ${direction}, i.id ASC`
+    // Scope/lifecycle predicates above still apply before ranking and LIMIT. The ordinary
+    // renderer search keeps its phrase semantics and explicit ordering unchanged.
+    const relevance =
+      agentTerms?.length && !request.sortBy && request.searchSort !== 'recent'
+        ? Prisma.sql`${Prisma.join(
+            agentTerms.map(
+              (term) => Prisma.sql`CASE WHEN
+          ${contains(Prisma.sql`i."normalizedTitle"`, term)} OR
+          ${contains(Prisma.sql`i."normalizedAbstract"`, term)} THEN 1 ELSE 0 END`
+            ),
+            ' + '
+          )} DESC,
+        CASE WHEN ${contains(Prisma.sql`i."normalizedTitle"`, query)} THEN 1 ELSE 0 END DESC,
+        CASE WHEN ${contains(Prisma.sql`i."normalizedAbstract"`, query)} THEN 1 ELSE 0 END DESC,
+        ${Prisma.join(
+          agentTerms.map(
+            (term) =>
+              Prisma.sql`CASE WHEN ${contains(Prisma.sql`i."normalizedTitle"`, term)} THEN 1 ELSE 0 END`
+          ),
+          ' + '
+        )} DESC,`
+        : Prisma.empty
     // Selected IDs follow getMany's alias contract: filter survivor metadata, return requested IDs.
     const from =
       request.itemIds === undefined
@@ -1355,7 +1411,7 @@ class LiteratureCatalog {
     }
     const ids = await client.$queryRaw<
       { id: string; requestedId: string }[]
-    >(Prisma.sql`SELECT i.id, ${requestedId} AS "requestedId" FROM ${from} WHERE ${where} ORDER BY ${orderBy}, ${requestedId} ASC
+    >(Prisma.sql`SELECT i.id, ${requestedId} AS "requestedId" FROM ${from} WHERE ${where} ORDER BY ${relevance} ${orderBy}, ${requestedId} ASC
       ${request.allItemIds ? Prisma.empty : Prisma.sql`LIMIT ${limit} OFFSET ${offset}`}`)
     const itemIds = ids.map(({ id }) => id)
     if (request.allItemIds)

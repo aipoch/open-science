@@ -30,6 +30,7 @@ import type { LiteratureLibraryDiscovery } from '../literature/discovery-contrac
 import type {
   LiteratureLibraryFormatDocumentResult,
   LiteratureLibraryFormatReferencesResult,
+  LiteratureLibraryFullTextSearchResult,
   LiteratureLibraryPrepareLatexResult,
   LiteratureLibraryReadAbstractResult,
   LiteratureLibraryReadPdfResult,
@@ -203,11 +204,22 @@ export type AcpRuntimeOptions = {
       offset?: number
       limit?: number
     }) => Promise<LiteratureLibrarySearchResult>
+    searchLibraryFullText?: (request: {
+      projectId: string
+      query: string
+      scope?: LiteratureLibraryScope
+      collectionId?: string
+      itemIds?: readonly string[]
+      limit?: number
+      offset?: number
+      signal?: AbortSignal
+    }) => Promise<LiteratureLibraryFullTextSearchResult>
     readAbstract: (request: {
       projectId: string
       itemId: string
       scope?: LiteratureLibraryScope
       collectionId?: string
+      signal?: AbortSignal
     }) => Promise<LiteratureLibraryReadAbstractResult | undefined>
     readPdf: (request: {
       projectId: string
@@ -216,6 +228,7 @@ export type AcpRuntimeOptions = {
       query: string
       scope?: LiteratureLibraryScope
       collectionId?: string
+      signal?: AbortSignal
     }) => Promise<LiteratureLibraryReadPdfResult | undefined>
     readCandidateFile?: (request: {
       projectId: string

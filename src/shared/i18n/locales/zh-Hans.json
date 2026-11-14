@@ -8037,6 +8037,19 @@
     "Source URL": "来源地址",
     "Branch or tag": "分支或标签",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "使用发布专家市场目录的公开 GitHub 仓库或分支链接。",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安装的技能可能改变智能体的行为。请仅信任您认可的来源。"
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安装的技能可能改变智能体的行为。请仅信任您认可的来源。",
+    "Agent Session cleanup did not complete.": "智能体会话清理未完成。",
+    "View surrounding text": "查看相邻原文",
+    "Source excerpt": "来源摘录",
+    "PDF evidence": "PDF 证据",
+    "View reference": "查看文献",
+    "View source page": "查看来源页面",
+    "The source could not be opened.": "无法打开来源。",
+    "Ask about this project": "向此项目的文献提问",
+    "Ask about this collection": "向此合集的文献提问",
+    "Choose a project for this conversation.": "为此会话选择一个项目。",
+    "Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.": "全文证据不完整。请确认所选文献已附 PDF，并准备正文后重试。",
+    "Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.": "缓存文本不代表全文覆盖完整。在根据缺失的证据作出结论前，请核对原始 PDF。",
+    "Continue searching the remaining references or refine the query within the selected scope.": "继续检索剩余文献，或在所选范围内调整检索词。"
   }
 }

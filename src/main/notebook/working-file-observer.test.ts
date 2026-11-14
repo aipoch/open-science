@@ -8,6 +8,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   stat,
@@ -1138,7 +1139,13 @@ describe('working-file evidence', () => {
                 !Number.isSafeInteger(original.ino)
               )
                 expect(item.immutableSource).toBeUndefined()
-              else expect(item.immutableSource).toMatchObject({ physicalPath: originalPath })
+              else
+                expect(item.immutableSource).toMatchObject({
+                  // Version leases bind the physical root (e.g. /var -> /private/var on macOS).
+                  physicalPath: await realpath(originalPath),
+                  dev: original.dev,
+                  ino: original.ino
+                })
               // Keep the old inode allocated so Linux cannot reuse it for the frozen copy.
               if (condition === 'missing') await rename(originalPath, `${originalPath}.old`)
               if (condition === 'replaced') {
@@ -1167,7 +1174,7 @@ describe('working-file evidence', () => {
         }
       )
       const result = await observation.finish()
-      expect(result.fileEvidence.fileReads).toBe('complete')
+      expect(result.fileEvidence.fileReads, JSON.stringify(result.fileEvidence)).toBe('complete')
       const sidecar = JSON.parse(
         await readFile(join(storageRoot!, result.fileEvidence.storageKey!), 'utf8')
       )

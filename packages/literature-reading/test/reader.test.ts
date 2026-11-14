@@ -644,33 +644,39 @@ it.each([false, true])(
     expect(found.documents[0].layoutOmittedPages).toEqual([1])
   }
 )
-it('uses source-owned physical page boundaries when document text imitates page markers', async () => {
-  const first =
-    '--- Page 1 ---\nFirst source.\n--- Page 99 ---\nneedle belongs to physical page one.'
-  const text = first + '\n\n--- Page 2 ---\nSecond source.'
-  const pageLayouts = [
-    positionedPage(1, 'needle belongs to physical page one.'),
-    positionedPage(2, 'Second source.')
-  ]
-  const reader = new LiteratureReader({
-    authorize: async () => async () => ({
-      text,
-      pageCount: 2,
-      truncated: false,
-      pageLayouts,
-      pageStarts: [
-        { page: 1, offset: 0 },
-        { page: 2, offset: first.length + 2 }
-      ]
+it.each([false, true])(
+  'uses source-owned physical page boundaries when document text imitates page markers; indexed=%s',
+  async (indexed) => {
+    const first =
+      '--- Page 1 ---\nFirst source.\n--- Page 99 ---\nneedle belongs to physical page one.'
+    const text = first + '\n\n--- Page 2 ---\nSecond source.'
+    const pageLayouts = [
+      positionedPage(1, 'needle belongs to physical page one.'),
+      positionedPage(2, 'Second source.')
+    ]
+    const reader = new LiteratureReader({
+      index: indexed ? createIndex(root) : undefined,
+      authorize: async () => async () => ({
+        text,
+        pageCount: 2,
+        truncated: false,
+        pageLayouts,
+        pageStarts: [
+          { page: 1, offset: 0 },
+          { page: 2, offset: first.length + 2 }
+        ]
+      })
     })
-  })
-  const found = await reader.searchDocuments([reference()], 'needle')
-  expect(found.passages[0].pageStart).toBe(1)
-  expect(found.passages[0].pageEnd).toBe(1)
-  expect(found.documents[0].pageLayouts).toEqual([pageLayouts[0]])
-  const read = await reader.readDocument(reference())
-  expect(read.passage.text).toBe(text)
-})
+    const found = await reader.searchDocuments([reference()], 'needle')
+    expect(found.passages[0].pageStart).toBe(1)
+    expect(found.passages[0].pageEnd).toBe(1)
+    expect(found.passages[0].pageSpans).toEqual([{ page: 1, textStart: 0, textEnd: first.length }])
+    expect(found.passages[0].content).toBe(text.slice(0, first.length))
+    expect(found.documents[0].pageLayouts).toEqual([pageLayouts[0]])
+    const read = await reader.readDocument(reference())
+    expect(read.passage.text).toBe(text)
+  }
+)
 
 it('keeps physical page ranges across native cursors inside page-like source text', async () => {
   const first = '--- Page 1 ---\n--- Page 99 ---\n' + 'source '.repeat(3000)
@@ -718,4 +724,174 @@ it.each([
     })
   })
   await expect(reader.readDocument(reference())).rejects.toThrow('invalid physical page boundaries')
+})
+
+it('keeps preceding source text tied to physical pages even when content imitates page markers', async () => {
+  const first = 'Prior evidence.\n--- Page 99 ---\nThe adjacent source paragraph.\n\n'
+  const text = first + '--- Page 2 ---\nneedle evidence.'
+  const reader = new LiteratureReader({
+    authorize: async () => async () => ({
+      text,
+      pageCount: 2,
+      truncated: false,
+      pageStarts: [
+        { page: 1, offset: 0 },
+        { page: 2, offset: first.length }
+      ]
+    })
+  })
+  const result = await reader.searchDocuments([reference()], 'needle')
+  expect(result.passages[0]).toMatchObject({
+    pageStart: 2,
+    precedingText: {
+      content: first,
+      pageStart: 1,
+      pageEnd: 1,
+      textStart: 0,
+      textEnd: first.length,
+      pageSpans: [{ page: 1, textStart: 0, textEnd: first.length }]
+    },
+    pageSpans: [{ page: 2, textStart: first.length, textEnd: text.length }]
+  })
+})
+
+it('does not certify marker-derived page spans without extractor-owned boundaries', async () => {
+  const reader = new LiteratureReader({
+    authorize: async () => async () => ({
+      text: '--- Page 1 ---\nPrior source.\n--- Page 2 ---\nneedle source.',
+      pageCount: 2,
+      truncated: false
+    })
+  })
+  const result = await reader.searchDocuments([reference()], 'needle')
+  expect(result.passages).not.toHaveLength(0)
+  expect(result.passages[0].pageSpans).toBeUndefined()
+  expect(result.passages[0].precedingText?.pageSpans).toBeUndefined()
+})
+
+it('opens cached text without loading, rebuilding, touching or falling back to writable open', async () => {
+  const { reader, index, extract } = setup('clinical cached evidence')
+  await reader.searchDocuments([reference()], 'clinical')
+  await index.flushPendingAccesses()
+  const backend = memoryIndex(root).store
+  const open = vi.spyOn(index, 'open')
+  const writes = [
+    vi.spyOn(backend, 'replace'),
+    vi.spyOn(backend, 'touch'),
+    vi.spyOn(backend, 'deleteExtraction'),
+    vi.spyOn(backend, 'purgeExpired')
+  ]
+  const authorize = vi.fn(async () => extract)
+  const coldReader = new LiteratureReader({ index, authorize })
+  const result = await coldReader.searchCachedDocuments([reference()], 'clinical')
+  expect(result).toMatchObject({
+    status: 'available',
+    coverage: {
+      requestedDocuments: 1,
+      cachedDocuments: 1,
+      notCachedDocuments: 0,
+      unavailableDocuments: 0
+    },
+    passages: [{ documentId: 'doc', content: 'clinical cached evidence' }]
+  })
+  expect(authorize).toHaveBeenCalledOnce()
+  expect(extract).toHaveBeenCalledOnce()
+  expect(open).not.toHaveBeenCalled()
+  for (const write of writes) expect(write).not.toHaveBeenCalled()
+  expect(index.pendingAccesses.size).toBe(0)
+})
+
+it('finds the latest OCR byte identity from a cold reader without trusting an obsolete fingerprint', async () => {
+  const index = createIndex(root)
+  const extract = vi
+    .fn()
+    .mockResolvedValueOnce({
+      text: 'clinical partial',
+      pageCount: 2,
+      truncated: false,
+      coverage: { textPages: [1], ocrPages: [], unavailablePages: [2], uncheckedPages: [] }
+    })
+    .mockResolvedValue({
+      text: 'clinical recovered',
+      pageCount: 2,
+      truncated: false,
+      coverage: { textPages: [1], ocrPages: [2], unavailablePages: [], uncheckedPages: [] }
+    })
+  const authorize = vi.fn(async () => extract)
+  const writer = new LiteratureReader({ index, authorize })
+  await writer.searchDocuments([reference()], 'clinical')
+  await writer.classificationEvidence(reference(), 'clinical')
+  await writer.searchDocuments([reference()], 'clinical')
+  const reader = new LiteratureReader({ index, authorize })
+  expect((await reader.searchCachedDocuments([reference()], 'clinical')).passages[0].content).toBe(
+    'clinical recovered'
+  )
+  expect(extract).toHaveBeenCalledTimes(2)
+  const changed = new LiteratureReader({
+    index,
+    authorize,
+    extractionFingerprint: () => createHash('sha256').update('changed').digest('hex')
+  })
+  expect(await changed.searchCachedDocuments([reference()], 'clinical')).toMatchObject({
+    coverage: { cachedDocuments: 0, notCachedDocuments: 1 },
+    passages: []
+  })
+  expect(extract).toHaveBeenCalledTimes(2)
+})
+
+it('reports an absent cache without creating it and still checks current authority', async () => {
+  const index = createIndex(root)
+  const extract = vi.fn()
+  const authorize = vi.fn(async () => extract)
+  const open = vi.spyOn(index, 'open')
+  const reader = new LiteratureReader({ index, authorize })
+  expect(await reader.searchCachedDocuments([reference()], 'clinical')).toMatchObject({
+    status: 'unavailable',
+    coverage: { cachedDocuments: 0, unavailableDocuments: 1 },
+    passages: []
+  })
+  expect(authorize).toHaveBeenCalledOnce()
+  expect(extract).not.toHaveBeenCalled()
+  expect(open).not.toHaveBeenCalled()
+})
+
+it('rechecks revoked cached sources and propagates cancellation during authorization', async () => {
+  const { reader, index, extract, authorize } = setup('clinical evidence')
+  await reader.searchDocuments([reference()], 'clinical')
+  authorize.mockRejectedValueOnce(new Error('revoked'))
+  expect(await reader.searchCachedDocuments([reference()], 'clinical')).toMatchObject({
+    coverage: { cachedDocuments: 0, unavailableDocuments: 1 },
+    passages: []
+  })
+  const controller = new AbortController()
+  const open = vi.spyOn(index, 'openExisting')
+  authorize.mockImplementationOnce(async () => {
+    controller.abort()
+    return extract
+  })
+  await expect(
+    reader.searchCachedDocuments([reference()], 'clinical', 8, controller.signal)
+  ).rejects.toMatchObject({ name: 'AbortError' })
+  // Only the preceding revoked lookup reached the index opener.
+  expect(open).not.toHaveBeenCalled()
+  expect(extract).toHaveBeenCalledOnce()
+})
+
+it('uses cache-only admission without invoking byte-authorizing callbacks', async () => {
+  const { reader: writer, index } = setup('clinical cached evidence')
+  await writer.searchDocuments([reference()], 'clinical')
+  const authorize = vi.fn()
+  const authorizeCached = vi.fn(async () => {})
+  const reader = new LiteratureReader({ index, authorize, authorizeCached })
+  expect(
+    (await reader.searchCachedDocuments([reference()], 'clinical')).coverage.cachedDocuments
+  ).toBe(1)
+  expect(authorizeCached).toHaveBeenCalledWith(reference(), undefined)
+  expect(authorize).not.toHaveBeenCalled()
+  authorizeCached.mockRejectedValueOnce(new Error('cache metadata revoked'))
+  expect(await reader.searchCachedDocuments([reference()], 'clinical')).toMatchObject({
+    coverage: { cachedDocuments: 0, unavailableDocuments: 1 },
+    passages: []
+  })
+  expect(authorize).not.toHaveBeenCalled()
 })

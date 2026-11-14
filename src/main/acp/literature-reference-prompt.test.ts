@@ -66,6 +66,18 @@ describe('buildLiteratureReferencePrompt', () => {
     expect(buildLiteratureReferencePrompt([{ type: 'text', text: 'Hello' }])).toBeUndefined()
   })
 
+  it('retains reported phase and masking only for relevant study-design comparisons', () => {
+    const prompt = buildLiteratureReferencePrompt([{ type: 'literature-scope', scope: 'project' }])!
+    expect(prompt).toContain(
+      'When comparing study designs, retain relevant trial phase and masking information'
+    )
+    expect(prompt).toContain('already established by the evidence used in that comparison')
+    expect(prompt).toContain('Omit unrelated optional elaboration')
+    expect(prompt).not.toContain(
+      'Omit optional elaboration, or cite its actual supporting passage separately'
+    )
+  })
+
   it('steers paged Library and Collection retrieval without attaching their contents', () => {
     const prompt = buildLiteratureReferencePrompt([
       { type: 'literature-scope', scope: 'project' },
@@ -88,6 +100,19 @@ describe('buildLiteratureReferencePrompt', () => {
     expect(prompt).toContain('do not batch-read every search result')
     expect(prompt).toContain('read_library_pdf')
     expect(prompt).toContain('bounded passages with page numbers')
+    expect(prompt).toContain('answer briefly and directly')
+    expect(prompt).toContain('[1](href)')
+    expect(prompt).toContain('short #library-cite= reference')
+    expect(prompt).toContain(
+      'specific numerical result, study population, method, endpoint or limitation'
+    )
+    expect(prompt).toContain('support elsewhere in the paper is insufficient')
+    expect(prompt).toContain('exact tool-generated sourceCitation.href or citations[].href')
+    expect(prompt).toContain('Do not construct, decode, rewrite, or modify a citation href')
+    expect(prompt).toContain('titles do not establish paper contents')
+    expect(prompt).toContain('Label abstract-only evidence as abstract evidence')
+    expect(prompt).toContain('Metadata citationHref is optional')
+    expect(prompt).toContain('Never index or read the entire Library')
     expect(prompt).toContain('Library itemId and linked-PDF documentId are not interchangeable')
     expect(prompt).toContain('not every Library search result or attachment')
     expect(prompt).toContain(

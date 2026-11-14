@@ -8,12 +8,66 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ContextUsageTracker } from './context-usage-tracker'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { claudeCodeFramework, opencodeFramework, codexFramework } from '../agent-framework'
-import type { LiteratureLibraryMcpHandler } from '../literature/library-mcp-server'
+import type {
+  LiteratureLibraryMcpHandler,
+  LiteratureLibraryFullTextSearchResult
+} from '../literature/library-mcp-server'
 import type { AgentMcpHttpHost } from './mcp-http-host'
 import { CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
 
 const projectRoot = resolve(__dirname, '../../..')
 const temporaryRoots: string[] = []
+
+// Preserve the inferred Vitest mock signatures used by the deferred-result checks below.
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
+const createScopedLibraryHarness = async (
+  searchLibraryFullText?: LiteratureLibraryMcpHandler['searchLibraryFullText']
+) => {
+  let handler!: LiteratureLibraryMcpHandler
+  const host = {
+    ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+    registerLiteratureLibrary: vi.fn((_id: string, next: LiteratureLibraryMcpHandler) => {
+      handler = next
+    }),
+    urlFor: vi.fn((kind: string, id: string) => `http://127.0.0.1:5/${kind}/${id}`),
+    unregister: vi.fn(),
+    clear: vi.fn(),
+    close: vi.fn()
+  } as unknown as AgentMcpHttpHost
+  const library = {
+    ...(searchLibraryFullText ? { searchLibraryFullText } : {}),
+    searchLibrary: vi.fn(async () => ({ items: [], totalCount: 0, hasMore: false })),
+    readAbstract: vi.fn(async () => ({
+      itemId: 'inside',
+      metadataRevision: 1,
+      title: 'Inside',
+      abstract: 'Evidence.'
+    })),
+    readPdf: vi.fn(async () => ({
+      itemTitle: 'Inside',
+      evidence: { passages: [{ content: 'Evidence.' }] }
+    })),
+    formatReferences: vi.fn(async () => ({ references: [] })),
+    saveToInbox: vi.fn(async () => ({ results: [] }))
+  }
+  const owners = composeAcpRuntimeBaseOwners({
+    appVersion: 'test',
+    defaultCwd: '/workspace',
+    mcpHttpHost: host,
+    literatureLibrary: library
+  })
+  const provision = await owners.sessionCapabilities.provision({
+    stableAppSessionId: 'session-1',
+    framework: claudeCodeFramework,
+    nativeMcpEnabled: true,
+    bridgeMcpAliasesEnabled: false,
+    policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+    sessionCwd: '/workspace',
+    projectId: 'project-1'
+  })
+  return { owners, handler, library, provision }
+}
+/* eslint-enable @typescript-eslint/explicit-function-return-type */
 
 afterEach(async () => {
   await Promise.all(
@@ -22,6 +76,220 @@ afterEach(async () => {
 })
 
 describe('ACP Runtime base composition', () => {
+  const emptyCachedResult: LiteratureLibraryFullTextSearchResult = {
+    scope: 'project',
+    query: 'evidence',
+    status: 'available',
+    retrievalMode: 'bm25',
+    coverageKind: 'cached-text-only',
+    fullTextCoverage: 'unverified',
+    coverage: {
+      requestedDocuments: 0,
+      cachedDocuments: 0,
+      notCachedDocuments: 0,
+      unavailableDocuments: 0
+    },
+    recordCount: 0,
+    totalRecordCount: 0,
+    sourceSelectionTruncated: false,
+    resultsRevalidated: true,
+    incomplete: true,
+    limitations: ['cached-pages-unverified'],
+    scannedSources: 0,
+    matches: [],
+    truncated: false
+  }
+
+  it.each([false, true])(
+    'forwards the sole full-text cancellation source without recombining it; prompt: %s',
+    async (withPrompt) => {
+      const search = vi.fn<NonNullable<LiteratureLibraryMcpHandler['searchLibraryFullText']>>(
+        async () => emptyCachedResult
+      )
+      const { owners, handler, provision } = await createScopedLibraryHarness(search)
+      const interaction = withPrompt
+        ? owners.sessionInteractions.claim({
+            sessionId: 'session-1',
+            kind: 'prompt',
+            parts: [{ type: 'literature-scope', scope: 'project' }]
+          })
+        : undefined
+      const controller = new AbortController()
+      try {
+        await expect(
+          handler.searchLibraryFullText!({
+            query: 'evidence',
+            ...(withPrompt ? {} : { signal: controller.signal })
+          })
+        ).resolves.toEqual(emptyCachedResult)
+        expect(search.mock.calls[0][0].signal).toBe(interaction?.signal ?? controller.signal)
+      } finally {
+        if (interaction) owners.sessionInteractions.release(interaction)
+        provision.release({ ownsStableIdentity: true })
+      }
+    }
+  )
+
+  it.each(['request', 'interaction'] as const)(
+    'cancels full-text discovery through the %s signal and rejects a late result',
+    async (source) => {
+      let finish!: (result: LiteratureLibraryFullTextSearchResult) => void
+      const search = vi.fn<NonNullable<LiteratureLibraryMcpHandler['searchLibraryFullText']>>(
+        () => new Promise((resolveResult) => (finish = resolveResult))
+      )
+      const { owners, handler, provision } = await createScopedLibraryHarness(search)
+      const interaction = owners.sessionInteractions.claim({
+        sessionId: 'session-1',
+        kind: 'prompt',
+        parts: [{ type: 'literature-scope', scope: 'project' }]
+      })
+      const controller = new AbortController()
+      try {
+        const pending = handler.searchLibraryFullText!({
+          query: 'evidence',
+          signal: controller.signal
+        })
+        const rejected = expect(pending).rejects.toThrow()
+        const forwarded = search.mock.calls[0][0].signal!
+        expect(forwarded.aborted).toBe(false)
+        if (source === 'request') controller.abort()
+        else owners.sessionInteractions.supersede(interaction)
+        expect(forwarded.aborted).toBe(true)
+        finish(emptyCachedResult)
+        await rejected
+      } finally {
+        owners.sessionInteractions.release(interaction)
+        provision.release({ ownsStableIdentity: true })
+      }
+    }
+  )
+
+  it('binds every evidence operation to all selected scopes while retaining ordinary Library tools', async () => {
+    const { owners, handler, library, provision } = await createScopedLibraryHarness()
+    const interaction = owners.sessionInteractions.claim({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      parts: [
+        { type: 'literature-scope', scope: 'collection', collectionId: 'first', name: 'First' },
+        { type: 'literature-scope', scope: 'collection', collectionId: 'second', name: 'Second' },
+        { type: 'literature', itemId: 'picked', metadataRevision: 1, item: {} as never },
+        { type: 'literature', itemId: 'also-picked', metadataRevision: 1, item: {} as never }
+      ]
+    })
+    for (const scope of ['library', 'project', undefined, 'items'] as const) {
+      await expect(handler.searchLibrary({ scope, itemIds: ['outside'] })).rejects.toThrow(
+        'LIBRARY_SCOPE_MISMATCH'
+      )
+      await expect(handler.readAbstract({ itemId: 'outside', scope })).rejects.toThrow(
+        'LIBRARY_SCOPE_MISMATCH'
+      )
+      await expect(
+        handler.readPdf({ itemId: 'outside', query: 'evidence', scope })
+      ).rejects.toThrow('LIBRARY_SCOPE_MISMATCH')
+    }
+    await expect(
+      handler.searchLibrary({ scope: 'collection', collectionId: 'unselected' })
+    ).rejects.toThrow('LIBRARY_SCOPE_MISMATCH')
+    await expect(
+      handler.searchLibrary({ scope: 'items', itemIds: ['picked', 'outside'] })
+    ).rejects.toThrow('LIBRARY_SCOPE_MISMATCH')
+    expect(library.searchLibrary).not.toHaveBeenCalled()
+    expect(library.readAbstract).not.toHaveBeenCalled()
+    expect(library.readPdf).not.toHaveBeenCalled()
+    for (const collectionId of ['first', 'second']) {
+      await handler.searchLibrary({ scope: 'collection', collectionId })
+      await handler.readAbstract({ itemId: 'inside', scope: 'collection', collectionId })
+      await handler.readPdf({
+        itemId: 'inside',
+        query: 'evidence',
+        scope: 'collection',
+        collectionId
+      })
+    }
+    await handler.searchLibrary({ scope: 'items', itemIds: ['also-picked', 'picked'] })
+    await handler.readAbstract({ itemId: 'also-picked', scope: 'items' })
+    await handler.readPdf({ itemId: 'picked', query: 'evidence', scope: 'items' })
+    // Bibliography formatting is not an evidence read and keeps its existing contract.
+    await handler.formatReferences!({ itemIds: ['outside'], styleId: 'apa', locale: 'en-US' })
+    expect(library.formatReferences).toHaveBeenCalledOnce()
+    owners.sessionInteractions.release(interaction)
+    const project = owners.sessionInteractions.claim({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      parts: [{ type: 'literature-scope', scope: 'project' }]
+    })
+    await handler.searchLibrary({})
+    await handler.readAbstract({ itemId: 'inside' })
+    await expect(handler.readAbstract({ itemId: 'outside', scope: 'library' })).rejects.toThrow(
+      'LIBRARY_SCOPE_MISMATCH'
+    )
+    owners.sessionInteractions.release(project)
+    owners.sessionInteractions.claim({ sessionId: 'session-1', kind: 'prompt' })
+    await handler.searchLibrary({ scope: 'library' })
+    await handler.readAbstract({ itemId: 'outside', scope: 'items' })
+    await handler.readPdf({ itemId: 'outside', query: 'evidence', scope: 'library' })
+    provision.release({ ownsStableIdentity: true })
+  })
+
+  it.each(['searchLibrary', 'readAbstract', 'readPdf'] as const)(
+    'discards late %s results and clears the old scope when a prompt is replaced',
+    async (operation) => {
+      const { owners, handler, library, provision } = await createScopedLibraryHarness()
+      const interaction = owners.sessionInteractions.claim({
+        sessionId: 'session-1',
+        kind: 'prompt',
+        parts: [{ type: 'literature-scope', scope: 'collection', collectionId: 'old', name: 'Old' }]
+      })
+      let resolve!: (value: never) => void
+      library[operation].mockImplementationOnce(
+        () =>
+          new Promise<never>((done) => {
+            resolve = done
+          })
+      )
+      const request = {
+        itemId: 'inside',
+        query: 'evidence',
+        scope: 'collection' as const,
+        collectionId: 'old'
+      }
+      const pending = handler[operation]!(request)
+      const rejected = expect(pending).rejects.toThrow()
+      owners.sessionInteractions.supersede(interaction)
+      const next = owners.sessionInteractions.claim({
+        sessionId: 'session-1',
+        kind: 'prompt',
+        parts: [{ type: 'literature-scope', scope: 'collection', collectionId: 'new', name: 'New' }]
+      })
+      resolve({} as never)
+      await rejected
+      await expect(handler[operation]!({ ...request, collectionId: 'old' })).rejects.toThrow(
+        'LIBRARY_SCOPE_MISMATCH'
+      )
+      await handler[operation]!({ ...request, collectionId: 'new' })
+      owners.sessionInteractions.release(interaction)
+      expect(owners.sessionInteractions.current('session-1')).toBe(next)
+      owners.sessionInteractions.release(next)
+      library[operation].mockImplementationOnce(
+        () =>
+          new Promise<never>((done) => {
+            resolve = done
+          })
+      )
+      const idleResult = handler[operation]!({ ...request, scope: 'library' })
+      const discardIdleResult = expect(idleResult).rejects.toThrow('LIBRARY_CONTEXT_CHANGED')
+      const newest = owners.sessionInteractions.claim({
+        sessionId: 'session-1',
+        kind: 'prompt',
+        parts: [{ type: 'literature-scope', scope: 'project' }]
+      })
+      resolve({} as never)
+      await discardIdleResult
+      owners.sessionInteractions.release(newest)
+      provision.release({ ownsStableIdentity: true })
+    }
+  )
+
   it('builds a fresh closed owner graph and preserves injected shared dependencies', () => {
     const contextUsageTracker = new ContextUsageTracker()
     const setTimer = vi.fn(() => 1 as never)
@@ -505,7 +773,30 @@ describe('ACP Runtime base composition', () => {
       })
     )
     await owners.artifactTurns!.dispose(artifactTurn)
+    let resolveLatePdf!: (value: Awaited<ReturnType<typeof readPdf>>) => void
+    readPdf.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolveLatePdf = done
+        })
+    )
+    const latePdf = handler!.readPdf({ itemId: 'item-1', query: 'late', scope: 'project' })
+    const discarded = expect(latePdf).rejects.toThrow('LIBRARY_CONTEXT_CHANGED')
     owners.sessionInteractions.release(interaction)
+    const replacement = owners.sessionInteractions.claim({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      promptMessageId: 'message-2'
+    })
+    resolveLatePdf({
+      itemTitle: 'Late Paper',
+      evidence: { passages: [{ content: 'Late evidence.' }] }
+    })
+    await discarded
+    expect(recordLiteraturePdfRead).toHaveBeenCalledOnce()
+    owners.sessionInteractions.release(interaction)
+    expect(owners.sessionInteractions.current('session-1')).toBe(replacement)
+    owners.sessionInteractions.release(replacement)
     provision.release({ ownsStableIdentity: true })
   })
 

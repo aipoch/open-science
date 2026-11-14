@@ -131,7 +131,10 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
     itemId: string,
     patch: PreviewFileViewState
   ) => void
-  upsertAndActivateItem: (item: PreviewItem) => void
+  upsertAndActivateItem: (
+    item: PreviewItem,
+    options?: { onActivated?: () => void; signal?: AbortSignal }
+  ) => void
   activateItem: (itemId: string) => void
   removeItem: (itemId: string) => boolean
   removeOtherItems: (keepItemId: string) => boolean
@@ -761,16 +764,19 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   },
 
   // Opens the panel and activates the item for first-time preview requests.
-  upsertAndActivateItem: (item) => {
+  upsertAndActivateItem: (item, options) => {
     const activeItem = redirectPlanArtifactFileItem(item)
     const current = get()
-    const upsertAndActivate = (): void =>
+    const upsertAndActivate = (): void => {
+      if (options?.signal?.aborted) return
       set((state) => ({
         ...upsertPreviewItem(state, activeItem),
         activeItemId: activeItem.id,
         panelState: 'open',
         openRequestVersion: state.openRequestVersion + 1
       }))
+      options?.onActivated?.()
+    }
     if (
       changesActiveFileSelection(current, activeItem) ||
       (current.activeItemId !== undefined && current.activeItemId !== activeItem.id)

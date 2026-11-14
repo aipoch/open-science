@@ -312,6 +312,176 @@ describe('WorkspacePage customize prefill', () => {
     expect(container.querySelector('[data-testid="conversation"]')).not.toBeNull()
   })
 
+  it.each(['project', 'collection'] as const)(
+    'direct composer prepares an empty %s scope and focuses without sending',
+    async (kind) => {
+      const dispatch = vi.spyOn(window, 'dispatchEvent')
+      await renderPage()
+      const scope =
+        kind === 'project'
+          ? { type: 'literature-scope' as const, scope: 'project' as const }
+          : {
+              type: 'literature-scope' as const,
+              scope: 'collection' as const,
+              collectionId: 'collection-1',
+              name: 'Evidence'
+            }
+      await act(async () => {
+        useNavigationStore.getState().startLiteratureReviewConversation('proj-1', scope)
+      })
+      expect(conversationProps.composer.view.doc).toEqual({ nodes: [scope] })
+      expect(useNavigationStore.getState().pendingLiteratureReviewPrefill).toBeUndefined()
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'open-science:focus-composer' })
+      )
+      expect(container.querySelector('[role="alertdialog"]')).toBeNull()
+      expect(runtime.sendMessage).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([undefined, 'Synthesize this literature into a concise review.'])(
+    'direct composer preserves every existing node, ignores a default prompt, and deduplicates repeat requests: %s',
+    async (prompt) => {
+      await renderPage()
+      const original: ComposerDoc = {
+        nodes: [
+          { type: 'text', text: 'My unsent question ' },
+          { type: 'skill', id: 'skill-a', name: 'Research' },
+          { type: 'pasted-text', id: 'paste-a', text: 'Unsent source material' }
+        ]
+      }
+      await act(async () => conversationProps.composer.actions.changeDoc(original))
+      const scope = {
+        type: 'literature-scope',
+        scope: 'collection',
+        collectionId: 'collection-1',
+        name: 'Evidence'
+      } as const
+      await act(async () => {
+        useNavigationStore.getState().startLiteratureReviewConversation('proj-1', scope, prompt)
+      })
+      const first = conversationProps.composer.view.doc
+      expect(first.nodes.slice(0, original.nodes.length)).toEqual(original.nodes)
+      expect(first.nodes.slice(original.nodes.length)).toEqual([{ type: 'text', text: ' ' }, scope])
+      await act(async () => {
+        useNavigationStore
+          .getState()
+          .startLiteratureReviewConversation(
+            'proj-1',
+            { ...scope, name: 'Renamed collection' },
+            prompt
+          )
+      })
+      expect(conversationProps.composer.view.doc).toEqual(first)
+      expect(
+        conversationProps.composer.view.doc.nodes.filter((node) => node.type === 'literature-scope')
+      ).toHaveLength(1)
+      expect(conversationProps.composer.view.doc.nodes).not.toContainEqual(
+        expect.objectContaining({ text: ` ${prompt}` })
+      )
+      expect(useNavigationStore.getState().pendingLiteratureReviewPrefill).toBeUndefined()
+      expect(container.querySelector('[role="alertdialog"]')).toBeNull()
+      expect(runtime.sendMessage).not.toHaveBeenCalled()
+    }
+  )
+
+  it('direct composer rejects overflow without trimming or retrying and permits a new explicit request', async () => {
+    await renderPage()
+    const original: ComposerDoc = {
+      nodes: Array.from({ length: 10 }, (_, index) => ({
+        type: 'artifact',
+        id: `file-${index}`,
+        name: `file-${index}.txt`,
+        path: `/files/${index}.txt`,
+        source: 'artifact'
+      }))
+    }
+    await act(async () => conversationProps.composer.actions.changeDoc(original))
+    const dispatch = vi.spyOn(window, 'dispatchEvent')
+    await act(async () => {
+      useNavigationStore
+        .getState()
+        .startLiteratureReviewConversation('proj-1', { type: 'literature-scope', scope: 'project' })
+    })
+    expect(conversationProps.composer.view.doc).toEqual(original)
+    expect(conversationProps.composer.view.error).toBe(
+      'Could not add references. Check that the conversation is editable and the reference limit is not exceeded.'
+    )
+    expect(useNavigationStore.getState().pendingLiteratureReviewPrefill).toBeUndefined()
+    const focusCount = dispatch.mock.calls.filter(
+      ([event]) => event.type === 'open-science:focus-composer'
+    ).length
+    await act(async () => useNavigationStore.setState({ userNavigationRevision: 7 }))
+    expect(
+      dispatch.mock.calls.filter(([event]) => event.type === 'open-science:focus-composer')
+    ).toHaveLength(focusCount)
+    expect(conversationProps.composer.view.doc).toEqual(original)
+    await act(async () =>
+      conversationProps.composer.actions.changeDoc({ nodes: original.nodes.slice(0, 9) })
+    )
+    await act(async () => {
+      useNavigationStore
+        .getState()
+        .startLiteratureReviewConversation('proj-1', { type: 'literature-scope', scope: 'project' })
+    })
+    expect(
+      conversationProps.composer.view.doc.nodes.filter((node) => node.type === 'artifact')
+    ).toHaveLength(9)
+    expect(conversationProps.composer.view.doc.nodes.at(-1)).toEqual({
+      type: 'literature-scope',
+      scope: 'project'
+    })
+    expect(conversationProps.composer.view.error).toBeNull()
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('direct composer waits for the destination project new draft without writing to other projects or selected sessions', async () => {
+    useProjectStore.setState((state) => ({
+      projects: [
+        ...state.projects,
+        {
+          id: 'proj-2',
+          name: 'Other project',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    }))
+    useSessionStore.setState((state) => ({
+      sessions: [...state.sessions, createSession('sess-c', 'proj-2')]
+    }))
+    await renderPage()
+    const source: ComposerDoc = { nodes: [{ type: 'text', text: 'Original project draft' }] }
+    await act(async () => conversationProps.composer.actions.changeDoc(source))
+    await act(async () =>
+      useNavigationStore.setState({
+        pendingLiteratureReviewPrefill: {
+          projectId: 'proj-2',
+          scope: { type: 'literature-scope', scope: 'project' },
+          requestId: 1
+        }
+      })
+    )
+    expect(conversationProps.composer.view.doc).toEqual(source)
+    expect(useNavigationStore.getState().pendingLiteratureReviewPrefill).toBeDefined()
+    await act(async () => {
+      useSessionStore.setState({ selectedSessionId: 'sess-c' })
+      useNavigationStore.setState({ activeProjectId: 'proj-2' })
+    })
+    expect(conversationProps.composer.view.doc).toEqual({ nodes: [] })
+    expect(useNavigationStore.getState().pendingLiteratureReviewPrefill).toBeDefined()
+    await act(async () => useSessionStore.setState({ selectedSessionId: undefined }))
+    expect(conversationProps.composer.view.doc).toEqual({
+      nodes: [{ type: 'literature-scope', scope: 'project' }]
+    })
+    expect(useNavigationStore.getState().pendingLiteratureReviewPrefill).toBeUndefined()
+    await act(async () => useNavigationStore.setState({ activeProjectId: 'proj-1' }))
+    expect(conversationProps.composer.view.doc).toEqual(source)
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
   it('uses the normal picked-Skill mechanism: the chip is a real skill node, not parsed text', async () => {
     useNavigationStore.setState({
       pendingCustomizePrefill: { projectId: 'proj-1', goal: 'specialist', requestId: 1 }

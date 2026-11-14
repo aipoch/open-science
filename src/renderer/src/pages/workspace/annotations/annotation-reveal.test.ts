@@ -5,6 +5,7 @@ import {
   requestAnnotationReveal,
   requestBookmarkReveal,
   requestPdfAnnotationReveal,
+  requestPdfSourceReveal,
   annotationRevealScrollBehavior,
   revealTextAnnotationRange,
   subscribeAnnotationReveal,
@@ -12,6 +13,8 @@ import {
   subscribeBookmarkReveal,
   subscribeBookmarkRevealPreparation
 } from './annotation-reveal'
+import { previewLeaveGuards } from '@/stores/preview-leave-guard'
+import type { BookmarkRevealTarget, PdfSourceRevealTarget } from './annotation-reveal'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore,
@@ -65,6 +68,148 @@ describe('annotation reveal', () => {
     target: 'agent',
     quote: 'quoted evidence',
     source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }
+  })
+
+  const librarySourceTarget = (): PdfSourceRevealTarget => ({
+    id: 'retrieved-source-page',
+    kind: 'pdf',
+    source: {
+      kind: 'literature-attachment-version',
+      sourceFileId: 'attachment-1',
+      versionId: 'original-version',
+      path: createLiteratureAttachmentVersionReference('original-version'),
+      name: 'study.pdf',
+      checksum: 'a'.repeat(64)
+    },
+    selector: { kind: 'page-note', pageNumber: 2, pageRotation: 0, coordinateVersion: 1 }
+  })
+
+  it.each([false, true])(
+    'reveals an unchanged global PDF locator with an original source tab already open=%s',
+    async (alreadyOpen) => {
+      const target = librarySourceTarget()
+      const existing: PreviewFileItem = {
+        id: 'literature:original-version',
+        projectId: 'project-1',
+        sessionId: '__literature__',
+        title: 'study.pdf',
+        name: 'study.pdf',
+        type: 'file',
+        format: 'pdf',
+        source: 'literature',
+        path: target.source.path,
+        selectedVersionId: target.source.versionId,
+        size: 1234,
+        mtimeMs: 42
+      }
+      if (alreadyOpen) usePreviewWorkbenchStore.getState().upsertAndActivateItem(existing)
+      const delivered = vi.fn<(target: BookmarkRevealTarget) => boolean>(() => true)
+      const stop = subscribeBookmarkReveal(delivered)
+      try {
+        const request = requestPdfSourceReveal(target, { projectId: 'project-1' })
+        expect(request.admitted).toBe(true)
+        await expect(request.result).resolves.toBe('revealed')
+        expect(delivered).toHaveBeenCalledExactlyOnceWith(target)
+        expect(delivered.mock.calls[0][0]).toBe(target)
+        expect(target.source.projectId).toBeUndefined()
+        expect(usePreviewWorkbenchStore.getState().items).toEqual([
+          expect.objectContaining({
+            projectId: 'project-1',
+            path: target.source.path,
+            selectedVersionId: 'original-version',
+            ...(alreadyOpen ? { id: existing.id, size: 1234, mtimeMs: 42 } : {})
+          })
+        ])
+      } finally {
+        stop()
+      }
+    }
+  )
+
+  it('starts PDF locator delivery only after a leave confirmation held longer than five seconds', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+      id: 'dirty-preview',
+      sessionId: 'session-1',
+      title: 'draft.md',
+      name: 'draft.md',
+      path: '/draft.md',
+      type: 'file',
+      format: 'markdown'
+    })
+    let accept!: () => boolean | void
+    const stopGuard = previewLeaveGuards.register('workbench:project-1:dirty-preview', (action) => {
+      accept = action
+      return false
+    })
+    const delivered = vi.fn<(target: BookmarkRevealTarget) => boolean>(() => true)
+    const stopReveal = subscribeBookmarkReveal(delivered)
+    const completed = vi.fn()
+    const controller = new AbortController()
+    try {
+      const target = librarySourceTarget()
+      const request = requestPdfSourceReveal(target, {
+        projectId: 'project-1',
+        signal: controller.signal
+      })
+      request.result.then(completed)
+      expect(request.admitted).toBe(false)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(completed).not.toHaveBeenCalled()
+      expect(delivered).not.toHaveBeenCalled()
+      expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('dirty-preview')
+      accept()
+      await expect(request.result).resolves.toBe('revealed')
+      expect(delivered).toHaveBeenCalledWith(target)
+      expect(usePreviewWorkbenchStore.getState().items.at(-1)).toMatchObject({
+        path: target.source.path,
+        selectedVersionId: target.source.versionId
+      })
+    } finally {
+      controller.abort()
+      stopGuard()
+      stopReveal()
+    }
+  })
+
+  it('cancels a deferred source request without opening a tab or publishing a locator', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+      id: 'dirty-preview',
+      sessionId: 'session-1',
+      title: 'draft.md',
+      name: 'draft.md',
+      path: '/draft.md',
+      type: 'file',
+      format: 'markdown'
+    })
+    let deferred!: () => boolean | void
+    const stopGuard = previewLeaveGuards.register('workbench:project-1:dirty-preview', (action) => {
+      deferred = action
+      return false
+    })
+    const delivered = vi.fn<(target: BookmarkRevealTarget) => boolean>(() => true)
+    const stopReveal = subscribeBookmarkReveal(delivered)
+    const controller = new AbortController()
+    const removeAbortListener = vi.spyOn(controller.signal, 'removeEventListener')
+    try {
+      const request = requestPdfSourceReveal(librarySourceTarget(), {
+        projectId: 'project-1',
+        signal: controller.signal
+      })
+      expect(request.admitted).toBe(false)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(delivered).not.toHaveBeenCalled()
+      controller.abort()
+      await expect(request.result).resolves.toBe('cancelled')
+      expect(removeAbortListener).toHaveBeenCalledWith('abort', expect.any(Function))
+      deferred()
+      expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
+      expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('dirty-preview')
+      expect(delivered).not.toHaveBeenCalled()
+    } finally {
+      stopGuard()
+      stopReveal()
+      removeAbortListener.mockRestore()
+    }
   })
 
   it.each(['artifact', 'upload'] as const)(

@@ -1026,6 +1026,7 @@ export class AcpSessionCapabilityOwner {
             : undefined,
           library: libraryAllowed
             ? {
+                searchFullText: Boolean(libraryHandler?.searchLibraryFullText),
                 formatReferences: Boolean(libraryHandler?.formatReferences),
                 formatCitationDocument: Boolean(libraryHandler?.formatCitationDocument),
                 prepareLatexBundle: Boolean(libraryHandler?.prepareLatexBundle),

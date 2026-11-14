@@ -8035,6 +8035,19 @@
     "Source URL": "소스 URL",
     "Branch or tag": "브랜치 또는 태그",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "스페셜리스트 마켓플레이스 카탈로그를 게시하는 공개 GitHub 저장소 또는 브랜치 URL을 사용하세요.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "설치한 스킬은 에이전트 동작을 변경할 수 있습니다. 신뢰할 수 있는 소스만 추가하세요."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "설치한 스킬은 에이전트 동작을 변경할 수 있습니다. 신뢰할 수 있는 소스만 추가하세요.",
+    "Agent Session cleanup did not complete.": "에이전트 세션 정리가 완료되지 않았습니다.",
+    "View surrounding text": "주변 원문 보기",
+    "Source excerpt": "출처 발췌문",
+    "PDF evidence": "PDF 근거",
+    "View reference": "문헌 보기",
+    "View source page": "출처 페이지 보기",
+    "The source could not be opened.": "출처를 열 수 없습니다.",
+    "Ask about this project": "이 프로젝트의 문헌에 질문하기",
+    "Ask about this collection": "이 컬렉션의 문헌에 질문하기",
+    "Choose a project for this conversation.": "이 대화에 사용할 프로젝트를 선택하세요.",
+    "Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.": "전문 근거가 불완전합니다. 선택한 문헌에 PDF가 첨부되어 있는지 확인하고 본문을 준비한 후 다시 시도하세요.",
+    "Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.": "캐시된 텍스트만으로는 전문 전체가 포함되었다고 볼 수 없습니다. 근거가 없다는 결론을 내리기 전에 원본 PDF를 확인하세요.",
+    "Continue searching the remaining references or refine the query within the selected scope.": "나머지 문헌을 계속 검색하거나 선택한 범위 안에서 검색어를 조정하세요."
   }
 }

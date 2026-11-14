@@ -31,6 +31,7 @@ type SearchLiteratureIndexInput = Readonly<{
   extractionIds: readonly string[]
   query: string
   limit?: number
+  signal?: AbortSignal
 }>
 
 const MAX_INDEX_CHUNKS = 20_000
@@ -76,7 +77,8 @@ const withRelativeScore = <T extends { rank: number }>(
 export class LiteratureFullTextIndex {
   constructor(
     private readonly client: LiteratureIndexStore,
-    private readonly owner: LiteratureIndex
+    private readonly owner: LiteratureIndex,
+    private readonly readOnly = false
   ) {}
 
   async close(): Promise<void> {
@@ -91,6 +93,18 @@ export class LiteratureFullTextIndex {
   async hasExtraction(extractionId: string): Promise<boolean> {
     if (!extractionId.trim()) throw new Error('Literature extraction identity is invalid.')
     return this.client.hasExtraction(extractionId)
+  }
+
+  async findExtraction(
+    documentChecksum: string,
+    extractorFingerprint: string
+  ): Promise<string | undefined> {
+    if (!HASH_PATTERN.test(documentChecksum) || !HASH_PATTERN.test(extractorFingerprint)) {
+      throw new Error('Literature extraction identity is invalid.')
+    }
+    if (this.client.findExtraction)
+      return this.client.findExtraction(documentChecksum, extractorFingerprint)
+    return undefined
   }
 
   async replace(input: ReplaceLiteratureIndexInput): Promise<void> {
@@ -120,7 +134,11 @@ export class LiteratureFullTextIndex {
   }
 
   async search(input: SearchLiteratureIndexInput): Promise<LiteratureSearchResult[]> {
-    if (input.extractionIds.length === 0 || input.extractionIds.length > 3) {
+    input.signal?.throwIfAborted()
+    if (
+      input.extractionIds.length === 0 ||
+      input.extractionIds.length > (this.readOnly ? 100 : 3)
+    ) {
       this.owner.log('Literature BM25 search skipped', {
         reason: 'invalid-extraction-count',
         extractionCount: input.extractionIds.length,
@@ -146,9 +164,11 @@ export class LiteratureFullTextIndex {
       const rows = await this.client.search({
         extractionIds: input.extractionIds,
         terms: query,
-        limit: candidateLimit
+        limit: candidateLimit,
+        signal: input.signal
       })
-      this.markAccess(input.extractionIds)
+      input.signal?.throwIfAborted()
+      if (!this.readOnly) this.markAccess(input.extractionIds)
       const candidates = rows.map(({ sectionTitle, ...row }) =>
         withRelativeScore(
           {
@@ -234,6 +254,12 @@ export class LiteratureIndex {
   }
   async open(): Promise<LiteratureFullTextIndex> {
     return new LiteratureFullTextIndex(await this.options.open(), this)
+  }
+
+  async openExisting(): Promise<LiteratureFullTextIndex | undefined> {
+    if (!this.options.openExisting || !(await this.options.exists())) return undefined
+    const client = await this.options.openExisting()
+    return client ? new LiteratureFullTextIndex(client, this, true) : undefined
   }
 
   async withSearch<T>(operation: () => Promise<T>): Promise<T> {

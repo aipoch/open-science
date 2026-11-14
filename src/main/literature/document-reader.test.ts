@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto'
+import { PrismaClient } from '@prisma/client'
+import { migrateApplicationDatabase } from '../projects/prisma-client'
+import { LiteratureAttachmentAuthority } from './attachment-authority'
+import { SessionPdfSourceResolver } from './session-pdf-source-resolver'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,7 +19,6 @@ import { MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import { extractPdfText } from '../uploads/pdf-text-extraction'
 import { literatureIndex } from './full-text-index'
 import { LiteratureDocumentReader } from './document-reader'
-import type { SessionPdfSourceResolver } from './session-pdf-source-resolver'
 
 import { createLiteratureMcpServer, LITERATURE_READ_DOCUMENT_TOOL_NAME } from './mcp-server'
 
@@ -879,6 +882,205 @@ describe('LiteratureDocumentReader', () => {
       await expect(reader.classificationEvidence(request)).rejects.toThrow('LINKED_PDF_UNAVAILABLE')
       expect(extractPdfText).not.toHaveBeenCalled()
     })
+  })
+
+  it('admits cached evidence through real metadata authority without reading or modifying original content', async () => {
+    const client = new PrismaClient({
+      datasources: {
+        db: { url: `file:${join(root, 'cache-authority.sqlite')}?connection_limit=1` }
+      },
+      log: [{ emit: 'event', level: 'query' }]
+    })
+    // Observe the production reader connection independently of fixture mutations.
+    // Prisma query events can arrive after a fixture write's promise has resolved.
+    const authorityClient = new PrismaClient({
+      datasources: {
+        db: { url: `file:${join(root, 'cache-authority.sqlite')}?connection_limit=1` }
+      },
+      log: [{ emit: 'event', level: 'query' }]
+    })
+    const statements: string[] = []
+    authorityClient.$on('query', (event) => statements.push(event.query))
+    const verify = vi.fn()
+    const openLease = vi.fn()
+    const authority = new LiteratureAttachmentAuthority({
+      getClient: async () => authorityClient,
+      content: { verify, openLease }
+    })
+    const sources = new SessionPdfSourceResolver({
+      inputs: { resolveVersion: vi.fn(), openContent: vi.fn() },
+      literature: authority
+    })
+    const reader = new LiteratureDocumentReader({
+      storageRoot: root,
+      sources,
+      sessions: { loadSessionForContinuation: vi.fn() }
+    })
+    const request = {
+      projectId: 'project-1',
+      query: 'cached',
+      attachments: [
+        {
+          attachmentId: 'cached-attachment',
+          attachmentVersionId: 'cached-version',
+          filename: 'cached.pdf',
+          sizeBytes: 42,
+          checksum
+        }
+      ]
+    }
+    try {
+      await migrateApplicationDatabase(client)
+      await client.literatureItem.create({
+        data: { id: 'cached-item', itemType: 'journalArticle', title: 'Cached paper' }
+      })
+      await client.contentBlob.create({
+        data: {
+          id: 'cached-blob',
+          checksum,
+          sizeBytes: 42n,
+          contentType: 'application/pdf',
+          storageKey: 'content/nonexistent-original.pdf',
+          state: 'available'
+        }
+      })
+      await client.literatureAttachment.create({
+        data: { id: 'cached-attachment', itemId: 'cached-item' }
+      })
+      await client.literatureAttachmentVersion.create({
+        data: {
+          id: 'cached-version',
+          attachmentId: 'cached-attachment',
+          contentBlobId: 'cached-blob',
+          versionNumber: 1,
+          filename: 'cached.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 42n,
+          checksum,
+          pageCount: 2
+        }
+      })
+      const fingerprint = createHash('sha256')
+        .update('open-science-pdfjs-automatic-reading-order-ocr-v2')
+        .digest('hex')
+      const extractionId = createHash('sha256').update(`${checksum}:${fingerprint}`).digest('hex')
+      const index = await literatureIndex(root).open()
+      try {
+        await index.replace({
+          extractionId,
+          documentChecksum: checksum,
+          extractorFingerprint: fingerprint,
+          chunks: [
+            { pageStart: 2, pageEnd: 2, textStart: 0, textEnd: 15, content: 'cached evidence' }
+          ]
+        })
+      } finally {
+        await index.close()
+      }
+      const before = await client.contentBlob.findUnique({ where: { id: 'cached-blob' } })
+      statements.length = 0
+      expect(await reader.searchCachedAttachments(request)).toMatchObject({
+        status: 'available',
+        coverage: { cachedDocuments: 1 },
+        passages: [{ content: 'cached evidence', pageStart: 2 }]
+      })
+      expect(
+        statements.filter((statement) =>
+          /\b(UPDATE|INSERT|DELETE|REPLACE|CREATE|ALTER|DROP)\b/i.test(statement)
+        )
+      ).toEqual([])
+      expect(await client.contentBlob.findUnique({ where: { id: 'cached-blob' } })).toEqual(before)
+
+      const unavailable = async (value = request): Promise<void> => {
+        statements.length = 0
+        expect(await reader.searchCachedAttachments(value)).toMatchObject({
+          coverage: { cachedDocuments: 0, unavailableDocuments: 1 },
+          passages: []
+        })
+        expect(
+          statements.filter((statement) =>
+            /\b(UPDATE|INSERT|DELETE|REPLACE|CREATE|ALTER|DROP)\b/i.test(statement)
+          )
+        ).toEqual([])
+      }
+      for (const changed of [
+        { checksum: secondChecksum },
+        { sizeBytes: 43 },
+        { filename: 'other.pdf' },
+        { attachmentId: 'foreign' }
+      ])
+        await unavailable({ ...request, attachments: [{ ...request.attachments[0], ...changed }] })
+      await client.contentBlob.update({
+        where: { id: 'cached-blob' },
+        data: { state: 'quarantined' }
+      })
+      await unavailable()
+      await client.contentBlob.update({
+        where: { id: 'cached-blob' },
+        data: { state: 'available', checksum: secondChecksum }
+      })
+      await unavailable()
+      await client.contentBlob.update({ where: { id: 'cached-blob' }, data: { checksum } })
+      await client.literatureItem.update({
+        where: { id: 'cached-item' },
+        data: { deletedAt: new Date() }
+      })
+      await unavailable()
+      await client.literatureItem.update({
+        where: { id: 'cached-item' },
+        data: { deletedAt: null }
+      })
+      await client.literatureAttachmentVersion.create({
+        data: {
+          id: 'replacement-version',
+          attachmentId: 'cached-attachment',
+          contentBlobId: 'cached-blob',
+          versionNumber: 2,
+          filename: 'cached.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 42n,
+          checksum: secondChecksum
+        }
+      })
+      await unavailable()
+      expect(verify).not.toHaveBeenCalled()
+      expect(openLease).not.toHaveBeenCalled()
+      expect(extractPdfText).not.toHaveBeenCalled()
+    } finally {
+      await reader.close()
+      await authorityClient.$disconnect()
+      await client.$disconnect()
+    }
+  })
+
+  it('does not fall back to byte-verifying authorization when cache admission is unavailable', async () => {
+    const resolveVersion = vi.fn()
+    const reader = new LiteratureDocumentReader({
+      storageRoot: root,
+      sources: { resolveVersion },
+      sessions: { loadSessionForContinuation: vi.fn() }
+    })
+    expect(
+      await reader.searchCachedAttachments({
+        projectId: 'project-1',
+        query: 'evidence',
+        attachments: [
+          {
+            attachmentId: 'attachment',
+            attachmentVersionId: 'version',
+            filename: 'paper.pdf',
+            sizeBytes: 42,
+            checksum
+          }
+        ]
+      })
+    ).toMatchObject({
+      coverage: { unavailableDocuments: 1, cachedDocuments: 0 },
+      passages: []
+    })
+    expect(resolveVersion).not.toHaveBeenCalled()
+    expect(extractPdfText).not.toHaveBeenCalled()
+    await reader.close()
   })
 
   it('fails closed when the active message has no linked PDF snapshot', async () => {

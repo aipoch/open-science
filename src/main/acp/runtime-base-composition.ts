@@ -214,6 +214,56 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       }
     }
   }
+  const libraryEvidenceContext = (
+    appSessionId: string,
+    request: {
+      scope?: 'library' | 'project' | 'collection' | 'items'
+      collectionId?: string
+      itemIds?: readonly string[]
+      itemId?: string
+      signal?: AbortSignal
+    }
+  ) => {
+    const interaction = sessionInteractions.current(appSessionId)
+    const selection = interaction?.kind === 'prompt' ? interaction.literatureSelection : undefined
+    const check = () => {
+      request.signal?.throwIfAborted()
+      interaction?.signal.throwIfAborted()
+      if (sessionInteractions.current(appSessionId) !== interaction)
+        throw new Error('LIBRARY_CONTEXT_CHANGED: The active Library question has changed.')
+    }
+    check()
+    if (selection) {
+      const scope = request.scope ?? 'project'
+      const itemIds = request.itemId ? [request.itemId] : request.itemIds
+      const allowed =
+        (scope === 'project' && selection.project) ||
+        (scope === 'collection' &&
+          Boolean(
+            request.collectionId && selection.collectionIds.includes(request.collectionId)
+          )) ||
+        (scope === 'items' &&
+          Boolean(itemIds?.length && itemIds.every((id) => selection.itemIds.includes(id))))
+      if (!allowed)
+        throw new Error(
+          'LIBRARY_SCOPE_MISMATCH: Use one of the current question’s selected scopes per call: ' +
+            JSON.stringify(selection) +
+            '. For items, every requested item ID must be explicitly selected. Omitted scope means project.'
+        )
+    }
+    return {
+      interaction,
+      check,
+      // Cached-text discovery supports cancellation. Other evidence operations still check the
+      // captured interaction after awaiting, before their results can produce tool receipts.
+      signal:
+        selection && interaction
+          ? request.signal
+            ? AbortSignal.any([request.signal, interaction.signal])
+            : interaction.signal
+          : request.signal
+    }
+  }
   const sessionCapabilities = new AcpSessionCapabilityOwner({
     registerBridgeMcpSession: (sessionId, tools, namespaces) =>
       connectionResources.registerBridgeMcpSession(sessionId, tools, namespaces),
@@ -304,12 +354,28 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     library: options.literatureLibrary
       ? {
           handlerFor: (appSessionId, projectId, workspaceCwd) => ({
+            ...(options.literatureLibrary!.searchLibraryFullText
+              ? {
+                  searchLibraryFullText: async (request) => {
+                    const guard = libraryEvidenceContext(appSessionId, request)
+                    const result = await options.literatureLibrary!.searchLibraryFullText!({
+                      ...request,
+                      projectId,
+                      ...(guard.signal ? { signal: guard.signal } : {})
+                    })
+                    guard.check()
+                    return result
+                  }
+                }
+              : {}),
             searchLibrary: async (request) => {
-              const interaction = sessionInteractions.current(appSessionId)
+              const guard = libraryEvidenceContext(appSessionId, request)
+              const { interaction } = guard
               const result = await options.literatureLibrary!.searchLibrary({
                 ...request,
                 projectId
               })
+              guard.check()
               if (
                 interaction?.kind === 'prompt' &&
                 interaction.promptMessageId &&
@@ -332,11 +398,14 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
               return result
             },
             readAbstract: async (request) => {
-              const interaction = sessionInteractions.current(appSessionId)
+              const guard = libraryEvidenceContext(appSessionId, request)
+              const { interaction } = guard
               const result = await options.literatureLibrary!.readAbstract({
                 ...request,
-                projectId
+                projectId,
+                ...(guard.signal ? { signal: guard.signal } : {})
               })
+              guard.check()
               if (
                 result?.abstract.trim() &&
                 interaction?.kind === 'prompt' &&
@@ -354,11 +423,14 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
               return result
             },
             readPdf: async (request) => {
-              const interaction = sessionInteractions.current(appSessionId)
+              const guard = libraryEvidenceContext(appSessionId, request)
+              const { interaction } = guard
               const result = await options.literatureLibrary!.readPdf({
                 ...request,
-                projectId
+                projectId,
+                ...(guard.signal ? { signal: guard.signal } : {})
               })
+              guard.check()
               const passages = result?.evidence.passages
               const hasContent =
                 Array.isArray(passages) &&

@@ -8037,6 +8037,19 @@
     "Source URL": "來源網址",
     "Branch or tag": "分支或標籤",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "使用發佈專家市集目錄的公開 GitHub 儲存庫或分支連結。",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安裝的技能可能改變智能體的行為。請僅信任您認可的來源。"
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安裝的技能可能改變智能體的行為。請僅信任您認可的來源。",
+    "Agent Session cleanup did not complete.": "智能體工作階段清理未完成。",
+    "View surrounding text": "檢視相鄰原文",
+    "Source excerpt": "來源摘錄",
+    "PDF evidence": "PDF 證據",
+    "View reference": "檢視文獻",
+    "View source page": "檢視來源頁面",
+    "The source could not be opened.": "無法開啟來源。",
+    "Ask about this project": "向此專案的文獻提問",
+    "Ask about this collection": "向此合集的文獻提問",
+    "Choose a project for this conversation.": "為此對話選擇一個專案。",
+    "Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.": "全文證據不完整。請確認所選文獻已附 PDF，並準備正文後重試。",
+    "Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.": "快取文字不代表全文覆蓋完整。在根據缺少的證據作出結論前，請核對原始 PDF。",
+    "Continue searching the remaining references or refine the query within the selected scope.": "繼續檢索剩餘文獻，或在所選範圍內調整檢索詞。"
   }
 }

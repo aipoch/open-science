@@ -103,6 +103,10 @@ import type {
   LibraryMentionScopeRequest
 } from './WorkspaceMessageItem'
 import { WorkspaceAssistantTurnCompletion, WorkspaceMessageItem } from './WorkspaceMessageItem'
+import {
+  literatureSourceCitationHrefsByPrompt,
+  literatureSourceCitationHrefsForMessage
+} from './literature-tool-presentation'
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { WorkspaceRunMarks } from './WorkspaceRunMarks'
 import { WorkspaceSessionConfigChangeRow } from './WorkspaceSessionConfigChangeRow'
@@ -656,6 +660,38 @@ const WorkspaceMessageScrollerImpl = ({
     setMessageScrollerViewport(node)
   }, [])
   const conversationGraph = activeSession?.conversationGraph
+  const sourceCitationActivities =
+    conversationGraph?.activities ??
+    (activeSession?.runtimeTranscriptOwner === 'main' ? undefined : activeSession?.activities)
+  // Parse receipts only when tool records change. Streaming message updates can replace the graph
+  // without changing its activities; presentation and revision renders must reuse this index.
+  const sourceCitationReceiptsByActivity = useMemo(
+    () =>
+      (sourceCitationActivities ?? []).flatMap((activity) => {
+        const receipts = literatureSourceCitationHrefsByPrompt([activity])
+        return receipts.size ? [{ id: activity.id, receipts }] : []
+      }),
+    [sourceCitationActivities]
+  )
+  const sourceCitationReceipts = useMemo(() => {
+    const byPrompt = new Map<string, readonly string[]>()
+    // Ordinary conversations have no receipts and need no extra graph traversal.
+    if (!sourceCitationReceiptsByActivity.length) return byPrompt
+    // The display projection strips prompt ownership. Authorize the canonical receipt only when
+    // its exact originating activity belongs to the active conversation branch.
+    const visibleIds = conversationGraph
+      ? new Set(
+          resolveActiveConversationActivities(conversationGraph).activities.map(({ id }) => id)
+        )
+      : undefined
+    for (const activity of sourceCitationReceiptsByActivity) {
+      if (visibleIds && !visibleIds.has(activity.id)) continue
+      for (const [promptId, hrefs] of activity.receipts) {
+        byPrompt.set(promptId, [...new Set([...(byPrompt.get(promptId) ?? []), ...hrefs])])
+      }
+    }
+    return byPrompt
+  }, [conversationGraph, sourceCitationReceiptsByActivity])
   const activeConversationFrame = conversationGraph?.frames.find(
     (frame) => frame.id === conversationGraph.activeFrameId
   )
@@ -1912,6 +1948,13 @@ const WorkspaceMessageScrollerImpl = ({
                   }
                   const messageItemProps: EditableWorkspaceMessageItemProps = {
                     message: item.message,
+                    sourceCitationHrefs: sourceCitationReceipts.size
+                      ? literatureSourceCitationHrefsForMessage(
+                          messageNode ?? item.message,
+                          conversationGraph ? conversationMessageById : transcriptMessageById,
+                          sourceCitationReceipts
+                        )
+                      : undefined,
                     contentPaddingClassName: transcriptEntries[entryIndex - 1]?.processHeader
                       ? 'pt-2'
                       : undefined,

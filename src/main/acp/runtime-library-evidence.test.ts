@@ -141,7 +141,7 @@ describe('Runtime Library evidence ownership', () => {
       expect(interaction.signal.aborted).toBe(true)
       expect(owners.sessionInteractions.current('session-1')).toBe(replacement)
       finish()
-      await Promise.all([search, read])
+      await Promise.allSettled([search, read])
       // Either discard cancelled results or retain their original owner; never relabel them.
       expect
         .soft(recordLiteratureSearch.mock.calls.map(([request]) => request.promptMessageId))
@@ -263,7 +263,7 @@ it.each([
       promptMessageId: 'message-2'
     })
     complete({ itemId: 'item-1', metadataRevision: 1, title: 'Paper', abstract: 'Old findings.' })
-    await pending
+    await expect(pending).rejects.toThrow()
     expect(recordLiteratureAbstractRead).not.toHaveBeenCalled()
   }
 )

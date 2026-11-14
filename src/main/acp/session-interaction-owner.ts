@@ -23,6 +23,31 @@ const cloneProvenanceContext = (
 
 export type AcpSessionInteractionKind = 'prompt' | 'compaction'
 
+export interface AcpPromptLiteratureSelection {
+  readonly project: boolean
+  readonly collectionIds: readonly string[]
+  readonly itemIds: readonly string[]
+}
+
+const literatureSelectionFromParts = (
+  parts: AcpPromptRequest['parts']
+): AcpPromptLiteratureSelection | undefined => {
+  const selection = { project: false, collectionIds: [] as string[], itemIds: [] as string[] }
+  for (const part of parts ?? []) {
+    if (part.type === 'literature') selection.itemIds.push(part.itemId)
+    if (part.type !== 'literature-scope') continue
+    if (part.scope === 'project') selection.project = true
+    if (part.scope === 'collection') selection.collectionIds.push(part.collectionId)
+  }
+  if (!selection.project && !selection.collectionIds.length && !selection.itemIds.length)
+    return undefined
+  return Object.freeze({
+    project: selection.project,
+    collectionIds: Object.freeze([...new Set(selection.collectionIds)]),
+    itemIds: Object.freeze([...new Set(selection.itemIds)])
+  })
+}
+
 export interface AcpPromptSessionInteractionRequest {
   readonly sessionId: string
   readonly kind: 'prompt'
@@ -32,6 +57,7 @@ export interface AcpPromptSessionInteractionRequest {
   readonly memoryEnabled?: boolean
   readonly turnToken?: string
   readonly referencedSessionIds?: readonly string[]
+  readonly parts?: AcpPromptRequest['parts']
 }
 
 export interface AcpCompactionSessionInteractionRequest {
@@ -55,6 +81,7 @@ export interface AcpPromptSessionInteractionScope extends AcpSessionInteractionS
   readonly provenanceContext?: AcpPromptRequest['provenanceContext']
   readonly memoryEnabled?: boolean
   readonly turnToken: string
+  readonly literatureSelection?: AcpPromptLiteratureSelection
 }
 
 export interface AcpCompactionSessionInteractionScope extends AcpSessionInteractionScopeBase {
@@ -425,6 +452,7 @@ export class AcpSessionInteractionOwner {
       },
       ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {}),
       turnToken: request.turnToken ?? randomUUID(),
+      literatureSelection: literatureSelectionFromParts(request.parts),
       sequence: ++this.sequence,
       signal: abortController.signal
     })
@@ -495,7 +523,8 @@ export class AcpSessionInteractionOwner {
             get provenanceContext() {
               return promptProvenance?.value
             },
-            turnToken: request.turnToken ?? randomUUID()
+            turnToken: request.turnToken ?? randomUUID(),
+            literatureSelection: literatureSelectionFromParts(request.parts)
           }
         : { ...base, kind: request.kind }
     )

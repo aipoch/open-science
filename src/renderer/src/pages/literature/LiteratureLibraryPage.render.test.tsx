@@ -3595,6 +3595,158 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
+  it('direct composer opens the current project scope without a question dialog or review prompt', async () => {
+    useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask about this project' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(startLiteratureReviewConversation).toHaveBeenCalledWith('project-1', {
+      type: 'literature-scope',
+      scope: 'project'
+    })
+  })
+
+  it.each(['project', 'collection'] as const)(
+    'direct composer retains the whole %s scope despite selected and search-filtered references',
+    async (kind) => {
+      const collection = {
+        id: 'scope-collection',
+        revision: 1,
+        name: 'Scoped collection',
+        description: '',
+        itemCount: 2,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      search.mockImplementation((request: { scope: string }) =>
+        Promise.resolve(
+          request.scope === 'collections'
+            ? { entries: [collection] }
+            : request.scope === 'library'
+              ? { entries: [libraryItem], totalCount: 1 }
+              : { entries: [] }
+        )
+      )
+      useNavigationStore.setState(
+        kind === 'project'
+          ? { pendingLiteratureProjectId: 'project-1' }
+          : { pendingLiteratureCollectionId: collection.id, activeProjectId: 'project-1' }
+      )
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('button', {
+        name: kind === 'project' ? 'Ask about this project' : 'Ask about this collection'
+      })
+      fireEvent.change(screen.getByLabelText('Search references'), {
+        target: { value: 'filtered evidence' }
+      })
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: 'filtered evidence' }))
+      )
+      fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all references' }))
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: kind === 'project' ? 'Ask about this project' : 'Ask about this collection'
+        })
+      )
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(startLiteratureReviewConversation).toHaveBeenCalledWith(
+        'project-1',
+        kind === 'project'
+          ? { type: 'literature-scope', scope: 'project' }
+          : {
+              type: 'literature-scope',
+              scope: 'collection',
+              collectionId: collection.id,
+              name: collection.name
+            }
+      )
+    }
+  )
+
+  it('does not imply global question retrieval from All references', async () => {
+    useNavigationStore.setState({
+      pendingLiteratureLibrarySection: 'library',
+      activeProjectId: 'project-1'
+    })
+    render(<LiteratureLibraryPage />)
+    await screen.findByRole('heading', { name: 'All references' })
+    expect(screen.queryByRole('button', { name: /Ask about this (project|collection)/ })).toBeNull()
+  })
+
+  it('direct composer follows Library scope navigation and prefers a valid active project for collections', async () => {
+    const collection = {
+      id: 'question-collection',
+      revision: 1,
+      name: 'Question collection',
+      description: '',
+      itemCount: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'collections' ? { entries: [collection] } : { entries: [] })
+    )
+    useNavigationStore.setState({
+      pendingLiteratureProjectId: 'project-1',
+      activeProjectId: 'project-1'
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask about this project' }))
+    expect(startLiteratureReviewConversation).toHaveBeenLastCalledWith('project-1', {
+      type: 'literature-scope',
+      scope: 'project'
+    })
+    act(() => useNavigationStore.setState({ pendingLiteratureCollectionId: collection.id }))
+    await screen.findByRole('heading', { name: collection.name })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask about this collection' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(startLiteratureReviewConversation).toHaveBeenLastCalledWith('project-1', {
+      type: 'literature-scope',
+      scope: 'collection',
+      collectionId: collection.id,
+      name: collection.name
+    })
+  })
+
+  it('direct composer chooses a project only when no active destination exists and does not reopen the selector after navigation', async () => {
+    const collection = {
+      id: 'no-project-collection',
+      revision: 1,
+      name: 'Unrouted collection',
+      description: '',
+      itemCount: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'collections' ? { entries: [collection] } : { entries: [] })
+    )
+    useNavigationStore.setState({
+      pendingLiteratureCollectionId: collection.id,
+      activeProjectId: 'archived-project'
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask about this collection' }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).queryByLabelText('Question')).toBeNull()
+    expect(startLiteratureReviewConversation).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Retrieval research' }))
+    expect(startLiteratureReviewConversation).toHaveBeenCalledWith('project-1', {
+      type: 'literature-scope',
+      scope: 'collection',
+      collectionId: collection.id,
+      name: collection.name
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Ask about this collection' }))
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    act(() => useNavigationStore.setState({ pendingLiteratureLibrarySection: 'library' }))
+    await screen.findByRole('heading', { name: 'All references' })
+    act(() => useNavigationStore.setState({ pendingLiteratureCollectionId: collection.id }))
+    await screen.findByRole('heading', { name: collection.name })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('keeps the selected Project sidebar count aligned with its loaded result total', async () => {
     search.mockImplementation((request: { scope: string; projectId?: string; query?: string }) =>
       Promise.resolve(

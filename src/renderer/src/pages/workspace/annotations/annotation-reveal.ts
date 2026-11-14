@@ -142,11 +142,21 @@ const managedAnnotationIdentity = (
 
 const fileSourceMatchesItem = (
   annotation: Annotation | BookmarkRevealTarget,
-  item: PreviewFileItem
+  item: PreviewFileItem,
+  previewProjectId?: string
 ): boolean => {
   const source = fileAnnotationSource(annotation)
   if (!source) return false
-  if (item.projectId !== source.projectId) return false
+  const globalLibrary =
+    source.kind === 'literature-attachment-version' &&
+    source.projectId === undefined &&
+    previewProjectId !== undefined
+  if (
+    globalLibrary
+      ? item.projectId !== undefined && item.projectId !== previewProjectId
+      : item.projectId !== source.projectId
+  )
+    return false
   const managedIdentity = managedAnnotationIdentity(source)
   if (managedIdentity === null) return false
   const literatureVersionId = parseLiteratureAttachmentVersionReference(source.path)
@@ -154,7 +164,8 @@ const fileSourceMatchesItem = (
     return (
       item.source === 'literature' &&
       item.path === source.path &&
-      literatureVersionId === source.versionId
+      literatureVersionId === source.versionId &&
+      (!globalLibrary || !item.selectedVersionId || item.selectedVersionId === source.versionId)
     )
   }
   const itemFileSource = item.source === 'upload' ? 'upload' : 'artifact'
@@ -398,6 +409,62 @@ const requestPdfAnnotationReveal = (
     options?.signal
   )
 
+type PdfSourceRevealTarget = Extract<BookmarkRevealTarget, { kind: 'pdf' }>
+type PdfSourceRevealOutcome = BookmarkRevealOutcome | 'cancelled'
+
+// A source locator has no saved annotation fields. Project context scopes the preview tab,
+// while the original source identity reaches the PDF consumer unchanged.
+const requestPdfSourceReveal = (
+  target: PdfSourceRevealTarget,
+  options: { projectId: string; signal?: AbortSignal }
+): { admitted: boolean; result: Promise<PdfSourceRevealOutcome> } => {
+  const { projectId, signal } = options
+  if (signal?.aborted) return { admitted: false, result: Promise.resolve('cancelled') }
+  const workbench = usePreviewWorkbenchStore.getState()
+  if (
+    workbench.activeProjectId !== projectId ||
+    (target.source.projectId && target.source.projectId !== projectId)
+  )
+    return { admitted: false, result: Promise.resolve('source-unavailable') }
+  const existing = workbench.items.find(
+    (item): item is Extract<typeof item, { type: 'file' }> =>
+      item.type === 'file' && fileSourceMatchesItem(target, item, projectId)
+  )
+  const preview = existing ?? createBookmarkPreviewItem(target)
+  if (!preview) return { admitted: false, result: Promise.resolve('source-unavailable') }
+  let settle!: (outcome: PdfSourceRevealOutcome) => void
+  let settled = false
+  const result = new Promise<PdfSourceRevealOutcome>((resolve) => {
+    settle = (outcome) => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener('abort', abort)
+      resolve(outcome)
+    }
+  })
+  const abort = (): void => settle('cancelled')
+  signal?.addEventListener('abort', abort, { once: true })
+  let admitted = false
+  try {
+    workbench.upsertAndActivateItem(existing ?? { ...preview, projectId }, {
+      signal,
+      onActivated: () => {
+        admitted = true
+        if (settled) return
+        // The five-second surface timeout starts only after the leave guard admits navigation.
+        void requestSavedSourceReveal(target, false, signal).then(
+          (outcome) => settle(signal?.aborted ? 'cancelled' : outcome),
+          () => settle('source-unavailable')
+        )
+      }
+    })
+  } catch {
+    settle('source-unavailable')
+    admitted = false
+  }
+  return { admitted, result }
+}
+
 const annotationRevealScrollBehavior = (): ScrollBehavior =>
   typeof globalThis.matchMedia === 'function' && globalThis.matchMedia(REDUCED_MOTION_QUERY).matches
     ? 'auto'
@@ -473,6 +540,7 @@ export {
   requestAnnotationReveal,
   requestBookmarkReveal,
   requestPdfAnnotationReveal,
+  requestPdfSourceReveal,
   retryPendingAnnotationReveal,
   revealTextAnnotationRange,
   subscribeAnnotationReveal,
@@ -480,4 +548,9 @@ export {
   subscribeBookmarkReveal,
   subscribeBookmarkRevealPreparation
 }
-export type { BookmarkRevealOutcome, BookmarkRevealTarget }
+export type {
+  BookmarkRevealOutcome,
+  BookmarkRevealTarget,
+  PdfSourceRevealOutcome,
+  PdfSourceRevealTarget
+}

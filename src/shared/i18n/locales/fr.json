@@ -8383,6 +8383,19 @@
     "Source URL": "URL de la source",
     "Branch or tag": "Branche ou tag",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Utilisez l’URL d’un dépôt GitHub public ou d’une branche publiant un catalogue de la place de marché des spécialistes.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Les compétences installées peuvent modifier le comportement des agents. Ne faites confiance qu’aux sources que vous connaissez."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Les compétences installées peuvent modifier le comportement des agents. Ne faites confiance qu’aux sources que vous connaissez.",
+    "Agent Session cleanup did not complete.": "Le nettoyage de la session de l’agent n’a pas abouti.",
+    "View surrounding text": "Voir le texte environnant",
+    "Source excerpt": "Extrait de la source",
+    "PDF evidence": "Preuves issues du PDF",
+    "View reference": "Voir la référence",
+    "View source page": "Voir la page source",
+    "The source could not be opened.": "Impossible d’ouvrir la source.",
+    "Ask about this project": "Poser une question sur les références de ce projet",
+    "Ask about this collection": "Poser une question sur les références de cette collection",
+    "Choose a project for this conversation.": "Choisissez un projet pour cette conversation.",
+    "Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.": "Les éléments probants du texte intégral sont incomplets. Vérifiez que les références sélectionnées disposent de PDF et préparez leur texte avant de réessayer.",
+    "Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.": "Le texte en cache ne garantit pas une couverture complète du texte intégral. Vérifiez le PDF source avant de tirer des conclusions de l’absence d’éléments probants.",
+    "Continue searching the remaining references or refine the query within the selected scope.": "Poursuivez la recherche dans les références restantes ou affinez la requête dans le périmètre sélectionné."
   }
 }

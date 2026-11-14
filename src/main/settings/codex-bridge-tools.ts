@@ -25,6 +25,7 @@ import {
   LITERATURE_LIBRARY_READ_PDF_TOOL_NAME,
   LITERATURE_LIBRARY_SAVE_TOOL_NAME,
   LITERATURE_LIBRARY_SEARCH_TOOL_NAME,
+  LITERATURE_LIBRARY_SEARCH_FULL_TEXT_TOOL_NAME,
   LITERATURE_LIBRARY_SCOPES,
   LITERATURE_LIBRARY_READ_SCOPES
 } from '../literature/library-mcp-server'
@@ -69,7 +70,7 @@ const SKILL_IMPORT_TOOLS: ResponsesNamespacedTool[] = [
 ]
 
 const libraryScope = z.enum(LITERATURE_LIBRARY_SCOPES)
-// Abstract and PDF reads reject the search-only "items" scope.
+// Read scopes mirror the MCP server; the active prompt guard restricts selected items.
 const libraryReadScope = z.enum(LITERATURE_LIBRARY_READ_SCOPES)
 const itemId = z.string().trim().min(1).max(512)
 // The runtime validator normalizes nested identifiers with Zod transforms, which cannot be
@@ -81,6 +82,19 @@ const candidate = z.object({
 })
 
 const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
+  tool(
+    LITERATURE_LIBRARY_MCP_SERVER_NAME,
+    LITERATURE_LIBRARY_SEARCH_FULL_TEXT_TOOL_NAME,
+    'Search only existing cached PDF text in the current Library scope for body-only matches; this never extracts, OCRs or indexes PDFs. Inspect coverage, incomplete and limitations; fullTextCoverage stays unverified. Pass nextOffset as offset to continue. Empty or truncated results do not prove absent evidence or complete full-text coverage. Passages are discovery evidence; call read_library_pdf before citing.',
+    z.object({
+      query: z.string().trim().min(1).max(2_000),
+      scope: libraryScope.optional(),
+      collectionId: itemId.optional(),
+      itemIds: z.array(itemId).min(1).max(20).optional(),
+      offset: z.number().int().min(0).optional(),
+      limit: z.number().int().min(1).max(8).optional()
+    })
+  ),
   tool(
     LITERATURE_LIBRARY_MCP_SERVER_NAME,
     LITERATURE_LIBRARY_SEARCH_TOOL_NAME,
@@ -97,10 +111,11 @@ const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
   tool(
     LITERATURE_LIBRARY_MCP_SERVER_NAME,
     LITERATURE_LIBRARY_READ_ABSTRACT_TOOL_NAME,
-    'Read one complete Library abstract or a bounded batch of up to five abstracts. Pass exactly one of itemId or itemIds.',
+    'Read one complete Library abstract or a bounded batch of up to five abstracts. Pass exactly one of itemId or itemIds. An optional focused query selects sourceCitation and may add bounded matching excerpts in citations. Cite the specific excerpt href verbatim only for claims supported by its quote or context; these links are abstract evidence.',
     z.object({
       itemId: itemId.optional(),
       itemIds: z.array(itemId).min(1).max(5).optional(),
+      query: z.string().trim().min(1).max(2_000).optional(),
       scope: libraryReadScope.optional(),
       collectionId: itemId.optional()
     })
@@ -108,7 +123,7 @@ const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
   tool(
     LITERATURE_LIBRARY_MCP_SERVER_NAME,
     LITERATURE_LIBRARY_READ_PDF_TOOL_NAME,
-    'Retrieve bounded prose passages with page numbers from one Library PDF after finding the record with search_library.',
+    'Retrieve bounded prose passages with page numbers from one Library PDF after finding the record with search_library. Citation excerpts preserve adjoining text within an 800-character page-boundary window but do not certify complete sentence meaning or full-PDF context; retain material qualifications from the returned passages.',
     z.object({
       itemId,
       attachmentId: itemId.optional(),
@@ -165,35 +180,27 @@ const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
   )
 ]
 
-const LIBRARY_OPTIONAL_TOOLS: Readonly<{
-  formatReferences: ResponsesNamespacedTool
-  formatCitationDocument: ResponsesNamespacedTool
-  prepareLatexBundle: ResponsesNamespacedTool
-  acquirePdf: ResponsesNamespacedTool
-}> = {
-  formatReferences: LIBRARY_CORE_TOOLS[3]!,
-  formatCitationDocument: LIBRARY_CORE_TOOLS[4]!,
-  prepareLatexBundle: LIBRARY_CORE_TOOLS[5]!,
-  acquirePdf: LIBRARY_CORE_TOOLS[7]!
+type LibraryToolOptions = {
+  searchFullText?: boolean
+  formatReferences?: boolean
+  formatCitationDocument?: boolean
+  prepareLatexBundle?: boolean
+  acquirePdf?: boolean
 }
 
-const libraryTools = (
-  options: {
-    formatReferences?: boolean
-    formatCitationDocument?: boolean
-    prepareLatexBundle?: boolean
-    acquirePdf?: boolean
-  } = {}
-): ResponsesNamespacedTool[] => [
-  ...LIBRARY_CORE_TOOLS.slice(0, 3),
-  ...(options.formatReferences === false ? [] : [LIBRARY_OPTIONAL_TOOLS.formatReferences]),
-  ...(options.formatCitationDocument === false
-    ? []
-    : [LIBRARY_OPTIONAL_TOOLS.formatCitationDocument]),
-  ...(options.prepareLatexBundle === false ? [] : [LIBRARY_OPTIONAL_TOOLS.prepareLatexBundle]),
-  LIBRARY_CORE_TOOLS[6]!,
-  ...(options.acquirePdf === false ? [] : [LIBRARY_OPTIONAL_TOOLS.acquirePdf])
-]
+const LIBRARY_OPTIONAL_CAPABILITIES: Readonly<Record<string, keyof LibraryToolOptions>> = {
+  [LITERATURE_LIBRARY_SEARCH_FULL_TEXT_TOOL_NAME]: 'searchFullText',
+  [LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME]: 'formatReferences',
+  [LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME]: 'formatCitationDocument',
+  [LITERATURE_LIBRARY_PREPARE_LATEX_TOOL_NAME]: 'prepareLatexBundle',
+  acquire_pdf: 'acquirePdf'
+}
+
+const libraryTools = (options: LibraryToolOptions = {}): ResponsesNamespacedTool[] =>
+  LIBRARY_CORE_TOOLS.filter(({ name }) => {
+    const capability = LIBRARY_OPTIONAL_CAPABILITIES[name]
+    return !capability || options[capability] !== false
+  })
 
 const LITERATURE_CORE_TOOLS: ResponsesNamespacedTool[] = [
   tool(
@@ -273,14 +280,7 @@ const notebookTools = (options: NotebookToolEnvironmentOptions): ResponsesNamesp
 export const createCodexBridgeMcpTools = (options: {
   notebook?: NotebookToolEnvironmentOptions
   skillImport?: boolean
-  library?:
-    | boolean
-    | {
-        formatReferences?: boolean
-        formatCitationDocument?: boolean
-        prepareLatexBundle?: boolean
-        acquirePdf?: boolean
-      }
+  library?: boolean | LibraryToolOptions
   literature?: boolean | { elements?: boolean; annotations?: boolean }
   artifacts?: boolean
 }): ResponsesNamespacedTool[] => {

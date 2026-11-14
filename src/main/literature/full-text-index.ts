@@ -4,6 +4,7 @@ import { openSqliteLiteratureIndex, type IndexDatabase } from './full-text-index
 import { PrismaClient, type Prisma } from '@prisma/client'
 import { access, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import { migrationSqlExecutor } from '../database/migration-sql-executor'
 import {
   acquireDataRootWriter,
@@ -38,6 +39,24 @@ export const literatureIndex = (storageRoot: string): LiteratureIndex => {
         })
         return openSqliteLiteratureIndex(adapt(client, client), (message, fields) =>
           log.info(message, fields)
+        )
+      },
+      openExisting: async () => {
+        const connection = new DatabaseSync(path, { readOnly: true })
+        return openSqliteLiteratureIndex(
+          {
+            query: async <T>(sql: string, ...values: unknown[]) =>
+              connection.prepare(sql).all(...(values as SQLInputValue[])) as T,
+            execute: async () => {
+              throw new Error('Cached Literature search is read-only.')
+            },
+            transaction: async () => {
+              throw new Error('Cached Literature search is read-only.')
+            },
+            close: async () => connection.close()
+          },
+          (message, fields) => log.info(message, fields),
+          { existingOnly: true }
         )
       },
       exists: async () => {

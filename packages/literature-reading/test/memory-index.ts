@@ -31,6 +31,14 @@ function createMemory(): {
     async hasExtraction(id) {
       return documents.has(id)
     },
+    async findExtraction(checksum, fingerprint) {
+      return [...documents.values()]
+        .reverse()
+        .find(
+          (document) =>
+            document.documentChecksum === checksum && document.extractorFingerprint === fingerprint
+        )?.extractionId
+    },
     async deleteExtraction(id) {
       documents.delete(id)
       accessed.delete(id)
@@ -70,6 +78,7 @@ function createMemory(): {
 export function createIndex(root: string): LiteratureIndex {
   return new LiteratureIndex({
     exists: async () => stores.has(root),
-    open: async () => memoryIndex(root).store
+    open: async () => memoryIndex(root).store,
+    openExisting: async () => stores.get(root)?.store
   })
 }
