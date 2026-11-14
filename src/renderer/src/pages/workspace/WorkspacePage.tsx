@@ -123,6 +123,8 @@ import { annotationRequiresImageInput } from '../../../../shared/annotations'
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
   isSessionPersistenceReady: boolean
+  sessionLoadErrorsBySession?: Readonly<Record<string, string>>
+  retrySessionLoad?: (projectId: string, sessionId: string) => void
   persistenceBlockedSessionIds?: readonly string[]
   persistenceWriteIssues?: readonly SessionWriteIssue[]
   onReviewPersistence?: () => void
@@ -154,6 +156,8 @@ const planProjectionRecoveryPorts = {
 const WorkspacePage = ({
   isSessionPersistenceHydrated,
   isSessionPersistenceReady,
+  sessionLoadErrorsBySession = {},
+  retrySessionLoad,
   persistenceBlockedSessionIds = [],
   persistenceWriteIssues = [],
   onReviewPersistence,
@@ -397,6 +401,9 @@ const WorkspacePage = ({
         : storedActiveSession,
     [hasPersistedActiveFixLoop, storedActiveSession]
   )
+  const activeSessionLoadError = activeSession
+    ? sessionLoadErrorsBySession[`${activeSession.projectId}\0${activeSession.id}`]
+    : undefined
   // Preserve the new composer through its pending-to-durable Session binding. Other
   // selections still remount the panel so local dialogs/details cannot cross Sessions.
   const panelSessionId = activeSession?.id
@@ -1849,6 +1856,11 @@ const WorkspacePage = ({
                 submissions={conversationSubmissions}
                 view={{
                   activeSession,
+                  sessionLoadError: activeSessionLoadError ? t(activeSessionLoadError) : undefined,
+                  onRetrySessionLoad:
+                    activeSession && activeSessionLoadError && retrySessionLoad
+                      ? () => retrySessionLoad(activeSession.projectId, activeSession.id)
+                      : undefined,
                   composerFocusKey: currentDraftKey,
                   canEditDraft,
                   canEditLocalDraft,

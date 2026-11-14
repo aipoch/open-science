@@ -49,6 +49,7 @@ import { createSessionReplayItem, DISCUSSION_DRAFT_CONFLICT } from './workspace-
 
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { NotificationBell } from '@/components/NotificationBell'
+import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { SpecialistUnavailableNotice } from './SpecialistUnavailableNotice'
 import { useNoticeCountdown } from '@/components/use-notice-countdown'
@@ -333,6 +334,8 @@ const formatAttachmentSize = (size: number): string => {
 
 type ConversationPanelView = {
   activeSession: ChatSession | undefined
+  sessionLoadError?: string
+  onRetrySessionLoad?: () => void
   authenticationRecovery?: AgentAuthenticationRecovery
   composerFocusKey?: string
   canEditDraft: boolean
@@ -497,6 +500,8 @@ const ConversationPanel = ({
   const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
   const {
     activeSession,
+    sessionLoadError,
+    onRetrySessionLoad,
     composerFocusKey,
     canEditDraft,
     canEditLocalDraft = canEditDraft,
@@ -1801,7 +1806,19 @@ const ConversationPanel = ({
         </header>
 
         {isNewConversation ? null : activeSession?.contentLoaded === false ? (
-          <SessionSwitchSkeleton />
+          sessionLoadError ? (
+            <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+              <SessionPersistenceAlert
+                title={t('Saved conversations could not be loaded')}
+                message={sessionLoadError}
+                inline
+                className="max-w-md"
+                onRetry={onRetrySessionLoad}
+              />
+            </div>
+          ) : (
+            <SessionSwitchSkeleton />
+          )
         ) : (
           <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
             <WorkspaceMessageScroller

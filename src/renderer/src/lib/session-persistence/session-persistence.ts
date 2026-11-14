@@ -55,6 +55,7 @@ import {
   type SaveSessionOptions,
   type SessionConflictRebaseField,
   type SessionLoadDiagnostics,
+  type SessionSummary,
   type SaveSessionManifestRequest,
   type SessionDeletionResult
 } from '../../../../shared/session-persistence'
@@ -1953,6 +1954,7 @@ type SessionPersistenceState = {
   catalogRecovery: SessionCatalogRecovery
   canDeleteSessionsAndProjects: boolean
   loadError: string | undefined
+  sessionLoadErrorsBySession: Readonly<Record<string, string>>
   loadWarning: string | undefined
   writeError: string | undefined
   writeErrorRetryable: boolean
@@ -1965,6 +1967,7 @@ type SessionPersistenceState = {
   dismissWriteWarning: () => void
   dismissLoadWarning: () => void
   startNewConversationAfterSizeLimit: () => void
+  retrySessionLoad: (projectId: string, sessionId: string) => void
   retryLoad: () => void
   retryWrites: () => void
   discardWrite: (target: string) => Promise<void>
@@ -2186,6 +2189,8 @@ const observePersistencePhase = <Result>(
 
 const SAFE_SESSION_LOAD_ERROR =
   'Open-Science could not read saved conversation data. Retry to continue.'
+const SESSION_LOAD_ERROR_KEY =
+  'Could not reload the saved conversation. Retained changes were kept. Please try again.'
 const SAFE_SESSION_WRITE_ERROR =
   'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 const SESSION_REVISION_CONFLICT_WRITE_ERROR =
@@ -2199,7 +2204,8 @@ const loadPersistedSessions = async (
   shouldHydrate: () => boolean = () => true,
   preferredSelection?: SessionHydrationSelection | (() => SessionHydrationSelection),
   preserveLocalDrafts = false,
-  retainedNewSessionIds: ReadonlySet<string> = new Set()
+  retainedNewSessionIds: ReadonlySet<string> = new Set(),
+  onSessionLoadError?: (summary: SessionSummary, error: unknown) => void
 ): Promise<LoadAllSessionsResult | ListSessionSummariesResult | undefined> => {
   const previousSessions = preserveLocalDrafts ? useSessionStore.getState().sessions : []
   const restoreLocalDrafts = (): void => {
@@ -2237,27 +2243,27 @@ const loadPersistedSessions = async (
     )
     const hydratedSessions = new Map(
       await Promise.all(
-        summariesToHydrate.map(
-          async (summary) =>
-            [
-              summary.id,
-              await loadPersistedSession(
-                { projectId: summary.projectId, sessionId: summary.id },
-                api,
-                // Recovery must not validate cached content against the previous store revision.
-                { bypassCache: true }
+        summariesToHydrate.map(async (summary) => {
+          try {
+            const loaded = await loadPersistedSession(
+              { projectId: summary.projectId, sessionId: summary.id },
+              api,
+              // Recovery must not validate cached content against the previous store revision.
+              { bypassCache: true }
+            )
+            if (!loaded)
+              throw new Error(
+                'Session JSON requiring startup hydration is missing from the SQLite projection.'
               )
-            ] as const
-        )
+            return [summary.id, loaded] as const
+          } catch (error) {
+            onSessionLoadError?.(summary, error)
+            return [summary.id, undefined] as const
+          }
+        })
       )
     )
     if (!shouldHydrate()) return undefined
-    const missing = summariesToHydrate.find((summary) => !hydratedSessions.get(summary.id))
-    if (missing) {
-      throw new Error(
-        'Session JSON requiring startup hydration is missing from the SQLite projection.'
-      )
-    }
     // The retained workspace remains navigable during a reload. Do not replay the selection from
     // the Retry click over a later user navigation (including an explicitly cleared selection).
     const selection = currentSelection()
@@ -2972,11 +2978,15 @@ const useSessionPersistence = (): SessionPersistenceState => {
   )
   const [canDeleteSessionsAndProjects, setCanDeleteSessionsAndProjects] = useState(false)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
+  const [sessionLoadErrorsBySession, setSessionLoadErrorsBySession] = useState<
+    Readonly<Record<string, string>>
+  >({})
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
   const [writeErrorRetryable, setWriteErrorRetryable] = useState(true)
   const [isRetryingWrites, setIsRetryingWrites] = useState(false)
   const retryingTargets = useRef(new Set<string>())
+  const sessionLoadGenerations = useRef(new Map<string, number>())
   const [persistenceBlockedSessionIds, setPersistenceBlockedSessionIds] = useState<
     readonly string[]
   >([])
@@ -3353,6 +3363,20 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setWriteError(undefined)
     setWriteErrorRetryable(true)
   }, [])
+  const retrySessionLoad = useCallback((projectId: string, sessionId: string): void => {
+    setSessionLoadErrorsBySession((current) => {
+      const next = { ...current }
+      delete next[`${projectId}\0${sessionId}`]
+      return next
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.projectId === projectId && session.id === sessionId
+          ? { ...session, contentLoaded: false }
+          : session
+      )
+    }))
+  }, [])
   const retryLoad = useCallback(() => {
     // A partial snapshot remains interactive. Keep the session the user chose from that snapshot so
     // a successful retry cannot replay the older on-disk manifest over their live navigation.
@@ -3367,6 +3391,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setCanDeleteSessionsAndProjects(false)
     setLoadError(undefined)
     setLoadWarning(undefined)
+    setSessionLoadErrorsBySession({})
     // Rechecking the catalog is not evidence that an outstanding write succeeded. Keep its
     // notice and Session write gates until a matching acknowledgement or authoritative
     // reconciliation resolves them.
@@ -3655,6 +3680,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       const preferredSelection = recovering
         ? { sessionId: useSessionStore.getState().selectedSessionId }
         : retrySelection.current
+      setSessionLoadErrorsBySession({})
       try {
         if (recovering) {
           // Let old requests settle into the retained registry before replacing their projection.
@@ -3677,7 +3703,18 @@ const useSessionPersistence = (): SessionPersistenceState => {
                   ? [sessionId]
                   : []
               )
-          )
+          ),
+          (summary, error) => {
+            reportPersistenceError(error, 'session-load', {
+              projectId: summary.projectId,
+              sessionId: summary.id
+            })
+            if (isMounted)
+              setSessionLoadErrorsBySession((current) => ({
+                ...current,
+                [`${summary.projectId}\0${summary.id}`]: SESSION_LOAD_ERROR_KEY
+              }))
+          }
         )
         if (!result || !isMounted) return
         if (recovering || liveSessionPersistence.recovery.getSnapshot().length > 0) {
@@ -3914,10 +3951,21 @@ const useSessionPersistence = (): SessionPersistenceState => {
         )
         if (selected && !loadingSessionContent.has(selected.id)) {
           loadingSessionContent.add(selected.id)
+          const sessionLoadKey = `${selected.projectId}\0${selected.id}`
+          const sessionLoadGeneration =
+            (sessionLoadGenerations.current.get(sessionLoadKey) ?? 0) + 1
+          sessionLoadGenerations.current.set(sessionLoadKey, sessionLoadGeneration)
+          const isCurrentSessionLoad = (): boolean =>
+            sessionLoadGenerations.current.get(sessionLoadKey) === sessionLoadGeneration
           void loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id })
             .then((session) => {
+              if (!isMounted || !isCurrentSessionLoad()) return
+              setSessionLoadErrorsBySession((current) => {
+                const next = { ...current }
+                delete next[sessionLoadKey]
+                return next
+              })
               if (!session) throw new Error('Selected Session JSON is missing.')
-              if (!isMounted) return
               const unchangedSummary =
                 useSessionStore
                   .getState()
@@ -3956,8 +4004,15 @@ const useSessionPersistence = (): SessionPersistenceState => {
               }
             })
             .catch((error) => {
-              reportPersistenceError(error, 'session-load')
-              if (isMounted) setLoadError(SAFE_SESSION_LOAD_ERROR)
+              reportPersistenceError(error, 'session-load', {
+                projectId: selected.projectId,
+                sessionId: selected.id
+              })
+              if (isMounted && isCurrentSessionLoad())
+                setSessionLoadErrorsBySession((current) => ({
+                  ...current,
+                  [sessionLoadKey]: SESSION_LOAD_ERROR_KEY
+                }))
             })
             .finally(() => loadingSessionContent.delete(selected.id))
         }
@@ -4029,6 +4084,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     catalogRecovery,
     canDeleteSessionsAndProjects,
     loadError,
+    sessionLoadErrorsBySession,
     loadWarning,
     writeError,
     writeErrorRetryable,
@@ -4048,6 +4104,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     dismissLoadWarning,
     dismissWriteWarning,
     startNewConversationAfterSizeLimit,
+    retrySessionLoad,
     retryLoad,
     retryWrites,
     discardWrite
