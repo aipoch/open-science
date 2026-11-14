@@ -96,6 +96,29 @@ describe('cached PDF search guidance', () => {
   })
 
   it.each([
+    {
+      ...cachedResult,
+      scannedSources: 2,
+      coverage: { ...cachedResult.coverage, notCachedDocuments: 1 }
+    },
+    { ...cachedResult, scannedSources: 2, nextOffset: 20 },
+    { ...cachedResult, scannedSources: 2, sourceSelectionTruncated: true },
+    { ...cachedResult, scannedSources: 2, truncated: true },
+    { ...cachedResult, recordCount: 0, totalRecordCount: 0 }
+  ])('renders retained cached coverage like the original result: %j', (result) => {
+    const expected = buildLiteratureLibraryToolSummary('search', {}, result).cachedTextCoverage
+    const summary = showResult({
+      openScienceLiteraturePresentation: {
+        libraryAction: 'search',
+        cachedSearch: result
+      }
+    })
+    expect(summary.cachedTextCoverage).toEqual(expected)
+    if (expected) expect(screen.getByRole('status')).toBeTruthy()
+    else expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it.each([
     { ...cachedResult, incomplete: false },
     { items: [], totalCount: 0 },
     { ...cachedResult, recordCount: 0, totalRecordCount: 0 },

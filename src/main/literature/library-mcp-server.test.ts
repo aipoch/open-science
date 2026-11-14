@@ -9,6 +9,9 @@ import {
   type LiteratureSourceCitation
 } from '../../shared/literature-source-citation'
 
+import { toAcpRuntimeEvent } from '../acp/runtime-events'
+import { sanitizeToolActivity } from '../../shared/session-persistence'
+import { buildLiteratureLibraryToolSummary } from '../../renderer/src/pages/workspace/literature-tool-presentation'
 import { joinPdfProseTextItems } from '../../shared/pdf-text'
 import { composeAcpRuntimeBaseOwners } from '../acp/runtime-base-composition'
 import { claudeCodeFramework } from '../agent-framework'
@@ -2570,66 +2573,118 @@ describe('Literature Library MCP server', () => {
     await client.close()
     await server.close()
   })
-  it('exposes bounded full-text discovery without issuing citation receipts', async () => {
-    const searchLibraryFullText = vi.fn(async () => ({
-      scope: 'project' as const,
-      query: 'body-only term',
-      status: 'available' as const,
-      retrievalMode: 'bm25' as const,
-      coverageKind: 'cached-text-only' as const,
-      fullTextCoverage: 'unverified' as const,
-      coverage: {
-        requestedDocuments: 2,
-        cachedDocuments: 2,
-        notCachedDocuments: 0,
-        unavailableDocuments: 0
-      },
-      recordCount: 2,
-      totalRecordCount: 21,
-      nextOffset: 20,
-      sourceSelectionTruncated: false,
-      resultsRevalidated: true,
-      incomplete: true,
-      limitations: ['cached-pages-unverified', 'more-records'] as const,
-      scannedSources: 2,
-      matches: [
-        {
-          itemId: 'item-1',
+  it.each(['native-result', 'mcp-result', 'json-result', 'acp-text', 'acp-array'])(
+    'retains cached search coverage and pagination through %s without issuing citation receipts',
+    async (transport) => {
+      const searchLibraryFullText = vi.fn(async () => ({
+        scope: 'project' as const,
+        query: 'body-only term',
+        status: 'available' as const,
+        retrievalMode: 'bm25' as const,
+        coverageKind: 'cached-text-only' as const,
+        fullTextCoverage: 'unverified' as const,
+        coverage: {
+          requestedDocuments: 20,
+          cachedDocuments: 8,
+          notCachedDocuments: 12,
+          unavailableDocuments: 0
+        },
+        recordCount: 20,
+        totalRecordCount: 21,
+        nextOffset: 20,
+        sourceSelectionTruncated: false,
+        resultsRevalidated: true,
+        incomplete: true,
+        limitations: ['cached-pages-unverified', 'more-records', 'not-cached'] as const,
+        scannedSources: 20,
+        matches: Array.from({ length: 8 }, (_, index) => ({
+          itemId: `item-${index}`,
           title: 'Body-only study',
           attachmentId: 'attachment-1',
           attachmentVersionId: 'version-1',
           pageStart: 3,
           pageEnd: 3,
-          content: 'The body-only term appears in this passage.',
-          contentTruncated: false
-        }
-      ],
-      truncated: false
-    }))
-    const server = createLiteratureLibraryMcpServer({
-      searchLibrary: vi.fn(),
-      searchLibraryFullText,
-      readAbstract: vi.fn(),
-      readPdf: vi.fn(),
-      saveToInbox: vi.fn()
-    })
-    const client = await connect(server)
-    try {
-      const result = await client.callTool({
-        name: 'search_library_full_text',
-        arguments: { query: 'body-only term', offset: 20 }
+          content: 'Evidence '.repeat(110),
+          contentTruncated: true
+        })),
+        truncated: false
+      }))
+      const server = createLiteratureLibraryMcpServer({
+        searchLibrary: vi.fn(),
+        searchLibraryFullText,
+        readAbstract: vi.fn(),
+        readPdf: vi.fn(),
+        saveToInbox: vi.fn()
       })
-      expect(result.isError).not.toBe(true)
-      expect(result.structuredContent).toEqual(await searchLibraryFullText())
-      expect(searchLibraryFullText).toHaveBeenCalledWith(
-        expect.objectContaining({ offset: 20, signal: expect.any(AbortSignal) })
-      )
-      expect(receiptHrefs(result)).toEqual([])
-    } finally {
-      await client.close()
-      await server.close()
+      const client = await connect(server)
+      try {
+        const result = await client.callTool({
+          name: 'search_library_full_text',
+          arguments: { query: 'body-only term', offset: 20 }
+        })
+        expect(result.isError).not.toBe(true)
+        expect(result.structuredContent).toEqual(await searchLibraryFullText())
+        expect(searchLibraryFullText).toHaveBeenCalledWith(
+          expect.objectContaining({ offset: 20, signal: expect.any(AbortSignal) })
+        )
+        expect(receiptHrefs(result)).toEqual([])
+        const rawOutput =
+          transport === 'native-result'
+            ? { result }
+            : transport === 'mcp-result'
+              ? result
+              : transport === 'json-result'
+                ? JSON.stringify(result)
+                : undefined
+        const event = toAcpRuntimeEvent(
+          {
+            sessionId: 'session-1',
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'cached-search',
+              status: 'completed',
+              title: 'mcp__open-science-library__search_library_full_text',
+              rawOutput,
+              ...(transport.startsWith('acp-')
+                ? {
+                    content: [
+                      {
+                        type: 'content' as const,
+                        content: {
+                          type: 'text' as const,
+                          text: JSON.stringify(transport === 'acp-array' ? result.content : result)
+                        }
+                      }
+                    ]
+                  }
+                : {})
+            }
+          },
+          'cached-search-event'
+        )
+        expect(event.rawOutput).toBeUndefined()
+        const retained = event.toolContent?.[0]
+        expect(JSON.stringify(retained).length).toBeLessThan(1000)
+        expect(JSON.stringify(retained)).not.toContain('Evidence ')
+        const persisted = sanitizeToolActivity({
+          ...event,
+          sortIndex: 1,
+          eventIds: [event.id],
+          createdAt: event.timestamp,
+          updatedAt: event.timestamp
+        })
+        const restored = JSON.parse(JSON.stringify(persisted))
+        expect(restored.toolContent[0]).toEqual(retained)
+        // Use only the retained presentation: native raw-output transports drop the large result.
+        const summary = buildLiteratureLibraryToolSummary('search', {}, [restored.toolContent[0]])
+        expect(summary.cachedTextCoverage).toEqual({ preparePdf: true, hasMore: true })
+        expect(summary.resultCount).toBe(8)
+      } finally {
+        await client.close()
+        await server.close()
+      }
     }
-  })
+  )
 })
 
 it('returns a tool error when a search result cannot be retained as review evidence', async () => {
