@@ -62,7 +62,7 @@ export type ResearchVideoPresentationOwner = {
 export function createResearchVideoPresentationOwner(options: {
   dataRoot(): string
   mutate?: <T>(request: ResearchVideoPresentationRequest, work: () => Promise<T>) => Promise<T>
-  checkReadiness?: () => Promise<void>
+  checkReadiness?: (signal?: AbortSignal) => Promise<void>
   models: Pick<
     ReturnType<typeof createLocalModelOwner>,
     'acquireUse' | 'getSnapshot' | 'installForUse'
@@ -78,6 +78,26 @@ export function createResearchVideoPresentationOwner(options: {
   ) => Promise<ResearchVideoPresentationStatus['result']>
   lifecycle?: ResearchFilmLifecycle
 }): ResearchVideoPresentationOwner {
+  const waitForReadiness = async (signal: AbortSignal): Promise<void> => {
+    const checkReadiness = options.checkReadiness
+    if (!checkReadiness) return
+    signal.throwIfAborted()
+    const aborted = Promise.withResolvers<never>()
+    const onAbort = (): void => aborted.reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+    try {
+      // A read-only probe can finish later without retaining Film admission.
+      await Promise.race([
+        aborted.promise,
+        Promise.resolve().then(() => {
+          signal.throwIfAborted()
+          return checkReadiness(signal)
+        })
+      ])
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+    }
+  }
   let installingKey: string | undefined
   let removing = false
   let closed = false
@@ -287,7 +307,7 @@ export function createResearchVideoPresentationOwner(options: {
         checksums
       )
       measure('readiness')
-      await options.checkReadiness?.()
+      await waitForReadiness(signal)
       signal.throwIfAborted()
       if (installNarration) {
         installingKey = key
@@ -310,7 +330,7 @@ export function createResearchVideoPresentationOwner(options: {
         const latest = await options.loadSession(scope.projectId, scope.sessionId)
         if (researchVideoGenerationBlock(latest, scope))
           throw new Error('Research session is unavailable.')
-        await options.checkReadiness?.()
+        await waitForReadiness(signal)
         signal.throwIfAborted()
       }
       measure('narration-acquire')

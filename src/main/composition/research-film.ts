@@ -238,8 +238,9 @@ export async function composeResearchFilm({
       sessionPackageService.readResearchFilm(request, options),
     dataRoot: resolveDataRoot,
     models: researchNarrationModels,
-    checkReadiness: async () => {
-      const readiness = await settingsService.getPreflight()
+    checkReadiness: async (signal) => {
+      const readiness = await settingsService.getPreflight(signal)
+      signal?.throwIfAborted()
       if (!readiness.agentReady)
         throw new Error(
           'Set up the selected agent runtime in Settings before generating a research film.'
@@ -263,6 +264,7 @@ export async function composeResearchFilm({
         )
       }
       const snapshot = await settingsService.getSettingsView()
+      signal?.throwIfAborted()
       const provider = snapshot.providers.find((entry) => entry.id === snapshot.activeProviderId)
       if (!provider) throw new Error('The selected research film provider is unavailable.')
       const model = snapshot.activeModel ?? provider.model
@@ -293,6 +295,13 @@ export async function composeResearchFilm({
   await modules.add({ researchVideoPresentation }, ({ researchVideoPresentation: owner }) => ({
     name: 'research-video-presentation',
     capability: undefined,
+    start: () => {
+      void researchVideoInference
+        .sweepStaleProfiles()
+        .catch((error) =>
+          filmLog.info('film inference profile cleanup failed', diagnosticErrorFields(error))
+        )
+    },
     dispose: async () => {
       await owner.close()
       await researchVideoInference.shutdown()

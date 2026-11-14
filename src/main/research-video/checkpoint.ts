@@ -53,6 +53,9 @@ export function savePendingFilm(base: string, value: PendingFilm): Promise<void>
   return writeDurableJsonFile(join(base, 'pending.json'), JSON.stringify(value))
 }
 
+// Budget for the serialized recovery file, independent of the model response size.
+const MAX_AUTHORING_CHECKPOINT_BYTES = 8 * 1024 * 1024
+
 /** Each validated unit has its own atomic file, including independent concurrent scenes. */
 export function filmAuthoringCheckpoint(
   directory: string,
@@ -65,9 +68,9 @@ export function filmAuthoringCheckpoint(
       const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error
       })
-      if (!info?.isFile() || info.size > 512 * 1024) return undefined
+      if (!info?.isFile() || info.size > MAX_AUTHORING_CHECKPOINT_BYTES) return undefined
       try {
-        const entry = JSON.parse(await readFileWithinLimit(path, 512 * 1024))
+        const entry = JSON.parse(await readFileWithinLimit(path, MAX_AUTHORING_CHECKPOINT_BYTES))
         if (typeof entry?.value === 'string' && digestFilmInput(entry.value) === entry.digest) {
           event('reused')
           return entry.value
@@ -78,10 +81,10 @@ export function filmAuthoringCheckpoint(
       return undefined
     },
     async save(key, value) {
-      await writeDurableJsonFile(
-        file(key),
-        JSON.stringify({ digest: digestFilmInput(value), value })
-      )
+      if (Buffer.byteLength(value) > MAX_AUTHORING_CHECKPOINT_BYTES) return
+      const entry = JSON.stringify({ digest: digestFilmInput(value), value })
+      if (Buffer.byteLength(entry) > MAX_AUTHORING_CHECKPOINT_BYTES) return
+      await writeDurableJsonFile(file(key), entry)
       event('saved')
     }
   }

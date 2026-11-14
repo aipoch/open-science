@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { filmAuthoringCheckpoint } from './checkpoint'
 import { createResearchVideoPresentationOwner } from './presentation'
 import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
 
@@ -543,32 +544,41 @@ it('discards a delayed preflight failure after a newer generation succeeds', asy
   }
 })
 
-it('reserves admission across duplicate starts and cancels before acquiring resources', async () => {
+it('releases Film admission when a shared readiness check is cancelled', async () => {
   const f = await fixture()
-  let finishProbe!: () => void
-  const checkReadiness = vi.fn(
-    () =>
-      new Promise<void>((resolve) => {
-        finishProbe = resolve
-      })
-  )
-  const owner = createResearchVideoPresentationOwner({ ...f.options, checkReadiness })
+  const probe = Promise.withResolvers<void>()
+  const checkReadiness = vi
+    .fn<(signal?: AbortSignal) => Promise<void>>(async () => {})
+    .mockImplementationOnce(() => probe.promise)
+  const other = { ...request, sessionId: 'other' }
+  const owner = createResearchVideoPresentationOwner({
+    ...f.options,
+    checkReadiness,
+    loadSession: async (_projectId, sessionId) => ({ ...session, id: sessionId })
+  })
   try {
     const first = owner.start(request)
     await vi.waitFor(() => expect(checkReadiness).toHaveBeenCalledOnce())
     const duplicate = owner.start(request)
-    await expect(owner.start({ ...request, sessionId: 'other' })).rejects.toThrow(
-      'Another research explanation'
-    )
+    await expect(owner.start(other)).rejects.toThrow('Another research explanation')
     owner.cancel(request)
-    finishProbe()
+    const settled = vi.fn()
+    void Promise.all([first, duplicate]).then(settled, settled)
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce())
     await Promise.all([first, duplicate])
-    expect(checkReadiness).toHaveBeenCalledOnce()
+    expect(checkReadiness.mock.calls[0][0]?.aborted).toBe(true)
     expect((await owner.status(request)).progress?.phase).toBe('cancelled')
     expect(f.options.models.acquireUse).not.toHaveBeenCalled()
     expect(f.options.writeScreenplay).not.toHaveBeenCalled()
     expect(await readdir(f.options.dataRoot())).toEqual([])
+
+    await owner.start(other)
+    expect(checkReadiness).toHaveBeenCalledTimes(2)
+    probe.reject(new Error('Obsolete readiness failure'))
+    await vi.waitFor(async () => expect((await owner.status(other)).result).toBeDefined())
+    expect((await owner.status(request)).progress?.phase).toBe('cancelled')
   } finally {
+    probe.resolve()
     await owner.close()
   }
 })
@@ -619,8 +629,9 @@ it('retains conversation text and Artifact references above the former byte cap'
   expect(Buffer.byteLength(JSON.stringify(source))).toBeGreaterThan(512 * 1024)
 })
 
-it('resumes a failed build after restart without requesting the screenplay again', async () => {
+it('reuses a large screenplay checkpoint when resuming after a failed build', async () => {
   const f = await fixture()
+  f.options.writeScreenplay.mockResolvedValue(script + ' '.repeat(520 * 1024))
   f.options.generate.mockRejectedValueOnce(new Error('Worker stopped'))
   const first = createResearchVideoPresentationOwner(f.options)
   await first.start(request)
@@ -636,6 +647,13 @@ it('resumes a failed build after restart without requesting the screenplay again
   expect(f.options.generate).toHaveBeenCalledTimes(2)
   expect((await reopened.status(request)).canResume).toBeUndefined()
   await reopened.close()
+})
+
+it('does not persist a checkpoint whose JSON escaping exceeds the recovery budget', async () => {
+  const f = await fixture()
+  const checkpoint = filmAuthoringCheckpoint(f.options.dataRoot(), vi.fn())
+  await checkpoint.save('screenplay', '\\'.repeat(4 * 1024 * 1024))
+  expect(await readdir(f.options.dataRoot())).toEqual([])
 })
 
 it('correlates preparation failures without retaining private error text', async () => {

@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   install: vi.fn(),
   acquire: vi.fn(),
   shutdown: vi.fn(),
+  sweep: vi.fn(async () => {}),
   log: vi.fn()
 }))
 vi.mock('@aipoch/diagnostics/node', async (original) => ({
@@ -39,6 +40,7 @@ vi.mock('../acp/restricted-inference-runner', async () => ({
   RestrictedInferenceRunner: class {
     run = mocks.run
     shutdown = mocks.shutdown
+    sweepStaleProfiles = mocks.sweep
   }
 }))
 
@@ -240,6 +242,7 @@ it.each(outcomes)(
       } as unknown as Parameters<typeof composeResearchFilm>[0])
     )
     try {
+      if (outcome === 'running') expect(mocks.sweep).toHaveBeenCalledOnce()
       const owner = runtime.interfaces.researchVideoPresentation
       const initialStatus = await owner.status(request)
       expect(input.sessionRepository.loadSessionWithDiagnostics).toHaveBeenCalledWith('p', 's', {
