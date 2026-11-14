@@ -213,7 +213,7 @@ const ApplicationPresentationContent = ({
             </main>
           }
         >
-          <OnboardingWizard loadStorageInfo={startup.storageRecovery.loadInfo} />
+          <OnboardingWizard loadStorageInfo={startup.storageRecovery.loadInfo} showWelcome />
         </Suspense>
       </>
     )
