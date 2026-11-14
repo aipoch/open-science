@@ -544,6 +544,79 @@ it('discards a delayed preflight failure after a newer generation succeeds', asy
   }
 })
 
+it('times out a stalled readiness check before the Film starts', async () => {
+  const f = await fixture()
+  const probe = Promise.withResolvers<void>()
+  const entered = Promise.withResolvers<void>()
+  const checkReadiness = vi.fn<(signal?: AbortSignal) => Promise<void>>(() => {
+    entered.resolve()
+    return probe.promise
+  })
+  const deadline = new AbortController()
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal)
+  const owner = createResearchVideoPresentationOwner({ ...f.options, checkReadiness })
+  try {
+    const pending = owner.status({ ...request, checkReadiness: true })
+    await entered.promise
+    deadline.abort(new DOMException('Deadline exceeded', 'TimeoutError'))
+    const outcome = vi.fn()
+    void pending.then(outcome, outcome)
+    await vi.waitFor(() =>
+      expect(outcome).toHaveBeenCalledWith({
+        preflightError: expect.stringMatching(/timed out/i)
+      })
+    )
+    expect(checkReadiness.mock.calls[0][0]?.aborted).toBe(true)
+    expect((await owner.status(request)).preflightError).toMatch(/timed out/i)
+    expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+
+    timeout.mockRestore()
+    checkReadiness.mockResolvedValueOnce(undefined)
+    expect(
+      (await owner.status({ ...request, checkReadiness: true })).preflightError
+    ).toBeUndefined()
+  } finally {
+    timeout.mockRestore()
+    probe.resolve()
+    await owner.close()
+  }
+})
+
+it('releases admission on cancel even if model verification returns a lease later', async () => {
+  const f = await fixture()
+  const acquire = f.options.models.acquireUse
+  const pending = Promise.withResolvers<Awaited<ReturnType<typeof acquire>>>()
+  const entered = vi.fn()
+  const owner = createResearchVideoPresentationOwner({
+    ...f.options,
+    models: {
+      ...f.options.models,
+      acquireUse: () => {
+        entered()
+        return pending.promise
+      }
+    }
+  })
+  try {
+    const starting = owner.start(request)
+    await vi.waitFor(() => expect(entered).toHaveBeenCalledOnce())
+    owner.cancel(request)
+    const outcome = vi.fn()
+    void starting.then(outcome, outcome)
+    await vi.waitFor(() =>
+      expect(outcome).toHaveBeenCalledWith(
+        expect.objectContaining({ progress: expect.objectContaining({ phase: 'cancelled' }) })
+      )
+    )
+    expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+    pending.resolve(await acquire())
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+  } finally {
+    if (!f.release.mock.calls.length) pending.resolve(await acquire())
+    await owner.close()
+  }
+})
+
 it('releases Film admission when a shared readiness check is cancelled', async () => {
   const f = await fixture()
   const probe = Promise.withResolvers<void>()

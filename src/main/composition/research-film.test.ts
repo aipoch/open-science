@@ -47,6 +47,10 @@ vi.mock('../acp/restricted-inference-runner', async () => ({
 const outcomes = [
   'prompt-unavailable',
   'target-unavailable',
+  'target-stalled',
+  'target-timeout',
+  'usage-stalled',
+  'usage-timeout',
   'session-missing',
   'session-unreadable',
   'runtime-unavailable',
@@ -121,7 +125,8 @@ it.each(outcomes)(
         text: '',
         frameworkId: 'pi',
         model: 'test',
-        stopReason: outcome === 'empty' ? 'end_turn' : outcome,
+        stopReason:
+          outcome === 'empty' ? 'end_turn' : outcome === 'usage-stalled' ? 'refusal' : outcome,
         usage: { inputTokens: 10, outputTokens: 16384 }
       })
     if (outcome === 'transport')
@@ -132,38 +137,43 @@ it.each(outcomes)(
           cacheTokens: 0
         })
       )
-    if (outcome === 'recovered') {
+    if (outcome === 'recovered' || outcome === 'usage-timeout') {
       const result = {
         frameworkId: 'pi',
         model: 'test',
         usage: { inputTokens: 10, outputTokens: 20 }
       }
-      mocks.run
-        .mockResolvedValueOnce({ ...result, text: '{', stopReason: 'max_tokens' })
-        .mockResolvedValueOnce({
-          ...result,
-          stopReason: 'end_turn',
-          text: JSON.stringify({
-            version: 1,
-            case: 'evidence',
-            title: 'Evidence',
-            session: 'session.json',
-            scenes: [
-              {
-                id: 'hook',
-                role: 'hook',
-                msg: 1,
-                lines: [{ caption: 'The result is uncertain.' }],
-                panels: [
-                  { type: 'title', text: 'Evidence' },
-                  { type: 'animation', script: 'anims/hook.js', size: 'band' }
-                ]
-              }
-            ]
-          })
+      if (outcome === 'recovered')
+        mocks.run.mockResolvedValueOnce({ ...result, text: '{', stopReason: 'max_tokens' })
+      mocks.run.mockResolvedValueOnce({
+        ...result,
+        stopReason: 'end_turn',
+        text: JSON.stringify({
+          version: 1,
+          case: 'evidence',
+          title: 'Evidence',
+          session: 'session.json',
+          scenes: [
+            {
+              id: 'hook',
+              role: 'hook',
+              msg: 1,
+              lines: [{ caption: 'The result is uncertain.' }],
+              panels: [
+                { type: 'title', text: 'Evidence' },
+                { type: 'animation', script: 'anims/hook.js', size: 'band' }
+              ]
+            }
+          ]
         })
-        .mockResolvedValueOnce({ ...result, text: 'function draw(', stopReason: 'max_tokens' })
-        .mockResolvedValue({ ...result, text: '', stopReason: 'refusal' })
+      })
+      if (outcome === 'recovered')
+        mocks.run.mockResolvedValueOnce({
+          ...result,
+          text: 'function draw(',
+          stopReason: 'max_tokens'
+        })
+      mocks.run.mockResolvedValue({ ...result, text: '', stopReason: 'refusal' })
     }
     mocks.shutdown.mockImplementation(async () => {
       mocks.events.push('shutdown')
@@ -308,6 +318,56 @@ it.each(outcomes)(
         )
         expect(mocks.run).not.toHaveBeenCalled()
         expect(JSON.stringify(mocks.log.mock.calls)).not.toContain('private target failure')
+        return
+      }
+      if (
+        outcome === 'target-stalled' ||
+        outcome === 'target-timeout' ||
+        outcome === 'usage-stalled' ||
+        outcome === 'usage-timeout'
+      ) {
+        const target = outcome.startsWith('target-')
+        const expires = outcome.endsWith('-timeout')
+        const stalled = Promise.withResolvers<never>()
+        const entered = vi.fn()
+        const wait = (): Promise<never> => {
+          entered()
+          return stalled.promise
+        }
+        if (target)
+          input.settingsService.captureActiveExplicitAgentBackendTarget.mockImplementationOnce(wait)
+        else input.recordAuxiliaryUsage.mockImplementationOnce(wait)
+        const deadline = new AbortController()
+        const realTimeout = AbortSignal.timeout
+        const timeout = expires
+          ? vi
+              .spyOn(AbortSignal, 'timeout')
+              .mockImplementation((ms) =>
+                ms === (target ? 30_000 : 5_000) ? deadline.signal : realTimeout(ms)
+              )
+          : undefined
+        try {
+          await owner.start(request)
+          await vi.waitFor(() => expect(entered).toHaveBeenCalledOnce())
+          if (expires) deadline.abort(new DOMException('Deadline exceeded', 'TimeoutError'))
+          else owner.cancel(request)
+          await vi.waitFor(async () =>
+            expect(await owner.status(request)).toMatchObject({
+              progress: { phase: expires ? 'failed' : 'cancelled' },
+              ...(expires
+                ? { error: expect.stringContaining(target ? 'model setup timed out' : 'refusal') }
+                : {})
+            })
+          )
+          expect(mocks.run).toHaveBeenCalledTimes(target ? 0 : expires ? 2 : 1)
+          if (!target && expires) {
+            const animation = JSON.parse(mocks.run.mock.calls[1][0].prompt)
+            expect(animation.path).toBe('anims/hook.js')
+          }
+        } finally {
+          timeout?.mockRestore()
+          stalled.reject(new Error('Delayed operation failed'))
+        }
         return
       }
       const prepare =

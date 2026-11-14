@@ -50,6 +50,46 @@ const filmAttempt = new AsyncLocalStorage<{
 export const currentFilmAttempt = (): ReturnType<typeof filmAttempt.getStore> =>
   filmAttempt.getStore()
 
+const FILM_READINESS_TIMEOUT_MS = 30_000
+class FilmReadinessTimeoutError extends Error {
+  constructor() {
+    super('Research film readiness check timed out. Try again.')
+  }
+}
+
+/** Stop waiting without abandoning ownership of any work started by the callback. */
+export async function waitForFilmStep<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+  signal.throwIfAborted()
+  const aborted = Promise.withResolvers<never>()
+  const onAbort = (): void => aborted.reject(signal.reason)
+  signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    return await Promise.race([
+      aborted.promise,
+      Promise.resolve().then(() => {
+        signal.throwIfAborted()
+        return work()
+      })
+    ])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
+async function checkFilmReadiness<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  caller?: AbortSignal
+): Promise<T> {
+  const deadline = AbortSignal.timeout(FILM_READINESS_TIMEOUT_MS)
+  const signal = caller ? AbortSignal.any([caller, deadline]) : deadline
+  try {
+    return await waitForFilmStep(signal, () => work(signal))
+  } catch (error) {
+    if (deadline.aborted && signal.reason === deadline.reason) throw new FilmReadinessTimeoutError()
+    throw error
+  }
+}
+
 export type ResearchVideoPresentationOwner = {
   status(request: ResearchVideoStatusRequest): Promise<ResearchVideoPresentationStatus>
   start(request: ResearchVideoStartRequest): Promise<ResearchVideoPresentationStatus>
@@ -78,26 +118,6 @@ export function createResearchVideoPresentationOwner(options: {
   ) => Promise<ResearchVideoPresentationStatus['result']>
   lifecycle?: ResearchFilmLifecycle
 }): ResearchVideoPresentationOwner {
-  const waitForReadiness = async (signal: AbortSignal): Promise<void> => {
-    const checkReadiness = options.checkReadiness
-    if (!checkReadiness) return
-    signal.throwIfAborted()
-    const aborted = Promise.withResolvers<never>()
-    const onAbort = (): void => aborted.reject(signal.reason)
-    signal.addEventListener('abort', onAbort, { once: true })
-    try {
-      // A read-only probe can finish later without retaining Film admission.
-      await Promise.race([
-        aborted.promise,
-        Promise.resolve().then(() => {
-          signal.throwIfAborted()
-          return checkReadiness(signal)
-        })
-      ])
-    } finally {
-      signal.removeEventListener('abort', onAbort)
-    }
-  }
   let installingKey: string | undefined
   let removing = false
   let closed = false
@@ -125,21 +145,37 @@ export function createResearchVideoPresentationOwner(options: {
     }
     return current
   }
-  const status = async (
-    rawRequest: ResearchVideoStatusRequest
+  const readStatus = async (
+    request: ResearchVideoPresentationRequest,
+    readinessSignal?: AbortSignal
   ): Promise<ResearchVideoPresentationStatus> => {
-    const { checkReadiness, ...request } = researchVideoStatusRequestSchema.parse(rawRequest),
-      key = scopeKey(request)
+    const key = scopeKey(request)
     const revision = operationRevision
     const state = structuredClone(states.get(key) ?? {})
     const session = await options.loadSession(request.projectId, request.sessionId)
+    readinessSignal?.throwIfAborted()
     const block = researchVideoGenerationBlock(session, request)
     if (block === 'unavailable') return { generationBlock: block }
     if (installingKey === key) state.narrationDownload = await options.models.getSnapshot()
     if (block) state.generationBlock = block
-    if (checkReadiness && !block && !active && !closed && !removing) {
+    if (readinessSignal && !block && !active && !closed && !removing) {
+      const signal = readinessSignal
+      signal.throwIfAborted()
       const probe = Symbol()
       preflights.set(key, probe)
+      const clearProbe = (): void => {
+        if (preflights.get(key) === probe) preflights.delete(key)
+      }
+      const onTimeout = (): void => {
+        if (preflights.get(key) === probe && revision === operationRevision) {
+          states.set(key, {
+            ...states.get(key),
+            preflightError: new FilmReadinessTimeoutError().message
+          })
+        }
+        clearProbe()
+      }
+      signal.addEventListener('abort', onTimeout, { once: true })
       delete state.preflightError
       try {
         const source = researchVideoSessionSource(session!, request)
@@ -148,26 +184,33 @@ export function createResearchVideoPresentationOwner(options: {
           session!,
           options.dataRoot(),
           undefined,
-          new AbortController().signal
+          signal
         )
-        await options.checkReadiness?.()
+        signal.throwIfAborted()
+        await options.checkReadiness?.(signal)
+        signal.throwIfAborted()
         const snapshot = await options.models.getSnapshot()
+        signal.throwIfAborted()
         if (snapshot.availability === 'ready' && !snapshot.updateAvailable) {
           const lease = await options.models.acquireUse()
           lease.release()
         }
       } catch (error) {
+        signal.throwIfAborted()
         state.preflightError = error instanceof Error ? error.message : String(error)
         if (state.preflightError !== states.get(key)?.preflightError)
           log.info('film preflight failed', {
             sessionId: request.sessionId,
             ...diagnosticErrorFields(error)
           })
+      } finally {
+        signal.removeEventListener('abort', onTimeout)
       }
+      signal.throwIfAborted()
       const currentProbe = preflights.get(key) === probe
-      if (currentProbe) preflights.delete(key)
+      clearProbe()
       // A newer probe or mutation owns the status. Do not restart work after disposal.
-      if (!currentProbe || revision !== operationRevision) return status(request)
+      if (!currentProbe || revision !== operationRevision) return readStatus(request)
       states.set(key, { ...states.get(key), preflightError: state.preflightError })
     }
     const branchId =
@@ -200,6 +243,19 @@ export function createResearchVideoPresentationOwner(options: {
       }
     }
     return result ? { ...state, result } : state
+  }
+
+  const status = async (
+    rawRequest: ResearchVideoStatusRequest
+  ): Promise<ResearchVideoPresentationStatus> => {
+    const { checkReadiness, ...request } = researchVideoStatusRequestSchema.parse(rawRequest)
+    if (!checkReadiness) return readStatus(request)
+    try {
+      return await checkFilmReadiness((signal) => readStatus(request, signal))
+    } catch (error) {
+      if (!(error instanceof FilmReadinessTimeoutError)) throw error
+      return { preflightError: error.message }
+    }
   }
 
   const run = async (
@@ -280,7 +336,10 @@ export function createResearchVideoPresentationOwner(options: {
     let completed = false
     log.info('film invocation started', { ...context(), phase: stage })
     try {
-      const session = await options.loadSession(request.projectId, request.sessionId)
+      const session = await checkFilmReadiness(
+        () => options.loadSession(request.projectId, request.sessionId),
+        signal
+      )
       signal.throwIfAborted()
       if (!session) throw new Error('Research session is unavailable.')
       const block = researchVideoGenerationBlock(session, request)
@@ -298,16 +357,19 @@ export function createResearchVideoPresentationOwner(options: {
       activeBranchId = source.provenance.branchId
       const checksums: string[] = []
       measure('images')
-      await stageResearchVideoSessionImages(
-        source,
-        session,
-        options.dataRoot(),
-        undefined,
-        signal,
-        checksums
-      )
-      measure('readiness')
-      await waitForReadiness(signal)
+      await checkFilmReadiness(async (preparation) => {
+        await stageResearchVideoSessionImages(
+          source,
+          session,
+          options.dataRoot(),
+          undefined,
+          preparation,
+          checksums
+        )
+        preparation.throwIfAborted()
+        measure('readiness')
+        await options.checkReadiness?.(preparation)
+      }, signal)
       signal.throwIfAborted()
       if (installNarration) {
         installingKey = key
@@ -327,16 +389,27 @@ export function createResearchVideoPresentationOwner(options: {
           return
         }
         const scope = { ...request, branchId: source.provenance.branchId }
-        const latest = await options.loadSession(scope.projectId, scope.sessionId)
-        if (researchVideoGenerationBlock(latest, scope))
-          throw new Error('Research session is unavailable.')
-        await waitForReadiness(signal)
+        await checkFilmReadiness(async (preparation) => {
+          const latest = await options.loadSession(scope.projectId, scope.sessionId)
+          preparation.throwIfAborted()
+          if (researchVideoGenerationBlock(latest, scope))
+            throw new Error('Research session is unavailable.')
+          await options.checkReadiness?.(preparation)
+        }, signal)
         signal.throwIfAborted()
       }
       measure('narration-acquire')
-      lease = await options.models.acquireUse()
+      const narration = await checkFilmReadiness(async (preparation) => {
+        const acquired = await options.models.acquireUse()
+        if (preparation.aborted) {
+          acquired.release()
+          preparation.throwIfAborted()
+        }
+        lease = acquired
+        return acquired
+      }, signal)
       signal.throwIfAborted()
-      const model = lease.assets.find((asset) => asset.file === 'model_quantized.onnx')
+      const model = narration.assets.find((asset) => asset.file === 'model_quantized.onnx')
       if (!model) throw new Error('Install the research narration model before generating.')
       installingKey = undefined
       admitted = true
@@ -432,7 +505,7 @@ export function createResearchVideoPresentationOwner(options: {
             },
             generate: options.generate,
             modelDirectory: dirname(model.path),
-            modelRevision: lease!.revision,
+            modelRevision: narration.revision,
             engineDirectory: options.engineDirectory,
             onProgress: report
           })
