@@ -169,6 +169,7 @@ it.each(outcomes)(
             ]
           })
         })
+        .mockResolvedValueOnce({ ...result, text: 'function draw(', stopReason: 'max_tokens' })
         .mockResolvedValue({ ...result, text: '', stopReason: 'refusal' })
     }
     mocks.shutdown.mockImplementation(async () => {
@@ -186,7 +187,8 @@ it.each(outcomes)(
               id: 'test',
               type: 'custom',
               model: outcome === 'refusal' ? 'claude-test' : 'test',
-              contextWindow: outcome === 'input-unavailable' ? 9000 : 200_000
+              contextWindow: outcome === 'input-unavailable' ? 9000 : 200_000,
+              ...(outcome === 'recovered' ? { maxOutputTokens: 2048 } : {})
             }
           ]
         })),
@@ -368,7 +370,7 @@ it.each(outcomes)(
         expect(status.result).toBeUndefined()
         const calls =
           outcome === 'recovered'
-            ? 3
+            ? 4
             : ['max_tokens', 'max_turn_requests', 'empty', 'output-limit'].includes(outcome)
               ? 2
               : 1
@@ -381,8 +383,27 @@ it.each(outcomes)(
           const correction = JSON.parse(mocks.run.mock.calls[1][0].prompt).correction
           expect(correction).toMatchObject({ draft: '', error: expect.stringContaining('shorter') })
         }
+        if (outcome === 'max_tokens' || outcome === 'recovered') {
+          const targets = mocks.run.mock.calls.map(([{ systemPrompt }]) =>
+            systemPrompt.match(/at most \d+ (?:visible|output) tokens/g)?.at(-1)
+          )
+          expect(targets).toEqual(
+            outcome === 'recovered'
+              ? [
+                  'at most 1024 visible tokens',
+                  'at most 512 visible tokens',
+                  'at most 1024 visible tokens',
+                  'at most 512 visible tokens'
+                ]
+              : ['at most 6000 output tokens', 'at most 3000 visible tokens']
+          )
+        }
         if (outcome === 'recovered') {
-          expect(mocks.run.mock.calls[2][0].systemPrompt).toContain('JavaScript animation')
+          const animationCorrection = JSON.parse(mocks.run.mock.calls[3][0].prompt)
+          expect(animationCorrection).toMatchObject({
+            path: 'anims/hook.js',
+            correction: { draft: '' }
+          })
           // Failed progress can arrive before file cleanup releases the active job. Retry until
           // a second job is admitted rather than observing the first job's terminal state again.
           await vi.waitFor(async () => {
