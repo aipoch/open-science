@@ -125,8 +125,7 @@ class BackgroundResultDeliveryOwner {
   private readonly claimRecoveryTimer: ReturnType<typeof setInterval>
   private authorityReady: Promise<void> | undefined
   private catalogRecovery: Promise<void> | undefined
-  private claimRecovery: Promise<void> | undefined
-  private pendingRecovery: Promise<void> | undefined
+  private pendingRecovery: Promise<string[]> | undefined
   private disposed = false
 
   constructor(private readonly options: BackgroundResultDeliveryOwnerOptions) {
@@ -271,46 +270,32 @@ class BackgroundResultDeliveryOwner {
 
   async recover(): Promise<void> {
     if (this.disposed) return
-    await Promise.all([this.reconcileCatalog(), this.recoverClaims()])
-    if (this.disposed) return
-    for (const sessionId of await this.options.repository.listPendingSessionIds())
-      await this.drainSession(sessionId)
+    const [, sessionIds] = await Promise.all([this.reconcileCatalog(), this.recoverPending()])
+    for (const sessionId of sessionIds) await this.drainSession(sessionId)
   }
 
   private recoverPeriodically(): void {
-    // A slow catalog must not stop claims from expiring. Do not attach new waiters to a
-    // recovery that is already in flight on every tick.
-    if (this.pendingRecovery) {
-      if (!this.claimRecovery) void this.recoverClaims().catch(reportRecoveryFailure)
-    } else {
-      this.pendingRecovery = this.schedulePending()
-        .catch(reportRecoveryFailure)
-        .finally(() => {
-          this.pendingRecovery = undefined
+    // Catalog cleanup must not hold up expired claims or their redispatch. Skip in-flight
+    // work instead of attaching another waiter on every tick.
+    if (!this.catalogRecovery) void this.reconcileCatalog().catch(reportRecoveryFailure)
+    if (!this.pendingRecovery) {
+      void this.recoverPending()
+        .then((sessionIds) => {
+          for (const sessionId of sessionIds) this.schedule(sessionId)
         })
+        .catch(reportRecoveryFailure)
     }
   }
 
-  private async schedulePending(): Promise<void> {
-    // Keep the pass occupied until both lookups settle even if one rejects first.
-    const results = await Promise.allSettled([this.reconcileCatalog(), this.recoverClaims()])
-    for (const result of results) {
-      if (result.status === 'rejected') throw result.reason
-    }
-    if (this.disposed) return
-    // Reuse the per-Session scheduler rather than holding the recovery pass open through a turn.
-    for (const sessionId of await this.options.repository.listPendingSessionIds())
-      this.schedule(sessionId)
-  }
-
-  private async recoverClaims(): Promise<void> {
-    return (this.claimRecovery ??= this.waitForAuthority()
-      .then(async () => {
-        if (!this.disposed) await this.options.repository.recoverExpiredClaims(this.now())
-      })
-      .finally(() => {
-        this.claimRecovery = undefined
-      }))
+  private recoverPending(): Promise<string[]> {
+    return (this.pendingRecovery ??= (async () => {
+      await this.waitForAuthority()
+      if (this.disposed) return []
+      await this.options.repository.recoverExpiredClaims(this.now())
+      return this.disposed ? [] : this.options.repository.listPendingSessionIds()
+    })().finally(() => {
+      this.pendingRecovery = undefined
+    }))
   }
 
   private reconcileCatalog(): Promise<void> {

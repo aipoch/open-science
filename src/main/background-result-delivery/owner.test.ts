@@ -119,7 +119,7 @@ const harness = (resolved: 'terminal' | 'not-ready' | 'missing' = 'terminal') =>
 describe('BackgroundResultDeliveryOwner', () => {
   afterEach(() => vi.restoreAllMocks())
 
-  it('coalesces a slow catalog scan without blocking expired claim recovery', async () => {
+  it('redelivers an expired claim while the catalog scan is still blocked', async () => {
     vi.useFakeTimers()
     const { owner, repository, loadSessionCatalog } = harness()
     const resume = deferred()
@@ -128,10 +128,18 @@ describe('BackgroundResultDeliveryOwner', () => {
       await resume.promise
       return { complete: true, sessions: [] }
     })
+    repository.recoverExpiredClaims.mockImplementationOnce(async () => {
+      repository.listPendingSessionIds.mockResolvedValueOnce(['session-1'])
+      return 1
+    })
     try {
       await vi.advanceTimersByTimeAsync(90_000)
       expect(loadSessionCatalog).toHaveBeenCalledOnce()
       expect(repository.recoverExpiredClaims).toHaveBeenCalledTimes(3)
+      expect(repository.claimPending).toHaveBeenCalledExactlyOnceWith(
+        'session-1',
+        expect.anything()
+      )
       expect(repository.deleteIds).not.toHaveBeenCalled()
       resume.resolve()
       await vi.advanceTimersByTimeAsync(30_000)
