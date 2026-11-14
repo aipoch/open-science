@@ -887,7 +887,7 @@ export function recoverUnassignedMetricGroupHeader({
     origin: 'source-metric-group-header',
     rect: [columns[column].rect[0], top, columns[column + colSpan - 1].rect[2], bottom],
     text: item.text,
-    sourceItems: [item.sourceItem],
+    sourceItems: [item.sourceItem ?? item],
     sourceTokens: [item],
     sourceRects: [item.rect]
   })
@@ -1548,6 +1548,7 @@ export function recoverNativeSixColumnMicrobenchmarkRows({
   repairs,
   observedRuns = []
 }) {
+  let rollback = () => {}
   try {
     if (
       !table ||
@@ -1697,6 +1698,50 @@ export function recoverNativeSixColumnMicrobenchmarkRows({
       )
     )
     if (!unassigned.length && allRowsAlreadyOwned && allHeadersAlreadyOwned) return false
+    const originalCells = cells.slice(),
+      originalCellState = cells.map((cell) => ({
+        cell,
+        row: cell.row,
+        text: cell.text,
+        sourceItems: cell.sourceItems,
+        sourceTokens: cell.sourceTokens,
+        sourceRects: cell.sourceRects
+      })),
+      originalBaseCells = baseCells.slice(),
+      originalBaseRows = baseCells.map((cell) => cell.row),
+      originalRows = rows.slice(),
+      originalRowRects = rows.map((row) => (Array.isArray(row.rect) ? row.rect.slice() : row.rect)),
+      originalHeaderRows = headerRows.slice(),
+      originalUnassigned = unassigned.slice(),
+      originalIssues = new Set(issues ?? []),
+      originalRepairCount = repairs.length
+    rollback = () => {
+      cells.splice(0, cells.length, ...originalCells)
+      originalCellState.forEach((state) => {
+        state.cell.row = state.row
+        state.cell.text = state.text
+        state.cell.sourceItems = state.sourceItems
+        state.cell.sourceTokens = state.sourceTokens
+        state.cell.sourceRects = state.sourceRects
+      })
+      baseCells.splice(0, baseCells.length, ...originalBaseCells)
+      originalBaseCells.forEach((cell, index) => {
+        cell.row = originalBaseRows[index]
+      })
+      rows.splice(0, rows.length, ...originalRows)
+      originalRows.forEach((row, index) => {
+        row.rect = Array.isArray(originalRowRects[index])
+          ? originalRowRects[index].slice()
+          : originalRowRects[index]
+      })
+      headerRows.splice(0, headerRows.length, ...originalHeaderRows)
+      unassigned.splice(0, unassigned.length, ...originalUnassigned)
+      if (issues) {
+        issues.clear()
+        for (const issue of originalIssues) issues.add(issue)
+      }
+      repairs.splice(originalRepairCount)
+    }
     const rowBaseline = (rowIndex) => {
       const values = cells
         .filter((cell) => cell.row === rowIndex)
@@ -1794,6 +1839,7 @@ export function recoverNativeSixColumnMicrobenchmarkRows({
     repairs.push('native-six-column-microbenchmark-recovered')
     return true
   } catch {
+    rollback()
     return false
   }
 }
