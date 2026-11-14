@@ -3,9 +3,17 @@ import { spawn } from 'node:child_process'
 import { mkdtemp, rm, link } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
+import {
+  assertVideoEncoderReady,
+  ownVideoProcess,
+  reapVideoProcesses,
+  waitForVideoProcess
+} from './encoder-process.js'
+export { assertVideoEncoderReady, ResearchVideoEncoderCleanupError } from './encoder-process.js'
 
 const ENCODER_IDLE_TIMEOUT_MS = 120_000
 const PROBE_TIMEOUT_MS = 120_000
+let exporting = false
 
 export type VideoFrameRenderer = {
   /** Return a PNG of the stage alone at exactly width × height, after drawing this time. */
@@ -41,36 +49,29 @@ export async function exportResearchVideoMp4(options: {
     duration > 3600
   )
     throw new Error('Invalid video dimensions or duration')
+  assertVideoEncoderReady()
+  if (exporting) throw new Error('A Film export is already running.')
   signal.throwIfAborted()
-  const directory = await mkdtemp(join(dirname(options.outputPath), '.research-video-'))
+  exporting = true
+  let directory: string
+  try {
+    directory = await mkdtemp(join(dirname(options.outputPath), '.research-video-'))
+  } catch (error) {
+    exporting = false
+    throw error
+  }
   const temporaryPath = join(directory, 'video.mp4')
   const frames = Math.ceil(duration * 30)
-  let encoder: ReturnType<typeof spawn> | undefined
-  let encoderClosed: Promise<void> | undefined
+  const children: ReturnType<typeof ownVideoProcess>[] = []
   let feed: Promise<void> | undefined
-  let probe: ReturnType<typeof spawn> | undefined
-  let probeClosed: Promise<void> | undefined
-  const reap = async (
-    child: ReturnType<typeof spawn> | undefined,
-    closed?: Promise<void>
-  ): Promise<void> => {
-    if (!child) return
-    if (child.exitCode === null && child.signalCode === null) {
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        // A signal error cannot authorize deleting files the process may still be using.
-      }
-    }
-    // These are direct children; owned stdio can be closed without waiting for further output.
-    child.stdin?.destroy()
-    child.stdout?.destroy()
-    child.stderr?.destroy()
-    await closed
+  const remove = async (): Promise<void> => {
+    await feed?.catch(() => {})
+    await rm(directory, { recursive: true, force: true, maxRetries: 3 })
   }
   try {
+    signal.throwIfAborted()
     armDeadline('Video encoding timed out without progress', ENCODER_IDLE_TIMEOUT_MS)
-    encoder = spawn(
+    const encoder = spawn(
       options.encoderPath,
       [
         '-hide_banner',
@@ -107,16 +108,16 @@ export async function exportResearchVideoMp4(options: {
         '-y',
         temporaryPath
       ],
-      { stdio: ['pipe', 'ignore', 'pipe'], signal }
+      { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true }
     )
+    children.push(ownVideoProcess(encoder))
     let diagnostics = ''
     encoder.stderr!.on('data', (chunk) => {
       diagnostics = (diagnostics + chunk.toString()).slice(-8192)
     })
-    encoderClosed = new Promise((resolve) => encoder!.once('close', () => resolve()))
     const completion = new Promise<void>((resolve, reject) => {
-      encoder!.once('error', reject)
-      encoder!.once('close', (code) =>
+      encoder.once('error', reject)
+      encoder.once('close', (code) =>
         code === 0 ? resolve() : reject(new Error(`Video encoder failed (${code}): ${diagnostics}`))
       )
     })
@@ -150,17 +151,16 @@ export async function exportResearchVideoMp4(options: {
     }
     // Let the pipeline own backpressure instead of subscribing to child exit for every frame.
     feed = pipeline(renderFrames, encoder.stdin!, { signal })
-    await Promise.all([completion, feed])
+    await waitForVideoProcess(Promise.all([completion, feed]), signal)
     signal.throwIfAborted()
     options.onPhase?.('verifying')
     armDeadline('Video verification timed out', PROBE_TIMEOUT_MS)
     const verifier = spawn(
       options.probePath,
       ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', temporaryPath],
-      { stdio: ['ignore', 'pipe', 'pipe'], signal }
+      { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }
     )
-    probe = verifier
-    probeClosed = new Promise((resolve) => verifier.once('close', () => resolve()))
+    children.push(ownVideoProcess(verifier))
     let output = '',
       probeError = '',
       outputTooLarge = false
@@ -175,7 +175,7 @@ export async function exportResearchVideoMp4(options: {
     verifier.stderr.on('data', (chunk) => {
       probeError = (probeError + chunk.toString()).slice(-8192)
     })
-    await new Promise<void>((resolve, reject) => {
+    const verification = new Promise<void>((resolve, reject) => {
       verifier.once('error', reject)
       verifier.once('close', (code) =>
         code === 0 && !outputTooLarge
@@ -183,6 +183,7 @@ export async function exportResearchVideoMp4(options: {
           : reject(new Error(`Video verification failed: ${probeError}`))
       )
     })
+    await waitForVideoProcess(verification, signal)
     clearTimeout(idleTimer)
     signal.throwIfAborted()
     const metadata = JSON.parse(output) as {
@@ -217,9 +218,11 @@ export async function exportResearchVideoMp4(options: {
     throw error
   } finally {
     clearTimeout(idleTimer)
-    // Abort emits an error before a process has exited; join both before removing their input.
-    await Promise.all([reap(probe, probeClosed), reap(encoder, encoderClosed)])
-    await feed?.catch(() => {})
-    await rm(directory, { recursive: true, force: true })
+    try {
+      await reapVideoProcesses(children, remove)
+      await remove()
+    } finally {
+      exporting = false
+    }
   }
 }

@@ -1,9 +1,14 @@
 import type { ResearchVideoProgress, ResearchVideoStep } from '@aipoch/research-film/contracts'
 import type { VideoEncoderPaths } from '@aipoch/research-film/export'
 import { BrowserWindow, session } from 'electron'
-import { readFile, writeFile, rm } from 'node:fs/promises'
+import { readFile, writeFile, rm, mkdtemp, link, rename } from 'node:fs/promises'
+import { dirname, join, relative } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { exportResearchVideoMp4 } from '@aipoch/research-film/export'
+import {
+  assertVideoEncoderReady,
+  exportResearchVideoMp4,
+  ResearchVideoEncoderCleanupError
+} from '@aipoch/research-film/export'
 import { waitForFilmStep } from './wait'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
@@ -93,6 +98,7 @@ export async function renderResearchVideoMp4(
   await acquireRenderSlot(parentSignal)
   try {
     parentSignal.throwIfAborted()
+    assertVideoEncoderReady()
     return await renderWithSlot(request, parentSignal)
   } finally {
     const next = renderWaiters.values().next().value
@@ -126,10 +132,10 @@ async function renderWithSlot(
   if (needsReset) await resetRenderSession(isolated, signal)
   signal.throwIfAborted()
   const playerUrl = `https://research-video.invalid/player?render&ratio=16x9&job=${randomUUID()}`
-  const audioPath = `${request.htmlPath}.wav`,
-    outputPath = `${request.htmlPath}.mp4`
+  const outputPath = `${request.htmlPath}.mp4`
   let activeWindow: BrowserWindow | undefined
-  let completed = false
+  let directory: string | undefined
+  let encoderExit: Promise<void> | undefined
   needsReset = true
   try {
     isolated.protocol.handle(
@@ -196,6 +202,26 @@ async function renderWithSlot(
         audio.length > 140 * 1024 * 1024
       )
         throw new Error('Invalid narration audio')
+      // The backend can remove its staging directory as soon as native RPC is cancelled.
+      // Give the encoder its own audio, output, and any executables staged by that request.
+      const staging = dirname(request.htmlPath)
+      const owned = (directory = await mkdtemp(join(dirname(staging), 'film-encode-')))
+      const moveTool = async (source: string, name: string): Promise<string> => {
+        if (relative(staging, dirname(source)) !== '') return source
+        const path = join(owned, name)
+        await rename(source, path)
+        return path
+      }
+      const encoder = await moveTool(
+        encoderPath,
+        process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+      )
+      const probe = await moveTool(
+        probePath,
+        process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'
+      )
+      const audioPath = join(owned, 'audio.wav')
+      const videoPath = join(owned, 'video.mp4')
       await writeFile(
         audioPath,
         Buffer.from(audio.slice('data:audio/wav;base64,'.length), 'base64'),
@@ -219,9 +245,9 @@ async function renderWithSlot(
           }
         },
         audioPath,
-        outputPath,
-        encoderPath,
-        probePath,
+        outputPath: videoPath,
+        encoderPath: encoder,
+        probePath: probe,
         width: 1280,
         height: 720,
         duration: metadata.duration,
@@ -229,11 +255,18 @@ async function renderWithSlot(
         onProgress: (completed, total) => report({ phase: 'rendering', completed, total }),
         onPhase: (phase) => report({ phase })
       })
-      completed = true
+      signal.throwIfAborted()
+      await link(videoPath, outputPath)
     } finally {
       clearTimeout(timer)
     }
     return outputPath
+  } catch (error) {
+    if (error instanceof ResearchVideoEncoderCleanupError) {
+      encoderExit = error.exited
+      log.warn('Film encoder shutdown is unconfirmed', diagnosticErrorFields(error))
+    }
+    throw error
   } finally {
     try {
       if (activeWindow && !activeWindow.isDestroyed()) activeWindow.destroy()
@@ -243,8 +276,15 @@ async function renderWithSlot(
       })
     } finally {
       activeProgress.delete(request.htmlPath)
-      await rm(audioPath, { force: true })
-      if (!completed) await rm(outputPath, { force: true })
+      if (directory) {
+        const owned = directory
+        const remove = (): Promise<void> =>
+          rm(owned, { recursive: true, force: true, maxRetries: 3 }).catch((error: unknown) =>
+            log.warn('Failed to remove Film encoder scratch', diagnosticErrorFields(error))
+          )
+        if (encoderExit) void encoderExit.then(remove)
+        else await remove()
+      }
     }
   }
 }

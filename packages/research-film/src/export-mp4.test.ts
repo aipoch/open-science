@@ -1,8 +1,9 @@
+import { ChildProcess } from 'node:child_process'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { exportResearchVideoMp4 } from './export-mp4.js'
+import { assertVideoEncoderReady, exportResearchVideoMp4 } from './export-mp4.js'
 
 describe('research video export', () => {
   it('rejects invalid media before launching a renderer or encoder', async () => {
@@ -46,6 +47,94 @@ describe('research video export', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it.skipIf(process.platform === 'win32').each(['encoder', 'probe'] as const)(
+    'fences retries and retains scratch until a delayed %s exit',
+    async (stage) => {
+      const root = await mkdtemp(join(tmpdir(), 'film-encoder-late-exit-'))
+      const encoderPath = join(root, 'encoder')
+      const probePath = join(root, 'probe')
+      const stuckPath = join(root, stage)
+      const ready = join(root, 'ready')
+      const controller = new AbortController()
+      const kill = ChildProcess.prototype.kill
+      const observed = new Set<ChildProcess>()
+      // Simulate an accepted force kill with no corresponding exit event.
+      const spy = vi.spyOn(ChildProcess.prototype, 'kill').mockImplementation(function (
+        this: ChildProcess,
+        signal
+      ) {
+        if (this.spawnfile !== stuckPath) return kill.call(this, signal)
+        observed.add(this)
+        return signal === 'SIGKILL'
+      })
+      let task: Promise<unknown> | undefined
+      const settled = vi.fn()
+      try {
+        if (stage === 'probe') {
+          await writeFile(
+            encoderPath,
+            `#!${process.execPath}
+process.stdin.resume();
+process.stdin.on('end', () => require('node:fs').writeFileSync(process.argv.at(-1), 'video'));`,
+            { mode: 0o700 }
+          )
+        }
+        await writeFile(
+          stuckPath,
+          `#!${process.execPath}
+require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready');
+setTimeout(() => {}, 4000);`,
+          { mode: 0o700 }
+        )
+        const options = {
+          renderer: { capture: async () => Buffer.from('frame') },
+          audioPath: 'unused',
+          outputPath: join(root, 'output.mp4'),
+          encoderPath,
+          probePath,
+          width: 2,
+          height: 2,
+          duration: 1 / 30
+        }
+        task = exportResearchVideoMp4({ ...options, signal: controller.signal }).then(
+          settled,
+          settled
+        )
+        await vi.waitFor(() => readFile(ready))
+        vi.useFakeTimers()
+        controller.abort()
+        await vi.advanceTimersByTimeAsync(5000)
+        expect(settled).toHaveBeenCalledWith(
+          expect.objectContaining({ message: expect.stringMatching(/did not confirm shutdown/i) })
+        )
+        expect((await readdir(root)).some((name) => name.startsWith('.research-video-'))).toBe(true)
+        await expect(
+          exportResearchVideoMp4({ ...options, signal: new AbortController().signal })
+        ).rejects.toThrow(/did not confirm shutdown/i)
+        expect(observed.size).toBe(1)
+        const child = observed.values().next().value
+        if (child) kill.call(child, 'SIGKILL')
+        vi.useRealTimers()
+        await vi.waitFor(async () =>
+          expect(await readdir(root)).toEqual(
+            stage === 'probe' ? ['encoder', 'probe', 'ready'] : ['encoder', 'ready']
+          )
+        )
+        expect(() => assertVideoEncoderReady()).not.toThrow()
+      } finally {
+        vi.useRealTimers()
+        spy.mockRestore()
+        controller.abort()
+        const child = observed.values().next().value
+        if (child && child.exitCode === null && child.signalCode === null) {
+          kill.call(child, 'SIGKILL')
+        }
+        await task
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it.skipIf(process.platform === 'win32')(
     'cancels a backpressured encode and joins the encoder before returning',

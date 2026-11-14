@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { ResearchVideoEncoderCleanupError } from '@aipoch/research-film/export'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
@@ -33,9 +34,18 @@ const electron = vi.hoisted(() => {
   return { clearData, loadURL, executeJavaScript, destroy, protocol, fromPartition, BrowserWindow }
 })
 
-vi.mock('@aipoch/research-film/export', () => ({
-  exportResearchVideoMp4: ({ outputPath }: { outputPath: string }) =>
-    writeFile(outputPath, 'verified video')
+const encode = vi.hoisted(() =>
+  vi.fn(
+    async ({
+      outputPath
+    }: Parameters<typeof import('@aipoch/research-film/export').exportResearchVideoMp4>[0]) => {
+      await writeFile(outputPath, 'verified video')
+    }
+  )
+)
+vi.mock('@aipoch/research-film/export', async (original) => ({
+  ...(await original<typeof import('@aipoch/research-film/export')>()),
+  exportResearchVideoMp4: encode
 }))
 
 vi.mock('electron', () => ({
@@ -193,5 +203,58 @@ it('bounds partition cleanup without mounting another player on a dirty partitio
     vi.useRealTimers()
     await first
     await rm(root, { force: true, recursive: true })
+  }
+})
+
+it('keeps encoder inputs when the cancelled backend request deletes its staging directory', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-export-owner-'))
+  const staging = join(root, 'backend')
+  const htmlPath = join(staging, 'player.html')
+  const encoderPath = join(staging, 'ffmpeg')
+  const probePath = join(staging, 'ffprobe')
+  const ready = Promise.withResolvers<{
+    audioPath: string
+    encoderPath: string
+    probePath: string
+  }>()
+  const reportFailure = Promise.withResolvers<void>()
+  const exited = Promise.withResolvers<void>()
+  const cleanupError = new ResearchVideoEncoderCleanupError(exited.promise)
+  const controller = new AbortController()
+  let task: Promise<unknown> | undefined
+  try {
+    await mkdir(staging)
+    await writeFile(htmlPath, '<meta name="open-science-research-video" content="1">')
+    await writeFile(encoderPath, 'encoder')
+    await writeFile(probePath, 'probe')
+    electron.executeJavaScript
+      .mockResolvedValueOnce({ W: 1920, H: 1080, duration: 1 })
+      .mockResolvedValueOnce('data:audio/wav;base64,YQ==')
+    encode.mockImplementationOnce(async (options) => {
+      ready.resolve(options)
+      await reportFailure.promise
+      throw cleanupError
+    })
+    task = renderResearchVideoMp4({ htmlPath, encoderPath, probePath }, controller.signal).catch(
+      (error: unknown) => error
+    )
+    const owned = await ready.promise
+    controller.abort(new Error('Cancelled over native RPC'))
+    await rm(staging, { recursive: true })
+    await expect(readFile(owned.audioPath, 'utf8')).resolves.toBe('a')
+    await expect(readFile(owned.encoderPath, 'utf8')).resolves.toBe('encoder')
+    await expect(readFile(owned.probePath, 'utf8')).resolves.toBe('probe')
+    reportFailure.resolve()
+    expect(await task).toBe(cleanupError)
+    await expect(readFile(owned.audioPath, 'utf8')).resolves.toBe('a')
+    exited.resolve()
+    await vi.waitFor(() =>
+      expect(readFile(owned.audioPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    )
+  } finally {
+    reportFailure.resolve()
+    exited.resolve()
+    await task
+    await rm(root, { recursive: true, force: true })
   }
 })

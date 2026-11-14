@@ -35,6 +35,7 @@
     "packages/research-film/src/build-player.test.ts",
     "packages/research-film/src/build-player.ts",
     "packages/research-film/src/contracts.ts",
+    "packages/research-film/src/encoder-process.ts",
     "packages/research-film/src/export-mp4.test.ts",
     "packages/research-film/src/export-mp4.ts",
     "packages/research-film/src/ffmpeg-assets.json",
