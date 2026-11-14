@@ -3724,6 +3724,16 @@ if (process.argv.includes('--version')) {
             const faultKey = `${faultRoot}:${mode}`
             const attempt = (classificationFaultAttempts.get(faultKey) ?? 0) + 1
             classificationFaultAttempts.set(faultKey, attempt)
+            if (mode === 'timeout') {
+              const receivedAt = performance.now()
+              response.once('close', () => {
+                const elapsedMs = performance.now() - receivedAt
+                void writeFile(
+                  join(faultRoot, `timeout-${attempt}.json`),
+                  JSON.stringify(elapsedMs)
+                ).catch((error) => console.error('Could not record classification timeout.', error))
+              })
+            }
             await appendFile(
               join(faultRoot, 'requests.jsonl'),
               `${JSON.stringify({
@@ -3733,8 +3743,7 @@ if (process.argv.includes('--version')) {
                 sessionId,
                 messageId,
                 pid: process.pid,
-                infoPresent: true,
-                delayMs: mode === 'timeout' ? 2_500 : 0
+                infoPresent: true
               })}\n`
             )
             if (
@@ -3745,7 +3754,8 @@ if (process.argv.includes('--version')) {
               response.writeHead(mode.endsWith('500') ? 500 : 404).end()
               return
             }
-            if (mode === 'timeout') await delay(2_500)
+            // Leave both attempts unanswered so the real client deadlines close them.
+            if (mode === 'timeout') return
             if (mode === 'body-reset' || (mode === 'transient-body-reset' && attempt === 1)) {
               response.writeHead(200, { 'content-type': 'application/json' })
               response.write('{"info":')
