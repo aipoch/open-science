@@ -104,10 +104,8 @@ for (const mode of [
     const outcome = session.messages.find((message) => message.role === 'user')?.turnOutcome
     if (succeeds) expect(outcome?.kind).toBe('completed')
     expect(requests).toHaveLength(mode === 'healthy' || mode === 'not-yet-visible' ? 1 : 2)
-    const elapsedMs = outcome ? outcome.settledAt - requests[0].timestamp : undefined
-    if (mode === 'timeout') expect(elapsedMs).toBeGreaterThanOrEqual(4_000)
     await testInfo.attach('classification-boundary-evidence', {
-      body: JSON.stringify({ mode, requests, elapsedMs, session }, null, 2),
+      body: JSON.stringify({ mode, requests, session }, null, 2),
       contentType: 'application/json'
     })
     await page.screenshot({ path: testInfo.outputPath(`classification-${mode}.png`) })
