@@ -36,11 +36,16 @@ const directories = async (path: string): Promise<string[]> => {
 }
 const readReceipt = async (path: string, limit: number): Promise<unknown> => {
   const stat = await info(path)
-  if (!stat?.isFile() || stat.isSymbolicLink()) return undefined
+  if (!stat?.isFile() || stat.size > limit) return undefined
   try {
     return JSON.parse(await readFileWithinLimit(path, limit))
   } catch (error) {
-    if (error instanceof SyntaxError) return undefined
+    if (
+      error instanceof SyntaxError ||
+      error instanceof DurableJsonReadLimitError ||
+      (error as NodeJS.ErrnoException).code === 'ENOENT'
+    )
+      return undefined
     throw error
   }
 }
@@ -223,9 +228,7 @@ export function createResearchFilmLifecycle(options: {
       ): Promise<{ proof: ReceiptProof; value: unknown } | undefined> => {
         const before = await info(path)
         if (!before?.isFile() || !predatesStartup(before) || before.size > limit) return
-        const value = await readReceipt(path, limit).catch((error: NodeJS.ErrnoException) => {
-          if (!(error instanceof DurableJsonReadLimitError) && error.code !== 'ENOENT') throw error
-        })
+        const value = await readReceipt(path, limit)
         if (value === undefined || !unchanged(await info(path), before)) return
         return { proof: { path, before }, value }
       }

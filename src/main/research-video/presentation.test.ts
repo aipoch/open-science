@@ -217,6 +217,44 @@ it('cancels the background authoring operation and releases the model lease', as
   expect(f.options.generate).not.toHaveBeenCalled()
   expect(f.release).toHaveBeenCalledOnce()
 })
+
+it('releases Film admission when a cancelled narration install is still draining', async () => {
+  const f = await fixture()
+  const install = Promise.withResolvers<Awaited<ReturnType<Options['models']['installForUse']>>>()
+  const installForUse = vi.fn<Options['models']['installForUse']>(async () => ({
+    ...(await f.options.models.getSnapshot()),
+    availability: 'ready'
+  }))
+  installForUse.mockReturnValueOnce(install.promise)
+  const other = { ...request, sessionId: 'other' }
+  const owner = createResearchVideoPresentationOwner({
+    ...f.options,
+    models: { ...f.options.models, installForUse },
+    loadSession: async (_projectId, sessionId) => ({ ...session, id: sessionId })
+  })
+  try {
+    await owner.start({ ...request, installNarration: true })
+    owner.cancel(request)
+    expect(installForUse.mock.calls[0][0].aborted).toBe(true)
+    await vi.waitFor(async () =>
+      expect(await owner.status(request)).toMatchObject({ progress: { phase: 'cancelled' } })
+    )
+    await expect(owner.start({ ...request, installNarration: true })).rejects.toThrow(
+      'Local model management is in progress.'
+    )
+    expect(installForUse).toHaveBeenCalledOnce()
+    await owner.start(other)
+    await vi.waitFor(async () => expect((await owner.status(other)).result).toBeDefined())
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+    install.reject(new Error('Cancelled download finished draining'))
+    expect((await owner.status(request)).progress?.phase).toBe('cancelled')
+    await owner.start({ ...request, installNarration: true })
+    await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+  } finally {
+    install.reject(new Error('Cancelled download finished draining'))
+    await owner.close()
+  }
+})
 it('preserves Film recovery and its model lease when narration shutdown is unconfirmed', async () => {
   const f = await fixture()
   const exited = Promise.withResolvers<void>()
@@ -683,6 +721,41 @@ it('reports a stalled checkpoint write without letting a retry race it', async (
   } finally {
     vi.useRealTimers()
     disk.resolve()
+    await owner.close()
+    write.mockImplementation(original)
+  }
+})
+
+it('retains a checkpoint committed while cancellation is waiting for its write', async () => {
+  const f = await fixture()
+  const owner = createResearchVideoPresentationOwner(f.options)
+  const write = vi.mocked(writeDurableJsonFile)
+  const original = write.getMockImplementation()!
+  const committed = Promise.withResolvers<void>()
+  const writeReturn = Promise.withResolvers<void>()
+  try {
+    await owner.start(request)
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+    const old = (await owner.status(request)).result!
+    write.mockImplementation(async (...args) => {
+      await original(...args)
+      if (args[0].endsWith('pending.json')) {
+        committed.resolve()
+        await writeReturn.promise
+      }
+    })
+    await owner.start(request)
+    await committed.promise
+    owner.cancel(request)
+    writeReturn.resolve()
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(2))
+    expect(await owner.status(request)).toMatchObject({
+      progress: { phase: 'cancelled' },
+      result: old,
+      canResume: true
+    })
+  } finally {
+    writeReturn.resolve()
     await owner.close()
     write.mockImplementation(original)
   }

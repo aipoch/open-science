@@ -119,6 +119,7 @@ export function createResearchVideoPresentationOwner(options: {
   lifecycle?: ResearchFilmLifecycle
 }): ResearchVideoPresentationOwner {
   let installingKey: string | undefined
+  let narrationInstall: Promise<unknown> | undefined
   let removing = false
   let closed = false
   let operationRevision = 0
@@ -475,7 +476,15 @@ export function createResearchVideoPresentationOwner(options: {
         states.delete(key)
         prepared()
         measure('narration-install')
-        const snapshot = await options.models.installForUse(signal)
+        // The model owner retains its writer while an aborted download drains. Film owns no
+        // checkpoint or model lease here, so cancellation can release Film admission immediately.
+        const snapshot = await waitForFilmStep(signal, () => {
+          const install = options.models.installForUse(signal).finally(() => {
+            narrationInstall = undefined
+          })
+          narrationInstall = install
+          return install
+        })
         signal.throwIfAborted()
         if (snapshot.availability !== 'ready' || snapshot.updateAvailable) {
           log.info('film attempt stopped', {
@@ -592,8 +601,12 @@ export function createResearchVideoPresentationOwner(options: {
           const { projectId, sessionId, branchId } = source.provenance
           await diskStep(() => savePendingFilmOwner(job!, { id, projectId, sessionId, branchId }))
         }
-        await diskStep(() => savePendingFilm(publishBase, saved!))
-        checkpointStarted = true
+        await diskStep(async () => {
+          await savePendingFilm(publishBase, saved!)
+          // The disk step checks cancellation again after the write. Record the durable checkpoint
+          // first so that a cancellation during this write cannot remove it in finally.
+          checkpointStarted = true
+        })
         for (const file of ['files', 'anims', 'video.json', 'output'])
           await diskStep(() => rm(join(job!, file), { recursive: true, force: true }))
         await diskStep(() => mkdir(join(job!, 'files')))
@@ -816,6 +829,8 @@ export function createResearchVideoPresentationOwner(options: {
         }
         throw new Error('Another research explanation is being generated. Wait for it to finish.')
       }
+      if (installNarration && narrationInstall)
+        throw new Error('Local model management is in progress.')
       options.checkGenerationAdmission?.()
       operationRevision++
       const controller = new AbortController()

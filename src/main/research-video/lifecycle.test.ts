@@ -100,6 +100,25 @@ it('reclaims only marked orphan pending jobs during startup reconciliation', asy
   }
 })
 
+it('continues orphan cleanup when a published index is oversized', async () => {
+  const { root } = await fixture()
+  const orphan = await presentation(root, 'gone', 'published')
+  const staged = await pending(root, 'gone')
+  const live = await presentation(root, 'live')
+  const latest = join(orphan.base, 'latest.json')
+  const oversized = 'x'.repeat(4097)
+  await writeFile(latest, oversized)
+  await new Promise((resolve) => setTimeout(resolve, 2))
+  const owner = createResearchFilmLifecycle({ dataRoot: () => root })
+  const plans = await owner.planSessionReconciliation(['live'])
+  expect(plans.map(({ sessionId }) => sessionId)).toEqual(['gone'])
+  await plans[0].apply()
+  await expect(lstat(orphan.directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(lstat(staged.directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await readFile(latest, 'utf8')).toBe(oversized)
+  expect(await exists(join(live.directory, 'output/player.html'))).toBe(true)
+})
+
 it('removes all deleted-session branches and retained tool jobs while preserving other sessions and user exports', async () => {
   const { root, owner } = await fixture()
   const first = await presentation(root, 'deleted')
