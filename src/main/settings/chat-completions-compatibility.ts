@@ -33,6 +33,7 @@ export type ChatCompletionsCompatibilityTarget = Readonly<{
   key?: string
   model: string
   wire: CompatibilityWire
+  maxOutputTokens?: number
   adaptRequest?: (request: Json) => Json
 }>
 
@@ -93,7 +94,7 @@ export class ChatCompletionsCompatibilityBridge {
     const upstreamBody =
       this.target.wire === 'responses'
         ? chatCompletionsToResponses(body, this.target.model)
-        : chatCompletionsToMessages(body, this.target.model)
+        : chatCompletionsToMessages(body, this.target.model, this.target.maxOutputTokens)
     const headers: Record<string, string> = { 'content-type': 'application/json' }
     if (this.target.key) headers.authorization = `Bearer ${this.target.key}`
     if (this.target.wire === 'messages') headers['anthropic-version'] = '2023-06-01'

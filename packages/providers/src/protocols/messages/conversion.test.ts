@@ -51,6 +51,7 @@ it('encodes images, system content, tools and tool results in the Messages wire 
 it.each([
   ['end_turn', 'stop'],
   ['max_tokens', 'length'],
+  ['model_context_window_exceeded', 'length'],
   ['refusal', 'content_filter']
 ])('preserves termination %s and cache accounting', (stop_reason, finish_reason) => {
   const response = messagesToChatCompletions(
