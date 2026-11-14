@@ -1028,6 +1028,35 @@ describe('navigation store Literature review conversation', () => {
   })
 })
 
+describe('navigation store Literature direct composer', () => {
+  it('routes a scope without a default question to a new project draft', () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions([createSession({})], { version: SESSION_MANIFEST_VERSION })
+    useSessionStore.getState().selectSession('session-1')
+    const scope = { type: 'literature-scope', scope: 'project' } as const
+    expect(
+      useNavigationStore.getState().startLiteratureReviewConversation('project-a', scope)
+    ).toBe(true)
+    expect(useNavigationStore.getState().pendingLiteratureReviewPrefill).toMatchObject({
+      projectId: 'project-a',
+      scope
+    })
+    expect(useNavigationStore.getState().pendingLiteratureReviewPrefill?.prompt).toBeUndefined()
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-a')
+  })
+  it('rejects an unavailable project without staging a scope', () => {
+    const navigation = useNavigationStore.getState()
+    const opened = navigation.startLiteratureReviewConversation('missing-project', {
+      type: 'literature-scope',
+      scope: 'project'
+    })
+    expect(opened).toBe(false)
+    expect(useNavigationStore.getState().pendingLiteratureReviewPrefill).toBeUndefined()
+  })
+})
+
 describe('navigation store WSL support conversation', () => {
   it('opens a normal new-conversation draft with the supplied safe diagnostic document', () => {
     const doc = { nodes: [{ type: 'text' as const, text: 'safe WSL diagnostics' }] }

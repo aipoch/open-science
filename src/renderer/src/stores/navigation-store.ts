@@ -59,7 +59,7 @@ export type CustomizePrefillIntent = {
 export type LiteratureReviewPrefillIntent = {
   projectId: string
   scope: LiteratureScopeReference
-  prompt: string
+  prompt?: string
   requestId: number
 }
 
@@ -164,7 +164,7 @@ type NavigationStore = {
   startLiteratureReviewConversation: (
     projectId: string,
     scope: LiteratureScopeReference,
-    prompt: string
+    prompt?: string
   ) => boolean
   // Opens a project's New Conversation draft with one immutable Library PDF staged as Reading.
   // The Session and durable PDF binding are still created only when the user sends the first turn.
@@ -579,7 +579,6 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   consumeCustomizePrefill: () => set({ pendingCustomizePrefill: undefined }),
 
   consumeLiteratureReviewPrefill: () => set({ pendingLiteratureReviewPrefill: undefined }),
-
   startWslSupportConversation: (projectId, doc, setupSessionToken) => {
     if (!isActiveProject(projectId)) return false
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {

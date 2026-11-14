@@ -11,6 +11,23 @@ const identity = (tool: { namespace: string; name: string }): string =>
   `${tool.namespace}/${tool.name}`
 
 describe('Codex bridge MCP catalogs', () => {
+  it('declares the optional focused abstract query in static and runtime catalogs', () => {
+    for (const tools of [
+      codexBridgeStaticMcpTools(),
+      createCodexBridgeMcpTools({ library: true })
+    ]) {
+      const abstract = tools.find(
+        (entry) => identity(entry) === 'mcp__open_science_library/read_library_abstract'
+      )!
+      expect(abstract.parameters.properties.query).toMatchObject({
+        type: 'string',
+        minLength: 1,
+        maxLength: 2_000
+      })
+      expect(abstract.parameters.required ?? []).not.toContain('query')
+    }
+  })
+
   it.each(['binding-1', 'b'.repeat(512)])(
     'declares a cursor range that accepts a production reader continuation (%#. binding)',
     async (bindingId) => {
@@ -56,6 +73,7 @@ describe('Codex bridge MCP catalogs', () => {
     expect([...names]).toEqual(
       expect.arrayContaining([
         'mcp__open_science_library/search_library',
+        'mcp__open_science_library/search_library_full_text',
         'mcp__open_science_library/read_library_abstract',
         'mcp__open_science_library/read_library_pdf',
         'mcp__open_science_library/format_references',
@@ -71,6 +89,47 @@ describe('Codex bridge MCP catalogs', () => {
         'mcp__open_science_literature/create_pdf_annotation'
       ])
     )
+  })
+
+  it('declares bounded full-text search pagination in static and runtime catalogs', () => {
+    for (const tools of [
+      codexBridgeStaticMcpTools(),
+      createCodexBridgeMcpTools({ library: { searchFullText: true } })
+    ]) {
+      const fullText = tools.find(
+        (entry) => identity(entry) === 'mcp__open_science_library/search_library_full_text'
+      )!
+      expect(fullText.parameters.properties.offset).toMatchObject({
+        type: 'integer',
+        minimum: 0
+      })
+      expect(fullText.parameters.required ?? []).not.toContain('offset')
+      expect(fullText.parameters.properties.limit).toMatchObject({
+        type: 'integer',
+        minimum: 1,
+        maximum: 8
+      })
+    }
+  })
+
+  it('advertises annotation tools only when their handlers are enabled', () => {
+    const annotations = [
+      'mcp__open_science_literature/list_pdf_annotations',
+      'mcp__open_science_literature/locate_pdf_annotation_target',
+      'mcp__open_science_literature/create_pdf_annotation'
+    ]
+    for (const literature of [true, { annotations: false }]) {
+      const names = createCodexBridgeMcpTools({ literature }).map(identity)
+      for (const name of annotations) expect(names).not.toContain(name)
+    }
+    const tools = createCodexBridgeMcpTools({
+      literature: { elements: false, annotations: true }
+    })
+    expect(tools.map(identity)).toEqual(expect.arrayContaining(annotations))
+    expect(tools.map(identity)).not.toContain('mcp__open_science_literature/list_pdf_elements')
+    for (const name of annotations) {
+      expect(tools.find((entry) => identity(entry) === name)?.parameters.type).toBe('object')
+    }
   })
 
   it('advertises the same Library scopes the MCP server accepts', () => {
@@ -101,6 +160,7 @@ describe('Codex bridge MCP catalogs', () => {
     const names = new Set(
       createCodexBridgeMcpTools({
         library: {
+          searchFullText: false,
           formatReferences: false,
           formatCitationDocument: false,
           prepareLatexBundle: false,
@@ -111,6 +171,8 @@ describe('Codex bridge MCP catalogs', () => {
     )
     expect(names).toContain('mcp__open_science_library/search_library')
     expect(names).toContain('mcp__open_science_library/save_to_inbox')
+    expect(names).toContain('mcp__open_science_library/read_library_pdf')
+    expect(names).not.toContain('mcp__open_science_library/search_library_full_text')
     expect(names).not.toContain('mcp__open_science_library/format_references')
     expect(names).not.toContain('mcp__open_science_library/format_citation_document')
     expect(names).not.toContain('mcp__open_science_library/prepare_latex_bundle')
@@ -118,6 +180,8 @@ describe('Codex bridge MCP catalogs', () => {
     expect(names).toContain('mcp__open_science_literature/read_document')
     expect(names).not.toContain('mcp__open_science_literature/list_pdf_elements')
     expect(names).not.toContain('mcp__open_science_literature/read_pdf_element')
+    expect(names).not.toContain('mcp__open_science_literature/list_pdf_annotations')
+    expect(names).not.toContain('mcp__open_science_literature/locate_pdf_annotation_target')
     expect(names).not.toContain('mcp__open_science_literature/create_pdf_annotation')
   })
 })

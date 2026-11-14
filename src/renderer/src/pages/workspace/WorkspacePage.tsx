@@ -74,6 +74,7 @@ import { invalidateSessionNotebookCache } from './session-notebook-data'
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import {
   appendArtifactMention,
+  appendLiteratureScope,
   docArtifactCount,
   MAX_COMPOSER_ARTIFACT_MENTIONS
 } from './composer/composer-doc'
@@ -879,31 +880,42 @@ const WorkspacePage = ({
     pendingArtifactMention
   ])
 
+  const consumedLiteraturePrefill = useRef<typeof pendingLiteratureReviewPrefill>(undefined)
   useEffect(() => {
+    const intent = pendingLiteratureReviewPrefill
     if (
-      !pendingLiteratureReviewPrefill ||
-      pendingLiteratureReviewPrefill.projectId !== activeProjectId ||
+      !intent ||
+      consumedLiteraturePrefill.current === intent ||
+      intent.projectId !== activeProjectId ||
       currentDraftKey !== newConversationDraftKey ||
       !canEditDraft
-    ) {
+    )
       return
-    }
-
-    changeComposerDraftDoc({
-      nodes: [
-        pendingLiteratureReviewPrefill.scope,
-        { type: 'text', text: ` ${pendingLiteratureReviewPrefill.prompt}` }
-      ]
-    })
+    consumedLiteraturePrefill.current = intent
+    const nextDoc = appendLiteratureScope(draftDoc, intent.scope, intent.prompt)
     consumeLiteratureReviewPrefill()
+    if (!nextDoc) {
+      setAttachmentError(
+        t(
+          'Could not add references. Check that the conversation is editable and the reference limit is not exceeded.'
+        )
+      )
+    } else {
+      changeComposerDraftDoc(nextDoc)
+      setAttachmentError(null)
+    }
+    requestComposerFocus()
   }, [
+    pendingLiteratureReviewPrefill,
     activeProjectId,
-    canEditDraft,
-    changeComposerDraftDoc,
-    consumeLiteratureReviewPrefill,
     currentDraftKey,
     newConversationDraftKey,
-    pendingLiteratureReviewPrefill
+    canEditDraft,
+    draftDoc,
+    consumeLiteratureReviewPrefill,
+    changeComposerDraftDoc,
+    setAttachmentError,
+    t
   ])
   const canEditMessage = conversation.availability.revise
   useWorkspaceBranchSwitchGuard(

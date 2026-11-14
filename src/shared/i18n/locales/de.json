@@ -8206,6 +8206,19 @@
     "Source URL": "Quell-URL",
     "Branch or tag": "Branch oder Tag",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Verwenden Sie die URL eines öffentlichen GitHub-Repositorys oder Branches, das einen Spezialisten-Marktplatzkatalog veröffentlicht.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Installierte Fähigkeiten können das Verhalten von Agenten ändern. Vertrauen Sie nur Ihnen bekannten Quellen."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Installierte Fähigkeiten können das Verhalten von Agenten ändern. Vertrauen Sie nur Ihnen bekannten Quellen.",
+    "Agent Session cleanup did not complete.": "Die Bereinigung der Agentensitzung wurde nicht abgeschlossen.",
+    "View surrounding text": "Umliegenden Text anzeigen",
+    "Source excerpt": "Quellenauszug",
+    "PDF evidence": "Belege aus dem PDF",
+    "View reference": "Referenz anzeigen",
+    "View source page": "Quellenseite anzeigen",
+    "The source could not be opened.": "Die Quelle konnte nicht geöffnet werden.",
+    "Ask about this project": "Zu den Referenzen dieses Projekts fragen",
+    "Ask about this collection": "Zu den Referenzen dieser Sammlung fragen",
+    "Choose a project for this conversation.": "Wählen Sie ein Projekt für diese Konversation.",
+    "Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.": "Die Volltextbelege sind unvollständig. Prüfen Sie, ob die ausgewählten Literaturquellen PDFs enthalten, und bereiten Sie deren Text vor einem erneuten Versuch auf.",
+    "Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.": "Zwischengespeicherter Text belegt keine vollständige Volltextabdeckung. Prüfen Sie die Original-PDF, bevor Sie aus fehlenden Belegen Schlüsse ziehen.",
+    "Continue searching the remaining references or refine the query within the selected scope.": "Durchsuchen Sie die übrigen Literaturquellen oder präzisieren Sie die Suchanfrage innerhalb des ausgewählten Bereichs."
   }
 }

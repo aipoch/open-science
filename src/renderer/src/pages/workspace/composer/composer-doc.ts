@@ -339,6 +339,38 @@ export const appendLiteratureMentions = (
   return { nodes }
 }
 
+// Scope identity is owned by the destination Project draft. Collection display names may change,
+// while the collection id remains the same. Never replace existing text or immutable snapshots.
+export const appendLiteratureScope = (
+  doc: ComposerDoc,
+  scope: LiteratureScopeReference,
+  defaultPrompt?: string
+): ComposerDoc | undefined => {
+  if (
+    doc.nodes.some(
+      (node) =>
+        node.type === 'literature-scope' &&
+        node.scope === scope.scope &&
+        (node.scope === 'project' ||
+          (scope.scope === 'collection' && node.collectionId === scope.collectionId))
+    )
+  )
+    return doc
+  if (docArtifactCount(doc) >= MAX_COMPOSER_ARTIFACT_MENTIONS) return undefined
+  const previous = doc.nodes.at(-1)
+  const needsSpace = previous && (previous.type !== 'text' || !/\s$/.test(previous.text))
+  return {
+    nodes: [
+      ...doc.nodes,
+      ...(needsSpace ? [{ type: 'text' as const, text: ' ' }] : []),
+      scope,
+      ...(docIsEmpty(doc) && defaultPrompt
+        ? [{ type: 'text' as const, text: ` ${defaultPrompt}` }]
+        : [])
+    ]
+  }
+}
+
 // Hydrate a plain-text draft into a single text node; empty text yields the empty doc.
 export const docFromText = (text: string): ComposerDoc =>
   text === '' ? emptyDoc : { nodes: [{ type: 'text', text }] }

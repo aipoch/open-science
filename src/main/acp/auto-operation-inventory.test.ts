@@ -19,6 +19,7 @@ const registrations: Record<
 > = {
   "artifacts/mcp-server.ts:'write_artifact_file'": 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_SEARCH_TOOL_NAME': 'allow_once',
+  'literature/library-mcp-server.ts:LITERATURE_LIBRARY_SEARCH_FULL_TEXT_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_PREPARE_LATEX_TOOL_NAME': 'allow_once',
@@ -163,12 +164,16 @@ describe('Auto operation completeness against real tool registrations', () => {
         // rejected in favor of source. Allow-once disposition and owner-checked source access are unchanged.
         'artifacts/mcp-server.ts':
           '9e0e7684e9ce91f56ba4e6bfc49bcd2a1bb97bf6dd2a22bd686307c9d634dde2',
-        // Reviewed: save_to_inbox/acquire_pdf advertise candidates as objects; the same strict
-        // candidate schema now validates inline records in the handler before any save or download.
-        // Citation tool descriptions are shortened only. Trusted origin, permission inputs and
-        // allow-once disposition are unchanged.
+        // Reviewed: full-text discovery is an optional read-only handler with bounded scope,
+        // query, offset/limit and cancellation. Results expose cache/record coverage limitations
+        // without citation receipts. Abstract/PDF citation receipts remain bounded presentation.
+        // PDF citations validate source-owned physical spans instead of interpreting prose as pages.
+        // Read scopes include items behind the active prompt selection guard. Inline save/download
+        // validation and argument recovery are restored; trusted origin and allow-once stay unchanged.
+        // Tool guidance clarifies existing scopes. Cached coverage in the presentation comes from
+        // the same authorized search result. Argument validation and allow-once are unchanged.
         'literature/library-mcp-server.ts':
-          '400ea9fb1739b849dad3f55d453b02be9879bda3e86fde29ebb34084d3e7e33e',
+          '4ca9748755d8bf7a19bab6bf3b8d29c0e243b6ae3a15a153aafbc02f4ca7cb79',
         // Reviewed: errors keep specific codes with a next step and annotation cursors are opaque
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':

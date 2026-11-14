@@ -8037,6 +8037,19 @@
     "Source URL": "ソース URL",
     "Branch or tag": "ブランチまたはタグ",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "スペシャリストのマーケットプレイスカタログを公開している GitHub リポジトリまたはブランチの URL を使用してください。",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "インストールしたスキルはエージェントの動作を変える可能性があります。信頼できるソースのみを追加してください。"
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "インストールしたスキルはエージェントの動作を変える可能性があります。信頼できるソースのみを追加してください。",
+    "Agent Session cleanup did not complete.": "エージェントセッションのクリーンアップが完了しませんでした。",
+    "View surrounding text": "前後の文章を表示",
+    "Source excerpt": "出典の抜粋",
+    "PDF evidence": "PDFの根拠",
+    "View reference": "文献を表示",
+    "View source page": "出典ページを表示",
+    "The source could not be opened.": "出典を開けませんでした。",
+    "Ask about this project": "このプロジェクトの文献について質問",
+    "Ask about this collection": "このコレクションの文献について質問",
+    "Choose a project for this conversation.": "この会話のプロジェクトを選択してください。",
+    "Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.": "全文の根拠が不完全です。選択した文献に PDF が添付されていることを確認し、本文を準備してから再試行してください。",
+    "Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.": "キャッシュされたテキストだけでは全文を網羅しているとは限りません。根拠が見つからないことから結論を出す前に、元の PDF を確認してください。",
+    "Continue searching the remaining references or refine the query within the selected scope.": "残りの文献を検索するか、選択した範囲内で検索語を調整してください。"
   }
 }

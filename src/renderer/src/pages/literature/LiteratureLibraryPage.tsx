@@ -66,6 +66,7 @@ import { isCollectionOnlyChange, useLiteratureChanges } from './useLiteratureCha
 import { useAttachmentOperationsStore } from './workflows/literature-attachment-operations'
 import { LiteratureAttachmentOperations } from './workflows/LiteratureAttachmentOperations'
 import { LiteratureReadingProjectDialog } from './workflows/LiteratureReadingProjectDialog'
+import { LiteratureScopeProjectDialog } from './workflows/LiteratureScopeProjectDialog'
 import { useLiteratureAttachments } from './workflows/useLiteratureAttachments'
 import { useLiteratureExport } from './workflows/useLiteratureExport'
 import {
@@ -77,7 +78,16 @@ import { useLiteratureReading } from './workflows/useLiteratureReading'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import * as AlertDialog from '@/components/ui/alert-dialog'
 import * as Dialog from '@/components/ui/dialog'
-import { ArrowLeft, BookOpenText, Check, Inbox, LoaderCircle, Pencil, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  BookOpenText,
+  Check,
+  Inbox,
+  LoaderCircle,
+  MessageCircleQuestion,
+  Pencil,
+  X
+} from 'lucide-react'
 import { Checkbox, Tabs } from 'radix-ui'
 import {
   lazy,
@@ -235,6 +245,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     () => window.sessionStorage.getItem(LITERATURE_REVIEW_CTA_ATTENTION_KEY) !== 'true'
   )
   const [collectionId, setCollectionId] = useState<string>()
+  const [pendingQuestionCollectionId, setPendingQuestionCollectionId] = useState<string>()
   const [screeningCollection, setScreeningCollection] = useState<string>()
   const [screeningStartingCollection, setScreeningStartingCollection] = useState<string>()
   const screeningOpen = Boolean(collectionId && screeningCollection === collectionId)
@@ -997,6 +1008,37 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     () => activeProjects.find((project) => project.id === projectId),
     [activeProjects, projectId]
   )
+  const questionScope = selectedCollection
+    ? ({
+        type: 'literature-scope',
+        scope: 'collection',
+        collectionId: selectedCollection.id,
+        name: selectedCollection.name
+      } as const)
+    : selectedProject
+      ? ({ type: 'literature-scope', scope: 'project' } as const)
+      : undefined
+  useEffect(() => {
+    let active = true
+    queueMicrotask(() => {
+      if (active) setPendingQuestionCollectionId(undefined)
+    })
+    return () => {
+      active = false
+    }
+  }, [section, projectId, collectionId])
+  const canAskQuestion = section === 'library' && Boolean(questionScope)
+  const askQuestion = (): void => {
+    if (!questionScope) return
+    const targetProjectId =
+      selectedProject?.id ??
+      (activeProjects.some(({ id }) => id === activeProjectId) ? activeProjectId : undefined)
+    if (targetProjectId) {
+      startLiteratureReviewConversation(targetProjectId, questionScope)
+    } else if (selectedCollection) {
+      setPendingQuestionCollectionId(selectedCollection.id)
+    }
+  }
   const reviewProjectId =
     selectedProject?.id ??
     (selectedCollection && activeProjects.some((project) => project.id === activeProjectId)
@@ -1778,6 +1820,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               shouldCueLiteratureReview={shouldCueLiteratureReview}
               startLiteratureReviewConversation={startLiteratureReviewConversation}
               setShouldCueLiteratureReview={setShouldCueLiteratureReview}
+              onAskQuestion={canAskQuestion ? askQuestion : undefined}
               importPdfInputRef={importPdfInputRef}
               onImportFiles={receiveImportFiles}
               importRecordsInputRef={importRecordsInputRef}
@@ -1840,6 +1883,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 exportDisabled={entriesLoading || selectedCollection.itemCount === 0}
                 searchActions={
                   <div className={screeningOpen ? 'hidden' : 'contents'}>
+                    {canAskQuestion ? (
+                      <Button type="button" variant="outline" size="sm" onClick={askQuestion}>
+                        <MessageCircleQuestion className="size-4" aria-hidden="true" />
+                        {t('Ask about this collection')}
+                      </Button>
+                    ) : null}
                     <LiteratureSearchInput
                       initialValue={query}
                       resetRevision={searchResetRevision}
@@ -2941,6 +2990,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           </AlertDialog.Portal>
         </AlertDialog.Root>
         {smartReevaluationNotice}
+        {canAskQuestion &&
+        selectedCollection &&
+        pendingQuestionCollectionId === selectedCollection.id ? (
+          <LiteratureScopeProjectDialog
+            collection={selectedCollection}
+            projects={activeProjects}
+            projectsLoaded={projectsLoaded}
+            onClose={() => setPendingQuestionCollectionId(undefined)}
+            onSelectProject={(id) => {
+              if (!questionScope) return false
+              return startLiteratureReviewConversation(id, questionScope)
+            }}
+          />
+        ) : null}
         <LiteratureReadingProjectDialog
           pendingLiteratureReading={pendingLiteratureReading}
           readingProjectFormDialog={readingProjectFormDialog}

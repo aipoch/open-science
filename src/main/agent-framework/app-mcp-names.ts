@@ -70,6 +70,7 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
     openCodeName: 'open_science_library',
     tools: [
       'search_library',
+      'search_library_full_text',
       'read_library_abstract',
       'read_library_pdf',
       'format_references',

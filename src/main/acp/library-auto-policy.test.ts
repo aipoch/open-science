@@ -277,7 +277,7 @@ describe('Library Auto policy', () => {
 
   // Query real registration, including each optional mount independently. New entries must receive
   // an explicit identity/policy decision; this is not a comparison of two hand-maintained catalogs.
-  it.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])(
+  it.each(Array.from({ length: 32 }, (_, index) => index))(
     'checks actual Library registration for optional-handler mask %s',
     async (mask) => {
       const server = createLiteratureLibraryMcpServer({
@@ -288,7 +288,8 @@ describe('Library Auto policy', () => {
         ...(mask & 1 ? { formatReferences: vi.fn() } : {}),
         ...(mask & 2 ? { formatCitationDocument: vi.fn() } : {}),
         ...(mask & 4 ? { prepareLatexBundle: vi.fn() } : {}),
-        ...(mask & 8 ? { acquirePdf: vi.fn() } : {})
+        ...(mask & 8 ? { acquirePdf: vi.fn() } : {}),
+        ...(mask & 16 ? { searchLibraryFullText: vi.fn() } : {})
       })
       const client = new Client({ name: 'inventory', version: '1' })
       const [a, b] = InMemoryTransport.createLinkedPair()
@@ -304,7 +305,8 @@ describe('Library Auto policy', () => {
               'format_references',
               'format_citation_document',
               'prepare_latex_bundle',
-              'acquire_pdf'
+              'acquire_pdf',
+              'search_library_full_text'
             ].indexOf(identity.split('/')[1])
             return optional < 0 || Boolean(mask & (1 << optional))
           })

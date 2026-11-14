@@ -182,3 +182,58 @@ describe('SessionPdfSourceResolver', () => {
     ).resolves.toBeUndefined()
   })
 })
+
+it('resolves only readonly cached attachment metadata and never falls back to byte authority', async () => {
+  const version = {
+    itemId: 'item',
+    attachmentId: 'attachment',
+    versionId: 'version',
+    versionNumber: 1,
+    filename: 'paper.pdf',
+    contentType: 'application/pdf',
+    sizeBytes: 42,
+    checksum: 'a'.repeat(64),
+    storageKey: 'blob'
+  }
+  const literature = {
+    resolveVersion: vi.fn(),
+    openContent: vi.fn(),
+    resolveCachedVersion: vi.fn(async () => version)
+  }
+  const inputs = { resolveVersion: vi.fn(), openContent: vi.fn() }
+  const resolver = new SessionPdfSourceResolver({ inputs, literature })
+  const request = {
+    projectId: 'project',
+    sourceKind: 'literature-attachment-version' as const,
+    sourceVersionId: 'version',
+    expectedSourceFileId: 'attachment'
+  }
+  expect(await resolver.resolveCachedVersion(request)).toEqual({
+    sourceKind: 'literature-attachment-version',
+    sourceFileId: 'attachment',
+    sourceVersionId: 'version',
+    filename: 'paper.pdf',
+    contentType: 'application/pdf',
+    sizeBytes: 42,
+    checksum: 'a'.repeat(64)
+  })
+  expect(
+    await resolver.resolveCachedVersion({ ...request, expectedSourceFileId: 'foreign' })
+  ).toBeUndefined()
+  expect(
+    await resolver.resolveCachedVersion({ ...request, sourceVersionId: 'stale' })
+  ).toBeUndefined()
+  expect(
+    await resolver.resolveCachedVersion({ ...request, sourceKind: 'upload-version' })
+  ).toBeUndefined()
+  expect(literature.resolveVersion).not.toHaveBeenCalled()
+  expect(literature.openContent).not.toHaveBeenCalled()
+  expect(inputs.resolveVersion).not.toHaveBeenCalled()
+  expect(inputs.openContent).not.toHaveBeenCalled()
+  const unavailable = new SessionPdfSourceResolver({
+    inputs,
+    literature: { resolveVersion: literature.resolveVersion, openContent: literature.openContent }
+  })
+  expect(await unavailable.resolveCachedVersion(request)).toBeUndefined()
+  expect(literature.resolveVersion).not.toHaveBeenCalled()
+})

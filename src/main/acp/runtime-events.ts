@@ -6,6 +6,7 @@ import {
   sanitizeAcpMessageImage
 } from '../../shared/acp-image-contract'
 import { sanitizeRawToolPayload } from '../../shared/tool-detail-sanitizer'
+import { collectLiteratureSourceCitationHrefs } from '../../shared/literature-source-citation'
 import { isRecord } from '../value-guards'
 
 // Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
@@ -408,6 +409,7 @@ const literaturePresentationText = (value: unknown): string | undefined => {
   const nextOffset = nonNegativeInteger(source.nextOffset)
   const candidateCount = nonNegativeInteger(source.candidateCount)
   const savedCount = nonNegativeInteger(source.savedCount)
+  const sourceCitationHrefs = collectLiteratureSourceCitationHrefs(source.sourceCitationHrefs)
   const textCoverage = Array.isArray(source.textCoverage)
     ? source.textCoverage.slice(0, 3).flatMap((entry) => {
         if (!isRecord(entry)) return []
@@ -443,7 +445,49 @@ const literaturePresentationText = (value: unknown): string | undefined => {
         ]
       })
     : []
+  const cachedSearchSource = isRecord(source.cachedSearch) ? source.cachedSearch : undefined
+  const cachedCoverage = isRecord(cachedSearchSource?.coverage)
+    ? cachedSearchSource.coverage
+    : undefined
+  const cachedLimitations = cachedSearchSource?.limitations
+  const cachedSearch =
+    cachedSearchSource?.coverageKind === 'cached-text-only' &&
+    typeof cachedSearchSource.incomplete === 'boolean'
+      ? {
+          coverageKind: 'cached-text-only',
+          incomplete: cachedSearchSource.incomplete,
+          recordCount: nonNegativeInteger(cachedSearchSource.recordCount),
+          totalRecordCount: nonNegativeInteger(cachedSearchSource.totalRecordCount),
+          scannedSources: nonNegativeInteger(cachedSearchSource.scannedSources),
+          nextOffset: nonNegativeInteger(cachedSearchSource.nextOffset),
+          sourceSelectionTruncated: cachedSearchSource.sourceSelectionTruncated === true,
+          truncated: cachedSearchSource.truncated === true,
+          coverage: cachedCoverage
+            ? Object.fromEntries(
+                [
+                  'requestedDocuments',
+                  'cachedDocuments',
+                  'notCachedDocuments',
+                  'unavailableDocuments'
+                ].map((key) => [key, nonNegativeInteger(cachedCoverage[key])])
+              )
+            : undefined,
+          limitations: Array.isArray(cachedLimitations)
+            ? [
+                'cached-pages-unverified',
+                'more-records',
+                'source-limit',
+                'not-cached',
+                'unavailable-sources',
+                'unavailable-reader',
+                'stale-results',
+                'result-limit'
+              ].filter((reason) => cachedLimitations.includes(reason))
+            : []
+        }
+      : undefined
   const presentation = {
+    ...(cachedSearch ? { cachedSearch } : {}),
     ...(retrievalMode ? { retrievalMode } : {}),
     ...(documentNames.length > 0 ? { documentNames } : {}),
     ...(textCoverage.length > 0 ? { textCoverage } : {}),
@@ -463,9 +507,17 @@ const literaturePresentationText = (value: unknown): string | undefined => {
     ...(savedCount !== undefined ? { savedCount } : {})
   }
 
-  return Object.keys(presentation).length > 0
-    ? JSON.stringify({ openScienceLiteraturePresentation: presentation })
-    : undefined
+  const text = (): string =>
+    JSON.stringify({
+      openScienceLiteraturePresentation: {
+        ...presentation,
+        ...(sourceCitationHrefs.length > 0 ? { sourceCitationHrefs } : {})
+      }
+    })
+  while (sourceCitationHrefs.length > 0 && text().length > MAX_RUNTIME_RAW_PAYLOAD_CHARS) {
+    sourceCitationHrefs.pop()
+  }
+  return Object.keys(presentation).length > 0 || sourceCitationHrefs.length > 0 ? text() : undefined
 }
 
 const isLiteratureReadDocumentUpdate = (update: ToolCallUpdate): boolean =>

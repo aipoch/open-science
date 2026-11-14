@@ -8383,6 +8383,19 @@
     "Source URL": "URL de la fuente",
     "Branch or tag": "Rama o etiqueta",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Utilice la URL de un repositorio público de GitHub o de una rama que publique un catálogo del mercado de especialistas.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Las habilidades instaladas pueden cambiar el comportamiento de los agentes. Confíe únicamente en fuentes que conozca."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Las habilidades instaladas pueden cambiar el comportamiento de los agentes. Confíe únicamente en fuentes que conozca.",
+    "Agent Session cleanup did not complete.": "La limpieza de la sesión del agente no se completó.",
+    "View surrounding text": "Ver el texto circundante",
+    "Source excerpt": "Extracto de la fuente",
+    "PDF evidence": "Pruebas del PDF",
+    "View reference": "Ver referencia",
+    "View source page": "Ver página de origen",
+    "The source could not be opened.": "No se pudo abrir la fuente.",
+    "Ask about this project": "Preguntar sobre las referencias de este proyecto",
+    "Ask about this collection": "Preguntar sobre las referencias de esta colección",
+    "Choose a project for this conversation.": "Seleccione un proyecto para esta conversación.",
+    "Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.": "Las pruebas del texto completo están incompletas. Compruebe que las referencias seleccionadas tengan archivos PDF y prepare su texto antes de volver a intentarlo.",
+    "Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.": "El texto en caché no garantiza una cobertura completa del texto íntegro. Compruebe el PDF original antes de sacar conclusiones por la falta de pruebas.",
+    "Continue searching the remaining references or refine the query within the selected scope.": "Continúe buscando en las referencias restantes o ajuste la consulta dentro del ámbito seleccionado."
   }
 }

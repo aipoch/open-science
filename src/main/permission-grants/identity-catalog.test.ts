@@ -6,14 +6,14 @@ import {
 } from './identity-catalog'
 
 describe('permission identity catalog', () => {
-  it('contains the closed 55-identity inventory including native web reading and search', () => {
-    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(55)
+  it('contains the closed 56-identity inventory including native web reading and search', () => {
+    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(56)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.builtin_tool).toEqual([
       'builtin:web_fetch',
       'builtin:web_search'
     ])
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.customize_mutation).toHaveLength(8)
-    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(36)
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(37)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(
       'mcp:open-science-notebook/request_network_access'
     )
@@ -40,6 +40,7 @@ describe('permission identity catalog', () => {
         'mcp:open-science-plan/generate_plan',
         'mcp:open-science-plan/update_step_status',
         'mcp:open-science-library/search_library',
+        'mcp:open-science-library/search_library_full_text',
         'mcp:open-science-library/read_library_abstract',
         'mcp:open-science-library/read_library_pdf',
         'mcp:open-science-library/format_references',

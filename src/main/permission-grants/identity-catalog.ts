@@ -39,6 +39,7 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'mcp:open-science-plan/generate_plan',
     'mcp:open-science-plan/update_step_status',
     'mcp:open-science-library/search_library',
+    'mcp:open-science-library/search_library_full_text',
     'mcp:open-science-library/read_library_abstract',
     'mcp:open-science-library/read_library_pdf',
     'mcp:open-science-library/format_references',

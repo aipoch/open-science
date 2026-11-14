@@ -312,6 +312,7 @@ const isArtifactSaveTool = (
 // Deliberately bounded: new tools do not inherit Auto approval from server membership.
 const LIBRARY_AUTO_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
   'open-science-library/search_library',
+  'open-science-library/search_library_full_text',
   'open-science-library/read_library_abstract',
   'open-science-library/read_library_pdf',
   'open-science-library/format_references',

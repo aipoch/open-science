@@ -40,10 +40,12 @@ import { resolveAllowedImportFilePath } from '../artifacts/storage-access'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import type { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
 import type { LiteratureCatalog } from '../literature/catalog'
+import { searchCachedLibraryText } from '../literature/cached-library-search'
 import { LiteratureCitationDocument } from '../literature/citation-document'
 import type { LiteratureDocumentReader } from '../literature/document-reader'
 import {
   LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
+  type LiteratureLibraryFullTextSearchResult,
   type LiteratureLibraryScope
 } from '../literature/library-mcp-server'
 import type { PdfElementTools } from '../literature/pdf-structure/agent-reader'
@@ -205,7 +207,8 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     claimId: string
     messageId: string
   }) => Promise<ArtifactFile[]>
-  literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent' | 'searchAttachment'>
+  literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent' | 'searchAttachment'> &
+    Partial<Pick<LiteratureDocumentReader, 'searchCachedAttachments'>>
   pdfAnnotationAgent?: PdfAnnotationAgentTools
   pdfElementReader?: PdfElementTools
   literatureAttachments?: Pick<LiteratureAttachmentAuthority, 'resolveVersion'>
@@ -651,6 +654,45 @@ const createAcpRuntime = ({
                     literature: result.sidecar.literature
                   }
                 },
+                searchLibraryFullText: async (request) => {
+                  const cached = await searchCachedLibraryText(
+                    literatureCatalog,
+                    literatureReader,
+                    request
+                  )
+                  const limitations: LiteratureLibraryFullTextSearchResult['limitations'][number][] =
+                    [
+                      // Schema 1 caches identify documents, not verified per-page extraction coverage.
+                      'cached-pages-unverified'
+                    ]
+                  if (cached.nextOffset !== undefined) limitations.push('more-records')
+                  if (cached.sourceSelectionTruncated) limitations.push('source-limit')
+                  if (cached.coverage.notCachedDocuments) limitations.push('not-cached')
+                  if (cached.coverage.unavailableDocuments) limitations.push('unavailable-sources')
+                  if (!literatureReader) limitations.push('unavailable-reader')
+                  if (!cached.resultsRevalidated) limitations.push('stale-results')
+                  if (cached.truncated) limitations.push('result-limit')
+                  const result = {
+                    ...cached,
+                    scope: request.scope ?? 'project',
+                    query: request.query,
+                    scannedSources: cached.coverage.cachedDocuments,
+                    coverageKind: 'cached-text-only' as const,
+                    fullTextCoverage: 'unverified' as const,
+                    incomplete: true,
+                    limitations
+                  } satisfies LiteratureLibraryFullTextSearchResult
+                  // Include caller query and diagnostics in the same bounded response envelope.
+                  while (
+                    Buffer.byteLength(JSON.stringify(result), 'utf8') > 32_000 &&
+                    result.matches.length
+                  ) {
+                    result.matches = result.matches.slice(0, -1)
+                    result.truncated = true
+                    if (!limitations.includes('result-limit')) limitations.push('result-limit')
+                  }
+                  return result
+                },
                 searchLibrary: async (request) => {
                   const scope = request.scope ?? 'project'
                   const offset = request.offset ?? 0
@@ -675,7 +717,9 @@ const createAcpRuntime = ({
                   }
                 },
                 readAbstract: async (request) => {
+                  request.signal?.throwIfAborted()
                   const item = (await literatureCatalog.getMany([request.itemId]))[0]
+                  request.signal?.throwIfAborted()
                   if (!item || !isLiteratureItemInScope(item, request)) return undefined
                   return {
                     itemId: item.id,
@@ -685,7 +729,9 @@ const createAcpRuntime = ({
                   }
                 },
                 readPdf: async (request) => {
+                  request.signal?.throwIfAborted()
                   const item = (await literatureCatalog.getMany([request.itemId]))[0]
+                  request.signal?.throwIfAborted()
                   if (!item || !isLiteratureItemInScope(item, request)) return undefined
                   if (!literatureReader) {
                     throw new Error(
@@ -714,11 +760,21 @@ const createAcpRuntime = ({
                     filename: selected.version.filename,
                     sizeBytes: selected.version.sizeBytes,
                     checksum: selected.version.checksum,
-                    query: request.query
+                    query: request.query,
+                    signal: request.signal
                   })
+                  request.signal?.throwIfAborted()
                   return {
                     itemTitle: item.item.title,
-                    evidence: evidence as Record<string, unknown>
+                    evidence: {
+                      ...(evidence as Record<string, unknown>),
+                      source: {
+                        attachmentId: selected.attachment.id,
+                        versionId: selected.version.id,
+                        checksum: selected.version.checksum,
+                        name: selected.version.filename
+                      }
+                    }
                   }
                 },
                 saveToInbox: async (request) => {

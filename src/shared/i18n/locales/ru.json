@@ -8533,6 +8533,19 @@
     "Source URL": "URL источника",
     "Branch or tag": "Ветка или тег",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Укажите URL публичного репозитория GitHub или ветки, публикующей каталог маркетплейса специалистов.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Установленные навыки могут изменить поведение агентов. Доверяйте только знакомым источникам."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Установленные навыки могут изменить поведение агентов. Доверяйте только знакомым источникам.",
+    "Agent Session cleanup did not complete.": "Очистка сессии агента не завершена.",
+    "View surrounding text": "Показать окружающий текст",
+    "Source excerpt": "Фрагмент источника",
+    "PDF evidence": "Доказательства из PDF",
+    "View reference": "Открыть публикацию",
+    "View source page": "Открыть страницу источника",
+    "The source could not be opened.": "Не удалось открыть источник.",
+    "Ask about this project": "Задать вопрос по источникам проекта",
+    "Ask about this collection": "Задать вопрос по источникам коллекции",
+    "Choose a project for this conversation.": "Выберите проект для этого диалога.",
+    "Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.": "Доказательства из полного текста неполны. Убедитесь, что к выбранным источникам прикреплены PDF, и подготовьте их текст перед повторной попыткой.",
+    "Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.": "Кэшированный текст не подтверждает полный охват документа. Проверьте исходный PDF, прежде чем делать выводы на основании отсутствующих доказательств.",
+    "Continue searching the remaining references or refine the query within the selected scope.": "Продолжите поиск в оставшихся источниках или уточните запрос в пределах выбранной области."
   }
 }

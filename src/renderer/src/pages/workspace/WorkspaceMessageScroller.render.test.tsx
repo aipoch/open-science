@@ -7,8 +7,10 @@ import type { JobSummary } from '../../../../shared/compute'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import {
   createLinearConversationGraph,
-  resolveActiveConversationActivities
+  resolveActiveConversationActivities,
+  synchronizeActiveConversationActivities
 } from '../../../../shared/conversation-graph'
+import { createLiteratureSourceCitationHref } from '../../../../shared/literature-source-citation'
 import type {
   HandoffLifecycleEvent,
   HandoffLifecycleEventSource
@@ -40,9 +42,26 @@ vi.mock('./WorkspaceRunMarks', () => ({
   )
 }))
 
+const sourceCitationHarness = vi.hoisted(() => ({ href: undefined as string | undefined }))
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>,
-  PresentedAgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
+  PresentedAgentMarkdown: ({
+    content,
+    components
+  }: {
+    content: string
+    components?: Record<string, React.ElementType>
+  }) => {
+    const Link = components?.a
+    return (
+      <div>
+        {content}
+        {sourceCitationHarness.href && Link ? (
+          <Link href={sourceCitationHarness.href}>1</Link>
+        ) : null}
+      </div>
+    )
+  }
 }))
 
 vi.mock('@/components/streamdown/use-smooth-streaming-content', () => ({
@@ -265,6 +284,75 @@ const turnOutcomeActions: TurnOutcomeActions = {
 }
 
 describe('WorkspaceMessageScroller optimistic send render', () => {
+  it.each([true, false])(
+    'retains canonical graph receipt ownership for the answering turn: %s',
+    async (ownsReceipt) => {
+      const href = createLiteratureSourceCitationHref({
+        itemId: 'paper-1',
+        title: 'A trial',
+        kind: 'abstract',
+        quote: 'The treatment did not reduce mortality.'
+      })
+      const prompt = createMessage({ id: 'source-prompt', createdAt: 1, updatedAt: 1 })
+      const nextPrompt = createMessage({ id: 'next-prompt', createdAt: 3, updatedAt: 3 })
+      const answer = createMessage({
+        id: 'source-answer',
+        role: 'agent',
+        content: 'A finding.',
+        responseToMessageId: ownsReceipt ? prompt.id : nextPrompt.id,
+        createdAt: 4,
+        updatedAt: 4
+      })
+      const tool = createActivity({
+        id: 'source-tool',
+        promptMessageId: prompt.id,
+        providerToolName: 'mcp__open_science_library__read_library_abstract',
+        toolContent: [
+          {
+            type: 'content',
+            content: {
+              type: 'text',
+              text: JSON.stringify({
+                openScienceLiteraturePresentation: { sourceCitationHrefs: [href] }
+              })
+            }
+          }
+        ],
+        createdAt: 2,
+        updatedAt: 2
+      })
+      const graph = synchronizeActiveConversationActivities(
+        createLinearConversationGraph({
+          sessionId: 'session-1',
+          messages: [prompt, nextPrompt, answer],
+          frameworkId: 'claude-code',
+          createdAt: 1,
+          updatedAt: 4
+        }),
+        [tool],
+        []
+      )
+      const displayedActivities = resolveActiveConversationActivities(graph).activities
+      expect(displayedActivities[0].promptMessageId).toBeUndefined()
+      sourceCitationHarness.href = href
+      try {
+        const html = await renderScroller(
+          createSession({
+            status: 'idle',
+            runtimeTranscriptOwner: 'main',
+            messages: [prompt, nextPrompt, answer],
+            activities: displayedActivities as ToolActivity[],
+            conversationGraph: graph
+          })
+        )
+        if (ownsReceipt) expect(html).toContain('data-library-source-citation')
+        else expect(html).not.toContain('data-library-source-citation')
+      } finally {
+        sourceCitationHarness.href = undefined
+      }
+    }
+  )
+
   it('renders a sending user bubble before the authoritative Message is admitted', async () => {
     const html = await renderScroller(createSession({ status: 'idle' }), {
       optimisticMessage: createMessage({
