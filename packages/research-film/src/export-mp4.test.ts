@@ -48,6 +48,52 @@ describe('research video export', () => {
   })
 
   it.skipIf(process.platform === 'win32')(
+    'cancels a backpressured encode and joins the encoder before returning',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'video-export-backpressure-'))
+      const controller = new AbortController()
+      const encoderPath = join(root, 'encoder')
+      const pidPath = join(root, 'encoder.pid')
+      const fallbackPath = join(root, 'encoder-fallback')
+      const captured = Promise.withResolvers<void>()
+      const outputPath = join(root, 'output.mp4')
+      try {
+        await writeFile(
+          encoderPath,
+          `#!${process.execPath}\nconst fs = require('node:fs');\nprocess.on('SIGTERM', () => {});\nfs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));\nsetTimeout(() => fs.writeFileSync(${JSON.stringify(fallbackPath)}, 'timed out'), 2000);`,
+          { mode: 0o700 }
+        )
+        const result = exportResearchVideoMp4({
+          renderer: {
+            capture: async () => {
+              captured.resolve()
+              return Buffer.alloc(8 * 1024 * 1024)
+            }
+          },
+          audioPath: 'unused',
+          outputPath,
+          encoderPath,
+          probePath: 'unused',
+          width: 2,
+          height: 2,
+          duration: 1 / 30,
+          signal: controller.signal
+        }).catch((error: unknown) => error)
+        const pid = await vi.waitFor(async () => Number(await readFile(pidPath, 'utf8')))
+        await captured.promise
+        controller.abort()
+        expect(await result).toMatchObject({ code: 'ABORT_ERR' })
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+        expect(await readdir(root)).not.toContain('encoder-fallback')
+        expect(await readdir(root)).not.toContain('output.mp4')
+      } finally {
+        controller.abort()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
     'joins the verifier on cancellation even if it ignores SIGTERM',
     async () => {
       const root = await mkdtemp(join(tmpdir(), 'video-export-probe-'))

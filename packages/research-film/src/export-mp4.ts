@@ -1,8 +1,8 @@
 export type { VideoEncoderPaths } from './ports.js'
 import { spawn } from 'node:child_process'
-import { once } from 'node:events'
 import { mkdtemp, rm, link } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 
 export type VideoFrameRenderer = {
   /** Return a PNG of the stage alone at exactly width × height, after drawing this time. */
@@ -36,6 +36,8 @@ export async function exportResearchVideoMp4(options: {
   const temporaryPath = join(directory, 'video.mp4')
   const frames = Math.ceil(duration * 30)
   let encoder: ReturnType<typeof spawn> | undefined
+  let encoderClosed: Promise<void> | undefined
+  let feed: Promise<void> | undefined
   let probe: ReturnType<typeof spawn> | undefined
   let probeClosed: Promise<void> | undefined
   try {
@@ -82,47 +84,43 @@ export async function exportResearchVideoMp4(options: {
     encoder.stderr!.on('data', (chunk) => {
       diagnostics = (diagnostics + chunk.toString()).slice(-8192)
     })
+    encoderClosed = new Promise((resolve) => encoder!.once('close', () => resolve()))
     const completion = new Promise<void>((resolve, reject) => {
       encoder!.once('error', reject)
       encoder!.once('close', (code) =>
         code === 0 ? resolve() : reject(new Error(`Video encoder failed (${code}): ${diagnostics}`))
       )
     })
-    // The frame producer and process completion can fail independently.
-    void completion.catch(() => {})
-    encoder.stdin!.on('error', () => {})
-    for (let frame = 0; frame < frames; frame++) {
-      signal.throwIfAborted()
-      let timer: ReturnType<typeof setTimeout> | undefined
-      let abort: (() => void) | undefined
-      let png: Uint8Array
-      try {
-        png = await new Promise<Uint8Array>((resolve, reject) => {
-          abort = (): void => reject(signal.reason)
-          timer = setTimeout(() => reject(new Error('Video frame rendering timed out')), 10_000)
-          signal.addEventListener('abort', abort, { once: true })
-          void Promise.resolve()
-            .then(() => options.renderer.capture(frame / 30, signal))
-            .then(resolve, reject)
-          if (signal.aborted) abort()
-        })
-      } finally {
-        clearTimeout(timer)
-        if (abort) signal.removeEventListener('abort', abort)
-      }
-      if (encoder.exitCode !== null) throw new Error(`Video encoder stopped: ${diagnostics}`)
-      if (!encoder.stdin!.write(png))
-        await Promise.race([
-          once(encoder.stdin!, 'drain'),
-          completion.then(() => {
-            throw new Error('Encoder closed before all frames')
+    async function* renderFrames(
+      { signal: frameSignal }: { signal: AbortSignal } = { signal }
+    ): AsyncGenerator<Uint8Array> {
+      for (let frame = 0; frame < frames; frame++) {
+        frameSignal.throwIfAborted()
+        let timer: ReturnType<typeof setTimeout> | undefined
+        let abort: (() => void) | undefined
+        let png: Uint8Array
+        try {
+          png = await new Promise<Uint8Array>((resolve, reject) => {
+            abort = (): void => reject(frameSignal.reason)
+            timer = setTimeout(() => reject(new Error('Video frame rendering timed out')), 10_000)
+            frameSignal.addEventListener('abort', abort, { once: true })
+            void Promise.resolve()
+              .then(() => options.renderer.capture(frame / 30, frameSignal))
+              .then(resolve, reject)
+            if (frameSignal.aborted) abort()
           })
-        ])
-      options.onProgress?.(frame + 1, frames)
+        } finally {
+          clearTimeout(timer)
+          if (abort) frameSignal.removeEventListener('abort', abort)
+        }
+        yield png
+        options.onProgress?.(frame + 1, frames)
+      }
+      options.onPhase?.('encoding')
     }
-    options.onPhase?.('encoding')
-    encoder.stdin!.end()
-    await completion
+    // Let the pipeline own backpressure instead of subscribing to child exit for every frame.
+    feed = pipeline(renderFrames, encoder.stdin!, { signal })
+    await Promise.all([completion, feed])
     signal.throwIfAborted()
     options.onPhase?.('verifying')
     const verifier = spawn(
@@ -185,11 +183,9 @@ export async function exportResearchVideoMp4(options: {
     // Abort emits an error before the verifier has exited; join it before removing its input.
     if (probe && probe.exitCode === null && probe.signalCode === null) probe.kill('SIGKILL')
     await probeClosed
-    if (encoder && encoder.exitCode === null && encoder.signalCode === null) {
-      const closed = once(encoder, 'close').catch(() => {})
-      encoder.kill('SIGKILL')
-      await closed
-    }
+    if (encoder && encoder.exitCode === null && encoder.signalCode === null) encoder.kill('SIGKILL')
+    await encoderClosed
+    await feed?.catch(() => {})
     await rm(directory, { recursive: true, force: true })
   }
 }
