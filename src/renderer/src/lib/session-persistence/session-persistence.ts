@@ -2986,6 +2986,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [writeErrorRetryable, setWriteErrorRetryable] = useState(true)
   const [isRetryingWrites, setIsRetryingWrites] = useState(false)
   const retryingTargets = useRef(new Set<string>())
+  const sessionLoadGenerations = useRef(new Map<string, number>())
   const [persistenceBlockedSessionIds, setPersistenceBlockedSessionIds] = useState<
     readonly string[]
   >([])
@@ -3950,12 +3951,18 @@ const useSessionPersistence = (): SessionPersistenceState => {
         )
         if (selected && !loadingSessionContent.has(selected.id)) {
           loadingSessionContent.add(selected.id)
+          const sessionLoadKey = `${selected.projectId}\0${selected.id}`
+          const sessionLoadGeneration =
+            (sessionLoadGenerations.current.get(sessionLoadKey) ?? 0) + 1
+          sessionLoadGenerations.current.set(sessionLoadKey, sessionLoadGeneration)
+          const isCurrentSessionLoad = (): boolean =>
+            sessionLoadGenerations.current.get(sessionLoadKey) === sessionLoadGeneration
           void loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id })
             .then((session) => {
-              if (!isMounted) return
+              if (!isMounted || !isCurrentSessionLoad()) return
               setSessionLoadErrorsBySession((current) => {
                 const next = { ...current }
-                delete next[`${selected.projectId}\0${selected.id}`]
+                delete next[sessionLoadKey]
                 return next
               })
               if (!session) throw new Error('Selected Session JSON is missing.')
@@ -4001,10 +4008,10 @@ const useSessionPersistence = (): SessionPersistenceState => {
                 projectId: selected.projectId,
                 sessionId: selected.id
               })
-              if (isMounted)
+              if (isMounted && isCurrentSessionLoad())
                 setSessionLoadErrorsBySession((current) => ({
                   ...current,
-                  [`${selected.projectId}\0${selected.id}`]: SESSION_LOAD_ERROR_KEY
+                  [sessionLoadKey]: SESSION_LOAD_ERROR_KEY
                 }))
             })
             .finally(() => loadingSessionContent.delete(selected.id))
