@@ -6,7 +6,7 @@ import {
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
 import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { filmAuthoringCheckpoint } from './checkpoint'
 import { createResearchVideoPresentationOwner } from './presentation'
@@ -611,11 +611,18 @@ it('times out a stalled readiness check before the Film starts', async () => {
     expect((await owner.status(request)).preflightError).toMatch(/timed out/i)
     expect(f.options.writeScreenplay).not.toHaveBeenCalled()
 
+    await expect(owner.status({ ...request, checkReadiness: true })).resolves.toMatchObject({
+      preflightError: expect.stringMatching(/timed out/i)
+    })
+    expect(checkReadiness).toHaveBeenCalledOnce()
+    probe.resolve()
     timeout.mockRestore()
     checkReadiness.mockResolvedValueOnce(undefined)
-    expect(
-      (await owner.status({ ...request, checkReadiness: true })).preflightError
-    ).toBeUndefined()
+    await vi.waitFor(async () =>
+      expect(
+        (await owner.status({ ...request, checkReadiness: true })).preflightError
+      ).toBeUndefined()
+    )
   } finally {
     timeout.mockRestore()
     probe.resolve()
@@ -705,6 +712,116 @@ it('cancels a stalled prepublication session read without discarding the built F
   }
 })
 
+it('bounds a stalled status read without starting another one', async () => {
+  const f = await fixture()
+  const lookup = Promise.withResolvers<PersistedChatSession>()
+  const loadSession = vi.fn(async () => session).mockImplementationOnce(() => lookup.promise)
+  const owner = createResearchVideoPresentationOwner({ ...f.options, loadSession })
+  vi.useFakeTimers()
+  try {
+    const first = owner.status(request).catch((error: unknown) => error)
+    const retry = owner.status(request).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(loadSession).toHaveBeenCalledOnce()
+    expect(await first).toMatchObject({ message: expect.stringMatching(/status.*timed out/i) })
+    expect(await retry).toBe(await first)
+    await expect(owner.status(request)).rejects.toThrow(/status.*timed out/i)
+    expect(loadSession).toHaveBeenCalledOnce()
+    lookup.resolve(session)
+    await vi.advanceTimersByTimeAsync(0)
+    await expect(owner.status(request)).resolves.toEqual({})
+    expect(loadSession).toHaveBeenCalledTimes(2)
+  } finally {
+    lookup.resolve(session)
+    vi.useRealTimers()
+    await owner.close()
+  }
+})
+
+it('keeps a known Film playable and allows regeneration with a corrupt latest receipt', async () => {
+  const f = await fixture()
+  const owner = createResearchVideoPresentationOwner(f.options)
+  try {
+    await owner.start(request)
+    await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+    const old = (await owner.status(request)).result!
+    const latest = join(dirname(dirname(dirname(old.playerPath))), 'latest.json')
+    await writeFile(latest, '{')
+    expect((await owner.status(request)).result).toEqual(old)
+    await owner.close()
+    const restarted = createResearchVideoPresentationOwner(f.options)
+    try {
+      expect(await restarted.status(request)).toMatchObject({
+        error: expect.stringMatching(/receipt/i)
+      })
+      await restarted.start(request)
+      await vi.waitFor(async () => {
+        const result = (await restarted.status(request)).result
+        expect(result?.id).toBeDefined()
+        expect(result?.id).not.toBe(old.id)
+      })
+      expect(await readFile(old.playerPath, 'utf8')).toContain('Generated')
+    } finally {
+      await restarted.close()
+    }
+  } finally {
+    await owner.close()
+  }
+})
+
+it.each(['player.html', 'sources.zip'])(
+  'rebuilds an empty %s while keeping the screenplay checkpoint and old Film',
+  async (emptyFile) => {
+    const f = await fixture()
+    const lookup = Promise.withResolvers<PersistedChatSession>()
+    const entered = Promise.withResolvers<void>()
+    const owner = createResearchVideoPresentationOwner(f.options)
+    try {
+      await owner.start(request)
+      await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+      await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+      const old = (await owner.status(request)).result!
+      const build = f.options.generate.getMockImplementation()!
+      f.options.generate.mockImplementationOnce(async (...args) => {
+        const result = await build(...args)
+        await writeFile(emptyFile === 'player.html' ? result.playerPath : result.sourcePath, '')
+        vi.mocked(f.options.loadSession).mockImplementationOnce(() => {
+          entered.resolve()
+          return lookup.promise
+        })
+        return result
+      })
+      await owner.start(request)
+      // Interrupt after the built receipt is on disk, before publication.
+      await entered.promise
+      owner.cancel(request)
+      await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(2))
+      expect((await owner.status(request)).result).toEqual(old)
+      if (emptyFile === 'sources.zip') {
+        const base = dirname(dirname(dirname(old.playerPath)))
+        const pending = JSON.parse(await readFile(join(base, 'pending.json'), 'utf8'))
+        await rename(join(base, 'pending'), join(base, pending.id))
+      }
+      await owner.start({ ...request, resume: true })
+      await vi.waitFor(async () => {
+        const current = (await owner.status(request)).result
+        expect(current?.id).toBeDefined()
+        expect(current?.id).not.toBe(old.id)
+      })
+      const current = (await owner.status(request)).result!
+      expect(await readFile(current.playerPath, 'utf8')).toContain('Generated')
+      expect(await readFile(current.sourcePath, 'utf8')).toBe('source')
+      expect(f.options.generate).toHaveBeenCalledTimes(3)
+      expect(f.options.writeScreenplay).toHaveBeenCalledTimes(2)
+      expect(await readFile(old.playerPath, 'utf8')).toContain('Generated')
+    } finally {
+      lookup.resolve(session)
+      await owner.close()
+    }
+  }
+)
+
 it('releases admission on cancel even if model verification returns a lease later', async () => {
   const f = await fixture()
   const acquire = f.options.models.acquireUse
@@ -779,27 +896,20 @@ it('releases Film admission when a shared readiness check is cancelled', async (
   }
 })
 
-it('keeps the newest readiness result when concurrent refreshes finish out of order', async () => {
+it('shares a readiness refresh across concurrent callers', async () => {
   const f = await fixture()
-  let rejectProbe!: (error: Error) => void
-  const checkReadiness = vi
-    .fn(async () => {})
-    .mockImplementationOnce(
-      () =>
-        new Promise<void>((_resolve, reject) => {
-          rejectProbe = reject
-        })
-    )
+  const probe = Promise.withResolvers<void>()
+  const checkReadiness = vi.fn(() => probe.promise)
   const owner = createResearchVideoPresentationOwner({ ...f.options, checkReadiness })
   try {
-    const oldProbe = owner.status({ ...request, checkReadiness: true })
+    const first = owner.status({ ...request, checkReadiness: true })
+    const second = owner.status({ ...request, checkReadiness: true })
     await vi.waitFor(() => expect(checkReadiness).toHaveBeenCalledOnce())
-    await owner.status({ ...request, checkReadiness: true })
-    rejectProbe(new Error('Obsolete failure'))
-    expect((await oldProbe).preflightError).toBeUndefined()
-    expect((await owner.status(request)).preflightError).toBeUndefined()
-    expect(checkReadiness).toHaveBeenCalledTimes(2)
+    probe.resolve()
+    expect(await second).toEqual(await first)
+    expect(checkReadiness).toHaveBeenCalledOnce()
   } finally {
+    probe.resolve()
     await owner.close()
   }
 })

@@ -151,6 +151,30 @@ it('keeps the trigger in a loading state until the initial presentation status i
   expect(trigger.disabled).toBe(false)
 })
 
+it('opens Film after a status RPC never returns without stacking requests', async () => {
+  let resolveStatus!: (next: ResearchVideoPresentationStatus) => void
+  api.researchVideo.status.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveStatus = resolve
+      })
+  )
+  await act(async () => root.render(<ResearchVideoButton {...request} sessionId="stalled" />))
+  const calls = api.researchVideo.status.mock.calls.length
+  await act(async () => vi.advanceTimersByTimeAsync(120_000))
+  expect(container.querySelector('button')?.disabled).toBe(false)
+  await click('Generate research film')
+  expect(document.querySelector('[role="alert"]')).not.toBeNull()
+  expect(api.researchVideo.status).toHaveBeenCalledTimes(calls)
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+  await act(async () => resolveStatus({}))
+  await click('Generate research film')
+  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith({
+    ...request,
+    sessionId: 'stalled'
+  })
+})
+
 it('keeps the trigger loading after a status failure until a retry succeeds', async () => {
   api.researchVideo.status.mockRejectedValueOnce(new Error('temporary status failure'))
 

@@ -4,7 +4,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from './ui/dropdown-menu'
-import { researchVideoFilename } from '../../../shared/research-video-presentation'
+import {
+  RESEARCH_VIDEO_STATUS_TIMEOUT_MS,
+  RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE,
+  researchVideoFilename
+} from '../../../shared/research-video-presentation'
 import { dialogBodyClassName, dialogFooterClassName } from './ui/dialog-chrome'
 import { WorkflowDialogFrame } from './ui/workflow-dialog-frame'
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState } from 'react'
@@ -41,6 +45,42 @@ const missingRuntime =
 
 const narrationReady = (model: LocalModelSnapshot | undefined): boolean =>
   model?.availability === 'ready' && !model.updateAvailable
+
+// Keep the settled deadline until the actual desktop request settles, including across remounts.
+const filmStatusReads = new Map<
+  string,
+  { checkReadiness: boolean; result: Promise<ResearchVideoPresentationStatus> }
+>()
+function readFilmStatus(
+  request: ResearchVideoPresentationRequest,
+  checkReadiness = false
+): Promise<ResearchVideoPresentationStatus> {
+  const scope = JSON.stringify([request.projectId, request.sessionId, request.branchId])
+  const existing = filmStatusReads.get(scope)
+  if (existing)
+    return checkReadiness && !existing.checkReadiness
+      ? existing.result.then(() => readFilmStatus(request, true))
+      : existing.result
+  let timer: ReturnType<typeof setTimeout>
+  const deadline = new Promise<never>((_, reject) => {
+    // Let the backend report its own timeout first when the transport is responding.
+    timer = setTimeout(
+      () => reject(new Error(RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE)),
+      RESEARCH_VIDEO_STATUS_TIMEOUT_MS + 1000
+    )
+  })
+  const read = Promise.resolve()
+    .then(() =>
+      window.api.researchVideo.status(checkReadiness ? { ...request, checkReadiness } : request)
+    )
+    .finally(() => {
+      clearTimeout(timer)
+      filmStatusReads.delete(scope)
+    })
+  const bounded = Promise.race([read, deadline])
+  filmStatusReads.set(scope, { checkReadiness, result: bounded })
+  return bounded
+}
 
 function FilmErrorNotice({
   summary,
@@ -217,8 +257,9 @@ export function ResearchVideoButton({
     const poll = async (): Promise<void> => {
       if (!desktop) return
       const version = statusVersion.current
+      let delay = 750
       try {
-        const next = await window.api.researchVideo.status({ projectId, sessionId, branchId })
+        const next = await readFilmStatus({ projectId, sessionId, branchId })
         const refreshedModel =
           subscribed && wasInstalling() && !next.narrationDownload
             ? await window.api.localModels.getSnapshot('research-narration')
@@ -228,10 +269,16 @@ export function ResearchVideoButton({
           setStatus(next)
           setStatusLoadedScope(deletionScope)
         }
-      } catch {
-        // Retry transient status failures on the next poll.
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.includes(RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE)
+        ) {
+          if (subscribed) setStatusLoadedScope(deletionScope)
+          delay = 5_000
+        }
       }
-      if (subscribed) timer = setTimeout(() => void poll(), 750)
+      if (subscribed) timer = setTimeout(() => void poll(), delay)
     }
     void poll()
     return () => {
@@ -249,7 +296,7 @@ export function ResearchVideoButton({
     setPending(true)
     setError(undefined)
     try {
-      const current = await window.api.researchVideo.status({ ...request, checkReadiness: true })
+      const current = await readFilmStatus(request, true)
       if (!live.current) return
       setStatus(current)
       if (
@@ -302,7 +349,7 @@ export function ResearchVideoButton({
     try {
       await window.api.researchVideo.cancel(request)
       if (live.current) {
-        setStatus(await window.api.researchVideo.status(request))
+        setStatus(await readFilmStatus(request))
       }
     } catch (caught) {
       if (live.current) setError(caught instanceof Error ? caught.message : String(caught))

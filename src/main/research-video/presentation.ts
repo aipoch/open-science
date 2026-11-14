@@ -4,11 +4,14 @@ import { lstat, mkdir, readdir, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import {
+  RESEARCH_VIDEO_STATUS_TIMEOUT_MS,
+  RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE,
   researchVideoPresentationRequestSchema,
   researchVideoStatusRequestSchema,
   researchVideoStartRequestSchema,
   type ResearchVideoStartRequest,
   type ResearchVideoStatusRequest,
+  type ResearchVideoPresentation,
   type ResearchVideoPresentationRequest,
   type ResearchVideoPresentationStatus
 } from '../../shared/research-video-presentation'
@@ -42,6 +45,9 @@ import type { ResearchFilmLifecycle } from './lifecycle'
 import {
   researchFilmScopeKey as scopeKey,
   readStoredResearchFilm,
+  readResearchFilmReceipt,
+  CorruptResearchFilmReceiptError,
+  hasResearchFilmOutputs,
   deleteStoredResearchFilms
 } from './stored-presentation'
 
@@ -53,6 +59,11 @@ const filmAttempt = new AsyncLocalStorage<{
 export const currentFilmAttempt = (): ReturnType<typeof filmAttempt.getStore> =>
   filmAttempt.getStore()
 
+const filmPathInfo = (path: string): Promise<Awaited<ReturnType<typeof lstat>> | undefined> =>
+  lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error
+    return undefined
+  })
 const FILM_READINESS_TIMEOUT_MS = 30_000
 const FILM_DISK_TIMEOUT_MS = 2 * 60_000
 const FILM_DISK_CANCEL_GRACE_MS = 5_000
@@ -119,7 +130,24 @@ export function createResearchVideoPresentationOwner(options: {
       }
     | undefined
   const states = new Map<string, ResearchVideoPresentationStatus>()
-  const preflights = new Map<string, symbol>()
+  const readinessReads = new Map<string, Promise<ResearchVideoPresentationStatus>>()
+  const statusReads = new Map<string, Promise<ResearchVideoPresentationStatus>>()
+  const knownFilms = new Map<string, ResearchVideoPresentation>()
+  const readLocalFilm = async (
+    request: ResearchVideoPresentationRequest,
+    signal: AbortSignal
+  ): Promise<ResearchVideoPresentation | undefined> => {
+    signal.throwIfAborted()
+    const key = scopeKey(request)
+    const result = await readStoredResearchFilm(options.dataRoot(), request, knownFilms.get(key))
+    signal.throwIfAborted()
+    knownFilms.delete(key)
+    if (result) {
+      if (knownFilms.size >= 32) knownFilms.delete(knownFilms.keys().next().value!)
+      knownFilms.set(key, result)
+    }
+    return result
+  }
   const directory = async (key: string, create = false): Promise<string | undefined> => {
     let current = options.dataRoot()
     for (const part of ['research-video-presentations', key]) {
@@ -140,33 +168,28 @@ export function createResearchVideoPresentationOwner(options: {
   }
   const readStatus = async (
     request: ResearchVideoPresentationRequest,
-    readinessSignal?: AbortSignal
+    signal: AbortSignal,
+    checkReadiness = false
   ): Promise<ResearchVideoPresentationStatus> => {
     const key = scopeKey(request)
     const revision = operationRevision
     const state = structuredClone(states.get(key) ?? {})
     const session = await options.loadSession(request.projectId, request.sessionId)
-    readinessSignal?.throwIfAborted()
+    signal.throwIfAborted()
     const block = researchVideoGenerationBlock(session, request)
     if (block === 'unavailable') return { generationBlock: block }
     if (installingKey === key) state.narrationDownload = await options.models.getSnapshot()
+    signal.throwIfAborted()
     if (block) state.generationBlock = block
-    if (readinessSignal && !block && !active && !closed && !removing) {
-      const signal = readinessSignal
+    if (checkReadiness && !block && !active && !closed && !removing) {
       signal.throwIfAborted()
-      const probe = Symbol()
-      preflights.set(key, probe)
-      const clearProbe = (): void => {
-        if (preflights.get(key) === probe) preflights.delete(key)
-      }
       const onTimeout = (): void => {
-        if (preflights.get(key) === probe && revision === operationRevision) {
+        if (revision === operationRevision) {
           states.set(key, {
             ...states.get(key),
             preflightError: new FilmReadinessTimeoutError().message
           })
         }
-        clearProbe()
       }
       signal.addEventListener('abort', onTimeout, { once: true })
       delete state.preflightError
@@ -200,10 +223,8 @@ export function createResearchVideoPresentationOwner(options: {
         signal.removeEventListener('abort', onTimeout)
       }
       signal.throwIfAborted()
-      const currentProbe = preflights.get(key) === probe
-      clearProbe()
-      // A newer probe or mutation owns the status. Do not restart work after disposal.
-      if (!currentProbe || revision !== operationRevision) return readStatus(request)
+      // A newer mutation owns the status. Do not restart readiness work after disposal.
+      if (revision !== operationRevision) return readStatus(request, signal)
       states.set(key, { ...states.get(key), preflightError: state.preflightError })
     }
     const branchId =
@@ -212,16 +233,24 @@ export function createResearchVideoPresentationOwner(options: {
         (frame) => frame.id === session?.conversationGraph?.rootFrameId
       )?.activeBranchId
     const scope = { ...request, branchId }
+    const local = (
+      target: ResearchVideoPresentationRequest
+    ): Promise<ResearchVideoPresentation | undefined> =>
+      readLocalFilm(target, signal).catch((error: unknown) => {
+        if (!(error instanceof CorruptResearchFilmReceiptError)) throw error
+        state.error ??= error.message
+        return undefined
+      })
     const result =
-      (await readStoredResearchFilm(options.dataRoot(), scope)) ??
-      (branchId !== request.branchId
-        ? await readStoredResearchFilm(options.dataRoot(), request)
-        : undefined) ??
+      (await local(scope)) ??
+      (branchId !== request.branchId ? await local(request) : undefined) ??
       (session?.packageOrigin || session?.forkOrigin
         ? await options.loadImportedFilm?.(request)
         : undefined)
+    signal.throwIfAborted()
     if (!active && session && !block) {
       const base = await directory(scopeKey(scope))
+      signal.throwIfAborted()
       const saved = base && (await readPendingFilm(base))
       if (
         saved &&
@@ -235,6 +264,7 @@ export function createResearchVideoPresentationOwner(options: {
           Object.assign(state.progress, { completed: saved.completed, total: saved.total })
       }
     }
+    signal.throwIfAborted()
     return result ? { ...state, result } : state
   }
 
@@ -242,15 +272,43 @@ export function createResearchVideoPresentationOwner(options: {
     rawRequest: ResearchVideoStatusRequest
   ): Promise<ResearchVideoPresentationStatus> => {
     const { checkReadiness, ...request } = researchVideoStatusRequestSchema.parse(rawRequest)
-    const current = active?.key === scopeKey(request) ? active : undefined
+    const key = scopeKey(request)
+    const current = active?.key === key ? active : undefined
     if (current?.blockedStatus) return current.blockedStatus
-    if (!checkReadiness) return readStatus(request)
-    try {
-      return await checkFilmReadiness((signal) => readStatus(request, signal))
-    } catch (error) {
+    const pending = statusReads.get(key)
+    if (!checkReadiness) {
+      if (pending) return pending
+      const deadline = new AbortController()
+      const timer = setTimeout(
+        () => deadline.abort(new Error(RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE)),
+        RESEARCH_VIDEO_STATUS_TIMEOUT_MS
+      )
+      const read = readStatus(request, deadline.signal).finally(() => {
+        clearTimeout(timer)
+        statusReads.delete(key)
+      })
+      const bounded = waitForFilmStep(deadline.signal, () => read)
+      statusReads.set(key, bounded)
+      return bounded
+    }
+    const readiness = readinessReads.get(key)
+    if (readiness) return readiness
+    // A readiness retry must not bypass a stalled read of the same scope.
+    if (pending) {
+      await pending
+      return status(rawRequest)
+    }
+    let started = false
+    const bounded = checkFilmReadiness((signal) => {
+      started = true
+      return readStatus(request, signal, true).finally(() => readinessReads.delete(key))
+    }).catch((error: unknown) => {
+      if (!started) readinessReads.delete(key)
       if (!(error instanceof FilmReadinessTimeoutError)) throw error
       return { preflightError: error.message }
-    }
+    })
+    readinessReads.set(key, bounded)
+    return bounded
   }
 
   const run = async (
@@ -284,7 +342,7 @@ export function createResearchVideoPresentationOwner(options: {
     let replayStep = 0
     let diskFailure: Error | undefined
     const markDiskStalled = (): void => {
-      if (diskFailure) return
+      if (diskFailure || completed) return
       diskFailure = new Error(
         'Film is still waiting for the disk. Try again after the disk responds.'
       )
@@ -460,7 +518,14 @@ export function createResearchVideoPresentationOwner(options: {
       const conversation = filmConversationDigest(source)
       const fingerprint = digestFilmInput(JSON.stringify([conversation, checksums]))
       const previous = await diskStep(() => readPendingFilm(publishBase))
-      const published = await diskStep(() => readStoredResearchFilm(options.dataRoot(), scope))
+      let corruptLatest = false
+      const published = await diskStep(() =>
+        readResearchFilmReceipt(publishBase).catch((error: unknown) => {
+          if (!(error instanceof CorruptResearchFilmReceiptError)) throw error
+          corruptLatest = true
+          return knownFilms.get(scopeKey(scope))
+        })
+      )
       job = join(base, 'pending')
       if (resume && previous?.source === fingerprint && previous.id !== published?.id) {
         saved = { ...previous, attempt: previous.attempt + 1 }
@@ -480,6 +545,29 @@ export function createResearchVideoPresentationOwner(options: {
         }
       }
       checkpointStarted = Boolean(saved.built) || (resume && previous?.id === saved.id)
+      let outputJob = join(publishBase, saved.id)
+      if (saved.built) {
+        const pending = await diskStep(() => filmPathInfo(job!))
+        if (!(await diskStep(() => hasResearchFilmOutputs(pending ? job! : outputJob)))) {
+          // A crash can leave the unpublished job already renamed. Move it back to reuse units.
+          if (!pending) {
+            const moved = await diskStep(() => filmPathInfo(outputJob))
+            if (moved && !corruptLatest) await diskStep(() => rename(outputJob, job!))
+            else if (moved) {
+              // The damaged index cannot prove this directory was never published.
+              saved.id = randomUUID()
+              outputJob = join(publishBase, saved.id)
+            }
+          }
+          delete saved.built
+          saved.step = 1
+          delete saved.completed
+          delete saved.total
+          replayStep = 0
+          await diskStep(() => mkdir(job!, { recursive: true, mode: 0o700 }))
+          await diskStep(() => savePendingFilm(publishBase, saved!))
+        }
+      }
       const id = saved.id
       log.info('film attempt started', {
         ...context(),
@@ -573,27 +661,10 @@ export function createResearchVideoPresentationOwner(options: {
       if (!currentSession) throw new Error('Research session was removed during generation.')
       report({ phase: 'publishing' })
       await writes
-      const outputJob = join(publishBase, id)
-      const pendingDirectory = await diskStep(() => lstat(job!)).catch(
-        (e: NodeJS.ErrnoException) => {
-          if (e.code !== 'ENOENT') throw e
-        }
-      )
-      if (pendingDirectory) {
-        if (!pendingDirectory.isDirectory())
-          throw new Error('Unsafe research presentation directory.')
-        for (const name of await diskStep(() => readdir(job!))) {
-          if (name.startsWith('unit-') || name === 'speech')
-            await diskStep(() => rm(join(job!, name), { recursive: true, force: true }))
-        }
-        await diskStep(() => rename(job!, outputJob))
-      }
-      for (const path of [outputJob, join(outputJob, 'output')])
-        if (!(await diskStep(() => lstat(path))).isDirectory())
-          throw new Error('Unsafe research presentation output.')
-      for (const name of ['player.html', 'sources.zip'])
-        if (!(await diskStep(() => lstat(join(outputJob, 'output', name)))).isFile())
-          throw new Error('Missing research presentation output.')
+      const pendingDirectory = await diskStep(() => filmPathInfo(job!))
+      if (!(await diskStep(() => hasResearchFilmOutputs(pendingDirectory ? job! : outputJob))))
+        throw new Error('Missing or empty research presentation output.')
+      if (pendingDirectory) await diskStep(() => rename(job!, outputJob))
       const receipt = JSON.stringify(saved.built)
       signal.throwIfAborted()
       await diskStep(() => writeDurableJsonFile(join(publishBase, 'latest.json'), receipt), true)
@@ -602,6 +673,12 @@ export function createResearchVideoPresentationOwner(options: {
         log.info('film cleanup deferred', { ...context(), phase: 'publishing' })
       )
       states.delete(key)
+      await diskStep(async () => {
+        for (const name of await readdir(outputJob)) {
+          if (name.startsWith('unit-') || name === 'speech')
+            await rm(join(outputJob, name), { recursive: true, force: true })
+        }
+      }, true).catch(() => log.info('film cleanup deferred', { ...context(), phase: 'publishing' }))
     } catch (error) {
       const buildUnconfirmed = error instanceof ResearchVideoBuildCleanupError
       const cleanupUnconfirmed =
@@ -788,6 +865,8 @@ export function createResearchVideoPresentationOwner(options: {
         await deleteStoredResearchFilms(options.dataRoot(), scope, imported?.id)
         states.delete(scopeKey(request))
         states.delete(scopeKey(scope))
+        knownFilms.delete(scopeKey(scope))
+        knownFilms.delete(scopeKey({ ...scope, branchId: undefined }))
         return status(request)
       }
       try {
