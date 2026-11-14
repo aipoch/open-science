@@ -119,9 +119,11 @@ test('interpolates pointer position only, and disables motion for reduced motion
           (animation) =>
             animation instanceof CSSTransition && animation.transitionProperty === 'transform'
         )
-      if (!transition?.effect) throw new Error('Tooltip did not start a transform transition.')
+      const endTime = transition?.effect?.getComputedTiming().endTime
+      if (!transition || typeof endTime !== 'number')
+        throw new Error('Tooltip did not start a timed transform transition.')
       transition.pause()
-      transition.currentTime = transition.effect.getComputedTiming().endTime / 2
+      transition.currentTime = endTime / 2
       const during = tooltip.getBoundingClientRect().x
       transition.finish()
       return { before, during, after: tooltip.getBoundingClientRect().x }

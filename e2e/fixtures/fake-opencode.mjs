@@ -3724,6 +3724,16 @@ if (process.argv.includes('--version')) {
             const faultKey = `${faultRoot}:${mode}`
             const attempt = (classificationFaultAttempts.get(faultKey) ?? 0) + 1
             classificationFaultAttempts.set(faultKey, attempt)
+            if (mode === 'timeout') {
+              const receivedAt = performance.now()
+              response.once('close', () => {
+                const elapsedMs = performance.now() - receivedAt
+                void writeFile(
+                  join(faultRoot, `timeout-${attempt}.json`),
+                  JSON.stringify(elapsedMs)
+                ).catch((error) => console.error('Could not record classification timeout.', error))
+              })
+            }
             await appendFile(
               join(faultRoot, 'requests.jsonl'),
               `${JSON.stringify({
