@@ -1127,6 +1127,25 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     await backend.providerTransportLease?.release()
   })
 
+  it('sets the Claude output budget only for a restricted target with a known limit', async () => {
+    const harness = makeHarness({
+      targetOverride: () => ({ provider: { maxOutputTokens: 64_000 } })
+    })
+    const target = await harness.resolver.captureExplicitTarget()
+    const restricted = await harness.resolver.resolveExplicitTarget(target, {
+      includeSkillAndConnectorContext: false,
+      useResolvedModelOutputLimit: true
+    })
+    const main = await harness.resolver.resolveActiveBackend()
+    try {
+      expect(restricted.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000')
+      expect(main.env).not.toHaveProperty('CLAUDE_CODE_MAX_OUTPUT_TOKENS')
+    } finally {
+      await restricted.messagesBridgeLease?.release()
+      await main.messagesBridgeLease?.release()
+    }
+  })
+
   it('keeps a single Claude target behind loopback and projects its model target', async () => {
     const harness = makeHarness()
     const backend = await harness.resolver.resolveActiveBackend()

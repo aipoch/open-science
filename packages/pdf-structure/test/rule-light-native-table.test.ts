@@ -20,6 +20,36 @@ const token = (text: string, x: number, y: number, width = 70): object => ({
   horizontal: true
 })
 
+it('recovers every native column beyond a partial detector grid', () => {
+  const items = [
+    ['Key', 'Mean', 'Spread'],
+    ['Alpha', '2', '3'],
+    ['Beta', '5', '7']
+  ].flatMap((row, r) => row.map((text, c) => token(text, [30, 70, 210][c], [35, 60, 85][r], 18)))
+  const existing = {
+    cropRect: [20, 25, 120, 115],
+    structure: {
+      objects: [
+        ...[5, 30, 55].map((y) => ({ label: 'table row', rect: [0, y, 100, y + 20] })),
+        ...[0, 50].map((x) => ({ label: 'table column', rect: [x, 0, x + 50, 90] }))
+      ]
+    }
+  }
+  const [recovered] = recoverCaptionedRuledTables(
+    items,
+    [30, 50, 110].map((y) => [20, y, 300, y]),
+    [{ page: 1, lines: ['Table I: Native values'], rect: [20, 10, 300, 20] }],
+    1,
+    [existing]
+  )
+  expect(recovered.cropRect).toEqual([20, 30, 300, 110])
+  expect(
+    recovered.structure.objects.filter(
+      (object: { label: string }) => object.label === 'table column'
+    )
+  ).toHaveLength(3)
+})
+
 const table = (): ReturnType<typeof JSON.parse> => ({
   id: 'anonymous-rule-light-table',
   cropRect: [0, 0, 400, 220],

@@ -7,6 +7,7 @@ import {
   carryNativeTerminalPlotScope,
   nativeTextFreeClipInkRegions
 } from './native-source-geometry.js'
+import { readNativeFormClippedText, isNativeFormBBoxExclusion } from './native-form-clipped-text.js'
 import { getPdfTranslationTextContent } from './text-content.js'
 
 type Content = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
@@ -402,10 +403,96 @@ function nativeInkPageWitness(
   }
 }
 
+// Only hard Form clipping is independent of image payload. Match allocator
+// names at their image use/dependency slots; this never creates ink evidence.
+async function hardFormImageComparison(
+  primary: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>,
+  auxiliary: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>,
+  fonts: ReadonlyMap<string, string>
+): Promise<typeof auxiliary | undefined> {
+  const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  if (
+    !same(primary.fnArray, auxiliary.fnArray) ||
+    primary.argsArray.length !== auxiliary.argsArray.length ||
+    primary.argsArray.length !== primary.fnArray.length
+  )
+    return
+  const unsupported = new Set([
+    OPS.paintImageXObjectRepeat,
+    OPS.paintInlineImageXObject,
+    OPS.paintInlineImageXObjectGroup,
+    OPS.paintImageMaskXObject,
+    OPS.paintImageMaskXObjectGroup,
+    OPS.paintImageMaskXObjectRepeat,
+    OPS.paintSolidColorImageMask,
+    OPS.setFillColorN,
+    OPS.setStrokeColorN,
+    OPS.shadingFill
+  ])
+  const forward = new Map<string, string>(),
+    reverse = new Map<string, string>(),
+    fontIds = new Set([...fonts.keys(), ...fonts.values()])
+  const imageId = (id: unknown): id is string =>
+    typeof id === 'string' && id.length <= 80 && /^img_p\d+_\d+$/u.test(id) && !fontIds.has(id)
+  for (const [index, op] of primary.fnArray.entries()) {
+    if (unsupported.has(op)) return
+    if (op !== OPS.paintImageXObject) continue
+    const a = primary.argsArray[index],
+      b = auxiliary.argsArray[index]
+    if (
+      !Array.isArray(a) ||
+      !Array.isArray(b) ||
+      a.length !== 3 ||
+      b.length !== 3 ||
+      !imageId(a[0]) ||
+      !imageId(b[0]) ||
+      ![a[1], a[2], b[1], b[2]].every((n) => Number.isSafeInteger(n) && n > 0) ||
+      (forward.has(a[0]) && forward.get(a[0]) !== b[0]) ||
+      (reverse.has(b[0]) && reverse.get(b[0]) !== a[0])
+    )
+      return
+    forward.set(a[0], b[0])
+    reverse.set(b[0], a[0])
+  }
+  if (!reverse.size) return
+  const aDependencies = new Set<string>(),
+    bDependencies = new Set<string>(),
+    argsArray = auxiliary.argsArray.slice()
+  for (const [index, op] of primary.fnArray.entries()) {
+    const a = primary.argsArray[index],
+      b = auxiliary.argsArray[index]
+    if (op === OPS.dependency) {
+      if (
+        !Array.isArray(a) ||
+        !Array.isArray(b) ||
+        a.length !== b.length ||
+        a.some((id) => typeof id !== 'string') ||
+        b.some((id) => typeof id !== 'string')
+      )
+        return
+      const next = b.slice()
+      for (let slot = 0; slot < b.length; slot++) {
+        if (reverse.has(b[slot])) {
+          if (reverse.get(b[slot]) !== a[slot]) return
+          next[slot] = a[slot]
+        } else if (forward.has(a[slot])) return
+        aDependencies.add(a[slot])
+        bDependencies.add(b[slot])
+      }
+      argsArray[index] = next
+    } else if (op === OPS.paintImageXObject) {
+      if (!aDependencies.has(a[0]) || !bDependencies.has(b[0])) return
+      argsArray[index] = [reverse.get(b[0]), ...b.slice(1)]
+    }
+  }
+  return { ...auxiliary, argsArray }
+}
+
 async function sameNativePage(
   primary: Request,
   page: PDFPageProxy,
-  content: Content
+  content: Content,
+  hardFormBBox = false
 ): Promise<Awaited<ReturnType<PDFPageProxy['getOperatorList']>>> {
   requireEvidence(primary.content.items.length === content.items.length)
   const forward = new Map<string, string>(),
@@ -437,7 +524,12 @@ async function sameNativePage(
   const aOperators = structuredClone(aOriginal),
     bOperators = structuredClone(bOriginal)
   if (primary.operatorSnapshot) requireEvidence(same(aOperators, primary.operatorSnapshot))
-  requireEvidence(aOperators.fnArray.length <= 100000 && same(aOperators, bOperators, reverse))
+  requireEvidence(aOperators.fnArray.length <= 100000)
+  const imageComparison =
+    hardFormBBox && !same(aOperators, bOperators, reverse)
+      ? await hardFormImageComparison(aOperators, bOperators, reverse)
+      : undefined
+  requireEvidence(same(aOperators, imageComparison ?? bOperators, reverse))
   requireEvidence(same(viewportKey(primary.viewport), viewportKey(page.getViewport({ scale: 1 }))))
   requireEvidence(
     same(
@@ -519,10 +611,140 @@ export function createAuxiliaryNativeCaptionInkReader(options: Options): Auxilia
 }
 
 export function createNativeInkReader(
-  { document: primary, nativeDocumentFactory, sourceIdentity, signal }: Options,
+  options: Options,
   readInk: typeof nativeTextFreeClipInkRegions,
   carryInk?: (from: Ink, to: Ink) => void
 ): AuxiliaryNativeInkReader {
+  return createNativeEvidenceReader(options, readInk, carryInk, false)
+}
+
+/** Selected native observations for exclusion or whole-page fallback only.
+ * Deliberately incompatible with the complete-page positive ink reader. */
+export function createAuxiliaryNativeNegativeReader(
+  options: Options,
+  readSelected: typeof nativeTextFreeClipInkRegions,
+  carrySelected?: (from: Ink, to: Ink) => void
+): Readonly<{
+  readNegativeSelection: (input: Request) => Promise<
+    | Readonly<{
+        negativeOnly: true
+        items: ReadonlyMap<
+          number,
+          { page: number; x: number; y: number; width: number; height: number }
+        >
+      }>
+    | undefined
+  >
+  dispose: () => Promise<void>
+}> {
+  const reader = createNativeEvidenceReader(options, readSelected, carrySelected, true)
+  return {
+    async readNegativeSelection(input) {
+      const items = await reader.read(input)
+      return items && Object.freeze({ negativeOnly: true as const, items })
+    },
+    dispose: reader.dispose
+  }
+}
+
+type NativeExclusion = Readonly<{ indexes: ReadonlySet<number>; current: () => boolean }>
+type Observation<T> = Readonly<{
+  read: (
+    page: PDFPageProxy,
+    content: Content,
+    viewport: Viewport,
+    pageNumber: number,
+    selected: ReadonlySet<number>,
+    operators?: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>
+  ) => Promise<T | undefined>
+  valid: (value: T, input: Request) => boolean
+  copy: (value: T, current: () => boolean) => T
+  bindPrimary?: boolean
+  hardFormBBox?: boolean
+}>
+
+/** Exclusions are never ink or permission to move or translate an item. */
+export function createAuxiliaryNativeExclusionReader(
+  options: Options,
+  readExcluded: (
+    page: PDFPageProxy,
+    content: Content,
+    viewport: Viewport
+  ) => Promise<NativeExclusion | undefined>
+): Readonly<{
+  readNegativeExclusions: (
+    input: Request
+  ) => Promise<(NativeExclusion & { negativeOnly: true }) | undefined>
+  dispose: () => Promise<void>
+}> {
+  const hardFormBBox = readExcluded === readNativeFormClippedText
+  const reader = createNativeObservationReader<NativeExclusion>(options, {
+    read: hardFormBBox
+      ? async (page, content, viewport) => {
+          const proof = await readExcluded(page, content, viewport)
+          return isNativeFormBBoxExclusion(proof, { page, content, viewport }) ? proof : undefined
+        }
+      : readExcluded,
+    valid: (proof, input) =>
+      (!hardFormBBox || isNativeFormBBoxExclusion(proof)) &&
+      proof.current() &&
+      proof.indexes.size > 0 &&
+      [...proof.indexes].every((index) => input.selected.has(index)),
+    copy: (proof, current) => {
+      const indexes = new Set(proof.indexes),
+        expected = [...indexes]
+      return Object.freeze({
+        indexes,
+        current: () =>
+          proof.current() &&
+          current() &&
+          indexes.size === expected.length &&
+          proof.indexes.size === expected.length &&
+          expected.every((index) => indexes.has(index) && proof.indexes.has(index))
+      })
+    },
+    bindPrimary: true,
+    hardFormBBox
+  })
+  return {
+    async readNegativeExclusions(input) {
+      const proof = await reader.read(input)
+      return proof && Object.freeze({ ...proof, negativeOnly: true as const })
+    },
+    dispose: reader.dispose
+  }
+}
+
+function createNativeEvidenceReader(
+  options: Options,
+  readInk: typeof nativeTextFreeClipInkRegions,
+  carryInk: ((from: Ink, to: Ink) => void) | undefined,
+  negativeSelected: boolean
+): AuxiliaryNativeInkReader {
+  return createNativeObservationReader(options, {
+    read: readInk,
+    valid: (ink, input) => {
+      const expected = negativeSelected
+        ? [...input.selected]
+        : input.content.items.flatMap((item, index): number[] =>
+            'str' in item && item.str.trim() ? [index] : []
+          )
+      return ink.size === expected.length && expected.every((index) => ink.has(index))
+    },
+    copy: (ink) => {
+      const next = new Map(
+        [...ink].map(([index, rect]): [number, typeof rect] => [index, Object.freeze({ ...rect })])
+      )
+      carryInk?.(ink, next)
+      return next
+    }
+  })
+}
+
+function createNativeObservationReader<T>(
+  { document: primary, nativeDocumentFactory, sourceIdentity, signal }: Options,
+  observation: Observation<T>
+): Readonly<{ read: (input: Request) => Promise<T | undefined>; dispose: () => Promise<void> }> {
   let task: ReturnType<typeof getDocument> | undefined,
     pending: Promise<PDFDocumentProxy> | undefined,
     render: ReturnType<PDFPageProxy['render']> | undefined,
@@ -539,7 +761,7 @@ export function createNativeInkReader(
       viewport: unknown
       selected: Set<number>
       operatorSnapshot: string | undefined
-      result: Promise<Ink | undefined>
+      result: Promise<T | undefined>
     }
   >()
   const proofChecks: NonNullable<ReturnType<typeof nativeInkPageWitness>>[] = []
@@ -623,7 +845,7 @@ export function createNativeInkReader(
     requireEvidence(same(a.info, b.info) && a.metadata?.getRaw() === b.metadata?.getRaw())
     return auxiliary
   }
-  const prove = async (input: Request): Promise<Ink> => {
+  const prove = async (input: Request): Promise<T> => {
     live()
     requireEvidence(input.page === (await primary.getPage(input.pageNumber)))
     requireEvidence(same(input.content, await getPdfTranslationTextContent(input.page)))
@@ -631,7 +853,7 @@ export function createNativeInkReader(
       same(viewportKey(input.viewport), viewportKey(input.page.getViewport({ scale: 1 })))
     )
     requireEvidence(
-      !(await readInk(
+      !(await observation.read(
         input.page,
         input.content,
         input.viewport,
@@ -640,6 +862,18 @@ export function createNativeInkReader(
         input.operatorSnapshot
       ))
     )
+    if (observation.bindPrimary) {
+      const operators = await input.page.getOperatorList()
+      const primaryProof = nativeInkPageWitness(
+        input.page,
+        input.content,
+        input.viewport,
+        operators,
+        []
+      )
+      requireEvidence(primaryProof && primaryProof.current())
+      proofChecks.push(primaryProof)
+    }
     requireEvidence(await missingNativeOutline(input.page))
     const auxiliary = await (pending ??= initialize()),
       page = await auxiliary.getPage(input.pageNumber),
@@ -668,7 +902,12 @@ export function createNativeInkReader(
     requireEvidence([...outlineKeys].every((key) => page.commonObjs.has(key)))
     const proof = nativeInkPageWitness(page, content, viewport, operators, [...outlineKeys])
     requireEvidence(proof)
-    const operatorSnapshot = await sameNativePage(input, page, content)
+    const operatorSnapshot = await sameNativePage(
+      input,
+      page,
+      content,
+      observation.hardFormBBox === true
+    )
     requireEvidence(proof.current())
     requireEvidence(
       Number.isSafeInteger(width) &&
@@ -692,35 +931,53 @@ export function createNativeInkReader(
     } finally {
       canvas.width = canvas.height = 0
     }
-    const ink = await readInk(
-        page,
-        content,
-        viewport,
-        input.pageNumber,
-        input.selected,
-        operatorSnapshot
-      ),
-      nonempty = input.content.items.flatMap((item, index): number[] =>
-        'str' in item && item.str.trim() ? [index] : []
-      )
-    requireEvidence(
-      ink && ink.size === nonempty.length && nonempty.every((index): boolean => ink.has(index))
+    const ink = await observation.read(
+      page,
+      content,
+      viewport,
+      input.pageNumber,
+      input.selected,
+      operatorSnapshot
     )
+    requireEvidence(ink && observation.valid(ink, input))
     live()
     requireEvidence(proof.current())
     proofChecks.push(proof)
     return ink
   }
-  const copy = (ink: Ink | undefined): Ink | undefined => {
-    if (!ink) return
-    const next = new Map(
-      [...ink].map(([index, rect]): [number, typeof rect] => [index, Object.freeze({ ...rect })])
-    )
-    carryInk?.(ink, next)
-    return next
+  const sourceBinding = JSON.stringify([primary.fingerprints, primary.numPages, sourceIdentity])
+  const documentApis = [primary.getPage, primary.getData, primary.getMetadata]
+  const current = (): boolean => {
+    try {
+      live()
+      requireEvidence(proofChecks.every((proof) => proof.current()))
+      requireEvidence(
+        JSON.stringify([primary.fingerprints, primary.numPages, sourceIdentity]) === sourceBinding
+      )
+      requireEvidence(
+        [primary.getPage, primary.getData, primary.getMetadata].every(
+          (api, index) => api === documentApis[index]
+        )
+      )
+      for (const record of records.values()) {
+        const input = record.request
+        requireEvidence(
+          record.content === JSON.stringify(normalized(input.content)) &&
+            same(record.viewport, viewportKey(input.viewport)) &&
+            record.operatorSnapshot ===
+              (input.operatorSnapshot && JSON.stringify(normalized(input.operatorSnapshot))) &&
+            record.selected.size === input.selected.size &&
+            [...input.selected].every((index) => record.selected.has(index))
+        )
+      }
+      return true
+    } catch {
+      return false
+    }
   }
+  const copy = (value: T | undefined): T | undefined => value && observation.copy(value, current)
   return {
-    async read(input): Promise<Ink | undefined> {
+    async read(input): Promise<T | undefined> {
       let timer: ReturnType<typeof setTimeout> | undefined
       try {
         live()
@@ -774,6 +1031,7 @@ export function createNativeInkReader(
               previous.selected.size === input.selected.size &&
               [...input.selected].every((index): boolean => previous.selected.has(index))
           )
+          if (observation.bindPrimary) requireEvidence(current())
           return copy(ink)
         }
         requireEvidence(records.size < 16)
@@ -810,6 +1068,7 @@ export function createNativeInkReader(
             selected.size === input.selected.size &&
             [...input.selected].every((index): boolean => selected.has(index))
         )
+        if (observation.bindPrimary) requireEvidence(current())
         return copy(ink)
       } catch {
         return undefined

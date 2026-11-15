@@ -1,10 +1,44 @@
 import { randomUUID } from 'node:crypto'
-import { renameSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
 import { retryFileReplacement } from '@aipoch/durable-files'
 import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from '../runtime-startup-options'
+
+const require = createRequire(__filename)
+
+// Keep update handoff identity evidence inside the update module. The shared desktop helper is
+// owned by the composition layer, and importing it here would create a runtime dependency cycle.
+function processBirthIdentity(pid: number): string | undefined {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return undefined
+  try {
+    if (process.platform === 'darwin') {
+      const native =
+        require('@aipoch/process-tree-native') as typeof import('@aipoch/process-tree-native')
+      const identity = native.getDarwinProcess(pid)
+      return identity?.uniqueId && identity.uniqueId !== '0'
+        ? `darwin-proc-uniqueid:${identity.uniqueId}`
+        : undefined
+    }
+    if (process.platform === 'linux') {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+      const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
+      const start = fields[19]
+      return start && /^\d+$/.test(start) ? `linux-proc-starttime:${start}` : undefined
+    }
+    if (process.platform === 'win32') {
+      const native =
+        require('@aipoch/process-tree-native') as typeof import('@aipoch/process-tree-native')
+      const value = native.getWindowsProcessCreationTime(pid)
+      return value && /^\d+$/.test(value) ? `windows-creation-time:${value}` : undefined
+    }
+  } catch {
+    /* Inability to inspect is not proof of death or ownership. */
+  }
+  return undefined
+}
 
 export const WINDOWS_UPDATE_OPERATION_ARG = '--open-science-update-operation='
 const operationIdSchema = z.string().uuid()
@@ -14,8 +48,10 @@ const requestSchema = z
     operationId: operationIdSchema,
     createdAt: z.number().int().nonnegative(),
     parentPid: z.number().int().positive(),
+    parentBirthToken: z.string().min(1).optional(),
     helperPid: z.number().int().positive().optional(),
     successorPid: z.number().int().positive().optional(),
+    successorBirthToken: z.string().min(1).optional(),
     targetVersion: z.string().min(1),
     applicationPath: z.string().refine(isAbsolute),
     installerPath: z.string().refine(isAbsolute),
@@ -141,7 +177,8 @@ export async function createWindowsUpdateRequest(
     schema: 1,
     operationId: randomUUID(),
     createdAt: Date.now(),
-    parentPid: process.pid
+    parentPid: process.pid,
+    parentBirthToken: processBirthIdentity(process.pid)
   })
   const root = await selectHandoffRoot(appData, input.applicationPath)
   const directory = join(root, request.operationId)
@@ -216,6 +253,7 @@ export async function resolveWindowsUpdateStartup(
   // Electron relaunch retains argv. Keep this configuration lease while that successor lives,
   // including startup repair, so later relaunches can consume the same operation safely.
   request.successorPid = process.pid
+  request.successorBirthToken = processBirthIdentity(process.pid)
   await writeWindowsUpdateFile(join(directory, 'request.json'), JSON.stringify(request))
   const readyPath = join(directory, 'ready.receipt')
   const confirmed = await lstat(readyPath)
@@ -261,13 +299,18 @@ export async function acknowledgeWindowsUpdateReady(
   return true
 }
 
-const processMayBeAlive = (pid: number): boolean => {
+const processMayBeAlive = (pid: number, birthToken?: string): boolean => {
   try {
     process.kill(pid, 0)
-    return true
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== 'ESRCH'
   }
+  if (!birthToken) return true
+  const actual = processBirthIdentity(pid)
+  if (actual === birthToken) return true
+  // The process exists but its birth identity could not be inspected. Preserve the record rather
+  // than treating an inaccessible process as an unrelated PID.
+  return actual === undefined
 }
 
 // Exact UUID requests prove the scope; live/PID-reused processes and unknown files are preserved.
@@ -296,9 +339,10 @@ async function cleanupWindowsUpdateHandoffRoot(root: string): Promise<void> {
     try {
       const request = await readRequest(directory, entry.name)
       if (
-        processMayBeAlive(request.parentPid) ||
+        processMayBeAlive(request.parentPid, request.parentBirthToken) ||
         (request.helperPid && processMayBeAlive(request.helperPid)) ||
-        (request.successorPid && processMayBeAlive(request.successorPid))
+        (request.successorPid &&
+          processMayBeAlive(request.successorPid, request.successorBirthToken))
       )
         continue
       const files = await readdir(directory, { withFileTypes: true })

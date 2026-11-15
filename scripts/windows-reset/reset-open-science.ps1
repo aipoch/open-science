@@ -111,13 +111,9 @@ function Test-TrustedAcl([string]$Path) {
   if ($trustedOwnerSids -notcontains $ownerSid) { return $false }
 
   $trustedWriteSids = @($trustedOwnerSids + 'S-1-3-0')
-  # Keep this complete dangerous-rights set in sync with micromamba-cache.ts. A foreign principal
-  # with any of these rights can replace content or grant itself full control.
+  # Match the dangerous-rights policy in micromamba-cache.ts using only mutating bits.
+  # Modify/FullControl also contain read bits: testing overlap with them rejects harmless readers.
   $writeMask = [System.Security.AccessControl.FileSystemRights]::Write -bor
-    [System.Security.AccessControl.FileSystemRights]::Modify -bor
-    [System.Security.AccessControl.FileSystemRights]::FullControl -bor
-    [System.Security.AccessControl.FileSystemRights]::CreateFiles -bor
-    [System.Security.AccessControl.FileSystemRights]::AppendData -bor
     [System.Security.AccessControl.FileSystemRights]::Delete -bor
     [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
     [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor

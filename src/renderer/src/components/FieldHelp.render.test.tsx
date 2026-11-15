@@ -46,7 +46,7 @@ describe('FieldHelp', () => {
     expect(document.body.textContent).toContain('/v1/messages')
   })
 
-  it('uses a small light neutral trigger with stronger hover, focus, and open states', async () => {
+  it('uses a readable neutral trigger with stronger hover, focus, and open states', async () => {
     await act(async () => {
       root.render(<FieldHelp content="More details" />)
     })
@@ -56,7 +56,7 @@ describe('FieldHelp', () => {
     expect(trigger?.getAttribute('aria-label')).toBe('More information')
     expect(trigger?.className).toContain('size-6')
     expect(trigger?.className).toContain('rounded-full')
-    expect(trigger?.className).toContain('text-muted-foreground/50')
+    expect(trigger?.classList.contains('text-muted-foreground')).toBe(true)
     expect(trigger?.className).toContain('hover:bg-muted')
     expect(trigger?.className).toContain('hover:text-foreground')
     expect(trigger?.className).toContain('focus-visible:bg-muted')

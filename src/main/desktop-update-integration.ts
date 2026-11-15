@@ -32,23 +32,29 @@ import {
 } from './update/installation-protection'
 import type { InstallReadiness } from './update/strategy'
 
-/** A cancelled read must not keep its caller or a subsequent recovery action waiting. */
-async function boundedRead<T>(read: Promise<T>, signal: AbortSignal): Promise<T> {
+/** A cancelled read must reject locally and also cancel the remote host operation when supported. */
+async function boundedRead<T>(
+  read: (signal: AbortSignal) => Promise<T>,
+  signal: AbortSignal
+): Promise<T> {
   signal.throwIfAborted()
+  const timeout = new AbortController()
+  const combined = AbortSignal.any([signal, timeout.signal])
   let timer: ReturnType<typeof setTimeout> | undefined
   let onAbort: (() => void) | undefined
   try {
-    return await Promise.race([
-      read,
-      new Promise<never>((_, reject) => {
-        onAbort = () => reject(signal.reason)
-        signal.addEventListener('abort', onAbort, { once: true })
-        timer = setTimeout(
-          () => reject(new Error('The service readiness check timed out.')),
-          15_000
-        )
-      })
-    ])
+    const operation = read(combined)
+    const cancellation = new Promise<never>((_, reject) => {
+      onAbort = () =>
+        reject(signal.reason ?? new Error('The service readiness check was cancelled.'))
+      signal.addEventListener('abort', onAbort, { once: true })
+      timer = setTimeout(() => {
+        const error = new Error('The service readiness check timed out.')
+        timeout.abort(error)
+        reject(error)
+      }, 15_000)
+    })
+    return await Promise.race([operation, cancellation])
   } finally {
     if (timer) clearTimeout(timer)
     if (onAbort) signal.removeEventListener('abort', onAbort)
@@ -63,7 +69,7 @@ export function createDesktopUpdateIntegration(options: {
   allowedProcessIds(): number[]
   // Only while the backend is running: its owned children must pass admission so the cleanup gate
   // can stop them. Handoff/recovery after stop deliberately receive no such exemption.
-  ownedRuntimeProcessIds?(client: DesktopRuntimeClient): Promise<number[]>
+  ownedRuntimeProcessIds?(client: DesktopRuntimeClient, signal?: AbortSignal): Promise<number[]>
   verifyArtifact(status: UpdateStatus, signal?: AbortSignal): Promise<InstallationManifest>
   // True when the downloaded channel lacks supervised-replacement acceptance. Such installs keep
   // the pre-supervision electron-updater handoff behind the same runtime stop and occupancy checks.
@@ -107,7 +113,10 @@ export function createDesktopUpdateIntegration(options: {
       return [
         ...options.allowedProcessIds(),
         ...(options.ownedRuntimeProcessIds
-          ? await boundedRead(options.ownedRuntimeProcessIds(client), signal)
+          ? await boundedRead(
+              (readSignal) => options.ownedRuntimeProcessIds!(client, readSignal),
+              signal
+            )
           : [])
       ]
     } catch (cause) {
@@ -779,7 +788,10 @@ export function createDesktopUpdateIntegration(options: {
             }
           }
           const client = options.client()
-          const info = await boundedRead(client.refreshControl(), checking)
+          const info = await boundedRead(
+            (readSignal) => client.refreshControl(readSignal),
+            checking
+          )
           checking.throwIfAborted()
           if (info.control !== 'granted')
             return {
@@ -822,7 +834,7 @@ export function createDesktopUpdateIntegration(options: {
             checking
           )
           const current = (await boundedRead(
-            client.invokeHost('desktop:update-inspect'),
+            (readSignal) => client.invokeHost('desktop:update-inspect', [], readSignal),
             checking
           )) as InstallReadiness
           checking.throwIfAborted()

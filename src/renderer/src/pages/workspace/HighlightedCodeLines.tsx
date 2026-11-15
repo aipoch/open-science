@@ -112,22 +112,24 @@ const HighlightedCodeLines = ({
               {startingLineNumber + index}
             </span>
             <span className={cn('whitespace-pre-wrap break-words text-text-000', contentClassName)}>
-              {tokens?.[index]?.map((token, tokenIndex) => (
-                <span
-                  key={tokenIndex}
-                  data-testid="source-code-token"
-                  className="dark:[color:var(--shiki-dark)]!"
-                  // Dual-theme Shiki output stores theme colors in token.htmlStyle; keep the dark
-                  // override class aligned with existing tool-call code blocks.
-                  style={{
-                    color: token.color,
-                    ...(token.htmlStyle as React.CSSProperties | undefined),
-                    ...fontStyleToCss(token.fontStyle)
-                  }}
-                >
-                  {token.content}
-                </span>
-              )) ??
+              {tokens?.[index]?.map((token, tokenIndex) => {
+                const tokenStyle = token.htmlStyle as React.CSSProperties | undefined
+                const lightColor = token.color ?? tokenStyle?.color ?? 'currentColor'
+                return (
+                  <span
+                    key={tokenIndex}
+                    data-testid="source-code-token"
+                    // A fixed-light Replay inside a dark app must use its own color-scheme.
+                    style={{
+                      ...tokenStyle,
+                      color: `light-dark(${lightColor}, var(--shiki-dark, ${lightColor}))`,
+                      ...fontStyleToCss(token.fontStyle)
+                    }}
+                  >
+                    {token.content}
+                  </span>
+                )
+              }) ??
                 (line || '\u00a0')}
             </span>
           </div>

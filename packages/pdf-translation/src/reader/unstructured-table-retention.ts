@@ -3,6 +3,9 @@ import { createPdfTranslationSource } from './source.js'
 import { carryNativeCaptionEligibility } from './caption-eligibility.js'
 import { getPdfTranslationTextContent } from './text-content.js'
 import type { applyCachedPdfFigureSources } from './figure-source.js'
+import type { PDFPageProxy } from 'pdfjs-dist'
+import { nativeAlgorithmInkRegions, nativeZeroAdvanceRegions } from './native-source-geometry.js'
+import { nativeInkPageCurrent } from './auxiliary-native-ink.js'
 
 type Region = { page: number; x: number; y: number; width: number; height: number }
 const overlaps = (a: Region, b: Region): boolean =>
@@ -12,6 +15,159 @@ const overlaps = (a: Region, b: Region): boolean =>
   a.y < b.y + b.height &&
   b.y < a.y + a.height
 const normalize = (s: string): string => s.replace(/\s/gu, '')
+const recordIssues = [
+  'native-fused-tuple-crosses-cell-wall',
+  'native-section-label-value-records-merged',
+  'native-group-heading-merged-with-record'
+] as const
+type RecordIssue = (typeof recordIssues)[number]
+const centeredIssue = 'native-centered-headed-record-lanes-collapsed'
+const ambiguousIssue = 'native-table-structure-ambiguous'
+const missingGridIssue = 'no-source-cell-grid'
+const knownIssues: readonly string[] = [
+  ambiguousIssue,
+  missingGridIssue,
+  centeredIssue,
+  ...recordIssues
+]
+
+// This proves a native record family, never replacement cells or paint bounds.
+const nativeRecordFamily = (
+  family: RecordIssue,
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
+  selected: ReadonlySet<number>,
+  viewport: ReturnType<PDFPageProxy['getViewport']>,
+  rules: readonly number[][]
+): boolean => {
+  const t = viewport.transform
+  if (
+    t.length !== 6 ||
+    !t.every(Number.isFinite) ||
+    !(t[0] > 0) ||
+    t[1] !== 0 ||
+    t[2] !== 0 ||
+    t[3] !== -t[0] ||
+    selected.size > 1024
+  )
+    return false
+  const records = [...selected].flatMap((index) => {
+    const item = content.items[index]
+    if (!item || !('str' in item)) return []
+    const x = item.transform[4] * t[0] + t[4]
+    return [
+      {
+        index,
+        text: item.str,
+        x,
+        right: x + item.width * t[0],
+        baseline: item.transform[5] * t[3] + t[5],
+        h: item.height * t[0],
+        face: item.fontName
+      }
+    ]
+  })
+  if (records.length !== selected.size) return false
+  type Record = (typeof records)[number]
+  const sameRow = (a: Record, b: Record): boolean => Math.abs(a.baseline - b.baseline) < a.h * 0.02,
+    sameFace = (a: Record, b: Record): boolean =>
+      a.face === b.face && Math.abs(a.h - b.h) < a.h * 0.02,
+    aligned = (a: Record, b: Record): boolean =>
+      Math.abs(a.x - b.x) < a.h * 0.05 ||
+      Math.abs(a.right - b.right) < a.h * 0.1 ||
+      Math.abs((a.x + a.right) / 2 - (b.x + b.right) / 2) < a.h * 0.05,
+    rows: Record[][] = []
+  for (const item of [...records].sort((a, b) => a.baseline - b.baseline || a.x - b.x)) {
+    const row = rows.find((r) => sameRow(r[0], item))
+    if (row) row.push(item)
+    else rows.push([item])
+  }
+  for (const row of rows) row.sort((a, b) => a.x - b.x)
+  if (family === 'native-fused-tuple-crosses-cell-wall') {
+    const tuple = (s: string): boolean =>
+      /^\([+−-]?\d+(?:\.\d+)?(?:,[+−-]?\d+(?:\.\d+)?)+\)$/u.test(normalize(s))
+    return rows.some((row) =>
+      row.some(
+        (seam, index) =>
+          /^\)\s+\($/u.test(seam.text) &&
+          row.every((r) => Math.abs(r.h - seam.h) < seam.h * 0.02) &&
+          row.slice(0, index).some((_, start) =>
+            tuple(
+              row
+                .slice(start, index)
+                .map((r) => r.text)
+                .join('') + ')'
+            )
+          ) &&
+          row.slice(index + 1).some((_, end) =>
+            tuple(
+              '(' +
+                row
+                  .slice(index + 1, index + end + 2)
+                  .map((r) => r.text)
+                  .join('')
+            )
+          ) &&
+          rules.some(
+            ([x, top, right, bottom]) =>
+              x === right &&
+              x * viewport.width > seam.x &&
+              x * viewport.width < seam.right &&
+              top * viewport.height <= seam.baseline - seam.h * 0.75 &&
+              bottom * viewport.height >= seam.baseline
+          )
+      )
+    )
+  }
+  if (family === 'native-section-label-value-records-merged') {
+    const pairs = rows.filter(
+      (row) =>
+        row.length === 2 &&
+        /\p{L}{2}/u.test(row[0].text) &&
+        /^[\p{L}\p{N}_.+−-]{1,24}$/u.test(row[1].text) &&
+        sameFace(row[0], row[1]) &&
+        row[0].right < row[1].x - row[0].h &&
+        row[0].index < row[1].index
+    )
+    return pairs.some(([left, right]) => {
+      const peers = pairs.filter(
+        ([a, b]) => sameFace(left, a) && aligned(left, a) && aligned(right, b)
+      )
+      return (
+        peers.length >= 3 &&
+        peers.slice(1).every((p, n) => peers[n][1].index < p[0].index) &&
+        rows.some(
+          (r) =>
+            r.length === 1 &&
+            /\p{L}{2}/u.test(r[0].text) &&
+            !sameFace(r[0], left) &&
+            r[0].x < left.x - left.h &&
+            peers.some(
+              ([a]) => a.baseline - r[0].baseline > a.h && a.baseline - r[0].baseline < a.h * 1.8
+            )
+        )
+      )
+    })
+  }
+  const headings = rows.flatMap((row, index) => {
+    const next = rows[index + 1],
+      head = row[0],
+      start = next?.[0]
+    return row.length === 1 &&
+      start &&
+      next.length >= 3 &&
+      /\p{L}{2}/u.test(head.text) &&
+      /\p{L}{2}/u.test(start.text) &&
+      !sameFace(head, start) &&
+      aligned(head, start) &&
+      start.baseline - head.baseline > head.h &&
+      start.baseline - head.baseline < head.h * 1.8 &&
+      head.index < start.index &&
+      next.slice(1).every((r) => r.x > start.right + head.h && r.index > start.index)
+      ? [head]
+      : []
+  })
+  return headings.some((a) => headings.some((b) => a !== b && sameFace(a, b) && aligned(a, b)))
+}
 
 // This is negative translation eligibility only. It supplies neither a crop nor
 // paint permission: content-first must retain the complete original source page.
@@ -52,6 +208,8 @@ export async function retainUnstructuredTablePages(
     const candidates: {
       result: ReturnType<typeof parsePdfStructureResult>
       element: ReturnType<typeof parsePdfStructureResult>['elements'][number]
+      centered: boolean
+      records: readonly RecordIssue[]
     }[] = []
     const allElements: ReturnType<typeof parsePdfStructureResult>['elements'][number][] = []
     const batches = new Map<string, string>()
@@ -75,7 +233,14 @@ export async function retainUnstructuredTablePages(
       if (cacheBytes > 32 * 1024 ** 2 || elementCount > 512) return empty
       batches.set(result.extractionId, serialized)
       allElements.push(...result.elements)
-      for (const element of result.elements)
+      for (const element of result.elements) {
+        const codes = element.issues.map((issue) => issue.code),
+          knownRecordIssues =
+            codes.includes(ambiguousIssue) &&
+            codes.includes(missingGridIssue) &&
+            codes.every((code) => knownIssues.includes(code)),
+          centered = knownRecordIssues && codes.includes(centeredIssue),
+          records = knownRecordIssues ? recordIssues.filter((code) => codes.includes(code)) : []
         if (
           element.kind === 'table' &&
           !element.table &&
@@ -84,10 +249,10 @@ export async function retainUnstructuredTablePages(
           !element.sourceItems &&
           element.regions.length === 1 &&
           element.caption?.regions.length === 1 &&
-          element.issues.length === 1 &&
-          element.issues[0].code === 'no-source-cell-grid'
+          (centered || records.length || (codes.length === 1 && codes[0] === missingGridIssue))
         )
-          candidates.push({ result, element })
+          candidates.push({ result, element, centered, records })
+      }
     }
     if (!candidates.length || candidates.length > 16 || !(await digest()) || !current())
       return empty
@@ -99,27 +264,70 @@ export async function retainUnstructuredTablePages(
           if (owners.has(key)) return empty
           owners.set(key, unit)
         }
-    for (const { result, element } of candidates) {
+    for (const { result, element, centered, records } of candidates) {
       const region = element.regions[0],
+        record = records.length > 0,
         number = region.page,
         page = await document.getPage(number),
         viewport = page.getViewport({ scale: 1 }),
         expected = source.pages[number - 1],
+        declared = result.pages.find((p) => p.page === number),
         content = await getPdfTranslationTextContent(page),
         binding = JSON.stringify([content, viewport]),
         fonts = new Map<number, Region>()
       if (!current()) return empty
       if (
         !expected ||
+        !declared ||
+        declared.width !== viewport.width ||
+        declared.height !== viewport.height ||
+        declared.rotation !== viewport.rotation ||
         viewport.rotation !== 0 ||
         viewport.width !== expected.width ||
         viewport.height !== expected.height ||
         !result.processedPages.includes(number)
       )
         continue
-      let valid = true
+      // Native line-end evidence can validate the reader's complete canonical
+      // spelling. It never changes an owner or drops an unwitnessed hyphen.
+      const nativeLiteral = (indexes: readonly number[], strictPacket = false): string =>
+        indexes
+          .map((index, position) => {
+            const item = content.items[index] as {
+                str: string
+                width: number
+                height: number
+                hasEOL: boolean
+                transform: number[]
+                fontName: string
+              },
+              next = content.items[indexes[position + 1]] as typeof item | undefined,
+              between = content.items.slice(index + 1, indexes[position + 1] ?? index + 1),
+              blank = between.every((i) => 'str' in i && !i.str.trim()),
+              lineEnd = item.hasEOL || (blank && between.some((i) => 'hasEOL' in i && i.hasEOL))
+            return next &&
+              (!strictPacket || blank) &&
+              lineEnd &&
+              /\p{L}-$/u.test(item.str) &&
+              /^\p{Ll}/u.test(next.str) &&
+              item.fontName === next.fontName &&
+              item.transform[5] - next.transform[5] >= item.height * 0.5 &&
+              item.transform[5] - next.transform[5] <= item.height * 1.75 &&
+              next.transform[4] < item.transform[4] + item.width
+              ? item.str.slice(0, -1)
+              : item.str
+          })
+          .join('')
+      let valid = true,
+        zero: Awaited<ReturnType<typeof nativeZeroAdvanceRegions>> | undefined
       for (const [index, item] of content.items.entries()) {
         if (!('str' in item) || !item.str.trim()) continue
+        if (record && item.width === 0) {
+          zero ??= await nativeZeroAdvanceRegions(page, content, viewport, number)
+          if (!current()) return empty
+          const ink = zero.get(index)
+          if (ink && ![region, ...element.caption!.regions].some((r) => overlaps(r, ink))) continue
+        }
         const style = content.styles[item.fontName],
           [a, b, c, d, x, y] = item.transform
         if (
@@ -181,7 +389,7 @@ export async function retainUnstructuredTablePages(
           )
         )
       })
-      if (!multirow && !layered.length) continue
+      if (!centered && !record && !multirow && !layered.length) continue
       const selectedBoxes = [...selected].map((i) => fonts.get(i)!),
         left = Math.min(region.x, ...selectedBoxes.map((b) => b.x)),
         top = Math.min(region.y, ...selectedBoxes.map((b) => b.y)),
@@ -210,45 +418,24 @@ export async function retainUnstructuredTablePages(
             literals.push(item.text)
           }
         }
-        if (normalize(owner.source) !== normalize(literals.join(''))) valid = false
+        if (
+          normalize(owner.source) !== normalize(literals.join('')) &&
+          (!record ||
+            normalize(owner.source) !==
+              normalize(
+                nativeLiteral(
+                  owner.fragments.flatMap((f) => f.items.map((i) => i.index)),
+                  true
+                )
+              ))
+        )
+          valid = false
       }
       if (!valid || [...fonts].some(([i, b]) => overlaps(b, body) && !selected.has(i))) continue
       const caption = element.caption!,
         captionRegion = caption.regions[0],
         captionItems = [...fonts].filter(([, box]) => overlaps(box, captionRegion))
-      const captionLiteral = captionItems
-        .map(([index], position) => {
-          const item = content.items[index] as {
-              str: string
-              width: number
-              height: number
-              hasEOL: boolean
-              transform: number[]
-              fontName: string
-            },
-            next = content.items[captionItems[position + 1]?.[0]] as typeof item | undefined
-          // Only a witnessed native line end may join a printed word. The cache
-          // must still match the complete resulting caption exactly below.
-          const between = content.items.slice(
-              index + 1,
-              captionItems[position + 1]?.[0] ?? index + 1
-            ),
-            lineEnd =
-              item.hasEOL ||
-              (between.every((i) => 'str' in i && !i.str.trim()) &&
-                between.some((i) => 'hasEOL' in i && i.hasEOL))
-          return next &&
-            lineEnd &&
-            /\p{L}-$/u.test(item.str) &&
-            /^\p{Ll}/u.test(next.str) &&
-            item.fontName === next.fontName &&
-            item.transform[5] - next.transform[5] >= item.height * 0.5 &&
-            item.transform[5] - next.transform[5] <= item.height * 1.75 &&
-            next.transform[4] < item.transform[4] + item.width
-            ? item.str.slice(0, -1)
-            : item.str
-        })
-        .join('')
+      const captionLiteral = nativeLiteral(captionItems.map(([index]) => index))
       if (
         captionRegion.page !== number ||
         !captionItems.length ||
@@ -264,6 +451,64 @@ export async function retainUnstructuredTablePages(
         )
       )
         continue
+      const proveCenteredLanes = (): boolean => {
+        // Recheck independent native heading/value lanes. The cache diagnostic
+        // selects this family; it cannot itself suppress ordinary prose.
+        if (selected.size > 512) return false
+        const records = [...selected].flatMap((index) => {
+            const item = content.items[index]
+            return 'str' in item ? [item] : []
+          }),
+          h = records[0].height,
+          top = Math.max(...records.map((item) => item.transform[5])),
+          heads = records
+            .filter((item) => Math.abs(item.transform[5] - top) < h * 0.02)
+            .sort((a, b) => a.transform[4] - b.transform[4]),
+          center = (item: (typeof records)[number]): number => item.transform[4] + item.width / 2
+        if (
+          heads.length !== 3 ||
+          heads.some(
+            (item) =>
+              Math.abs(item.height - h) > h * 0.02 ||
+              !/^\p{L}{2}[\p{L}\d]*(?:[ -][\p{L}\d]+)*$/u.test(item.str.trim())
+          ) ||
+          heads[0].transform[4] + heads[0].width >= heads[1].transform[4] - h ||
+          heads[2].transform[4] - heads[1].transform[4] - heads[1].width < h * 0.6
+        )
+          return false
+        const baselines: number[] = []
+        for (const left of records) {
+          const y = left.transform[5],
+            sameRow = (item: (typeof records)[number]): boolean =>
+              Math.abs(item.transform[5] - y) < h * 0.02 && Math.abs(item.height - h) < h * 0.02
+          if (
+            y >= top - h * 0.5 ||
+            Math.abs(left.height - h) > h * 0.02 ||
+            !/^[\p{L}\d.+−-]{1,24}$/u.test(left.str.trim()) ||
+            Math.abs(center(left) - center(heads[1])) >= h * 0.02
+          )
+            continue
+          const right = records.filter(
+              (item) =>
+                sameRow(item) &&
+                /^[\p{L}\d.+−-]{1,24}$/u.test(item.str.trim()) &&
+                Math.abs(center(item) - center(heads[2])) < h * 0.02 &&
+                item.transform[4] - left.transform[4] - left.width >= h
+            ),
+            labels = records.filter(
+              (item) => sameRow(item) && item.transform[4] + item.width < left.transform[4] - h
+            )
+          if (
+            right.length === 1 &&
+            labels.length === 1 &&
+            !baselines.some((before) => Math.abs(before - y) < h * 0.02)
+          )
+            baselines.push(y)
+        }
+        return baselines.length >= 3
+      }
+      const centeredProved = centered && proveCenteredLanes()
+      if (centered && !centeredProved && !record) continue
       // Re-read native observations after all asynchronous proof work below.
       const readText = page.getTextContent,
         readViewport = page.getViewport,
@@ -393,13 +638,73 @@ export async function retainUnstructuredTablePages(
         !valid ||
         stack.length ||
         horizontals.length < 2 ||
-        new Set(verticals.map((r) => r[0])).size < 2
+        (!centered && !record && new Set(verticals.map((r) => r[0])).size < 2)
       )
         continue
+      const encloses = (boxes: readonly Region[]): boolean =>
+        horizontals.some(
+          ([x, y, right]) =>
+            x <= Math.min(...boxes.map((b) => b.x)) &&
+            right >= Math.max(...boxes.map((b) => b.x + b.width)) &&
+            y < Math.min(...boxes.map((b) => b.y))
+        ) &&
+        horizontals.some(
+          ([x, y, right]) =>
+            x <= Math.min(...boxes.map((b) => b.x)) &&
+            right >= Math.max(...boxes.map((b) => b.x + b.width)) &&
+            y >= Math.max(...boxes.map((b) => b.y + b.height))
+        )
+      const advanceFrame = (centeredProved || record) && encloses(selectedBoxes)
+      let nativeFrame = advanceFrame
+      if (record && (zero || !nativeFrame)) {
+        const keys = new Set<string>(),
+          stack: string[] = []
+        let font = ''
+        for (const [index, op] of operators.fnArray.entries()) {
+          const a = operators.argsArray[index]
+          if (op === OPS.setFont) font = a[0]
+          else if ([OPS.save, OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op))
+            stack.push(font)
+          else if ([OPS.restore, OPS.paintFormXObjectEnd, OPS.endGroup].includes(op))
+            font = stack.pop() ?? ''
+          else if (op === OPS.showText)
+            for (const glyph of a[0])
+              if (typeof glyph?.fontChar === 'string') keys.add(font + '_path_' + glyph.fontChar)
+        }
+        const inkCurrent = nativeInkPageCurrent(page, content, viewport, operators, [...keys])
+        if (!inkCurrent) continue
+        checks.push(inkCurrent)
+        if (
+          zero &&
+          JSON.stringify([...zero]) !==
+            JSON.stringify([...(await nativeZeroAdvanceRegions(page, content, viewport, number))])
+        )
+          return empty
+        if (!current()) return empty
+      }
+      if (record && !nativeFrame) {
+        // Prove real glyph overhangs independently; never pad a rail or relax
+        // the original advance/frame comparison for a known table marker.
+        const ink = await nativeAlgorithmInkRegions(
+            page,
+            content,
+            viewport,
+            number,
+            selected,
+            operators
+          ),
+          boxes = [...selected].flatMap((index) => (ink?.get(index) ? [ink.get(index)!] : []))
+        if (!current()) return empty
+        nativeFrame = boxes.length === selected.size && encloses(boxes)
+      }
+      const recordProved =
+        nativeFrame &&
+        records.some((code) => nativeRecordFamily(code, content, selected, viewport, rules))
+      if ((centered || record) && !recordProved && !(centeredProved && advanceFrame)) continue
       const retainBody =
-        multirow &&
-        lastRule >= body.y + body.height &&
-        captionItems.every(([, b]) => b.y > lastRule)
+        recordProved ||
+        ((advanceFrame || (multirow && lastRule >= body.y + body.height)) &&
+          captionItems.every(([, b]) => b.y > lastRule))
       // A layered header can cross native column fences while its outer cell
       // remains open. Only suppress the unsafe whole owner; the selected crop
       // padding is neither a native boundary nor a new paint permission.

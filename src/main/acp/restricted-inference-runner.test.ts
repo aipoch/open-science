@@ -365,78 +365,89 @@ describe('RestrictedInferenceRunner', () => {
     }
   )
 
-  it('bounds cancelled resolution and cleans up a backend that arrives later', async () => {
-    temporaryRoot = await mkdtemp(join(tmpdir(), 'validation-resolution-'))
-    let finish!: (value: ResolvedAgentBackend) => void
-    const resolving = new Promise<ResolvedAgentBackend>((resolve) => {
-      finish = resolve
-    })
-    const resolveTarget = vi.fn(async () => resolving)
-    const createRuntime = vi.fn()
-    const runner = new RestrictedInferenceRunner({
-      appVersion: 'test',
-      configRoot: temporaryRoot,
-      profileNamespace: 'test',
-      taskOnly: true,
-      preserveModelRoute: true,
-      resolveTarget,
-      createRuntime
-    })
-    const controller = new AbortController()
-    const pending = runner.run(runInput({ signal: controller.signal }))
-    const rejected = expect(pending).rejects.toMatchObject({ code: 'cancelled' })
-    await vi.waitFor(() => expect(resolveTarget).toHaveBeenCalledOnce())
-    controller.abort()
-    await rejected
-    await runner.shutdown()
-    expect(createRuntime).not.toHaveBeenCalled()
-    const release = vi.fn(async () => undefined)
-    finish(
-      backend(claudeCodeFramework, { messagesBridgeLease: { setTarget: () => true, release } })
-    )
-    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
-    await vi.waitFor(async () =>
-      expect(await readdir(join(temporaryRoot!, 'runtime-support', 'test'))).toEqual([])
-    )
-  })
-
-  it('shuts down a validation runtime when cancelled before session creation completes', async () => {
-    temporaryRoot = await mkdtemp(join(tmpdir(), 'validation-abort-'))
-    let rejectSession!: (error: Error) => void
-    const runtime = {
-      createSession: vi.fn(
-        () =>
-          new Promise<never>((_resolve, reject) => {
-            rejectSession = reject
-          })
-      ),
-      sendPrompt: vi.fn(),
-      cancelPrompt: vi.fn(),
-      respondToPermission: vi.fn(),
-      shutdownForQuit: vi.fn(async () => {
-        rejectSession(new Error('closed'))
-        return { reaped: true }
+  it.each([false, true])(
+    'bounds cancelled resolution and cleans up a late backend (preserveModelRoute=%s)',
+    async (preserveModelRoute) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'restricted-resolution-'))
+      const resolving = Promise.withResolvers<ResolvedAgentBackend>()
+      const resolveTarget = vi.fn(() => resolving.promise)
+      const createRuntime = vi.fn()
+      const runner = new RestrictedInferenceRunner({
+        appVersion: 'test',
+        configRoot: temporaryRoot,
+        profileNamespace: 'test',
+        taskOnly: true,
+        preserveModelRoute,
+        resolveTarget,
+        createRuntime
       })
+      const controller = new AbortController()
+      const pending = runner.run(runInput({ signal: controller.signal }))
+      const settled = vi.fn()
+      void pending.catch(settled)
+      await vi.waitFor(() => expect(resolveTarget).toHaveBeenCalledOnce())
+      const release = vi.fn(async () => undefined)
+      controller.abort(new DOMException('Timed out', 'TimeoutError'))
+      try {
+        await vi.waitFor(
+          () =>
+            expect(settled).toHaveBeenCalledWith(expect.objectContaining({ code: 'cancelled' })),
+          { timeout: 500 }
+        )
+      } finally {
+        resolving.resolve(
+          backend(claudeCodeFramework, { messagesBridgeLease: { setTarget: () => true, release } })
+        )
+        await runner.shutdown()
+      }
+      expect(createRuntime).not.toHaveBeenCalled()
+      await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+      await vi.waitFor(async () =>
+        expect(await readdir(join(temporaryRoot!, 'runtime-support', 'test'))).toEqual([])
+      )
     }
-    const runner = new RestrictedInferenceRunner({
-      appVersion: 'test',
-      configRoot: temporaryRoot,
-      profileNamespace: 'test',
-      taskOnly: true,
-      preserveModelRoute: true,
-      resolveTarget: async () => backend(claudeCodeFramework),
-      createRuntime: () => runtime
-    })
-    const controller = new AbortController()
-    const pending = runner.run(runInput({ signal: controller.signal }))
-    const rejected = expect(pending).rejects.toThrow('closed')
-    await vi.waitFor(() => expect(runtime.createSession).toHaveBeenCalledOnce())
-    controller.abort()
-    await rejected
-    expect(runtime.sendPrompt).not.toHaveBeenCalled()
-    expect(runtime.shutdownForQuit).toHaveBeenCalled()
-    expect(await readdir(join(temporaryRoot, 'runtime-support', 'test'))).toEqual([])
-  })
+  )
+
+  it.each([false, true])(
+    'interrupts a restricted runtime during session setup (preserveModelRoute=%s)',
+    async (preserveModelRoute) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'restricted-setup-'))
+      const creating = Promise.withResolvers<never>()
+      const runtime = {
+        createSession: vi.fn(() => creating.promise),
+        sendPrompt: vi.fn(),
+        cancelPrompt: vi.fn(),
+        respondToPermission: vi.fn(),
+        shutdownForQuit: vi.fn(async () => {
+          creating.reject(new Error('closed'))
+          return { reaped: true }
+        })
+      }
+      const runner = new RestrictedInferenceRunner({
+        appVersion: 'test',
+        configRoot: temporaryRoot,
+        profileNamespace: 'test',
+        taskOnly: true,
+        preserveModelRoute,
+        resolveTarget: async () => backend(claudeCodeFramework),
+        createRuntime: () => runtime
+      })
+      const controller = new AbortController()
+      const pending = runner
+        .run(runInput({ signal: controller.signal }))
+        .catch((error: unknown) => error)
+      await vi.waitFor(() => expect(runtime.createSession).toHaveBeenCalledOnce())
+      controller.abort(new DOMException('Timed out', 'TimeoutError'))
+      try {
+        expect(runtime.shutdownForQuit).toHaveBeenCalledOnce()
+      } finally {
+        creating.reject(new Error('closed'))
+        await expect(pending).resolves.toMatchObject({ code: 'cancelled' })
+      }
+      expect(runtime.sendPrompt).not.toHaveBeenCalled()
+      expect(await readdir(join(temporaryRoot, 'runtime-support', 'test'))).toEqual([])
+    }
+  )
 
   it.each(listAgentFrameworks())(
     'delivers only task instructions through the $id adapter',

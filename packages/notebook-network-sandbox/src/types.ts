@@ -1,5 +1,7 @@
 import type { TrustedPrivateDestination } from '../runtime/src/gateway/address-policy.js'
 export type NotebookNetworkPolicy = Readonly<{
+  mode?: 'relaxed' | 'strict'
+  strictWhitelist?: readonly import('./network-address.js').StrictNetworkRule[]
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   /** Overrides wildcard allows; an exact allow still represents explicit approval. */

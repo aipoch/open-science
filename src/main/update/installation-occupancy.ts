@@ -3,7 +3,7 @@ import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, sep, win32 } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { createLogger, runtimeChildProcessErrorFields } from '@aipoch/diagnostics/node'
 import {
   listWindowsProcesses,
   splitWindowsCommandLine,
@@ -230,10 +230,31 @@ export async function inspectInstallationProcessesAsync(
           const native = require(process.argv[1])
           let root = process.argv[2]
           try { root = fs.realpathSync(root) } catch { /* The installation may have moved. */ }
-          const files = fs.statSync(root).isDirectory()
-            ? fs.readdirSync(root, { recursive: true, withFileTypes: true })
-                .filter(entry => entry.isFile()).map(entry => join(entry.parentPath, entry.name))
-            : [root]
+          const files = []
+          if (!fs.statSync(root).isDirectory()) files.push(root)
+          else {
+            // Node's recursive readdir stats every non-directory, including known regular files.
+            // Reuse Dirent types while retaining its directory-link traversal and file-link exclusion.
+            // Keep physical ASAR archives as resources; Electron recursive readdir expands virtual entries.
+            const directories = [root]
+            const visited = new Set()
+            for (let index = 0; index < directories.length; index++) {
+              // Canonical paths stop self/ancestor junction cycles without dropping distinct targets.
+              // Resolution failures remain unknown occupancy, not proof that a directory is empty.
+              const canonical = fs.realpathSync.native(directories[index])
+              if (visited.has(canonical)) continue
+              visited.add(canonical)
+              for (const entry of fs.readdirSync(directories[index], { withFileTypes: true })) {
+                const file = join(entry.parentPath, entry.name)
+                if (entry.isFile()) files.push(file)
+                else if (entry.isDirectory()) directories.push(file)
+                else {
+                  // Match recursive readdir's best-effort directory probe for other entry types.
+                  try { if (fs.statSync(file).isDirectory()) directories.push(file) } catch {}
+                }
+              }
+            }
+          }
           // Only this short-lived scanner is exempt; the parent and other occupants remain.
           const pids = native.listWindowsInstallationOccupants(files).filter(pid => pid !== process.pid)
           process.stdout.write(JSON.stringify({ root, pids }))
@@ -258,6 +279,7 @@ export async function inspectInstallationProcessesAsync(
     } catch (cause) {
       if (signal?.aborted) throw cause
       createLogger('update').warn('Windows installation occupancy inspection failed', {
+        ...runtimeChildProcessErrorFields(cause),
         durationMs: Date.now() - started,
         message: cause instanceof Error ? cause.message : 'Unknown inspection error'
       })

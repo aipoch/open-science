@@ -1023,7 +1023,10 @@ const RuntimesPanel = ({
           />
         ) : null}
         {environmentLockImportResult?.imported ? (
-          <p role="status" className="text-sm text-status-info-foreground">
+          <p
+            role="status"
+            className="text-sm text-status-info-foreground dark:text-status-info-dark-foreground"
+          >
             {environmentLockImportResult.reused
               ? t('Environment {{name}} is already available.', {
                   name: environmentLockImportResult.environmentName

@@ -14,6 +14,7 @@ function PopoverContent({
   className,
   style,
   sideOffset = 4,
+  collisionPadding = 8,
   ref,
   onInteractOutside,
   container,
@@ -28,8 +29,9 @@ function PopoverContent({
       <PopoverPrimitive.Content
         ref={setContentRef}
         sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
         className={cn(
-          'z-50 rounded-md border border-border bg-popover p-2 text-xs text-popover-foreground shadow-menu outline-none',
+          'z-50 max-w-[calc(100vw-1rem)] rounded-md border border-border bg-popover p-2 text-xs text-popover-foreground shadow-menu outline-none',
           className
         )}
         {...props}

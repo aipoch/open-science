@@ -27,7 +27,8 @@ const TAG_COLORS: Record<TagColorKey, string> = {
   gray: 'border-slate-400/30 bg-slate-400/10 text-slate-600 dark:text-slate-300',
   red: 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300',
   orange: 'border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300',
-  amber: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  amber:
+    'border-amber-500/30 bg-amber-500/10 text-status-warning-foreground dark:text-status-warning-dark-foreground',
   green: 'border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-300',
   blue: 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300',
   purple: 'border-purple-500/30 bg-purple-500/10 text-purple-700 dark:text-purple-300',

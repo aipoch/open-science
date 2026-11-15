@@ -50,6 +50,97 @@ function interveningBulletPage(scale = 1): PdfLayoutPage {
   return { page: 1, width: 700 * scale, height: 800 * scale, rotation: 0, items }
 }
 
+test('preserves a caption whose PDF contains duplicate figure label streams', () => {
+  const item = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName: string,
+    hasEOL = false
+  ): PdfLayoutTextItem => ({
+    str,
+    dir: 'ltr',
+    width,
+    height: 10,
+    transform: [10, 0, 0, 10, x, y],
+    fontName,
+    fontAscent: 0.8,
+    fontDescent: -0.2,
+    fontVertical: false,
+    hasEOL
+  })
+  const page: PdfLayoutPage = {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items: [
+      item('Figure 1.', 90, 400, 30, 'HiddenCaption'),
+      item('Figure 1.', 60, 400.5, 36, 'Caption'),
+      item('Hidden caption text.', 90, 388, 120, 'HiddenCaption', true),
+      item('Visible caption text.', 60, 388.5, 140, 'Caption', true),
+      item(
+        'This ordinary paragraph remains independently available for translation.',
+        60,
+        300,
+        360,
+        'Body',
+        true
+      ),
+      item(
+        'This adjacent column paragraph remains independently available for translation.',
+        300,
+        388,
+        240,
+        'Body',
+        true
+      )
+    ]
+  }
+
+  const result = extractDocument({ pages: [page] }),
+    caption = result.units.find((unit) => unit.source.includes('Figure 1.'))
+  expect(caption?.sourceOnly).toBe(true)
+  expect(
+    result.units.find((unit) => unit.source.startsWith('This ordinary paragraph'))?.sourceOnly
+  ).not.toBe(true)
+  expect(
+    result.units.find((unit) => unit.source.startsWith('This adjacent column paragraph'))
+      ?.sourceOnly
+  ).not.toBe(true)
+
+  const sameFontPage = structuredClone(page)
+  sameFontPage.items = [
+    sameFontPage.items[2],
+    sameFontPage.items[0],
+    sameFontPage.items[1],
+    sameFontPage.items[3],
+    ...sameFontPage.items.slice(4),
+    item('Nearby same-column prose one.', 60, 376, 150, 'Body'),
+    item('Nearby same-column prose two.', 220, 376, 150, 'Body', true)
+  ]
+  for (const entry of sameFontPage.items.slice(0, 4)) entry.fontName = 'Caption'
+  const sameFontResult = extractDocument({ pages: [sameFontPage] })
+  expect(sameFontResult.units.find((unit) => unit.source.includes('Figure 1.'))?.sourceOnly).toBe(
+    true
+  )
+  expect(
+    sameFontResult.units.find((unit) => unit.source.startsWith('Nearby same-column prose'))
+      ?.sourceOnly
+  ).not.toBe(true)
+
+  const referencePage = structuredClone(page)
+  referencePage.items[0].str = 'Figure 2.'
+  referencePage.items[1].str = 'Figure 2.'
+  referencePage.items[2].str = 'shows the measured result.'
+  referencePage.items[3].str = 'shows the measured result.'
+  const referenceResult = extractDocument({ pages: [referencePage] })
+  expect(
+    referenceResult.units.find((unit) => unit.source.includes('Figure 2.'))?.sourceOnly
+  ).not.toBe(true)
+})
+
 test.each([0.5, 1, 2])(
   'a complete native terminal row remains in its ordinary bullet sentence: %s',
   (scale) => {
@@ -3153,6 +3244,23 @@ test.each(
       unit.originalStrings,
       unit.items.map((key) => fixture.page.items[Number(key.split(':')[1])].str)
     )
+})
+
+test('retains a long non-contact native row with repeated domain punctuation', () => {
+  const text = '!@!.' + '!.'.repeat(50_000) + '@'
+  const inputs = [item(text, 40, 100, 250)]
+  const input = document([page(inputs)])
+  const before = structuredClone(input)
+  const result = extractDocument(input)
+  assert.deepEqual(
+    result.units.flatMap((unit) => unit.originalStrings),
+    [text]
+  )
+  assert.deepEqual(
+    result.units.flatMap((unit) => unit.items),
+    ['1:0']
+  )
+  assert.deepEqual(input, before)
 })
 
 test.each(
@@ -16766,51 +16874,54 @@ for (const fault of [
 
 // An independent fraction already has a protected expectation owner. A new
 // multi-glyph radical row must not make that isolated mathematical E prose.
-test('an independent expectation fraction retains its original mathematical protection', () => {
-  const f = ruledNativeRadicalPage(),
-    p = f.page,
-    native = (
-      str: string,
-      x: number,
-      y: number,
-      width: number,
-      fontName = 'math',
-      hasEOL = false
-    ): PdfLayoutTextItem => ({
-      ...p.items[fontName === 'body' ? 0 : fontName === 'radical' ? f.roots[0] : f.bases[0]],
-      str,
-      width,
-      transform: [10, 0, 0, 10, x, y],
-      fontName,
-      hasEOL
-    })
-  p.items = [
-    native(
-      'The complete preceding explanation describes this independent estimate.',
-      40,
-      550,
-      400,
-      'body',
-      true
-    ),
-    native('E', 200, 518, 7.4),
-    native('1', 224, 524.7, 5, 'math', true),
-    native('√', 216.3, 518.3, 8.3, 'radical'),
-    native('R θ', 224.6, 509.8, 12, 'math', true)
-  ]
-  const evidence = p.nativeReferenceEvidence
-  assert.ok(evidence?.complete)
-  evidence.rules = [
-    { left: 216.3, right: 236.6, baseline: 520.5, halfHeight: 0.2, operators: [8] },
-    { left: 224.6, right: 236.6, baseline: 518.5, halfHeight: 0.2, operators: [9] }
-  ]
-  const before = structuredClone(p),
-    result = extractDocument({ pages: [p], pageCount: 1 }),
-    expectation = result.units.find((u) => u.items.includes('1:1'))!
-  assert.equal(expectation.sourceOnly, true)
-  assert.equal(expectation.preserve, 'formula')
-  assert.deepEqual(p, before)
-})
+test.each(['R θ', 'R T'])(
+  'an independent expectation fraction retains its mathematical protection with %s',
+  (radicand) => {
+    const f = ruledNativeRadicalPage(),
+      p = f.page,
+      native = (
+        str: string,
+        x: number,
+        y: number,
+        width: number,
+        fontName = 'math',
+        hasEOL = false
+      ): PdfLayoutTextItem => ({
+        ...p.items[fontName === 'body' ? 0 : fontName === 'radical' ? f.roots[0] : f.bases[0]],
+        str,
+        width,
+        transform: [10, 0, 0, 10, x, y],
+        fontName,
+        hasEOL
+      })
+    p.items = [
+      native(
+        'The complete preceding explanation describes this independent estimate.',
+        40,
+        550,
+        400,
+        'body',
+        true
+      ),
+      native('E', 200, 518, 7.4),
+      native('1', 224, 524.7, 5, 'math', true),
+      native('√', 216.3, 518.3, 8.3, 'radical'),
+      native(radicand, 224.6, 509.8, 12, 'math', true)
+    ]
+    const evidence = p.nativeReferenceEvidence
+    assert.ok(evidence?.complete)
+    evidence.rules = [
+      { left: 216.3, right: 236.6, baseline: 520.5, halfHeight: 0.2, operators: [8] },
+      { left: 224.6, right: 236.6, baseline: 518.5, halfHeight: 0.2, operators: [9] }
+    ]
+    const before = structuredClone(p),
+      result = extractDocument({ pages: [p], pageCount: 1 }),
+      expectation = result.units.find((u) => u.items.includes('1:1'))!
+    assert.equal(expectation.sourceOnly, true)
+    assert.equal(expectation.preserve, 'formula')
+    assert.deepEqual(p, before)
+  }
+)
 
 for (const fault of [
   'mathematical predecessor',

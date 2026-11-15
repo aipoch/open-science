@@ -29,6 +29,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import {
   createLogger,
   diagnosticErrorFields,
+  currentDiagnosticCorrelation,
   runWithDiagnosticCorrelation
 } from '@aipoch/diagnostics/node'
 import {
@@ -171,6 +172,9 @@ type WebServerOptions = {
     Partial<
       Pick<
         HeadlessTaskApi,
+        | 'supportsSubmissions'
+        | 'submitRun'
+        | 'getSubmission'
         | 'getSessionPlan'
         | 'respondSessionPlan'
         | 'resolveActiveRun'
@@ -600,6 +604,8 @@ const readJsonBody = async (
 }
 
 const taskErrorStatus = (error: TaskApiError): number => {
+  if (error.code === 'submission_unavailable') return 503
+  if (error.code === 'submission_conflict' || error.code === 'session_read_only') return 409
   if (error.code === 'invalid_request') return 400
   if (error.code === 'invalid_configuration') return 400
   if (
@@ -1172,6 +1178,37 @@ const handleTaskApiRequest = async (
         json(response, 200, { data: await tasks.updateAgentRouting(body) })
         return true
       }
+      const submissionMatch = url.pathname.match(/^\/api\/v1\/run-submissions\/([^/]+)$/)
+      if (
+        submissionMatch &&
+        tasks.submitRun &&
+        tasks.getSubmission &&
+        (request.method === 'PUT' || request.method === 'GET')
+      ) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        if (callerContext.location !== 'local') {
+          json(response, 403, {
+            error: { code: 'forbidden', message: 'Durable submissions require local access.' }
+          })
+          return true
+        }
+        const requestId = decodeURIComponent(submissionMatch[1])
+        if (request.method === 'GET') {
+          json(response, 200, { data: await tasks.getSubmission(requestId) })
+        } else {
+          const body = await readJsonBody(
+            request,
+            response,
+            requestBodyBudgetRegistry,
+            requestBodyClientId
+          )
+          json(response, 202, {
+            data: await tasks.submitRun(requestId, body as StartTaskRunRequest)
+          })
+        }
+        return true
+      }
+
       if (url.pathname === '/api/v1/runs' && request.method === 'POST') {
         const body = (await readJsonBody(
           request,
@@ -1486,7 +1523,14 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             .update('\0')
             .update(clientPrincipalId)
             .digest('hex'),
-          taskCapabilities: options.tasks ? ['permission-prompts-none'] : [],
+          taskCapabilities: options.tasks
+            ? [
+                'permission-prompts-none',
+                ...(!externalAuthorization && options.tasks.supportsSubmissions?.()
+                  ? ['durable-submissions']
+                  : [])
+              ]
+            : [],
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
           rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [RUNTIME_PAYLOAD_CAPABILITY],
           rpcChannels,
@@ -1677,6 +1721,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           if (externalAuthorization && !externalAuthorization.isCurrent()) {
             webRpcError(response, 401, 'invalid_request', 'Remote access authorization expired.')
             return
+          }
+          if (auth.localBearer && channel === 'sessions:import-package') {
+            const correlationId = currentDiagnosticCorrelation()
+            if (correlationId) response.setHeader('x-correlation-id', correlationId)
           }
           log.warn('web rpc rejected', {
             channel,

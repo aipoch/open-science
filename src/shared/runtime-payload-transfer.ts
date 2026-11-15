@@ -6,10 +6,12 @@ export const RUNTIME_PAYLOAD_INLINE_BYTES = 8 * 1024 * 1024
 // Transport admission is independent of domain codecs; Session projection compatibility is tested.
 export const MAX_RUNTIME_PAYLOAD_BYTES = 512 * 1024 * 1024
 export const RUNTIME_PAYLOAD_UPLOAD_CHANNELS = new Set([
+  'pdf-translation:generate-pdf',
   'sessions:save-session',
   'sessions:update-configuration'
 ])
 export const RUNTIME_PAYLOAD_CHANNELS = new Set([
+  'pdf-translation:generate-pdf',
   'sessions:load-one',
   'sessions:save-session',
   'sessions:update-configuration',

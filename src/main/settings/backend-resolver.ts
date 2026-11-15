@@ -50,8 +50,7 @@ import {
   type ProviderRuntimeTarget,
   type RuntimeProviderModelSelection
 } from './provider-accounts'
-import type { ResolvedProvider } from './provider-env'
-import { buildProviderEnv } from './provider-env'
+import { buildProviderEnv, resolveProviderOutputLimit, type ResolvedProvider } from './provider-env'
 import {
   ProviderTransportOwner,
   type ProviderTransportOwnerOptions
@@ -74,6 +73,8 @@ export type AgentBackendResolutionContext = {
   includeSkillAndConnectorContext?: boolean
   forceCodexNativeResponsesCompatibility?: boolean
   isolateConfiguration?: boolean
+  // A disposable single-target runtime can set a process-wide output budget safely.
+  useResolvedModelOutputLimit?: boolean
 }
 
 const userSkillDirectorySystemPromptAppend = (storageRoot: string): string =>
@@ -441,6 +442,7 @@ export class AgentBackendResolver {
         return {
           framework,
           providerId: target.providerId,
+          providerName: target.providerName,
           backendId: `open-science-agent:${target.providerId}`,
           modelRoute: 'open-science-agent',
           executablePath,
@@ -567,14 +569,25 @@ export class AgentBackendResolver {
         context.skillWhitelist,
         context.isolateConfiguration
       )
+      const outputLimit =
+        context.useResolvedModelOutputLimit && usesAppProviderTransport(target.provider.type)
+          ? resolveProviderOutputLimit({ ...target.provider, model: target.effectiveModel })
+          : undefined
       const transport = await this.transports.acquire({ activeTarget: target, plan })
       return {
         framework,
         providerId: target.providerId,
+        providerName: target.providerName,
         backendId: `${framework.id}:${target.providerId}`,
         modelRoute,
         executablePath: claudeExecutablePath,
-        env: { ...envOverrides, ...(transport.environment ?? {}) },
+        env: {
+          ...envOverrides,
+          ...(transport.environment ?? {}),
+          ...(outputLimit === undefined
+            ? {}
+            : { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(outputLimit) })
+        },
         sessionOptions,
         sessionEffort,
         contextWindow,
@@ -679,6 +692,7 @@ export class AgentBackendResolver {
       return {
         framework,
         providerId: target.providerId,
+        providerName: target.providerName,
         ...(codexSubscriptionTransport ? { codexSubscriptionTransport } : {}),
         backendId: `${framework.id}:${backendProviderId}`,
         modelRoute,

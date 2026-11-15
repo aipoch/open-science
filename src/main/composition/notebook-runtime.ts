@@ -113,7 +113,7 @@ export async function composeNotebookRuntime({
           true
         ) ?? (() => undefined),
       isSessionBusy: (projectId: string, sessionId: string) =>
-        archiveCoordinator.isSessionBusy(projectId, sessionId),
+        archiveCoordinator.isSessionLocallyBusy(projectId, sessionId),
       isSessionExporting: (projectId: string, sessionId: string) =>
         archiveCoordinator.isSessionExporting(projectId, sessionId),
       configRoot: resolveConfigRoot(),

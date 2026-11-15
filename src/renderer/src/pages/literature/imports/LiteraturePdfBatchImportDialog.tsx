@@ -477,7 +477,7 @@ export function LiteraturePdfBatchImportDialog({
                 </span>
               </div>
               {row.nativeAnnotations && row.nativeAnnotations.unsupportedCount > 0 ? (
-                <p className="pl-7 text-xs text-status-warning-foreground">
+                <p className="pl-7 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
                   {t('Unsupported native annotations: {{count}}', {
                     count: row.nativeAnnotations.unsupportedCount
                   })}

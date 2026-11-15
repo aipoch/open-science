@@ -3,6 +3,7 @@
     "src/main/notebook/configured-shell-runtime.test.ts",
     "src/main/notebook/configured-shell-runtime.ts",
     "src/main/notebook/kernel-executable-read-root.ts",
+    "src/main/notebook/kernel-executable-read-root.test.ts",
     "src/main/notebook/managed-runtime-guard.test.ts",
     "src/main/notebook/managed-runtime-guard.ts",
     "src/main/notebook/managed-runtime-relocation.test.ts",
@@ -22,6 +23,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/notebook/kernel-executable-read-root.test.ts",
       "src/main/notebook/configured-shell-runtime.test.ts",
       "src/main/notebook/managed-runtime-guard.test.ts",
       "src/main/notebook/managed-runtime-relocation.test.ts",

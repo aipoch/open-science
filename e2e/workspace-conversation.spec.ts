@@ -18,6 +18,45 @@ const CONTEXT_COMPACTION_PROMPT = 'Preview context compaction.'
 const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
 const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
 
+test('truncates the model name before wrapping the composer send buttons', async ({ app }) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await page.setViewportSize({ width: 1280, height: 900 })
+  const model = 'long-model-name-for-composer'
+  await page.evaluate(async (model) => {
+    const name = 'Composer layout provider'
+    const snapshot = await window.api.settings.upsertProvider({
+      type: 'custom',
+      name,
+      apiEndpoints: ['chat-completions'],
+      baseUrl: 'http://127.0.0.1:9/v1',
+      key: 'e2e-key',
+      model
+    })
+    const provider = snapshot.providers.find((provider) => provider.name === name)!
+    await window.api.settings.setActiveProvider({ id: provider.id, model })
+  }, model)
+  await createProject(page)
+
+  const composer = page.getByTestId('ordinary-composer-form')
+  const modelPicker = composer.getByRole('button', { name: 'Select model', exact: true })
+  const modelName = modelPicker.getByText(model, { exact: true })
+  const add = composer.getByTestId('composer-plus-trigger')
+  const send = composer.getByRole('button', { name: 'Send message', exact: true })
+  const modelWidth = async (): Promise<number> => modelName.evaluate((name) => name.clientWidth)
+  await expect(modelName).toBeVisible()
+  const wideModelWidth = await modelWidth()
+
+  await page.setViewportSize({ width: 320, height: 900 })
+  await expect.poll(modelWidth).toBeLessThan(wideModelWidth)
+  await expect.poll(async () => (await send.boundingBox())!.y).toBe((await add.boundingBox())!.y)
+  expect((await send.boundingBox())!.x).toBeGreaterThan((await modelPicker.boundingBox())!.x)
+  await modelPicker.click()
+  await expect(
+    page.getByRole('menuitem', { name: /Model Provider and model for this chat/ })
+  ).toBeVisible()
+})
+
 test('preserves an unavailable saved model until an explicit replacement is selected', async ({
   app
 }, testInfo) => {

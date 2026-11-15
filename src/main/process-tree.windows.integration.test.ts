@@ -11,8 +11,10 @@ import { DelegatedProcessOwnership } from './delegation/process-ownership'
 import { terminateProcessTree } from './process-tree'
 import {
   inspectOwnedWindowsProcessIds,
-  inspectRuntimeWindowsProcessIds
+  inspectRuntimeWindowsProcessIds,
+  terminateWindowsProcessesByIdentity
 } from './process-tree-windows'
+import { windowsProcessStartTicks } from './windows-process-query'
 import { inspectInstallationAvailability } from './update/installation-protection'
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -46,6 +48,105 @@ const alive = (pid: number): boolean => {
 }
 
 windows('delegated Windows Job ownership (real processes)', () => {
+  it('preserves mismatched identities and expired deadlines when terminating update holders', async () => {
+    const create = async (): Promise<ChildProcessWithoutNullStreams> => {
+      const child = spawn(
+        process.execPath,
+        ['-e', 'process.stdout.write("ready");setInterval(()=>{},1000)'],
+        {
+          stdio: 'pipe',
+          windowsHide: true
+        }
+      )
+      children.push(child)
+      await once(child.stdout, 'data')
+      return child
+    }
+    const owned = await create()
+    const unrelated = await create()
+    const birth = String(BigInt(windowsProcessStartTicks(owned.pid!)!) - 504911232000000000n)
+    const identities = new Map([
+      [owned.pid!, birth],
+      [unrelated.pid!, '1']
+    ])
+    await expect(terminateWindowsProcessesByIdentity(identities, Date.now() - 1)).rejects.toThrow(
+      'deadline'
+    )
+    expect(alive(owned.pid!)).toBe(true)
+    const exited = once(owned, 'exit')
+    await terminateWindowsProcessesByIdentity(identities, Date.now() + 4_000)
+    await exited
+    expect(alive(unrelated.pid!)).toBe(true)
+  })
+
+  it('releases installation files held by an orphaned update child without killing another runtime', async () => {
+    root = await mkdtemp(join(tmpdir(), 'update-owned-cleanup-'))
+    const installationRoot = join(root, 'app')
+    await mkdir(installationRoot)
+    const file = join(installationRoot, 'fixture.dat')
+    await writeFile(file, 'fixture')
+    const worker = `require('node:fs').openSync(process.argv[1], 'r'); process.stdout.write('ready'); setInterval(()=>{},1000)`
+    const parent = `const {spawn}=require('node:child_process'); const c=spawn(process.execPath,['-e',${JSON.stringify(worker)},process.argv[1]],{stdio:['ignore','pipe','inherit'],windowsHide:true}); c.stdout.once('data',()=>process.stdout.write(String(c.pid))); process.stdin.resume(); process.stdin.once('data',()=>process.exit(0));`
+    const script = buildSync({
+      stdin: {
+        contents: `
+          import {spawn} from 'node:child_process';
+          import {once} from 'node:events';
+          import {captureRuntimeWindowsProcessCleanup} from './src/main/process-tree-windows';
+          (async()=>{
+            const child=spawn(process.execPath,['-e',${JSON.stringify(parent)},${JSON.stringify(file)}],{stdio:'pipe',windowsHide:true});
+            const [output]=await once(child.stdout,'data');
+            const cleanup=captureRuntimeWindowsProcessCleanup();
+            process.stdout.write(output);
+            await once(process.stdin,'data');
+            const exited=once(child,'exit');child.stdin.write('exit');await exited;
+            await cleanup(Date.now()+4000);
+            const late=spawn(process.execPath,['-e',${JSON.stringify(worker)},${JSON.stringify(file)}],{stdio:'pipe',windowsHide:true});
+            await once(late.stdout,'data');
+            const lateExited=once(late,'exit');
+            await cleanup(Date.now()+4000);await lateExited;
+            process.exit(0);
+          })().catch(e=>{console.error(e);process.exit(1)});
+        `,
+        resolveDir: process.cwd()
+      },
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      packages: 'external',
+      write: false
+    }).outputFiles[0].text
+    const entry = join(root, 'runtime.cjs')
+    await writeFile(entry, script)
+    const application = spawn(process.execPath, [entry], {
+      stdio: 'pipe',
+      windowsHide: true,
+      env: { ...process.env, NODE_PATH: join(process.cwd(), 'node_modules') }
+    })
+    children.push(application)
+    const exited = once(application, 'exit')
+    const workerPid = Number((await once(application.stdout, 'data'))[0])
+    const unrelated = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+      stdio: 'pipe',
+      windowsHide: true
+    })
+    children.push(unrelated)
+    try {
+      const location = { installationRoot, stateRoot: join(root, 'state') }
+      await expect(inspectInstallationAvailability(location)).rejects.toMatchObject({
+        reason: 'installation-busy'
+      })
+      application.stdin.write('cleanup')
+      expect((await exited)[0]).toBe(0)
+      expect(alive(workerPid)).toBe(false)
+      expect(alive(unrelated.pid!)).toBe(true)
+      await expect(inspectInstallationAvailability(location)).resolves.toBeUndefined()
+    } finally {
+      // The worker intentionally outlives its parent; retain cleanup for a failing regression too.
+      if (alive(workerPid)) process.kill(workerPid)
+    }
+  }, 20_000)
+
   it('admits live Notebook-style child hosts and their workers before requiring cleanup', async () => {
     root = await mkdtemp(join(tmpdir(), 'notebook-update-admission-'))
     const installationRoot = join(root, 'app')

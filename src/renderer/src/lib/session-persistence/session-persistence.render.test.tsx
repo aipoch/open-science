@@ -139,6 +139,7 @@ describe('session persistence startup', () => {
         data-persistence-blocked={persistence.persistenceBlockedSessionIds.join(',')}
         data-checking={String(persistence.isCheckingWrites)}
         data-write-targets={persistence.writeIssues.map(({ target }) => target).join(',')}
+        data-session-load-errors={JSON.stringify(persistence.sessionLoadErrorsBySession)}
       >
         <span data-testid="load-error">{persistence.loadError ?? 'sessions available'}</span>
         <span data-testid="load-warning">{persistence.loadWarning ?? 'no load warnings'}</span>
@@ -2328,5 +2329,68 @@ describe('session persistence startup', () => {
     expect(loadOne).toHaveBeenCalledTimes(2)
     expect(saveSession).not.toHaveBeenCalled()
     expect(saveManifest).toHaveBeenCalledWith({ lastSessionId: second.id })
+  })
+
+  it('keeps a newer lazy-load error when an older request settles after retry', async () => {
+    const session = createPersistedSession({ number: 1 })
+    const summary: SessionSummary = {
+      number: 1,
+      id: session.id,
+      projectId: session.projectId,
+      title: session.title,
+      status: session.status,
+      presentedStatus: session.status,
+      pinned: false,
+      revision: 0,
+      activeMessageCount: 0,
+      artifactCount: 0,
+      filesRevision: 0,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      needsStartupRecovery: false
+    }
+    let resolveOldRequest: (value: PersistedChatSession) => void = () => undefined
+    const oldRequest = new Promise<PersistedChatSession>((resolve) => {
+      resolveOldRequest = resolve
+    })
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    window.api.sessions.list = vi.fn().mockResolvedValue({
+      sessions: [summary],
+      manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: session.id },
+      diagnostics: emptyLoadResult().diagnostics
+    })
+    const loadOne = vi.fn(({ sessionId }: { sessionId: string }) => {
+      expect(sessionId).toBe(session.id)
+      return loadOne.mock.calls.length === 1
+        ? oldRequest
+        : Promise.reject(new Error('new retry error'))
+    })
+    window.api.sessions.loadOne = loadOne
+
+    await act(async () => root.render(<Probe />))
+    await act(async () => {
+      useSessionStore.getState().selectSession(session.id)
+      await Promise.resolve()
+    })
+    expect(loadOne).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')?.click()
+    })
+    await vi.waitFor(() => expect(loadOne).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-testid="load-error"]')?.textContent).toBe(
+        'sessions available'
+      )
+    )
+    expect(container.querySelector('div')?.dataset.sessionLoadErrors).toContain(
+      `${session.projectId}\\u0000${session.id}`
+    )
+
+    await act(async () => resolveOldRequest(session))
+
+    expect(container.querySelector('div')?.dataset.sessionLoadErrors).toContain(
+      `${session.projectId}\\u0000${session.id}`
+    )
   })
 })

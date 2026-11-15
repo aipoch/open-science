@@ -68,6 +68,7 @@ it('exposes only supported consumer operations, not private collectors or format
   expect(Object.keys(nodeApi).sort()).toEqual(
     [
       'createLogger',
+      'currentDiagnosticCorrelation',
       'diagnosticErrorFields',
       'errorLogFields',
       'flushLogs',

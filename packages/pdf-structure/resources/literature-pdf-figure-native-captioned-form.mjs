@@ -50,6 +50,79 @@ const box = (r, m) => {
   ]
 }
 
+// Original pixels can retain nested, non-isolated transparency groups. Each
+// group still needs its own renderer-enforced BBox and balanced Form wrapper.
+// This observer grants no glyph, path-repaint or text-source authority.
+function nestedPixelGroupClips(o, v) {
+  const groups = new Map(),
+    stack = []
+  let ctm = [1, 0, 0, 1, 0, 0],
+    clip = [0, 0, v.width, v.height],
+    depth = 0
+  const identity = (m) => m === null || (finite(m, 6) && equal(Array.from(m), [1, 0, 0, 1, 0, 0]))
+  for (let i = 0; i < o.fnArray.length; i++) {
+    const op = o.fnArray[i],
+      a = o.argsArray[i]
+    if ([OPS.save, OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op)) {
+      stack.push({ op, ctm: [...ctm], clip: [...clip], begin: i })
+      if (op === OPS.beginGroup) {
+        const g = a?.[0],
+          next = o.argsArray[i + 1]
+        if (
+          ++depth > 8 ||
+          groups.size >= 64 ||
+          !g ||
+          Object.keys(g).sort().join(',') !== 'bbox,isolated,knockout,matrix,smask' ||
+          !identity(g.matrix) ||
+          g.smask !== null ||
+          g.knockout !== false ||
+          typeof g.isolated !== 'boolean' ||
+          !valid(g.bbox) ||
+          o.fnArray[i + 1] !== OPS.paintFormXObjectBegin ||
+          !identity(next?.[0]) ||
+          next?.[1] !== null
+        )
+          return
+        const rect = box(g.bbox, Util.transform(v.transform, ctm))
+        clip = [
+          Math.max(clip[0], rect[0]),
+          Math.max(clip[1], rect[1]),
+          Math.min(clip[2], rect[2]),
+          Math.min(clip[3], rect[3])
+        ]
+        if (!valid(clip)) return
+        groups.set(i, { begin: i, rect, clip: [...clip], group: g })
+      } else if (op === OPS.paintFormXObjectBegin && a?.[0] !== null) {
+        if (!finite(a?.[0], 6)) return
+        ctm = Util.transform(ctm, a[0])
+      }
+    } else if ([OPS.restore, OPS.paintFormXObjectEnd, OPS.endGroup].includes(op)) {
+      const previous = stack.pop(),
+        begin =
+          op === OPS.restore
+            ? OPS.save
+            : op === OPS.endGroup
+              ? OPS.beginGroup
+              : OPS.paintFormXObjectBegin
+      if (!previous || previous.op !== begin) return
+      if (op === OPS.endGroup) {
+        const g = groups.get(previous.begin)
+        if (!g || !equal(g.group, a?.[0]) || o.fnArray[i - 1] !== OPS.paintFormXObjectEnd) return
+        g.end = i
+        depth--
+      }
+      ctm = previous.ctm
+      clip = previous.clip
+    } else if (op === OPS.transform) {
+      if (!finite(a, 6)) return
+      ctm = Util.transform(ctm, a)
+    }
+    if (!finite(ctm, 6) || Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2]) < 1e-12) return
+  }
+  if (stack.length || depth || !groups.size) return
+  return groups
+}
+
 // A native Form has its own renderer-enforced BBox. This proof isolates a
 // captioned vector body without interpreting its glyph ink. Outside glyphs
 // still need their complete loaded outlines before excluding adjacent prose.
@@ -89,7 +162,7 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
     paint.set(g.operationIndex, { ...g, rect })
   }
   const outsidePaint = []
-  const clips = originalHeaders
+  let clips = originalHeaders
     ? collectOriginalRasterHeaderFrames(o, v)
     : pixels
       ? {
@@ -101,16 +174,26 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
         }
       : undefined
   if (clips && !originalHeaders) collectClosedFigureFrames(o, v, clips)
+  if (mode === pixelCropMode && clips.invalidIsolatedGroups) {
+    const groups = nestedPixelGroupClips(o, v)
+    if (!groups) return
+    clips = { images: [], paths: new Map(), texts: new Map(), frames: new Map() }
+    // The ordinary path observer remains unchanged. Its results are used only
+    // for exterior paint; the complete inner program stays in its root clip.
+    collectClosedFigureFrames(o, v, clips)
+    clips.isolatedGroups = groups
+  }
   if (
     clips &&
     (clips.invalidIsolatedGroups ||
-      clips.isolatedGroups.size > 1 ||
+      (mode !== pixelCropMode && clips.isolatedGroups.size > 1) ||
       [...clips.isolatedGroups.values()].some(
         (g) =>
           !Number.isSafeInteger(g.end) ||
           o.fnArray[g.begin + 1] !== OPS.paintFormXObjectBegin ||
           o.fnArray[g.end - 1] !== OPS.paintFormXObjectEnd ||
-          !equal(o.argsArray[g.begin + 1], [null, null])
+          o.argsArray[g.begin + 1]?.[1] !== null ||
+          (mode !== pixelCropMode && !equal(o.argsArray[g.begin + 1], [null, null]))
       ))
   )
     return
@@ -162,7 +245,7 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
       }
       if (op === OPS.paintFormXObjectBegin) {
         const groupBoundary =
-          pixels && !form && equal(a, [null, null]) ? clips.isolatedGroups.get(i - 1) : undefined
+          pixels && a?.[1] === null ? clips.isolatedGroups.get(i - 1) : undefined
         if (
           (!pixels && form) ||
           (a?.[0] !== null &&
@@ -253,10 +336,10 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
       x = lineX += a[0]
       y = lineY += a[1]
     } else if (pixels && op === OPS.setLeading) {
-      if (!text || !finite(a, 1)) return
+      if ((!text && mode !== pixelCropMode) || !finite(a, 1)) return
       state.leading = a[0]
     } else if (pixels && op === OPS.setCharSpacing) {
-      if (!text || !finite(a, 1)) return
+      if ((!text && mode !== pixelCropMode) || !finite(a, 1)) return
       state.charSpacing = a[0]
     } else if (pixels && op === OPS.nextLine) {
       if (!text || (a !== null && (!Array.isArray(a) || a.length))) return
@@ -306,6 +389,20 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
           })
         x += (glyph.width * state.size) / 1000 + state.charSpacing
       }
+    } else if (op === OPS.shadingFill) {
+      // A shading may paint anywhere in its enclosing Form's enforced BBox.
+      // Retain that whole domain for an original-pixel crop; this is neither
+      // interpreted paint geometry nor authority to repaint the pattern.
+      if (
+        mode !== pixelCropMode ||
+        text ||
+        !form ||
+        a?.length !== 1 ||
+        typeof a[0] !== 'string' ||
+        !a[0].length
+      )
+        return
+      form.paint.push({ operationIndex: i, kind: 'path', rect: form.rect })
     } else if (op === OPS.constructPath || op === OPS.paintImageXObject) {
       if (text) return
       if (
@@ -434,7 +531,14 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
         !(
           (a?.[0] === 'P' && Number.isInteger(a[1]) && a[1] >= 0) ||
           (a?.[0] === 'Span' &&
-            (a[1] == null || (originalHeaders && Number.isSafeInteger(a[1]) && a[1] >= 0)))
+            (a[1] == null || (originalHeaders && Number.isSafeInteger(a[1]) && a[1] >= 0))) ||
+          // Retain already-rendered optional-layer pixels inside the same root
+          // clip. This does not interpret layer visibility or mint text owners.
+          (mode === pixelCropMode &&
+            a?.[0] === 'OC' &&
+            a[1]?.type === 'OCG' &&
+            typeof a[1].id === 'string' &&
+            Object.keys(a[1]).sort().join(',') === 'id,type')
         )
       )
         return
@@ -584,7 +688,7 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
     if (record.form) {
       if (
         !supplied ||
-        r.dir !== 'ltr' ||
+        (r.dir !== 'ltr' && (mode !== pixelCropMode || !['rtl', 'ttb'].includes(r.dir))) ||
         (!pixels &&
           (!valid(record.label) ||
             !inside(record.form.rect, token.rect) ||

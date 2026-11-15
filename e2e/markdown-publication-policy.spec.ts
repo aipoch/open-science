@@ -421,10 +421,14 @@ test('legacy Markdown v3 opens from an old message card as current after restart
     await expect(page.getByTestId('artifact-provenance')).toContainText(
       'Execution evidence is incomplete for v3'
     )
-    expect(
-      (await client.artifactLineage.findUniqueOrThrow({ where: { id: first.artifactId } }))
-        .currentVersionId
-    ).toBe(third.versionId)
+    await expect
+      .poll(async () => {
+        const lineage = await client.artifactLineage.findUniqueOrThrow({
+          where: { id: first.artifactId }
+        })
+        return lineage.currentVersionId
+      })
+      .toBe(third.versionId)
     await page.screenshot({ path: testInfo.outputPath('legacy-opened-v3.png') })
     await preview.getByRole('button', { name: 'Previous file version' }).click()
     await expect(preview.getByText('Manually corrected result.', { exact: true })).toBeVisible()

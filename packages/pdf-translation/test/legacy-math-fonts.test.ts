@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { resolve } from './paths.js'
-import { PDFDocument, PDFDict, PDFName, StandardFonts } from 'pdf-lib'
+import { PDFDocument, PDFDict, PDFName, PDFString, StandardFonts } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { PdfTranslationWriter } from '../src/writer.js'
 import { TestCallerRegistry } from './support/callers.js'
@@ -556,3 +556,114 @@ it.each([
     }
   }
 )
+
+it.each([
+  'dense',
+  'separate-paragraph',
+  'changed-symbol',
+  'dense-ordinal',
+  'separate-ordinal',
+  'linked-ordinal'
+])('keeps an inline native alphabet beside compacted prose: %s', async (kind) => {
+  const pdf = await PDFDocument.create(),
+    prose = await pdf.embedFont(StandardFonts.TimesRoman),
+    alphabet = await pdf.embedFont(StandardFonts.TimesRomanItalic),
+    page = pdf.addPage([380, 220]),
+    ordinal = kind.endsWith('-ordinal'),
+    gap = kind === 'separate-paragraph' || kind === 'separate-ordinal' ? 24 : 12,
+    nativeX = ordinal ? 340 : 320,
+    source =
+      (ordinal ? '(6) ' : '') +
+      'Every measured network has the same interval representation for all k in N with the same independent labelling.',
+    translation = `${ordinal ? '(6) ' : ''}所有测量网络对于每个 k in ${kind === 'changed-symbol' ? 'R' : 'N'} 都具有相同的区间表示和独立标号。`,
+    registry = new TestCallerRegistry(),
+    caller = registry.acquire({ leaseId: 'inline-native-alphabet', surface: 'electron' })
+  if (ordinal) page.drawText('(6) ', { font: prose, size: 10, x: 40, y: 150 })
+  page.drawText('Every measured network has the same interval representation for all k in ', {
+    font: prose,
+    size: 10,
+    x: ordinal ? 56 : 40,
+    y: 150
+  })
+  page.drawText('N', { font: alphabet, size: 10, x: nativeX, y: 150 })
+  page.drawText('with the same independent labelling.', {
+    font: prose,
+    size: 10,
+    x: 40,
+    y: 150 - gap
+  })
+  page.drawText('Neighbor 17', { font: prose, size: 10, x: 40, y: 90 })
+  if (kind === 'linked-ordinal')
+    page.node.set(
+      PDFName.of('Annots'),
+      pdf.context.obj([
+        pdf.context.register(
+          pdf.context.obj({
+            Type: 'Annot',
+            Subtype: 'Link',
+            Rect: [39, 147, 55, 158],
+            Border: [0, 0, 0],
+            A: { S: 'URI', URI: PDFString.of('https://example.invalid/item') }
+          })
+        )
+      ])
+    )
+  await pdf.flush()
+  pdf.context.lookup(alphabet.ref, PDFDict).set(PDFName.of('BaseFont'), PDFName.of('MSBM10'))
+  let task: ReturnType<typeof getDocument> | undefined
+  try {
+    const output = new PdfTranslationWriter(() => resolve('resources/worker.mjs')).generate(
+      {
+        id: 'inline-native-alphabet',
+        data: await pdf.save(),
+        pages: [{ width: 380, height: 220 }],
+        units: [
+          {
+            source,
+            translation,
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: {
+                  x: 39 / 380,
+                  y: 60 / 220,
+                  width: (ordinal ? 320 : 300) / 380,
+                  height: (gap + 18) / 220
+                }
+              }
+            ]
+          }
+        ]
+      },
+      caller.lease
+    )
+    if (kind === 'changed-symbol') {
+      await expect(output).rejects.toMatchObject({ failure: { code: 'annotations' } })
+      return
+    }
+    task = getDocument({ data: (await output)!, useSystemFonts: true })
+    const document = await task.promise,
+      items = (await (await document.getPage(1)).getTextContent()).items.filter(
+        (item) => 'str' in item
+      ),
+      letter = items.find((item) => item.str === 'N')!
+    expect(
+      items
+        .map((item) => item.str)
+        .join('')
+        .replace(/\s/gu, '')
+    ).toBe((translation + 'Neighbor 17').replace(/\s/gu, ''))
+    expect(letter.height).toBe(10)
+    if (kind === 'dense' || kind === 'dense-ordinal') expect(letter.transform[4]).toBeLessThan(250)
+    else expect(letter.transform.slice(4)).toEqual([nativeX, 150])
+    if (kind === 'linked-ordinal')
+      expect((await (await document.getPage(1)).getAnnotations())[0].rect).toEqual([
+        39, 147, 55, 158
+      ])
+    expect(items.find((item) => item.str === 'Neighbor 17')?.transform.slice(4)).toEqual([40, 90])
+  } finally {
+    await task?.destroy()
+    caller.release()
+    registry.dispose()
+  }
+})

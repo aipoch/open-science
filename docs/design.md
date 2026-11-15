@@ -95,8 +95,9 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 | Token                               | Tailwind class                                                                         | Light value                                                       | Usage                                                |
 | ----------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------- |
 | `--bg-400`                          | `bg-bg-400`                                                                            | `hsl(45 10% 88%)`                                                 | Sidebar row action hover                             |
-| `--text-300`                        | `text-text-300`                                                                        | `hsl(43 3% 57%)`                                                  | Action icon default color and loading dots           |
+| `--text-300`                        | `text-text-300`                                                                        | `hsl(43 3% 38%)`                                                  | Quiet metadata, action icons and loading dots        |
 | `--rail-card-bg`                    | `bg-rail-card-bg`                                                                      | `hsl(0 0% 100%)`                                                  | Sidebar rail card                                    |
+| `--danger-foreground`               | `text-danger-foreground`                                                               | `hsl(0 0% 100%)` (dark: `hsl(0 30% 14%)`)                         | Labels on filled `bg-danger-000` surfaces            |
 | `--danger-000` / `--danger-900`     | `text-danger-000`, `bg-danger-900`                                                     | `hsl(0 45% 38%)`, `hsl(0 55% 95%)`                                | Destructive session menu and dialog actions          |
 | `--action-panel-toggle`             | `text-action-panel-toggle`                                                             | `hsl(0 0% 42%)`                                                   | Collapsed preview toggle                             |
 | `--surface-control-hover`           | `hover:bg-surface-control-hover`                                                       | `hsl(38 20% 90%)`                                                 | Header icon control hover                            |
@@ -108,11 +109,30 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 | `--shadow-menu` / `--shadow-dialog` | `shadow-menu`, `shadow-dialog`                                                         | `0 2px 8px rgb(0 0 0 / 0.08)`, `0 8px 32px rgb(10 10 10 / 12%)`   | Menus and modal dialogs                              |
 | `--shadow-sheet`                    | `shadow-sheet`                                                                         | `0 4px 24px rgb(10 10 10 / 0.04)`                                 | Borderless document sheets (SKILL.md panel)          |
 
+Shared `text-100/200/300` and muted text retain ordinary-text contrast on the full workspace
+surface ramp, including hover surfaces. Their icon consumers share that stronger hierarchy.
+The success foreground and destructive accent also support small counts and custom status prose
+on tinted surfaces; a shared color that conveys text cannot be calibrated for icons alone.
+Primary and filled destructive actions use 90% hover backgrounds so inverse labels retain text
+contrast. Filled danger controls pair `bg-danger-000` with `text-danger-foreground`; soft destructive Button
+and Badge variants use the existing strong failure text roles instead of their background accent.
+
+Notebook standard ANSI foreground/background roles (`--notebook-ansi-*`) use `light-dark()` and
+follow the element's local `color-scheme`. Explicit backgrounds use paired tints; faint SGR spans
+retain 90% opacity so recorded diagnostic text stays readable. Recorded escapes and persisted
+output remain unchanged. Read-only Shiki lines select their dual-theme colors by the same local
+scheme, using GitHub's high-contrast palettes on inset code surfaces. Replay fixes its scheme and
+semantic surface/text pairs to light even when embedded in a dark application.
+The [CSS Color specification](https://www.w3.org/TR/css-color-5/#light-dark) defines this selection
+by the element's used color scheme; it does not require changing the application theme.
+
 ### Settings Status and Category Tokens
 
 Settings views use named aliases for categorical data and host status. The aliases in `main.css`
-resolve to the established Tailwind palette values, so semantic cleanup does not change the rendered
-colors.
+resolve to established Tailwind palette values. Keep each semantic foreground paired with its
+surface and local theme. Status foregrounds on theme-changing surfaces must include their matching dark role;
+fixed light status blocks retain their paired light surface and foreground. The warning foreground
+uses amber-800 for readable copy on tinted surfaces.
 
 | Semantic role        | Tailwind classes                                                                                                                                                                                                                                   | Usage                                          |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |

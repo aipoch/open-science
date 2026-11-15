@@ -254,8 +254,9 @@ export const createLocalModelOwner = (
       throw error
     }
   }
-  const install = async (): Promise<LocalModelSnapshot> => {
+  const startInstall = async (signal?: AbortSignal): Promise<LocalModelSnapshot> => {
     await initialize()
+    signal?.throwIfAborted()
     if (
       closed ||
       operation ||
@@ -442,8 +443,9 @@ export const createLocalModelOwner = (
   }
   const installForUse = async (signal: AbortSignal): Promise<LocalModelSnapshot> => {
     signal.throwIfAborted()
-    await install()
-    const download = operation
+    const existing = operation?.kind === 'install' ? operation : undefined
+    if (!existing) await startInstall(signal)
+    const download = existing ?? operation
     if (download?.kind === 'install') {
       const abort = (): void => download.controller.abort()
       if (signal.aborted) abort()
@@ -457,7 +459,15 @@ export const createLocalModelOwner = (
     signal.throwIfAborted()
     return currentSnapshot()
   }
-  return { getSnapshot, install, installForUse, cancel, remove, acquireUse, close }
+  return {
+    getSnapshot,
+    install: () => startInstall(),
+    installForUse,
+    cancel,
+    remove,
+    acquireUse,
+    close
+  }
 }
 
 export type LocalModelUse = Readonly<{

@@ -70,10 +70,11 @@ export function researchFilmInputBudget(provider: ProviderView, model?: string):
         ? 1_000_000
         : (vendor && resolveModelContextWindow(vendor, model)) ||
           DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW
-  const available = Math.min(
-    provider.maxInputTokens ?? context,
-    context - (provider.maxOutputTokens ?? 8192)
-  )
+  // Like the built-in agent, reserve at most a quarter of the context for generation.
+  // A model's maximum output can equal the entire window. This reserve only shapes the input;
+  // the selected runtime and provider still decide how much output the request can generate.
+  const outputReserve = Math.min(provider.maxOutputTokens ?? 8192, Math.floor(context / 4))
+  const available = Math.min(provider.maxInputTokens ?? context, context - outputReserve)
   // Provider tokenizers and adapter-added messages differ. This is a preparation estimate, not a
   // claim to exactly predict provider token accounting.
   return Math.max(0, Math.floor(available * 0.85) - 2048)

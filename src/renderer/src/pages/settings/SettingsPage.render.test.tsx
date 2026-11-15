@@ -3737,7 +3737,7 @@ describe('SettingsPage layout', () => {
     )
   })
 
-  it('opens Notebook network access from the Runtimes protection banner', async () => {
+  it('opens Notebook network access from the Runtimes network summary', async () => {
     useRuntimeSettingsStore.setState({
       envs: { python: [], r: [] },
       loaded: true,
@@ -3756,11 +3756,12 @@ describe('SettingsPage layout', () => {
     })
 
     const banner = document.body.querySelector('[data-testid="notebook-network-protection-banner"]')
-    expect(banner?.textContent).toContain('Network protection on')
+    expect(banner?.querySelector('h3')?.textContent).toBe('Notebook network access')
 
     const manage = Array.from(banner?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Network settings'
+      (button) => button.textContent?.trim() === 'Manage access'
     )
+    expect(manage).toBeDefined()
     await act(async () => {
       manage?.click()
     })
@@ -5589,26 +5590,20 @@ describe('Settings Compute completion navigation', () => {
 })
 
 describe('Network editor leave protection', () => {
-  it.each(['keep editing', 'discard before success', 'discard before failure'])(
-    'handles closing Settings during a pending network rule review: %s',
-    async (choice) => {
-      const rule = {
-        hostname: 'lab.internal.example',
-        port: 8443,
-        protocol: 'http' as const,
-        approvedAddresses: []
-      }
-      let resolve!: (value: { ok: true; destination: typeof rule }) => void
-      let reject!: (reason: Error) => void
-      window.api.settings.reviewNotebookPrivateDestination = vi.fn(
+  it.each(['success', 'failure'])(
+    'protects closing Settings during a pending network rule save: %s',
+    async (outcome) => {
+      const onClose = vi.fn()
+      const saved = useSettingsStore.getState().notebookNetwork
+      let finish!: (value: typeof saved) => void
+      let fail!: (reason: Error) => void
+      const save = vi.fn<(next: typeof saved) => Promise<typeof saved>>(
         () =>
-          new Promise<{ ok: true; destination: typeof rule }>((done, fail) => {
-            resolve = done
-            reject = fail
+          new Promise<typeof saved>((resolve, reject) => {
+            finish = resolve
+            fail = reject
           })
       )
-      const onClose = vi.fn()
-      const save = vi.fn()
       useSettingsStore.setState({
         pendingSettingsIntent: {
           requestId: 44,
@@ -5624,63 +5619,42 @@ describe('Network editor leave protection', () => {
         })
       }
       await act(async () => root.render(<SettingsPage open onClose={onClose} />))
-      await click('Add service')
-      act(() => {
-        fireEvent.change(document.querySelector('#private-hostname')!, {
-          target: { value: rule.hostname }
+      await click('Add address')
+      act(() =>
+        fireEvent.change(document.querySelector('form input')!, {
+          target: { value: 'lab.internal.example' }
         })
-        fireEvent.change(document.querySelector('#private-port')!, { target: { value: '8443' } })
-      })
-      await click('Review service')
+      )
+      await click('Confirm')
+      expect(save).toHaveBeenCalledOnce()
       await act(async () =>
         document.querySelector<HTMLButtonElement>('[aria-label="Close settings"]')!.click()
       )
       expect(document.body.textContent).toContain('Your network rules have not been saved.')
-      expect(onClose).not.toHaveBeenCalled()
-      const discard = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-        (item) => item.textContent?.trim() === 'Discard changes'
+      const pending = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent?.trim() === 'Please wait…'
       )!
-      expect(discard.disabled).toBe(false)
-
-      if (choice === 'keep editing') {
-        await click('Keep editing')
-        expect(document.querySelector<HTMLInputElement>('#private-hostname')!.value).toBe(
-          rule.hostname
-        )
-        expect(document.querySelector<HTMLInputElement>('#private-port')!.value).toBe('8443')
+      expect(pending.disabled).toBe(true)
+      await act(async () => pending.click())
+      expect(onClose).not.toHaveBeenCalled()
+      await act(async () => {
+        if (outcome === 'success') finish(save.mock.calls[0]![0] ?? saved)
+        else fail(new Error('Save failed'))
+      })
+      if (outcome === 'success') {
         expect(document.body.textContent).not.toContain('Your network rules have not been saved.')
-        await act(async () => resolve({ ok: true, destination: rule }))
-        expect(document.body.textContent).toContain('HTTP://lab.internal.example:8443')
-        expect(document.body.textContent).toContain('Add network exception')
-        expect(onClose).not.toHaveBeenCalled()
+        expect(document.querySelector('form')).toBeNull()
       } else {
-        await click('Discard changes')
-        expect(onClose).toHaveBeenCalledOnce()
-        // Apply the controlled open prop as the application does after accepting onClose.
-        await act(async () => root.render(<SettingsPage open={false} onClose={onClose} />))
-        expect(document.querySelector('#private-hostname')).toBeNull()
-        await act(async () => root.render(<SettingsPage open onClose={onClose} />))
-        await click('Add service')
-        act(() =>
-          fireEvent.change(document.querySelector('#private-hostname')!, {
-            target: { value: 'new.internal.example' }
-          })
+        expect(document.body.textContent).toContain('Your network rules have not been saved.')
+        await click('Keep editing')
+        expect(document.querySelector<HTMLInputElement>('form input')!.value).toBe(
+          'lab.internal.example'
         )
-        await act(async () => {
-          if (choice === 'discard before failure') reject(new Error('DNS failed after closing'))
-          else resolve({ ok: true, destination: rule })
-        })
-        expect(document.querySelector<HTMLInputElement>('#private-hostname')!.value).toBe(
-          'new.internal.example'
+        expect(document.body.textContent).toContain(
+          'Could not save network rules. Reopen this page and try again.'
         )
-        expect(document.body.textContent).not.toContain('10.32.0.7')
-        expect(document.body.textContent).not.toContain('Add network exception')
-        expect(document.body.textContent).not.toContain('Could not review the service. Try again.')
       }
-      expect(save).not.toHaveBeenCalled()
-      expect(useSettingsStore.getState().notebookNetwork.trustedPrivateDestinations ?? []).toEqual(
-        []
-      )
+      expect(onClose).not.toHaveBeenCalled()
     }
   )
   it.each(['breadcrumb', 'panel', 'Close settings'])(
@@ -5697,10 +5671,10 @@ describe('Network editor leave protection', () => {
       await act(async () => root.render(<SettingsPage open onClose={onClose} />))
       await act(async () => {
         ;[...document.body.querySelectorAll<HTMLButtonElement>('button')]
-          .find((button) => button.textContent?.trim() === 'Add service')!
+          .find((button) => button.textContent?.trim() === 'Add address')!
           .click()
       })
-      const input = document.body.querySelector<HTMLInputElement>('#private-hostname')!
+      const input = document.body.querySelector<HTMLInputElement>('form input')!
       expect(input).not.toBeNull()
       act(() => fireEvent.change(input, { target: { value: 'unsaved.example' } }))
       const leave = async (): Promise<void> => {
@@ -5729,7 +5703,7 @@ describe('Network editor leave protection', () => {
       await leave()
       await click('Discard changes')
       if (route === 'Close settings') expect(onClose).toHaveBeenCalledOnce()
-      else expect(document.body.querySelector('#private-hostname')).toBeNull()
+      else expect(document.body.querySelector('form input')).toBeNull()
     }
   )
 })
@@ -5754,7 +5728,17 @@ it('dismisses a network leave request when the pending save succeeds', async () 
   )
   await act(async () =>
     [...document.body.querySelectorAll<HTMLButtonElement>('button')]
-      .find((b) => b.textContent?.trim() === 'Save changes')!
+      .find((b) => b.textContent?.trim() === 'Add address')!
+      .click()
+  )
+  act(() =>
+    fireEvent.change(document.querySelector('form input')!, {
+      target: { value: 'saved.local' }
+    })
+  )
+  await act(async () =>
+    [...document.body.querySelectorAll<HTMLButtonElement>('button')]
+      .find((b) => b.textContent?.trim() === 'Confirm')!
       .click()
   )
   await act(async () =>

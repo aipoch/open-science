@@ -573,7 +573,8 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     backendGeneration,
     providerPromptExecutor: new AcpProviderPromptExecutor({
       backendGeneration,
-      opencodeUsageFetch: options.opencodeUsageFetch
+      opencodeUsageFetch: options.opencodeUsageFetch,
+      recoverOutputTruncation: options.recoverOutputTruncation
     }),
     providerPromptSerialization: new AcpProviderPromptSerializationOwner(),
     contextUsageTracker,

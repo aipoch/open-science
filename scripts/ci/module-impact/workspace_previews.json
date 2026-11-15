@@ -221,7 +221,14 @@
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationActionHint.tsx",
     "test/fixtures/pdf-translation/baseline-comma-definition.jsonl",
     "src/renderer/src/pages/workspace/previews/docx-table-styles.test.ts",
-    "src/renderer/src/pages/workspace/previews/renderers/SinglePagePdfPreview.tsx"
+    "src/renderer/src/pages/workspace/previews/renderers/SinglePagePdfPreview.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-matrix-retention.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-fixed-structure-retention.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-function-display-retention.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-target-occlusion-roundtrip.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-coordinated-panel-links.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-typed-reference-links.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-closed-citation-native.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/previews/PreviewFallback.tsx",
@@ -325,7 +332,14 @@
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-checkpoint.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx",
-      "src/renderer/src/pages/workspace/previews/docx-table-styles.test.ts"
+      "src/renderer/src/pages/workspace/previews/docx-table-styles.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-matrix-retention.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-fixed-structure-retention.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-function-display-retention.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-target-occlusion-roundtrip.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-coordinated-panel-links.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-typed-reference-links.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-closed-citation-native.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

@@ -213,6 +213,7 @@ type Entry = {
   session: AgentSession
   /** True once per provider context-overflow rejection observed since the last call. */
   takeOverflow(): boolean
+  takeOutputTruncation(): boolean
   close(): Promise<void>
   flush(): Promise<void>
   reconcile(): Promise<void>
@@ -386,6 +387,7 @@ export function createHarnessAcpAgent(directory: string): {
       const inputBudget = Math.floor(config.contextWindow * 0.9) - outputReserve
       const clearing = createToolResultClearing(inputBudget, meter)
       let overflow = false
+      let outputTruncated = false
       const onEvent = (event: AgentEvent): void => {
         if (event.type === 'compaction') {
           const started = event.status === 'started'
@@ -410,6 +412,7 @@ export function createHarnessAcpAgent(directory: string): {
           })
         } else if (event.type === 'model') {
           if (event.purpose === 'compaction') return
+          if (event.event.type === 'finish') outputTruncated = event.event.reason === 'length'
           if (event.event.type === 'finish' && event.event.usage)
             meter.reported(event.requestId, event.event.usage)
           if (event.event.type === 'finish' && event.event.usage)
@@ -571,6 +574,11 @@ export function createHarnessAcpAgent(directory: string): {
           overflow = false
           return observed
         },
+        takeOutputTruncation: () => {
+          const observed = outputTruncated
+          outputTruncated = false
+          return observed
+        },
         close,
         reconcile: () => mcp!.reconcile(session!),
         active: false,
@@ -689,6 +697,7 @@ export function createHarnessAcpAgent(directory: string): {
             const before = await entry.session.inspect()
             assertKnown(before)
             entry.takeOverflow()
+            entry.takeOutputTruncation()
             // A provider context overflow already lowered the meter's estimate. Continue the same turn
             // once so the next request compacts first; the rejected request executed no tool.
             const status = await entry.session
@@ -733,7 +742,9 @@ export function createHarnessAcpAgent(directory: string): {
                   ? 'end_turn'
                   : status === 'cancelled'
                     ? 'cancelled'
-                    : 'max_turn_requests',
+                    : entry.takeOutputTruncation()
+                      ? 'max_tokens'
+                      : 'max_turn_requests',
               _meta: {
                 'open-science-agent/requests': requests.map(({ id, status, usage }) => ({
                   id,

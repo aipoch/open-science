@@ -765,7 +765,12 @@ export async function runSessionDiagnosticWorker(
                     )
                     const truncation = projection.truncation as Record<string, number>
                     state.arrayCounts = { runs: projection.runCounts, truncation }
-                    if (Object.values(truncation).some((count) => count > 0)) {
+                    // Runs outside the recent-history window are intentionally filtered.
+                    if (
+                      Object.entries(truncation).some(
+                        ([key, count]) => key !== 'omittedRuns' && count > 0
+                      )
+                    ) {
                       partial = true
                       state.status = 'truncated'
                       record('Notebook diagnostic projection truncated; omission counts recorded')

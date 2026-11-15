@@ -5,6 +5,9 @@ import { useNotebookNetworkStatus } from './use-notebook-network-status'
 
 import type { NotebookNetworkStatus } from '../../../../shared/notebook-network'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { SettingsSection } from './SettingsLayout'
+import { NotebookNetworkAccessSummary } from './NotebookNetworkAccessSummary'
 
 type NotebookNetworkProtectionBannerPreviewState =
   'default' | 'hover' | 'focus' | 'active' | 'disabled' | 'loading' | 'error' | 'success'
@@ -45,16 +48,10 @@ const NotebookNetworkProtectionBanner = ({
   const runtimeStatus = useNotebookNetworkStatus(!previewState && suppliedStatus === undefined)
   const status = previewState ? previewStatus(previewState) : (suppliedStatus ?? runtimeStatus)
 
-  const presentation: BannerPresentation = (() => {
+  const presentation: BannerPresentation | null = (() => {
     switch (status.kind) {
       case 'ready':
-        return {
-          title: t('Network protection on'),
-          description: t(
-            'Notebook allows approved domains and restricted public HTTPS reads. GET and HEAD still send URLs; approved domains allow sending data.'
-          ),
-          level: 'info'
-        }
+        return null
       case 'setupRequired':
         return {
           title:
@@ -97,28 +94,49 @@ const NotebookNetworkProtectionBanner = ({
           ? 'translate-y-px'
           : ''
 
+  if (!presentation) {
+    return (
+      <NotebookNetworkAccessSummary
+        onOpen={onOpen}
+        testId="notebook-network-protection-banner"
+        buttonClassName={previewButtonClassName}
+      />
+    )
+  }
+
   return (
-    <Notice
-      inline
+    <SettingsSection
+      title={t('Notebook network protection')}
       aria-label={t('Notebook network protection')}
-      aria-live="polite"
-      role={status.kind === 'error' ? 'alert' : 'status'}
       data-testid="notebook-network-protection-banner"
-      level={presentation.level}
-      icon={status.kind === 'checking' ? LoaderCircle : undefined}
-      iconClassName={
-        status.kind === 'checking' ? 'animate-spin motion-reduce:animate-none' : undefined
-      }
-      title={presentation.title}
-      description={presentation.description}
       className={cn(previewState === 'disabled' && 'opacity-50')}
-      primaryButton={{
-        label: t('Network settings'),
-        onClick: onOpen,
-        disabled: previewState === 'disabled',
-        className: cn('min-h-11 w-full sm:min-h-8 sm:w-auto', previewButtonClassName)
-      }}
-    />
+    >
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border p-4">
+        <Notice
+          inline
+          aria-live="polite"
+          role={status.kind === 'error' ? 'alert' : 'status'}
+          level={presentation.level}
+          icon={status.kind === 'checking' ? LoaderCircle : undefined}
+          iconClassName={
+            status.kind === 'checking' ? 'animate-spin motion-reduce:animate-none' : undefined
+          }
+          title={status.kind === 'checking' ? undefined : presentation.title}
+          description={presentation.description}
+          className="min-w-0 flex-1 basis-64"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onOpen}
+          disabled={previewState === 'disabled'}
+          className={cn('ml-auto min-h-11 shrink-0 sm:min-h-8', previewButtonClassName)}
+        >
+          {t('Network settings')}
+        </Button>
+      </div>
+    </SettingsSection>
   )
 }
 

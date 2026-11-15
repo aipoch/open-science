@@ -1,7 +1,13 @@
+import {
+  migrateNotebookNetworkSettings,
+  normalizeStrictWhitelist,
+  normalizeWhitelistGroups
+} from '../../shared/notebook-network-strict'
 import type { NetworkDestinationGrant } from '../../shared/network-destination-grants'
 import { isDeepStrictEqual } from 'node:util'
 import { reviewPrivateDestination, validPrivateDestination } from '@aipoch/notebook-network-sandbox'
 import {
+  trustedDestinationId,
   type PrivateDestinationRequest,
   type PrivateDestinationReview,
   type NotebookNetworkSettings
@@ -12,6 +18,34 @@ import {
 } from '../../shared/notebook-network'
 import type { SetNotebookNetworkRequest } from '../../shared/settings'
 import type { SettingsRepository } from './repository'
+
+const mergeById = <T extends { id: string }>(
+  current: readonly T[],
+  desired: readonly T[],
+  base: readonly T[] | undefined,
+  same: (left: T | undefined, right: T | undefined) => boolean = isDeepStrictEqual
+): T[] => {
+  if (!base) {
+    if (isDeepStrictEqual(current, desired)) return [...current]
+    throw new Error('Network rules changed. Reopen this page before saving.')
+  }
+  const merged = new Map(current.map((row) => [row.id, row]))
+  for (const id of new Set([...base.map((row) => row.id), ...desired.map((row) => row.id)])) {
+    const before = base.find((row) => row.id === id),
+      after = desired.find((row) => row.id === id)
+    if (same(before, after)) continue
+    const live = merged.get(id)
+    if (!same(live, before) && !same(live, after))
+      throw new Error('Network rules changed. Reopen this page before saving.')
+    if (after) merged.set(id, after)
+    else merged.delete(id)
+  }
+  return [...merged.values()]
+}
+const assertRelaxed = (settings: NotebookNetworkSettings): void => {
+  if (settings.mode === 'strict')
+    throw new Error('Authorization is unavailable in strict mode. Edit the whitelist manually.')
+}
 
 const sameManagedRule = (
   left: NonNullable<NotebookNetworkSettings['trustedPrivateDestinations']>[number],
@@ -70,7 +104,7 @@ class NotebookNetworkSettingsOwner {
     const current = normalizeNotebookNetworkSettings(
       (await this.options.repository.getSettings()).notebookNetwork
     )
-    const reconciled = syncManagedDestinationRules(current)
+    const reconciled = syncManagedDestinationRules(migrateNotebookNetworkSettings(current))
     if (!isDeepStrictEqual(current, reconciled)) {
       const stored = await this.options.repository.setNotebookNetwork(reconciled)
       return normalizeNotebookNetworkSettings(stored.notebookNetwork)
@@ -92,10 +126,10 @@ class NotebookNetworkSettingsOwner {
     finalize?: () => Promise<void>
   ): Promise<NotebookNetworkSettings> {
     return this.enqueue(
-      (current) => ({
-        ...current,
-        allowedDomains: [...new Set([...current.allowedDomains, hostname])]
-      }),
+      (current) => {
+        assertRelaxed(current)
+        return { ...current, allowedDomains: [...new Set([...current.allowedDomains, hostname])] }
+      },
       assertCurrent,
       finalize
     )
@@ -108,6 +142,7 @@ class NotebookNetworkSettingsOwner {
   ): Promise<NotebookNetworkSettings> {
     return this.enqueue(
       async (current) => {
+        assertRelaxed(current)
         if (
           current.destinationGrants?.some(
             (entry) => entry.id === grant.id && entry.revokedAt !== undefined
@@ -149,6 +184,63 @@ class NotebookNetworkSettingsOwner {
     request: SetNotebookNetworkRequest
   ): Promise<NotebookNetworkSettings> {
     let requested = normalizeNotebookNetworkSettings(request)
+    if (request.mode !== undefined && request.mode !== 'strict' && request.mode !== 'relaxed')
+      throw new Error('Invalid network mode.')
+    const currentMode = current.mode ?? 'relaxed'
+    const modeChanged = request.mode !== undefined && request.mode !== request.baseMode
+    const mode = modeChanged ? request.mode! : currentMode
+    if (modeChanged && mode !== currentMode && request.baseMode !== currentMode)
+      throw new Error('Network mode changed. Reopen this page before saving.')
+    if (
+      request.strictWhitelist &&
+      !isDeepStrictEqual(normalizeStrictWhitelist(request.strictWhitelist), request.strictWhitelist)
+    )
+      throw new Error('Invalid whitelist rules.')
+    if (
+      request.strictWhitelistGroups &&
+      !isDeepStrictEqual(
+        normalizeWhitelistGroups(request.strictWhitelistGroups),
+        request.strictWhitelistGroups
+      )
+    )
+      throw new Error('Invalid whitelist groups.')
+    const strictWhitelist =
+      request.strictWhitelist === undefined
+        ? (current.strictWhitelist ?? [])
+        : mergeById(
+            current.strictWhitelist ?? [],
+            request.strictWhitelist,
+            request.baseStrictWhitelist
+          )
+    const strictWhitelistGroups =
+      request.strictWhitelistGroups === undefined
+        ? (current.strictWhitelistGroups ?? [])
+        : mergeById(
+            current.strictWhitelistGroups ?? [],
+            request.strictWhitelistGroups,
+            request.baseStrictWhitelistGroups
+          )
+    // Origin is assigned by the writer, never selected by a renderer.
+    const rules = strictWhitelist.map((rule) => ({
+      ...rule,
+      origin:
+        current.strictWhitelist?.find((row) => row.id === rule.id)?.origin ?? ('manual' as const)
+    }))
+    if (
+      rules.some(
+        (rule) => rule.groupId && !strictWhitelistGroups.some((group) => group.id === rule.groupId)
+      )
+    )
+      throw new Error('Unknown whitelist group.')
+    if (normalizeStrictWhitelist(rules).length !== rules.length)
+      throw new Error('Duplicate whitelist destination.')
+    requested = {
+      ...requested,
+      mode,
+      strictWhitelistVersion: 1,
+      strictWhitelist: rules,
+      strictWhitelistGroups
+    }
     // Settings can revoke existing authority; only the conversation approval owner can add it.
     const revoked = request.revokeNetworkGrantIds ?? []
     if (!Array.isArray(revoked) || revoked.some((id) => typeof id !== 'string'))
@@ -165,16 +257,25 @@ class NotebookNetworkSettingsOwner {
       // Public-only and historical clients must not erase independently reviewed grants.
       requested = { ...requested, trustedPrivateDestinations: current.trustedPrivateDestinations }
     } else {
-      const rules = normalizeTrustedPrivateDestinations(request.trustedPrivateDestinations)
-      if (!isDeepStrictEqual(rules, request.trustedPrivateDestinations))
-        throw new Error('Invalid trusted private service.')
-      if (
-        !isDeepStrictEqual(
-          request.baseTrustedPrivateDestinations ?? [],
-          current.trustedPrivateDestinations ?? []
-        )
+      const normalizedRules = normalizeTrustedPrivateDestinations(
+        request.trustedPrivateDestinations
       )
-        throw new Error('Private services changed. Reopen this page before saving.')
+      if (!isDeepStrictEqual(normalizedRules, request.trustedPrivateDestinations))
+        throw new Error('Invalid trusted private service.')
+      const wrap = (
+        rule: NonNullable<NotebookNetworkSettings['trustedPrivateDestinations']>[number]
+      ): { id: string; value: typeof rule } => ({ id: trustedDestinationId(rule), value: rule })
+      const rules = mergeById(
+        (current.trustedPrivateDestinations ?? []).map(wrap),
+        normalizedRules.map(wrap),
+        request.baseTrustedPrivateDestinations?.map(wrap),
+        (left, right) => {
+          if (!left || !right) return left === right
+          return isDeepStrictEqual({ ...left.value, id: left.id }, { ...right.value, id: right.id })
+        }
+      ).map((row) => row.value)
+      if (normalizeTrustedPrivateDestinations(rules).length !== rules.length)
+        throw new Error('Duplicate trusted private service.')
       const currentRules = current.trustedPrivateDestinations ?? []
       const removedManagedIds = currentRules
         .filter(

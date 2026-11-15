@@ -14,6 +14,7 @@ import { RuntimeSessionOwner } from './runtime-session-owner'
 import { SessionPersistenceCoordinator, type SessionFileIndex } from './coordinator'
 import {
   materializeSessionConversationGraph,
+  createSessionFile,
   type PersistedChatSession
 } from '../../shared/session-persistence'
 
@@ -385,4 +386,43 @@ it('reports corrupt recovery authority as a failure rather than a missing Sessio
     'unreadable'
   )
   await expect(h.coordinator.recoverStartupSession('project', 'absent')).resolves.toBeUndefined()
+})
+
+it('releases an abandoned unadmitted preparation during targeted startup recovery', async () => {
+  const h = await harness()
+  const abandoned: PersistedChatSession = {
+    ...h.initial,
+    runtimeTranscriptOwner: 'main',
+    promptPreparation: {
+      id: 'abandoned-preparation',
+      projectId: 'project',
+      sessionId: 'session',
+      promptMessageId: 'prompt',
+      mode: 'new',
+      preparedAt: 1,
+      runStartedAt: 1,
+      previousState: { status: 'idle' },
+      expectedState: { status: 'running' }
+    }
+  }
+  // Simulate the prior Main's durable marker; metadata saves cannot create this authority.
+  await writeFile(
+    join(h.root, 'sessions/project/session.json'),
+    JSON.stringify(createSessionFile(abandoned))
+  )
+  expect(await loadSessionMutationAuthority(h.repository, 'project', 'session')).toMatchObject({
+    status: 'found',
+    session: {
+      promptPreparation: { id: 'abandoned-preparation' },
+      activeRun: { promptMessageId: 'prompt', startedAt: 1 }
+    }
+  })
+  const recovered = await h.coordinator.recoverStartupSession('project', 'session')
+  expect(recovered?.status).toBe('idle')
+  expect(recovered?.activeRun).toBeUndefined()
+  expect(recovered?.promptPreparation).toBeUndefined()
+  expect(recovered?.messages[0].content).toBe('Original question')
+  expect(recovered?.messages[0].turnOutcome).toBeUndefined()
+  const durable = await loadSessionMutationAuthority(h.repository, 'project', 'session')
+  expect(durable.status === 'found' && durable.session.activeRun).toBeUndefined()
 })

@@ -58,11 +58,12 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
   const { projectId, sessionId, runId, filename } = request
   const directory = storage.getPendingRunDir(projectId, sessionId, runId)
   const filePath = join(directory, filename)
-  const suffix = `${Date.now()}-${randomUUID()}`
-  const temporaryPath = `${filePath}.${suffix}.tmp`
-  const backupPath = `${filePath}.${suffix}.backup`
+  // Staging names must not extend a caller's already-valid, potentially maximum-length name.
+  const suffix = randomUUID()
+  const temporaryPath = join(directory, `.${suffix}.tmp`)
+  const backupPath = join(directory, `.${suffix}.backup`)
   const metadataPath = storage.getArtifactMetadataPath(directory, filename)
-  const metadataBackupPath = `${metadataPath}.${suffix}.backup`
+  const metadataBackupPath = join(dirname(metadataPath), `.${suffix}.backup`)
   let fileBackedUp = false
   let metadataBackedUp = false
   let preserveFileBackup = false

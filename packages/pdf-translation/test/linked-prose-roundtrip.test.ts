@@ -256,3 +256,67 @@ it.each(
     ).rejects.toThrow('[pdf-generation:source-mismatch:2]')
   }
 )
+
+it('preserves a thin native link border through PDFium float32 serialization', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica),
+    page = pdf.addPage([600, 800])
+  page.drawText('See Figure7.', { font, x: 60, y: 700, size: 10 })
+  page.node.set(
+    PDFName.of('Annots'),
+    pdf.context.obj([
+      pdf.context.register(
+        pdf.context.obj({
+          Type: 'Annot',
+          Subtype: 'Link',
+          Rect: [
+            60 + font.widthOfTextAtSize('See Figure', 10) - 1,
+            699,
+            60 + font.widthOfTextAtSize('See Figure7', 10) + 1,
+            711
+          ],
+          Border: [0, 0, 0.1],
+          A: { S: 'URI', URI: PDFString.of('https://example.invalid/reference') }
+        })
+      )
+    ])
+  )
+  const bytes = await pdf.save(),
+    input = getDocument({ data: bytes.slice(), useSystemFonts: true }),
+    original = await input.promise,
+    caller = new TestCallerRegistry().acquire({ leaseId: 'native-border' })
+  onTestFinished(() => {
+    caller.release()
+    return input.destroy()
+  })
+  const result = await new PdfTranslationWriter().generateDetailed(
+    {
+      id: 'native-border',
+      data: bytes,
+      pages: [{ width: 600, height: 800 }],
+      units: [
+        {
+          source: 'See Figure7.',
+          translation: 'Consult Figure7.',
+          fragments: [{ pageNumber: 1, rect: { x: 0.09, y: 0.1, width: 0.2, height: 0.05 } }]
+        }
+      ]
+    },
+    caller.lease
+  )
+  expect(result?.data).toBeInstanceOf(Uint8Array)
+  const output = getDocument({ data: result!.data.slice(), useSystemFonts: true })
+  onTestFinished(() => output.destroy())
+  const translated = await output.promise,
+    before = (await (await original.getPage(1)).getAnnotations())[0],
+    after = (await (await translated.getPage(1)).getAnnotations())[0]
+  expect(before.borderStyle.width).toBe(0.1)
+  expect(after.borderStyle.width).not.toBe(before.borderStyle.width)
+  expect(Math.fround(after.borderStyle.width)).toBe(Math.fround(before.borderStyle.width))
+  expect(after.borderStyle).toEqual({
+    ...before.borderStyle,
+    width: after.borderStyle.width,
+    rawWidth: after.borderStyle.rawWidth
+  })
+  expect(after.url).toBe(before.url)
+})

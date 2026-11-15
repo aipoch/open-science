@@ -20,7 +20,8 @@
     "src/main/notebook/resource-memory.ts",
     "src/main/notebook/resource-release.windows.integration.test.ts",
     "src/main/notebook/memory-admission.windows.integration.test.ts",
-    "src/main/notebook/python-lifecycle.windows.integration.test.ts"
+    "src/main/notebook/python-lifecycle.windows.integration.test.ts",
+    "src/main/update/windows-update-handoff.ts"
   ],
   "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc": [
     "packages/safe-file-publisher-native/index.cjs",
@@ -213,7 +214,12 @@
   ],
   "packages/research-film/src/generation-worker.ts": [
     "packages/research-film/src/resources.ts",
-    "packages/research-film/src/generation.ts"
+    "packages/research-film/src/generation.ts",
+    "packages/research-film/src/speech-process.ts"
+  ],
+  "packages/research-film/src/speech-process.ts": [
+    "packages/research-film/src/resources.ts",
+    "packages/research-film/src/speech-client.ts"
   ],
   "packages/research-film/resources/stage/index.html": [
     "packages/research-film/src/build-player.ts"

@@ -668,3 +668,115 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
     }
   })
 })
+
+describe.runIf(platformSupported)('strict whitelist with a real Python client', () => {
+  it('blocks without asking, allows a manually added localhost rule, checks redirects, and restores relaxed trust', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'strict-python-'))
+    let requests = 0
+    const server = createServer((request, response) => {
+      requests++
+      if (request.url === '/redirect') {
+        response.writeHead(302, { location: `http://127.0.0.1:${port}/` })
+        response.end()
+      } else response.end('strict-python-ok')
+    })
+    // Both loopback families must reach the fixture when relaxed policy pins the first DNS result.
+    await new Promise<void>((resolve) =>
+      server.listen({ port: 0, host: '::', ipv6Only: false }, resolve)
+    )
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('Missing fixture port')
+    const port = address.port
+    const trusted = [
+      { hostname: 'localhost', protocol: 'http' as const, port, approvedAddresses: [] }
+    ]
+    const sandbox = new NotebookNetworkSandbox({
+      policy: {
+        mode: 'strict',
+        strictWhitelist: [],
+        trustedPrivateDestinations: trusted,
+        allowedDomains: [],
+        deniedDomains: []
+      },
+      resources: { root: resolve(import.meta.dirname, '../vendor') }
+    })
+    const approval = vi.fn(async () => true)
+    // Exercise hosts where localhost resolves to IPv6 first, as on the Linux CI runner.
+    const dnsFixture = vi
+      .mocked<(hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>>(lookup)
+      .mockResolvedValue([
+        { address: '::1', family: 6 },
+        { address: '127.0.0.1', family: 4 }
+      ])
+    const python = process.env.OPEN_SCIENCE_TEST_PYTHON ?? '/usr/bin/python3'
+    const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
+    const request = async (path = '/'): Promise<Awaited<ReturnType<typeof runAndCleanup>>> => {
+      const script = `import urllib.request; print(urllib.request.urlopen(${JSON.stringify(`http://localhost:${port}${path}`)}, timeout=5).read().decode())`
+      const wrapped = await sandbox.wrap({
+        command: `${quote(python)} -c ${quote(script)}`,
+        cwd: directory,
+        env: { ...process.env, NO_PROXY: '', no_proxy: '' },
+        filesystem: {
+          readOnlyRoots: ['/usr/bin', '/bin', dirname(dirname(python))],
+          readWriteRoots: [directory],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        },
+        onNetworkAccessRequest: approval
+      })
+      wrapped.setExecutionActive(true)
+      return runAndCleanup(wrapped, directory)
+    }
+    try {
+      await sandbox.initialize()
+      const blocked = await request()
+      expect(blocked.annotatedStderr).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+      expect(blocked.code).not.toBe(0)
+      expect(requests).toBe(0)
+      expect(approval).not.toHaveBeenCalled()
+      sandbox.updatePolicy({
+        mode: 'strict',
+        strictWhitelist: [{ hostnamePattern: 'localhost', protocol: 'http', port }],
+        allowedDomains: [],
+        deniedDomains: []
+      })
+      const allowed = await request()
+      expect(allowed, allowed.annotatedStderr).toMatchObject({
+        code: 0,
+        stdout: 'strict-python-ok\n'
+      })
+      expect(requests).toBe(1)
+      const redirected = await request('/redirect')
+      expect(redirected.annotatedStderr).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+      expect(requests).toBe(2)
+      sandbox.updatePolicy({
+        mode: 'relaxed',
+        trustedPrivateDestinations: trusted,
+        allowedDomains: [],
+        deniedDomains: []
+      })
+      const restored = await request()
+      expect(restored, restored.annotatedStderr).toMatchObject({
+        code: 0,
+        stdout: 'strict-python-ok\n'
+      })
+      expect(requests).toBe(3)
+      sandbox.updatePolicy({
+        mode: 'strict',
+        strictWhitelist: [],
+        trustedPrivateDestinations: trusted,
+        allowedDomains: [],
+        deniedDomains: []
+      })
+      expect((await request()).annotatedStderr).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+      expect(requests).toBe(3)
+      expect(approval).not.toHaveBeenCalled()
+    } finally {
+      dnsFixture.mockRestore()
+      await sandbox.dispose()
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 30_000)
+})

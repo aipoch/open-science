@@ -285,11 +285,20 @@ export type ModelRouting =
       reasoningEffort: ReasoningEffort
     }
 export type RequestOptions = {
+  /** Use durable admission for startRun. Requires a compatible server. */
+  requestId?: string
   idempotencyKey?: string
   /** Aborts this request, not work already accepted by the service. */
   signal?: AbortSignal
   /** Per-request deadline in milliseconds, including response-body consumption. */
   timeoutMs?: number
+}
+export type Submission = {
+  requestId: string
+  status: 'pending' | 'accepted' | 'failed' | 'interrupted'
+  createdAt: number
+  runId?: string
+  error?: { code: string; message: string }
 }
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 export type RunFailureCode = 'process_restarted'
@@ -395,6 +404,7 @@ export type PlanFeedbackResponse = {
 export type PlanResponse = PlanDecisionResponse | PlanFeedbackResponse
 
 export type Run = {
+  requestId?: string
   id: string
   sessionId: string
   projectId: string
@@ -535,8 +545,10 @@ export type FormattedReferences = {
 }
 
 export class OpenScienceApiError extends Error {
+  requestId?: string
   code: string
   status?: number
+  correlationId?: string
 }
 
 export class OpenScienceClient {
@@ -665,6 +677,21 @@ export class OpenScienceClient {
       | { feedback: string },
     options?: RequestOptions
   ): Promise<PlanResponse>
+  forkSession(
+    projectId: string,
+    sessionId: string,
+    options?: RequestOptions
+  ): Promise<{ projectId: string; sessionId: string } | null>
+  submitRun(
+    requestId: string,
+    request: Parameters<OpenScienceClient['startRun']>[0],
+    options?: RequestOptions
+  ): Promise<Submission>
+  getSubmission(requestId: string, options?: RequestOptions): Promise<Submission>
+  waitForSubmission(
+    requestId: string,
+    options?: RequestOptions & { pollIntervalMs?: number }
+  ): Promise<Run>
   startRun(
     request: {
       project: string

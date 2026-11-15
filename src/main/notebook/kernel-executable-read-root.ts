@@ -10,6 +10,18 @@ export const kernelExecutableReadRoot = (
   platform: NodeJS.Platform
 ): string => {
   const platformPath = platform === 'win32' ? win32 : posix
+  if (kind === 'python' && platform !== 'win32') {
+    const bin = platformPath.dirname(executable)
+    const prefix = platformPath.dirname(bin)
+    // A registered environment needs its standard library beside bin, not just its executable.
+    // Keep ordinary/system interpreters scoped to their executable directory.
+    if (
+      platformPath.basename(bin) === 'bin' &&
+      (existsSync(platformPath.join(prefix, 'pyvenv.cfg')) ||
+        existsSync(platformPath.join(prefix, 'conda-meta')))
+    )
+      return prefix
+  }
   if (kind === 'repl' && platform === 'darwin' && executable.includes('/Contents/MacOS/')) {
     return platformPath.resolve(platformPath.dirname(executable), '../..')
   }

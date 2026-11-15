@@ -36,3 +36,52 @@ export const isNetworkIpLiteral = (hostname: string): boolean =>
 
 export const requiresNetworkException = (hostname: string, protocol?: 'http' | 'https'): boolean =>
   protocol === 'http' || isNetworkIpLiteral(hostname)
+
+export type StrictNetworkRule = Readonly<{
+  protocol: 'http' | 'https'
+  hostnamePattern: string
+  port: number
+}>
+
+export const normalizeStrictNetworkRule = (value: unknown): StrictNetworkRule | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+  const rule = value as Record<string, unknown>
+  if (typeof rule.hostnamePattern !== 'string' || typeof rule.protocol !== 'string')
+    return undefined
+  const protocol = rule.protocol.toLowerCase()
+  const pattern = rule.hostnamePattern.trim()
+  const wildcard = pattern.startsWith('*.')
+  const hostname = normalizeNetworkHostname(wildcard ? pattern.slice(2) : pattern)
+  if (
+    !hostname ||
+    (wildcard && (isNetworkIpLiteral(hostname) || !hostname.includes('.'))) ||
+    (protocol !== 'http' && protocol !== 'https') ||
+    !Number.isInteger(rule.port) ||
+    (rule.port as number) < 1 ||
+    (rule.port as number) > 65535
+  )
+    return undefined
+  return {
+    protocol,
+    hostnamePattern: wildcard ? `*.${hostname}` : hostname,
+    port: rule.port as number
+  }
+}
+
+/** Matches the requested authority only. DNS results never participate in strict admission. */
+export const strictNetworkRuleMatches = (
+  rules: readonly StrictNetworkRule[],
+  input: string,
+  port: number,
+  protocol: 'http' | 'https'
+): boolean => {
+  const host = normalizeNetworkHostname(input)
+  if (!host) return false
+  return rules.some((value) => {
+    const rule = normalizeStrictNetworkRule(value)
+    if (!rule || rule.protocol !== protocol || rule.port !== port) return false
+    return rule.hostnamePattern.startsWith('*.')
+      ? host.endsWith(rule.hostnamePattern.slice(1))
+      : host === rule.hostnamePattern
+  })
+}

@@ -158,39 +158,45 @@ describe('session persistence repository (per-session files)', () => {
     expect(cleanup).toHaveBeenCalledTimes(1)
   })
 
-  it.each(['unreadable', 'disappearing-project', 'created-project', 'tombstone', 'symlink'])(
-    'keeps identity absence cleanup incomplete for %s catalogs',
-    async (kind) => {
-      const root = await createStorageRoot()
-      const directory = join(root, 'sessions', 'project-a')
-      await mkdir(directory, { recursive: true })
-      await writeFile(join(directory, 'history.json'), 'not parsed')
-      if (kind === 'tombstone')
-        await mkdir(join(root, 'deleted-sessions', 'deleted-project'), { recursive: true })
-      if (kind === 'symlink')
-        await symlink(join(directory, 'history.json'), join(directory, 'alias.json'))
-      const repository = new SessionRepository(root, {
-        readSessionFile: async () => {
-          throw new Error('Body reads forbidden')
-        },
-        readDirectoryEntries: async (path) => {
-          if (path === directory && kind === 'unreadable')
-            throw Object.assign(new Error('denied'), { code: 'EACCES' })
-          if (path === directory && kind === 'disappearing-project') {
-            await rm(directory, { recursive: true, force: true })
-            throw Object.assign(new Error('gone'), { code: 'ENOENT' })
-          }
-          const entries = await readdir(path, { withFileTypes: true })
-          if (path === join(root, 'sessions') && kind === 'created-project') {
-            await mkdir(join(root, 'sessions', 'new-project'), { recursive: true })
-            await writeFile(join(root, 'sessions', 'new-project', 'new.json'), 'not parsed')
-          }
-          return entries
+  it.each([
+    'unreadable',
+    'disappearing-project',
+    'created-project',
+    'created-session',
+    'tombstone',
+    'symlink'
+  ])('keeps identity absence cleanup incomplete for %s catalogs', async (kind) => {
+    const root = await createStorageRoot()
+    const directory = join(root, 'sessions', 'project-a')
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'history.json'), 'not parsed')
+    if (kind === 'tombstone')
+      await mkdir(join(root, 'deleted-sessions', 'deleted-project'), { recursive: true })
+    if (kind === 'symlink')
+      await symlink(join(directory, 'history.json'), join(directory, 'alias.json'))
+    const repository = new SessionRepository(root, {
+      readSessionFile: async () => {
+        throw new Error('Body reads forbidden')
+      },
+      readDirectoryEntries: async (path) => {
+        if (path === directory && kind === 'unreadable')
+          throw Object.assign(new Error('denied'), { code: 'EACCES' })
+        if (path === directory && kind === 'disappearing-project') {
+          await rm(directory, { recursive: true, force: true })
+          throw Object.assign(new Error('gone'), { code: 'ENOENT' })
         }
-      })
-      expect((await repository.scanSessionIdentities()).isComplete).toBe(false)
-    }
-  )
+        const entries = await readdir(path, { withFileTypes: true })
+        if (path === join(root, 'sessions') && kind === 'created-project') {
+          await mkdir(join(root, 'sessions', 'new-project'), { recursive: true })
+          await writeFile(join(root, 'sessions', 'new-project', 'new.json'), 'not parsed')
+        }
+        if (path === directory && kind === 'created-session')
+          await writeFile(join(directory, 'new.json'), 'not parsed')
+        return entries
+      }
+    })
+    expect((await repository.scanSessionIdentities()).isComplete).toBe(false)
+  })
 
   it.each(['temp', 'quarantine', 'duplicate', 'pending-package', 'deletion'])(
     'reserves identities but refuses complete cleanup during %s uncertainty',

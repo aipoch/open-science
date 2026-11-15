@@ -34,6 +34,8 @@ function DropdownMenuSubContent({
   // padding box. 8px covers both p-1 (4px) and p-1.5 (6px) parents with a small visual gap.
   sideOffset = 8,
   alignOffset = -5,
+  // Keep menus off the viewport edge so phone-width menus never sit flush against the bezel.
+  collisionPadding = 8,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>): React.JSX.Element {
   const layer = useOverlayLayer()
@@ -43,8 +45,9 @@ function DropdownMenuSubContent({
         data-slot="dropdown-menu-sub-content"
         sideOffset={sideOffset}
         alignOffset={alignOffset}
+        collisionPadding={collisionPadding}
         className={cn(
-          'z-50 min-w-[8rem] overflow-hidden overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu outline-none',
+          'max-h-[var(--radix-dropdown-menu-content-available-height)] z-50 min-w-[8rem] max-w-[calc(100vw-1rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu outline-none',
           className
         )}
         {...props}
@@ -58,6 +61,7 @@ function DropdownMenuContent({
   className,
   style,
   sideOffset = 4,
+  collisionPadding = 8,
   container,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content> &
@@ -68,8 +72,9 @@ function DropdownMenuContent({
       <DropdownMenuPrimitive.Content
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
         className={cn(
-          'z-50 min-w-[8rem] overflow-hidden overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu outline-none',
+          'max-h-[var(--radix-dropdown-menu-content-available-height)] z-50 min-w-[8rem] max-w-[calc(100vw-1rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu outline-none',
           className
         )}
         {...props}

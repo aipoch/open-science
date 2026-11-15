@@ -1,0 +1,22 @@
+{
+  "headers": ["Item", "Group", "N", "Mean", "SD", "Panel"],
+  "records": [
+    ["Medium", "3", "4", "5"],
+    ["High", "4", "5", "6"],
+    ["Control", "5", "6", "7"],
+    ["Medium", "6", "7", "8"],
+    ["High", "7", "8", "9"],
+    ["Control", "8", "9", "10"],
+    ["Medium", "9", "10", "11"],
+    ["High", "10", "11", "12"],
+    ["Control", "11", "12", "13"],
+    ["Medium", "12", "13", "14"],
+    ["High", "13", "14", "15"]
+  ],
+  "groups": [
+    { "text": "Category A", "sourceRow": 3, "modelRow": 1, "modelSpan": 4, "panel": "A" },
+    { "text": "Category B", "sourceRow": 6, "modelRow": 6, "modelSpan": 3, "panel": "B" },
+    { "text": "Category C", "sourceRow": 9, "modelRow": 9, "modelSpan": 3, "panel": "C" }
+  ],
+  "expectedFirstStub": { "row": 3, "rowSpan": 3 }
+}

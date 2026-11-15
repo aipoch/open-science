@@ -10,6 +10,8 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'settings-credential-unavailable',
   'session-details-conflict',
   'session-size-limit',
+  'session-package-source-unavailable',
+  'session-package-invalid-archive',
   'session-revision-conflict',
   'SESSION_RUNTIME_WRITER_LOST',
   'csl-file-too-large',
@@ -68,9 +70,10 @@ export class ApplicationCommandError extends Error {
   constructor(
     readonly code: ApplicationCommandErrorCode,
     message: string,
-    readonly parameters?: Readonly<{ macro: string }>
+    readonly parameters?: Readonly<{ macro: string }>,
+    options?: ErrorOptions
   ) {
-    super(message)
+    super(message, options)
     this.name = 'ApplicationCommandError'
   }
 }

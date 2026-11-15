@@ -2,6 +2,8 @@ import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
 import {
   normalizeNetworkHostname as normalizeRequestedHost,
+  strictNetworkRuleMatches,
+  type StrictNetworkRule,
   formatNetworkHostname
 } from '../../../src/network-address.js'
 
@@ -24,6 +26,8 @@ export type TrustedPrivateDestination = Readonly<{
 }>
 
 type DestinationPolicyOptions = Readonly<{
+  mode?: 'relaxed' | 'strict'
+  strictWhitelist?: readonly StrictNetworkRule[]
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   askDomains?: readonly string[]
@@ -134,7 +138,7 @@ class DestinationPolicy {
   readonly #denied: readonly Readonly<{ raw: string; rule: Rule }>[]
   readonly #reasons: Readonly<Record<string, string>>
 
-  constructor(options: DestinationPolicyOptions) {
+  constructor(private readonly options: DestinationPolicyOptions) {
     this.#trusted = (options.trustedPrivateDestinations ?? [])
       .filter(validPrivateDestination)
       .map((entry) => ({
@@ -162,6 +166,15 @@ class DestinationPolicy {
         reason: this.#reasons[blocked.raw] ?? 'host is blocked by policy',
         configurable: false
       }
+    }
+    if (this.options.mode === 'strict') {
+      return strictNetworkRuleMatches(this.options.strictWhitelist ?? [], host, port, protocol)
+        ? { kind: 'allow', address: host }
+        : {
+            kind: 'deny',
+            reason: 'Destination is not in the strict whitelist. Add it manually in Settings.',
+            configurable: false
+          }
     }
     const trusted = this.#trusted.find(
       (entry) => entry.hostname === host && entry.port === port && entry.protocol === protocol

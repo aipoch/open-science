@@ -571,7 +571,7 @@ const editCardClassName =
 const editCancelButtonClassName =
   'flex h-7 items-center rounded-md px-2.5 text-[12px] font-medium text-text-300 transition-colors duration-200 ease-out hover:bg-bg-200 hover:text-text-100'
 const editSendButtonClassName =
-  'flex h-7 items-center rounded-md bg-primary px-2.5 text-[12px] font-medium text-primary-foreground transition-colors duration-200 ease-out hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary'
+  'flex h-7 items-center rounded-md bg-primary px-2.5 text-[12px] font-medium text-primary-foreground transition-colors duration-200 ease-out hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary'
 // The inline editor ignores pasted files; plain-text paste is handled by the editor itself.
 const ignoreEditPaste = (): void => {}
 // A branch-changing resend with several downstream turns asks for confirmation first.

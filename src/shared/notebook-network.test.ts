@@ -136,6 +136,7 @@ describe('notebook network policy', () => {
         disabledOpenScienceDomains: ['rest.uniprot.org', 'unknown.example']
       })
     ).toEqual({
+      mode: 'relaxed',
       allowedDomains: ['data.example.com'],
       disabledOpenScienceDomainGroups: ['literature'],
       disabledOpenScienceDomains: ['rest.uniprot.org']

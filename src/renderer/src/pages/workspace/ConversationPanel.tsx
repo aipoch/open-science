@@ -49,6 +49,7 @@ import { createSessionReplayItem, DISCUSSION_DRAFT_CONFLICT } from './workspace-
 
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { NotificationBell } from '@/components/NotificationBell'
+import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { SpecialistUnavailableNotice } from './SpecialistUnavailableNotice'
 import { useNoticeCountdown } from '@/components/use-notice-countdown'
@@ -333,6 +334,8 @@ const formatAttachmentSize = (size: number): string => {
 
 type ConversationPanelView = {
   activeSession: ChatSession | undefined
+  sessionLoadError?: string
+  onRetrySessionLoad?: () => void
   authenticationRecovery?: AgentAuthenticationRecovery
   composerFocusKey?: string
   canEditDraft: boolean
@@ -497,6 +500,8 @@ const ConversationPanel = ({
   const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
   const {
     activeSession,
+    sessionLoadError,
+    onRetrySessionLoad,
     composerFocusKey,
     canEditDraft,
     canEditLocalDraft = canEditDraft,
@@ -1801,7 +1806,19 @@ const ConversationPanel = ({
         </header>
 
         {isNewConversation ? null : activeSession?.contentLoaded === false ? (
-          <SessionSwitchSkeleton />
+          sessionLoadError ? (
+            <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+              <SessionPersistenceAlert
+                title={t('Saved conversations could not be loaded')}
+                message={sessionLoadError}
+                inline
+                className="max-w-md"
+                onRetry={onRetrySessionLoad}
+              />
+            </div>
+          ) : (
+            <SessionSwitchSkeleton />
+          )
         ) : (
           <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
             <WorkspaceMessageScroller
@@ -3375,7 +3392,7 @@ const ConversationPanel = ({
                             row and never wait for another user message. */}
                             {specialistHasPendingSwitch ? (
                               <span
-                                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] italic text-blue-400"
+                                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] italic text-status-info-foreground dark:text-status-info-dark-foreground"
                                 data-testid="specialist-pending-switch-chip"
                                 aria-label={t('Specialist switch pending')}
                               >
@@ -3383,7 +3400,7 @@ const ConversationPanel = ({
                               </span>
                             ) : null}
 
-                            <div className="flex-1" />
+                            <div className="ms-auto" />
 
                             {/* Context-window usage for the active session (renders nothing when the
                             framework doesn't report usage). Sits with the model it pertains to. */}
@@ -3395,14 +3412,15 @@ const ConversationPanel = ({
                               onCompact={onCompactContext}
                             />
 
-                            {/* Model/provider switcher; hides itself unless more than one is configured.
-                            Grouped on the right with Send, mirroring the reference composer layout. */}
-                            <ComposerModelPicker
-                              configuration={modelConfiguration}
-                              unavailable={modelUnavailable}
-                              includeAllClaudeSubscriptions={activeSession !== undefined}
-                              onChange={changeModelConfiguration}
-                            />
+                            {/* Give wrapping the picker's icon width; its label uses the remaining space. */}
+                            <div className="flex min-w-0 max-w-[220px] flex-[1_1_3.75rem] justify-end empty:hidden">
+                              <ComposerModelPicker
+                                configuration={modelConfiguration}
+                                unavailable={modelUnavailable}
+                                includeAllClaudeSubscriptions={activeSession !== undefined}
+                                onChange={changeModelConfiguration}
+                              />
+                            </div>
 
                             <Popover
                               open={specialistUnavailableOpen}

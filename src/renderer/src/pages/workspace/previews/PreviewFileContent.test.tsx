@@ -68,7 +68,6 @@ vi.mock('@/components/streamdown/code-highlighter-runtime', () => ({
           [
             {
               content: firstToken,
-              color: '#0969da',
               htmlStyle: { color: '#0969da', '--shiki-dark': '#79c0ff' }
             },
             { content: options.code.slice(firstToken.length), color: '#24292f' }
@@ -944,8 +943,13 @@ describe('PreviewFileContent', () => {
     )
     const token = container.querySelector('[data-testid="source-code-token"]') as HTMLElement
     expect(token?.textContent).toBe('import')
-    expect(token?.style.color).toBe('rgb(9, 105, 218)')
+    // jsdom retains the declaration; Electron coverage verifies the resolved local-scheme colors.
+    expect(token?.style.color).toBe('light-dark(#0969da, var(--shiki-dark, #0969da))')
     expect(token?.style.getPropertyValue('--shiki-dark')).toBe('#79c0ff')
+    const plainToken = container.querySelectorAll<HTMLElement>(
+      '[data-testid="source-code-token"]'
+    )[1]
+    expect(plainToken?.style.color).toBe('light-dark(#24292f, var(--shiki-dark, #24292f))')
     expect(container.querySelector('[data-testid="source-line-number"]')?.textContent).toBe('1')
   })
 

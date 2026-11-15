@@ -681,6 +681,9 @@ export type ProjectFilesFilterPreference = {
 export type SetNetworkProxyRequest = NetworkProxySettings
 
 export type SetNotebookNetworkRequest = NotebookNetworkSettings & {
+  baseMode?: NotebookNetworkSettings['mode']
+  baseStrictWhitelist?: NotebookNetworkSettings['strictWhitelist']
+  baseStrictWhitelistGroups?: NotebookNetworkSettings['strictWhitelistGroups']
   // The renderer's allowed-domain baseline. The owner applies the draft's add/remove delta to the
   // latest stored policy so a concurrent conversation approval cannot be overwritten by a stale form.
   baseAllowedDomains?: readonly string[]

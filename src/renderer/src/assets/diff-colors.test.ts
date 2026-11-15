@@ -87,3 +87,64 @@ describe('diff color tokens', () => {
     expect(semanticRules).toContain('color: var(--diff-removed-foreground)')
   })
 })
+
+// These are the actual shared substrates, including the strongest hover surface. A token used
+// for small metadata must stay readable wherever the existing surface ramp is used.
+describe('shared text and ANSI contrast', () => {
+  it.each(['light', 'dark'] as const)(
+    'keeps %s text and filled-danger labels readable',
+    (theme) => {
+      const block = themeBlock(theme === 'light' ? ':root' : '.dark')
+      for (const name of ['text-100', 'text-200', 'text-300', 'muted-foreground', 'success-000']) {
+        const foreground = hslToken(
+          block,
+          name === 'text-100' && theme === 'light' ? 'muted-foreground' : name
+        )
+        for (const surface of ['bg-000', 'bg-10', 'bg-200', 'bg-300', 'bg-400']) {
+          expect(
+            contrast(foreground, hslToken(block, surface)),
+            `${name} on ${surface}`
+          ).toBeGreaterThanOrEqual(4.5)
+        }
+      }
+      const danger = hslToken(block, 'danger-000')
+      const label = hslToken(block, 'danger-foreground')
+      const substrate = hslToken(block, 'bg-000')
+      const hovered = danger.map((channel, index) => channel * 0.9 + substrate[index]! * 0.1) as Rgb
+      expect(contrast(label, danger)).toBeGreaterThanOrEqual(4.5)
+      expect(contrast(label, hovered)).toBeGreaterThanOrEqual(4.5)
+    }
+  )
+
+  it.each(['light', 'dark'] as const)(
+    'keeps %s ANSI colors readable, including faint and paired backgrounds',
+    (theme) => {
+      const block = themeBlock(':root').replace(
+        /light-dark\((hsl\([^)]*\)),\s*(hsl\([^)]*\))\)/gu,
+        (_match, light: string, dark: string) => (theme === 'light' ? light : dark)
+      )
+      const parent = hslToken(themeBlock(theme === 'light' ? ':root' : '.dark'), 'bg-200')
+      const backgrounds = [
+        parent,
+        ...[40, 41, 42, 43, 44, 45, 46, 47, 100, 101, 102, 103, 104, 105, 106, 107].map((code) =>
+          hslToken(block, `notebook-ansi-bg-${code}`)
+        )
+      ]
+      for (const code of [30, 31, 32, 33, 34, 35, 36, 37, 90, 91, 92, 93, 94, 95, 96, 97]) {
+        const foreground = hslToken(block, `notebook-ansi-${code}`)
+        for (const background of backgrounds) {
+          for (const opacity of [1, 0.9]) {
+            const faded = (color: Rgb): Rgb =>
+              color.map(
+                (channel, index) => channel * opacity + parent[index]! * (1 - opacity)
+              ) as Rgb
+            expect(
+              contrast(faded(foreground), faded(background)),
+              `SGR ${code}, opacity ${opacity}`
+            ).toBeGreaterThanOrEqual(4.5)
+          }
+        }
+      }
+    }
+  )
+})

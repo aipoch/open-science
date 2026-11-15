@@ -223,7 +223,10 @@ describe('session diagnostics isolated collector', () => {
     const document = (runId: string): Record<string, unknown> => ({
       projectId: 'project',
       sessionId: 'session',
-      runs: [{ runId, script: 'SECRET_SCRIPT', text: { stdout: 'SECRET_STDOUT' } }]
+      runs: [
+        ...Array.from({ length: 100 }, (_, index) => ({ runId: `older-${index}` })),
+        { runId, script: 'SECRET_SCRIPT', text: { stdout: 'SECRET_STDOUT' } }
+      ]
     })
     await writeFile(join(notebookRoot, 'run.json'), JSON.stringify(document('root-run')))
     await writeFile(
@@ -254,8 +257,9 @@ describe('session diagnostics isolated collector', () => {
     const environment = JSON.parse(
       await readFile(join(input.directory!, 'content/environment.json'), 'utf8')
     )
-    expect(rootRun.runs[0].runId).toBe('root-run')
-    expect(frameRun.runs[0].runId).toBe('frame-run')
+    expect(rootRun.runCounts).toEqual({ source: 101, retained: 100, omitted: 1 })
+    expect(rootRun.runs.at(-1).runId).toBe('root-run')
+    expect(frameRun.runs.at(-1).runId).toBe('frame-run')
     expect(environment.storedDefaults.frameworkId).toBe('codex')
     const exported = JSON.stringify([rootRun, frameRun, environment])
     for (const secret of ['SECRET_SCRIPT', 'SECRET_STDOUT', 'SECRET_KEY'])

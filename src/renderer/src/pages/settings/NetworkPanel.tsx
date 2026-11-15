@@ -23,6 +23,7 @@ import {
   type NetworkEditorLeaveState
 } from './NotebookNetworkDomainsForm'
 import { SettingsSection } from './SettingsLayout'
+import { NotebookNetworkAccessSummary } from './NotebookNetworkAccessSummary'
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 
@@ -300,32 +301,7 @@ const NetworkPanel = ({
       ) : null}
 
       {!isConfiguring && notebookNetworkAvailable ? (
-        <SettingsSection
-          title={t('Notebook network access')}
-          description={t(
-            'HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.'
-          )}
-          aria-label={t('Notebook network access')}
-          data-settings-anchor="network.domains"
-        >
-          <div className="rounded-xl border border-border p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm text-foreground">{t('Trusted unsafe networks')}</p>
-                <p className="text-xs text-muted-foreground">
-                  {t('Authorize HTTP or direct IP access to an exact protocol, host and port.')}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onNavigate({ kind: 'domains' })}
-              >
-                {t('Manage access')}
-              </Button>
-            </div>
-          </div>
-        </SettingsSection>
+        <NotebookNetworkAccessSummary onOpen={() => onNavigate({ kind: 'domains' })} />
       ) : null}
 
       {!isConfiguring ? (

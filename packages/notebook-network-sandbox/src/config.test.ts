@@ -27,6 +27,8 @@ describe('Notebook network sandbox configuration', () => {
         deniedDomainReasons: { ' EXAMPLE.COM:22 ': 'SSH is blocked.' }
       })
     ).toEqual({
+      mode: 'relaxed',
+      strictWhitelist: [],
       allowedDomains: ['openalex.org', '*.npmjs.org:443'],
       deniedDomains: ['example.com:22'],
       deniedDomainReasons: { 'example.com:22': 'SSH is blocked.' }

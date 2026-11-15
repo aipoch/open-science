@@ -1,4 +1,5 @@
 import { nativeOrdinalReferencePackets } from './ordinal-reference-packets.js'
+import { isNativeCaptionTerminal } from './caption-terminal.js'
 import { nativeBoundedReferencePackets } from './bounded-reference-packets.js'
 import {
   nativeClosedUnheadedReferencePackets,
@@ -30,6 +31,7 @@ import {
 } from './compound-reference-boundary.js'
 import { nativeDisplayNumber, type NativeReferenceEvidence } from './native-reference-evidence.js'
 import { nativeMathAtom, nativeClosedMathGrammar } from './native-display-packets.js'
+import { nativeCaseDisplayItems } from './native-case-display.js'
 import {
   nativeAppendixOverviewBoundary,
   nativeOutlineRestartBoundary,
@@ -102,6 +104,7 @@ type Item = PdfLayoutTextItem &
   }
 type Line = Rect & { font: number; baseline: number; text: string; items: Item[] }
 type Block = Rect & {
+  sourceOnly?: true
   font: number
   lines: Line[]
   source: string
@@ -110,6 +113,7 @@ type Block = Rect & {
   readingBaseline?: number
 }
 type LayoutBlock = {
+  nativeProse?: true
   sourceOnly?: true
   preserve?: 'formula' | 'code' | 'literal' | 'reference'
   tableCell?: true
@@ -130,6 +134,7 @@ type LayoutPage = {
   blocks: LayoutBlock[]
 }
 type LayoutUnit = {
+  figure?: true
   id: string
   kind: 'prose-candidate' | 'heading-candidate' | 'other'
   referenceBoundary?: true
@@ -2408,10 +2413,25 @@ function extractPage(
   for (const radical of all.filter(
     (item) => item.str === '√' && (item.detachedOperator || item.fontDescent !== undefined)
   )) {
+    // A spaced pair additionally needs an inline prefix on this native row.
+    // A preceding fraction numerator cannot establish its reading baseline.
+    const prefix = all[all.indexOf(radical) - 1]
     const bases = all.filter(
       (base) =>
         !base.unsupported &&
-        /^[A-Za-z\p{Script=Greek}\d∆]{1,2}$/u.test(base.str) &&
+        (/^[A-Za-z\p{Script=Greek}\d∆]{1,2}$/u.test(base.str) ||
+          (/^[A-Z] [A-Z]$/u.test(base.str) &&
+            prefix &&
+            !prefix.unsupported &&
+            finalizedLines.has(radical.nativeLine) &&
+            prefix.nativeLine === radical.nativeLine &&
+            Math.abs(prefix.font - base.font) < base.font * 0.05 &&
+            Math.abs(prefix.originalBaseline - base.originalBaseline) < base.font * 0.05 &&
+            radical.x - prefix.right >= -base.font * 0.05 &&
+            radical.x - prefix.right < base.font * 0.5 &&
+            base.nativeLine === radical.nativeLine &&
+            base.index > radical.index &&
+            !all.some((item) => item.index > radical.index && item.index < base.index))) &&
         (base.str !== '∆' ||
           (base.nativeLine === radical.nativeLine &&
             base.index > radical.index &&
@@ -2938,9 +2958,51 @@ function extractPage(
                   ))
             ))
       )
+    // A second-level power has a source-contiguous parent before a same-tier
+    // division. Prefer that already attached parent over a nearer prose row.
+    const at = /^\d{1,2}$/u.test(item.str) ? all.indexOf(item) : -1,
+      parent = all[at - 1],
+      following = all[at + 1]
+    const nativeNestedPower = (band: (typeof bands)[number]): number =>
+      Number(
+        /^\d{1,2}$/u.test(item.str) &&
+          !!item.fontName &&
+          item.width > 0 &&
+          item.height > 0 &&
+          parent &&
+          following &&
+          /^[A-Za-z\p{Script=Greek}]$/u.test(parent.str) &&
+          following.str === '/' &&
+          attachedScripts.has(parent) &&
+          band.items.includes(parent) &&
+          [parent, following].every(
+            (part) =>
+              !part.unsupported &&
+              part.width > 0 &&
+              part.height > 0 &&
+              part.nativeLine === item.nativeLine &&
+              !!part.fontName &&
+              !part.hasEOL
+          ) &&
+          !item.hasEOL &&
+          parent.index < item.index &&
+          item.index < following.index &&
+          parent.fontName === following.fontName &&
+          Math.abs(parent.font - following.font) < parent.font * 0.05 &&
+          Math.abs(parent.originalBaseline - following.originalBaseline) < parent.font * 0.05 &&
+          item.font >= parent.font * 0.6 &&
+          item.font < parent.font * 0.85 &&
+          parent.originalBaseline - item.originalBaseline > parent.font * 0.08 &&
+          parent.originalBaseline - item.originalBaseline < parent.font * 0.55 &&
+          item.x - parent.right >= -parent.font * 0.01 &&
+          item.x - parent.right < parent.font * 0.15 &&
+          following.x - item.right >= -parent.font * 0.05 &&
+          following.x - item.right < parent.font * 0.3
+      )
     let band = bands
       .filter(
         (b) =>
+          nativeNestedPower(b) ||
           sharesLine(b) ||
           adjacentBase(b) ||
           (Math.abs(b.baseline - item.baseline) < Math.max(b.font, item.font) * 0.45 &&
@@ -2958,6 +3020,7 @@ function extractPage(
       )
       .sort((a, b) => {
         return (
+          nativeNestedPower(b) - nativeNestedPower(a) ||
           adjacentBase(b) - adjacentBase(a) ||
           sharesLine(b) - sharesLine(a) ||
           Math.abs(a.baseline - item.baseline) - Math.abs(b.baseline - item.baseline)
@@ -5720,6 +5783,140 @@ function extractPage(
             item.x - line.items[index - 1].right < line.font * 0.8))
     )
   const verifiedProseLines = new Set<Line>()
+  const nativeCases = nativeCaseDisplayItems(page)
+  for (const line of lines)
+    if (line.items.every((item) => nativeCases.has(item.index))) preservedFormulaLines.add(line)
+  const continuedEnumerationRows = new Set<Line>()
+  // Complete native prose rows outrank a symbolic-looking prefix, not a word dictionary.
+  for (const line of lines) {
+    const first = line.items.find((item) => !attachedScripts.has(item))
+    if (!first?.fontName || preservedFormulaLines.has(line)) continue
+    const scripts = line.items.filter((item) => attachedScripts.has(item))
+    const acronym = /\b[A-Za-z]{3,} \([A-Z][A-Z\d]{1,8}\)/u.exec(line.text)
+    const enumeration = [...line.text.matchAll(/\((\d{1,2})\) [A-Z][A-Za-z0-9-]* \[\d{1,3}\]/gu)]
+    const parameter =
+      /^[A-Z][a-z]{3,} \([A-Za-z]{3,}\s*=\s*\d+(?:,\s*\d+){1,7}\)(?:[ A-Za-z(),.;'’–-]+)$/u.test(
+        line.text
+      )
+    const acronymProse =
+      acronym &&
+      scripts.length > 0 &&
+      scripts.every((item) => /^\d{1,2}$/u.test(item.str)) &&
+      /^[A-Za-z\s,.'’!?;:–-]+$/u.test(line.text.replace(acronym[0], '')) &&
+      (line.text.replace(acronym[0], '').match(/\b[A-Za-z]{2,}\b/gu)?.length ?? 0) >= 3
+    const enumeratedProse =
+      scripts.length === 0 &&
+      enumeration.length >= 2 &&
+      /^[a-z]{3,} /u.test(line.text) &&
+      /, and$/u.test(line.text) &&
+      enumeration.every((match, at) => Number(match[1]) === at + 1) &&
+      /^[A-Za-z\s,]+$/u.test(line.text.replace(/\(\d{1,2}\) [A-Z][A-Za-z0-9-]* \[\d{1,3}\]/gu, ''))
+    const captionParameter = parameter && scripts.length === 0 && captionProseLines.has(line)
+    const fieldDescription =
+      scripts.length === 0 &&
+      /^[a-z]{3,} \([A-Z][a-z]{2,} [A-Z]{2,6}\) [a-z][a-z ,.'’–-]+$/u.test(line.text) &&
+      (line.text.slice(line.text.indexOf(')') + 1).match(/\b[a-z]{2,}\b/gu)?.length ?? 0) >= 4 &&
+      line.items.some(
+        (item, at) =>
+          /^\([A-Z]$/u.test(item.str) &&
+          /^[a-z]{2,} [A-Z]{2,6}$/u.test(line.items[at + 1]?.str ?? '') &&
+          line.items[at + 2]?.str === ')' &&
+          Math.abs(line.items[at + 1].x - item.right) < line.font * 0.02
+      )
+    if (!acronymProse && !enumeratedProse && !captionParameter && !fieldDescription) continue
+    const keys = new Set(line.items.map((item) => item.index)),
+      domain = nativeProseProofDomain(line.items),
+      exceptions = captionParameter
+        ? line.items.filter((item) => item.fontName !== first.fontName)
+        : []
+    if (
+      !domain ||
+      nativeGroups.get(first.nativeLine)?.length !== line.items.length ||
+      line.items.some((item, at) => {
+        const previous = line.items[at - 1]
+        return (
+          item.unsupported ||
+          tableItems.has(item) ||
+          codeItems.has(item) ||
+          item.nativeLine !== first.nativeLine ||
+          !item.fontName ||
+          item.transform.length !== 6 ||
+          !item.transform.every(Number.isFinite) ||
+          item.transform[0] <= 0 ||
+          item.transform[3] <= 0 ||
+          Math.abs(item.transform[1]) > 0.001 ||
+          Math.abs(item.transform[2]) > 0.001 ||
+          (attachedScripts.has(item)
+            ? !previous ||
+              item.font <= first.font * 0.5 ||
+              item.font >= first.font * 0.85 ||
+              previous.originalBaseline - item.originalBaseline <= first.font * 0.08 ||
+              previous.originalBaseline - item.originalBaseline >= first.font * 0.55 ||
+              Math.abs(item.x - previous.right) >= first.font * 0.15
+            : (!exceptions.includes(item) && item.fontName !== first.fontName) ||
+              Math.abs(item.font - first.font) >= first.font * 0.05 ||
+              Math.abs(item.originalBaseline - first.originalBaseline) >= first.font * 0.05) ||
+          (!!previous &&
+            (item.index <= previous.index ||
+              all.some((other) => other.index > previous.index && other.index < item.index) ||
+              item.x - previous.right < -first.font * 0.05 ||
+              item.x - previous.right >= first.font * 0.8))
+        )
+      }) ||
+      page.items.some(
+        (item, at) => item.str.trim() && !keys.has(at) && nativeProseRowOverlap(item, domain)
+      )
+    )
+      continue
+    const preceding = all.findLast((item) => item.index < line.items[0].index),
+      previous = preceding && lines.find((row) => row.items.at(-1) === preceding),
+      baselineRow = scripts.length
+        ? lineOf(line.items.filter((item) => !attachedScripts.has(item)))
+        : line
+    if (
+      !previous ||
+      preservedFormulaLines.has(previous) ||
+      previous.items.some((item) => item.unsupported || tableItems.has(item) || codeItems.has(item))
+    )
+      continue
+    if (captionParameter) {
+      if (
+        !captionProseLines.has(previous) ||
+        terminal(previous.text) ||
+        previous.items[0].fontName !== first.fontName ||
+        line.baseline - previous.baseline <= first.font * 0.75 ||
+        line.baseline - previous.baseline >= first.font * 1.7 ||
+        Math.abs(line.x - previous.x) >= first.font * 0.15
+      )
+        continue
+    } else if (!continuousBodyWrap(previous, baselineRow, all, line.x, line.right)) continue
+    if (enumeratedProse) {
+      const last = Math.max(...line.items.map((item) => item.index)),
+        next = all.find((item) => item.index > last),
+        following = next && lines.find((row) => row.items[0] === next)
+      if (
+        !following ||
+        !following.text.startsWith(`(${enumeration.length + 1}) `) ||
+        (following.text.match(/\b[a-z]{2,}\b/gu)?.length ?? 0) < 4 ||
+        !uninterruptedNativeRow(following) ||
+        following.items.some(
+          (item) =>
+            item.unsupported ||
+            tableItems.has(item) ||
+            codeItems.has(item) ||
+            item.fontName !== first.fontName ||
+            Math.abs(item.font - first.font) >= first.font * 0.05
+        ) ||
+        following.baseline - line.baseline <= first.font * 0.75 ||
+        following.baseline - line.baseline >= first.font * 1.7 ||
+        Math.abs(following.x - line.x) >= first.font * 0.15
+      )
+        continue
+      continuedEnumerationRows.add(following)
+      verifiedProseLines.add(following)
+    }
+    verifiedProseLines.add(line)
+  }
   const sectionReferenceStarts = new Set<Line>()
   // A numeric citation can wrap after its comma, followed by another cited
   // name and returning prose. Prove both complete references and uninterrupted
@@ -7706,6 +7903,118 @@ function extractPage(
     fontWeights.set(item.fontName!, (fontWeights.get(item.fontName!) ?? 0) + item.str.length)
   }
   const bodyFontName = [...fontWeights].sort((a, b) => b[1] - a[1])[0]?.[0]
+  // A repeated name/contact row closes each front-matter record independently
+  // of its wording. Unknown contacts or intervening fields defeat the packet.
+  const metadataAuthors = ((): Set<Line> => {
+    const empty = new Set<Line>()
+    if (page.page !== 1) return empty
+    const contacts = lines.filter((row) => {
+      // Separate the domain token from its interior dot so long PDF strings
+      // cannot backtrack across overlapping domain repetitions.
+      const domain = /^[^\s@]+@([^\s@]+)$/u.exec(row.text)?.[1]
+      return (
+        row.baseline < page.height * 0.35 &&
+        Boolean(domain?.slice(1, -1).includes('.')) &&
+        uninterruptedNativeRow(row) &&
+        row.items.every(
+          (part) => !part.unsupported && !tableItems.has(part) && !codeItems.has(part)
+        )
+      )
+    })
+    if (contacts.length < 3 || contacts.length > 12) return empty
+    const pairs = contacts.map((contact) => {
+      const names = lines.filter(
+        (row) =>
+          row !== contact &&
+          Math.abs(row.baseline - contact.baseline) < contact.font * 0.05 &&
+          row.right + contact.font * 2 < contact.x &&
+          row.font > contact.font * 1.05 &&
+          row.font < contact.font * 1.2
+      )
+      return names.length === 1 ? { name: names[0], contact } : undefined
+    })
+    if (pairs.some((pair) => !pair)) return empty
+    const ordered = pairs.map((pair) => pair!).sort((a, b) => a.name.baseline - b.name.baseline)
+    const first = ordered[0],
+      font = first.name.items[0].fontName
+    if (
+      !font ||
+      !/^(?:[A-Z][A-Za-z'.-]*\s+){1,4}[A-Z][A-Za-z'.-]*[∗*†‡]+$/u.test(first.name.text) ||
+      ordered.some(
+        ({ name, contact }) =>
+          Math.abs(name.x - first.name.x) > name.font * 0.05 ||
+          Math.abs(name.font - first.name.font) > name.font * 0.05 ||
+          Math.abs(contact.right - first.contact.right) > contact.font * 0.05 ||
+          Math.abs(contact.font - first.contact.font) > contact.font * 0.05 ||
+          contact.items.some((part) => part.fontName !== first.contact.items[0].fontName) ||
+          name.items.some(
+            (part) =>
+              part.unsupported ||
+              tableItems.has(part) ||
+              codeItems.has(part) ||
+              (part.font >= name.font * 0.85 && part.fontName !== font)
+          ) ||
+          Math.max(...name.items.map((part) => part.index)) >=
+            Math.min(...contact.items.map((part) => part.index)) ||
+          all.some(
+            (part) =>
+              part.index >= name.items[0].index &&
+              part.index <= contact.items.at(-1)!.index &&
+              !name.items.includes(part) &&
+              !contact.items.includes(part)
+          )
+      )
+    )
+      return empty
+    let affiliationFont: string | undefined, affiliationSize: number | undefined
+    for (const [at, { name, contact }] of ordered.entries()) {
+      let cursor = Math.max(...contact.items.map((part) => part.index)),
+        baseline = name.baseline,
+        rows = 0
+      const nextName = ordered[at + 1]?.name
+      for (;;) {
+        const next = all.find((part) => part.index > cursor)
+        const row = next && lines.find((line) => line.items[0] === next)
+        if (!row || row === nextName) break
+        affiliationFont ??= row.items[0].fontName
+        affiliationSize ??= row.font
+        if (
+          !affiliationFont ||
+          affiliationFont === font ||
+          affiliationFont === contact.items[0].fontName ||
+          row.font >= name.font ||
+          Math.abs(row.font - affiliationSize) > row.font * 0.05 ||
+          Math.abs(row.x - name.x) > row.font * 0.05 ||
+          row.right >= contact.right ||
+          row.baseline >= page.height * 0.35 ||
+          !uninterruptedNativeRow(row) ||
+          row.items.some(
+            (part) =>
+              part.fontName !== affiliationFont ||
+              part.unsupported ||
+              tableItems.has(part) ||
+              codeItems.has(part)
+          )
+        )
+          break
+        if (row.baseline - baseline <= row.font * 0.75 || row.baseline - baseline >= row.font * 1.7)
+          return empty
+        cursor = Math.max(...row.items.map((part) => part.index))
+        baseline = row.baseline
+        if (++rows > 6) return empty
+      }
+      const next = all.find((part) => part.index > cursor)
+      if (
+        !rows ||
+        (nextName
+          ? next !== nextName.items[0]
+          : !next || next.originalBaseline - baseline < name.font * 2)
+      )
+        return empty
+    }
+    return new Set(ordered.map((pair) => pair.name))
+  })()
+  for (const row of metadataAuthors) styleBoundaries.add(row)
   // A separate en dash proves a hanging list only with a matching peer.
   // Inline abbreviation dashes and operands must not start new records.
   const dashRows = lines.filter(
@@ -8230,7 +8539,12 @@ function extractPage(
     return (
       block.lines.length === 1 &&
       block.y < page.height * 0.25 &&
-      block.font < pageFont * 0.95 &&
+      (block.font < pageFont * 0.95 ||
+        (page.page === 1 &&
+          block.items[0].index === all[0].index &&
+          // Some first-page titles share body size; native continuation closes their role.
+          block.font >= pageFont * 0.95 &&
+          /\b(?:IN|OF|ON|FOR|WITH|AND|TO)$/u.test(block.source))) &&
       /^[A-Z][A-Z ,:;–—-]{39,}$/u.test(block.source) &&
       /^[A-Z]{3,}(?: [A-Z]{3,}){0,3}$/u.test(line.text) &&
       block.right - block.x > page.width * 0.5 &&
@@ -8282,6 +8596,29 @@ function extractPage(
         (Math.abs(line.x - block.x) < block.font * 0.15 && /^\p{Ll}/u.test(line.text))) &&
       block.items[0].fontName !== undefined &&
       line.items.every((item) => item.fontName === block.items[0].fontName)
+    )
+  }
+  const spacedPaperTitleWrap = (block: Block, line: Line): boolean => {
+    const last = block.lines.at(-1)!
+    return (
+      page.page === 1 &&
+      block.lines.length === 1 &&
+      block.items[0].index === all[0].index &&
+      paperTitleWrap(block, line) &&
+      uninterruptedNativeRow(last) &&
+      uninterruptedNativeRow(line) &&
+      line.items[0].nativeLine === last.items.at(-1)!.nativeLine + 1 &&
+      Math.abs((line.x + line.right - block.x - block.right) / 2) < block.font * 0.15 &&
+      line.baseline - last.baseline > block.font * 1.7 &&
+      line.baseline - last.baseline < block.font * 2.1 &&
+      [...block.items, ...line.items].every(
+        (part) =>
+          !part.unsupported &&
+          !tableItems.has(part) &&
+          !codeItems.has(part) &&
+          part.fontName === block.items[0].fontName &&
+          Math.abs(part.font - block.font) < block.font * 0.05
+      )
     )
   }
   const dashBulletWrap = (block: Block, line: Line): boolean => {
@@ -8634,7 +8971,18 @@ function extractPage(
       bodyFontName !== undefined &&
       title.fontName !== undefined &&
       title.fontName !== bodyFontName &&
-      [...first.items, ...line.items].every(
+      (first.items.every((item) => item.fontName === title.fontName) || nativeHeadingRow(first)) &&
+      first.items.every(
+        (item) =>
+          Math.abs(item.font - line.font) < line.font * 0.05 &&
+          (item.fontName === title.fontName ||
+            (item.index > title.index &&
+              item.index < first.items.at(-1)!.index &&
+              /^\d+$/u.test(item.str) &&
+              !!item.fontName &&
+              Math.abs(item.originalBaseline - first.baseline) < line.font * 0.05))
+      ) &&
+      line.items.every(
         (item) =>
           item.fontName === title.fontName && Math.abs(item.font - line.font) < line.font * 0.05
       ) &&
@@ -9742,7 +10090,86 @@ function extractPage(
               Math.abs(part.font - line.font) < line.font * 0.05
           ) &&
           continuousBodyWrap(last, line, all, b.x, b.right, styledTail)
+        // A repeated, native subscripted process can close an unfinished
+        // theorem sentence. The variable's earlier occurrence proves its type;
+        // an isolated equation label or a new paragraph is not a continuation.
+        const [comparison, variable, subscript, period] = line.items
+        const scriptedComparisonTail =
+          b.lines.length >= 2 &&
+          /^(?:Theorem|Lemma|Proposition|Corollary) \d+(?:\.\d+)*[.:] /u.test(b.source) &&
+          /\bsame (?:joint )?distributions?$/u.test(last.text) &&
+          line.items.length === 4 &&
+          comparison.str === 'as' &&
+          /^[A-Za-z]$/u.test(variable.str) &&
+          /^[a-z]$/u.test(subscript.str) &&
+          period.str === '.' &&
+          attachedScripts.has(subscript) &&
+          [last, line].every((row) => {
+            const id = row.items[0].nativeLine,
+              native = nativeGroups.get(id)
+            return (
+              finalizedLines.has(id) &&
+              native?.length === row.items.length &&
+              native.every((part, index) => row.items[index] === part)
+            )
+          }) &&
+          comparison.nativeLine === last.items.at(-1)!.nativeLine + 1 &&
+          line.items.every(
+            (part) =>
+              !part.unsupported &&
+              !!part.fontName &&
+              part.width > 0 &&
+              part.height > 0 &&
+              !tableItems.has(part) &&
+              !codeItems.has(part)
+          ) &&
+          [comparison, period].every(
+            (part) =>
+              part.fontName === last.items[0].fontName &&
+              Math.abs(part.font - line.font) < line.font * 0.05
+          ) &&
+          [comparison, variable, period].every(
+            (part) => Math.abs(part.originalBaseline - line.baseline) < line.font * 0.05
+          ) &&
+          Math.abs(variable.font - line.font) < line.font * 0.05 &&
+          subscript.font >= variable.font * 0.6 &&
+          subscript.font < variable.font * 0.85 &&
+          subscript.originalBaseline - variable.originalBaseline > variable.font * 0.08 &&
+          subscript.originalBaseline - variable.originalBaseline < variable.font * 0.35 &&
+          subscript.x - variable.right >= -variable.font * 0.05 &&
+          subscript.x - variable.right < variable.font * 0.15 &&
+          b.items.some((part, index) => {
+            const following = b.items[index + 1]
+            return (
+              part.str === variable.str &&
+              part.fontName === variable.fontName &&
+              following?.str === subscript.str &&
+              following.fontName === subscript.fontName &&
+              attachedScripts.has(following) &&
+              Math.abs(part.font - variable.font) < line.font * 0.05 &&
+              Math.abs(following.font - subscript.font) < line.font * 0.05
+            )
+          }) &&
+          gap > line.font * 0.75 &&
+          gap < line.font * 1.7 &&
+          Math.abs(line.x - b.x) < line.font * 0.15 &&
+          Math.abs(last.right - b.right) < line.font &&
+          lastNativeIndex < nextNativeIndex &&
+          !all.some((part) => part.index > lastNativeIndex && part.index < nextNativeIndex)
+        const captionPanelTail =
+          line.items.length === 1 &&
+          isNativeCaptionTerminal(
+            page,
+            b.items.map((item) => item.index),
+            line.items[0].index
+          ) &&
+          uninterruptedNativeRow(last) &&
+          uninterruptedNativeRow(line) &&
+          line.items[0].nativeLine === last.items.at(-1)!.nativeLine + 1 &&
+          continuousBodyWrap(last, line, all, b.x, b.right, [], b.source)
         const shortTerminalTail =
+          captionPanelTail ||
+          scriptedComparisonTail ||
           shortInlineTail ||
           legacyTerminalTail ||
           raggedCitedNounTail ||
@@ -9786,12 +10213,12 @@ function extractPage(
         if (
           // Author names and contact lines are separate metadata rows, even
           // when their font size and leading match the affiliation below.
-          (line.baseline < page.height * 0.35 &&
-            [line, last].some(
-              (row) =>
-                /^(?:[A-Z][A-Za-z'.-]*\s+){1,4}[A-Z][A-Za-z'.-]*[∗*†‡]+$/u.test(row.text.trim()) ||
-                /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(row.text.trim())
-            )) ||
+          [line, last].some(
+            (row) =>
+              row.baseline < page.height * 0.35 &&
+              (/^(?:[A-Z][A-Za-z'.-]*\s+){1,4}[A-Z][A-Za-z'.-]*[∗*†‡]+$/u.test(row.text.trim()) ||
+                /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(row.text.trim()))
+          ) ||
           // A raised leading affiliation index starts its own front-matter
           // row. Do not flow the authors and several institutions as one
           // paragraph across their differently centered source regions.
@@ -9869,6 +10296,7 @@ function extractPage(
               terminal(last.text) ||
               line.items[0].str.trim() === last.items[0].str.trim())) ||
           (numbered.has(line) &&
+            !continuedEnumerationRows.has(line) &&
             !literalNumberContinuation &&
             !citationContinuation &&
             !sampleCountContinuation &&
@@ -10303,7 +10731,8 @@ function extractPage(
             : 0
         return (
           gap > line.font * 0.45 &&
-          gap < line.font * Math.max(1.7, (localLeadings.get(line) ?? leading) * 1.3) &&
+          (gap < line.font * Math.max(1.7, (localLeadings.get(line) ?? leading) * 1.3) ||
+            spacedPaperTitleWrap(b, line)) &&
           Math.abs(b.font - line.font) < line.font * 0.15 &&
           (hanging ||
             paperTitleWrap(b, line) ||
@@ -10393,8 +10822,15 @@ function extractPage(
         centeredSectionHeadingWrap(block, line))
     )
       completedHeadingWraps.add(block)
+    const literalHeadingHyphen =
+      block.lines.length > 0 &&
+      numberedHeadingWrap(block, line) &&
+      /(?:^|\s)[A-Za-z]-$/u.test(block.source) &&
+      /^\p{L}/u.test(line.text)
     block.lines.push(line)
-    block.source = joinLines(block.source, line.text)
+    block.source = literalHeadingHyphen
+      ? block.source + line.text
+      : joinLines(block.source, line.text)
     block.items.push(...line.items)
     Object.assign(block, bounds(block.items))
   }
@@ -10493,6 +10929,90 @@ function extractPage(
   const parallelCaptions = nativeParallelFigureCaptions(blocks, page, all, tableItems, codeItems)
   if (parallelCaptions) blocks.splice(0, blocks.length, ...parallelCaptions)
   blocks.push(...panelCaptionBlocks)
+  const duplicateCaptionAnchors = all
+    .filter((item) => captionAnchorLabel.test(item.str))
+    .flatMap((item, index, anchors) =>
+      anchors.slice(index + 1).flatMap((other) => {
+        const sameLabel =
+          item.str.replace(/[.:]$/u, '').toLowerCase() ===
+          other.str.replace(/[.:]$/u, '').toLowerCase()
+        const font = Math.max(item.font, other.font)
+        const overlapping =
+          item.x < other.right + font * 0.8 &&
+          other.x < item.right + font * 0.8 &&
+          Math.abs(item.originalBaseline - other.originalBaseline) < font * 0.9
+        return sameLabel && overlapping ? [{ item, other }] : []
+      })
+    )
+  if (duplicateCaptionAnchors.length) {
+    for (const block of blocks) {
+      if (!block.items.length) continue
+      const anchor = duplicateCaptionAnchors.find(({ item, other }) => {
+        const anchorBlocks = blocks.filter(
+          (candidate) => candidate.items.includes(item) || candidate.items.includes(other)
+        )
+        if (
+          !anchorBlocks.some((candidate) => {
+            const source = collapseDuplicateCaptionLabels(candidate.source)
+            return isPdfTranslationCaption(source) && !captionBodyReference.test(source)
+          })
+        )
+          return false
+        const top = Math.min(item.y, other.y),
+          bottom = Math.max(item.bottom, other.bottom),
+          left = Math.min(item.x, other.x),
+          right = Math.max(item.right, other.right),
+          font = Math.max(item.font, other.font),
+          anchorFonts = new Set(
+            blocks
+              .filter(
+                (candidate) => candidate.items.includes(item) || candidate.items.includes(other)
+              )
+              .flatMap((candidate) => candidate.items.map((entry) => entry.fontName))
+              .filter((name): name is string => !!name)
+          ),
+          streamFonts = new Set(
+            block.items.map((entry) => entry.fontName).filter((name): name is string => !!name)
+          ),
+          anchorIndexGap = Math.abs(item.index - other.index),
+          lowerAnchorIndex = Math.min(item.index, other.index),
+          upperAnchorIndex = Math.max(item.index, other.index),
+          anchorBaselineGap = Math.abs(item.originalBaseline - other.originalBaseline),
+          carriesBothStreams =
+            [...streamFonts].filter((name) => anchorFonts.has(name)).length >= 2 ||
+            block.items.some((left, index) =>
+              block.items.slice(index + 1).some((right) => {
+                const pairFont = Math.max(left.font, right.font),
+                  sameNativeGap =
+                    Math.abs(Math.abs(left.index - right.index) - anchorIndexGap) <=
+                    Math.max(4, anchorIndexGap * 0.15),
+                  sameBaselineGap =
+                    Math.abs(
+                      Math.abs(left.originalBaseline - right.originalBaseline) - anchorBaselineGap
+                    ) <=
+                    pairFont * 0.35,
+                  sameAnchorX =
+                    (Math.abs(left.x - item.x) <= pairFont * 0.8 &&
+                      Math.abs(right.x - other.x) <= pairFont * 0.8) ||
+                    (Math.abs(left.x - other.x) <= pairFont * 0.8 &&
+                      Math.abs(right.x - item.x) <= pairFont * 0.8),
+                  straddlesAnchors =
+                    (left.index < lowerAnchorIndex && right.index > upperAnchorIndex) ||
+                    (right.index < lowerAnchorIndex && left.index > upperAnchorIndex)
+                return sameNativeGap && sameBaselineGap && sameAnchorX && straddlesAnchors
+              })
+            )
+        return (
+          (block.items.includes(item) || block.items.includes(other) || carriesBothStreams) &&
+          block.x < right + font * 0.8 &&
+          block.right > left - font * 0.8 &&
+          block.y < bottom + Math.max(item.font, other.font) * 1.8 &&
+          block.bottom > top - Math.max(item.font, other.font) * 1.8
+        )
+      })
+      if (anchor) block.sourceOnly = true
+    }
+  }
   for (const item of all.filter((i) => isolatedFolios.has(i.key)))
     blocks.push({
       ...item,
@@ -10703,6 +11223,9 @@ function extractPage(
     height: page.height,
     sourceItems: all.length,
     blocks: finalOrdered.map((b, index) => ({
+      ...(b.lines.some((line) => verifiedProseLines.has(line))
+        ? { nativeProse: true as const }
+        : {}),
       id: `p${page.page}-b${index + 1}`,
       ...(b.items.every((item) => tableItems.has(item)) ? { tableCell: true as const } : {}),
       ...(b.items.every((item) => codeItems.has(item)) &&
@@ -10730,6 +11253,7 @@ function extractPage(
             (packet) => packet.size === b.items.length && b.items.every((item) => packet.has(item))
           ) ||
           headers.has(b) ||
+          b.sourceOnly ||
           b.items.every((item) => embeddedMetadata.has(item)) ||
           b.lines.some((line) => preservedFormulaLines.has(line)) ||
           (b.items.every((item) => codeItems.has(item)) &&
@@ -10872,6 +11396,19 @@ export const isPdfTranslationCaption = (text: string): boolean =>
     text
   )
 const captionLabel = /^(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+[.:]\s/iu
+// Some publishers place a second, non-visible caption text stream inside the
+// figure Form. PDF.js exposes both streams at nearly the same baseline, which
+// otherwise makes the caption body interleave character-by-character. Keep
+// those caption rows in their native layout until a renderer can prove which
+// stream is paintable.
+const captionAnchorLabel = /^(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+[.:]$/iu
+const collapseDuplicateCaptionLabels = (text: string): string =>
+  text.replace(
+    /^(?<label>(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+[.:])\s*\k<label>\s*/iu,
+    '$<label> '
+  )
+const captionBodyReference =
+  /^(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+[.:]\s+(?:shows?|illustrates?|depicts?|presents?|summari[sz]es?|reports?|provides?|flips|clarifies|assesses|compares?|demonstrates?|contains?|lists?|is|are)\b/iu
 // Some PDF text maps expand formula glyphs into repeated `ffi` ligature text or
 // paired Latin-1 delimiters. The visual formula is still present, but its source
 // string cannot be safely matched to PDFium text objects for replacement.
@@ -10882,6 +11419,94 @@ const formulaExtractionArtifact = (text: string): boolean =>
 // control code. Keep this damaged metadata native rather than aborting the PDF.
 const metadataExtractionArtifact = (text: string): boolean =>
   text.includes('☯') || /(?:©c|c©)\s*\d{4}\b/u.test(text)
+// Small, independently owned labels above their native figure caption cannot
+// open a document-wide bibliography. Unknown typography keeps the old policy.
+function nativeFigureReferenceLabel(
+  unit: LayoutUnit,
+  units: LayoutUnit[],
+  pages: PdfLayoutPage[],
+  bodyFont: number
+): boolean {
+  if (
+    !/^(?:references|bibliography|literature cited|works cited|参考文献|參考文獻)$/iu.test(
+      unit.source
+    ) ||
+    unit.kind !== 'other' ||
+    unit.fragments.length !== 1 ||
+    unit.items.length !== 1 ||
+    unit.risks.length
+  )
+    return false
+  const part = unit.fragments[0],
+    page = pages.find((p) => p.page === part.page)
+  if (!page || page.rotation !== 0 || part.rect.font >= bodyFont * 0.6) return false
+  const native = (owner: LayoutUnit): PdfLayoutTextItem | undefined => {
+    if (
+      owner.fragments.length !== 1 ||
+      owner.fragments[0].page !== page.page ||
+      owner.items.length !== 1 ||
+      owner.risks.length
+    )
+      return
+    const key = owner.items[0],
+      index = Number(key.split(':')[1]),
+      item = page.items[index]
+    if (
+      key !== page.page + ':' + index ||
+      !nativeHorizontalSourceItem(item) ||
+      !item.fontName ||
+      owner.source !== item.str ||
+      owner.originalStrings[0] !== item.str ||
+      units.filter((u) => u.items.includes(key)).length !== 1
+    )
+      return
+    return item
+  }
+  const label = native(unit)
+  if (!label) return false
+  return units.some((caption) => {
+    if (
+      caption.fragments.length !== 1 ||
+      caption.fragments[0].page !== page.page ||
+      !/^(?:Fig\.?|Figure)\s+\d+[.:]\s+\p{Lu}/iu.test(caption.source) ||
+      caption.risks.length ||
+      caption.items.length !== caption.originalStrings.length ||
+      caption.items.some((key, n) => {
+        const item = page.items[Number(key.split(':')[1])]
+        return (
+          !nativeHorizontalSourceItem(item) ||
+          item.str !== caption.originalStrings[n] ||
+          units.filter((owner) => owner.items.includes(key)).length !== 1
+        )
+      })
+    )
+      return false
+    const bounds = caption.fragments[0].rect
+    if (
+      part.rect.bottom > bounds.y ||
+      bounds.y - part.rect.y > page.height * 0.35 ||
+      part.rect.x < bounds.x ||
+      part.rect.right > bounds.right ||
+      part.rect.font >= bounds.font * 0.75
+    )
+      return false
+    const peers = units.filter((owner) => {
+      const item = native(owner),
+        box = owner.fragments[0]?.rect
+      return (
+        item &&
+        item.fontName === label.fontName &&
+        Math.abs(item.height - label.height) < label.height * 0.02 &&
+        box.x >= bounds.x &&
+        box.right <= bounds.right &&
+        box.y >= bounds.y - page.height * 0.35 &&
+        box.bottom < bounds.y
+      )
+    })
+    return peers.length >= 3
+  })
+}
+
 // A References column is not a bibliography boundary. Prove only its native
 // table-header ownership, without interpreting mathematical cells or claiming ink bounds.
 function nativeTableColumnReference(
@@ -12347,6 +12972,7 @@ export function groupPdfTranslationPages(raw: {
         (symbolicExpression(
           block.source.replace(/\b(?:max|min)(?=[a-z\p{Script=Greek}]∈)/gu, '')
         ) &&
+          !block.nativeProse &&
           !percentageTableLabel &&
           !nativeEquationReferenceProse(block, page, raw.pages, pages) &&
           !nativeClosedReferenceProse(block, page, rawItems.get(page.page)!) &&
@@ -15180,6 +15806,11 @@ export function groupPdfTranslationPages(raw: {
   const legendProse = nativeLegendProseOwners(units, raw.pages)
   for (const [index, unit] of units.entries()) {
     const wasReferences = references
+    const figureReference = nativeFigureReferenceLabel(unit, units, raw.pages, bodyFont)
+    if (figureReference) {
+      unit.figure = true
+      unit.sourceOnly = true
+    }
     if (pairedFigureNotes.has(unit.items.join('|'))) unit.referenceBoundary = true
     if (nativeCaptionPanel(unit, index)) delete unit.sourceOnly
     const heading = unit.source
@@ -15193,7 +15824,8 @@ export function groupPdfTranslationPages(raw: {
         nativeSingularReference(unit, units, raw.pages, raw.pageCount) ||
         nativeSupplementaryReferences(unit, units, raw.pages, raw.pageCount)) &&
       !isContentsEntry(unit) &&
-      !nativeTableColumnReference(unit, units, raw)
+      !nativeTableColumnReference(unit, units, raw) &&
+      !figureReference
     ) {
       references = true
       referenceHeading = unit
@@ -15744,9 +16376,133 @@ export function groupPdfTranslationPages(raw: {
       Object.assign(unit, { sourceOnly: true, preserve: 'code' })
   const finalUnits = units.filter((unit) => !joinedReferenceTails.has(unit))
   joinNativeBulletTails(finalUnits, raw.pages, lexicon)
+  joinNativeHyphenatedBodyWords(finalUnits, pages, raw.pages, lexicon, bodyFont)
   orderNativeReferenceRecords(finalUnits, pages, raw.pages, folios, lexicon)
   orderNativeBracketedRecords(finalUnits, pages, raw.pages, lexicon, joins)
   return { bodyFont, pages, units: finalUnits, joins }
+}
+
+// Repair only a witnessed word across two already closed native owners. A
+// neighboring body pair calibrates this boundary's leading, not a page-wide rule.
+function joinNativeHyphenatedBodyWords(
+  units: LayoutUnit[],
+  layouts: LayoutPage[],
+  pages: PdfLayoutPage[],
+  lexicon: Set<string>,
+  bodyFont: number
+): void {
+  const eligible = (unit: LayoutUnit): boolean =>
+    !unit.sourceOnly &&
+    !unit.preserve &&
+    unit.fragments.length === 1 &&
+    unit.items.length === 1 &&
+    unit.originalStrings.length === 1 &&
+    unit.risks.every((risk) => risk === 'possible-continuation') &&
+    !isPdfTranslationCaption(unit.source) &&
+    !symbolicExpression(unit.source)
+  const counts = new Map<string, number>()
+  for (const unit of units)
+    for (const key of unit.items) counts.set(key, (counts.get(key) ?? 0) + 1)
+  for (let at = 0; at + 1 < units.length; at++) {
+    const first = units[at],
+      next = units[at + 1]
+    if (!eligible(first) || !eligible(next) || first.kind !== 'prose-candidate') continue
+    const prefix = /\b([a-z]{3,})-$/u.exec(first.source)?.[1],
+      suffix = /^([a-z]{2,})\b/u.exec(next.source)?.[1]
+    if (
+      !prefix ||
+      !suffix ||
+      !lexicon.has(prefix + suffix) ||
+      lexicon.has(prefix + '-' + suffix) ||
+      wordCount(first.source) < 12 ||
+      wordCount(next.source) < 6 ||
+      !terminal(next.source)
+    )
+      continue
+    const page = pages.find((p) => p.page === first.fragments[0].page),
+      index = Number(first.items[0].split(':')[1])
+    if (
+      !page ||
+      page.rotation !== 0 ||
+      next.fragments[0].page !== page.page ||
+      !Number.isInteger(index) ||
+      index < 2 ||
+      first.items[0] !== `${page.page}:${index}` ||
+      next.items[0] !== `${page.page}:${index + 1}`
+    )
+      continue
+    const packet = page.items.slice(index - 2, index + 2),
+      [before, prior, head, tail] = packet,
+      size = head?.height,
+      pitch = head?.transform[5] - tail?.transform[5]
+    if (
+      !size ||
+      packet.length !== 4 ||
+      !head.fontName ||
+      Math.abs(size - bodyFont) > size * 0.055 ||
+      pitch < size * 1.7 ||
+      pitch > size * 2.8 ||
+      packet.some(
+        (item, n) =>
+          !nativeContentsUpright(item) ||
+          !item.hasEOL ||
+          item.fontName !== head.fontName ||
+          Math.abs(item.height - size) > size * 0.01 ||
+          item.fontAscent !== head.fontAscent ||
+          item.fontDescent !== head.fontDescent ||
+          counts.get(`${page.page}:${index - 2 + n}`) !== 1 ||
+          /[=<>≤≥+*/^−×÷∑∫]/u.test(item.str) ||
+          (n > 0 && Math.abs(packet[n - 1].transform[5] - item.transform[5] - pitch) > size * 0.03)
+      )
+    )
+      continue
+    const layout = layouts.find((p) => p.page === page.page)
+    if (
+      !layout ||
+      packet.some((_, n) => {
+        const owners = layout.blocks.filter((b) =>
+          b.items.includes(`${page.page}:${index - 2 + n}`)
+        )
+        return (
+          owners.length !== 1 || owners[0].tableCell || owners[0].sourceOnly || owners[0].preserve
+        )
+      })
+    )
+      continue
+    if (
+      first.originalStrings[0] !== head.str ||
+      next.originalStrings[0] !== tail.str ||
+      first.source !== head.str ||
+      next.source !== tail.str ||
+      wordCount(before.str) < 6 ||
+      wordCount(prior.str) < 6 ||
+      Math.abs(before.transform[4] - tail.transform[4]) > size * 0.15 ||
+      Math.abs(prior.transform[4] - tail.transform[4]) > size * 0.15 ||
+      Math.abs(before.transform[4] + before.width - head.transform[4] - head.width) > size * 0.15 ||
+      head.transform[4] < tail.transform[4] - size * 0.15 ||
+      head.transform[4] - tail.transform[4] > size * 3 ||
+      tail.transform[4] + tail.width > head.transform[4] + head.width - size * 2
+    )
+      continue
+    const domain = nativeProseProofDomain([head, tail])
+    if (
+      !domain ||
+      domain.x < 0 ||
+      domain.right > page.width ||
+      domain.y < 0 ||
+      domain.bottom > page.height ||
+      page.items.some(
+        (item, n) => n !== index && n !== index + 1 && nativeTextOverlapsProof(item, domain)
+      )
+    )
+      continue
+    first.source = joinCaptionLines([first.source, next.source], lexicon)
+    first.items.push(...next.items)
+    first.originalStrings.push(...next.originalStrings)
+    first.fragments.push(...next.fragments)
+    first.risks = [...new Set([...first.risks, ...next.risks])]
+    units.splice(at + 1, 1)
+  }
 }
 
 // Qualification is already final. Repair only a closed eligible component in
@@ -19111,6 +19867,38 @@ function nativeTextOverlapsProof(item: PdfLayoutTextItem, domain: Rect): boolean
       rect.right >= domain.x &&
       rect.bottom > domain.y &&
       rect.y < domain.bottom)
+  )
+}
+
+// Rotated margin text must be bounded in its own axes before testing a prose row.
+function nativeProseRowOverlap(item: PdfLayoutTextItem, domain: Rect): boolean {
+  if (item.transform[1] === 0 && item.transform[2] === 0)
+    return nativeTextOverlapsProof(item, domain)
+  const [a, b, c, d, x, y] = item.transform,
+    advance = Math.hypot(a, b),
+    ascent = item.fontAscent,
+    descent = item.fontDescent
+  if (!item.str.trim()) return false
+  if (
+    item.fontVertical !== false ||
+    item.dir !== 'ltr' ||
+    item.width <= 0 ||
+    ![...item.transform, item.width, ascent, descent].every(Number.isFinite) ||
+    advance <= 0 ||
+    ascent! <= descent!
+  )
+    return true
+  const corners = [0, item.width].flatMap((offset) =>
+    [descent!, ascent!].map((height) => ({
+      x: x + (a / advance) * offset + c * height,
+      y: y + (b / advance) * offset + d * height
+    }))
+  )
+  return (
+    Math.min(...corners.map((p) => p.x)) < domain.right &&
+    Math.max(...corners.map((p) => p.x)) >= domain.x &&
+    Math.max(...corners.map((p) => p.y)) > domain.y &&
+    Math.min(...corners.map((p) => p.y)) < domain.bottom
   )
 }
 

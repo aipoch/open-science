@@ -169,7 +169,9 @@ async function modelServer(
     for await (const chunk of request) chunks.push(Buffer.from(chunk))
     const body = JSON.parse(Buffer.concat(chunks).toString()) as WireRequest
     requests.push(body)
-    expect(request.headers.authorization).toBe('Bearer local-test-token')
+    if (request.url?.endsWith('/messages'))
+      expect(request.headers['x-api-key']).toBe('local-test-token')
+    else expect(request.headers.authorization).toBe('Bearer local-test-token')
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     if (reply) reply(body, response)
     else finish(response, 'answer')
@@ -414,6 +416,28 @@ it('sends task-only instructions without a tool catalog on the provider wire', a
   expect(model.requests[0].messages.map(({ role }) => role)).toEqual(['system', 'user'])
   expect(JSON.stringify(model.requests[0].messages)).toContain('Translate faithfully.')
 })
+
+it.each(['max_tokens', 'model_context_window_exceeded'])(
+  'reports a Messages %s stop as output truncation to the host',
+  async (reason) => {
+    const model = await modelServer((_body, response) => {
+      const events = [
+        { type: 'content_block_delta', delta: { type: 'text_delta', text: 'partial' } },
+        { type: 'message_delta', delta: { stop_reason: reason } },
+        { type: 'message_stop' }
+      ]
+      response.end(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''))
+    })
+    const a = await fixture(model.endpoint.replace('/chat/completions', '/messages'))
+    const { sessionId } = await a.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: a.directory,
+      mcpServers: []
+    })
+
+    expect((await prompt(a.connection, sessionId)).stopReason).toBe('max_tokens')
+    expect(model.requests).toHaveLength(1)
+  }
+)
 
 it('uses the package across turns and resumes durable history without replay duplication', async () => {
   const model = await modelServer()

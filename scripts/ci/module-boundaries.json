@@ -5851,6 +5851,7 @@
         "src/renderer/src/pages/settings/MemoryPanel.tsx",
         "src/renderer/src/pages/settings/NetworkPanel.tsx",
         "src/renderer/src/pages/settings/NetworkProxyForm.tsx",
+        "src/renderer/src/pages/settings/NotebookNetworkAccessSummary.tsx",
         "src/renderer/src/pages/settings/NotebookNetworkDomainsForm.tsx",
         "src/renderer/src/pages/settings/NotebookNetworkProtectionBanner.preview.tsx",
         "src/renderer/src/pages/settings/NotebookNetworkProtectionBanner.tsx",
@@ -5886,7 +5887,7 @@
         "src/renderer/src/pages/settings/useWslSetupStatus.ts",
         "src/renderer/src/pages/settings/validation-message.ts",
         "src/renderer/src/pages/settings/ProviderTestResultCard.tsx",
-        "src/renderer/src/pages/settings/TrustedPrivateServices.tsx"
+        "src/renderer/src/pages/settings/NotebookNetworkAccessEditor.tsx"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -5911,6 +5912,7 @@
         "src/renderer/src/pages/settings/MemoryPanel.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/NetworkPanel.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/NetworkProxyForm.tsx": "presentation-adapter",
+        "src/renderer/src/pages/settings/NotebookNetworkAccessSummary.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/NotebookNetworkDomainsForm.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/NotebookNetworkProtectionBanner.preview.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/NotebookNetworkProtectionBanner.tsx": "presentation-adapter",
@@ -5946,7 +5948,7 @@
         "src/renderer/src/pages/settings/useWslSetupStatus.ts": "presentation-adapter",
         "src/renderer/src/pages/settings/validation-message.ts": "presentation-adapter",
         "src/renderer/src/pages/settings/ProviderTestResultCard.tsx": "presentation-adapter",
-        "src/renderer/src/pages/settings/TrustedPrivateServices.tsx": "presentation-adapter"
+        "src/renderer/src/pages/settings/NotebookNetworkAccessEditor.tsx": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [

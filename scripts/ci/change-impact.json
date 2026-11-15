@@ -150,6 +150,12 @@
       "capabilities": ["documentation"]
     },
     {
+      "id": "german_readme_glossary",
+      "role": "overlay",
+      "paths": ["docs/de/README.md"],
+      "capabilities": ["i18n_catalog"]
+    },
+    {
       "id": "issue_template",
       "role": "owner",
       "paths": [".github/ISSUE_TEMPLATE/*.yml", ".github/ISSUE_TEMPLATE/*.yaml"],
@@ -219,6 +225,7 @@
         "packages/reproducibility/**",
         "src/main/artifacts/artifact-reproducibility-export.ts",
         "src/main/artifacts/durability.ts",
+        "src/main/artifacts/publication-owner.ts",
         "src/main/cli-install/launcher.ts",
         "src/main/composition/notebook-bridge.ts",
         "src/main/composition/settings-effects.ts",
@@ -533,6 +540,7 @@
         "e2e/message-scroll-release.spec.ts",
         "e2e/message-tool-order.spec.ts",
         "e2e/preview-context-menu.spec.ts",
+        "e2e/artifact-long-filenames.spec.ts",
         "e2e/source-preview-storage.spec.ts",
         "e2e/reproducibility-preview.spec.ts",
         "e2e/skill-permission-card.spec.ts",
@@ -553,6 +561,8 @@
         "e2e/pdf-translation-performance.spec.ts",
         "e2e/runtime-approval.spec.ts",
         "e2e/network-destination-approval.spec.ts",
+        "e2e/notebook-network-entry.spec.ts",
+        "e2e/notebook-network-modes.spec.ts",
         "e2e/pi-harness.spec.ts",
         "e2e/builtin-harness.spec.ts",
         "e2e/session-wait-status.spec.ts",

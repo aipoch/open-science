@@ -20,6 +20,7 @@ import { createManagedPreviewOwnerRegistry } from '../managed-preview-owner-regi
 import { ManagedPreviewResources } from '../managed-preview-resources'
 
 import { NotebookInputRegistry } from '../notebook/input-registry'
+import type { NotebookNetworkSandboxOwner } from '../notebook/network-sandbox-owner'
 import { NotebookRunRepository } from '../notebook/repository'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { PackageLiteratureReader } from '../session-package/literature-reader'
@@ -34,6 +35,7 @@ export function composeManagedFiles({
   settingsService,
   managedFileVersionService,
   sessionRepository,
+  notebookNetworkSandbox,
   getNotebookInputRegistry,
   readLiteratureItems
 }: {
@@ -44,6 +46,7 @@ export function composeManagedFiles({
   settingsService: SettingsService
   managedFileVersionService: ManagedFileVersionService
   sessionRepository: ReturnType<typeof createDefaultSessionRepository>
+  notebookNetworkSandbox: NotebookNetworkSandboxOwner
   getNotebookInputRegistry: () => NotebookInputRegistry
   readLiteratureItems: ReadArtifactLiteratureItems
 }): {
@@ -131,8 +134,11 @@ export function composeManagedFiles({
     settingsService
   )
   grantedRootsRepositoryRef.current = grantedRootsRepository
-  const localFsService = new LocalFsService(grantedRootsRepository, () =>
-    shutdownNotebooksBeforePolicyChange('granted-roots')
+  const localFsService = new LocalFsService(
+    grantedRootsRepository,
+    () => shutdownNotebooksBeforePolicyChange('granted-roots'),
+    (path, access, requestedPath) =>
+      notebookNetworkSandbox.preflightGrantedRoot(path, access, requestedPath)
   )
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (

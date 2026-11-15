@@ -1,3 +1,5 @@
+import { readNativeFormClippedText } from './native-form-clipped-text.js'
+import { rememberPdfTranslationSourceParser } from './snapshot.js'
 import { readNativeOccludedText } from './native-occluded-text.js'
 import { createNativeRuledAlgorithmCaptionReader } from './ruled-algorithm-packets.js'
 import { createNativeTaggedReferenceReader } from './tagged-reference-packets.js'
@@ -12,6 +14,7 @@ import {
   bindNativeTerminalCaptionLayout
 } from './appendix-overview-boundary.js'
 import { getPdfTranslationTextContent } from './text-content.js'
+import { rememberNativeCaptionTerminal } from './caption-terminal.js'
 import { nativeOwnedReferenceRolesCurrent } from './unheaded-reference-packets.js'
 import {
   readNativeReferenceEvidence,
@@ -23,8 +26,23 @@ import {
 } from './native-reference-evidence.js'
 import { readNativeSectionFontEvidence } from './wrapped-section-prose.js'
 import type { PDFDocumentProxy, PDFPageProxy, getDocument } from 'pdfjs-dist'
-import { createAuxiliaryNativeDisplayInkReader } from './auxiliary-native-ink.js'
+import {
+  createAuxiliaryNativeExclusionReader,
+  createAuxiliaryNativeDisplayInkReader
+} from './auxiliary-native-ink.js'
 import { hasNativeDisplaySequence, nativeScopedDisplayOwners } from './native-display-packets.js'
+import {
+  hasNativeMatrixCandidate,
+  createNativeMatrixReader,
+  nativeMatrixOwners
+} from './native-matrix-packets.js'
+import {
+  hasNativeFunctionDisplay,
+  createNativeFunctionDisplayReader,
+  nativeFunctionDisplayOwners
+} from './native-function-display.js'
+import { nativeTableCaptionOwners } from './native-table-caption.js'
+import { rememberNativeCaptionEligibility } from './caption-eligibility.js'
 import { nativePartialNavigation } from './native-source-geometry.js'
 import { readOutlierFontNavigation, readNativeType3Navigation } from './outlier-font-navigation.js'
 import { createPdfTranslationSource, type PdfTranslationSource } from './source.js'
@@ -127,15 +145,7 @@ function independentRect(
     : undefined
 }
 
-/** Borrows the reader's PDF; owns no loading task, page cleanup, or document disposal. */
-export async function extractPdfTranslationSource({
-  document,
-  resourceRequestKey,
-  sourceIdentity,
-  nativeDocumentFactory,
-  signal,
-  onProgress
-}: {
+type ExtractionInput = {
   document: Pick<PDFDocumentProxy, 'numPages' | 'fingerprints' | 'getPage'> &
     Partial<
       Pick<
@@ -148,6 +158,30 @@ export async function extractPdfTranslationSource({
   nativeDocumentFactory?: typeof getDocument
   signal: AbortSignal
   onProgress?: (pagesRead: number) => void
+}
+
+/** Borrows the viewer PDF; disposes only its own auxiliary loading task. */
+export async function extractPdfTranslationSource(
+  input: ExtractionInput
+): Promise<PdfTranslationExtraction> {
+  const exclusions = createAuxiliaryNativeExclusionReader(input, readNativeFormClippedText)
+  try {
+    return await readPdfTranslationSource({ ...input, nativeExclusions: exclusions })
+  } finally {
+    await exclusions.dispose()
+  }
+}
+
+async function readPdfTranslationSource({
+  document,
+  resourceRequestKey,
+  sourceIdentity,
+  nativeDocumentFactory,
+  signal,
+  onProgress,
+  nativeExclusions
+}: ExtractionInput & {
+  nativeExclusions: ReturnType<typeof createAuxiliaryNativeExclusionReader>
 }): Promise<PdfTranslationExtraction> {
   signal.throwIfAborted()
   const fingerprint = document.fingerprints[0]
@@ -177,6 +211,11 @@ export async function extractPdfTranslationSource({
       throw new Error('PDF source changed during occluded text verification')
   }
   const pages: PdfLayoutPage[] = []
+  const captionTerminals: (() => boolean)[] = []
+  const checkCaptionTerminals = (): void => {
+    if (captionTerminals.some((current) => !current()))
+      throw new Error('Native caption sources changed during extraction')
+  }
   const onlineContexts: Parameters<typeof readNativeOnlineAppendixRestart>[0][] = []
   const scopedDisplays: {
     page: PDFPageProxy
@@ -184,6 +223,8 @@ export async function extractPdfTranslationSource({
     viewport: ReturnType<PDFPageProxy['getViewport']>
     pageNumber: number
   }[] = []
+  const nativeMatrices: typeof scopedDisplays = []
+  const nativeFunctions: typeof scopedDisplays = []
   const mathDiagrams: PdfMathDiagram[] = []
   const styles: Record<string, TextStyle>[] = []
   const pagesWithoutText: number[] = []
@@ -228,7 +269,17 @@ export async function extractPdfTranslationSource({
       }
     )
     signal.throwIfAborted()
-    const occlusion = await readNativeOccludedText(page, content, viewport)
+    const occlusion = await readNativeOccludedText(page, content, viewport, () =>
+      nativeExclusions.readNegativeExclusions({
+        page,
+        content,
+        viewport,
+        pageNumber,
+        selected: new Set(
+          content.items.flatMap((item, index) => ('str' in item && item.str.trim() ? [index] : []))
+        )
+      })
+    )
     signal.throwIfAborted()
     if (occlusion) occlusionProofs.push(occlusion)
     let pageTextItems = 0
@@ -261,6 +312,7 @@ export async function extractPdfTranslationSource({
         return empty
       }
       if (hasText && occlusion?.indexes.has(index)) {
+        // Complete native ink is hidden by a proved fill or inherited Form clip.
         exclusions.push({
           reason: 'occluded-native-text',
           items: [{ pageNumber, index, text: item.str }]
@@ -303,6 +355,10 @@ export async function extractPdfTranslationSource({
     )
     if (!nativeDisplayMathEvidence.complete && hasNativeDisplaySequence(content))
       scopedDisplays.push({ page, content, viewport, pageNumber })
+    if (hasNativeFunctionDisplay(content))
+      nativeFunctions.push({ page, content, viewport, pageNumber })
+    if (hasNativeMatrixCandidate(content))
+      nativeMatrices.push({ page, content, viewport, pageNumber })
     for (const [index, rect] of readOutlierFontNavigation(page, content, viewport))
       outlierNavigation.set(`${pageNumber}:${index}`, rect)
     signal.throwIfAborted()
@@ -408,6 +464,14 @@ export async function extractPdfTranslationSource({
     await taggedReferences.observe({ ...restartInput, viewport })
     await algorithmCaptions.observe({ ...restartInput, viewport })
     terminalCaptions.observe({ ...restartInput, viewport })
+    const captionTerminal = await rememberNativeCaptionTerminal({
+      document,
+      page,
+      content,
+      rawPage: pages.at(-1)!,
+      signal
+    })
+    if (captionTerminal) captionTerminals.push(captionTerminal)
     onProgress?.(pageNumber)
     // Let the reader paint and deliver cancellation between page reads.
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -415,6 +479,7 @@ export async function extractPdfTranslationSource({
   }
   checkType3Navigation()
   checkOcclusions()
+  checkCaptionTerminals()
   await terminalCaptions.prepare(pages)
   signal.throwIfAborted()
   // ponytail: grouping is synchronous; move it to a worker if long-document profiling requires it.
@@ -612,6 +677,7 @@ export async function extractPdfTranslationSource({
         source: unit.source,
         ...(sourceOnly ? { sourceOnly: true as const } : {}),
         ...(unit.preserve ? { preserve: unit.preserve } : {}),
+        ...(unit.figure ? { figure: true as const } : {}),
         ...(unit.referenceBoundary ? { referenceBoundary: true as const } : {}),
         fragments
       })
@@ -668,6 +734,64 @@ export async function extractPdfTranslationSource({
         : unit
     )
   }
+  if (nativeMatrices.length) {
+    const reader = createNativeMatrixReader({
+        document,
+        sourceIdentity,
+        nativeDocumentFactory,
+        signal
+      }),
+      protectedOwners = new Set<string>()
+    try {
+      for (const context of nativeMatrices)
+        for (const id of await nativeMatrixOwners(
+          finalUnits,
+          context.page,
+          context.content,
+          context.viewport,
+          context.pageNumber,
+          reader
+        ))
+          protectedOwners.add(id)
+    } finally {
+      await reader.dispose()
+    }
+    signal.throwIfAborted()
+    finalUnits = finalUnits.map((unit) =>
+      protectedOwners.has(unit.id)
+        ? { ...unit, sourceOnly: true as const, preserve: 'formula' as const }
+        : unit
+    )
+  }
+  if (nativeFunctions.length) {
+    const reader = createNativeFunctionDisplayReader({
+        document,
+        sourceIdentity,
+        nativeDocumentFactory,
+        signal
+      }),
+      protectedOwners = new Set<string>()
+    try {
+      for (const context of nativeFunctions)
+        for (const id of await nativeFunctionDisplayOwners(
+          finalUnits,
+          context.page,
+          context.content,
+          context.viewport,
+          context.pageNumber,
+          reader
+        ))
+          protectedOwners.add(id)
+    } finally {
+      await reader.dispose()
+    }
+    signal.throwIfAborted()
+    finalUnits = finalUnits.map((unit) =>
+      protectedOwners.has(unit.id)
+        ? { ...unit, sourceOnly: true as const, preserve: 'formula' as const }
+        : unit
+    )
+  }
   await taggedReferences.owners(finalUnits, pages)
   const taggedOwners = taggedReferences.currentOwners(finalUnits, pages)
   finalUnits = finalUnits.map((unit) => {
@@ -678,9 +802,18 @@ export async function extractPdfTranslationSource({
         ? { ...unit, sourceOnly: true as const }
         : unit
   })
+  const tableCaptionOwners = await nativeTableCaptionOwners(finalUnits, document, signal)
+  finalUnits = finalUnits.map((unit) => {
+    if (!tableCaptionOwners.has(unit.id)) return unit
+    const restored = { ...unit }
+    delete restored.sourceOnly
+    delete restored.preserve
+    return restored
+  })
   signal.throwIfAborted()
   checkType3Navigation()
   checkOcclusions()
+  checkCaptionTerminals()
   if (
     !nativeReferenceRolePagesCurrent(pages, unreliableItems) ||
     !nativeOwnedReferenceRolesCurrent(pages)
@@ -688,6 +821,8 @@ export async function extractPdfTranslationSource({
     throw new Error('Native reference sources changed during extraction')
   const sourceInput = { resourceRequestKey, fingerprint, pages, units: finalUnits }
   const source = terminalSource?.create(sourceInput) ?? createPdfTranslationSource(sourceInput)
+  rememberNativeCaptionEligibility(source, tableCaptionOwners)
+  rememberPdfTranslationSourceParser(source)
   return Object.freeze({
     source,
     coverage: Object.freeze({

@@ -47,6 +47,86 @@ function expectSamePixels(actual: Uint8ClampedArray, expected: Uint8ClampedArray
   }
 }
 
+it('retains both native lowered callee scripts through a PDF roundtrip', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRomanItalic),
+    page = pdf.addPage([612, 792]),
+    caller = lease(),
+    source = 'Use Qr(t) and Qr(t).',
+    translation = '使用Qr(t)与Qr(t)。'
+  page.drawText('Use ', { font, size: 12, x: 40, y: 700 })
+  for (const [n, x] of [100, 200].entries()) {
+    page.drawText('Q', { font, size: 12, x, y: 700 })
+    const r = x + font.widthOfTextAtSize('Q', 12) - 0.3,
+      end = r + font.widthOfTextAtSize('r', 8) + 0.3
+    page.drawText('r', { font, size: 8, x: r, y: 698.2 })
+    page.drawText(n ? '(t).' : '(t) and ', { font, size: 12, x: end, y: 700 })
+  }
+  page.drawText('Neighbor.', { font, size: 12, x: 40, y: 650 })
+  let task: ReturnType<typeof getDocument> | undefined
+  try {
+    const output = await new PdfTranslationWriter(entry).generateDetailed(
+      {
+        id: 'native-callee-scripts',
+        data: await pdf.save(),
+        pages: [{ width: 612, height: 792 }],
+        preserveUnsupported: true,
+        units: [
+          {
+            source,
+            translation,
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 39 / 612, y: 68 / 792, width: 300 / 612, height: 34 / 792 }
+              }
+            ]
+          },
+          {
+            source: 'Neighbor.',
+            translation: '邻段。',
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 39 / 612, y: 128 / 792, width: 270 / 612, height: 24 / 792 }
+              }
+            ]
+          }
+        ]
+      },
+      caller.lease
+    )
+    expect(output!.layoutFailures).toEqual([])
+    task = getDocument({ data: output!.data.slice(), useSystemFonts: true })
+    const items = (await (await (await task.promise).getPage(1)).getTextContent()).items
+      .filter((i) => 'str' in i)
+      .filter((i) => i.str.trim())
+    expect(
+      items
+        .map((i) => i.str)
+        .join('')
+        .replace(/\s/gu, '')
+    ).toContain(translation)
+    const scripts = items.flatMap((i, n) =>
+      i.str === 'r' ? [{ item: i, previous: items[n - 1], next: items[n + 1] }] : []
+    )
+    expect(scripts).toHaveLength(2)
+    for (const { item, previous, next } of scripts) {
+      expect(previous.str.endsWith('Q')).toBe(true)
+      expect(next.str.startsWith('(t)')).toBe(true)
+      expect(item.height).toBeCloseTo(8, 3)
+      expect(previous.height).toBeCloseTo(12, 3)
+      expect(item.transform[5] - previous.transform[5]).toBeCloseTo(-1.8, 3)
+      const gap = item.transform[4] - (previous.transform[4] + previous.width)
+      expect(gap).toBeGreaterThanOrEqual(-previous.height * 0.1)
+      expect(gap).toBeLessThan(previous.height * 0.1)
+    }
+  } finally {
+    await task?.destroy()
+    caller.release()
+  }
+})
+
 it.each([
   'plus',
   'minus',
@@ -649,11 +729,13 @@ it.each([
   'combining',
   'linked',
   'source-extended',
-  'nested'
+  'nested',
+  'multi-object-radicand'
 ] as const)('retains unowned radical overbars without blocking other text (%s)', async (kind) => {
   const increment = kind.endsWith('-increment'),
-    operand = increment ? '∆' : 'dT',
-    operandRight = increment ? 115.4 : 120.7
+    multiple = kind === 'multi-object-radicand',
+    operand = multiple ? 'x' : increment ? '∆' : 'dT',
+    operandRight = multiple ? 148 : increment ? 115.4 : 120.7
   const pathKind =
     kind === 'move-reversed' ? 'reversed' : kind === 'move-rotated' ? 'rotated' : kind
   const pdf = await PDFDocument.create(),
@@ -661,6 +743,13 @@ it.each([
     symbol = await pdf.embedFont(StandardFonts.Symbol),
     page = pdf.addPage([612, 792]),
     caller = lease()
+  if (multiple)
+    page.drawText('The measured process admits this complete bounded expression.', {
+      font,
+      size: 12,
+      x: 40,
+      y: 724
+    })
   page.drawText('Scale ', { font, size: 12, x: 40, y: 700 })
   if (kind === 'nested') page.drawText('√', { font: symbol, size: 12, x: 93, y: 700 })
   page.drawText(kind === 'no-radical' ? 'R' : '√', {
@@ -696,10 +785,14 @@ it.each([
     if (pathKind === 'rotated') page.pushOperators(popGraphicsState())
   }
   page.drawText(operand, { font: increment ? symbol : font, size: 12, x: 107, y: 700 })
+  if (multiple) {
+    page.drawText('2', { font, size: 8, x: 113, y: 704 })
+    page.drawText(' + 2y', { font, size: 12, x: 118, y: 700 })
+  }
   page.drawText(kind === 'source-extended' ? '2 is bounded.' : ' is bounded.', {
     font,
     size: 12,
-    x: increment ? 116 : 121,
+    x: multiple ? 149 : increment ? 116 : 121,
     y: 700
   })
   page.drawText('Other paragraph.', { font, size: 12, x: 40, y: 650 })
@@ -719,8 +812,9 @@ it.each([
       ])
     )
   const moving = ['move', 'move-increment', 'move-reversed', 'move-rotated'].includes(kind),
-    translated =
-      moving || kind === 'linked'
+    translated = multiple
+      ? '测量过程的完整尺度√x2 + 2y有界。'
+      : moving || kind === 'linked'
         ? `这个模型给出的总体尺度√${operand}有界。`
         : kind === 'changed-increment'
           ? '该尺度√Γ有界。'
@@ -737,7 +831,7 @@ it.each([
                     : '该尺度有界。'
   const data = await pdf.save(),
     nativeSourceBytes = data.slice(),
-    source = `Scale ${kind === 'nested' ? '√' : ''}${kind === 'no-radical' ? 'R' : '√'}${operand}${kind === 'source-extended' ? '2' : ''} is bounded.`,
+    source = `${multiple ? 'The measured process admits this complete bounded expression. ' : ''}Scale ${kind === 'nested' ? '√' : ''}${kind === 'no-radical' ? 'R' : '√'}${operand}${multiple ? '2 + 2y' : ''}${kind === 'source-extended' ? '2' : ''} is bounded.`,
     retained = [
       'visible',
       'reversed',
@@ -751,7 +845,8 @@ it.each([
       'combining',
       'linked',
       'source-extended',
-      'nested'
+      'nested',
+      'multi-object-radicand'
     ].includes(kind),
     original = getDocument({ data: data.slice(), useSystemFonts: true })
   let target: ReturnType<typeof getDocument> | undefined
@@ -776,7 +871,12 @@ it.each([
             fragments: [
               {
                 pageNumber: 1,
-                rect: { x: 39 / 612, y: 68 / 792, width: 270 / 612, height: 34 / 792 }
+                rect: {
+                  x: 39 / 612,
+                  y: (multiple ? 54 : 68) / 792,
+                  width: (multiple ? 340 : 270) / 612,
+                  height: (multiple ? 48 : 34) / 792
+                }
               }
             ]
           },
@@ -895,6 +995,250 @@ it.each([
   } finally {
     await target?.destroy()
     await original.destroy()
+    caller.release()
+  }
+})
+
+it.each(['wildcard', 'identifier', 'unchanged', 'distant'])(
+  'retains a closed wildcard underscore without moving its path (%s)',
+  async (kind) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.TimesRoman),
+      page = pdf.addPage([612, 792]),
+      caller = lease(),
+      start = 100 + font.widthOfTextAtSize('AX', 12) - 0.3,
+      suffix = kind === 'identifier' ? 'YZ are shown.' : '* are shown.',
+      source = `Band AX ${suffix}`,
+      translation = '频带AX如图。',
+      retained = kind === 'wildcard' || kind === 'identifier'
+    page.drawText('Band ', { font, size: 12, x: 40, y: 700 })
+    page.drawText('AX', { font, size: 12, x: 100, y: 700 })
+    page.drawLine({
+      start: { x: start, y: kind === 'distant' ? 680 : 698.7 },
+      end: { x: start + 6, y: kind === 'distant' ? 680 : 698.7 },
+      thickness: 0.4
+    })
+    page.drawText(suffix, { font, size: 12, x: start + 6.3, y: 700 })
+    page.drawText('Neighbor.', { font, size: 12, x: 40, y: 650 })
+    const data = await pdf.save(),
+      before = data.slice()
+    try {
+      const output = await new PdfTranslationWriter(entry).generateDetailed(
+        {
+          id: 'native-wildcard-mark',
+          data,
+          preserveUnsupported: true,
+          pages: [{ width: 612, height: 792 }],
+          units: [
+            {
+              source,
+              translation: kind === 'unchanged' ? source : translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 39 / 612, y: 68 / 792, width: 300 / 612, height: 34 / 792 }
+                }
+              ]
+            },
+            {
+              source: 'Neighbor.',
+              translation: '邻段。',
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 39 / 612, y: 128 / 792, width: 270 / 612, height: 24 / 792 }
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(output!.layoutFailures).toHaveLength(retained ? 1 : 0)
+      const task = getDocument({ data: output!.data.slice(), useSystemFonts: true })
+      try {
+        const text = (await (await (await task.promise).getPage(1)).getTextContent()).items
+          .flatMap((i) => ('str' in i ? [i.str] : []))
+          .join('')
+          .replace(/\s/gu, '')
+        expect(text).toContain('邻段。')
+        expect(text).toContain(
+          (retained || kind === 'unchanged' ? source : translation).replace(/\s/gu, '')
+        )
+      } finally {
+        await task.destroy()
+      }
+      const { engine } = await import(pathToFileURL(resolve('resources/pdfium.mjs')).href),
+        native = await engine(),
+        bars = []
+      for (const bytes of [before, output!.data]) {
+        const document = native.open(bytes),
+          p = native.p.FPDF_LoadPage(document.doc, 0)
+        try {
+          bars.push(
+            native
+              .objects(p)
+              .filter((o) => o.type === 2)
+              .map((o) => o.bounds)
+          )
+        } finally {
+          native.p.FPDF_ClosePage(p)
+          document.close()
+        }
+      }
+      expect(bars[1]).toEqual(bars[0])
+    } finally {
+      caller.release()
+    }
+  }
+)
+
+it.each([
+  'move',
+  'move-translated-path',
+  'changed',
+  'duplicate',
+  'overshoot',
+  'triple',
+  'split',
+  'superscript',
+  'literal-space',
+  'foreign'
+])('keeps a whole native root-product object and its prefix bar (%s)', async (kind) => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRoman),
+    symbol = await pdf.embedFont(StandardFonts.Symbol),
+    page = pdf.addPage([612, 792]),
+    caller = lease(),
+    secondOrigin = 106.6 + font.widthOfTextAtSize('P', 12) + 2.4
+  if (kind === 'foreign')
+    page.drawLine({ start: { x: 112, y: 703 }, end: { x: 112, y: 709 }, thickness: 0.2 })
+  page.drawText('Scale ', { font, size: 12, x: 40, y: 700 })
+  page.drawText('√', { font: symbol, size: 12, x: 100, y: 700 })
+  if (kind === 'move-translated-path')
+    page.pushOperators(pushGraphicsState(), concatTransformationMatrix(1, 0, 0, 1, 106.6, 710.7))
+  page.drawLine({
+    start: {
+      x: kind === 'move-translated-path' ? 0 : 106.6,
+      y: kind === 'move-translated-path' ? 0 : 710.7
+    },
+    end: {
+      x:
+        kind === 'move-translated-path'
+          ? secondOrigin - 0.05 - 106.6
+          : kind === 'overshoot'
+            ? secondOrigin + 9
+            : secondOrigin - 0.05,
+      y: kind === 'move-translated-path' ? 0 : 710.7
+    },
+    thickness: 0.1
+  })
+  if (kind === 'move-translated-path') page.pushOperators(popGraphicsState())
+  page.drawText(
+    kind === 'split' ? 'P' : kind === 'triple' ? 'PQR' : kind === 'literal-space' ? 'P Q' : 'PQ',
+    {
+      font,
+      size: 12,
+      x: 106.6,
+      y: 700
+    }
+  )
+  if (kind === 'split') page.drawText('Q', { font, size: 12, x: secondOrigin, y: 700 })
+  if (kind === 'superscript') page.drawText('2', { font, size: 8, x: secondOrigin + 8, y: 704 })
+  page.drawText(' is bounded.', { font, size: 12, x: secondOrigin + 17, y: 700 })
+  page.drawText('Neighbor.', { font, size: 12, x: 40, y: 650 })
+  // One native object, two glyphs with an actual advance gap; no literal space glyph.
+  const prepared = await PDFDocument.load(await pdf.save()),
+    contents = prepared.getPage(0).node.Contents()!,
+    streams = contents instanceof PDFArray ? contents.asArray() : [contents]
+  for (const ref of streams) {
+    const stream = prepared.context.lookup(ref)
+    if (!(stream instanceof PDFRawStream)) throw Error('Expected native content stream')
+    const text = Buffer.from(decodePDFRawStream(stream).decode())
+      .toString('latin1')
+      .replace('<5051> Tj', '[<50> -200 <51>] TJ')
+      .replace('<505152> Tj', '[<50> -200 <51> -200 <52>] TJ')
+    prepared.context.assign(ref as never, prepared.context.flateStream(text))
+  }
+  const data = await prepared.save(),
+    original = data.slice(),
+    source = `Scale √P Q${kind === 'triple' ? ' R' : kind === 'superscript' ? '2' : ''} is bounded.`,
+    translation = `原生尺度√P ${kind === 'changed' ? 'R' : 'Q'}${kind === 'duplicate' ? '与√P Q' : kind === 'triple' ? ' R' : kind === 'superscript' ? '²' : ''}有界。`,
+    retained = !kind.startsWith('move')
+  try {
+    const output = await new PdfTranslationWriter(entry).generateDetailed(
+      {
+        id: 'native-root-product',
+        data,
+        preserveUnsupported: true,
+        pages: [{ width: 612, height: 792 }],
+        units: [
+          {
+            source,
+            translation,
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 39 / 612, y: 68 / 792, width: 300 / 612, height: 34 / 792 }
+              }
+            ]
+          },
+          {
+            source: 'Neighbor.',
+            translation: '邻段。',
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 39 / 612, y: 128 / 792, width: 270 / 612, height: 24 / 792 }
+              }
+            ]
+          }
+        ]
+      },
+      caller.lease
+    )
+    expect(output!.layoutFailures).toHaveLength(retained ? 1 : 0)
+    const task = getDocument({ data: output!.data.slice(), useSystemFonts: true })
+    try {
+      const text = (await (await (await task.promise).getPage(1)).getTextContent()).items
+        .flatMap((i) => ('str' in i ? [i.str] : []))
+        .join('')
+        .replace(/\s/gu, '')
+      expect(text).toContain('邻段。')
+      expect(text).toContain((retained ? source : translation).replace(/\s/gu, ''))
+    } finally {
+      await task.destroy()
+    }
+    if (!retained) {
+      const { engine } = await import(pathToFileURL(resolve('resources/pdfium.mjs')).href),
+        native = await engine(),
+        snapshots: number[][][] = []
+      for (const bytes of [original, output!.data]) {
+        const document = native.open(bytes),
+          p = native.p.FPDF_LoadPage(document.doc, 0)
+        try {
+          const objects = native.objects(p),
+            root = objects.find((o) => o.text?.trim() === '√')!,
+            variable = objects.find((o) => o.text?.trim() === 'P Q')!,
+            bar = objects.filter((o) => o.type === 2)
+          expect(root).toBeDefined()
+          expect(variable).toBeDefined()
+          expect(bar).toHaveLength(1)
+          snapshots.push(
+            [root, bar[0], variable].map((o) =>
+              o.bounds.map((x, axis) => x - root.bounds[axis % 2])
+            )
+          )
+        } finally {
+          native.p.FPDF_ClosePage(p)
+          document.close()
+        }
+      }
+      for (let i = 0; i < 3; i++)
+        for (let axis = 0; axis < 4; axis++)
+          expect(snapshots[1][i][axis]).toBeCloseTo(snapshots[0][i][axis], 3)
+    }
+  } finally {
     caller.release()
   }
 })
@@ -10295,7 +10639,7 @@ it.each([
 })
 
 it.each(['empty', 'text', 'rule', 'link'] as const)(
-  'uses a short final row only when the additional column space is empty: %s',
+  'keeps a short final row within its declared boundary beside %s space',
   async (obstacle) => {
     const pdf = await PDFDocument.create(),
       font = await pdf.embedFont(StandardFonts.TimesRoman),
@@ -10375,7 +10719,10 @@ it.each(['empty', 'text', 'rule', 'link'] as const)(
           .join('')
           .replace(/\s/gu, '')
       expect(text).toBe(translation.replace(/\s/gu, '') + (obstacle === 'text' ? 'X' : ''))
-      expect(links[0].rect[1] - links[1].rect[1]).toBeCloseTo(obstacle === 'empty' ? 0 : 14, 2)
+      // Empty native space is not output capacity declared by the caller.
+      expect(links[0].rect[1] - links[1].rect[1]).toBeCloseTo(14, 2)
+      expect(links[0].rect[2]).toBeLessThanOrEqual(340.5)
+      expect(links[1].rect[2]).toBeLessThanOrEqual(255.5)
       if (obstacle === 'link') expect(links[2].rect).toEqual([258, 684, 263, 692])
     } finally {
       await target?.destroy()

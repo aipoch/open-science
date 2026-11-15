@@ -339,7 +339,7 @@ describe('CompletedJobCard', () => {
       root.render(<CompletedJobCard job={job} onOpen={vi.fn()} />)
     })
     const card = container.querySelector('[data-testid="completed-job-card"]')
-    expect(card?.innerHTML).toContain('text-green-600')
+    expect(card?.innerHTML).toContain('text-status-success-foreground')
   })
 
   it('renders red text for failed', () => {
@@ -348,7 +348,7 @@ describe('CompletedJobCard', () => {
       root.render(<CompletedJobCard job={job} onOpen={vi.fn()} />)
     })
     const card = container.querySelector('[data-testid="completed-job-card"]')
-    expect(card?.innerHTML).toContain('text-red-600')
+    expect(card?.innerHTML).toContain('text-status-failure-foreground')
   })
 
   it('calls onOpen when clicked', () => {

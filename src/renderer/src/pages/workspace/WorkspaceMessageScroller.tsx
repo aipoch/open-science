@@ -1853,7 +1853,9 @@ const WorkspaceMessageScrollerImpl = ({
                             defaultValue_one: '{{count}} previous message'
                           })}
                           {process.outcome === 'failed' ? (
-                            <span className="text-status-failure-foreground">{t('Failed')}</span>
+                            <span className="text-status-failure-foreground dark:text-status-failure-dark-foreground">
+                              {t('Failed')}
+                            </span>
                           ) : null}
                         </button>
                       </div>

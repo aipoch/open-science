@@ -250,23 +250,43 @@ const StatusIndicator = ({
   if (busy) {
     return (
       <LoaderCircle
-        className="size-4 animate-spin text-status-info-foreground"
+        className="size-4 animate-spin text-status-info-foreground dark:text-status-info-dark-foreground"
         aria-hidden="true"
       />
     )
   }
   if (state === 'ready') {
-    return <CheckCircle2 className="size-4 text-status-success-foreground" aria-hidden="true" />
+    return (
+      <CheckCircle2
+        className="size-4 text-status-success-foreground dark:text-status-success-dark-foreground"
+        aria-hidden="true"
+      />
+    )
   }
-  return <CircleX className="size-4 text-status-failure-foreground" aria-hidden="true" />
+  return (
+    <CircleX
+      className="size-4 text-status-failure-foreground dark:text-status-failure-dark-foreground"
+      aria-hidden="true"
+    />
+  )
 }
 
 const ReadinessIndicator = ({ value }: { value: boolean | undefined }): React.JSX.Element => {
   if (value === true) {
-    return <CheckCircle2 className="size-4 text-status-success-foreground" aria-hidden="true" />
+    return (
+      <CheckCircle2
+        className="size-4 text-status-success-foreground dark:text-status-success-dark-foreground"
+        aria-hidden="true"
+      />
+    )
   }
   if (value === false) {
-    return <CircleX className="size-4 text-status-failure-foreground" aria-hidden="true" />
+    return (
+      <CircleX
+        className="size-4 text-status-failure-foreground dark:text-status-failure-dark-foreground"
+        aria-hidden="true"
+      />
+    )
   }
   return <CircleHelp className="size-4 text-muted-foreground" aria-hidden="true" />
 }
@@ -760,7 +780,10 @@ export const WslLocalShellSection = ({
         setupStatus?.operation.state === 'finished' &&
         setupStatus.operation.kind === 'install-platform' &&
         setupStatus.operation.outcome === 'completed' ? (
-          <p className="mt-3 text-sm text-status-success-foreground" role="status">
+          <p
+            className="mt-3 text-sm text-status-success-foreground dark:text-status-success-dark-foreground"
+            role="status"
+          >
             {t(
               'The WSL2 platform installation completed. Continue with the next setup step below.'
             )}

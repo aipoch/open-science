@@ -382,3 +382,38 @@ describe('public-read runtime decision lifecycle', () => {
     })
   })
 })
+
+it('enforces strict rules through the runtime without DNS policy checks or approval', async () => {
+  runtime.updateConfig({
+    ...config,
+    mode: 'strict',
+    strictWhitelist: [{ protocol: 'http', hostnamePattern: 'localhost', port: 8080 }]
+  })
+  await wrap()
+  await expect(gateway.decide('localhost', 8080, 'block', undefined, 'http')).resolves.toEqual({
+    allowed: true,
+    address: 'localhost'
+  })
+  await expect(gateway.decide('unknown.example', 443, 'block')).resolves.toMatchObject({
+    allowed: false,
+    message: expect.stringContaining('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+  })
+  expect(approval).not.toHaveBeenCalled()
+  expect(mocks.lookup).not.toHaveBeenCalled()
+})
+it('expires a pending relaxed grant even when switching back before the answer arrives', async () => {
+  await wrap()
+  let release!: (allowed: boolean) => void
+  approval.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve
+      })
+  )
+  const pending = gateway.decide('unknown.example', 80, 'block', undefined, 'http')
+  await vi.waitFor(() => expect(approval).toHaveBeenCalledOnce())
+  runtime.updateConfig({ ...config, mode: 'strict', strictWhitelist: [] })
+  runtime.updateConfig({ ...config, mode: 'relaxed' })
+  release(true)
+  await expect(pending).resolves.toMatchObject({ allowed: false })
+})

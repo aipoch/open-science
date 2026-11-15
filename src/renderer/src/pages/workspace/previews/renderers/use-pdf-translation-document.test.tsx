@@ -1460,6 +1460,261 @@ describe('translated PDF ownership', () => {
 
 describe('independent moved-link validation', () => {
   it.each([
+    'changed-body',
+    'moved-body',
+    'retained-body',
+    'fake-caption',
+    'missing-fences',
+    'disconnected-fences'
+  ])('protects a real native ruled mathematical parameter body: %s', async (change) => {
+    const { getDocument: load, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    Object.assign(operators, OPS)
+    const make = async (target: boolean): Promise<Uint8Array> => {
+      const pdf = await PDFDocument.create(),
+        font = await pdf.embedFont(StandardFonts.Helvetica),
+        page = pdf.addPage([600, 800])
+      page.drawText(change === 'fake-caption' ? 'EXAMPLE II' : 'TABLE II', {
+        font,
+        x:
+          180 -
+          font.widthOfTextAtSize(change === 'fake-caption' ? 'EXAMPLE II' : 'TABLE II', 10) / 2,
+        y: 750,
+        size: 10
+      })
+      page.drawText('Parameters', { font, x: 60, y: 720, size: 10 })
+      for (let n = 0; n < 7; n++) {
+        page.drawText(
+          n === 0
+            ? target && !['retained-body', 'moved-body'].includes(change)
+              ? 'Input level'
+              : 'Input power'
+            : `Setting ${String.fromCharCode(65 + n)}`,
+          { font, x: target && change === 'moved-body' ? 70 : 60, y: 695 - n * 18, size: 10 }
+        )
+        page.drawText(`v = ${n + 1} W`, { font, x: 200, y: 695 - n * 18, size: 10 })
+      }
+      for (const y of change === 'missing-fences' ? [735, 570] : [735, 710, 650, 570]) {
+        if (change === 'disconnected-fences') {
+          const { moveTo, lineTo, stroke } = await import('pdf-lib')
+          page.pushOperators(moveTo(50, y), lineTo(80, y), moveTo(280, y), lineTo(310, y), stroke())
+        } else page.drawLine({ start: { x: 50, y }, end: { x: 310, y }, thickness: 0.5 })
+      }
+      page.drawText(target ? 'Translated prose.' : 'Original prose.', {
+        font,
+        x: 60,
+        y: 500,
+        size: 10
+      })
+      return pdf.save()
+    }
+    const sourceBytes = await make(false),
+      data = await make(true),
+      task = load({ data: sourceBytes.slice(), useSystemFonts: true }),
+      original = await task.promise
+    try {
+      const extracted = await extractPdfTranslationSource({
+          document: original,
+          resourceRequestKey: 'native-parameter-table',
+          signal: new AbortController().signal
+        }),
+        source = createPdfTranslationSource({
+          ...extracted.source,
+          units: extracted.source.units.map((u) => ({ ...u, sourceOnly: undefined }))
+        }),
+        results = {
+          source,
+          units: source.units.map((u) => ({
+            id: u.id,
+            translationSource: u.source,
+            translation: u.source
+              .replace('Original prose.', 'Translated prose.')
+              .replace(
+                'Input power',
+                ['retained-body', 'moved-body'].includes(change) ? 'Input power' : 'Input level'
+              )
+          }))
+        },
+        artifact = { results, data }
+      getDocument.mockImplementationOnce((options) => load({ ...options, useSystemFonts: true }))
+      const hook = renderHook(() =>
+        usePdfTranslationDocument(original, results, artifact, 'native-parameter-table')
+      )
+      await waitFor(() =>
+        expect(hook.result.current.state.status).toBe(
+          ['changed-body', 'moved-body'].includes(change) ? 'error' : 'ready'
+        )
+      )
+      if (['changed-body', 'moved-body'].includes(change))
+        expect(hook.result.current.state).toMatchObject({
+          failure: { code: 'validation-failed' },
+          details: 'Native mathematical parameter table changed'
+        })
+      hook.unmount()
+    } finally {
+      await task.destroy()
+    }
+  })
+
+  it('keeps distinct finite border widths exact when float32 would overflow', async () => {
+    const f = fixture(),
+      annotation = {
+        annotationType: 2,
+        rect: [60, 699, 80, 711],
+        url: 'https://example.invalid/reference'
+      }
+    f.originalPage.getAnnotations.mockResolvedValue([
+      { ...annotation, borderStyle: { width: 3.5e38, rawWidth: 3.5e38 } }
+    ])
+    f.targetPage.getAnnotations.mockResolvedValue([
+      { ...annotation, borderStyle: { width: 3.6e38, rawWidth: 3.6e38 } }
+    ])
+    const hook = renderHook(() =>
+      usePdfTranslationDocument(f.original, f.results, f.artifact, 'reader:0')
+    )
+    await waitFor(() => expect(hook.result.current.state.status).toBe('error'))
+    expect(hook.result.current.state).toMatchObject({
+      failure: { code: 'validation-failed' },
+      details: 'PDF annotations changed'
+    })
+  })
+
+  it('rejects a native repeated digit moved from a list marker to a figure reference', async () => {
+    const text = '(7) Compare Figure7.',
+      pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([600, 800]),
+      { PDFName, PDFDict } = await import('pdf-lib'),
+      width = font.widthOfTextAtSize('7', 10),
+      originalX = 60 + font.widthOfTextAtSize('(', 10),
+      targetX = 60 + font.widthOfTextAtSize('(7) Compare Figure', 10)
+    page.drawText(text, { font, x: 60, y: 700, size: 10 })
+    const link = pdf.context.obj({
+      Type: 'Annot',
+      Subtype: 'Link',
+      Rect: [originalX - 1, 699, originalX + width + 1, 711],
+      A: { S: 'URI', URI: 'https://example.invalid/figure-seven' }
+    })
+    page.node.set(PDFName.of('Annots'), pdf.context.obj([pdf.context.register(link)]))
+    const bytes = await pdf.save(),
+      saved = await PDFDocument.load(bytes),
+      moved = saved.context.lookup(saved.getPage(0).node.Annots()!.get(0), PDFDict)
+    moved.set(PDFName.of('Rect'), saved.context.obj([targetX - 1, 699, targetX + width + 1, 711]))
+    const data = await saved.save(),
+      { getDocument: load } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+      task = load({ data: bytes.slice(), useSystemFonts: true }),
+      original = await task.promise
+    try {
+      const { source } = await extractPdfTranslationSource({
+          document: original,
+          resourceRequestKey: 'native-digit-swap',
+          signal: new AbortController().signal
+        }),
+        results = {
+          source,
+          units: source.units.map((unit) => ({
+            id: unit.id,
+            translationSource: unit.source,
+            translation: unit.source
+          }))
+        },
+        artifact = { results, data }
+      expect(
+        (await (await original.getPage(1)).getTextContent()).items.filter(
+          (item) => 'str' in item && item.str.trim()
+        )
+      ).toHaveLength(1)
+      getDocument.mockImplementationOnce((options) => load({ ...options, useSystemFonts: true }))
+      const hook = renderHook(() =>
+        usePdfTranslationDocument(original, results, artifact, 'native-digit-swap')
+      )
+      await waitFor(() => expect(hook.result.current.state.status).toBe('error'))
+      expect(hook.result.current.state).toMatchObject({
+        failure: { code: 'validation-failed' },
+        details: 'PDF link label changed'
+      })
+      hook.unmount()
+    } finally {
+      await task.destroy()
+    }
+  })
+
+  it.each([
+    { change: 'float-width', accepted: true },
+    { change: 'different-width', accepted: false },
+    { change: 'different-dash', accepted: false },
+    { change: 'different-action', accepted: false }
+  ])('checks real serialized PDF annotation metadata: $change', async ({ change, accepted }) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([600, 800]),
+      annotation = pdf.context.obj({
+        Type: 'Annot',
+        Subtype: 'Link',
+        Rect: [60, 699, 80, 711],
+        BS: { W: 0.1, S: 'D', D: [3] },
+        A: { S: 'URI', URI: 'https://example.invalid/reference' }
+      })
+    page.drawText('Cell', { font, x: 60, y: 700, size: 10 })
+    page.node.set(
+      (await import('pdf-lib')).PDFName.of('Annots'),
+      pdf.context.obj([pdf.context.register(annotation)])
+    )
+    const bytes = await pdf.save(),
+      saved = await PDFDocument.load(bytes),
+      { PDFName, PDFDict } = await import('pdf-lib'),
+      link = saved.context.lookup(saved.getPage(0).node.Annots()!.get(0), PDFDict)
+    link.set(
+      PDFName.of('BS'),
+      saved.context.obj({
+        W: change === 'different-width' ? 0.2 : 0.100000001,
+        S: 'D',
+        D: [change === 'different-dash' ? 4 : 3]
+      })
+    )
+    if (change === 'different-action')
+      link.set(
+        PDFName.of('A'),
+        saved.context.obj({
+          S: 'URI',
+          URI: 'https://example.invalid/changed'
+        })
+      )
+    const targetBytes = await saved.save()
+    const { getDocument: load } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+      originalTask = load({ data: bytes.slice(), useSystemFonts: true }),
+      original = await originalTask.promise
+    try {
+      const { source } = await extractPdfTranslationSource({
+          document: original,
+          resourceRequestKey: 'native-annotation-width',
+          signal: new AbortController().signal
+        }),
+        results = {
+          source,
+          units: source.units.map((unit) => ({
+            id: unit.id,
+            translationSource: unit.source,
+            translation: unit.source
+          }))
+        }
+      expect((await (await original.getPage(1)).getAnnotations())[0].borderStyle.width).toBe(0.1)
+      getDocument.mockImplementationOnce((options) => load({ ...options, useSystemFonts: true }))
+      const artifact = { results, data: targetBytes }
+      const hook = renderHook(() =>
+        usePdfTranslationDocument(original, results, artifact, 'native-annotation-width')
+      )
+      await waitFor(() =>
+        expect(hook.result.current.state.status).toBe(accepted ? 'ready' : 'error')
+      )
+      if (!accepted)
+        expect(hook.result.current.state).toMatchObject({ failure: { code: 'validation-failed' } })
+      hook.unmount()
+    } finally {
+      await originalTask.destroy()
+    }
+  })
+
+  it.each([
     { sourceLabel: 'Table 2', targetLabel: '表2', accepted: true },
     { sourceLabel: 'Alpha et al.', targetLabel: 'Alpha 等人', accepted: true },
     { sourceLabel: 'Alpha et al.', targetLabel: 'Gamma 等人', accepted: false },
@@ -2671,21 +2926,42 @@ it.each(
   )
 })
 
-it.each([
-  { change: 'none', accepted: true },
-  { change: 'parentheses', accepted: true },
-  { change: 'letter', accepted: false },
-  { change: 'number', accepted: false },
-  { change: 'suffix', accepted: false },
-  { change: 'bare', accepted: false },
-  { change: 'duplicate', accepted: false },
-  { change: 'action', accepted: false },
-  { change: 'owner', accepted: false }
-])('verifies a merged native figure-panel digit: $change', async ({ change, accepted }) => {
+it.each(
+  [
+    { change: 'none', accepted: true },
+    { change: 'parentheses', accepted: true },
+    { change: 'letter', accepted: false },
+    { change: 'letter-case', accepted: false },
+    { change: 'number', accepted: false },
+    { change: 'suffix', accepted: false },
+    { change: 'bare', accepted: false },
+    { change: 'duplicate', accepted: false },
+    { change: 'action', accepted: false },
+    { change: 'owner', accepted: false }
+  ].flatMap((testCase) =>
+    ['Figure', 'figure', 'FIG.', 'wrapped', 'bare-owner'].map((sourcePrefix) => ({
+      ...testCase,
+      accepted: testCase.accepted && sourcePrefix !== 'bare-owner',
+      sourcePrefix,
+      name: `verifies a merged native figure-panel digit: ${sourcePrefix}/${testCase.change}`
+    }))
+  )
+)('$name', async ({ change, accepted, sourcePrefix }) => {
   const f = fixture(),
     sourceText =
-      change === 'bare' ? 'See sample 2(a) with 20 items.' : 'See Figure 2(a) with 20 items.',
-    suffix = change === 'letter' ? '(b)' : change === 'parentheses' ? '（a）' : '(a)',
+      change === 'bare'
+        ? 'See sample 2(a) with 20 items.'
+        : sourcePrefix === 'bare-owner'
+          ? '2(a) with 20 items.'
+          : `See ${sourcePrefix === 'wrapped' ? 'figure' : sourcePrefix} 2(a) with 20 items.`,
+    suffix =
+      change === 'letter'
+        ? '(b)'
+        : change === 'letter-case'
+          ? '(A)'
+          : change === 'parentheses'
+            ? '（a）'
+            : '(a)',
     digit = change === 'number' ? '3' : '2',
     tail =
       change === 'suffix'
@@ -2701,7 +2977,13 @@ it.each([
       width,
       transform: [10, 0, 0, 10, x, 700]
     }),
-    original = item(sourceText, 60, 220),
+    wrapped = sourcePrefix === 'wrapped' && change !== 'bare',
+    originalItems = wrapped
+      ? [
+          { ...item('See figure', 60, 70), transform: [10, 0, 0, 10, 60, 730] },
+          item('2(a) with 20 items.', 60, 220)
+        ]
+      : [item(sourceText, 60, 220)],
     source = createPdfTranslationSource({
       ...f.results.source,
       units: [
@@ -2711,8 +2993,9 @@ it.each([
           fragments: [
             {
               ...f.results.source.units[0].fragments[0],
+              ...(wrapped ? { rect: { x: 0.1, y: 0.05, width: 0.5, height: 0.15 } } : {}),
               ...(change === 'owner' ? { rect: { x: 0.5, y: 0.1, width: 0.4, height: 0.1 } } : {}),
-              items: [{ index: 0, text: sourceText }]
+              items: originalItems.map((native, index) => ({ index, text: native.str }))
             }
           ]
         }
@@ -2721,10 +3004,10 @@ it.each([
     results = { source, units: [{ id: 'one', translationSource: sourceText, translation }] },
     link = {
       annotationType: 2,
-      rect: [111, 699, 118, 711],
+      rect: sourcePrefix === 'bare-owner' ? [59, 699, 66, 711] : [111, 699, 118, 711],
       url: 'https://example.org/figure'
     }
-  f.originalPage.getTextContent.mockResolvedValue({ items: [original] })
+  f.originalPage.getTextContent.mockResolvedValue({ items: originalItems })
   f.targetPage.getTextContent.mockResolvedValue({
     items: [item(prefix, 60, 30), item(digit, 95, 5), item(tail, 103, 120)]
   })
@@ -6435,4 +6718,160 @@ it.each([
   } finally {
     canvasFactory.mockRestore()
   }
+})
+
+it.each([
+  'complete',
+  'complete-multiset',
+  'multiset-missing-script',
+  'multiset-changed-script',
+  'multiset-flat-copy',
+  'multiset-foreign-owner',
+  'multiset-mixed-source-style',
+  'multiset-mixed-target-style',
+  'multiset-mixed-rise',
+  'multiset-mixed-font',
+  'missing-script',
+  'changed-script',
+  'duplicate-token',
+  'changed-token',
+  'foreign-owner',
+  'next-line-script',
+  'changed-scale',
+  'changed-rise',
+  'foreign-glyph',
+  'item-budget',
+  'candidate-budget'
+])('reads complete native script groups across old line padding: %s', async (change) => {
+  const f = fixture(),
+    item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      point = 12
+    ): typeof f.item & { fontName: string } => ({
+      fontName: 'body',
+      str,
+      width,
+      transform: [point, 0, 0, point, x, y]
+    }),
+    before = [
+      item('Use ', 60, 705, 20),
+      item('N', 80, 705, 10),
+      item('G', 90, 703.2, 6, change === 'multiset-mixed-source-style' ? 7.8 : 8),
+      item('(x), ', 96.5, 705, 40),
+      item('N', 137, 705, 10),
+      item('G', 147, 703.2, 6, 8),
+      item('(x) and ', 153.5, 705, 40),
+      item('N', 194, 705, 10),
+      item('G', 204, 703.2, 6, 8),
+      item('[x] remains.', 210.5, 705, 85),
+      item('End.', 60, 690, 25)
+    ],
+    fragments = [
+      {
+        pageNumber: 1,
+        rect: { x: 0.1, y: 90 / 800, width: 0.5, height: 10 / 800 },
+        items: before.slice(0, -1).map((i, index) => ({ index, text: i.str }))
+      },
+      {
+        pageNumber: 1,
+        rect: { x: 0.1, y: 100.2 / 800, width: 0.5, height: 15 / 800 },
+        items: [{ index: before.length - 1, text: before.at(-1)!.str }]
+      }
+    ].map((fragment) => ({ ...fragment, unclippedRect: { ...fragment.rect } })),
+    foreignIndex = change === 'foreign-owner' ? 8 : 2,
+    sourceText = before.map((i) => i.str).join(''),
+    targetText = '值NG(x)、NG(x)及NG[x]稳定。结束。',
+    source = createPdfTranslationSource({
+      ...f.results.source,
+      units: ['foreign-owner', 'multiset-foreign-owner'].includes(change)
+        ? [
+            {
+              id: 'body',
+              source: before
+                .filter((_, index) => index !== foreignIndex)
+                .map((i) => i.str)
+                .join(''),
+              fragments: fragments.map((fragment) => ({
+                ...fragment,
+                items: fragment.items.filter((i) => i.index !== foreignIndex)
+              }))
+            },
+            {
+              id: 'foreign',
+              source: 'G',
+              sourceOnly: true,
+              fragments: [{ ...fragments[0], items: [{ index: foreignIndex, text: 'G' }] }]
+            }
+          ]
+        : [{ id: 'body', source: sourceText, fragments }]
+    }),
+    results = {
+      source,
+      units: [{ id: 'body', translationSource: source.units[0].source, translation: targetText }]
+    },
+    after = [
+      ...(change === 'complete-multiset' || change.startsWith('multiset-')
+        ? [
+            item('值N', 60, 700.3, 30, 8),
+            ...(change === 'multiset-missing-script'
+              ? []
+              : [
+                  {
+                    ...item(
+                      change === 'multiset-changed-script' ? 'H' : 'G',
+                      90,
+                      change === 'multiset-mixed-rise' ? 698.3 : 698.5,
+                      4,
+                      change === 'multiset-mixed-target-style' ? 5.6 : 16 / 3
+                    ),
+                    fontName: change === 'multiset-mixed-font' ? 'other' : 'body'
+                  }
+                ]),
+            item('(x)、N', 94.5, 700.3, 52.5, 8),
+            item('G', 147, 698.5, 4, 16 / 3),
+            item('(x)及N', 151.5, 700.3, 52.5, 8)
+          ]
+        : [item('值NG(x)、NG(x)及N', 60, 700.3, 144, 8)]),
+      ...(change === 'missing-script'
+        ? []
+        : [
+            item(
+              change === 'changed-script' ? 'H' : 'G',
+              204,
+              change === 'next-line-script' ? 690 : change === 'changed-rise' ? 698.3 : 698.5,
+              4,
+              change === 'changed-scale' ? 6 : 16 / 3
+            )
+          ]),
+      item(change === 'changed-token' ? '[y]稳定。' : '[x]稳定。', 208.5, 700.3, 65, 8),
+      item(
+        change === 'duplicate-token'
+          ? '结束NG[x]。'
+          : change === 'multiset-flat-copy'
+            ? '结束NG(x)。'
+            : '结束。',
+        60,
+        690,
+        70,
+        8
+      ),
+      ...(change === 'foreign-glyph' ? [item('q', 206, 698.6, 1, 5)] : []),
+      ...Array.from(
+        { length: change === 'item-budget' ? 8192 : change === 'candidate-budget' ? 256 : 0 },
+        (_, index) =>
+          item(change === 'item-budget' ? 'outside' : 'q', 500, 300 - index * 0.01, 10, 8)
+      )
+    ]
+  f.originalPage.getTextContent.mockResolvedValue({ items: before })
+  f.targetPage.getTextContent.mockResolvedValue({ items: after })
+  const artifact = { results, data: new Uint8Array([4, 5]) },
+    hook = renderHook(() => usePdfTranslationDocument(f.original, results, artifact, 'reader:0'))
+  await waitFor(() =>
+    expect(hook.result.current.state).toMatchObject({
+      status: change.startsWith('complete') ? 'ready' : 'error'
+    })
+  )
 })

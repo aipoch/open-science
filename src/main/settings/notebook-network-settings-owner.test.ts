@@ -1,12 +1,15 @@
+import { migrateNotebookNetworkSettings } from '../../shared/notebook-network-strict'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+  DEFAULT_NOTEBOOK_NETWORK_SETTINGS as LEGACY_DEFAULTS,
   type NotebookNetworkSettings
 } from '../../shared/notebook-network'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import { NotebookNetworkSettingsOwner } from './notebook-network-settings-owner'
 import type { StoredSettings } from './types'
+
+const DEFAULT_NOTEBOOK_NETWORK_SETTINGS = migrateNotebookNetworkSettings(LEGACY_DEFAULTS)
 
 const lookup = vi.hoisted(() => vi.fn())
 vi.mock('node:dns/promises', () => ({ lookup }))
@@ -19,7 +22,7 @@ const createHarness = (
 ): Readonly<{
   owner: NotebookNetworkSettingsOwner
   repository: {
-    getSettings: ReturnType<typeof vi.fn>
+    getSettings: ReturnType<typeof vi.fn<() => Promise<StoredSettings>>>
     setNotebookNetwork: ReturnType<
       typeof vi.fn<(next: NotebookNetworkSettings) => Promise<StoredSettings>>
     >
@@ -52,7 +55,7 @@ describe('NotebookNetworkSettingsOwner', () => {
   ): Readonly<{
     owner: NotebookNetworkSettingsOwner
     repository: {
-      getSettings: ReturnType<typeof vi.fn>
+      getSettings: ReturnType<typeof vi.fn<() => Promise<StoredSettings>>>
       setNotebookNetwork: ReturnType<
         typeof vi.fn<(next: NotebookNetworkSettings) => Promise<StoredSettings>>
       >
@@ -229,7 +232,7 @@ describe('NotebookNetworkSettingsOwner', () => {
     })
     expect(state.read().trustedPrivateDestinations).toEqual([privateRule])
   })
-  it('preserves private trust on public-only writes and detects stale private editors', async () => {
+  it('preserves independent private trust when an old editor makes no changes', async () => {
     const state = harness({
       ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
       trustedPrivateDestinations: [privateRule]
@@ -248,7 +251,7 @@ describe('NotebookNetworkSettingsOwner', () => {
         trustedPrivateDestinations: [],
         baseTrustedPrivateDestinations: []
       })
-    ).rejects.toThrow('Private services changed')
+    ).resolves.toMatchObject({ trustedPrivateDestinations: [privateRule] })
     // Revocation does not need DNS or reachability; it applies to active policy immediately.
     lookup.mockRejectedValue(new Error('offline'))
     await state.owner.set({
@@ -299,7 +302,7 @@ describe('NotebookNetworkSettingsOwner', () => {
         trustedPrivateDestinations: [otherPort],
         baseTrustedPrivateDestinations: baseline
       })
-    ).rejects.toThrow('Private services changed')
+    ).rejects.toThrow('Network rules changed')
     expect(state.repository.setNotebookNetwork).toHaveBeenCalledTimes(writes)
     expect(state.read()).toEqual(updated)
     lookup.mockClear().mockRejectedValue(new Error('offline'))
@@ -607,4 +610,116 @@ describe('exact destination grants', () => {
       })
     ).rejects.toThrow('controlled by network approvals')
   })
+})
+
+it('merges independent strict edits and rejects concurrent edits of the same rule', async () => {
+  const { owner } = createHarness()
+  const base = await owner.get()
+  const rules = base.strictWhitelist!
+  const one = rules[0]!,
+    two = rules[1]!
+  await owner.set({
+    ...base,
+    baseStrictWhitelist: rules,
+    strictWhitelist: rules.map((r) => (r.id === one.id ? { ...r, port: 8443 } : r))
+  })
+  const merged = await owner.set({
+    ...base,
+    baseStrictWhitelist: rules,
+    strictWhitelist: rules.map((r) => (r.id === two.id ? { ...r, port: 9443 } : r))
+  })
+  expect(merged.strictWhitelist?.find((r) => r.id === one.id)?.port).toBe(8443)
+  expect(merged.strictWhitelist?.find((r) => r.id === two.id)?.port).toBe(9443)
+  await expect(
+    owner.set({
+      ...base,
+      baseStrictWhitelist: rules,
+      strictWhitelist: rules.filter((r) => r.id !== one.id)
+    })
+  ).rejects.toThrow('changed')
+})
+it('does not allow conversation domain grants in strict mode', async () => {
+  const { owner } = createHarness({
+    ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+    mode: 'strict',
+    strictWhitelist: []
+  })
+  await expect(owner.allowDomain('example.org')).rejects.toThrow('strict')
+})
+it('merges independent manual trust edits by stable ID and rejects a stale edit', async () => {
+  const a = {
+    id: 'a',
+    hostname: 'localhost',
+    protocol: 'http' as const,
+    port: 80,
+    approvedAddresses: []
+  }
+  const b = { ...a, id: 'b', port: 81 }
+  const { owner } = createHarness({
+    ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+    trustedPrivateDestinations: [a, b]
+  })
+  const base = await owner.get()
+  await owner.set({
+    ...base,
+    baseTrustedPrivateDestinations: [a, b],
+    trustedPrivateDestinations: [b, { ...a, port: 82 }]
+  })
+  const merged = await owner.set({
+    ...base,
+    baseTrustedPrivateDestinations: [a, b],
+    trustedPrivateDestinations: [a, { ...b, port: 83 }]
+  })
+  expect(merged.trustedPrivateDestinations?.map((row) => row.port)).toEqual([82, 83])
+  await expect(
+    owner.set({
+      ...base,
+      baseTrustedPrivateDestinations: [a, b],
+      trustedPrivateDestinations: [b, { ...a, port: 84 }]
+    })
+  ).rejects.toThrow('changed')
+})
+it('persists one migration and keeps an emptied whitelist across owner restarts', async () => {
+  const { owner, repository } = createHarness(LEGACY_DEFAULTS)
+  const first = await owner.get()
+  expect(first.strictWhitelistVersion).toBe(1)
+  expect(repository.setNotebookNetwork).toHaveBeenCalledOnce()
+  await owner.set({ ...first, baseStrictWhitelist: first.strictWhitelist, strictWhitelist: [] })
+  const restarted = new NotebookNetworkSettingsOwner({ repository, apply: async () => {} })
+  expect((await restarted.get()).strictWhitelist).toEqual([])
+  expect(repository.setNotebookNetwork).toHaveBeenCalledTimes(2)
+})
+it.each(['edit', 'delete'] as const)(
+  'accepts the first %s from a legacy trusted-address snapshot before migration',
+  async (action) => {
+    const rule = {
+      hostname: 'localhost',
+      port: 80,
+      protocol: 'http' as const,
+      approvedAddresses: []
+    }
+    const initial = { ...LEGACY_DEFAULTS, trustedPrivateDestinations: [rule] }
+    const { owner } = createHarness(initial)
+    const result = await owner.set({
+      ...initial,
+      baseTrustedPrivateDestinations: [rule],
+      trustedPrivateDestinations:
+        action === 'delete' ? [] : [{ ...rule, id: 'manual:http://localhost:80', port: 81 }]
+    })
+    expect(result.trustedPrivateDestinations).toHaveLength(action === 'delete' ? 0 : 1)
+    if (action === 'edit') expect(result.trustedPrivateDestinations?.[0]?.port).toBe(81)
+  }
+)
+it('merges rule edits across an independent mode change without reverting the mode', async () => {
+  const { owner } = createHarness()
+  const base = await owner.get()
+  await owner.set({ ...base, mode: 'strict', baseMode: 'relaxed' })
+  const next = await owner.set({
+    ...base,
+    baseMode: 'relaxed',
+    baseStrictWhitelist: base.strictWhitelist,
+    strictWhitelist: []
+  })
+  expect(next.mode).toBe('strict')
+  expect(next.strictWhitelist).toEqual([])
 })

@@ -223,6 +223,78 @@ describe('desktop projection of application commands and events', () => {
     }
   )
 
+  it('cancels an in-flight host command in the runtime process', async () => {
+    let operationSignal: AbortSignal | undefined
+    const commands = {
+      commandNames: () => ['projects:list'],
+      invoke: async (_name: string, invocation: ApplicationInvocation<readonly unknown[]>) => {
+        operationSignal = invocation.callerLease.signal
+        await new Promise<void>((resolve) =>
+          operationSignal!.addEventListener('abort', () => resolve(), { once: true })
+        )
+        return []
+      }
+    }
+    const server = await startDesktopRuntimeTransport({
+      version: 'test',
+      events: new ApplicationEventHub(),
+      commands,
+      hostCommands: commands
+    })
+    cleanups.push(server.close)
+    const client = await connectDesktopRuntime({
+      endpoint: server.endpoint,
+      onEvent: vi.fn(),
+      onDisconnect: vi.fn()
+    })
+    cleanups.push(async () => client.close())
+    const cancellation = new AbortController()
+    const pending = client.invokeHost('projects:list', [], cancellation.signal)
+    await vi.waitFor(() => expect(operationSignal).toBeDefined())
+    cancellation.abort(new Error('cancel fixture'))
+    await expect(pending).rejects.toThrow('cancel fixture')
+    await vi.waitFor(() => expect(operationSignal?.aborted).toBe(true))
+  })
+
+  it('keeps an abandoned host command budgeted until the runtime settles it', async () => {
+    let release!: () => void
+    const released = new Promise<void>((resolve) => (release = resolve))
+    const commands = {
+      commandNames: () => ['projects:list'],
+      // Ignores cancellation, like synchronous runtime inspection.
+      invoke: async () => {
+        await released
+        return []
+      }
+    }
+    const server = await startDesktopRuntimeTransport({
+      version: 'test',
+      events: new ApplicationEventHub(),
+      commands,
+      hostCommands: commands
+    })
+    cleanups.push(server.close)
+    const onDisconnect = vi.fn()
+    const client = await connectDesktopRuntime({
+      endpoint: server.endpoint,
+      onEvent: vi.fn(),
+      onDisconnect
+    })
+    cleanups.push(async () => client.close())
+    const abandoned = Array.from({ length: 256 }, () => {
+      const cancellation = new AbortController()
+      const pending = client.invokeHost('projects:list', [], cancellation.signal)
+      cancellation.abort(new Error('abandoned'))
+      return pending.catch(() => undefined)
+    })
+    await Promise.all(abandoned)
+    // The runtime still counts these requests; the client must not exceed its admission limit.
+    await expect(client.invokeHost('projects:list')).rejects.toThrow('Too many pending')
+    release()
+    await vi.waitFor(async () => expect(await client.invokeHost('projects:list')).toEqual([]))
+    expect(onDisconnect).not.toHaveBeenCalled()
+  })
+
   it('connects the desktop client to the real transport and rejects pending calls on disconnect', async () => {
     const events = new ApplicationEventHub()
     const observed = vi.fn()

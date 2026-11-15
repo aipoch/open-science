@@ -3819,8 +3819,9 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(content.provider[agentProviderId].models['kimi-k3.1-pro']).toEqual({
       attachment: true,
       modalities: { input: ['text', 'image'] },
-      limit: { context: 1_048_576, output: 32_000 }
+      limit: { context: 1_048_576, input: 1_048_576, output: 1_048_576 }
     })
+    expect(backend.env?.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX).toBe('1048576')
     expect(backend.args).toEqual(['--port', '42424', '--hostname', '127.0.0.1'])
     expect(backend.opencodeUsageApi).toEqual({
       baseUrl: 'http://127.0.0.1:42424',

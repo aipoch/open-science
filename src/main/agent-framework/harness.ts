@@ -3,7 +3,7 @@ import {
   resolveMessagesReasoningTransport,
   resolveResponsesReasoningTransport
 } from '@aipoch/providers/protocol'
-import { getOfficialVendor } from '@aipoch/providers'
+import { resolveProviderOutputLimit } from '../settings/provider-env'
 import { preferredEndpoint } from '../../shared/settings'
 import { spawn } from 'node:child_process'
 import { isAbsolute, join } from 'node:path'
@@ -107,12 +107,7 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
         : {}),
       contextWindow,
       maxOutputTokens:
-        provider.maxOutputTokens ??
-        (protocol === 'messages' && provider.vendorId
-          ? getOfficialVendor(provider.vendorId)?.models.find(
-              (entry) => entry.id === provider.model
-            )?.maxOutputTokens
-          : undefined),
+        protocol === 'messages' ? resolveProviderOutputLimit(provider) : provider.maxOutputTokens,
       parameters:
         protocol === 'responses'
           ? {

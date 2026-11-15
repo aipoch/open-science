@@ -72,7 +72,14 @@ it.each([
   expect(resolveNativeLatinAccents(native)).toEqual([])
 })
 
-it.each(['complete-name', 'changed-name', 'unowned-accent'])(
+it.each([
+  'complete-name',
+  'changed-name',
+  'unowned-accent',
+  'literal-name',
+  'literal-changed-name',
+  'literal-unlinked'
+])(
   'retains native accented citation glyphs and action only for the complete owner: %s',
   async (kind) => {
     const pdf = await PDFDocument.create(),
@@ -89,55 +96,75 @@ it.each(['complete-name', 'changed-name', 'unowned-accent'])(
     page.drawText('aaren et al.', { font, size: 10, x: vowelX, y: 150 })
     page.drawText(', 2009).', { font, size: 10, x: edge, y: 150 })
     page.drawText('Neighbor', { font, size: 10, x: 40, y: 110 })
-    page.node.set(
-      PDFName.of('Annots'),
-      pdf.context.obj([
-        pdf.context.register(
-          pdf.context.obj({
-            Type: 'Annot',
-            Subtype: 'Link',
-            Rect: [left - 1, 148, edge + 1, 159],
-            Border: [0, 0, 0],
-            A: { S: 'URI', URI: PDFString.of('https://example.invalid/naaren-2009') }
-          })
-        )
-      ])
-    )
+    if (kind !== 'literal-unlinked')
+      page.node.set(
+        PDFName.of('Annots'),
+        pdf.context.obj([
+          pdf.context.register(
+            pdf.context.obj({
+              Type: 'Annot',
+              Subtype: 'Link',
+              Rect: [left - 1, 148, edge + 1, 159],
+              Border: [0, 0, 0],
+              A: { S: 'URI', URI: PDFString.of('https://example.invalid/naaren-2009') }
+            })
+          )
+        ])
+      )
     const data = await pdf.save(),
       original = getDocument({ data: data.slice(), useSystemFonts: true })
     let target: ReturnType<typeof getDocument> | undefined
     try {
       const before = await (await original.promise).getPage(1),
         oldItems = (await before.getTextContent()).items.filter((i) => 'str' in i)
-      const output = new PdfTranslationWriter(() => resolve('resources/worker.mjs')).generate(
-        {
-          id: 'native-latin',
-          data,
-          pages: [{ width: 320, height: 200 }],
-          units: [
-            {
-              source: 'Evidence (Näaren et al., 2009).',
-              translation: `研究证据（${kind === 'changed-name' ? 'Naaren' : 'Näaren'} et al., 2009）。`,
-              fragments: [
-                {
-                  pageNumber: 1,
-                  rect: {
-                    x: 39 / 320,
-                    y: 40 / 200,
-                    width: 260 / 320,
-                    height: (kind === 'unowned-accent' ? 4 : 22) / 200
-                  }
+      const request = {
+        id: 'native-latin',
+        data,
+        pages: [{ width: 320, height: 200 }],
+        units: [
+          {
+            source: `Evidence (${kind.startsWith('literal-') ? 'N¨aaren' : 'Näaren'} et al., 2009).`,
+            translation: `研究证据（${kind.endsWith('changed-name') ? 'Naaren' : kind.startsWith('literal-') ? 'N¨aaren' : 'Näaren'} et al., 2009）。`,
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: {
+                  x: 39 / 320,
+                  y: 40 / 200,
+                  width: 260 / 320,
+                  height: (kind === 'unowned-accent' ? 4 : 22) / 200
                 }
-              ]
-            }
-          ]
-        },
-        caller.lease
-      )
-      if (kind !== 'complete-name') {
+              }
+            ]
+          }
+        ]
+      }
+      const writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs')),
+        output = writer.generate(request, caller.lease)
+      if (kind !== 'complete-name' && kind !== 'literal-name') {
         await expect(output).rejects.toMatchObject({
-          failure: { code: kind === 'unowned-accent' ? 'unsupported-layout' : 'annotations' }
+          failure: {
+            code: ['unowned-accent', 'literal-unlinked'].includes(kind)
+              ? 'unsupported-layout'
+              : 'annotations'
+          }
         })
+        if (kind === 'literal-unlinked') {
+          const retained = await writer.generateDetailed(
+            { ...request, preserveUnsupported: true, preserveUnmatched: true },
+            caller.lease
+          )
+          expect(retained!.layoutFailures).toEqual([
+            {
+              unitIndex: 0,
+              code: 'unsupported-layout',
+              phase: 'planning',
+              pageNumbers: [1],
+              fragmentCount: 1
+            }
+          ])
+          expect(retained!.data).toEqual(new Uint8Array(data))
+        }
         return
       }
       target = getDocument({ data: (await output)!, useSystemFonts: true })

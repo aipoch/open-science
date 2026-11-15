@@ -5004,7 +5004,7 @@ it('uses a real bounded transparency canvas without granting its labels Source o
         `/Type /XObject /Subtype /Form /BBox [100 100 300 280] /Group << /S /Transparency /I false /K false >> /Resources << /Font << /Text ${face} 0 R /Type3 ${type3} 0 R >> /Pattern << /Shade ${pattern} 0 R /Tile ${tile} 0 R >> /XObject << /PanelImage ${secondImage} 0 R >> >>`
       ),
       content = stream(
-        'BT /Text 10 Tf 1 0 0 1 90 350 Tm (Running header.) Tj ET q /Picture Do Q BT /Text 10 Tf 1 0 0 1 90 80 Tm (Figure 1: Three complete measured sample panels.) Tj ET'
+        'BT /Text 10 Tf 1 0 0 1 90 350 Tm (Running header.) Tj ET q /Picture Do Q BT /Text 10 Tf 1 0 0 1 90 80 Tm (Figure 1: Three complete measured sample panels.) Tj /Text 6 Tf 1 0 0 1 118 53 Tm (r) Tj 1 0 0 1 118 39 Tm (s) Tj ET q .339 w 115 47 m 130 47 l S 155 35 m 165 35 l S Q'
       )
     ids.push(
       add(
@@ -5043,6 +5043,7 @@ it('uses a real bounded transparency canvas without granting its labels Source o
     const document = await task.promise
     for (const pageNumber of [1, 2]) {
       const nativePage = await document.getPage(pageNumber),
+        witnessPage = await document.getPage(pageNumber === 1 ? 2 : 1),
         viewport = nativePage.getViewport({ scale: 1 }),
         content = await nativePage.getTextContent(),
         canvas = createCanvas(400, 400),
@@ -5078,7 +5079,15 @@ it('uses a real bounded transparency canvas without granting its labels Source o
               sourceSha256
             ),
             pageNumber,
-            sourceSha256
+            sourceSha256,
+            runningHeadWitness: {
+              sourceSha256,
+              currentPageNumber: pageNumber,
+              witnessPageNumber: witnessPage.pageNumber,
+              currentContent: content,
+              witnessContent: await witnessPage.getTextContent(),
+              witnessViewport: witnessPage.getViewport({ scale: 1 })
+            }
           },
           tokens = context.content.items
             .filter((r: ReturnType<typeof JSON.parse>) => r.str?.trim())
@@ -5142,6 +5151,38 @@ it('uses a real bounded transparency canvas without granting its labels Source o
           expect(plan).toEqual({ rect: [99.5, 119.5, 300.5, 300.5] })
           expect(plan.sourceItems).toBeUndefined()
           expect(figure.reason).toBe('native-raster-composite-grid')
+          const marginTokens = tokens.filter(
+              (t: ReturnType<typeof JSON.parse>) => t.text !== 'Running header.'
+            ),
+            marginPlan = nativeNonisolatedGroupPixelCrop(
+              page,
+              figure,
+              [caption],
+              [],
+              marginTokens,
+              context,
+              figure.rect,
+              live,
+              createNativeNonisolatedGroupCropProfile(page, marginTokens, context)
+            )
+          expect(marginPlan).toEqual(plan)
+          expect(marginPlan.sourceItems).toBeUndefined()
+          const missingLabelTokens = marginTokens.filter(
+            (t: ReturnType<typeof JSON.parse>) => t.text !== 'Right label'
+          )
+          expect(
+            nativeNonisolatedGroupPixelCrop(
+              page,
+              figure,
+              [caption],
+              [],
+              missingLabelTokens,
+              context,
+              figure.rect,
+              live,
+              createNativeNonisolatedGroupCropProfile(page, missingLabelTokens, context)
+            )
+          ).toBeUndefined()
           const sourceColor =
               context.operators.argsArray[
                 context.operators.fnArray.findIndex(
@@ -5224,6 +5265,116 @@ it('uses a real bounded transparency canvas without granting its labels Source o
             )
           ).toBeUndefined()
           const png = await renderPdfCrop(nativePage, plan.rect, 0)
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          const outside = context.graphicsBounds.find(
+              (g: ReturnType<typeof JSON.parse>) =>
+                g.kind === 'path' &&
+                g.operationIndex > context.operators.fnArray.lastIndexOf(OPS.endGroup)
+            ),
+            ledgers = [...new Set([context.graphicsBounds, page.graphicsBounds])],
+            slots = ledgers.map((ledger) => ({
+              ledger,
+              index: ledger.findIndex(
+                (g: ReturnType<typeof JSON.parse>) => g.operationIndex === outside.operationIndex
+              )
+            })),
+            originals = slots.map(({ ledger, index }) => ledger[index]),
+            freshPlan = (): ReturnType<typeof nativeNonisolatedGroupPixelCrop> =>
+              nativeNonisolatedGroupPixelCrop(
+                page,
+                figure,
+                [caption],
+                [],
+                tokens,
+                context,
+                figure.rect,
+                live,
+                createNativeNonisolatedGroupCropProfile(page, tokens, context)
+              )
+          expect(outside).toBeDefined()
+          const witness = context.runningHeadWitness,
+            witnessViewport = witness.witnessViewport,
+            widthBefore = witnessViewport.width,
+            viewportPrototype = Object.getPrototypeOf(witnessViewport),
+            sourceHashBefore = witness.sourceSha256
+          witnessViewport.width++
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          witnessViewport.width = widthBefore
+          Object.setPrototypeOf(witnessViewport, {})
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          Object.setPrototypeOf(witnessViewport, viewportPrototype)
+          const converterSlot = Object.getOwnPropertyDescriptor(
+            viewportPrototype,
+            'convertToViewportPoint'
+          )!
+          Object.defineProperty(viewportPrototype, 'convertToViewportPoint', {
+            ...converterSlot,
+            value: (): number[] => []
+          })
+          try {
+            expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          } finally {
+            Object.defineProperty(viewportPrototype, 'convertToViewportPoint', converterSlot)
+          }
+          witness.sourceSha256 = '0'.repeat(64)
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          witness.sourceSha256 = sourceHashBefore
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          let witnessGetterCalls = 0
+          for (const [object, key] of [
+            [witness, 'witnessViewport'],
+            [witnessViewport, 'width']
+          ] as const) {
+            const descriptor = Object.getOwnPropertyDescriptor(object, key)!
+            Object.defineProperty(object, key, {
+              configurable: true,
+              get() {
+                witnessGetterCalls++
+                return descriptor.value
+              }
+            })
+            try {
+              expect(freshPlan()).toBeUndefined()
+            } finally {
+              Object.defineProperty(object, key, descriptor)
+            }
+          }
+          expect(witnessGetterCalls).toBe(0)
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          // The exterior fraction is still native source, never part of the picture.
+          expect(
+            (await nativePage.getTextContent()).items.filter(
+              (i) => 'str' in i && ['r', 's'].includes(i.str)
+            )
+          ).toHaveLength(2)
+          for (const { ledger, index } of slots) ledger.splice(index, 1)
+          expect(freshPlan()).toBeUndefined()
+          slots.forEach(({ ledger, index }, n) => ledger.splice(index, 0, originals[n]))
+          for (const { ledger, index } of slots)
+            ledger[index] = { ...ledger[index], normalizedRect: [0.4, 0.4, 0.5, 0.5] }
+          expect(freshPlan()).toBeUndefined()
+          slots.forEach(({ ledger, index }, n) => {
+            ledger[index] = originals[n]
+          })
+          // A conservative bound can miss the group yet reach the final raster halo.
+          for (const { ledger, index } of slots) {
+            const box = ledger[index].normalizedRect
+            ledger[index] = {
+              ...ledger[index],
+              normalizedRect: [box[0], 300.6 / 400, box[2], box[3]]
+            }
+          }
+          const haloPlan = freshPlan()
+          expect(haloPlan).toBeDefined()
+          expect(nativeRenderedGroupPixelPngSafe(haloPlan, png, haloPlan.rect, page)).toBe(false)
+          slots.forEach(({ ledger, index }, n) => {
+            ledger[index] = originals[n]
+          })
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          const exteriorTop = outside.normalizedRect[1]
+          outside.normalizedRect[1] = exteriorTop + 0.001
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          outside.normalizedRect[1] = exteriorTop
           expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
           tileProgram.argsArray[nestedIndex] = [...nestedImage]
           expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)

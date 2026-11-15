@@ -59,7 +59,7 @@ type TranscriptCursor = {
   frameId: string
   branchId: string
   snapshotKey: string
-  end: number
+  beforeMessageId: string
 }
 
 type NormalizedGetOptions = {
@@ -255,8 +255,8 @@ const decodeTranscriptCursor = (
     cursor.frameId !== binding.frameId ||
     cursor.branchId !== binding.branchId ||
     typeof cursor.snapshotKey !== 'string' ||
-    !Number.isInteger(cursor.end) ||
-    (cursor.end as number) < 0
+    typeof cursor.beforeMessageId !== 'string' ||
+    cursor.beforeMessageId.length === 0
   ) {
     throw new Error(
       'host.frames.get cursor does not match the requested Frame and Branch. Restart host.frames.get with the intended Frame and Branch and omit before; use the new pagination cursor returned by that read.'
@@ -267,6 +267,11 @@ const decodeTranscriptCursor = (
 
 const fingerprint = (value: unknown): string =>
   createHash('sha256').update(JSON.stringify(value)).digest('base64url')
+
+const transcriptSnapshotKey = (messages: readonly PersistedMessageNode[]): string =>
+  fingerprint(
+    messages.map((message) => [message.id, message.updatedAt, message.status, message.content])
+  )
 
 const compareOrdinal = (left: string, right: string): number =>
   left === right ? 0 : left < right ? -1 : 1
@@ -530,28 +535,19 @@ class HostFramesService {
       frameId: match.frame.id,
       branchId: branch.id
     }
-    const snapshotKey = fingerprint({
-      branchUpdatedAt: branch.updatedAt,
-      messages: path.map((message) => [
-        message.id,
-        message.updatedAt,
-        message.status,
-        message.content
-      ])
-    })
     const cursor = normalized.before
       ? decodeTranscriptCursor(normalized.before, binding)
       : undefined
-    if (cursor && cursor.snapshotKey !== snapshotKey) {
-      throw new Error(
-        'host.frames.get cursor is no longer valid. Restart host.frames.get with the intended Frame and Branch and omit before; use the new pagination cursor returned by that read.'
-      )
+    let end = path.length
+    if (cursor) {
+      const anchor = path.findIndex((message) => message.id === cursor.beforeMessageId)
+      if (anchor < 0 || transcriptSnapshotKey(path.slice(0, anchor)) !== cursor.snapshotKey) {
+        throw new Error(
+          'host.frames.get cursor is no longer valid. Restart host.frames.get with the intended Frame and Branch and omit before; use the new pagination cursor returned by that read.'
+        )
+      }
+      end = anchor
     }
-    const end = cursor?.end ?? path.length
-    if (end > path.length)
-      throw new Error(
-        'host.frames.get cursor is no longer valid. Restart host.frames.get with the intended Frame and Branch and omit before; use the new pagination cursor returned by that read.'
-      )
     const start = Math.max(0, end - normalized.limit)
     const messages = path.slice(start, end)
     const artifactsById = new Map(
@@ -582,8 +578,8 @@ class HostFramesService {
               previous_cursor: encodeCursor({
                 version: 1,
                 ...binding,
-                snapshotKey,
-                end: start
+                snapshotKey: transcriptSnapshotKey(path.slice(0, start)),
+                beforeMessageId: path[start].id
               })
             }
           : {}),

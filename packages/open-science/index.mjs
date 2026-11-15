@@ -15,11 +15,12 @@ const NORMAL_EVENT_STREAM_CLOSE_CODES = new Set([1000])
 const FAILED_EVENT_STREAM_CLOSE_CODES = new Set([1002, 1003, 1007, 1008, 1009])
 
 export class OpenScienceApiError extends Error {
-  constructor(message, { code = 'request_failed', status } = {}) {
+  constructor(message, { code = 'request_failed', status, correlationId } = {}) {
     super(message)
     this.name = 'OpenScienceApiError'
     this.code = code
     this.status = status
+    if (correlationId) this.correlationId = correlationId
   }
 }
 
@@ -29,6 +30,14 @@ const resolveRequestTimeout = (defaultTimeoutMs, timeoutMs) => {
     throw new TypeError('timeoutMs must be a positive number.')
   }
   return resolved
+}
+
+const beforeDeadline = (options, deadline) => {
+  if (deadline === undefined) return options
+  const remaining = deadline - Date.now()
+  if (remaining <= 0)
+    throw new OpenScienceApiError('Open-Science operation timed out.', { code: 'timeout' })
+  return { ...options, timeoutMs: Math.min(options?.timeoutMs ?? remaining, remaining) }
 }
 
 const createRequestLifecycle = ({ defaultTimeoutMs, signal, timeoutMs }) => {
@@ -371,12 +380,23 @@ export class OpenScienceClient {
         if (!response.ok || payload?.ok !== true) {
           throw new OpenScienceApiError(
             payload?.error?.message ?? `Open-Science Web RPC request failed (${response.status}).`,
-            { code: payload?.error?.code, status: response.status }
+            {
+              code: payload?.error?.code,
+              status: response.status,
+              correlationId: response.headers.get('x-correlation-id')
+            }
           )
         }
         return payload.result
       }
     )
+  }
+
+  forkSession(projectId, sessionId, options) {
+    return this.callRpc('sessions:fork', [{ projectId, sessionId }], {
+      ...options,
+      timeoutMs: options?.timeoutMs ?? PACKAGE_REQUEST_TIMEOUT_MS
+    })
   }
 
   exportSessionPackage(projectId, sessionId, destinationPath, options) {
@@ -427,9 +447,72 @@ export class OpenScienceClient {
     })
   }
 
+  async submitRun(requestId, request, options) {
+    const deadline = Date.now() + resolveRequestTimeout(this.requestTimeoutMs, options?.timeoutMs)
+    const bootstrap = await this.health(beforeDeadline(options, deadline))
+    if (!bootstrap.taskCapabilities?.includes('durable-submissions')) {
+      throw new OpenScienceApiError(
+        'This server does not support durable submission receipts. Update the server before submitting.',
+        { code: 'unsupported_capability' }
+      )
+    }
+    try {
+      return await this.request(`/api/v1/run-submissions/${encodeURIComponent(requestId)}`, {
+        ...beforeDeadline(options, deadline),
+        method: 'PUT',
+        body: request
+      })
+    } catch (error) {
+      error.requestId = requestId
+      throw error
+    }
+  }
+
+  getSubmission(requestId, options) {
+    return this.request(`/api/v1/run-submissions/${encodeURIComponent(requestId)}`, options)
+  }
+
+  async waitForSubmission(requestId, { pollIntervalMs = 250, timeoutMs, signal } = {}) {
+    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0))
+      throw new TypeError('timeoutMs must be a positive number.')
+    if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0)
+      throw new TypeError('pollIntervalMs must be a positive number.')
+    const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs
+    try {
+      for (;;) {
+        signal?.throwIfAborted()
+        const remaining = deadline === undefined ? this.requestTimeoutMs : deadline - Date.now()
+        if (remaining <= 0)
+          throw new OpenScienceApiError(`Timed out waiting for submission ${requestId}.`, {
+            code: 'timeout'
+          })
+        const options = { signal, timeoutMs: Math.min(this.requestTimeoutMs, remaining) }
+        const receipt = await this.getSubmission(requestId, options)
+        if (receipt.requestId !== requestId)
+          throw new OpenScienceApiError('Submission identity mismatch.', {
+            code: 'invalid_response'
+          })
+        if (receipt.status === 'accepted' && receipt.runId)
+          return await this.getRun(receipt.runId, beforeDeadline(options, deadline))
+        if (receipt.status === 'failed' || receipt.status === 'interrupted')
+          throw new OpenScienceApiError(receipt.error?.message ?? 'Submission failed.', {
+            code: receipt.error?.code ?? 'submission_failed'
+          })
+        if (receipt.status !== 'pending')
+          throw new OpenScienceApiError('Unknown submission status.', { code: 'invalid_response' })
+        const sleepOptions = beforeDeadline({ timeoutMs: pollIntervalMs }, deadline)
+        await sleepWithSignal(this.sleep, sleepOptions.timeoutMs, signal)
+      }
+    } catch (error) {
+      if (error && typeof error === 'object') error.requestId = requestId
+      throw error
+    }
+  }
+
   async startRun(request, options) {
+    const deadline = Date.now() + resolveRequestTimeout(this.requestTimeoutMs, options?.timeoutMs)
     if (request.permissionPrompts === 'none') {
-      const bootstrap = await this.health(options)
+      const bootstrap = await this.health(beforeDeadline(options, deadline))
       if (!bootstrap.taskCapabilities?.includes('permission-prompts-none')) {
         throw new OpenScienceApiError(
           'This Open-Science server does not support unattended permission handling. Update the server before starting this run.',
@@ -437,7 +520,20 @@ export class OpenScienceClient {
         )
       }
     }
-    return this.request('/api/v1/runs', { ...options, method: 'POST', body: request })
+    if (options?.requestId) {
+      try {
+        await this.submitRun(options.requestId, request, beforeDeadline(options, deadline))
+        return await this.waitForSubmission(options.requestId, beforeDeadline(options, deadline))
+      } catch (error) {
+        if (error && typeof error === 'object') error.requestId = options.requestId
+        throw error
+      }
+    }
+    return this.request('/api/v1/runs', {
+      ...beforeDeadline(options, deadline),
+      method: 'POST',
+      body: request
+    })
   }
 
   getRun(runId, options) {
@@ -481,7 +577,9 @@ export class OpenScienceClient {
         }
         throw error
       }
-      if (run.status !== 'running') return run
+      if (['completed', 'failed', 'cancelled'].includes(run.status)) return run
+      if (run.status !== 'running')
+        throw new OpenScienceApiError('Unknown Run status.', { code: 'invalid_response' })
       if (returnOnAttention && run.attention) return run
       const sleepMs =
         deadline === undefined

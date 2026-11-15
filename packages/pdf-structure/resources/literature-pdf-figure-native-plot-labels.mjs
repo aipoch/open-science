@@ -31,13 +31,19 @@ import {
 } from './literature-pdf-native-printed-face-packet.mjs'
 import { nativeClosedRuleFrames } from './literature-pdf-figure-connectivity.mjs'
 import { nativeIdentityHatchPatternStates } from './literature-pdf-figure-native-identity-hatch.mjs'
-import { nativeMesh4RenderContextData } from './literature-pdf-render-bounds.mjs'
+import {
+  nativeMesh4RenderContextData,
+  matchNativeFigureRenderContext as strokePreviewMatch
+} from './literature-pdf-render-bounds.mjs'
 import { area, intersection, union } from './literature-pdf-page-geometry.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
 
 import { nativeFigurePathPaint } from './literature-pdf-figure-native-complete-form.mjs'
-import { nativeFillStrokeGlyphEnvelope } from './literature-pdf-figure-native-stroked-text.mjs'
+import {
+  nativeFillStrokeGlyphEnvelope,
+  nativeStrokeOnlyGlyphEnvelope
+} from './literature-pdf-figure-native-stroked-text.mjs'
 import {
   createNativeBoundedPixelProgram,
   nativeBoundedPixelProgramData
@@ -53,6 +59,7 @@ const boundedPixelMode = Symbol('native-bounded-program-pixel'),
   boundedPixelCertificates = new WeakMap()
 const leadingType3PixelMode = Symbol('leading-type3-forms-pixel')
 const fillStrokeTextPixelMode = Symbol('fill-stroke-text-pixel')
+const strokeOnlyTextPixelMode = Symbol('stroke-only-text-pixel')
 const nativeProgramPaintCurrents = new WeakMap()
 const rasterTitlePlans = new WeakMap()
 
@@ -1513,7 +1520,7 @@ function nativePageProgramPhase(
   cropMode
 ) {
   const normalRaster = isNormalRasterPixelPurpose(cropMode),
-    strokeText = cropMode === fillStrokeTextPixelMode,
+    strokeText = cropMode === fillStrokeTextPixelMode || cropMode === strokeOnlyTextPixelMode,
     meshPixel = cropMode === meshPixelMode,
     boundedPixel = cropMode === boundedPixelMode,
     cropOnly =
@@ -1729,7 +1736,7 @@ function nativePageProgramPhase(
       } else {
         if (!Number.isFinite(a[0])) return
         if (op === OPS.setTextRenderingMode) {
-          if (![0, 2].includes(a[0])) return
+          if (!(cropMode === strokeOnlyTextPixelMode ? [0, 1, 2] : [0, 2]).includes(a[0])) return
           typedTextRenderingMode = a[0]
         } else if (op === OPS.setLineWidth) {
           if (a[0] < 0) return
@@ -2051,7 +2058,12 @@ function nativePageProgramPhase(
           )
           const advance = box([x, y, x + advanceWidth, y + size], m)
           let fillStrokeText
-          if (strokeText && typedTextRenderingMode === 2 && !rendererSkipped) {
+          if (
+            strokeText &&
+            (typedTextRenderingMode === 2 ||
+              (cropMode === strokeOnlyTextPixelMode && typedTextRenderingMode === 1)) &&
+            !rendererSkipped
+          ) {
             if (ink[0] === ink[2] && ink[1] === ink[3] && /^\s+$/u.test(g.unicode)) {
               // A source-proved empty space path has no stroke perimeter.
             } else {
@@ -2069,7 +2081,10 @@ function nativePageProgramPhase(
                 strokeAlpha: typedStrokeAlpha,
                 clip: [...physicalClip]
               }
-              const envelope = nativeFillStrokeGlyphEnvelope(ink, fillStrokeText, 4)
+              const envelope =
+                typedTextRenderingMode === 1
+                  ? nativeStrokeOnlyGlyphEnvelope(ink, fillStrokeText, 4)
+                  : nativeFillStrokeGlyphEnvelope(ink, fillStrokeText, 4)
               if (!envelope) return
               ink = envelope
             }
@@ -2100,8 +2115,14 @@ function nativePageProgramPhase(
             packet,
             show
           }
-          z.textPaint = { fillColor: typedFillColor, fillAlpha: typedFillAlpha }
-          if (fillStrokeText) z.fillStrokeText = fillStrokeText
+          z.textPaint =
+            cropMode === strokeOnlyTextPixelMode && typedTextRenderingMode === 1
+              ? { renderingMode: 1, strokeColor: typedStrokeColor, strokeAlpha: typedStrokeAlpha }
+              : { fillColor: typedFillColor, fillAlpha: typedFillAlpha }
+          if (fillStrokeText) {
+            if (typedTextRenderingMode === 1) z.strokeOnlyText = fillStrokeText
+            else z.fillStrokeText = fillStrokeText
+          }
           if (boundedPixel) {
             z.originalPaintClip = state.exactClip
             z.exactClip = state.exactClip
@@ -2114,15 +2135,18 @@ function nativePageProgramPhase(
             z.originalClipQuads = state.originalClipQuads
           } else if (cropOnly) {
             if (!valid(state.clip)) return
-            z.cropVisibleInk =
-              typedFillAlpha === 0
-                ? undefined
-                : [
-                    Math.max(ink[0], state.clip[0]),
-                    Math.max(ink[1], state.clip[1]),
-                    Math.min(ink[2], state.clip[2]),
-                    Math.min(ink[3], state.clip[3])
-                  ]
+            z.cropVisibleInk = (
+              cropMode === strokeOnlyTextPixelMode && typedTextRenderingMode === 1
+                ? typedStrokeAlpha === 0 || unpaintedWhitespace
+                : typedFillAlpha === 0
+            )
+              ? undefined
+              : [
+                  Math.max(ink[0], state.clip[0]),
+                  Math.max(ink[1], state.clip[1]),
+                  Math.min(ink[2], state.clip[2]),
+                  Math.min(ink[3], state.clip[3])
+                ]
             z.cropPaintClip = [...state.clip]
           }
           if (compound) z.compoundAccent = true
@@ -2744,6 +2768,106 @@ export function nativeFillStrokeTextInkPacket(page, tokens, context, sourceItems
   )
 }
 
+// Separate preview-only purpose. Source carriers bind the existing native glyph
+// inventory but do not gain Source rights. Consumers must recheck current().
+// Initial stroke envelopes use scale4. Consumers must recompute each envelope
+// from strokeOnlyText.ink/state at their actual final raster scale.
+export function nativeStrokeOnlyTextInkPacket(page, tokens, context, sourceItems) {
+  if (!Array.isArray(sourceItems) || !sourceItems.length || sourceItems.length > 64) return
+  const own = nativeRecoveryOwnValues(context),
+    witness =
+      own?.runningHeadWitness === undefined
+        ? undefined
+        : nativeRecoveryOwnValues(own.runningHeadWitness)
+  const keep =
+    own &&
+    retainNativeArrayPixelInputs(
+      [page, tokens, context, sourceItems],
+      own.viewport,
+      witness?.witnessViewport
+    )
+  if (
+    !keep ||
+    !strokePreviewMatch(
+      context,
+      page.pageNumber,
+      own.content,
+      own.viewport,
+      page.graphicsBounds,
+      own.sourceSha256
+    )
+  )
+    return
+  const claims = new Set()
+  for (const item of sourceItems) {
+    const raw = context?.content?.items?.[item?.index]
+    if (
+      item?.pageNumber !== page.pageNumber ||
+      !Number.isSafeInteger(item.index) ||
+      typeof item.text !== 'string' ||
+      !item.text.trim() ||
+      claims.has(item.index) ||
+      raw?.str !== item.text ||
+      JSON.stringify(raw.sourceItem) !== JSON.stringify(item)
+    )
+      return
+    claims.add(item.index)
+  }
+  const packet = nativePagePacketCore(
+    page,
+    tokens,
+    context,
+    true,
+    claims,
+    false,
+    true,
+    undefined,
+    false,
+    context.operators.fnArray.includes(OPS.beginGroup),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    strokeOnlyTextPixelMode
+  )
+  if (!packet) return
+  const evidence = nativeRecoveryOwnValues(packet.evidence),
+    evidenceKeys = Reflect.ownKeys(packet.evidence),
+    maps = [...Object.values(evidence).filter((v) => v instanceof Map), packet.strokeMargins].map(
+      (map) => ({ map, entries: [...map] })
+    )
+  const observed = retainNativeArrayPixelInputs(
+    [
+      packet.records,
+      packet.packets,
+      packet.glyphs,
+      ...Object.values(evidence).filter((v) => !(v instanceof Map)),
+      ...maps.flatMap((m) => m.entries)
+    ],
+    own.viewport
+  )
+  const current = () => {
+    const now = nativeRecoveryOwnValues(packet.evidence)
+    return (
+      !!now &&
+      Reflect.ownKeys(packet.evidence).length === evidenceKeys.length &&
+      evidenceKeys.every((key) => now[key] === evidence[key]) &&
+      maps.every(
+        ({ map, entries }) =>
+          Object.getPrototypeOf(map) === Map.prototype &&
+          !Reflect.ownKeys(map).length &&
+          map.size === entries.length &&
+          entries.every(([key, value]) => Map.prototype.get.call(map, key) === value)
+      ) &&
+      !!observed?.() &&
+      keep() &&
+      !!nativeProgramPaintCurrents.get(packet.glyphs)?.()
+    )
+  }
+  return current()
+    ? Object.freeze({ ...packet, current, purpose: 'stroke-only-preview', sourceAuthority: false })
+    : undefined
+}
 // A separate preview purpose may consume the complete dual-API witness. It
 // grants no Source claims and cannot change an already successful strict path.
 export function nativeSavedPaintInkPacket(page, tokens, context, sourceItems) {

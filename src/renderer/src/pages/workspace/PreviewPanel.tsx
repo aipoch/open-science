@@ -1,4 +1,4 @@
-import { OverlayLayerProvider } from '@/components/ui/overlay-layer'
+import { OverlayLayerProvider, useOverlayLayer } from '@/components/ui/overlay-layer'
 import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
 import { SideChatWorkbenchContent } from './SideChatWorkbench'
 import { BookOpen, Cpu, FolderOpen, Globe2, MessageSquare, Play, Store, X } from 'lucide-react'
@@ -681,6 +681,9 @@ const PreviewFilePanel = ({
     setIsFullScreenOpen(true)
   }
 
+  // Stack above the host surface (e.g. the z-60 mobile preview sheet) instead of resetting to 40.
+  const parentLayer = useOverlayLayer()
+
   usePreviewModalSurface({
     isOpen: isFullScreenOpen,
     onClose: closeFullScreen,
@@ -689,7 +692,7 @@ const PreviewFilePanel = ({
   })
 
   return (
-    <OverlayLayerProvider value={isFullScreenOpen ? 60 : 40}>
+    <OverlayLayerProvider value={isFullScreenOpen ? parentLayer + 20 : parentLayer}>
       {isFullScreenOpen ? (
         <div
           aria-hidden="true"
@@ -769,6 +772,8 @@ const PreviewToolPanel = ({
     setToolItemExpanded(null)
   }, [setToolItemExpanded])
 
+  const parentLayer = useOverlayLayer()
+
   usePreviewModalSurface({
     isOpen: isExpanded,
     onClose: closeExpanded,
@@ -777,7 +782,7 @@ const PreviewToolPanel = ({
   })
 
   return (
-    <OverlayLayerProvider value={isExpanded ? 60 : 40}>
+    <OverlayLayerProvider value={isExpanded ? parentLayer + 20 : parentLayer}>
       {isExpanded ? (
         <div
           aria-hidden="true"

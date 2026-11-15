@@ -27,7 +27,8 @@ export class VerificationProcessUnsettledError extends UpdateLifecycleError {
 export class VerificationProcessExitError extends UpdateLifecycleError {
   constructor(
     readonly command: string,
-    readonly exitCode: number | null
+    readonly exitCode: number | null,
+    readonly stderr = ''
   ) {
     super('install-failed', `Installation verification failed (${command}, exit ${exitCode}).`)
   }
@@ -100,7 +101,9 @@ export async function runVerificationProcess(
           return
         }
         if (code !== 0) {
-          reject(new VerificationProcessExitError(command, code))
+          // The existing output budget bounds this evidence. Keep it out of the display message;
+          // diagnostic callers redact and shorten it through runtimeChildProcessErrorFields.
+          reject(new VerificationProcessExitError(command, code, Buffer.concat(stderr).toString()))
           return
         }
         resolve({

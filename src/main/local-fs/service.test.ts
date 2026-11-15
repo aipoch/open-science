@@ -29,7 +29,11 @@ import { access, readdir, stat } from 'node:fs/promises'
 import { app } from 'electron'
 
 import { LOCAL_DIR_ENTRY_CAP, type GrantedLocalRoot } from '../../shared/local-fs'
-import { LocalFsService, type GrantedLocalRootsStore } from './service'
+import {
+  LocalFsService,
+  type GrantedLocalRootsStore,
+  type PreflightGrantedLocalRoot
+} from './service'
 import { NotebookShellProcessAdapter } from '../notebook/shell-process'
 
 // The unmocked fs/promises, for restoring the delegating wrappers after each listDrives test.
@@ -159,7 +163,7 @@ describe('LocalFsService.listDir', () => {
 
   it('resolves symlinks and .. via realpath', async () => {
     const link = join(root, 'link-to-sub')
-    await symlink(join(root, 'sub'), link)
+    await symlink(join(root, 'sub'), link, process.platform === 'win32' ? 'junction' : 'dir')
     const listing = await service.listDir(link)
     // realpath both sides: macOS resolves the tmp dir through a /private symlink prefix.
     expect(listing.resolvedPath).toBe(await realpath(join(root, 'sub')))
@@ -278,6 +282,7 @@ describe('LocalFsService granted roots', () => {
   let store: GrantedLocalRoot[] = []
   let grantService: LocalFsService
   let beforeGrantedRootsChange: ReturnType<typeof vi.fn<() => Promise<{ reaped: boolean } | void>>>
+  let preflightGrantedRoot: ReturnType<typeof vi.fn<PreflightGrantedLocalRoot>>
   // In-memory row-level store matching the SQLite repository's contract. Plain closures, not
   // vi.fn: the afterEach restoreAllMocks (for the app.getPath spy) must not reset the stub's
   // implementations between tests.
@@ -308,8 +313,9 @@ describe('LocalFsService granted roots', () => {
     await mkdir(join(home, 'Documents'))
     store = []
     beforeGrantedRootsChange = vi.fn(async () => undefined)
+    preflightGrantedRoot = vi.fn(async () => undefined)
     vi.spyOn(app, 'getPath').mockImplementation((name: string) => (name === 'home' ? home : '/tmp'))
-    grantService = new LocalFsService(storeStub, beforeGrantedRootsChange)
+    grantService = new LocalFsService(storeStub, beforeGrantedRootsChange, preflightGrantedRoot)
   })
 
   afterEach(async () => {
@@ -342,6 +348,47 @@ describe('LocalFsService granted roots', () => {
     expect(updated[0].id).toMatch(/^[0-9a-f-]{36}$/)
     await expect(grantService.listGrantedRoots()).resolves.toEqual(updated)
     expect(beforeGrantedRootsChange).not.toHaveBeenCalled()
+  })
+
+  it('preserves the requested path while preflighting the canonical grant before persistence', async () => {
+    const folder = join(home, 'Documents')
+    const alias = join(outside, 'documents-link')
+    await symlink(folder, alias, process.platform === 'win32' ? 'junction' : 'dir')
+
+    await grantService.grantRoot({ path: alias, access: 'rw' })
+
+    expect(preflightGrantedRoot).toHaveBeenCalledExactlyOnceWith(folder, 'rw', alias)
+    expect(store).toEqual([expect.objectContaining({ path: folder, access: 'rw' })])
+  })
+
+  it('returns preflight details without persisting or stopping notebooks', async () => {
+    const failure = new Error(
+      'Path: D:\\spss\nStage: inspect-selected-path\nWin32 error: 5 (ERROR_ACCESS_DENIED)\nRemediation: choose a local NTFS folder you own.'
+    )
+    const persist = vi.spyOn(storeStub, 'upsertByPath')
+    preflightGrantedRoot.mockRejectedValueOnce(failure)
+
+    await expect(
+      grantService.grantRoot({ path: join(home, 'Documents'), access: 'ro' })
+    ).rejects.toThrow(failure.message)
+
+    expect(persist).not.toHaveBeenCalled()
+    expect(beforeGrantedRootsChange).not.toHaveBeenCalled()
+    expect(store).toEqual([])
+  })
+
+  it('rejects an access change when preflight fails without stopping notebooks', async () => {
+    const [granted] = await grantService.grantRoot({ path: join(home, 'Documents'), access: 'ro' })
+    preflightGrantedRoot.mockClear()
+    preflightGrantedRoot.mockRejectedValueOnce(new Error('ACL preflight failed'))
+
+    await expect(
+      grantService.setGrantedRootAccess({ id: granted.id, access: 'rw' })
+    ).rejects.toThrow('ACL preflight failed')
+
+    expect(preflightGrantedRoot).toHaveBeenCalledExactlyOnceWith(granted.path, 'rw')
+    expect(beforeGrantedRootsChange).not.toHaveBeenCalled()
+    expect(store).toEqual([granted])
   })
 
   it('does not update an existing grant when stopping active kernels fails', async () => {
@@ -475,7 +522,7 @@ describe('LocalFsService granted roots', () => {
     // app.getPath('home') may return a path with symlinked segments (/var on macOS, /home mounts
     // on Linux): validation must compare against the canonical home, not the verbatim string.
     const symlinkedHome = join(outside, 'home-link')
-    await symlink(home, symlinkedHome)
+    await symlink(home, symlinkedHome, process.platform === 'win32' ? 'junction' : 'dir')
     vi.mocked(app.getPath).mockImplementation((name: string) =>
       name === 'home' ? symlinkedHome : '/tmp'
     )

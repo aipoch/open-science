@@ -336,3 +336,183 @@ it.each(['missing tier rule', 'wrong rank order', 'crossing group', 'body owned 
     expect(reconcileSourceGroupedHeaders(f)).toBe(0)
   }
 )
+
+const { anonymousOwnedGroupedParentHeader } = await import(
+  pathToFileURL(resolve('test/fixtures/owned-grouped-parent-header.mjs')).href
+)
+
+it('retains an already owned whole parent over its terminal group while a compound leaf stays unassigned', async () => {
+  const f = await anonymousOwnedGroupedParentHeader()
+  try {
+    const result = refineTable(
+      f.table,
+      f.items,
+      f.captions,
+      [],
+      f.rules,
+      [],
+      undefined,
+      undefined,
+      f.context
+    )
+    const parent = result.cells.find((cell: { text: string }) => cell.text === 'Group')
+    expect(parent).toMatchObject({ row: 0, column: 2, rowSpan: 1, colSpan: 5 })
+    const whole = f.items.find((item: { text: string }) => item.text === 'Group').sourceItem
+    expect(parent.sourceItems).toEqual([whole])
+    expect(
+      result.cells.filter(
+        (cell: { row: number; column: number }) =>
+          cell.row === 0 && [3, 4, 5, 6].includes(cell.column)
+      )
+    ).toEqual([])
+    expect(result.unassigned).toEqual(['AAAA BBBB CCCC'])
+    expect(
+      f.items.some(
+        (item: { text: string }) => item.text === 'A note remains below the closed table.'
+      )
+    ).toBe(true)
+    const claims = result.cells.flatMap(
+      (cell: { sourceItems?: { index: number }[] }) => cell.sourceItems ?? []
+    )
+    expect(claims).toHaveLength(34)
+    expect(new Set(claims.map((source: { index: number }) => source.index)).size).toBe(34)
+    const expected = f.items
+      .filter(
+        (item: { text: string }) =>
+          ![
+            'Table 1: Anonymous grouped values.',
+            'AAAA BBBB CCCC',
+            'A note remains below the closed table.'
+          ].includes(item.text)
+      )
+      .map((item: { sourceItem: { index: number } }) => item.sourceItem)
+    expect(
+      [...claims].sort((a: { index: number }, b: { index: number }) => a.index - b.index)
+    ).toEqual(expected.sort((a: { index: number }, b: { index: number }) => a.index - b.index))
+  } finally {
+    await f.cleanup()
+  }
+})
+
+it.each([
+  'missing-underline',
+  'missing-long-underline',
+  'competing-parent',
+  'different-leaf-distribution',
+  'missing-native-context',
+  'font',
+  'partial-original-inventory',
+  'foreign-original-source',
+  'fake-signing'
+])('declines an owned common parent with incomplete ordinary evidence: %s', async (mode) => {
+  const f = await anonymousOwnedGroupedParentHeader(mode)
+  try {
+    if (mode === 'missing-native-context' || mode === 'fake-signing') f.context = undefined
+    if (mode === 'fake-signing')
+      f.items.find((item: { text: string }) => item.text === 'Group').nativeSigned = true
+    if (mode === 'font') f.context.sourceContent.styles = {}
+    if (mode === 'partial-original-inventory')
+      f.items = f.items.filter(
+        (item: { text: string }) => item.text !== 'A note remains below the closed table.'
+      )
+    if (mode === 'foreign-original-source')
+      f.items.find((item: { text: string }) => item.text === 'Group').sourceItem.text = 'Foreign'
+    const result = refineTable(
+      f.table,
+      f.items,
+      f.captions,
+      [],
+      f.rules,
+      [],
+      undefined,
+      undefined,
+      f.context
+    )
+    expect(
+      result.cells.some(
+        (cell: { row: number; column: number; colSpan: number }) =>
+          cell.row === 0 && cell.column === 2 && cell.colSpan === 5
+      )
+    ).toBe(false)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+const { anonymousRepeatedOwnedParentHeader } = await import(
+  pathToFileURL(resolve('test/fixtures/repeated-owned-parent-header.mjs')).href
+)
+
+it('partitions two already owned whole parents over repeated leaf groups with touching unequal underlines', async () => {
+  const f = await anonymousRepeatedOwnedParentHeader()
+  try {
+    const result = refineTable(
+      f.table,
+      f.items,
+      f.captions,
+      [],
+      f.rules,
+      [],
+      undefined,
+      undefined,
+      f.context
+    )
+    const parents = result.cells.filter(
+      (cell: { row: number; colSpan: number }) => cell.row === 0 && cell.colSpan > 1
+    )
+    expect(
+      parents.map((cell: { column: number; colSpan: number; text: string }) => [
+        cell.column,
+        cell.colSpan,
+        cell.text
+      ])
+    ).toEqual([
+      [1, 4, 'Base'],
+      [5, 4, 'Trial']
+    ])
+    expect(parents.map((cell: { sourceItems: { text: string }[] }) => cell.sourceItems)).toEqual(
+      ['Base', 'Trial'].map((text) => [
+        f.items.find((item: { text: string }) => item.text === text).sourceItem
+      ])
+    )
+    expect(
+      result.cells
+        .filter((cell: { row: number }) => cell.row > 1)
+        .map((cell: { text: string }) => cell.text)
+    ).toEqual(
+      Array.from({ length: 4 }, (_, r) => [
+        'A' + r,
+        ...Array.from({ length: 8 }, (_, c) => '0.' + r + (c + 1))
+      ]).flat()
+    )
+    expect(result.unassigned).toEqual([])
+  } finally {
+    await f.cleanup()
+  }
+})
+
+it.each(['missing-left', 'missing-right', 'different-leaves', 'foreign-upper', 'foreign-lower'])(
+  'keeps ambiguous repeated parent evidence out of the owned partition: %s',
+  async (mode) => {
+    const f = await anonymousRepeatedOwnedParentHeader(mode)
+    try {
+      const result = refineTable(
+        f.table,
+        f.items,
+        f.captions,
+        [],
+        f.rules,
+        [],
+        undefined,
+        undefined,
+        f.context
+      )
+      const parents = result.cells.filter(
+        (cell: { row: number; colSpan: number }) => cell.row === 0 && cell.colSpan === 4
+      )
+      expect(parents.map((cell: { text: string }) => cell.text)).not.toEqual(['Base', 'Trial'])
+    } finally {
+      await f.cleanup()
+    }
+  }
+)

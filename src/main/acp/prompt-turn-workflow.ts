@@ -565,6 +565,7 @@ class AcpPromptTurnWorkflow {
     const eventIdentity = interaction.promptMessageId
       ? { promptMessageId: interaction.promptMessageId }
       : {}
+    let promptBackend: AcpBackendGenerationView | undefined
     let artifact: ArtifactTurnHandle | undefined
     let prepared: PreparedPromptHandle | undefined
     let context: ContextWindowTurnHandle | undefined
@@ -611,6 +612,7 @@ class AcpPromptTurnWorkflow {
         : request
       const snapshot = registry.lookup(sessionId)?.aggregate.snapshot()
       const backend = env.backend()
+      promptBackend = backend
       const planContext =
         turn.plan.active ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
       // Only an explicit user send carries the notice; continuations never consume it.
@@ -669,7 +671,7 @@ class AcpPromptTurnWorkflow {
         skillStarted = true
       }
       const promptSnapshot = registry.lookup(sessionId)?.aggregate.snapshot()
-      const promptBackend = env.backend()
+      promptBackend = env.backend()
       const framework = promptBackend.framework
       const cwd = promptSnapshot?.cwd ?? this.options.currentCwd()
       let providerContent = readyPrepared.content
@@ -924,7 +926,7 @@ class AcpPromptTurnWorkflow {
       sideChatRelaySettled = true
       sideChatRelay.restore()
     }
-    const model = env.backend().session.model
+    const model = promptBackend?.context.model ?? promptBackend?.session.model
     return finalizer.finalize(
       {
         sessionId,
@@ -936,6 +938,7 @@ class AcpPromptTurnWorkflow {
         ...(context ? { context } : {}),
         skill,
         ...(model ? { model } : {}),
+        providerName: promptBackend?.providerName,
         emitUserMessage,
         emitArtifact: (onPublished) => artifacts.publish(sessionId, artifact, onPublished),
         disposeArtifact: () => artifacts.dispose(artifact),

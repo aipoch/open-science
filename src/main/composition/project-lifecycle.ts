@@ -260,14 +260,9 @@ export function composeProjectLifecycle({
     projectRepository,
     sessionPersistenceCoordinator,
     {
-      isSessionBusy: async (projectId, sessionId) => {
-        const computeJobs = computeJobActivityRef.current
-        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
-        const jobs = await computeJobs.countNonTerminalBySession(sessionId)
-        // Read synchronous activity after the database await so a newly active runtime is visible.
+      isSessionLocallyBusy(projectId, sessionId) {
         const snapshot = runtimeRef.current?.getSnapshot()
         return (
-          jobs > 0 ||
           snapshot?.pendingPermissions?.some((request) => request.sessionId === sessionId) ===
             true ||
           snapshot?.pendingElicitations?.some((request) => request.sessionId === sessionId) ===
@@ -277,6 +272,13 @@ export function composeProjectLifecycle({
             (session) => session.projectId === projectId && session.sessionId === sessionId
           )
         )
+      },
+      async isSessionBusy(projectId, sessionId) {
+        const computeJobs = computeJobActivityRef.current
+        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
+        const jobs = await computeJobs.countNonTerminalBySession(sessionId)
+        // Read synchronous activity after the database await so a newly active runtime is visible.
+        return jobs > 0 || this.isSessionLocallyBusy!(projectId, sessionId)
       },
       isSessionExportBusy: async (projectId, sessionId) => {
         const computeJobs = computeJobActivityRef.current

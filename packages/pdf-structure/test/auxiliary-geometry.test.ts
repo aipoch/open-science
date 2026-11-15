@@ -157,9 +157,17 @@ const { matchNativeFigureRenderContext } = await import(pathToFileURL(join(dirna
 const { tableTextToken } = await import(pathToFileURL(join(dirname(script), 'literature-pdf-orientation.mjs')).href)
 const { createNativeFigurePaintCertificate, nativeFigurePaintCertificateData } = await import(pathToFileURL(join(dirname(script), 'literature-pdf-figure-native-plot-labels.mjs')).href)
 const assets = dirname(require.resolve('pdfjs-dist/package.json'))
-const task = getDocument({data:new Uint8Array(await readFile(input)), standardFontDataUrl:join(assets,'standard_fonts')+'/', cMapUrl:join(assets,'cmaps')+'/', wasmUrl:join(assets,'wasm')+'/', cMapPacked:true, isEvalSupported:false, fontExtraProperties:true, useSystemFonts:false, verbosity:0})
+const inputBytes = await readFile(input), padded = Buffer.allocUnsafe(inputBytes.length + 37)
+padded.fill(0x58)
+const pooled = padded.subarray(13, 13 + inputBytes.length)
+inputBytes.copy(pooled)
+assert(pooled.byteOffset > 0 && pooled.byteLength < pooled.buffer.byteLength)
+assert.equal(createHash('sha256').update(inputBytes).digest('hex'), probe.summary.checksum)
+const task = getDocument({data:new Uint8Array(pooled.buffer, pooled.byteOffset, pooled.byteLength), standardFontDataUrl:join(assets,'standard_fonts')+'/', cMapUrl:join(assets,'cmaps')+'/', wasmUrl:join(assets,'wasm')+'/', cMapPacked:true, isEvalSupported:false, fontExtraProperties:true, useSystemFonts:false, verbosity:0})
 try {
   const document = await task.promise, nativePage = await document.getPage(1)
+  assert.deepEqual(Buffer.from(await document.getData()), inputBytes)
+  assert.deepEqual(await readFile(input), inputBytes)
   const content = await nativePage.getTextContent(), viewport = nativePage.getViewport({scale:1, rotation:page.renderRotation})
   const context = {...matchNativeFigureRenderContext(snapshot, 1, content, viewport, page.graphicsBounds, probe.summary.checksum), pageNumber:1, sourceSha256:probe.summary.checksum}
   assert(context.content)
@@ -190,3 +198,109 @@ console.log('retained-evidence-ok')
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it.each(['none', 'auxiliary', 'requested'])(
+  'releases completed page caches while preserving the %s cleanup failure contract',
+  async (failure) => {
+    const { runInNewContext } = await import('node:vm'),
+      assert = (await import('node:assert/strict')).default,
+      { createHash } = await import('node:crypto'),
+      { dirname, resolve: absolute } = await import('node:path')
+    const source = (await readFile(resolve('resources/literature-pdf-structure.mjs'), 'utf8'))
+      .replace(/^import\b[\s\S]*?from ['"][^'"]+['"]\n/gm, '')
+      .replaceAll('export const ', 'const ')
+      .replaceAll('import.meta.url', "'file:///resources/literature-pdf-structure.mjs'")
+    const events: string[] = [],
+      cachedImages = new Set<number>()
+    let renderedPage = 0
+    const document = {
+        numPages: 2,
+        getOutline: async () => [],
+        getPage: async (number: number) => ({
+          rotate: 0,
+          commonObjs: {},
+          getTextContent: async () => ({ items: [], styles: {} }),
+          getStructTree: async () => undefined,
+          getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+          getViewport: () => ({ width: 200, height: 200 }),
+          render: () => {
+            renderedPage = number
+            events.push(`render:${number}`)
+            cachedImages.add(number)
+            return { promise: Promise.resolve() }
+          },
+          cleanup: () => events.push(`page:${number}`)
+        }),
+        cleanup: async () => {
+          events.push('document')
+          if (
+            (failure === 'auxiliary' && renderedPage === 1) ||
+            (failure === 'requested' && renderedPage === 2)
+          )
+            throw Error('cleanup failed')
+          cachedImages.clear()
+        }
+      },
+      task = {
+        promise: Promise.resolve(document),
+        destroy: async () => {
+          cachedImages.clear()
+          events.push('destroy')
+        }
+      }
+    const run = runInNewContext(
+      `(async()=>{${source};return {pages, nativeFigureRenderContexts}})()`,
+      {
+        assert,
+        createHash,
+        dirname,
+        join,
+        resolve: absolute,
+        process: { argv: ['node', 'script', 'source.pdf', 'out', '2', 'adjacent', 'production'] },
+        stat: async () => ({ size: 20 }),
+        readFile: async () => Buffer.from('source'),
+        mkdir: async () => undefined,
+        writeFile: async () => undefined,
+        createRequire: () => ({ resolve: () => '/pdfjs/package.json' }),
+        getDocument: () => task,
+        OPS: {},
+        version: 'test',
+        performance,
+        console: { log: () => undefined },
+        createCanvas: () => ({ width: 200, height: 200, getContext: () => ({}) }),
+        readingRotation: () => 0,
+        repairPdfSymbolText: async (_page: unknown, content: unknown) => content,
+        excludePdfLineNumbers: (content: unknown) => content,
+        projectPdfTextLines: () => [],
+        normalizePageLineOrder: ({ lines }: { lines: unknown[] }) => lines,
+        captionKind: () => false,
+        collectGraphicsBounds: () => ({ invalidGraphicsBounds: 0, graphicsBounds: [] }),
+        nativeConditionalFigureReferenceStarts: () => new Set(),
+        recordPaintedOperationBounds: () => undefined,
+        captureNativeFigureRenderContext: () => ({ glyphBounds: ['retained'] }),
+        sealNativeMesh4RenderContext: () => false,
+        nativeLigatureDualApiCaptureRequired: () => false,
+        attachNativeCompositingResources: (snapshot: unknown) => snapshot,
+        installPdfCanvasReset: () => undefined
+      }
+    )
+    if (failure === 'requested') {
+      await expect(run).rejects.toThrow('cleanup failed')
+      expect(events.at(-1)).toBe('destroy')
+      return
+    }
+    const result = await run
+    expect(events).toEqual([
+      'render:1',
+      'page:1',
+      'document',
+      'render:2',
+      'page:2',
+      'document',
+      'destroy'
+    ])
+    expect(cachedImages.size).toBe(0)
+    expect(result.nativeFigureRenderContexts.size).toBe(1)
+    expect(result.nativeFigureRenderContexts.get(2).glyphBounds).toEqual(['retained'])
+  }
+)

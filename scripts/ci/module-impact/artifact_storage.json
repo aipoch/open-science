@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/main/artifacts/repository.filename-alias.test.ts",
+    "src/main/artifacts/storage-access.filename.test.ts",
     "src/main/artifacts/compatibility-owner.ts",
     "src/main/artifacts/pending-file-transaction.ts",
     "src/main/artifacts/publication-owner.ts",
@@ -21,6 +23,8 @@
   "consumerModules": ["artifact_provenance"],
   "testFiles": {
     "owner": [
+      "src/main/artifacts/repository.filename-alias.test.ts",
+      "src/main/artifacts/storage-access.filename.test.ts",
       "src/main/artifacts/repository.test.ts",
       "src/main/artifacts/repository.rollback.test.ts"
     ],

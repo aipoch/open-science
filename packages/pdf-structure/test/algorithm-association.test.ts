@@ -59,18 +59,37 @@ it('keeps two-column algorithms separate and includes the title and closing rule
   ])
 })
 
-it.each(['title', 'pseudocode', 'closing-rule'])(
-  'requires %s evidence before classifying an algorithm',
-  (missing) => {
+it.each(['S1', 'A1', 'A.1'])(
+  'keeps a complete supplemental algorithm %s in its own ruled column',
+  (ordinal) => {
     const page = structuredClone(sample)
-    if (missing === 'title') page.lines = page.lines.filter((l) => !l.text.startsWith('Algorithm'))
-    if (missing === 'pseudocode')
-      page.lines = page.lines.filter((l) => !l.text.startsWith('Require'))
-    if (missing === 'closing-rule')
-      page.graphicsBounds = page.graphicsBounds.filter((_, i) => i !== 2 && i !== 5)
-    expect(findAlgorithmCandidates(page)).toEqual([])
+    page.lines[0].text = `Algorithm ${ordinal} Search`
+    const algorithms = findAlgorithmCandidates(page)
+    expect(
+      algorithms.map((candidate: { caption: { lines: string[] }; rect: number[] }) => [
+        candidate.caption.lines[0],
+        candidate.rect.map(Math.round)
+      ])
+    ).toEqual([
+      [`Algorithm ${ordinal} Search`, [48, 198, 302, 286]],
+      ['Algorithm 2 Search', [318, 218, 572, 306]]
+    ])
   }
 )
+
+it.each(
+  ['1', 'S1'].flatMap((ordinal) =>
+    ['title', 'pseudocode', 'closing-rule'].map((missing) => ({ ordinal, missing }))
+  )
+)('requires $missing evidence before classifying algorithm $ordinal', ({ ordinal, missing }) => {
+  const page = structuredClone(sample)
+  page.lines[0].text = `Algorithm ${ordinal} Search`
+  if (missing === 'title') page.lines = page.lines.filter((l) => !l.text.startsWith('Algorithm'))
+  if (missing === 'pseudocode') page.lines = page.lines.filter((l) => !l.text.startsWith('Require'))
+  if (missing === 'closing-rule')
+    page.graphicsBounds = page.graphicsBounds.filter((_, i) => i !== 2 && i !== 5)
+  expect(findAlgorithmCandidates(page)).toEqual([])
+})
 
 it('keeps algorithm rules out of the preceding figure association', () => {
   const page = {

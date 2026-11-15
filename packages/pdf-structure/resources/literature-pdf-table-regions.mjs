@@ -1949,11 +1949,13 @@ function recoverCaptionedOpenRuleTable(items, rules, pageNumber, caption, captio
   // that fallback when a distinct explicit title intervenes before its entire
   // rule frame; ordinary continuation titles and neighboring columns remain
   // eligible. Do not remove any existing detector-owned table.
-  const number = /^Table\s+(\d+[A-Z]?)\s*[:.]/i.exec(caption.lines?.[0] ?? '')?.[1]
+  const number = /^Table\s+(\d+[A-Z]?|[IVXLCDM]+)\s*(?:[:.]|$)/i.exec(caption.lines?.[0] ?? '')?.[1]
   if (
     number &&
     captions.some((other) => {
-      const nextNumber = /^Table\s+(\d+[A-Z]?)\s*[:.]/i.exec(other.lines?.[0] ?? '')?.[1]
+      const nextNumber = /^Table\s+(\d+[A-Z]?|[IVXLCDM]+)\s*(?:[:.]|$)/i.exec(
+        other.lines?.[0] ?? ''
+      )?.[1]
       return (
         other !== caption &&
         other.page === caption.page &&

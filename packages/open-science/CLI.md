@@ -131,6 +131,12 @@ accepts only JSON and help options, and `help` accepts only one optional command
 
 ## Service lifecycle
 
+Startup waits up to 120 seconds by default. Set `start --timeout-ms <ms>` for a different
+readiness deadline. `startup_unconfirmed` means readiness was not observed before the deadline;
+the process may still finish starting. Its JSON error includes the configuration root, launcher
+PID, launch log and a `status` recovery command. Inspect that status before starting again.
+The CLI does not kill a slow service when its readiness wait expires.
+
 Initialize the local configuration directory from a terminal. This is safe to repeat and does not
 start the desktop application:
 
@@ -500,6 +506,38 @@ open-science run cancel <run-id> --json
 open-science session status <session-id> --json
 ```
 
+Every CLI submission has a request ID. Supply `--request-id <id>` to retain an identity in a script;
+otherwise the CLI generates one. The local service durably acknowledges the request before slow
+Agent preparation. If the connection fails before a Run ID is returned, the error includes
+`requestId`; query that receipt rather than sending a new request:
+
+```bash
+open-science run --project <project-id> --prompt-file ./task.md --request-id analysis-001 --wait --json
+open-science run status --request-id analysis-001 --json
+open-science run wait --request-id analysis-001 --timeout-ms 600000 --json
+open-science run wait <run-id> --json
+```
+
+A receipt is `pending` during preparation, `accepted` once it links to a Run, `failed` after a
+preparation rejection, or `interrupted` when restart recovery finds no persisted Run link.
+`accepted` does not mean the research is complete. Reusing the same request ID with the same
+input returns the existing receipt; different input returns `submission_conflict`. Interrupted
+requests are never automatically replayed. The receipts persist in `task-submissions.json` without
+prompt text or credentials. Run records carry an optional `requestId` for crash recovery. Existing
+Runs without this field remain queryable by Run ID; their original requests cannot be reconstructed.
+Receipts survive the existing 200-Run history retention, so an accepted receipt can outlive its Run
+query result. Receipt storage is capped at 10,000 entries: capacity or storage recovery errors reject
+new admissions without evicting deduplication evidence. Do not delete receipt storage to retry an
+uncertain request. Older servers lack this guarantee; the CLI asks for a server update before
+submitting. Downgraded servers and SDK calls without a request ID do not provide durable deduplication.
+
+`run wait` attaches to an existing Run or receipt and never submits another prompt. A terminal Run
+result is published after persistence, finalization and release of the Session reservation. Scripts
+can wait successfully and then send their next turn. `--jsonl` streams available progress and a final
+result; disconnecting a progress stream does not replace the authoritative status check. Plan
+attention, explicit cancellation and failure exit codes follow `run --wait` behavior. Cancellation
+requires a known Run ID; a still-preparing receipt cannot be cancelled through `run cancel`.
+
 Use `--timeout-ms <milliseconds>` with `--wait` to bound how long the client waits. A timeout stops the
 CLI wait and returns exit code `1`; it does not cancel the run, which can still be inspected with
 `open-science run status <run-id>`. Add `--cancel-on-timeout` to explicitly cancel the server run after
@@ -646,7 +684,11 @@ open-science session import ~/backups/session.science --project <id-or-name> --n
 `--non-interactive` confirms the import preview on the caller's behalf; without it the command
 fails rather than waiting for an approval that a headless caller can never supply. Choose exactly
 one destination: `--project` imports into an existing Project, `--new-project` creates one with
-the given name, and omitting both uses the package's own Project name in a new Project. The
+the given name, and omitting both uses the package's own Project name in a new Project. A cancelled import exits nonzero with
+`code: "cancelled"`. If the import request times out, JSON output includes
+`completionStatus: "unconfirmed"`. The service can still finish the import. Check the destination
+before retrying, since another import can create a second Session. For a rejected local import,
+include the returned `error.correlationId` (when present) when looking up the service log. The
 package file is read directly from disk, so no upload or drag-and-drop step is involved.
 
 Both commands dispatch the same `sessions:export-package`, `sessions:import-package`, and
@@ -655,6 +697,26 @@ loopback HTTP channel. They are unavailable to remote Web sessions by design: th
 installed as a rejecting stub for remote callers, and the handler additionally requires a local
 caller, so arbitrary-path file read and write stay confined to loopback callers that hold the
 service token.
+
+### Fork an existing Session
+
+Import, fork and new-Session creation are separate operations. Import keeps the imported research
+read-only and never executes it. Fork explicitly creates a writable continuation with copied
+history, managed files and a source relationship; it does not overwrite or unlock the imported
+Session. Starting a Run without `--session` creates a new independent Session.
+
+```bash
+open-science session fork <imported-session-id> --project <id-or-name> --json
+open-science run --project <project-id> --session <returned-fork-session-id> --prompt "Continue the analysis" --wait
+```
+
+Fork reuses the desktop package owner, including admission, recovery and provenance remapping.
+Imported forks replay their copied history with this installation's model defaults; they do not
+restore another machine's provider process, credentials or pending approvals. Local forks preserve
+the existing model-selection policy. `run --session <imported-session-id>` returns `session_read_only`
+with a fork instruction. The `session fork` request uses the same one-hour default timeout as package
+transfers and accepts `--timeout-ms`; after a timeout inspect the operation and Session list before
+forking again. Fork is available only through authenticated local access.
 
 ## Agent routing settings
 

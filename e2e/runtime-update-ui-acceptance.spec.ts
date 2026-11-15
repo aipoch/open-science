@@ -383,8 +383,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
         await releaseNotes.focus()
         await expect(releaseNotes).toBeFocused()
         await desktopState(false)
-        // LS-25 keeps unexpected connection loss in one nonmodal notice. LS-32 keeps the
-        // independent update transaction visible; connection loss must not replace its dialog.
+        // Unexpected connection loss blocks interaction while the update stays mounted.
         const recovery = page.getByTestId('local-service-recovery')
         await expect(recovery).toHaveCount(1)
         await expect(recovery.getByRole('status')).toHaveCount(1)
@@ -394,7 +393,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
         await expect(page.getByRole('alertdialog')).toHaveCount(0)
         await expect(page.getByRole('dialog')).toHaveCount(1)
         await expect(page.getByTestId('runtime-update-dialog')).toBeVisible()
-        await expect(releaseNotes).toBeFocused()
+        await expect(recovery).toBeFocused()
         await capture('S23-unexpected-runtime-disconnect')
         await desktopState(false, 'connected')
         await expect(recovery).toHaveCount(0)
@@ -602,7 +601,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
         })
       ).toBeVisible()
       await expect(page.getByRole('alertdialog')).toHaveCount(0)
-      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await expect(page.getByRole('dialog')).toHaveCount(1)
       await expect(recovery.getByRole('button', { name: '退出', exact: true })).toBeVisible()
       if (phase === 'disconnected' || phase === 'unavailable')
         await expect(recovery.getByRole('button', { name: '重试', exact: true })).toBeVisible()

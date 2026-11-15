@@ -16,6 +16,7 @@ type PendingFileTransactionOptions = {
 type PendingFileTransactionStorage = {
   getPendingRunDir: (projectId: string, sessionId: string, runId: string) => string
   getArtifactMetadataPath: (directory: string, filename: string) => string
+  resolveArtifactFilename: (directory: string, filename: string) => Promise<string>
   resolveAllowedImportFilePath: (
     path: string,
     allowedImportRoots: string[],

@@ -74,6 +74,8 @@ const validateDomainPattern = (pattern: string, allowFlexibleWildcard: boolean):
 }
 
 const normalizePolicy = (policy: NotebookNetworkPolicy): NotebookNetworkPolicy => ({
+  mode: policy.mode === 'strict' ? 'strict' : 'relaxed',
+  strictWhitelist: policy.strictWhitelist ?? [],
   ...(policy.trustedPrivateDestinations
     ? {
         trustedPrivateDestinations: policy.trustedPrivateDestinations.map((entry) => {
@@ -140,6 +142,8 @@ const createRuntimeConfig = (
   const installationId = WINDOWS_INSTALLATION_ID
   const windowsOwnershipRoot = resolveWindowsOwnershipRoot(environment, options.packaged ?? true)
   return {
+    mode: policy.mode,
+    strictWhitelist: policy.strictWhitelist,
     trustedPrivateDestinations: policy.trustedPrivateDestinations,
     allowedDomains: [...policy.allowedDomains],
     ...(policy.askDomains ? { askDomains: [...policy.askDomains] } : {}),

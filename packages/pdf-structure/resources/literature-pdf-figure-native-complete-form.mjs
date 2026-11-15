@@ -7,8 +7,15 @@ import {
 import { collectTableRules } from './literature-pdf-graphics.mjs'
 import { union } from './literature-pdf-page-geometry.mjs'
 import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
-import { nativePairedScopedSubcaptions } from './literature-pdf-figure-native-paired-subcaptions.mjs'
+import {
+  nativePairedScopedSubcaptions,
+  nativeVectorPairTailCurrent
+} from './literature-pdf-figure-native-paired-subcaptions.mjs'
 import { nativeOrderedRasterLabels } from './literature-pdf-figure-native-ordered-raster-labels.mjs'
+import {
+  nativeRasterSubcaptionCrop,
+  nativeRasterSubcaptionCurrent
+} from './literature-pdf-figure-native-raster-subcaptions.mjs'
 import { nativeWrappedPanelSubcaptionCrop } from './literature-pdf-figure-native-wrapped-subcaptions.mjs'
 const hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
 const inside = (a, b, e = 1e-5) => b.every((v, i) => (i < 2 ? v >= a[i] - e : v <= a[i] + e))
@@ -17,6 +24,16 @@ const expand = (r, d) => r.map((v, i) => v + (i < 2 ? -d : d))
 export function nativeCompleteFormCrop(page, f, captions, tables, tokens, ctx) {
   try {
     if (f?.fallbackFigure || f?.headerRaster) return
+    const raster = nativeRasterSubcaptionCrop(
+      page,
+      f,
+      captions,
+      tables,
+      tokens,
+      ctx,
+      nativeFigurePathPaint
+    )
+    if (raster) return raster
     const wrapped = nativeWrappedPanelSubcaptionCrop(
       page,
       f,
@@ -817,6 +834,8 @@ export function nativeCompleteFormCropPngSafe(png, rect, page, candidate) {
       !proof ||
       ![
         'foreignPaints,ownedRects',
+        'foreignPaints,ownedRects,vectorTail',
+        'foreignPaints,ownedRects,rasterSubcaptions',
         'foreignPaints,nativeTail,ownedRects',
         'foreignPaints,ownedRects,paintSeparations',
         'foreignPaints,markerClips,ownedRects'
@@ -826,6 +845,10 @@ export function nativeCompleteFormCropPngSafe(png, rect, page, candidate) {
       !Array.isArray(proof.foreignPaints) ||
       !valid(rect)
     )
+      return false
+    if (Object.hasOwn(proof, 'vectorTail') && !nativeVectorPairTailCurrent(proof, page))
+      return false
+    if (Object.hasOwn(proof, 'rasterSubcaptions') && !nativeRasterSubcaptionCurrent(proof, page))
       return false
     const raster = getPdfCropRasterProtectionFromPng(png, rect, page)
     if (!raster) return false

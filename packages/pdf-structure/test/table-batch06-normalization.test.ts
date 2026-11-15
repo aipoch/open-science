@@ -32,6 +32,33 @@ it('rejects a damaged equation crop even when a caption is attached', () => {
   expect(hasTableEvidence(table, { lines: ['Table 1. Supplementary derivation.'] })).toBe(false)
 })
 
+it('keeps a mixed table and adjacent prose candidate on the conservative path', () => {
+  const table = {
+    cropRect: [0, 0, 600, 220],
+    grid: [['Setting'], ['Value']],
+    cells: [],
+    rows: [],
+    unassigned: [
+      'the neighboring figure explains the trend',
+      'is better than baseline',
+      'additional prose'
+    ],
+    clipped: Array.from({ length: 4 }, (_, i) => ({
+      text: `fragment ${i}`,
+      rect: [0, 0, 1, 1]
+    })),
+    issues: ['text-crosses-crop-boundary', 'unassigned-source-text'],
+    repairs: []
+  }
+  const before = structuredClone(table)
+  expect(
+    hasTableEvidence(table, {
+      lines: ['Table 1 and Figure 2. Evaluation results.']
+    })
+  ).toBe(false)
+  expect(table).toEqual(before)
+})
+
 it('routes a captioned prose card away from table evidence', () => {
   const prose = 'A long narrative explanation '.repeat(12).trim()
   const table = {

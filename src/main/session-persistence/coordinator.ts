@@ -6,6 +6,7 @@ import {
   SessionDeletionCommittedError,
   SessionRevisionConflictError,
   isSessionRevisionConflictError,
+  isPreparedSessionRun,
   sessionRevision,
   deleteSessionRecoveryFileRequestSchema,
   type DeleteSessionRecoveryFileRequest,
@@ -949,7 +950,11 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           if (actualRevision !== expectedRevision)
             throw new SessionRevisionConflictError(expectedRevision, actualRevision)
           // Normal reads preserve active runtime state. Never restart an owned run or preparation.
-          if (loaded.session.activeRun || this.stateOwner.ownsPromptPreparation(loaded.session))
+          if (
+            (loaded.session.activeRun && !isPreparedSessionRun(loaded.session)) ||
+            this.stateOwner.ownsPromptPreparation(loaded.session) ||
+            this.repository.hasLiveRuntimeSession?.(projectId, sessionId)
+          )
             return loaded.session
           // Runtime ownership can change without a JSON revision. Replan from the validated read so
           // stale restore normalization cannot resurrect a released run or disturb a new owner.
@@ -1106,6 +1111,11 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         let recoveryFailureCount = 0
         for (let index = 0; index < sessions.length; index += 1) {
           try {
+            if (
+              this.stateOwner.ownsPromptPreparation(sessions[index]) ||
+              this.repository.hasLiveRuntimeSession?.(sessions[index].projectId, sessions[index].id)
+            )
+              continue
             const recovery = recoverInterruptedDelegatedWorkSession(sessions[index])
             if (recovery.interrupted.length === 0) continue
             const persistedRecovery = await saveSessionWithRevision(
