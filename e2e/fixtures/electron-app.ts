@@ -415,6 +415,11 @@ type ElectronApp = {
   }) => Promise<Page>
   restartAfterCrash: (options?: { force?: boolean }) => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
+  restartWithRawSessionFileFixture: (fixture: {
+    projectId: string
+    sessionId: string
+    contents: string
+  }) => Promise<Page>
   restartWithSessionFixture: (
     session: PersistedChatSession,
     notebookRuns?: NotebookRunRecord[],
@@ -1938,6 +1943,30 @@ class ElectronAppHarness implements ElectronApp {
         })
     }
     // Rebuild the catalog from the fixture file, just as the historical-session fixture does.
+    const client = createProjectDbClient(this.roots.storageRoot)
+    try {
+      await client.sessionProjectionState.deleteMany()
+    } finally {
+      await client.$disconnect()
+    }
+    await this.launch()
+    return this.page
+  }
+
+  async restartWithRawSessionFileFixture(fixture: {
+    projectId: string
+    sessionId: string
+    contents: string
+  }): Promise<Page> {
+    if (![fixture.projectId, fixture.sessionId].every((id) => /^[a-zA-Z0-9_-]+$/.test(id))) {
+      throw new Error('Invalid E2E Session fixture identity.')
+    }
+    await this.close()
+    const directory = join(this.roots.storageRoot, 'sessions', fixture.projectId)
+    await mkdir(directory, { recursive: true })
+    // Preserve the released fixture byte-for-byte instead of re-encoding it through the current
+    // createSessionFile projection.
+    await writeFile(join(directory, `${fixture.sessionId}.json`), fixture.contents, 'utf8')
     const client = createProjectDbClient(this.roots.storageRoot)
     try {
       await client.sessionProjectionState.deleteMany()

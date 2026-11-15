@@ -15,7 +15,70 @@ import {
   validateConversationGraph
 } from '../src/shared/conversation-graph'
 import type { PersistedChatSession, PersistedToolActivity } from '../src/shared/session-persistence'
-import { createSessionFile } from '../src/shared/session-persistence'
+
+const legacyJsonFixturePath = join(
+  __dirname,
+  'fixtures',
+  'legacy-json',
+  'open-science-1.0.8-session.v2.json'
+)
+
+type LegacySessionFile = {
+  version: number
+  session: PersistedChatSession & {
+    conversationGraph: NonNullable<PersistedChatSession['conversationGraph']> & {
+      schemaVersion: number
+    }
+  }
+}
+
+const readLegacySessionFixture = async (): Promise<LegacySessionFile> =>
+  JSON.parse(await readFile(legacyJsonFixturePath, 'utf8')) as LegacySessionFile
+
+// Guard the checked-in input itself: a current JSONL stream is multiple JSON documents and would
+// fail this parse, while a regenerated current JSON file loses the released graph field shape.
+test('keeps the checked-in legacy JSON fixture as a released 1.0.8 v2 envelope', async () => {
+  const fixture = await readLegacySessionFixture()
+  expect(fixture.version).toBe(2)
+  expect(fixture.session).toMatchObject({
+    id: 'legacy-upgrade-json-session',
+    number: 1,
+    revision: 1,
+    title: 'Legacy JSON upgrade session',
+    status: 'idle',
+    agentFrameworkId: 'opencode',
+    permissionProfile: 'ask',
+    autoReviewEnabled: false,
+    memoryEnabled: true,
+    delegationPolicy: 'allow'
+  })
+  expect(fixture.session.agentConfiguration).toBeUndefined()
+  expect(
+    fixture.session.messages.map(({ id, role, responseToMessageId }) => ({
+      id,
+      role,
+      responseToMessageId
+    }))
+  ).toEqual([
+    { id: 'legacy-upgrade-question', role: 'user', responseToMessageId: undefined },
+    {
+      id: 'legacy-upgrade-answer',
+      role: 'agent',
+      responseToMessageId: 'legacy-upgrade-question'
+    }
+  ])
+  expect(fixture.session.conversationGraph).toMatchObject({
+    schemaVersion: 1,
+    rootFrameId: 'root-frame-legacy-upgrade-json-session',
+    activeFrameId: 'root-frame-legacy-upgrade-json-session'
+  })
+  expect(fixture.session.conversationGraph.frames).toHaveLength(1)
+  expect(fixture.session.conversationGraph.branches).toHaveLength(1)
+  expect(fixture.session.conversationGraph.messages.map(({ id }) => id)).toEqual([
+    'legacy-upgrade-question',
+    'legacy-upgrade-answer'
+  ])
+})
 
 test('continues and cold opens legacy JSON alongside new JSONL without migrating or indexing the legacy conversation', async ({
   app
@@ -38,47 +101,26 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
       reasoningEffort: settings.reasoningEffort
     }
   })
-  const source: PersistedChatSession = {
-    id: 'legacy-history-session',
-    number: 1,
+  // Seed the released 1.0.8 file unchanged except for runtime identity fields: projectId, cwd, and
+  // the provider binding the fake agent needs. Everything else — envelope version, graph, message
+  // IDs, and timestamps — comes from the checked-in sample.
+  const legacyFile = await readLegacySessionFixture()
+  const source = legacyFile.session
+  source.projectId = projectId
+  source.cwd = cwd
+  // 1.0.8 did not persist a provider binding. Supply the fake provider identity before seeding so
+  // the read-only open below cannot accrue a metadata-only normalization write.
+  source.agentConfiguration = configuration
+  const expectedJson = JSON.stringify(legacyFile)
+  page = await app.restartWithRawSessionFileFixture({
     projectId,
-    title: 'Legacy recorded research',
-    cwd,
-    status: 'idle',
-    agentFrameworkId: 'opencode',
-    agentConfiguration: configuration,
-    createdAt: 1,
-    updatedAt: 3,
-    revision: 4,
-    messages: [
-      {
-        id: 'legacy-question',
-        role: 'user',
-        content: 'LEGACY-QUESTION',
-        status: 'complete',
-        eventIds: [],
-        createdAt: 1,
-        updatedAt: 1
-      },
-      {
-        id: 'legacy-answer',
-        role: 'agent',
-        content: 'LEGACY-ANSWER',
-        responseToMessageId: 'legacy-question',
-        status: 'complete',
-        eventIds: [],
-        createdAt: 2,
-        updatedAt: 3,
-        completedAt: 3
-      }
-    ]
-  }
-  page = await app.restartWithSessionFixture(source)
+    sessionId: source.id,
+    contents: expectedJson
+  })
   let application = (app as unknown as { application: ElectronApplication }).application
   const configRoot = await application.evaluate(() => process.env.OPEN_SCIENCE_CONFIG_ROOT!)
   const directory = join(configRoot, 'sessions', projectId)
   const legacyPath = join(directory, `${source.id}.json`)
-  const expectedJson = JSON.stringify(createSessionFile(source))
   expect(await readFile(legacyPath, 'utf8')).toBe(expectedJson)
   await application.evaluate(({ ipcMain }) => {
     const observations: Array<{ channel: string; complete?: boolean }> = []
@@ -109,8 +151,8 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
     }
   })
   await openProjectSession(page, projectName, source.title)
-  await expect(page.getByText('LEGACY-QUESTION', { exact: true })).toBeVisible()
-  await expect(page.getByText('LEGACY-ANSWER', { exact: true })).toBeVisible()
+  await expect(page.getByText(source.messages[0].content, { exact: true })).toBeVisible()
+  await expect(page.getByText(source.messages[1].content, { exact: true })).toBeVisible()
   await expect(
     page.getByRole('button', { name: 'Load full conversation', exact: true })
   ).toHaveCount(0)
@@ -219,8 +261,11 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
     number: undefined,
     revision: undefined,
     title: 'New JSONL research',
+    agentConfiguration: configuration,
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    conversationGraph: undefined,
+    activities: undefined,
     messages: source.messages.map((message) => ({
       ...message,
       id: message.id.replace('legacy-', 'new-'),
@@ -246,7 +291,7 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
     })
   })
   await openProjectSession(page, projectName, modern.title)
-  await expect(page.getByText('NEW-ANSWER', { exact: true })).toBeVisible()
+  await expect(page.getByText(modern.messages[1].content, { exact: true })).toBeVisible()
   await expect(
     page.getByRole('button', { name: 'Load full conversation', exact: true })
   ).toBeVisible()
@@ -255,8 +300,8 @@ test('continues and cold opens legacy JSON alongside new JSONL without migrating
     .locator('button[data-slot="session-open-button"]')
     .filter({ hasText: source.title })
     .click()
-  await expect(page.getByText('LEGACY-QUESTION', { exact: true })).toBeVisible()
-  await expect(page.getByText('LEGACY-ANSWER', { exact: true })).toBeVisible()
+  await expect(page.getByText(source.messages[0].content, { exact: true })).toBeVisible()
+  await expect(page.getByText(source.messages[1].content, { exact: true })).toBeVisible()
   await expect(page.getByText(followup, { exact: true })).toBeVisible()
   await expect(
     page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
