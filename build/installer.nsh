@@ -490,19 +490,15 @@ FunctionEnd
 # constants, and the literal temp-uninstaller path uninstallOldVersion uses.
 !macro uninstallFailureRecoveryAt DIR
   DetailPrint `Old uninstaller exited with $R0; closing leftover app processes and retrying once.`
-  # Force-kill anything still running from the install dir, then retry. The PowerShell sweep
-  # matches on ExecutablePath with a trailing-backslash boundary so a sibling directory can never
-  # match. The directory travels through an inherited environment variable: powershell.exe joins
-  # every argument after -C into the script source, so a quoted argument would split on spaces
-  # and an interpolated path would break on an apostrophe. If inspection is unavailable, never
-  # widen the target to executable names: another installation or an unrelated tool may use the
-  # same name. $0 keeps the uninstaller arguments (/currentuser etc.) — nsExec does not touch it.
-  System::Call 'kernel32::SetEnvironmentVariable(t "OPEN_SCIENCE_PROCESS_ROOT", t "${DIR}")'
-  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "$$root = $$env:OPEN_SCIENCE_PROCESS_ROOT.TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | ? { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$root, 'CurrentCultureIgnoreCase') } | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
-  Pop $R1
+  # Terminate anything still running from the install dir, then retry. The native sweep matches
+  # full image paths with a trailing-backslash boundary so a sibling directory can never match.
+  # If inspection is unavailable, never widen the target to executable names: another
+  # installation or an unrelated tool may use the same name. $0 keeps the uninstaller arguments
+  # (/currentuser etc.); the sweep overwrites only $R0 (already reported above) and $R1.
+  !insertmacro openScienceInstallProcesses "${DIR}" stop $R1
   # The existing uninstall retry remains the verdict even when process inspection fails.
-  ${if} $R1 != 0
-    DetailPrint `Could not inspect installation processes: $R1; retrying without terminating unverified processes.`
+  ${if} $R1 == "error"
+    DetailPrint `Could not inspect installation processes; retrying without terminating unverified processes.`
   ${endif}
   ClearErrors
   Sleep 1000
