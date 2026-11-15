@@ -5,6 +5,18 @@
 !include "FileFunc.nsh"
 !include "${BUILD_RESOURCES_DIR}\windows-install-diagnostics.nsh"
 
+# The native uninstall helper (build/windows-uninstall-helper.cs) is AnyCPU, including in
+# universal installers. It embeds the publication helper's InstallDirectory code.
+!macro extractUninstallHelper
+  !ifdef APP_64
+    File "${PROJECT_DIR}\out\windows-installer\x64\windows-uninstall-helper.exe"
+  !else ifdef APP_ARM64
+    File "${PROJECT_DIR}\out\windows-installer\arm64\windows-uninstall-helper.exe"
+  !else
+    File "${PROJECT_DIR}\out\windows-installer\ia32\windows-uninstall-helper.exe"
+  !endif
+!macroend
+
 !ifdef BUILD_UNINSTALLER
 Var programSourceRoot
 Var programTargetRoot
@@ -46,8 +58,6 @@ FunctionEnd
 Function un.loadProgramDataPaths
   InitPluginsDir
   SetOutPath $PLUGINSDIR
-  File "${BUILD_RESOURCES_DIR}\windows-program-data-paths.ps1"
-  File "${BUILD_RESOURCES_DIR}\windows-program-cleanup.ps1"
   File "${BUILD_RESOURCES_DIR}\windows-install-diagnostics.ps1"
   # Manual uninstall owns a local context too. Upgrade children receive a private parent path.
   ${GetParameters} $R0
@@ -56,18 +66,11 @@ Function un.loadProgramDataPaths
     StrCpy $cleanupReport "$PLUGINSDIR\cleanup-attempt-manual.json"
     StrCpy $programOwnDiagnostic "1"
   ${endif}
-  # The shared managed helper is AnyCPU, including in universal installers.
-  !ifdef APP_64
-    File "${PROJECT_DIR}\out\windows-installer\x64\windows-install-publication.dll"
-  !else ifdef APP_ARM64
-    File "${PROJECT_DIR}\out\windows-installer\arm64\windows-install-publication.dll"
-  !else
-    File "${PROJECT_DIR}\out\windows-installer\ia32\windows-install-publication.dll"
-  !endif
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-program-data-paths.ps1" -InstallPath "$INSTDIR" -OutputPath "$PLUGINSDIR\program-data-paths.txt" -MaxLineLength ${NSIS_MAX_STRLEN}'
+  !insertmacro extractUninstallHelper
+  nsExec::ExecToLog '"$PLUGINSDIR\windows-uninstall-helper.exe" program-data-paths --install-path "$INSTDIR" --output "$PLUGINSDIR\program-data-paths.txt" --max-line-length ${NSIS_MAX_STRLEN}'
   Pop $R0
   ${if} $R0 != 0
-    DetailPrint `Open-Science windows-program-data-paths.ps1 exit code=$R0 phase=resolve-configured-data-locations`
+    DetailPrint `Open-Science windows-uninstall-helper program-data-paths exit code=$R0 phase=resolve-configured-data-locations`
     StrCpy $programMoveOperation "resolve-configured-data-locations"
     StrCpy $programMovePath $INSTDIR
     StrCpy $programMoveError -1
@@ -362,14 +365,14 @@ FunctionEnd
   StrCpy $programCleanupArguments ""
   !ifdef isUpdated
     ${if} ${isUpdated}
-      StrCpy $programCleanupArguments "-Upgrade"
+      StrCpy $programCleanupArguments "--upgrade"
     ${endif}
   !endif
   # Silent manual uninstalls retain one attempt. Only the explicit update flag opts in.
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-program-cleanup.ps1" -StagingPath "$programStagingDirectory" -ReportPath "$cleanupReport" $programCleanupArguments'
+  nsExec::ExecToLog '"$PLUGINSDIR\windows-uninstall-helper.exe" program-cleanup --staging-path "$programStagingDirectory" --report "$cleanupReport" $programCleanupArguments'
   Pop $R0
   ${if} $R0 != 0
-    DetailPrint `Open-Science windows-program-cleanup.ps1 exit code=$R0 phase=remove-staged-program-files`
+    DetailPrint `Open-Science windows-uninstall-helper program-cleanup exit code=$R0 phase=remove-staged-program-files`
     DetailPrint `Could not commit program cleanup: $R0`
     Goto programCleanup_rollback
   ${endif}

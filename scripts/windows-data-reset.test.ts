@@ -16,6 +16,8 @@ import { join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { runUninstallHelper } from './fixtures/windows-uninstall-helper'
+
 const script = resolve('scripts/windows-reset/reset-open-science.ps1')
 const launcher = resolve('scripts/windows-reset/reset-open-science.cmd')
 const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
@@ -61,24 +63,70 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-it('keeps standalone cache ownership checks identical to the installer owner', () => {
-  const source = readFileSync(
-    resolve('build/windows-runtime-cache-uninstall.ps1'),
-    'utf8'
-  ).replaceAll('\r\n', '\n')
-  const helpers = source
-    .slice(
-      source.indexOf('function Get-CanonicalPath'),
-      source.indexOf('function Remove-EmptyManagedParent')
-    )
-    .trim()
-  const reset = readFileSync(script, 'utf8').replaceAll('\r\n', '\n')
-  expect(
-    reset
-      .split('# CACHE OWNERSHIP FUNCTIONS BEGIN')[1]
-      .split('# CACHE OWNERSHIP FUNCTIONS END')[0]
-      .trim()
-  ).toBe(helpers)
+it('agrees with the installer helper on cache trust and leaf names', () => {
+  const sandbox = mkdtempSync(join(tmpdir(), 'reset-cache-parity-'))
+  roots.push(sandbox)
+  const runtime = join(sandbox, 'runtime')
+  const parent = join(sandbox, 'OpenScienceTmp')
+  const identity = 'RESET-FIXTURE\\cache-owner'
+  mkdirSync(runtime)
+  mkdirSync(parent)
+  const powershell = join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe')
+  const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
+  // Build the fixtures and read the verdicts from the standalone reset script.
+  const command = `
+$ErrorActionPreference = 'Stop'
+. ${quote(script)}
+$runtime = ${quote(runtime)}
+$identity = ${quote(identity)}
+$parent = ${quote(parent)}
+$leaf = Get-WorkingCacheLeaf $runtime $identity
+$cache = Join-Path $parent $leaf
+New-Item -ItemType Directory -Path $cache | Out-Null
+@{ schema = 1; kind = 'micromamba-working-cache-parent'; userIdentity = $identity } |
+  ConvertTo-Json | Set-Content -LiteralPath (Join-Path $parent '.open-science-temp.json') -Encoding UTF8
+@{ schema = 1; canonicalRoot = $runtime.ToLowerInvariant(); userIdentity = $identity } |
+  ConvertTo-Json | Set-Content -LiteralPath (Join-Path $cache '.open-science-cache.json') -Encoding UTF8
+$aclIdentity = ([Security.Principal.WindowsIdentity]::GetCurrent().User).Value
+foreach ($path in @($parent, $cache)) {
+  & "$env:SystemRoot\\System32\\icacls.exe" $path /inheritance:r /grant:r ($aclIdentity + ':(OI)(CI)F') '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+}
+[pscustomobject]@{
+  Parent = Test-TrustedManagedParent $parent $identity
+  Cache = Test-TrustedCache $cache $runtime $identity
+  Leaf = $leaf
+  CacheLeaf = Get-CacheLeaf $runtime $identity
+  CompactLeaf = Get-CompactCacheLeaf $runtime $identity
+} | ConvertTo-Json -Compress`
+  const reset = spawnSync(
+    powershell,
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-EncodedCommand',
+      Buffer.from(command, 'utf16le').toString('base64')
+    ],
+    { encoding: 'utf8', timeout: 30_000 }
+  )
+  expect(reset.status, reset.stderr).toBe(0)
+  const helper = runUninstallHelper(
+    [
+      'test-inspect-cache',
+      '--parent',
+      parent,
+      '--cache',
+      join(parent, JSON.parse(reset.stdout).Leaf),
+      '--runtime-root',
+      runtime,
+      '--identity',
+      identity
+    ],
+    process.env
+  )
+  expect(helper.status, helper.stderr).toBe(0)
+  expect(JSON.parse(helper.stdout)).toMatchObject(JSON.parse(reset.stdout))
 })
 
 describe.skipIf(process.platform !== 'win32')('Windows data reset', () => {

@@ -578,88 +578,58 @@ describe('electron-builder Windows targets', () => {
   })
 
   it('ships and invokes the owned managed-runtime cache cleanup on uninstall', () => {
-    const config = readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')
     const include = readFileSync(join(process.cwd(), 'build', 'installer.nsh'), 'utf8')
-    const cleanup = readFileSync(
-      join(process.cwd(), 'build', 'windows-runtime-cache-uninstall.ps1'),
-      'utf8'
-    )
+    const helper = readFileSync(join(process.cwd(), 'build', 'windows-uninstall-helper.cs'), 'utf8')
 
-    expect(config).toContain('from: build/windows-runtime-cache-uninstall.ps1')
-    expect(config).toContain('include: build/installer-license.nsh')
+    expect(include).toContain('windows-uninstall-helper.exe" runtime-cache')
+    expect(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')).toContain(
+      'include: build/installer-license.nsh'
+    )
     expect(readFileSync(join(process.cwd(), 'build', 'installer-license.nsh'), 'utf8')).toContain(
       '!include "${BUILD_RESOURCES_DIR}\\installer.nsh"'
     )
-    expect(include).toContain('windows-runtime-cache-uninstall.ps1')
     const customUninstall = include.match(/!macro customUnInstall\n([\s\S]*?)!macroend/)?.[1]
-    expect(customUninstall).toContain('$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe')
-    expect(customUninstall).not.toMatch(/ExecToLog 'powershell\.exe\b/)
-    expect(cleanup).toContain('.open-science-cache.json')
-    expect(cleanup).toContain('Get-CompactCacheLeaf')
-    expect(cleanup).toContain('$compactLeaf = Get-CompactCacheLeaf $canonicalRoot $userIdentity')
-    expect(cleanup).toContain('Get-WorkingCacheLeaf')
-    expect(cleanup).toContain('$workingLeaf = Get-WorkingCacheLeaf $canonicalRoot $userIdentity')
-    expect(cleanup).toContain('foreach ($configuredTemp in @($env:TEMP, $env:TMP))')
-    expect(cleanup).toContain("(Join-Path $configuredTemp 'OpenScienceTmp')")
-    expect(cleanup).toContain("(Join-Path $env:USERPROFILE 'os-tmp')")
-    expect(cleanup).toContain('Test-TrustedManagedParent')
-    expect(cleanup).toContain('Test-NoReparsePointInPath')
-    expect(cleanup).toContain("'.open-science-temp.json'")
-    expect(cleanup).toContain('$env:TMP')
-    expect(cleanup).toContain('$trustedOwnerSids -notcontains $ownerSid')
-    expect(cleanup).toContain('elseif ($candidate.ManagedParent')
-    expect(cleanup).toContain('(Join-Path $env:PUBLIC $leaf)')
-    expect(cleanup).toContain('(Join-Path $env:USERPROFILE $compactLeaf)')
+    expect(customUninstall).not.toMatch(/ExecToLog ['"][^'"]*powershell\.exe/)
+    expect(helper).toContain('.open-science-cache.json')
+    expect(helper).toContain('CompactCacheLeaf')
+    expect(helper).toContain('WorkingCacheLeaf')
+    expect(helper).toContain('Variable("TEMP"), Variable("TMP")')
+    expect(helper).toContain('OpenScienceTmp')
+    expect(helper).toContain('TrustedManagedParent')
+    expect(helper).toContain('NoReparsePointInPath')
+    expect(helper).toContain('.open-science-temp.json')
+    expect(helper).toContain('Variable("PUBLIC")')
+    expect(helper).toContain('os-tmp')
     for (const sid of WINDOWS_CACHE_TRUSTED_OWNER_SIDS) {
-      expect(cleanup).toContain("'" + sid + "'")
+      expect(helper).toContain('"' + sid + '"')
     }
-    expect(cleanup).toContain('$trustedWriteSids -notcontains $sid')
-    // The runtime matches names; the uninstaller checks bit overlap. Composite Modify/FullControl
+    // The runtime matches names; the helper checks bit overlap. Composite Modify/FullControl
     // include read rights and must not enter this mask. Write includes CreateFiles and AppendData.
-    const writeMask = cleanup.match(/\$writeMask = ([\s\S]*?)\r?\n\s*foreach \(\$rule/)?.[1] ?? ''
-    expect(
-      Array.from(
-        writeMask.matchAll(/\[System\.Security\.AccessControl\.FileSystemRights\]::(\w+)/g),
-        (match) => match[1]
-      )
-    ).toEqual([
-      'Write',
-      'Delete',
-      'DeleteSubdirectoriesAndFiles',
-      'ChangePermissions',
-      'TakeOwnership'
-    ])
-    expect(cleanup).toContain('Remove-Item -LiteralPath $candidate')
+    const writeMask = helper.match(/const FileSystemRights writeMask = ([\s\S]*?);/)?.[1] ?? ''
+    expect(Array.from(writeMask.matchAll(/FileSystemRights\.(\w+)/g), (match) => match[1])).toEqual(
+      ['Write', 'Delete', 'DeleteSubdirectoriesAndFiles', 'ChangePermissions', 'TakeOwnership']
+    )
+    expect(helper).toContain('RemoveTree')
   })
 
   it('ships and enforces owned Notebook AppContainer cleanup on uninstall', () => {
-    const config = readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')
     const include = readFileSync(join(process.cwd(), 'build', 'installer.nsh'), 'utf8')
-    const cleanup = readFileSync(
-      join(process.cwd(), 'build', 'windows-notebook-sandbox-uninstall.ps1'),
-      'utf8'
-    )
+    const helper = readFileSync(join(process.cwd(), 'build', 'windows-uninstall-helper.cs'), 'utf8')
 
-    expect(config).toContain('from: build/windows-notebook-sandbox-uninstall.ps1')
-    expect(include).toContain('windows-notebook-sandbox-uninstall.ps1')
+    expect(include).toContain('windows-uninstall-helper.exe" notebook-sandbox')
     expect(include).toContain('${ifNot} ${isUpdated}')
     expect(include).toContain('notebookSandboxCleanupComplete')
     expect(include).toContain('The uninstall was stopped so the cleanup can be retried.')
-    expect(cleanup).toContain('-ArgumentList $quotedArguments')
-    expect(cleanup).toContain(
-      '@($Command, $installationId, $ownershipRoot) | ForEach-Object { ConvertTo-WindowsArgument $_ }'
-    )
-    expect(cleanup).toContain('OPEN_SCIENCE_E2E_STORAGE_ROOT')
-    expect(cleanup).not.toContain('OPEN_SCIENCE_E2E_ROOT')
-    expect(cleanup).toContain('& $HostPath $Command $installationId $ownershipRoot')
-    expect(cleanup).toContain('& $HostPath prepare-remove $installationId $ownershipRoot')
-    expect(cleanup).toContain('& $HostPath finish-remove $installationId $ownershipRoot')
-    expect(cleanup).toContain('Test-CurrentUserIsAdministrator')
-    expect(cleanup).toContain('Stop-SandboxHostProcesses')
-    expect(cleanup).toContain('notebook-sandbox\\$installationId')
-    expect(cleanup).toContain("$installationId = '0f3cd2a44c3d4e4e9f1e2a5b'")
-    expect(cleanup.indexOf('$ownershipRoot =')).toBeLessThan(cleanup.indexOf('$HostPath ='))
-    expect(cleanup).toContain('-Verb RunAs')
+    expect(helper).toContain('HostArguments')
+    expect(helper).toContain('OPEN_SCIENCE_E2E_STORAGE_ROOT')
+    expect(helper).not.toContain('OPEN_SCIENCE_E2E_ROOT')
+    expect(helper).toContain('RunHost(hostPath, "prepare-remove"')
+    expect(helper).toContain('RunHost(hostPath, "finish-remove"')
+    expect(helper).toContain('CurrentUserIsAdministrator')
+    expect(helper).toContain('StopProcessesUnder')
+    expect(helper).toContain('notebook-sandbox')
+    expect(helper).toContain('const string NotebookInstallationId = "0f3cd2a44c3d4e4e9f1e2a5b"')
+    expect(helper).toContain('Verb = "runas"')
   })
 
   it('does not claim a Windows publisher while packages remain unsigned', () => {

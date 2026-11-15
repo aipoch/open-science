@@ -494,7 +494,10 @@ describe.skipIf(!nsisCompiler).each(['OpenScience', 'Open-Science'])(
         // UI output to a file so an error dialog cannot block unattended regression runs.
         const observed = `${macro}\n${restore}`
           .replace(/^\s*DetailPrint (.+)$/gm, 'FileWriteUTF16LE $9 $1')
-          .replace(/^\s*MessageBox MB_OK\|MB_ICONSTOP (.+?)(?: \/SD \w+)?$/gm, 'FileWriteUTF16LE $9 $1')
+          .replace(
+            /^\s*MessageBox MB_OK\|MB_ICONSTOP (.+?)(?: \/SD \w+)?$/gm,
+            'FileWriteUTF16LE $9 $1'
+          )
         const output = join(root, 'result.txt')
         const executable = join(root, 'probe.exe')
         const source = join(root, 'probe.nsi')
@@ -622,9 +625,9 @@ it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as
       writeFileSync(applicationFile, 'old application')
       mkdirSync(join(install, 'resources'), { recursive: true })
       const retryFiles = [
-        'resources/windows-update-handoff-uninstall.ps1',
-        'resources/windows-notebook-sandbox-uninstall.ps1',
-        'resources/windows-runtime-cache-uninstall.ps1',
+        'resources/retry-owned-a.txt',
+        'resources/retry-owned-b.txt',
+        'resources/retry-owned-c.txt',
         'Uninstall open-science.exe'
       ]
       retryFiles.forEach((file, index) =>
@@ -670,7 +673,10 @@ it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as
         })
         .join('\n')
         .replace(/^\s*DetailPrint (.+)$/gm, 'FileWriteUTF16LE $9 $1')
-        .replace(/^\s*MessageBox MB_OK\|MB_ICONSTOP (.+?)(?: \/SD \w+)?$/gm, 'FileWriteUTF16LE $9 $1')
+        .replace(
+          /^\s*MessageBox MB_OK\|MB_ICONSTOP (.+?)(?: \/SD \w+)?$/gm,
+          'FileWriteUTF16LE $9 $1'
+        )
       const upstream = readFileSync(
         join(appBuilderLibRoot, 'templates/nsis/uninstaller.nsh'),
         'utf8'
@@ -716,9 +722,8 @@ it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as
       }
       const cleanupPath = join(repoRoot, 'build/windows-program-cleanup.nsh')
       const cleanup = existsSync(cleanupPath) ? readFileSync(cleanupPath, 'utf8') : ''
-      require('./compile-windows-install-publication.cjs')(
-        join(repoRoot, 'build/windows-install-publication.cs'),
-        join(root, 'out/windows-installer/ia32/windows-install-publication.dll')
+      require('./compile-windows-install-publication.cjs').uninstallHelper(
+        join(root, 'out/windows-installer/ia32/windows-uninstall-helper.exe')
       )
       for (const version of ['old', 'current']) {
         compileAndRun(
@@ -1201,32 +1206,25 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(recovery.slice(recovery.indexOf('ExecWait'))).toMatch(
       /\$\{if\} \$R0 != 0[\s\S]*!insertmacro quitFailedUpdate/
     )
-    for (const script of [
-      'windows-update-handoff-uninstall.ps1',
-      'windows-notebook-sandbox-uninstall.ps1',
-      'windows-runtime-cache-uninstall.ps1'
-    ]) {
-      expect(include).toContain(`File "\${BUILD_RESOURCES_DIR}\\${script}"`)
-      expect(include).toContain(`-File "$PLUGINSDIR\\${script}"`)
+    for (const command of ['update-handoff', 'notebook-sandbox', 'runtime-cache']) {
+      expect(include).toContain(`windows-uninstall-helper.exe" ${command}`)
     }
+    expect(include).toContain('!insertmacro extractUninstallHelper')
   })
 
   it('records the helper phase and exit code when cleanup fails', () => {
     const cleanup = readFileSync(join(repoRoot, 'build/windows-program-cleanup.nsh'), 'utf8')
     expect(cleanup).toContain(
-      'Open-Science windows-program-data-paths.ps1 exit code=$R0 phase=resolve-configured-data-locations'
+      'Open-Science windows-uninstall-helper program-data-paths exit code=$R0 phase=resolve-configured-data-locations'
     )
     expect(cleanup).toContain(
-      'Open-Science windows-program-cleanup.ps1 exit code=$R0 phase=remove-staged-program-files'
+      'Open-Science windows-uninstall-helper program-cleanup exit code=$R0 phase=remove-staged-program-files'
     )
 
-    const dataPaths = readFileSync(join(repoRoot, 'build/windows-program-data-paths.ps1'), 'utf8')
-    const programCleanup = readFileSync(join(repoRoot, 'build/windows-program-cleanup.ps1'), 'utf8')
-    for (const script of [dataPaths, programCleanup]) {
-      expect(script).toContain('nativeErrorCode=')
-      expect(script).toContain('hresult=0x')
-      expect(script).toMatch(/exit 2/)
-    }
+    const helper = readFileSync(join(repoRoot, 'build/windows-uninstall-helper.cs'), 'utf8')
+    expect(helper).toContain('nativeErrorCode=')
+    expect(helper).toContain('hresult=0x')
+    expect(helper).toMatch(/Exit\(2\)/)
   })
 
   it('force-kills install-dir processes and retries the old uninstaller once before failing', () => {

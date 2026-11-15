@@ -32,17 +32,16 @@
 !include "${BUILD_RESOURCES_DIR}\windows-app-running.nsh"
 
 !macro customUnInstall
-  # Cleanup can fail after removing some program files. Keep retry's lifecycle scripts in the
-  # uninstaller itself, so their availability never depends on a partly removed installation.
+  # Cleanup can fail after removing some program files. Keep retry's lifecycle helper in the
+  # uninstaller itself, so its availability never depends on a partly removed installation.
+  # The native helper replaces one powershell.exe launch (0.6-1.2 s each) per cleanup step.
   InitPluginsDir
   SetOutPath $PLUGINSDIR
-  File "${BUILD_RESOURCES_DIR}\windows-update-handoff-uninstall.ps1"
-  File "${BUILD_RESOURCES_DIR}\windows-notebook-sandbox-uninstall.ps1"
-  File "${BUILD_RESOURCES_DIR}\windows-runtime-cache-uninstall.ps1"
+  !insertmacro extractUninstallHelper
   # Updates run the old uninstaller with isUpdated set and must retain the durable profile. Only a
   # real product uninstall removes the AppContainer resources.
   ${ifNot} ${isUpdated}
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-update-handoff-uninstall.ps1" -InstallPath "$INSTDIR"'
+    nsExec::ExecToLog '"$PLUGINSDIR\windows-uninstall-helper.exe" update-handoff --install-path "$INSTDIR"'
     Pop $0
     StrCmp $0 "0" updatePresentationCleanupComplete
     DetailPrint `Open-Science update presentation cleanup failure code=$0`
@@ -53,7 +52,7 @@
     ${endif}
     Abort
     updatePresentationCleanupComplete:
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-notebook-sandbox-uninstall.ps1" -SandboxRoot "$INSTDIR\resources\notebook-network-sandbox\windows"'
+    nsExec::ExecToLog '"$PLUGINSDIR\windows-uninstall-helper.exe" notebook-sandbox --sandbox-root "$INSTDIR\resources\notebook-network-sandbox\windows"'
     Pop $0
     StrCmp $0 "0" notebookSandboxCleanupComplete
     DetailPrint `Open-Science Notebook cleanup failure code=$0 sandboxRoot="$INSTDIR\resources\notebook-network-sandbox\windows"`
@@ -66,7 +65,7 @@
       DeleteRegKey HKCU "Software\Classes\open-science"
     ${endif}
   ${endif}
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-runtime-cache-uninstall.ps1"'
+  nsExec::ExecToLog '"$PLUGINSDIR\windows-uninstall-helper.exe" runtime-cache'
 !macroend
 
 !ifndef BUILD_UNINSTALLER

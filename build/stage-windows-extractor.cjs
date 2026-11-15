@@ -49,6 +49,10 @@ module.exports = async (context) => {
     helper
   )
   await context.packager.signIf(helper)
+  // Embedded only in the uninstaller; replaces per-script powershell.exe launches.
+  const uninstallHelper = path.join(directory, 'windows-uninstall-helper.exe')
+  require('./compile-windows-install-publication.cjs').uninstallHelper(uninstallHelper)
+  await context.packager.signIf(uninstallHelper)
   await fs.writeFile(path.join(directory, '7zip-LICENSE.txt'), license)
   const resources = path.join(context.appOutDir, 'resources')
   await fs.mkdir(resources, { recursive: true })

@@ -942,18 +942,10 @@ const main = async () => {
   if (installed)
     await cleanup(async () => {
       // Surface the real uninstall guard's reason without leaving an unattended NSIS message box.
+      // The packaging build stages the same helper the uninstaller embeds.
       await runProcess(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-File',
-          resolve('build/windows-update-handoff-uninstall.ps1'),
-          '-InstallPath',
-          installDirectory
-        ],
+        resolve(`out/windows-installer/${process.arch}/windows-uninstall-helper.exe`),
+        ['update-handoff', '--install-path', installDirectory],
         { env }
       )
       await uninstallAndVerify(installDirectory, env)
