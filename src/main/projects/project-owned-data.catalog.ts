@@ -290,6 +290,24 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
+    id: 'session-history-index',
+    medium: 'sqlite',
+    resources: ['SessionHistoryIndex', 'SessionHistoryItem'],
+    prismaModels: [
+      {
+        name: 'SessionHistoryIndex',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-session-json-delete',
+      operation: 'SessionHistoryProjectionRepository.delete and deleteProjectHistory',
+      note: 'Explicit Session deletion removes the derived index and cascades its item bodies. Project deletion removes every index for the Project before the Session JSON tombstone is collected.'
+    }
+  },
+  {
     id: 'vision-evidence',
     medium: 'sqlite',
     resources: ['VisionEvidence'],
