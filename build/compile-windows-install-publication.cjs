@@ -51,3 +51,16 @@ module.exports.uninstallHelper = (
     destination,
     { target: 'exe', references: ['System.Web.Extensions.dll'], defines, warnAsError }
   )
+
+// Replaces the install-path PowerShell scripts. Same sources as the uninstall helper plus the
+// publication and extraction entry points, so one process covers prepare, extract, publish and
+// cleanup instead of a powershell.exe launch per phase.
+module.exports.installHelper = (destination, defines = []) =>
+  module.exports(
+    [
+      path.join(__dirname, 'windows-install-helper.cs'),
+      path.join(__dirname, 'windows-install-publication.cs')
+    ],
+    destination,
+    { target: 'exe', references: ['System.Web.Extensions.dll'], defines }
+  )

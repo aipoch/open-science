@@ -65,13 +65,16 @@ for (const [directory, version, code, hook] of [
   }
   await writeFile(join(projectDir, 'installer.nsh'), hook)
   // The current hook generates extraction lists from the final archive during NSIS compilation.
+  // stageWindowsExtractor below compiles the install helper the hook embeds. The hook also includes
+  // the cleanup, diagnostics, and update-handoff fragments, so copy those too.
   for (const file of [
     'windows-install-publication.nsh',
-    'windows-install-publication.ps1',
     'prepare-windows-extraction.cjs',
     'windows-app-running.nsh',
     'windows-install-processes.nsh',
-    'windows-extract-payload.ps1'
+    'windows-program-cleanup.nsh',
+    'windows-install-diagnostics.nsh',
+    'windows-install-diagnostics.ps1'
   ]) {
     await writeFile(join(projectDir, file), await readFile(`build/${file}`))
   }
