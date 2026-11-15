@@ -139,6 +139,7 @@ type AcpRuntimeArtifacts = {
 }
 
 type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
+  schedules?: import('../schedules/mcp').ScheduleMcp
   appVersion: string
   mcpEntryPath: string
   uploadRepository: UploadRepository
@@ -263,6 +264,7 @@ const isPdfAttachmentVersion = (version: { filename: string; contentType: string
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
 const createAcpRuntime = ({
+  schedules,
   appVersion,
   mcpEntryPath,
   repository,
@@ -496,6 +498,7 @@ const createAcpRuntime = ({
         ...(spawnAgent ? { spawnAgent } : {}),
         ...(spawnProcess ? { spawnProcess } : {}),
         ...(registerOpenCodeStoreRelease ? { registerOpenCodeStoreRelease } : {}),
+        schedules: delegatedNotebookConnection ? undefined : schedules,
         mcpHttpHost: new AgentMcpHttpHost({
           receiptDirectory: join(dataRoot, 'open-science-agent', 'tool-receipts')
         }),

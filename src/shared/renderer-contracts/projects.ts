@@ -4,6 +4,16 @@ import type {
   OptimizePromptResult,
   OptimizationEvent
 } from '../prompt-optimization'
+import type {
+  ScheduleCreateRequest,
+  ScheduleHistoryRequest,
+  ScheduleRun,
+  ScheduleListRequest,
+  ScheduleEditRequest,
+  ScheduleDeleteRequest,
+  ScheduleView,
+  ScheduleSummary
+} from '../session-schedules'
 // Ordered fragments keep the public registration order when capabilities interleave.
 import type { ProjectDeletedEvent } from '../lifecycle-events'
 
@@ -198,4 +208,37 @@ export const tagsCreateContracts = {
     undefined,
     RUNTIME_VALIDATED
   ])
+} as const
+
+export const scheduleContracts = {
+  'schedules.onChanged': callable<
+    (listener: AcpListener<{ projectId: string; sessionId: string | null }>) => RemoveListener
+  >()('schedules', ['schedules:changed', EVENT]),
+  'schedules.history': callable<(request: ScheduleHistoryRequest) => Promise<ScheduleRun[]>>()(
+    'schedules',
+    ['schedules:history', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'schedules.list': callable<(request: ScheduleListRequest) => Promise<ScheduleSummary[]>>()(
+    'schedules',
+    ['schedules:list', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'schedules.get': callable<(request: ScheduleHistoryRequest) => Promise<ScheduleView | null>>()(
+    'schedules',
+    ['schedules:get', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'schedules.create': callable<(request: ScheduleCreateRequest) => Promise<ScheduleView>>()(
+    'schedules',
+    ['schedules:create', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'schedules.delete': callable<(request: ScheduleDeleteRequest) => Promise<void>>()('schedules', [
+    'schedules:delete',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'schedules.edit': callable<(request: ScheduleEditRequest) => Promise<ScheduleView>>()(
+    'schedules',
+    ['schedules:edit', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  )
 } as const

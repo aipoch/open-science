@@ -175,7 +175,7 @@ async function notebookComposition(
   }
   const runtime = await composeApplicationRuntime(async (modules) => {
     const lifecycle = composeProjectLifecycle({
-      applicationEvents: {},
+      applicationEvents: { publish: vi.fn() },
       notificationInbox: { setSessionAvailability: () => undefined },
       sessionPersistenceCoordinator: {
         setSessionDeletionHandlers: () => undefined,

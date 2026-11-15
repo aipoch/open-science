@@ -76,6 +76,9 @@ export type WslSupportPrefillIntent = {
 }
 
 type NavigationStore = {
+  scheduleScope?: { projectId: string; sessionId?: string; taskId?: string; revision: number }
+  openSchedule: (projectId: string, sessionId?: string, taskId?: string) => void
+  closeSchedule: () => void
   view: NavigationView
   activeProjectId: string | undefined
   marketplaceListContext: { projectId: string; list: MarketplaceListSnapshot } | undefined
@@ -205,6 +208,7 @@ const navigationState = (
   next: Pick<NavigationStore, 'view'> & Partial<Pick<NavigationStore, 'activeProjectId'>>
 ): Pick<
   NavigationStore,
+  | 'scheduleScope'
   | 'view'
   | 'activeProjectId'
   | 'userNavigationRevision'
@@ -213,6 +217,10 @@ const navigationState = (
   | 'marketplaceListContext'
 > => ({
   view: next.view,
+  scheduleScope:
+    next.view === 'home' || (next.activeProjectId && next.activeProjectId !== state.activeProjectId)
+      ? undefined
+      : state.scheduleScope,
   // A Project handoff survives the round trip, but never leaks into Home or another Project.
   marketplaceListContext:
     next.view === 'home' ||
@@ -276,6 +284,21 @@ const requestPreviewLeaveForNavigation = (
 // Owns which top-level screen is visible and which project the workspace is scoped to. Session
 // selection stays in the session store; this store coordinates it when navigating.
 export const useNavigationStore = create<NavigationStore>((set, get) => ({
+  openSchedule: (projectId, sessionId, taskId) => {
+    if (get().view !== 'workspace' || get().activeProjectId !== projectId) return
+    if (sessionId && !isActiveSession(projectId, sessionId)) return
+    set((state) => ({
+      userNavigationRevision: state.userNavigationRevision + 1,
+      explicitNavigationRevision: state.explicitNavigationRevision + 1,
+      scheduleScope: {
+        projectId,
+        sessionId,
+        taskId,
+        revision: state.explicitNavigationRevision + 1
+      }
+    }))
+  },
+  closeSchedule: () => set({ scheduleScope: undefined }),
   view: 'home',
   activeProjectId: undefined,
   marketplaceListContext: undefined,

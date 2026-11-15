@@ -9,6 +9,9 @@ import {
   type SettingsSnapshot
 } from '../../shared/settings'
 
+// Symbol keys cannot be supplied by renderer or RPC clients.
+export const freshSessionAttachment = Symbol('fresh session attachment')
+
 type SessionAgentTargetSource = Pick<
   PersistedChatSession,
   'agentBackendId' | 'agentModel' | 'agentConfiguration'

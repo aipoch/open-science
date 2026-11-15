@@ -1,3 +1,4 @@
+import { ScheduleMessageCards, SessionScheduleBanner } from './schedules/ScheduleMessageCard'
 import { LiteratureCandidateSessionContext } from './literature-candidate-session-context'
 import { ErrorNotice } from '@/components/error-notice'
 import { cn } from '@/lib/utils'
@@ -1291,6 +1292,9 @@ const WorkspaceMessageScrollerImpl = ({
     () => findDurablePlanOwnerActivityId(activeSession, rawConversationItems),
     [activeSession, rawConversationItems]
   )
+  const latestScheduleFooterId = fullConversationItems.findLast(
+    (item) => item.type === 'turn-completion'
+  )?.id
   // Visible and announced completion share the same turn-level timeline authority.
   const assistantFooterMessageIds = useMemo(() => {
     return new Set(
@@ -2062,6 +2066,9 @@ const WorkspaceMessageScrollerImpl = ({
                             bottom-follow back after the final text has appeared. */}
                         <div className="min-h-[60px] px-4 pb-1 md:px-6">
                           <div className="mx-auto w-full max-w-[56rem]">
+                            {item.message.responseToMessageId && (
+                              <ScheduleMessageCards promptId={item.message.responseToMessageId} />
+                            )}
                             <WorkspaceAssistantTurnCompletion
                               message={item.message}
                               // Only Main conversation opts into explicit turn authority; legacy
@@ -2074,6 +2081,13 @@ const WorkspaceMessageScrollerImpl = ({
                               canBranchInNewSession={canBranchInNewSession}
                               onBranchInNewSession={onBranchInNewSession}
                             />
+                            {(item.id === latestScheduleFooterId ||
+                              promptMessage?.attribution?.feature === 'schedule') && (
+                              <SessionScheduleBanner
+                                promptId={item.message.responseToMessageId}
+                                latest={item.id === latestScheduleFooterId}
+                              />
+                            )}
                           </div>
                         </div>
                       </MessageScrollerItem>
