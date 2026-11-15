@@ -1274,6 +1274,35 @@ it('carries native PDF, audio and explicitly supported video across the ACP host
   ])
 })
 
+it('accepts ACP resource links as model-visible references without resolving them', async () => {
+  const model = await modelServer()
+  const f = await fixture(model.endpoint)
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: []
+  })
+  await f.connection.agent.request(acp.methods.agent.session.prompt, {
+    sessionId,
+    prompt: [
+      { type: 'text', text: 'Inspect these references' },
+      {
+        type: 'resource_link',
+        uri: 'file:///private/evidence/report.csv',
+        name: 'report.csv',
+        title: 'Report',
+        mimeType: 'text/csv',
+        size: 42
+      },
+      { type: 'resource_link', uri: 'file:///private/evidence/notes.txt', name: '' },
+      { type: 'resource_link', uri: 'https://example.test/reference.pdf', name: '' }
+    ]
+  })
+  expect(model.requests[0].messages.at(-1)?.content).toBe(
+    'Inspect these references\n[@report.csv](file:///private/evidence/report.csv)\n' +
+      '[@notes.txt](file:///private/evidence/notes.txt)\nhttps://example.test/reference.pdf'
+  )
+})
+
 it('rejects model-disabled media before provider I/O and allows a subsequent text turn', async () => {
   const model = await modelServer()
   const f = await fixture(model.endpoint, undefined, true, 32768, { audio: false })
