@@ -56,6 +56,7 @@ describe('buildLiteratureReferencePrompt', () => {
 
     expect(prompt).toContain('immutable bibliographic snapshot')
     expect(prompt).toContain('scope "items"')
+    expect(prompt).toContain('When the user only referenced records')
     expect(prompt).toContain('A cited paper')
     expect(prompt).toContain('10.1/example')
     expect(prompt).toContain('version-1')

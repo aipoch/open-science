@@ -2438,7 +2438,7 @@ describe('Literature Library MCP server', () => {
     await server.close()
   })
 
-  it('reads only selected item abstracts and PDFs through the real MCP transport and prompt guard', async () => {
+  it('limits items-scope reads to referenced records without bounding Library reads through the real MCP transport', async () => {
     let handler!: LiteratureLibraryMcpHandler
     const readAbstract = vi.fn(async ({ itemId }: { itemId: string }) => ({
       itemId,
@@ -2506,16 +2506,22 @@ describe('Literature Library MCP server', () => {
           name,
           arguments: { ...args, itemId: 'outside', scope: 'library' }
         })
-        expect(widened.isError).toBe(true)
-        expect(JSON.stringify(widened.content)).toContain('LIBRARY_SCOPE_MISMATCH')
+        // Item mentions are references, not a question boundary: Library reads stay available.
+        expect(widened.isError).not.toBe(true)
       }
-      expect(readAbstract).toHaveBeenCalledOnce()
+      expect(readAbstract).toHaveBeenCalledTimes(2)
       expect(readAbstract).toHaveBeenCalledWith(
         expect.objectContaining({ itemId: 'item-1', scope: 'items' })
       )
-      expect(readPdf).toHaveBeenCalledOnce()
+      expect(readAbstract).not.toHaveBeenCalledWith(
+        expect.objectContaining({ itemId: 'outside', scope: 'items' })
+      )
+      expect(readPdf).toHaveBeenCalledTimes(2)
       expect(readPdf).toHaveBeenCalledWith(
         expect.objectContaining({ itemId: 'item-1', scope: 'items' })
+      )
+      expect(readPdf).not.toHaveBeenCalledWith(
+        expect.objectContaining({ itemId: 'outside', scope: 'items' })
       )
     } finally {
       await client.close()

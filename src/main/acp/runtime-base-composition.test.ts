@@ -224,6 +224,20 @@ describe('ACP Runtime base composition', () => {
       'LIBRARY_SCOPE_MISMATCH'
     )
     owners.sessionInteractions.release(project)
+    // Item mentions alone are references: `items` stays limited to them, other scopes stay open.
+    const referenced = owners.sessionInteractions.claim({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      parts: [{ type: 'literature', itemId: 'picked', metadataRevision: 1, item: {} as never }]
+    })
+    await expect(handler.readAbstract({ itemId: 'outside', scope: 'items' })).rejects.toThrow(
+      'LIBRARY_SCOPE_MISMATCH'
+    )
+    await handler.searchLibrary({})
+    await handler.searchLibrary({ scope: 'library' })
+    await handler.readAbstract({ itemId: 'picked', scope: 'items' })
+    await handler.readPdf({ itemId: 'outside', query: 'evidence', scope: 'library' })
+    owners.sessionInteractions.release(referenced)
     owners.sessionInteractions.claim({ sessionId: 'session-1', kind: 'prompt' })
     await handler.searchLibrary({ scope: 'library' })
     await handler.readAbstract({ itemId: 'outside', scope: 'items' })

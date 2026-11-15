@@ -236,19 +236,26 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     if (selection) {
       const scope = request.scope ?? 'project'
       const itemIds = request.itemId ? [request.itemId] : request.itemIds
+      // Only Project/Collection scope mentions bound the question. Item mentions are references:
+      // `items` stays limited to them, but they do not forbid searching the Project or Library.
+      const bounded = selection.project || selection.collectionIds.length > 0
       const allowed =
-        (scope === 'project' && selection.project) ||
-        (scope === 'collection' &&
-          Boolean(
-            request.collectionId && selection.collectionIds.includes(request.collectionId)
-          )) ||
-        (scope === 'items' &&
-          Boolean(itemIds?.length && itemIds.every((id) => selection.itemIds.includes(id))))
+        scope === 'items'
+          ? Boolean(itemIds?.length && itemIds.every((id) => selection.itemIds.includes(id)))
+          : !bounded ||
+            (scope === 'project' && selection.project) ||
+            (scope === 'collection' &&
+              Boolean(
+                request.collectionId && selection.collectionIds.includes(request.collectionId)
+              ))
       if (!allowed)
         throw new Error(
           'LIBRARY_SCOPE_MISMATCH: Use one of the current question’s selected scopes per call: ' +
             JSON.stringify(selection) +
-            '. For items, every requested item ID must be explicitly selected. Omitted scope means project.'
+            '. For items, every requested item ID must be explicitly selected. Omitted scope means project.' +
+            (bounded
+              ? ' To widen the scope, ask the user to send the question without the Project or Collection mention.'
+              : '')
         )
     }
     return {

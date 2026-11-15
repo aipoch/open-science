@@ -180,8 +180,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         // validation and argument recovery are restored; trusted origin and allow-once stay unchanged.
         // Tool guidance clarifies existing scopes. Cached coverage in the presentation comes from
         // the same authorized search result. Argument validation and allow-once are unchanged.
+        // Full-text guidance names the record-page and passage-limit axes; behavior is unchanged.
         'literature/library-mcp-server.ts':
-          '4ca9748755d8bf7a19bab6bf3b8d29c0e243b6ae3a15a153aafbc02f4ca7cb79',
+          '2342e501027f0aff338b06963e0211f0980798609ddf2d1d0f255288145b018f',
         // Reviewed: errors keep specific codes with a next step and annotation cursors are opaque
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':

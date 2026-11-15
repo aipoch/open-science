@@ -16,7 +16,7 @@ export type CachedLibrarySearchRequest = Readonly<{
 }>
 
 export type CachedLibrarySearchResult = Omit<CachedTextSearchResult, 'passages'> & {
-  scope: 'cached-text-only'
+  coverageKind: 'cached-text-only'
   recordCount: number
   totalRecordCount: number
   nextOffset?: number
@@ -163,7 +163,7 @@ export const searchCachedLibraryText = async (
       requestedDocuments: result.coverage.requestedDocuments + unavailableCount,
       unavailableDocuments: result.coverage.unavailableDocuments + unavailableCount
     },
-    scope: 'cached-text-only' as const,
+    coverageKind: 'cached-text-only' as const,
     recordCount: items.length,
     totalRecordCount: page.totalCount ?? items.length,
     ...(page.nextOffset !== undefined ? { nextOffset: page.nextOffset } : {}),

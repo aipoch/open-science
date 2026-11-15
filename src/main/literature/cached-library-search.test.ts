@@ -268,7 +268,7 @@ describe('searchCachedLibraryText', () => {
     expect(result.matches[0]).toMatchObject({ itemId, attachmentId: current.attachmentId })
     expect(result).toMatchObject({
       status: 'available',
-      scope: 'cached-text-only',
+      coverageKind: 'cached-text-only',
       recordCount: 1,
       resultsRevalidated: true,
       coverage: { requestedDocuments: 1, cachedDocuments: 1 }
