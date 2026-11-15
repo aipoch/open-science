@@ -24,6 +24,12 @@ import {
   cleanupModalVolume,
   ModalCreateRejectedError
 } from './modal-sdk'
+import { createComputeRuntimeLoop, type ComputeRuntimePassResult } from './compute-runtime-loop'
+import {
+  nextComputeRuntimeBackoff,
+  nextComputeRuntimeWakeAfter,
+  type ComputeRuntimeBackoffState
+} from './compute-runtime-backoff'
 
 const log = createLogger('compute:modal')
 const frozen = z.array(
@@ -133,6 +139,7 @@ function settlement(state: Observation): UpdateJobRequest | undefined {
 }
 export function createModalJobRuntime(deps: Deps): {
   start(): void
+  wake(): Promise<void>
   resume(): void
   pause(): Promise<void>
   stop(): Promise<void>
@@ -142,10 +149,6 @@ export function createModalJobRuntime(deps: Deps): {
 } {
   const repo = deps.jobRepository
   const operations = deps.operationRepository
-  let controller: AbortController | undefined
-  let timer: ReturnType<typeof setInterval> | undefined
-  let active: Promise<void> | undefined
-  let stopped = false
   const publish = async (id: string): Promise<void> => {
     const job = await repo.get(id)
     if (job) await deps.onJobUpdated(job)
@@ -282,8 +285,8 @@ export function createModalJobRuntime(deps: Deps): {
     await cleanupModalVolume(scope, signal)
     await deps.onJobUpdated(await repo.confirmModalCleanup(job))
   }
-  const cancelOne = async (signal: AbortSignal): Promise<void> => {
-    if (!operations) return
+  const cancelOne = async (signal: AbortSignal): Promise<boolean> => {
+    if (!operations) return false
     const claim = await operations.claimNext(
       'cancel',
       new Date(),
@@ -291,7 +294,7 @@ export function createModalJobRuntime(deps: Deps): {
       randomUUID(),
       'modal_sandbox'
     )
-    if (!claim) return
+    if (!claim) return false
     const retry = (): Promise<boolean> =>
       operations.retry(claim, new Date(), new Date(Date.now() + 5000))
     try {
@@ -301,7 +304,7 @@ export function createModalJobRuntime(deps: Deps): {
       if (uncertain(j)) {
         await markUncertain(job)
         await retry()
-        return
+        return true
       }
       if (j.sandbox?.id) {
         const scope = { ...base(j), volumeId: j.volume!.id!, sandboxId: j.sandbox.id }
@@ -313,7 +316,7 @@ export function createModalJobRuntime(deps: Deps): {
           state = await inspectModalSandbox(scope, signal)
           if (state.status === 'running') {
             await retry()
-            return
+            return true
           }
         }
         if (state.status !== 'cancelled') {
@@ -322,32 +325,37 @@ export function createModalJobRuntime(deps: Deps): {
             job: settlement(state)
           })
           await publish(job.job_id)
-          return
+          return true
         }
       }
       if (await operations.fulfill(claim, new Date(), !j.volume, !!j.volume && !j.sandbox))
         await publish(job.job_id)
     } catch {
       await retry()
+      return true
     }
+    return true
   }
-  const failures = new Map<string, { until: number; delay: number }>()
-  const pass = async (signal: AbortSignal): Promise<void> => {
-    await cancelOne(signal)
+  const failures = new Map<string, ComputeRuntimeBackoffState>()
+  const keepsActiveCadence = (job: ComputeJob): boolean =>
+    job.status === 'submitted' || job.status === 'running' || !job.harvested_at
+  const pass = async (signal: AbortSignal): Promise<ComputeRuntimePassResult> => {
+    const cancelled = await cancelOne(signal)
     const jobs = await repo.findModalWork()
     const ids = new Set(jobs.map((job) => job.job_id))
     for (const id of failures.keys()) if (!ids.has(id)) failures.delete(id)
+    let ready = false
     for (const job of jobs) {
       signal.throwIfAborted()
       const previous = failures.get(job.job_id)
-      if (previous && Date.now() < previous.until) continue
+      if (previous && previous.retryAt > Date.now()) continue
       try {
         await reconcile(job, signal)
         failures.delete(job.job_id)
+        ready ||= keepsActiveCadence(job)
       } catch {
         signal.throwIfAborted()
-        const delay = Math.min((previous?.delay ?? 2500) * 2, 300000)
-        failures.set(job.job_id, { delay, until: Date.now() + delay })
+        failures.set(job.job_id, nextComputeRuntimeBackoff(previous, Date.now()))
         const message =
           'Modal job reconciliation is pending. Check the approved account, environment and App.'
         if (job.last_poll_error !== message) {
@@ -358,51 +366,30 @@ export function createModalJobRuntime(deps: Deps): {
         }
       }
     }
+    const nextWakeAfterMs = nextComputeRuntimeWakeAfter(failures.values(), Date.now())
+    return {
+      hasWork: cancelled || ready,
+      ...(nextWakeAfterMs === undefined ? {} : { nextWakeAfterMs })
+    }
   }
-  const tick = (): Promise<void> => {
-    if (!controller) return Promise.resolve()
-    return (active ??= pass(controller.signal)
-      .catch(() => {
-        if (controller && !controller.signal.aborted) log.warn('Modal job recovery deferred.')
-      })
-      .finally(() => {
-        active = undefined
-      }))
-  }
-  const start = (): void => {
-    if (stopped || controller) return
-    controller = new AbortController()
-    timer = setInterval(() => void tick(), 5000)
-    timer.unref()
-    void tick()
-  }
-  const pause = async (): Promise<void> => {
-    clearInterval(timer)
-    controller?.abort()
-    controller = undefined
-    await active
-  }
+  const loop = createComputeRuntimeLoop({
+    run: pass,
+    activeIntervalMs: 5000,
+    onError: () => log.warn('Modal job recovery deferred.')
+  })
   return {
-    start,
-    resume: start,
-    pause,
-    tick,
+    ...loop,
     manualCleanup: async (job) => {
-      if (!controller) throw new Error('Compute recovery is paused.')
+      const signal = loop.signal
+      if (!signal) throw new Error('Compute recovery is paused.')
       const journal = readModalJournal(job)
       if (!journal.volume?.id || !repo.getManualStagedCleanup(job))
         throw new Error('Cannot verify staged resources.')
-      await cleanupModalVolume({ ...base(journal), volumeId: journal.volume.id }, controller.signal)
+      await cleanupModalVolume({ ...base(journal), volumeId: journal.volume.id }, signal)
       await deps.onJobUpdated(await repo.confirmManualStagedCleanup(job))
     },
     retry: async (jobId: string) => {
-      await active
-      failures.delete(jobId)
-      await tick()
-    },
-    stop: async () => {
-      stopped = true
-      await pause()
+      await loop.wake(() => failures.delete(jobId))
     }
   }
 }

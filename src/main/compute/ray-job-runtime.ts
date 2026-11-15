@@ -23,6 +23,12 @@ import { decodeDataPath } from '../storage/data-path'
 import type { ComputeJobRepository, UpdateJobRequest } from './job-repository'
 import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import { readRayJournal, type RayJobJournal } from './ray-job-journal'
+import { createComputeRuntimeLoop, type ComputeRuntimePassResult } from './compute-runtime-loop'
+import {
+  nextComputeRuntimeBackoff,
+  nextComputeRuntimeWakeAfter,
+  type ComputeRuntimeBackoffState
+} from './compute-runtime-backoff'
 import {
   inspectRayDashboard,
   reserveRayOutputDirectory,
@@ -122,6 +128,7 @@ function terminal(observed: RayJobObservation, timedOut: boolean): UpdateJobRequ
 }
 export function createRayJobRuntime(deps: Dependencies): {
   start(): void
+  wake(): Promise<void>
   resume(): void
   pause(): Promise<void>
   stop(): Promise<void>
@@ -129,10 +136,6 @@ export function createRayJobRuntime(deps: Dependencies): {
   retry(jobId: string): Promise<void>
 } {
   const repo = deps.jobRepository
-  let controller: AbortController | undefined
-  let interval: ReturnType<typeof setInterval> | undefined
-  let active: Promise<void> | undefined
-  let stopped = false
   const expired = (job: ComputeJob): boolean =>
     job.submitted_at != null &&
     job.timeout_seconds != null &&
@@ -247,11 +250,11 @@ export function createRayJobRuntime(deps: Dependencies): {
     })
     if (updated) await deps.onJobUpdated(updated)
   }
-  const cancelOne = async (signal: AbortSignal): Promise<void> => {
+  const cancelOne = async (signal: AbortSignal): Promise<boolean> => {
     const ops = deps.operationRepository
-    if (!ops) return
+    if (!ops) return false
     const claim = await ops.claimNext('cancel', new Date(), 120000, randomUUID(), 'ray_jobs')
-    if (!claim) return
+    if (!claim) return false
     try {
       const job = await repo.get(claim.jobId)
       if (!job) throw new Error('Ray job unavailable.')
@@ -270,25 +273,30 @@ export function createRayJobRuntime(deps: Dependencies): {
       if (updated) await deps.onJobUpdated(updated)
     } catch {
       await ops.retry(claim, new Date(), new Date(Date.now() + 5000))
+      return true
     }
+    return true
   }
-  const backoff = new Map<string, { delayMs: number; until: number }>()
-  const pass = async (signal: AbortSignal): Promise<void> => {
-    await cancelOne(signal)
+  const backoff = new Map<string, ComputeRuntimeBackoffState>()
+  const keepsActiveCadence = (job: ComputeJob): boolean =>
+    job.status === 'submitted' || job.status === 'running' || !job.harvested_at
+  const pass = async (signal: AbortSignal): Promise<ComputeRuntimePassResult> => {
+    const cancelled = await cancelOne(signal)
     const jobs = await repo.findRayWork()
     const pending = new Set(jobs.map((job) => job.job_id))
     for (const id of backoff.keys()) if (!pending.has(id)) backoff.delete(id)
+    let ready = false
     for (const job of jobs) {
       signal.throwIfAborted()
       const previous = backoff.get(job.job_id)
-      if (previous && Date.now() < previous.until) continue
+      if (previous && previous.retryAt > Date.now()) continue
       try {
         await reconcile(job, signal)
         backoff.delete(job.job_id)
+        ready ||= keepsActiveCadence(job)
       } catch {
         signal.throwIfAborted()
-        const delayMs = Math.min(300_000, (previous?.delayMs ?? 2_500) * 2)
-        backoff.set(job.job_id, { delayMs, until: Date.now() + delayMs })
+        backoff.set(job.job_id, nextComputeRuntimeBackoff(previous, Date.now()))
         const message =
           'Ray job reconciliation is pending. Check the approved cluster and shared output directory before resubmitting.'
         if (job.last_poll_error !== message) {
@@ -299,43 +307,21 @@ export function createRayJobRuntime(deps: Dependencies): {
         }
       }
     }
+    const nextWakeAfterMs = nextComputeRuntimeWakeAfter(backoff.values(), Date.now())
+    return {
+      hasWork: cancelled || ready,
+      ...(nextWakeAfterMs === undefined ? {} : { nextWakeAfterMs })
+    }
   }
-  const tick = (): Promise<void> => {
-    if (!controller) return Promise.resolve()
-    return (active ??= pass(controller.signal)
-      .catch(() => {
-        if (controller && !controller.signal.aborted) log.warn('Ray job reconciliation deferred.')
-      })
-      .finally(() => {
-        active = undefined
-      }))
-  }
-  const start = (): void => {
-    if (stopped || controller) return
-    controller = new AbortController()
-    interval = setInterval(() => void tick(), 5000)
-    interval.unref()
-    void tick()
-  }
-  const pause = async (): Promise<void> => {
-    clearInterval(interval)
-    controller?.abort()
-    controller = undefined
-    await active
-  }
+  const loop = createComputeRuntimeLoop({
+    run: pass,
+    activeIntervalMs: 5000,
+    onError: () => log.warn('Ray job reconciliation deferred.')
+  })
   return {
-    start,
-    resume: start,
-    pause,
-    tick,
+    ...loop,
     retry: async (jobId) => {
-      await active
-      backoff.delete(jobId)
-      await tick()
-    },
-    stop: async () => {
-      stopped = true
-      await pause()
+      await loop.wake(() => backoff.delete(jobId))
     }
   }
 }
