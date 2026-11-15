@@ -18,7 +18,7 @@ import type {
   SettingsSnapshot,
   ClaudeInstallSourceInfo,
   NodeInstallHint
-} from './settings'
+} from './settings-types'
 
 // Runtime values shared by the Main and renderer Settings contract.
 
