@@ -1,5 +1,5 @@
-import { copyFile, readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { copyFile, mkdir, readFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- plain Node helper
 export async function syncFileEvidenceCodec({
@@ -19,7 +19,10 @@ export async function syncFileEvidenceCodec({
       throw new Error(`Generated file-evidence codec is stale: ${target}`)
     return false
   }
-  if (sourceText !== targetText) await copyFile(source, target)
+  if (sourceText !== targetText) {
+    await mkdir(dirname(target), { recursive: true })
+    await copyFile(source, target)
+  }
   return sourceText !== targetText
 }
 
