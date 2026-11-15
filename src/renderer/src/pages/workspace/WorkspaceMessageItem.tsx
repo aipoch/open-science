@@ -702,8 +702,8 @@ const CollapsibleUserMessageContent = ({
   const contentId = useId()
   const measurementRef = useRef<HTMLDivElement>(null)
   const [isExpanded, setIsExpanded] = useState(false)
-  const [canExpand, setCanExpand] = useState(false)
-  const isCollapsed = canExpand && !isExpanded
+  const [canExpand, setCanExpand] = useState<boolean>()
+  const isCollapsed = canExpand === true && !isExpanded
   const measurementParts =
     staticParts && staticParts.length > 0
       ? staticParts
@@ -716,6 +716,7 @@ const CollapsibleUserMessageContent = ({
     if (!measurement) return
 
     setIsExpanded(false)
+    setCanExpand(undefined)
     const measureOverflow = (): void => {
       // Reading a skipped subtree's geometry defeats content-visibility containment.
       // ResizeObserver measures it again when the browser resumes rendering the row.
@@ -767,7 +768,7 @@ const CollapsibleUserMessageContent = ({
         id={contentId}
         data-slot="user-message-content"
         // Cap the first layout even when containment defers the overflow measurement.
-        className={cn(!isExpanded && 'max-h-[12.5lh] overflow-hidden')}
+        className={cn(canExpand !== false && !isExpanded && 'max-h-[12.5lh] overflow-hidden')}
       >
         {isCollapsed && hasInteractiveContent ? (
           <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
