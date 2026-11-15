@@ -2982,3 +2982,63 @@ it('preserves saved run identity without describing provenance evidence as a his
     'Environment evidence is incomplete or unavailable. Current packages cannot fill historical gaps.'
   )
 })
+
+it.each(['code', 'environment', 'reproducibility'] as const)(
+  'replaces the inapplicable %s tab with the saved image receipt',
+  async (selectedTab) => {
+    await act(async () => root.unmount())
+    const snapshot = provenance()
+    snapshot.evidence!.producer = {
+      state: 'available',
+      kind: 'connector',
+      connector_id: 'image-model',
+      tool_id: 'edit_image',
+      invocation_id: 'image-edit',
+      implementation_version: '1',
+      arguments_checksum: 'a'.repeat(64),
+      association_method: 'app-owned-handler'
+    }
+    snapshot.evidence!.connector_execution = {
+      schema_version: 1,
+      arguments_checksum: 'a'.repeat(64),
+      normalized_arguments: {
+        model: 'MiniMax-H3-Image',
+        parameters: { aspect_ratio: '16:9' },
+        sourceVersionId: 'source-version'
+      }
+    }
+    getVersionProvenance.mockResolvedValue(snapshot)
+    getCodeReconstruction.mockClear()
+    getVersionExecution.mockClear()
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={item}
+          projectId="project-1"
+          onClose={vi.fn()}
+          selectedTab={selectedTab}
+        />
+      )
+    )
+    await flush()
+    expect([...container.querySelectorAll('[role="tab"]')].map((node) => node.textContent)).toEqual(
+      ['Execution Log', 'Messages', 'Review']
+    )
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      'Execution Log'
+    )
+    expect(container.textContent).toContain('MiniMax-H3-Image')
+    expect(container.textContent).not.toContain('source-version')
+    expect(container.textContent).not.toContain('16:9')
+    const output = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Output settings'
+    )
+    expect(output?.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => output?.click())
+    expect(container.textContent).toContain('16:9')
+    expect(container.textContent).not.toContain('Generate script')
+    expect(getCodeReconstruction).not.toHaveBeenCalled()
+    expect(getVersionExecution).not.toHaveBeenCalled()
+  }
+)

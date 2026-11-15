@@ -783,6 +783,13 @@ const createAcpRuntime = ({
                 dataRoot,
                 projectId: DEFAULT_ARTIFACT_PROJECT_ID,
                 mcpEntryPath,
+                enableImageGeneration: true,
+                imageMcp: {
+                  getPresetId: () =>
+                    settingsService.imageModels
+                      .resolve()
+                      .then((resolved) => resolved?.model.presetId)
+                },
                 repository,
                 runRegistry,
                 provenance: provenanceRepository,

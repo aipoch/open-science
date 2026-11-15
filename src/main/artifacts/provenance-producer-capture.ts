@@ -17,6 +17,7 @@ import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/noteb
 import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
 import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
+import type { ArtifactProducerInputScope } from '../managed-file-versions/read-port'
 import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repository'
 import {
   unavailableNotebookDependencyProjection,
@@ -108,6 +109,10 @@ const connectorEvidenceIsValid = (evidence: ArtifactVersionEvidence): boolean =>
     sha256(serialized) === execution.arguments_checksum &&
     execution.arguments_checksum === producer.arguments_checksum
   )
+}
+
+export type AppGeneratedArtifactWriteProducer = AppGeneratedArtifactProducer & {
+  inputScope?: ArtifactProducerInputScope
 }
 
 type ArtifactVersionProducerCapture =
@@ -243,12 +248,25 @@ class ArtifactProvenanceProducerCapture {
     request: CreateArtifactVersionRequest,
     createdAt: Date,
     target: ArtifactVersionTargetCapture,
-    appGeneratedProducer?: AppGeneratedArtifactProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
   ): Promise<ArtifactVersionProducerCapture> {
+    if (
+      request.imageTaskId &&
+      (request.imageTaskId !== request.artifactRunId ||
+        request.promptMessageId !== null ||
+        request.runtimeSegmentId !== null ||
+        appGeneratedProducer?.connectorId !== 'image-model')
+    )
+      throw new Error('Invalid image task provenance context.')
     if (appGeneratedProducer) {
       const execution = prepareConnectorExecution(appGeneratedProducer)
       const inputFiles = appGeneratedProducer.inputFiles ?? []
-      await this.validateInputReferences(request.projectId, inputFiles, 'Connector')
+      await this.validateInputReferences(
+        request.projectId,
+        inputFiles,
+        'Connector',
+        appGeneratedProducer.inputScope
+      )
       return {
         state: 'available',
         kind: 'connector',
@@ -261,6 +279,8 @@ class ArtifactProvenanceProducerCapture {
         inputFiles
       }
     }
+    if (!request.promptMessageId || !request.runtimeSegmentId)
+      throw new Error('Conversation provenance requires a prompt and runtime segment.')
     if (request.producerRunId && !request.notebookSessionId) {
       throw new Error('producerRunId requires notebookSessionId in the active Artifact run.')
     }
@@ -554,10 +574,11 @@ class ArtifactProvenanceProducerCapture {
       conversation: {
         agent_frame_id: request.agentFrameId,
         message_branch_id: request.messageBranchId,
-        prompt_message_id: request.promptMessageId,
+        prompt_message_id: request.promptMessageId ?? undefined,
         root_frame_id: request.rootFrameId,
-        runtime_segment_id: request.runtimeSegmentId
+        runtime_segment_id: request.runtimeSegmentId ?? undefined
       },
+      ...(request.imageTaskId ? { image_task_id: request.imageTaskId } : {}),
       created_at: createdAt.toISOString(),
       environment_status:
         producer.state !== 'available'
@@ -805,10 +826,15 @@ class ArtifactProvenanceProducerCapture {
   private async validateInputReferences(
     projectId: string,
     inputs: NotebookRunInputFile[],
-    producerLabel = 'Notebook'
+    producerLabel = 'Notebook',
+    inputScope?: ArtifactProducerInputScope
   ): Promise<void> {
     for (const input of inputs) {
-      const validation = await this.options.inputAuthority.validateVersion(projectId, input)
+      const validation = await this.options.inputAuthority.validateVersion(
+        projectId,
+        input,
+        inputScope
+      )
       if (validation.state === 'project-mismatch') {
         throw new Error(
           `${producerLabel} input belongs to another Project: ${input.inputFileVersionId}`

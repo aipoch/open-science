@@ -2032,6 +2032,7 @@ const ConversationPanel = ({
                     requests={pendingPermissions.filter((request) => request.delegated)}
                     onRespond={onRespondToPermission}
                     disabled={isStopping}
+                    imageSourceSession={activeSession}
                     notebookLookup={
                       activeSession
                         ? {
@@ -2165,6 +2166,7 @@ const ConversationPanel = ({
                             requests={rootPermissionRequests}
                             onRespond={onRespondToPermission}
                             embedded
+                            imageSourceSession={activeSession}
                             notebookLookup={
                               activeSession
                                 ? {

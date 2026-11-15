@@ -30,7 +30,8 @@
     "src/main/ipc.ts": "composition",
     "src/main/index.ts": "composition",
     "src/main/node-entry.ts": "composition",
-    "src/main/app-startup.ts": "composition"
+    "src/main/app-startup.ts": "composition",
+    "src/main/settings/image-model-config.ts": "policy"
   },
   "publicInterfaceOwners": ["pdf_documents", "shared_promise_identity", "pdf_text"],
   "modules": {

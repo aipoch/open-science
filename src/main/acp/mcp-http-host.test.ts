@@ -2,7 +2,7 @@ import { rm, mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSkillRuntimeAcpServerConfig } from '../skills/runtime-mcp-server'
-import { createServer, request as httpRequest, type Server } from 'node:http'
+import { createServer, request as httpRequest, type Server, type ServerResponse } from 'node:http'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 
@@ -918,6 +918,120 @@ describe('AgentMcpHttpHost', () => {
     expect(searchLibrary).toHaveBeenCalledWith({ query: 'retrieval', scope: 'project', limit: 20 })
     await client.close()
   })
+
+  it.each(['cancel', 'replace', 'unregister'] as const)(
+    'streams image progress and aborts only the owning RPC on %s',
+    async (action) => {
+      root = await mkdtemp(join(tmpdir(), 'image-mcp-http-'))
+      const currentRunFile = join(root, 'current-run.json')
+      await writeFile(
+        currentRunFile,
+        JSON.stringify({ artifactRunId: 'run-a', rpcCapabilityToken: 'image-token' })
+      )
+      const requests = new Map<string, ServerResponse>()
+      const closed = new Set<string>()
+      rpcServer = createServer((request, response) => {
+        void (async () => {
+          const chunks: Buffer[] = []
+          for await (const chunk of request) chunks.push(Buffer.from(chunk))
+          const { params } = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+          requests.set(params.filename, response)
+          response.once('close', () => closed.add(params.filename))
+        })()
+      })
+      await new Promise<void>((resolve) => rpcServer!.listen(0, '127.0.0.1', resolve))
+      const address = rpcServer.address()
+      if (!address || typeof address === 'string') throw new Error('Missing RPC address')
+      host = new AgentMcpHttpHost()
+      const { token } = await host.ensureStarted()
+      const environment = {
+        projectId: 'project-a',
+        sessionId: 'session-a',
+        currentRunFile,
+        rpcEndpoint: `http://127.0.0.1:${address.port}`
+      }
+      const clients: Client[] = []
+      const contentTypes: string[] = []
+      const connect = async (route: string): Promise<Client> => {
+        const client = new Client({ name: 'image-http-test', version: '1' })
+        clients.push(client)
+        await client.connect(
+          new StreamableHTTPClientTransport(new URL(host!.urlFor('image', route)), {
+            requestInit: { headers: { authorization: `Bearer ${token}` } },
+            fetch: async (input, init) => {
+              const response = await fetch(input, init)
+              if (
+                typeof init?.body === 'string' &&
+                JSON.parse(init.body).method === 'tools/call' &&
+                response.ok
+              )
+                contentTypes.push(response.headers.get('content-type') ?? '')
+              return response
+            }
+          })
+        )
+        return client
+      }
+      const controller = new AbortController()
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+      try {
+        host.registerImage('first', environment)
+        host.registerImage('second', environment)
+        const first = await connect('first')
+        const second = await connect('second')
+        const onprogress = vi.fn()
+        const firstResult = first
+          .callTool(
+            { name: 'generate_image', arguments: { prompt: 'a circle', filename: 'first' } },
+            undefined,
+            { onprogress, signal: controller.signal }
+          )
+          .catch((error: unknown) => error)
+        const secondResult = second.callTool({
+          name: 'edit_image',
+          arguments: {
+            prompt: 'recolor',
+            filename: 'second',
+            source: {
+              projectId: 'project-a',
+              sourceKind: 'artifact-version',
+              sourceFileId: 'file-a',
+              inputFileVersionId: 'version-a'
+            }
+          }
+        })
+        await vi.waitFor(() => expect(requests.size).toBe(2))
+        await vi.advanceTimersByTimeAsync(30_000)
+        await vi.waitFor(() =>
+          expect(onprogress).toHaveBeenCalledWith({ progress: 1, message: 'Generating image.' })
+        )
+        const duplicate = await connect('first')
+        await expect(
+          duplicate.callTool({ name: 'generate_image', arguments: { prompt: 'duplicate' } })
+        ).rejects.toMatchObject({ code: 409 })
+        if (action === 'cancel') controller.abort()
+        else if (action === 'replace') host.registerImage('first', { ...environment })
+        else host.unregister('first')
+        await vi.waitFor(() => expect(closed.has('first')).toBe(true))
+        expect(closed.has('second')).toBe(false)
+        requests.get('second')!.writeHead(200, { 'content-type': 'application/json' })
+        requests
+          .get('second')!
+          .end(JSON.stringify({ result: { artifactId: 'artifact-a', versionId: 'version-b' } }))
+        expect((await secondResult).isError).not.toBe(true)
+        expect(contentTypes).toHaveLength(2)
+        expect(contentTypes.every((type) => type.includes('text/event-stream'))).toBe(true)
+        controller.abort()
+        await first.close()
+        await firstResult
+        expect(requests.size).toBe(2)
+      } finally {
+        controller.abort()
+        await Promise.all(clients.map((client) => client.close()))
+        vi.useRealTimers()
+      }
+    }
+  )
 
   it('delivers HTTP cancellation to the active literature lookup before it can save', async () => {
     host = new AgentMcpHttpHost()

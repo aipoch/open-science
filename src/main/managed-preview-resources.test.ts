@@ -146,6 +146,24 @@ describe('ManagedPreviewResources', () => {
     })
   })
 
+  it('streams unchanged high-resolution download bytes without admitting an inline raster', async () => {
+    const png = createCompressedPng(5472, 3072)
+    const filePath = await createFile(png, 'large.png')
+    const resources = new ManagedPreviewResources({ resolvePath: async () => filePath })
+    const source = { source: 'local' as const, path: filePath, mimeType: 'image/png' }
+    await expect(resources.acquire(17, source)).rejects.toThrow(/16,000,000.*pixel/i)
+    const download = await resources.acquire(17, { ...source, purpose: 'download' })
+    expect(download).toMatchObject({ size: png.length, mimeType: 'application/octet-stream' })
+    expect(download.width).toBeUndefined()
+    const range = await resources.readRange(17, {
+      resourceId: download.id,
+      begin: 0,
+      end: png.length
+    })
+    expect(range.data).toEqual(new Uint8Array(png))
+    resources.release(17, { resourceId: download.id })
+  })
+
   it.each([
     [9_456, 2_800],
     [9_496, 2_028],
@@ -432,6 +450,8 @@ describe('ManagedPreviewResources', () => {
         source,
         projectId: 'project-1',
         fileId: 'upload-1',
+        imagePreview: true,
+        imageGenerationSessionId: 'session-1',
         ...(versionId ? { versionId } : {})
       })
       expect(resource.sourceChecksum).toBe('a'.repeat(64))
@@ -447,7 +467,8 @@ describe('ManagedPreviewResources', () => {
       expect(openManagedFileVersion).toHaveBeenCalledWith(source, {
         projectId: 'project-1',
         fileId: 'upload-1',
-        ...(versionId ? { versionId } : {})
+        ...(versionId ? { versionId } : {}),
+        ...(source === 'artifact' && versionId ? { imageGenerationSessionId: 'session-1' } : {})
       })
       expect(resolvePath).not.toHaveBeenCalled()
 

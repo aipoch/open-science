@@ -258,7 +258,9 @@
     "scripts/ocr/worker.mjs",
     "src/main/composition/research-film.ts",
     "src/main/composition/research-film.test.ts",
-    "src/main/composition/notebook-approvals.test.ts"
+    "src/main/composition/notebook-approvals.test.ts",
+    "src/main/composition/image-model.ts",
+    "src/main/composition/image-tasks.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",

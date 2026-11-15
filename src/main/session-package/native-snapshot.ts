@@ -4,6 +4,8 @@ import {
   packageOperationReplayFilmsSchema,
   packageFilms
 } from './research-films-contract'
+import { imageTaskSchema } from '../../shared/image-task'
+import { writeStoredImageTask } from '../image-model/stored-tasks'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import {
   indexPortableEvidence,
@@ -297,6 +299,8 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
     typeof value.tables !== 'object'
   )
     throw new Error('Unsupported package records.')
+  if ('imageTasks' in value && value.imageTasks !== undefined)
+    z.array(imageTaskSchema).parse(value.imageTasks)
   if ('logEvidence' in value) portableEvidenceSchema.parse(value.logEvidence)
   if ('researchFilms' in value && value.researchFilms !== undefined)
     packageResearchFilmsSchema.parse(value.researchFilms)
@@ -532,7 +536,24 @@ export const mapPackageReferences = (
   checksums: Record<string, string> = {},
   pooledKeys?: ReadonlySet<string>
 ): unknown => {
-  if (key === 'sourceScope' || key === 'sourceSessionCheck') return value
+  if (key === 'imageTasks' && Array.isArray(value))
+    return value.map((task) => {
+      const { edit, ...rest } = task
+      return {
+        ...(mapPackageReferences(rest, identities, '', checksums, pooledKeys) as object),
+        edit: mapPackageReferences(edit, identities, 'imageTaskEdit', checksums, pooledKeys)
+      }
+    })
+  if (key === 'imageTaskEdit' && value && typeof value === 'object' && !Array.isArray(value)) {
+    const edit = value as Record<string, unknown>
+    // Model IDs, options and instructions are not package identities, even on exact collisions.
+    return {
+      ...edit,
+      source: mapPackageReferences(edit.source, identities, '', checksums, pooledKeys)
+    }
+  }
+  if (key === 'sourceScope' || key === 'sourceSessionCheck' || key === 'normalized_arguments')
+    return value
   if (['content', 'text', 'script', 'code', 'outputs', 'structuredOutputEvidence'].includes(key))
     return value
   if (typeof value === 'string') {
@@ -634,6 +655,7 @@ export const prepareNativeImport = async (
   for (const item of records.literature?.items ?? []) identities[item.itemId] ??= randomUUID()
   const context = session?.runtimeContext
   const contextIds = [
+    ...(records.imageTasks?.map((task) => task.id) ?? []),
     context?.sideChat?.id,
     ...(context?.sideChat?.entries.map((entry) => entry.id) ?? []),
     ...(context?.pdfContext?.bindings.map((binding) => binding.bindingId) ?? []),
@@ -878,6 +900,25 @@ export const prepareNativeImport = async (
         string,
         CanonicalJson
       >
+      if (jsonKey === 'evidenceJson') {
+        const evidence =
+          value as unknown as import('../../shared/artifact-provenance').ArtifactVersionEvidence
+        if (
+          'kind' in evidence.producer &&
+          evidence.producer.kind === 'connector' &&
+          evidence.producer.connector_id === 'image-model' &&
+          evidence.connector_execution
+        ) {
+          // Image request references relocate; model IDs, parameters and arbitrary provider data do not.
+          const args = evidence.connector_execution.normalized_arguments
+          for (const key of ['imageTaskId', 'sourceVersionId']) {
+            if (typeof args[key] === 'string') args[key] = identities[args[key]] ?? args[key]
+          }
+          const checksum = sha256(canonicalJson(args as CanonicalJson))
+          evidence.connector_execution.arguments_checksum = checksum
+          evidence.producer.arguments_checksum = checksum
+        }
+      }
       if (jsonKey === 'executionSnapshotJson') {
         // The source snapshot was validated before remapping. Its derived local graph now has
         // different identities, so seal the recipe again before computing the outer checksum.
@@ -924,6 +965,7 @@ export const prepareNativeImport = async (
     for (const output of version.outputs)
       output.storageKey = remapStorageKey(output.storageKey, identities)
   }
+  for (const task of mapped.imageTasks ?? []) await writeStoredImageTask(destinationRoot, task)
   return { records: mapped, identities, checksums }
 }
 

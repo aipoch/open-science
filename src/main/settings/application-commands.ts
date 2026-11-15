@@ -1,3 +1,7 @@
+import type {
+  ImageModelSettingsMutation,
+  ImageModelSettingsSnapshot
+} from '../../shared/image-model-settings'
 import { readSourceLinkImage, readSourceLinkMetadata } from './source-link-metadata'
 import type { SourceLinkMetadata } from '../../shared/source-preview'
 import type {
@@ -162,6 +166,7 @@ type CoreSettingsCommandStore = Pick<
   | 'setSubagentModel'
   | 'setVisionModel'
   | 'validateProvider'
+  | 'imageModels'
 > & {
   classification: Pick<ClassificationSettingsOwner, 'snapshot' | 'mutate' | 'probe'>
 }
@@ -263,6 +268,16 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [id: string],
     StoreResult<'getConnectorDetail'>
   >('settings:get-connector-detail'),
+  getImageModels: defineApplicationCommand<
+    'settings:get-image-models',
+    readonly [],
+    ImageModelSettingsSnapshot
+  >('settings:get-image-models'),
+  updateImageModels: defineApplicationCommand<
+    'settings:update-image-models',
+    readonly [request: ImageModelSettingsMutation],
+    ImageModelSettingsSnapshot
+  >('settings:update-image-models'),
   getClassification: defineApplicationCommand<
     'settings:get-classification',
     readonly [],
@@ -595,6 +610,8 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.detectOpencode,
   settingsCoreApplicationCommands.getConnectorDetail,
   settingsCoreApplicationCommands.getClassification,
+  settingsCoreApplicationCommands.getImageModels,
+  settingsCoreApplicationCommands.updateImageModels,
   settingsCoreApplicationCommands.getGitHubTokenStatus,
   settingsCoreApplicationCommands.getPackageMirror,
   settingsCoreApplicationCommands.reviewNotebookPrivateDestination,
@@ -730,6 +747,14 @@ const registerCoreSettingsApplicationCommands = (
         dependencies.snapshotCommits.currentSnapshotAfter(dependencies.service.detectOpencode()),
       'settings:get-connector-detail': ({ args }) =>
         dependencies.service.getConnectorDetail(args[0]),
+      'settings:get-image-models': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:get-image-models')
+        return dependencies.service.imageModels.snapshot()
+      },
+      'settings:update-image-models': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:update-image-models')
+        return dependencies.service.imageModels.mutate(args[0])
+      },
       'settings:get-classification': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:get-classification')
         return dependencies.service.classification.snapshot()

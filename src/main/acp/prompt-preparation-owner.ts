@@ -465,7 +465,7 @@ class AcpPromptPreparationOwner {
         .join('\n\n')
 
       const skillImportAttachmentPaths = new Set<string>()
-      const references = input.request.referencedArtifacts ?? []
+      const references = [...(input.request.referencedArtifacts ?? [])]
       const requestedHistoryUploads = input.request.historyAttachments ?? []
       const historyUploads = filterUnlinkedPdfHistory(requestedHistoryUploads, references)
       if (historyUploads.length < requestedHistoryUploads.length) {

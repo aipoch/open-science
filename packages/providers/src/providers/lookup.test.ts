@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { getProviderModels, resolveProviderImageBaseUrl } from './definitions'
 import { OFFICIAL_VENDORS } from './data'
 import {
   getOfficialVendor,
@@ -1674,3 +1675,50 @@ it('protects provider metadata and query results from external mutation', () => 
   expect(getVendorModelIds('openai').length).toBeGreaterThan(0)
   expect(getVendorModelContextWindow('openai', 'unknown')).toBeUndefined()
 })
+
+describe('image provider capability', () => {
+  it.each([
+    ['china', 'https://api.minimax.cn/v1'],
+    ['global', 'https://api.minimax.io/v1'],
+    [undefined, 'https://api.minimax.io/v1']
+  ])('resolves MiniMax images for region %s independently of chat', (region, expected) => {
+    expect(resolveProviderImageBaseUrl('minimax', region)).toBe(expected)
+    expect(
+      getProviderModels('minimax', 'image-generation', region).map((model) => model.modelId)
+    ).toEqual(['MiniMax-H3-Image'])
+    expect(
+      getProviderModels('minimax', 'text-generation', region).map((model) => model.modelId)
+    ).not.toContain('MiniMax-H3-Image')
+  })
+  it('does not substitute another capability or region for an unavailable image connection', () => {
+    expect(resolveProviderImageBaseUrl('minimax', 'unknown-region')).toBeUndefined()
+    expect(getProviderModels('minimax', 'image-generation', 'unknown-region')).toEqual([])
+    for (const providerId of ['anthropic', 'typesafe', 'custom']) {
+      expect(resolveProviderImageBaseUrl(providerId)).toBeUndefined()
+      expect(getProviderModels(providerId, 'image-generation')).toEqual([])
+    }
+  })
+})
+
+it.each([
+  ['openai', undefined, 'https://api.openai.com/v1', 'gpt-image-2.6-sunburst'],
+  ['bailian', 'china', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'qwen-image-3.0-pro'],
+  [
+    'volcengine',
+    undefined,
+    'https://ark.cn-beijing.volces.com/api/v3',
+    'doubao-seedream-5-5-261028'
+  ]
+])(
+  'separates the %s image catalog and region from conversation models',
+  (vendor, region, url, model) => {
+    expect(resolveProviderImageBaseUrl(vendor, region)).toBe(url)
+    expect(
+      getProviderModels(vendor, 'image-generation', region).map((entry) => entry.modelId)
+    ).toContain(model)
+    expect(
+      getProviderModels(vendor, 'text-generation', region).map((entry) => entry.modelId)
+    ).not.toContain(model)
+    expect(resolveProviderImageBaseUrl('bailian', 'global')).toBeUndefined()
+  }
+)

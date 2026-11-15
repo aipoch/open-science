@@ -621,6 +621,191 @@ describe('ACP session capability owner', () => {
     })
   })
 
+  it('mounts image tools only when an image model is configured', async () => {
+    const request = {
+      stableAppSessionId: 'session-images',
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    } as const
+    const disabled = await createOwner().provision(request)
+    expect(disabled.mcpServers.map((server) => server.name)).not.toContain('open-science-images')
+
+    const enabled = await createOwner({
+      artifacts: {
+        dataRoot: '/data',
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        imageMcp: { getPresetId: async () => 'minimax-h3/official' }
+      }
+    }).provision(request)
+    expect(enabled.mcpServers.map((server) => server.name)).toContain('open-science-images')
+    expect(enabled.descriptor.capabilities).toContain('images')
+    const image = enabled.mcpServers.find((server) => server.name === 'open-science-images')
+    expect(image && 'env' in image ? image.env : []).toContainEqual({
+      name: 'OPEN_SCIENCE_IMAGE_PRESET_ID',
+      value: 'minimax-h3/official'
+    })
+  })
+
+  it('refreshes image guidance availability when configuration changes without skill import', async () => {
+    let presetId: string | undefined
+    const owner = createOwner({
+      skillImport: undefined,
+      artifacts: {
+        dataRoot: '/data',
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        imageMcp: { getPresetId: async () => presetId }
+      }
+    })
+    const input = {
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
+    }
+    for (const value of [undefined, 'minimax-h3/official', undefined]) {
+      presetId = value
+      await owner.refreshDynamicAvailability()
+      expect(owner.toolingAvailability(input).images).toBe(Boolean(value))
+      expect(owner.toolingAvailability({ ...input, nativeMcpEnabled: false }).images).toBe(false)
+      expect(
+        owner.toolingAvailability({
+          ...input,
+          policy: { role: 'side-chat', delegation: 'denied' }
+        }).images
+      ).toBe(false)
+    }
+    owner.dispose()
+  })
+
+  it('keeps image bridge tools aligned with mounting, role and capability replacement', async () => {
+    let configured = true
+    const registerBridgeMcpSession = vi.fn()
+    const unregisterBridgeMcpSession = vi.fn()
+    const owner = createOwner({
+      registerBridgeMcpSession,
+      unregisterBridgeMcpSession,
+      artifacts: {
+        dataRoot: '/data',
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        imageMcp: { getPresetId: async () => (configured ? 'minimax-h3/official' : undefined) }
+      }
+    })
+    const request = {
+      stableAppSessionId: 'session-images',
+      framework: codexFramework,
+      nativeMcpEnabled: false,
+      bridgeMcpAliasesEnabled: true,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    }
+    try {
+      const primary = await owner.provision(request)
+      primary.commit('session-images')
+      primary.registerBridgeMcpSession?.('session-images', 'provider-1')
+      expect(primary.descriptor.capabilities).toContain('images')
+      expect(
+        owner
+          .piPermissionCapabilitiesFor('session-images')
+          ?.allowedToolIdentities.has('open-science-images/generate_image')
+      ).toBe(true)
+      expect(
+        primary.bridgeMcpTools
+          ?.filter(({ namespace }) => namespace === 'mcp__open_science_images')
+          .map(({ name }) => name)
+      ).toEqual(['generate_image', 'edit_image'])
+      for (const role of ['reviewer', 'side-chat', 'restricted-inference'] as const) {
+        const restricted = await owner.provision({
+          ...request,
+          stableAppSessionId: role,
+          policy: { role, delegation: 'denied' }
+        })
+        expect(restricted.descriptor.capabilities).not.toContain('images')
+        expect(
+          restricted.bridgeMcpTools?.some(
+            ({ namespace }) => namespace === 'mcp__open_science_images'
+          )
+        ).toBe(false)
+        expect(restricted.bridgeMcpNamespaces).toContain('mcp__open_science_images')
+        await restricted.release({ ownsStableIdentity: true })
+      }
+      configured = false
+      const replacement = await owner.provision(request)
+      replacement.commit('session-images')
+      replacement.registerBridgeMcpSession?.('session-images', 'provider-2')
+      expect(replacement.descriptor.capabilities).not.toContain('images')
+      expect(
+        owner
+          .piPermissionCapabilitiesFor('session-images')
+          ?.allowedToolIdentities.has('open-science-images/generate_image')
+      ).toBe(false)
+      expect(
+        replacement.bridgeMcpTools?.some(
+          ({ namespace }) => namespace === 'mcp__open_science_images'
+        )
+      ).toBe(false)
+      expect(registerBridgeMcpSession).toHaveBeenLastCalledWith(
+        'provider-2',
+        replacement.bridgeMcpTools,
+        expect.arrayContaining(['mcp__open_science_images'])
+      )
+      expect(unregisterBridgeMcpSession).toHaveBeenCalledWith('provider-1')
+      owner.revokeSession('session-images')
+      expect(unregisterBridgeMcpSession).toHaveBeenCalledWith('provider-2')
+    } finally {
+      owner.dispose()
+    }
+  })
+
+  it('registers the image server on the HTTP MCP host', async () => {
+    const registerImage = vi.fn()
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerArtifact: vi.fn(),
+      registerImage,
+      urlFor: vi.fn((kind: string, id: string) => `http://127.0.0.1:5/${kind}/${id}`),
+      registerReceiptScope: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: {
+        dataRoot: '/data',
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        imageMcp: { getPresetId: async () => 'minimax-h3/official' }
+      },
+      notebook: undefined,
+      skillImport: undefined,
+      mcpHttpHost: host
+    })
+    const provision = await owner.provision({
+      stableAppSessionId: 'session-image-http',
+      framework: harnessFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    })
+    expect(provision.mcpServers.map((server) => server.name)).toContain('open-science-images')
+    expect(registerImage).toHaveBeenCalledWith(
+      'session-image-http',
+      expect.objectContaining({ presetId: 'minimax-h3/official' })
+    )
+    provision.commit('session-image-http')
+    expect(host.registerReceiptScope).toHaveBeenCalledWith(
+      'session-image-http',
+      JSON.stringify(['project', 'session-image-http', 'image']),
+      'image'
+    )
+  })
+
   it.each([
     [claudeCodeFramework, 'open-science-host-message'],
     [codexFramework, 'open-science-host-message'],

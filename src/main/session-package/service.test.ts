@@ -1,3 +1,5 @@
+import { ImageTaskOwner } from '../image-model/tasks'
+import { readStoredImageTasks, writeStoredImageTask } from '../image-model/stored-tasks'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { PdfAnnotationRepository } from '../pdf-annotations/repository'
 import { replayAnnotationId } from '../../shared/replay-reference'
@@ -1680,8 +1682,8 @@ it(
       rootFrameId: request.rootFrameId,
       agentFrameId: request.agentFrameId,
       messageBranchId: request.messageBranchId,
-      runtimeSegmentId: request.runtimeSegmentId,
-      promptMessageId: request.promptMessageId,
+      runtimeSegmentId: request.runtimeSegmentId!,
+      promptMessageId: request.promptMessageId!,
       messageId: 'message-1'
     })
     await new ProvenanceMessageSnapshotRepository({
@@ -2982,8 +2984,8 @@ it.each(['root', 'frame'] as const)(
         rootFrameId: anchors.rootFrameId,
         agentFrameId: anchors.agentFrameId,
         messageBranchId: anchors.messageBranchId,
-        runtimeSegmentId: anchors.runtimeSegmentId,
-        promptMessageId: anchors.promptMessageId,
+        runtimeSegmentId: anchors.runtimeSegmentId!,
+        promptMessageId: anchors.promptMessageId!,
         environmentCapture: { state: 'unavailable', reason: 'environment-capture-failed' },
         inputFiles: [
           {
@@ -3934,194 +3936,357 @@ it('exports duplicate Artifact Version bytes as one self-contained object', asyn
   )
 })
 
-it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation'] as const)(
-  'includes a foreign immutable file referenced only by %s',
-  async (kind) => {
-    const source = await createProvenanceTestFixture()
-    initDataRoot(source.storageRoot)
-    const target = await createProvenanceTestFixture()
-    initDataRoot(target.storageRoot)
-    fixtures.push(source, target)
-    await source.client.project.create({ data: { id: 'project-1', name: 'References' } })
-    const content = Buffer.from('%PDF-1.4\nfixture evidence\n%%EOF')
-    const storageKey = 'uploads/project-1/foreign-session/file-1/versions/version-1/paper.pdf'
-    await mkdir(dirname(join(source.storageRoot, storageKey)), { recursive: true })
-    await writeFile(join(source.storageRoot, storageKey), content)
-    await source.client.fileOriginSession.create({
-      data: { projectId: 'project-1', sessionId: 'foreign-session' }
-    })
-    await source.client.uploadFile.create({
-      data: {
-        id: 'file-1',
-        projectId: 'project-1',
-        sessionId: 'foreign-session',
-        filename: 'paper.pdf',
-        originalFilename: 'paper.pdf',
-        versions: {
-          create: {
-            id: 'version-1',
-            versionNumber: 1,
-            state: 'ready',
-            contentStorageKey: storageKey,
-            filename: 'paper.pdf',
-            originalFilename: 'paper.pdf',
-            contentType: 'application/pdf',
-            sizeBytes: BigInt(content.length),
-            checksum: sha256(content)
-          }
-        }
-      }
-    })
-    await source.client.uploadFile.update({
-      where: { id: 'file-1' },
-      data: { currentVersionId: 'version-1' }
-    })
-    const fileSource = {
-      kind: 'upload-version' as const,
+it.each([
+  'pdf-context',
+  'pdf-annotation',
+  'text-annotation',
+  'image-annotation',
+  'image-task',
+  'image-task-restart',
+  'image-task-error'
+] as const)('includes a foreign immutable file referenced only by %s', async (kind) => {
+  const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
+  const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
+  fixtures.push(source, target)
+  await source.client.project.create({ data: { id: 'project-1', name: 'References' } })
+  const content =
+    kind === 'image-task' || kind === 'image-task-error' || kind === 'image-task-restart'
+      ? Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=',
+          'base64'
+        )
+      : Buffer.from('%PDF-1.4\nfixture evidence\n%%EOF')
+  const storageKey = 'uploads/project-1/foreign-session/file-1/versions/version-1/paper.pdf'
+  await mkdir(dirname(join(source.storageRoot, storageKey)), { recursive: true })
+  await writeFile(join(source.storageRoot, storageKey), content)
+  await source.client.fileOriginSession.create({
+    data: { projectId: 'project-1', sessionId: 'foreign-session' }
+  })
+  await source.client.uploadFile.create({
+    data: {
+      id: 'file-1',
       projectId: 'project-1',
       sessionId: 'foreign-session',
-      versionId: 'version-1',
-      name: 'paper.pdf',
-      path: createUploadVersionReference('version-1', {
-        projectId: 'project-1',
-        sessionId: 'foreign-session',
-        fileId: 'file-1'
-      }),
-      checksum: sha256(content)
+      filename: 'paper.pdf',
+      originalFilename: 'paper.pdf',
+      versions: {
+        create: {
+          id: 'version-1',
+          versionNumber: 1,
+          state: 'ready',
+          contentStorageKey: storageKey,
+          filename: 'paper.pdf',
+          originalFilename: 'paper.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: BigInt(content.length),
+          checksum: sha256(content)
+        }
+      }
     }
-    await new SessionRepository(source.storageRoot).saveSession({
-      id: 'session-1',
+  })
+  await source.client.uploadFile.update({
+    where: { id: 'file-1' },
+    data: { currentVersionId: 'version-1' }
+  })
+  const fileSource = {
+    kind: 'upload-version' as const,
+    projectId: 'project-1',
+    sessionId: 'foreign-session',
+    versionId: 'version-1',
+    name: 'paper.pdf',
+    path: createUploadVersionReference('version-1', {
       projectId: 'project-1',
-      title: 'Read the evidence',
-      cwd: '',
-      status: 'idle',
-      createdAt: 1,
-      updatedAt: 2,
-      messages: [
-        {
-          id: 'question',
-          role: 'user',
-          content: 'Explain the reference',
-          status: 'complete',
-          eventIds: [],
-          createdAt: 1,
-          updatedAt: 1,
-          ...(kind === 'pdf-context'
-            ? {
-                pdfContext: {
-                  version: 1,
-                  bindings: [
-                    {
-                      version: 1,
-                      bindingId: 'binding-1',
-                      sourceKind: 'upload-version',
-                      sourceFileId: 'file-1',
-                      sourceVersionId: 'version-1',
-                      sourceSessionId: 'foreign-session',
-                      name: 'paper.pdf',
-                      mimeType: 'application/pdf',
-                      sizeBytes: content.length,
-                      checksum: sha256(content),
-                      linkedAt: 1
-                    }
-                  ]
-                }
+      sessionId: 'foreign-session',
+      fileId: 'file-1'
+    }),
+    checksum: sha256(content)
+  }
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Read the evidence',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: [
+      {
+        id: 'question',
+        role: 'user',
+        content: 'Explain the reference',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1,
+        ...(kind === 'pdf-context'
+          ? {
+              pdfContext: {
+                version: 1,
+                bindings: [
+                  {
+                    version: 1,
+                    bindingId: 'binding-1',
+                    sourceKind: 'upload-version',
+                    sourceFileId: 'file-1',
+                    sourceVersionId: 'version-1',
+                    sourceSessionId: 'foreign-session',
+                    name: 'paper.pdf',
+                    mimeType: 'application/pdf',
+                    sizeBytes: content.length,
+                    checksum: sha256(content),
+                    linkedAt: 1
+                  }
+                ]
               }
-            : {}),
-          annotations:
-            kind === 'pdf-annotation'
+            }
+          : {}),
+        annotations:
+          kind === 'pdf-annotation'
+            ? [
+                {
+                  id: 'annotation-1',
+                  kind: 'pdf',
+                  target: 'agent',
+                  source: fileSource,
+                  selector: {
+                    kind: 'text',
+                    pageNumber: 1,
+                    exact: 'evidence',
+                    position: { start: 0, end: 8 },
+                    quads: [{ x: 0, y: 0, width: 0.5, height: 0.1 }],
+                    extractorVersion: 'fixture'
+                  }
+                }
+              ]
+            : kind === 'text-annotation'
               ? [
                   {
                     id: 'annotation-1',
-                    kind: 'pdf',
+                    kind: 'text',
                     target: 'agent',
-                    source: fileSource,
-                    selector: {
-                      kind: 'text',
-                      pageNumber: 1,
-                      exact: 'evidence',
-                      position: { start: 0, end: 8 },
-                      quads: [{ x: 0, y: 0, width: 0.5, height: 0.1 }],
-                      extractorVersion: 'fixture'
+                    quote: 'evidence',
+                    source: {
+                      kind: 'project-file',
+                      projectId: 'project-1',
+                      path: fileSource.path
                     }
                   }
                 ]
-              : kind === 'text-annotation'
+              : kind === 'image-annotation'
                 ? [
                     {
                       id: 'annotation-1',
-                      kind: 'text',
+                      kind: 'image-point',
                       target: 'agent',
-                      quote: 'evidence',
-                      source: {
-                        kind: 'project-file',
-                        projectId: 'project-1',
-                        path: fileSource.path
-                      }
+                      note: 'evidence',
+                      source: { ...fileSource, mimeType: 'image/png' },
+                      point: { x: 0.5, y: 0.5 },
+                      naturalSize: { width: 100, height: 100 }
                     }
                   ]
-                : kind === 'image-annotation'
-                  ? [
-                      {
-                        id: 'annotation-1',
-                        kind: 'image-point',
-                        target: 'agent',
-                        note: 'evidence',
-                        source: { ...fileSource, mimeType: 'image/png' },
-                        point: { x: 0.5, y: 0.5 },
-                        naturalSize: { width: 100, height: 100 }
-                      }
-                    ]
-                  : []
-        }
-      ]
+                : []
+      }
+    ]
+  })
+  if (kind === 'image-task' || kind === 'image-task-error' || kind === 'image-task-restart') {
+    const id = crypto.randomUUID()
+    const output = await source.repository.writeAppGeneratedVersion({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'session-1',
+      artifactRunId: id,
+      imageTaskId: id,
+      rootFrameId: 'root-frame-session-1',
+      agentFrameId: 'root-frame-session-1',
+      messageBranchId: 'message-branch-session-1',
+      runtimeSegmentId: null,
+      promptMessageId: null,
+      filename: 'edited.png',
+      content: content.toString('base64'),
+      encoding: 'base64',
+      contentType: 'image/png',
+      producer: {
+        kind: 'connector',
+        connectorId: 'image-model',
+        toolId: 'edit_image',
+        invocationId: id,
+        implementationVersion: '1',
+        normalizedArguments: { imageTaskId: id }
+      }
     })
-    const archive = join(source.storageRoot, 'reference.science')
-    await new SessionPackageService({
-      storageRoot: source.storageRoot,
-      getClient: async () => source.client
-    }).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
-    const importer = new SessionPackageService({
-      storageRoot: target.storageRoot,
-      getClient: async () => target.client
+    await source.repository.publishImageTaskVersion({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      taskId: id,
+      versionId: output.versionId,
+      sourceVersionId: 'version-1'
     })
-    const imported = await importer.importFrom(archive)
-    const origin = await importer.readOrigin(imported)
-    expect(origin.identities['version-1']).toBeDefined()
-    const version = await target.client.uploadVersion.findUniqueOrThrow({
-      where: { id: origin.identities['version-1'] }
+    const { artifactId, versionId, versionNumber, name, mimeType, size, checksum } = output
+    await writeStoredImageTask(source.storageRoot, {
+      id,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      frameId: 'root-frame-session-1',
+      branchId: 'message-branch-session-1',
+      prompt: 'Keep version-1',
+      state: 'succeeded',
+      result: { artifactId, versionId, versionNumber, name, mimeType, size, checksum },
+      createdAt: 1,
+      updatedAt: 2,
+      edit: {
+        version: 1,
+        source: {
+          projectId: 'project-1',
+          sourceSessionId: 'foreign-session',
+          sourceKind: 'upload-version',
+          sourceFileId: 'file-1',
+          sourceVersionId: 'version-1',
+          name: 'image.png',
+          mimeType: 'image/png'
+        },
+        model: { serviceId: '11111111-1111-4111-8111-111111111111', modelId: 'version-1' },
+        options: { size: 'version-1' },
+        naturalSize: { width: 1, height: 1 },
+        regions: []
+      }
     })
-    expect(await readFile(join(target.storageRoot, version.contentStorageKey))).toEqual(content)
-    const session = await new SessionRepository(target.storageRoot).loadSession(
-      imported.projectId,
-      imported.sessionId
-    )
-    if (kind === 'pdf-context')
-      expect(session?.messages[0].pdfContext?.bindings[0].sourceVersionId).toBe(version.id)
-    else expect(session?.messages[0].annotations).toHaveLength(1)
-    const fork = await importer.fork(imported)
-    const forkOrigin = await importer.readOrigin(fork)
-    const forkSession = (await new SessionRepository(target.storageRoot).loadSession(
-      fork.projectId,
-      fork.sessionId
-    ))!
-    const forkVersion = await target.client.uploadVersion.findUniqueOrThrow({
-      where: { id: forkOrigin.identities['version-1'] }
+  }
+  const recovered = vi.fn()
+  const taskOwner = new ImageTaskOwner({
+    verifyResults: vi.fn(async () => {}),
+    root: () => source.storageRoot,
+    retainWrite: () => () => {},
+    mutate: (_scope, work) => work(),
+    authorize: async () => {},
+    prepare: async () => {
+      throw new Error('Export must not generate images')
+    },
+    recover: recovered,
+    reportError: (error) => {
+      throw error
+    }
+  })
+  if (kind === 'image-task-restart') {
+    const [task] = await readStoredImageTasks(source.storageRoot, {
+      projectId: 'project-1',
+      sessionId: 'session-1'
     })
-    expect(await readFile(join(target.storageRoot, forkVersion.contentStorageKey))).toEqual(content)
-    if (kind === 'pdf-context') {
-      const binding = forkSession.messages[0].pdfContext!.bindings[0]
-      expect(binding.sourceVersionId).toBe(forkVersion.id)
-      expect(binding.bindingId).not.toBe(session!.messages[0].pdfContext!.bindings[0].bindingId)
-    } else {
-      const annotation = forkSession.messages[0].annotations![0]
-      expect(annotation.id).not.toBe(session!.messages[0].annotations![0].id)
-      if (annotation.source.kind === 'project-file')
-        expect(annotation.source.path).toContain(forkVersion.id)
-      else expect(annotation.source).toMatchObject({ versionId: forkVersion.id })
+    recovered.mockResolvedValue(task.result)
+    await writeStoredImageTask(source.storageRoot, { ...task, state: 'running', result: undefined })
+  }
+  if (kind === 'image-task-error') {
+    const [task] = await readStoredImageTasks(source.storageRoot, {
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+    await writeStoredImageTask(source.storageRoot, {
+      ...task,
+      state: 'failed',
+      result: undefined,
+      error: { code: 'QUOTA_EXCEEDED', httpStatus: 429 }
+    })
+  }
+  const archive = join(source.storageRoot, 'reference.science')
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client,
+    readImageTasks: (scope) => taskOwner.list(scope)
+  })
+  if (kind === 'image-task') {
+    const [task] = await readStoredImageTasks(source.storageRoot, {
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+    const row = await source.client.artifactVersion.findUniqueOrThrow({
+      where: { id: task.result!.versionId }
+    })
+    const file = join(source.storageRoot, ...row.contentStorageKey.split('/'))
+    const original = await readFile(file)
+    const changed = Buffer.from(original)
+    changed[changed.length - 1] ^= 1
+    try {
+      await expect(
+        exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive, {
+          onProgress: ({ phase }) => {
+            if (phase === 'validating') writeFileSync(file, changed)
+          }
+        })
+      ).rejects.toThrow('changed during export')
+    } finally {
+      await writeFile(file, original)
     }
   }
-)
+  await exporter.prepareExport({ projectId: 'project-1', sessionId: 'session-1' })
+  await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+  expect(recovered).toHaveBeenCalledTimes(kind === 'image-task-restart' ? 1 : 0)
+  await taskOwner.close()
+  const readImportedTasks = vi.fn(async () => {
+    throw new Error('Imported history is read-only')
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client,
+    readImageTasks: readImportedTasks
+  })
+  const imported = await importer.importFrom(archive)
+  await importer.prepareExport(imported)
+  expect(readImportedTasks).not.toHaveBeenCalled()
+  const origin = await importer.readOrigin(imported)
+  expect(origin.identities['version-1']).toBeDefined()
+  const version = await target.client.uploadVersion.findUniqueOrThrow({
+    where: { id: origin.identities['version-1'] }
+  })
+  expect(await readFile(join(target.storageRoot, version.contentStorageKey))).toEqual(content)
+  const session = await new SessionRepository(target.storageRoot).loadSession(
+    imported.projectId,
+    imported.sessionId
+  )
+  if (kind === 'pdf-context')
+    expect(session?.messages[0].pdfContext?.bindings[0].sourceVersionId).toBe(version.id)
+  else if (kind === 'image-task' || kind === 'image-task-error' || kind === 'image-task-restart') {
+    const [task] = await readStoredImageTasks(target.storageRoot, imported)
+    expect(task.edit.source.sourceVersionId).toBe(version.id)
+    expect(task.edit.model.modelId).toBe('version-1')
+    expect(task.edit.options.size).toBe('version-1')
+    expect(task.prompt).toBe('Keep version-1')
+    if (kind === 'image-task-error')
+      expect(task.error).toEqual({ code: 'QUOTA_EXCEEDED', httpStatus: 429 })
+  } else expect(session?.messages[0].annotations).toHaveLength(1)
+  const fork = await importer.fork(imported)
+  const forkOrigin = await importer.readOrigin(fork)
+  const forkSession = (await new SessionRepository(target.storageRoot).loadSession(
+    fork.projectId,
+    fork.sessionId
+  ))!
+  const forkVersion = await target.client.uploadVersion.findUniqueOrThrow({
+    where: { id: forkOrigin.identities['version-1'] }
+  })
+  expect(await readFile(join(target.storageRoot, forkVersion.contentStorageKey))).toEqual(content)
+  if (kind === 'pdf-context') {
+    const binding = forkSession.messages[0].pdfContext!.bindings[0]
+    expect(binding.sourceVersionId).toBe(forkVersion.id)
+    expect(binding.bindingId).not.toBe(session!.messages[0].pdfContext!.bindings[0].bindingId)
+  } else if (
+    kind === 'image-task' ||
+    kind === 'image-task-error' ||
+    kind === 'image-task-restart'
+  ) {
+    const [task] = await readStoredImageTasks(target.storageRoot, fork)
+    const [previous] = await readStoredImageTasks(target.storageRoot, imported)
+    expect(task.edit.source.sourceVersionId).toBe(forkVersion.id)
+    expect(task.id).not.toBe(previous.id)
+    expect(task.edit).not.toHaveProperty('id')
+    expect(task.edit.model.modelId).toBe('version-1')
+  } else {
+    const annotation = forkSession.messages[0].annotations![0]
+    expect(annotation.id).not.toBe(session!.messages[0].annotations![0].id)
+    if (annotation.source.kind === 'project-file')
+      expect(annotation.source.path).toContain(forkVersion.id)
+    else expect(annotation.source).toMatchObject({ versionId: forkVersion.id })
+  }
+})
 
 it('drops an undelivered Side Chat relay instead of blocking Session export', async () => {
   const source = await createProvenanceTestFixture()

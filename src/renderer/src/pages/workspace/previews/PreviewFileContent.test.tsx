@@ -8,6 +8,8 @@ import type { PreviewFileRendererProps } from './preview-types'
 import { createCachedImageFetchResponse } from './cached-preview-image.test-support'
 import { createManagedPreviewTestTransport } from './managed-preview-test-support'
 import { PreviewFileContent } from './PreviewFileContent'
+import { useCachedPreviewImage } from './useCachedPreviewImage'
+import { IMAGE_PREVIEW_BUSY_MESSAGE } from '../../../../../shared/preview-resources'
 import { PdfAnnotationsProvider } from '../pdf-annotations/PdfAnnotationsProvider'
 import type { PreviewDownloadVersionContext } from './preview-runtime-context'
 
@@ -379,6 +381,45 @@ describe('PreviewFileContent', () => {
     )
   })
 
+  it.each([true, false])(
+    'retries a busy thumbnail only while needed (visible: %s)',
+    async (visible) => {
+      vi.useFakeTimers()
+      const acquire = vi.mocked(window.api.previewResources.acquire)
+      acquire.mockRejectedValueOnce(new Error(IMAGE_PREVIEW_BUSY_MESSAGE)).mockResolvedValueOnce({
+        id: 'thumbnail',
+        url: '/thumb',
+        size: 1,
+        mimeType: 'image/png',
+        version: 1
+      })
+      vi.mocked(fetch).mockResolvedValueOnce(createCachedImageFetchResponse() as Response)
+      const probe = createFileItem({
+        format: 'image',
+        name: 'busy-thumb.png',
+        selectedVersionId: `busy-thumb-${visible}`
+      })
+      const Thumbnail = ({ enabled }: { enabled: boolean }): React.JSX.Element => {
+        const result = useCachedPreviewImage(probe, enabled, false, true)
+        return <output>{result.status}</output>
+      }
+      try {
+        root = createRoot(container)
+        await act(async () => root.render(<Thumbnail enabled />))
+        expect(acquire).toHaveBeenCalledOnce()
+        if (!visible) await act(async () => root.render(<Thumbnail enabled={false} />))
+        await act(async () => vi.advanceTimersByTimeAsync(250))
+        expect(acquire).toHaveBeenCalledTimes(visible ? 2 : 1)
+        expect(acquire).toHaveBeenLastCalledWith(
+          expect.objectContaining({ imagePreview: 'thumbnail' })
+        )
+        expect(container.textContent).toBe(visible ? 'ready' : 'idle')
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it('waits for an Artifact Version to publish before rendering Markdown', async () => {
     vi.useFakeTimers()
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -701,6 +742,37 @@ describe('PreviewFileContent', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
     expect(fetchImage).toHaveBeenCalledTimes(1)
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
+  })
+
+  it('streams a large decoded image and releases its resource when the preview closes', async () => {
+    vi.mocked(window.api.previewResources.acquire).mockResolvedValueOnce({
+      id: 'large-image',
+      url: 'open-science-preview://large/image',
+      size: 2048,
+      mimeType: 'image/png',
+      version: 1,
+      width: 4100,
+      height: 4100
+    })
+    await renderFile(
+      createFileItem({
+        format: 'image',
+        name: 'large-chart.png',
+        path: '/workspace/large-chart.png',
+        mimeType: 'image/png'
+      })
+    )
+    await vi.waitFor(() =>
+      expect(container.querySelector('img')?.getAttribute('src')).toBe(
+        'open-science-preview://large/image'
+      )
+    )
+    expect(fetch).not.toHaveBeenCalled()
+
+    await act(async () => root.render(<div />))
+    expect(window.api.previewResources.release).toHaveBeenCalledExactlyOnceWith({
+      resourceId: 'large-image'
+    })
   })
 
   it('shows the format-aware quiet progress state while a file is loading', async () => {

@@ -56,6 +56,21 @@ upgrade; a binary downgrade is not a data rollback. Preserve the existing requir
 conflicting runtimes and use matching desktop/backend versions. This policy does not promise mixed
 version operation or arbitrary cross-platform transfer of OS-protected credentials.
 
+Image service settings add optional `imageServices` and `imageModel` fields to the existing
+version-2 settings document, without a database migration. Older profiles remain unconfigured.
+An older build can discard these fields on its next ordinary settings write after a downgrade.
+Official services reference an existing provider account; custom services use the existing
+credential-storage mode and never include credential references in renderer snapshots.
+
+Image-generation token measurements add the `image-generation` auxiliary usage source.
+Migration `0060_image_models` updates the usage and Artifact version constraints in one transaction.
+It preserves historical rows, indexes and foreign keys. The migration
+uses the existing retained-backup policy. No prompt text or image bytes are stored in this table.
+Older application manifests reject the upgraded database with `database_newer_than_app`;
+returning to an older build requires restoring a compatible pre-upgrade backup. Image provenance
+continues to use the existing connector evidence format; session-package compatibility is a
+separate contract from opening the application database.
+
 The historical compatibility policy is a maintenance commitment, not evidence that every released
 0.x version has been individually tested against 1.0. Record the source version, platform and checked
 profile contents when reporting upgrade acceptance. The pre-1.0 CLI changes listed in the

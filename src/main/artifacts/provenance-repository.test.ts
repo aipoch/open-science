@@ -1375,7 +1375,8 @@ describe('artifact provenance repository', () => {
     })
 
     const content = Buffer.from([0, 255, 1, 254, 2, 253])
-    const version = await repository.writeAppGeneratedVersion({
+    const input = {
+      writeOperationId: 'image-operation',
       projectId: 'project-1',
       appSessionId: 'session-1',
       artifactStorageSessionId: 'artifact-session-1',
@@ -1388,9 +1389,18 @@ describe('artifact provenance repository', () => {
       agentName: 'OpenCode',
       filename: 'generated.bin',
       content: content.toString('base64'),
-      encoding: 'base64',
+      encoding: 'base64' as const,
       contentType: 'application/octet-stream'
-    })
+    }
+    const version = await repository.writeAppGeneratedVersion(input)
+    const replay = await repository.writeAppGeneratedVersion(input)
+    expect(replay.versionId).toBe(version.versionId)
+    await expect(
+      repository.writeAppGeneratedVersion({
+        ...input,
+        content: Buffer.from('changed').toString('base64')
+      })
+    ).rejects.toThrow()
 
     await expect(readFile(version.path)).resolves.toEqual(content)
     await expect(

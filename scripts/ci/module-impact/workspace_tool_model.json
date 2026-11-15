@@ -24,7 +24,9 @@
     "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-style.ts",
     "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts",
-    "src/renderer/src/pages/workspace/workspace-web-search-details.ts"
+    "src/renderer/src/pages/workspace/workspace-web-search-details.ts",
+    "src/renderer/src/pages/workspace/image-tool-presentation.ts",
+    "src/renderer/src/pages/workspace/image-tool-presentation.test.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/agent-loading-message.ts",
@@ -40,7 +42,8 @@
     "src/renderer/src/pages/workspace/workspace-tool-activity-details.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-style.ts",
-    "src/renderer/src/pages/workspace/workspace-web-search-details.ts"
+    "src/renderer/src/pages/workspace/workspace-web-search-details.ts",
+    "src/renderer/src/pages/workspace/image-tool-presentation.ts"
   ],
   "testFiles": {
     "owner": [
@@ -54,7 +57,8 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-details.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-groups.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
-      "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts"
+      "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts",
+      "src/renderer/src/pages/workspace/image-tool-presentation.test.ts"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
@@ -200,5 +204,5 @@
   "consumerModules": [],
   "capabilityOverlays": [],
   "fallbackCapability": "renderer_view",
-  "fullTestReason": "Scheduled tool results add a presentation owner shared by conversation and preview consumers beyond the reviewed source boundary; retain full CI validation until these contracts are reviewed."
+  "fullTestReason": "Scheduled tool presentation and image tool previews span conversation and preview consumers beyond the reviewed workspace tool-model boundary; retain full CI validation until these contracts are reviewed."
 }

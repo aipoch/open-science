@@ -1,6 +1,7 @@
 import { computePythonSelectionSchema } from '../../shared/compute-python-runtime'
 import { isAbsolute } from 'node:path'
 import { classificationSettingsSchema } from './classification-config'
+import { sanitizeImageSettings } from './image-model-config'
 
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { isAgentFrameworkId } from '../../shared/agent-framework-id'
@@ -263,6 +264,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     ...(modalRuntime.success ? { modalRuntime: modalRuntime.data } : {}),
     version: SETTINGS_FILE_VERSION,
     providers,
+    ...sanitizeImageSettings(value, providers),
     ...(classification ? { classification } : {}),
     subagentModel: sanitizeSubagentModel(value.subagentModel),
     reviewerModel: sanitizeSubagentModel(value.reviewerModel),

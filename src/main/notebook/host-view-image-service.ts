@@ -1,3 +1,7 @@
+import type {
+  ArtifactProducerInputScope,
+  ManagedFileVersionReadPort
+} from '../managed-file-versions/read-port'
 import type { NativeTransientViewImage, TransientViewImage } from './execution-model-contract'
 import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute, posix, relative, resolve, sep, win32 } from 'node:path'
@@ -43,6 +47,7 @@ export type HostViewImageContext = HostViewImageCaller &
     projectId: string
     executionCwd?: string
     controlInvocationId: string
+    producerScope?: ArtifactProducerInputScope
     signal: AbortSignal
   }>
 
@@ -65,6 +70,7 @@ type HostViewImageCatalog = Readonly<{
 }>
 
 type HostViewImageManagedFileReader = Readonly<{
+  openProducerVersion?: ManagedFileVersionReadPort['openProducerVersion']
   openVersion(
     request: {
       source: 'artifact' | 'upload'
@@ -95,7 +101,8 @@ type HostViewImageServiceOptions = Readonly<{
     filePath: string,
     options: { crop?: ImageCrop; maxSize?: number },
     signal?: AbortSignal,
-    expectedCanonicalPath?: string
+    expectedCanonicalPath?: string,
+    managedVersion?: boolean
   ) => Promise<PreparedImageContentData>
 }>
 
@@ -453,35 +460,52 @@ export class HostViewImageService {
           projectId: context.projectId,
           versionId: source.versionId
         })
-        if (items.length === 0) {
-          throw new HostViewImageError(
-            `Version was not found in the current Project: ${source.versionId}`
+        if (items.length === 0 && context.producerScope) {
+          context.producerScope.assertActive()
+          managedLease = await this.options.managedFileVersions.openProducerVersion?.(
+            context.projectId,
+            source.versionId,
+            context.producerScope
           )
         }
-        if (items.length !== 1) {
-          throw new HostViewImageError(
-            `Version is ambiguous in the current Project: ${source.versionId}`
+        if (managedLease) {
+          filePath = managedLease.path
+          sourceKind = 'artifactVersion'
+        } else {
+          if (items.length === 0) {
+            throw new HostViewImageError(
+              `Version was not found in the current Project: ${source.versionId}`
+            )
+          }
+          if (items.length !== 1) {
+            throw new HostViewImageError(
+              `Version is ambiguous in the current Project: ${source.versionId}`
+            )
+          }
+          const item = items[0]
+          if (item.projectId !== context.projectId || item.versionId !== source.versionId) {
+            throw new HostViewImageError('Version resolver returned an untrusted Project identity.')
+          }
+          managedLease = await this.options.managedFileVersions.openVersion(
+            { source: item.source, projectId: context.projectId, fileId: item.sourceFileId },
+            item.versionId
           )
+          filePath = managedLease.path
+          sourceKind = item.source === 'artifact' ? 'artifactVersion' : 'uploadVersion'
         }
-        const item = items[0]
-        if (item.projectId !== context.projectId || item.versionId !== source.versionId) {
-          throw new HostViewImageError('Version resolver returned an untrusted Project identity.')
-        }
-        managedLease = await this.options.managedFileVersions.openVersion(
-          {
-            source: item.source,
-            projectId: context.projectId,
-            fileId: item.sourceFileId
-          },
-          item.versionId
-        )
-        filePath = managedLease.path
-        sourceKind = item.source === 'artifact' ? 'artifactVersion' : 'uploadVersion'
       }
 
       let image: PreparedImageContentData
       try {
-        image = await this.prepareImage(filePath, options, signal, expectedCanonicalPath)
+        context.producerScope?.assertActive()
+        image = await this.prepareImage(
+          filePath,
+          options,
+          signal,
+          expectedCanonicalPath,
+          Boolean(managedLease)
+        )
+        context.producerScope?.assertActive()
       } finally {
         const lease = managedLease
         managedLease = undefined
@@ -505,6 +529,7 @@ export class HostViewImageService {
       if (current !== invocation) {
         throw new HostViewImageError('invocation ended before the image could be attached.')
       }
+      context.producerScope?.assertActive()
       const payloadBytes = Buffer.byteLength(image.data, 'base64')
       const encodedImageBytes = invocation.encodedImageBytes + payloadBytes
       if (encodedImageBytes > MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE) {

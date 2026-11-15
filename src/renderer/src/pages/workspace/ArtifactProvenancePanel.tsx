@@ -1,3 +1,4 @@
+import { WorkspaceImageToolCard } from './WorkspaceImageToolCard'
 import { ErrorNotice } from '@/components/error-notice'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useSessionStore } from '@/stores/session-store'
@@ -124,6 +125,7 @@ type ArtifactProvenancePanelProps = {
   item: PreviewFileItem
   projectId: string
   onClose: () => void
+  lockVersion?: boolean
   onVersionChange?: (item: PreviewFileItem) => boolean
   initialTab?: ProvenanceTab
   selectedTab?: ProvenanceTab
@@ -801,6 +803,7 @@ const ArtifactProvenancePanel = ({
   item,
   projectId,
   onClose,
+  lockVersion,
   onVersionChange,
   initialTab,
   selectedTab,
@@ -927,10 +930,29 @@ const ArtifactProvenancePanel = ({
   )
   const coreProvenance =
     provenanceResult?.key === provenanceKey ? provenanceResult.value : undefined
-  const activeTab =
+  const imageProducer = coreProvenance?.evidence?.producer
+  const isImageGeneration =
+    imageProducer?.state === 'available' &&
+    'kind' in imageProducer &&
+    imageProducer.kind === 'connector' &&
+    imageProducer.connector_id === 'image-model'
+  const inapplicableImageTabs = [
+    'code',
+    'environment',
+    'reproducibility',
+    ...(coreProvenance?.evidence.image_task_id ? ['messages'] : [])
+  ]
+  const requestedActiveTab =
     selectedTab ??
     requestedTab ??
     (selectedVersionDescriptor?.hasLiterature || coreProvenance?.literature ? 'sources' : 'code')
+  const activeTab =
+    isImageGeneration && inapplicableImageTabs.includes(requestedActiveTab)
+      ? 'execution'
+      : requestedActiveTab
+  const imageArguments = isImageGeneration
+    ? coreProvenance?.evidence?.connector_execution?.normalized_arguments
+    : undefined
   const showAllPackages = showAllPackagesKey === provenanceKey
   const notebookExportError =
     notebookExportFailure?.key === provenanceKey ? notebookExportFailure.message : undefined
@@ -1120,11 +1142,13 @@ const ArtifactProvenancePanel = ({
 
   const reviewReloadKey = activeTab === 'review' ? reviewRevision : 0
   const deferredTab = (
-    activeTab === 'reproducibility' || activeTab === 'environment'
-      ? 'execution'
-      : activeTab === 'execution' || activeTab === 'messages' || activeTab === 'review'
-        ? activeTab
-        : undefined
+    isImageGeneration && activeTab === 'execution'
+      ? undefined
+      : activeTab === 'reproducibility' || activeTab === 'environment'
+        ? 'execution'
+        : activeTab === 'execution' || activeTab === 'messages' || activeTab === 'review'
+          ? activeTab
+          : undefined
   ) as DeferredProvenanceTab | undefined
   const deferredSectionKey = deferredTab
     ? `${provenanceKey}:${deferredTab}:${deferredTab === 'review' ? reviewReloadKey : 0}`
@@ -1180,13 +1204,18 @@ const ArtifactProvenancePanel = ({
     { id: 'review', label: t('Review', { context: 'audit' }) }
   ]
   const sourcesTab = { id: 'sources', label: t('Literature') } as const
+  const applicableTabs = isImageGeneration
+    ? tabs.filter(({ id }) => !inapplicableImageTabs.includes(id))
+    : tabs
   const visibleTabs = isUserEdit
     ? literature
       ? [sourcesTab]
       : []
     : literature
-      ? [tabs[0]!, sourcesTab, ...tabs.slice(1)]
-      : tabs
+      ? isImageGeneration
+        ? [sourcesTab, ...applicableTabs]
+        : [tabs[0]!, sourcesTab, ...tabs.slice(1)]
+      : applicableTabs
   useEffect(() => {
     if ((selectedTab ?? requestedTab) === 'sources' && provenance && !provenance.literature) {
       setRequestedTab(undefined)
@@ -1447,7 +1476,7 @@ const ArtifactProvenancePanel = ({
   }
 
   const selectVersion = (versionId: string): void => {
-    if (!item.artifactId) return
+    if (lockVersion || !item.artifactId) return
     const version = lineage ? resolveArtifactVersionDescriptor(lineage, versionId) : undefined
     if (!version) return
 
@@ -1630,7 +1659,7 @@ const ArtifactProvenancePanel = ({
         <div className="space-y-1.5 text-xs">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>{t('Manually edited in Open-Science')}</span>
-            {basedOnVersionId && basedOnVersionNumber !== undefined ? (
+            {!lockVersion && basedOnVersionId && basedOnVersionNumber !== undefined ? (
               <button
                 type="button"
                 aria-label={t('Open source version v{{version}}', {
@@ -1669,7 +1698,7 @@ const ArtifactProvenancePanel = ({
           variant="ghost"
           size="icon-xs"
           aria-label={t('Previous Artifact version')}
-          disabled={selectedIndex <= 0 && !lineage?.previousVersion}
+          disabled={lockVersion || (selectedIndex <= 0 && !lineage?.previousVersion)}
           onClick={() => {
             const versionId = (
               selectedIndex > 0 ? lineage?.versions[selectedIndex - 1] : lineage?.previousVersion
@@ -1688,6 +1717,7 @@ const ArtifactProvenancePanel = ({
           size="icon-xs"
           aria-label={t('Next Artifact version')}
           disabled={
+            lockVersion ||
             !lineage ||
             ((selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1) &&
               !lineage.nextVersion)
@@ -2113,7 +2143,31 @@ const ArtifactProvenancePanel = ({
           />
         ) : null}
         {provenance && activeTab === 'execution' && deferredSectionReady ? (
-          executionRuns.length > 0 ? (
+          isImageGeneration && imageArguments ? (
+            <div className="p-3">
+              <WorkspaceImageToolCard
+                operation={imageProducer.tool_id === 'edit_image' ? 'edit' : 'generate'}
+                input={{ options: imageArguments.parameters }}
+                inputFilename={
+                  provenance.evidence.inputs.find(
+                    (entry) => entry.input_file_version_id === imageArguments.sourceVersionId
+                  )?.filename
+                }
+                collapseSettings
+                result={{
+                  artifactId: item.artifactId!,
+                  versionId: selectedVersionId!,
+                  filename: item.name,
+                  model:
+                    typeof imageArguments.model === 'string' ? imageArguments.model : undefined,
+                  width:
+                    typeof imageArguments.width === 'number' ? imageArguments.width : undefined,
+                  height:
+                    typeof imageArguments.height === 'number' ? imageArguments.height : undefined
+                }}
+              />
+            </div>
+          ) : executionRuns.length > 0 ? (
             <div>
               {executionTruncation ? (
                 <InlineNotice className="m-2">

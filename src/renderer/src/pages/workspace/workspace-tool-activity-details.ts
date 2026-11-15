@@ -2,6 +2,13 @@ import {
   scheduleToolPresentation,
   scheduleToolResult
 } from './schedules/schedule-tool-presentation'
+import type { ImageErrorDetail } from '../../../../shared/image-model-error'
+import {
+  imageToolOperation,
+  readImageToolResult,
+  readImageToolError,
+  type ImageToolResult
+} from './image-tool-presentation'
 import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotocol/sdk'
 
 import { formatByteSize } from '@/lib/utils'
@@ -89,6 +96,7 @@ type ToolDetailSection =
   | { kind: 'authorized-directories'; snapshot: AuthorizedDirectorySnapshot }
 
 type ToolActivityDetails = {
+  image?: { operation: 'generate' | 'edit'; result?: ImageToolResult; error?: ImageErrorDetail }
   codeReview?: NotebookCodeReview
   defaultExpanded?: boolean
   displayName: string
@@ -1384,6 +1392,27 @@ const buildToolActivityDetails = (
       if (script) sections.push({ ...script, collapsible: true })
     }
     return { displayName: summary.title, subtitle: summary.subtitle, sections }
+  }
+  const imageOperation = imageToolOperation(activity.providerToolName, activity.title)
+  if (imageOperation) {
+    const result =
+      activity.status === 'completed'
+        ? [activity.rawOutput, ...(activity.toolContent ?? [])]
+            .map((value) => readImageToolResult(value))
+            .find(Boolean)
+        : undefined
+    const error = [activity.rawOutput, ...(activity.toolContent ?? [])]
+      .map((value) => readImageToolError(value))
+      .find(Boolean)
+    return {
+      displayName: imageOperation === 'edit' ? t('Edit image') : t('Image generation'),
+      defaultExpanded: true,
+      image: { operation: imageOperation, result, error },
+      sections:
+        activity.status === 'failed' && !error
+          ? [createCodeSection('Error', getOutputText(activity)?.code ?? t('Failed'))!]
+          : []
+    }
   }
   const literatureDetails = buildLiteratureDetails(activity)
   if (literatureDetails) return literatureDetails

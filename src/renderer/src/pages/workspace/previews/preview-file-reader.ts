@@ -16,6 +16,7 @@ type PreviewRequestIdentity = {
 }
 
 type ManagedPreviewRequestInput = PreviewRequestIdentity & {
+  imageGenerationSessionId?: string
   managedFileId?: string
   selectedVersionId?: string
   mimeType?: string
@@ -57,6 +58,9 @@ const createManagedPreviewRequest = (
       source,
       projectId: scope.projectId,
       fileId: input.managedFileId,
+      ...(input.imageGenerationSessionId
+        ? { imageGenerationSessionId: input.imageGenerationSessionId }
+        : {}),
       ...(input.selectedVersionId ? { versionId: input.selectedVersionId } : {}),
       ...presentation
     }

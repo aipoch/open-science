@@ -22,7 +22,7 @@ import type {
   PublishCompatibilityRouting,
   StagingArtifactVersionRecord
 } from './provenance-version-writer'
-import { requireAgentArtifactVersion } from './provenance-version-kind'
+import { requireGeneratedArtifactVersion } from './provenance-version-kind'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 // Reconciliation can also run from a read path while an active writer is between copying bytes and
@@ -329,7 +329,7 @@ export class ArtifactProvenanceStagingRecovery {
       return updated
     })
     return this.options.projectVersionFile(
-      requireAgentArtifactVersion(recovered),
+      requireGeneratedArtifactVersion(recovered),
       projectId,
       appSessionId
     )
@@ -358,7 +358,7 @@ export class ArtifactProvenanceStagingRecovery {
         },
         include: { artifact: true }
       })
-      .then((rows) => rows.map(requireAgentArtifactVersion))
+      .then((rows) => rows.map(requireGeneratedArtifactVersion))
 
     // A crash can leave a complete staging row after its immutable bytes were copied but before the
     // final state update. Resume those rows from SQLite authority before scanning unindexed folders.

@@ -1918,7 +1918,8 @@ class AcpRuntime {
     this.clearPlanDeliveryClaimRetry(request.sessionId)
     this.sessionPlanWorkflow.sessionDeleted(request.sessionId)
     try {
-      return await this.sessionDeletion.delete(request.sessionId)
+      const result = await this.sessionDeletion.delete(request.sessionId)
+      return result
     } finally {
       this.clearPlanDeliveryClaimRetry(request.sessionId)
     }
@@ -3150,6 +3151,7 @@ class AcpRuntime {
     input: {
       filename: string
       content: string
+      encoding?: import('../../shared/artifacts').ArtifactWriteEncoding
       mimeType?: string
       producer?: AppGeneratedArtifactProducer
     }

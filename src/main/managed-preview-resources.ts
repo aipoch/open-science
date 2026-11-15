@@ -20,6 +20,8 @@ import {
 import { waitForManagedFilePublication } from './managed-file-preview'
 import type { ManagedFileReadLease } from './managed-file-versions/read-port'
 import {
+  AnimatedImagePreviewError,
+  IMAGE_THUMBNAIL_EDGE,
   MAX_PREVIEW_SOURCE_PIXELS,
   resizeImagePreview,
   type ResizedImagePreview
@@ -98,7 +100,12 @@ type ManagedPreviewResourcesOptions = {
   ) => Promise<ManagedFileReadLease>
   openManagedFileVersion?: (
     source: 'artifact' | 'upload',
-    request: { projectId: string; fileId: string; versionId: string }
+    request: {
+      projectId: string
+      fileId: string
+      versionId: string
+      imageGenerationSessionId?: string
+    }
   ) => Promise<ManagedFileReadLease>
   openComputeOutput?: (
     request: Extract<AcquireManagedPreviewRequest, { source: 'compute-output' }>
@@ -114,7 +121,11 @@ type ManagedPreviewResourcesOptions = {
 type ManagedPreviewTrustedLease = Pick<
   ManagedFileReadLease,
   'path' | 'size' | 'versionToken' | 'snapshot' | 'read' | 'readRange' | 'verifyUnchanged' | 'close'
-> & { checksum?: string; version?: Pick<ManagedFileReadLease['version'], 'checksum'> }
+> & {
+  checksum?: string
+  version?: Pick<ManagedFileReadLease['version'], 'checksum'> &
+    Partial<Pick<ManagedFileReadLease['version'], 'filename'>>
+}
 
 type ManagedPreviewResourceSnapshot = {
   size: number
@@ -319,9 +330,12 @@ class ManagedPreviewResources {
         throw new Error('Managed preview file changed after admission.')
       }
 
-      let mimeType = inferMimeType(filePath, request.mimeType, {
-        preferTrustedHtmlMime: request.source === 'artifact' || request.source === 'upload'
-      })
+      let mimeType =
+        request.purpose === 'download'
+          ? 'application/octet-stream'
+          : inferMimeType(filePath, request.mimeType, {
+              preferTrustedHtmlMime: request.source === 'artifact' || request.source === 'upload'
+            })
       // Reused below as the resource's width/height, so consumers learn the exact geometry from
       // the same header read that enforces the decoded-pixel limit.
       let imageDimensions: RasterImageDimensions | undefined
@@ -366,19 +380,41 @@ class ManagedPreviewResources {
         const header = await readImageBytes(Math.min(fileSnapshot.size, MAX_IMAGE_HEADER_BYTES))
         const dimensions = readRasterImageDimensions(header, mimeType)
         if (!dimensions) throw new Error('Could not read image preview dimensions safely.')
-        const maxPixels =
-          request.imagePreview === true ? MAX_PREVIEW_SOURCE_PIXELS : MAX_DECODED_IMAGE_PIXELS
+        const maxPixels = request.imagePreview
+          ? MAX_PREVIEW_SOURCE_PIXELS
+          : MAX_DECODED_IMAGE_PIXELS
         if (exceedsDecodedImagePixelLimit(dimensions, maxPixels)) {
           throw new Error(
             `Image preview exceeds the ${maxPixels.toLocaleString('en-US')}-pixel limit.`
           )
         }
         imageDimensions = dimensions
-        if (request.imagePreview === true && exceedsDecodedImagePixelLimit(dimensions)) {
-          imagePreview = await resizeImagePreview(fileSnapshot.size, () =>
-            readImageBytes(fileSnapshot.size)
-          )
-          mimeType = 'image/png'
+        const thumbnail = request.imagePreview === 'thumbnail'
+        if (
+          request.imagePreview &&
+          (exceedsDecodedImagePixelLimit(dimensions) ||
+            (thumbnail && Math.max(dimensions.width, dimensions.height) > IMAGE_THUMBNAIL_EDGE))
+        ) {
+          try {
+            imagePreview = await resizeImagePreview(
+              fileSnapshot.size,
+              () => readImageBytes(fileSnapshot.size),
+              thumbnail
+            )
+          } catch (error) {
+            // Tiles can still stream a safe animation without extracting a still frame.
+            if (
+              !thumbnail ||
+              !(error instanceof AnimatedImagePreviewError) ||
+              exceedsDecodedImagePixelLimit(dimensions)
+            )
+              throw error
+          }
+          if (imagePreview) {
+            if (thumbnail)
+              imageDimensions = { width: imagePreview.width, height: imagePreview.height }
+            mimeType = 'image/png'
+          }
         }
       }
 
@@ -390,6 +426,7 @@ class ManagedPreviewResources {
         size: imagePreview?.data.byteLength ?? fileSnapshot.size,
         mimeType,
         version: fileSnapshot.version,
+        ...(trustedLease?.version?.filename ? { filename: trustedLease.version.filename } : {}),
         ...(typeof sourceChecksum === 'string' && /^[a-f0-9]{64}$/.test(sourceChecksum)
           ? { sourceChecksum }
           : {}),
@@ -779,7 +816,13 @@ class ManagedPreviewResources {
         openManagedFileVersion(request.source, {
           projectId,
           fileId,
-          versionId
+          versionId,
+          ...(request.source === 'artifact' &&
+          request.purpose !== 'download' &&
+          request.imagePreview &&
+          request.imageGenerationSessionId
+            ? { imageGenerationSessionId: request.imageGenerationSessionId }
+            : {})
         })
       )
     }

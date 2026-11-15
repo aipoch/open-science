@@ -1,3 +1,4 @@
+import type { ImageTask, ImageTaskStart, ImageTaskList, ImageTaskIdentity } from '../image-task'
 import type {
   ResearchVideoPresentationRequest,
   ResearchVideoStartRequest,
@@ -152,6 +153,22 @@ export const pptxDraftContracts = {
 } as const
 
 export const previewDeleteContracts = {
+  'imageTasks.start': callable<(request: ImageTaskStart) => Promise<ImageTask>>()(
+    'preview-resources',
+    ['image-tasks:start']
+  ),
+  'imageTasks.get': callable<(request: ImageTaskIdentity) => Promise<ImageTask | undefined>>()(
+    'preview-resources',
+    ['image-tasks:get']
+  ),
+  'imageTasks.list': callable<(request: ImageTaskList) => Promise<ImageTask[]>>()(
+    'preview-resources',
+    ['image-tasks:list']
+  ),
+  'imageTasks.cancel': callable<(request: ImageTaskIdentity) => Promise<void>>()(
+    'preview-resources',
+    ['image-tasks:cancel']
+  ),
   'preview.delete': callable<(request: DeletePreviewStateRequest) => Promise<void>>()('preview', [
     'preview:delete'
   ]),

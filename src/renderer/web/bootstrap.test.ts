@@ -853,7 +853,8 @@ describe('Web bootstrap event connection', () => {
           source: 'artifact',
           projectId: 'project-1',
           fileId: 'artifact-1',
-          versionId: 'version-3'
+          versionId: 'version-3',
+          purpose: 'download'
         }
       ]
     })

@@ -46,6 +46,17 @@ of abandoned destinations and may choose a stricter restart policy.
 `ResilientDownloadOpts` are public types. Progress phases remain `downloading` and
 `reconnecting`; display, translation and task scheduling belong to the caller.
 
+`requestPublicHttps(url, signal, options?)` opens one credential-free public HTTPS GET
+and returns an `IncomingMessage`. It rejects IP literals, credentials, nonstandard ports,
+and private or mixed DNS answers, pins the validated addresses, and does not follow redirects
+or retry. Callers must bound the body, destroy the response, supply a deadline signal, and
+revalidate every redirect by calling this function again. `publicDownloadUrl` and
+`isPublicDownloadAddress` expose the same validation rules. Optional `accept`, `resolveProxy`
+and `tunnel` control the download transport; `PublicDownloadTunnel` is the tunnel contract.
+The default proxy path also pins public addresses. `allowProxyHostnameResolution` exists
+only for legacy callers whose trusted proxy enforces final-address policy for uniform
+fake-IP DNS answers; image result downloads leave it disabled.
+
 CommonJS `require` and ESM `import` consume the same module and error constructors.
 Only the package root is exported. Filesystem and clock fault-injection seams in the
 implementation are private, not supported storage adapter APIs.

@@ -661,7 +661,7 @@ const installWebApi = async (): Promise<EventCursor> => {
               break
           }
           const acquiredResource = (await invoke('preview-resources:acquire', [
-            previewRequest
+            { ...previewRequest, purpose: 'download' }
           ])) as { id: string; url: string; size: number }
           resource = acquiredResource
           if (!writable && acquiredResource.size > WEB_BLOB_DOWNLOAD_MAX_BYTES) {

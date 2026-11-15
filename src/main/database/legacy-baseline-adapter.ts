@@ -98,7 +98,9 @@ type TargetIndex = {
   columns: readonly string[]
   unique: boolean
 }
-type AllowedSuffixCheckConstraints = Readonly<Record<string, Readonly<Record<string, string>>>>
+type AllowedSuffixCheckConstraints = Readonly<
+  Record<string, Readonly<Record<string, string | readonly string[]>>>
+>
 
 const splitSqlDefinitions = (ddl: string): string[] => {
   const open = ddl.indexOf('(')
@@ -877,11 +879,9 @@ const verifyRuntimeSchemaTarget = async (
       ([name, expression]) =>
         !expectedTable.checks.has(name) &&
         (!Object.hasOwn(allowedChecks, name) ||
-          !checkExpressionsMatch(
-            tableName,
-            name,
-            expression,
-            normalizeSqlFragment(allowedChecks[name]!)!
+          !(Array.isArray(allowedChecks[name]) ? allowedChecks[name] : [allowedChecks[name]]).some(
+            (allowed) =>
+              checkExpressionsMatch(tableName, name, expression, normalizeSqlFragment(allowed)!)
           ))
     )
     if (incompatibleSuffixCheck) {
