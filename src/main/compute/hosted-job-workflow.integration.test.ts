@@ -264,6 +264,9 @@ async function exerciseSubmission(
       runtime.start()
       for (let n = 0; n < 5 && !cleanup.mock.calls.length; n++) await runtime.tick()
       expect(cleanup).toHaveBeenCalledTimes(1)
+      await runtime.tick()
+      await runtime.wake()
+      expect(cleanup).toHaveBeenCalledTimes(1)
       expect(await jobs.get(job_id)).toMatchObject({
         cancellation_status: 'cancelled',
         remote_cleanup_disposition: 'pending'
@@ -347,7 +350,7 @@ async function exerciseSubmission(
       new Error('Temporary cleanup failure')
     )
     for (let n = 0; n < 8; n++) {
-      await runtime.tick()
+      await runtime.retry(job_id)
       if ((await jobs.get(job_id))?.remote_cleanup_disposition === 'cleaned') break
     }
     const job = await jobs.get(job_id)

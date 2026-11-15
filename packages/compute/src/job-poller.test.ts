@@ -12,7 +12,7 @@ import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
 import { createComputeExecution } from './execution'
 import { DispatchTracker } from './dispatch-tracker'
 import type { HarvestFn } from './job-harvest-scheduler'
-import { JobPoller, POLL_INTERVAL_MS } from './job-poller'
+import { JobPoller, POLL_FALLBACK_INTERVAL_MS, POLL_INTERVAL_MS } from './job-poller'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2151,7 +2151,7 @@ describe('JobPoller', () => {
     expect((runner.run as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0)
   })
 
-  it('starts a 15s interval even when the job list is empty', () => {
+  it('keeps only the fallback interval when the job list is empty', () => {
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([]))
     } as unknown as ComputeJobRepository
@@ -2174,7 +2174,41 @@ describe('JobPoller', () => {
     })
     poller.start()
 
-    expect(setIntervalMock).toHaveBeenCalledWith(expect.any(Function), POLL_INTERVAL_MS)
+    expect(setIntervalMock).toHaveBeenCalledWith(expect.any(Function), POLL_FALLBACK_INTERVAL_MS)
+  })
+
+  it('wakes idle recovery and keeps the short cadence only while work exists', async () => {
+    const activeJob = makeJob({ status: 'submitted', remote_handle: undefined })
+    const dispatchTracker = new DispatchTracker()
+    dispatchTracker.begin(activeJob.job_id)
+    const findNonTerminal = vi.fn().mockResolvedValueOnce([activeJob]).mockResolvedValue([])
+    const setIntervalMock = vi.fn(
+      (fn: () => void, ms: number) => ({ fn, ms }) as unknown as ReturnType<typeof setInterval>
+    )
+    const clearIntervalMock = vi.fn()
+    const poller = new JobPoller({
+      connectionBroker: {} as ComputeConnectionBrokerAcquirer,
+      hostRepository: {} as ComputeHostRepository,
+      jobRepository: { findNonTerminal } as unknown as ComputeJobRepository,
+      dispatchTracker,
+      setInterval: setIntervalMock,
+      clearInterval: clearIntervalMock
+    })
+
+    poller.start()
+    await vi.waitFor(() => expect(setIntervalMock).toHaveBeenCalledTimes(2))
+    expect(setIntervalMock).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Function),
+      POLL_FALLBACK_INTERVAL_MS
+    )
+    expect(setIntervalMock).toHaveBeenNthCalledWith(2, expect.any(Function), POLL_INTERVAL_MS)
+
+    await poller.wake()
+    expect(clearIntervalMock).toHaveBeenCalledTimes(1)
+    await poller.wake()
+    expect(findNonTerminal).toHaveBeenCalledTimes(3)
+    await poller.stop()
   })
 
   it('start/stop manage the interval', () => {
