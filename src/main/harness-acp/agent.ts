@@ -1,3 +1,4 @@
+import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
 import * as acp from '@agentclientprotocol/sdk'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
@@ -210,6 +211,7 @@ export function createToolResultClearing(
 }
 
 type Entry = {
+  setScheduleTurn(ref: string | undefined): void
   session: AgentSession
   /** True once per provider context-overflow rejection observed since the last call. */
   takeOverflow(): boolean
@@ -569,6 +571,7 @@ export function createHarnessAcpAgent(directory: string): {
       signal.throwIfAborted()
       entries.set(id, {
         session,
+        setScheduleTurn: mcp.setScheduleTurn,
         takeOverflow: () => {
           const observed = overflow
           overflow = false
@@ -682,6 +685,12 @@ export function createHarnessAcpAgent(directory: string): {
               return { type: 'text', text: block.resource.text }
             throw new Error('Unsupported prompt content; host must resolve references')
           })
+          const references = context.params.prompt.flatMap((block) => {
+            const ref = block._meta?.[SCHEDULE_TURN_META]
+            return typeof ref === 'string' && ref.length <= 100 ? [ref] : []
+          })
+          if (references.length > 1) throw new Error('Ambiguous Schedule turn context')
+          entry.setScheduleTurn(references[0])
           entry.active = true
           entry.cancelled = false
           try {
@@ -754,6 +763,7 @@ export function createHarnessAcpAgent(directory: string): {
               }
             }
           } finally {
+            entry.setScheduleTurn(undefined)
             entry.active = false
           }
         })()

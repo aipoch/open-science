@@ -11,6 +11,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import {
   BookOpenText,
   Bot,
+  Clock,
   Brain,
   Check,
   ChevronDown,
@@ -1780,6 +1781,12 @@ const WorkspaceMessageItemImpl = ({
               </div>
             ) : (
               <div className="group flex flex-col items-end">
+                {message.attribution?.feature === 'schedule' && (
+                  <span className="mb-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <Clock className="size-3" aria-hidden="true" />
+                    {t('Sent by scheduled task')}
+                  </span>
+                )}
                 <div
                   data-slot="user-bubble-row"
                   className="flex w-full max-w-full items-center justify-end gap-1"

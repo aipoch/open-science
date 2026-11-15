@@ -5,6 +5,7 @@
     "src/renderer/src/pages/workspace/authorized-directories-presentation.ts",
     "src/renderer/src/pages/workspace/handoff-lifecycle-projection.test.ts",
     "src/renderer/src/pages/workspace/handoff-lifecycle-projection.ts",
+    "src/renderer/src/pages/workspace/schedules/schedule-tool-presentation.ts",
     "src/renderer/src/pages/workspace/session-notebook-projection.ts",
     "src/renderer/src/pages/workspace/subagent-release-projection.test.ts",
     "src/renderer/src/pages/workspace/subagent-release-projection.ts",
@@ -29,6 +30,7 @@
     "src/renderer/src/pages/workspace/agent-loading-message.ts",
     "src/renderer/src/pages/workspace/authorized-directories-presentation.ts",
     "src/renderer/src/pages/workspace/handoff-lifecycle-projection.ts",
+    "src/renderer/src/pages/workspace/schedules/schedule-tool-presentation.ts",
     "src/renderer/src/pages/workspace/session-notebook-projection.ts",
     "src/renderer/src/pages/workspace/subagent-release-projection.ts",
     "src/renderer/src/pages/workspace/tool-execution-phase.ts",
@@ -197,5 +199,6 @@
   },
   "consumerModules": [],
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Scheduled tool results add a presentation owner shared by conversation and preview consumers beyond the reviewed source boundary; retain full CI validation until these contracts are reviewed."
 }

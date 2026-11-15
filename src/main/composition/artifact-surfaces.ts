@@ -197,7 +197,12 @@ export function composeArtifactSurfaces({
   })
   const sessionDeletionOwner = new SessionDeletionOwner({
     runtime,
-    backgroundResults: backgroundResultDelivery,
+    backgroundResults: {
+      prepareSessionDeletion: (p, s) => backgroundResultDelivery.prepareSessionDeletion(p, s),
+      abortSessionDeletion: (p, s) => backgroundResultDelivery.abortSessionDeletion(p, s),
+      commitSessionDeletion: (projectId, sessionId) =>
+        backgroundResultDelivery.commitSessionDeletion(projectId, sessionId)
+    },
     withStoppedWork: (request, operation) => {
       const owner = artifactReproducibilityAttemptOwnerRef.current
       return owner

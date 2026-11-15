@@ -633,6 +633,21 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
+  findSessionForContinuation(
+    projectId: string,
+    sessionId: string
+  ): Promise<PersistedChatSession | undefined> {
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId, {
+        mode: 'read-only'
+      })
+      if (loaded.status === 'missing') return undefined
+      if (loaded.status !== 'found')
+        throw new Error(`Cannot prepare a durable continuation for a ${loaded.status} Session.`)
+      return structuredClone(loaded.session)
+    })
+  }
+
   loadSessionForContinuation(projectId: string, sessionId: string): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(projectId, sessionId, async () => {
       const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)

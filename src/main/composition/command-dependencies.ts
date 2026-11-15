@@ -1,4 +1,5 @@
 import { hasCallerAuthority } from '../caller-context'
+import type { ScheduleManagement } from '../schedules/management'
 import type { composeResearchFilm } from './research-film'
 import type { LocalModelApi } from '../../shared/local-models'
 import { UseCaseCatalog } from '../session-package/use-case-catalog'
@@ -54,6 +55,7 @@ import type { composeSettingsEffects } from './settings-effects'
 import type { composeStorageStartup } from './storage-startup'
 
 export function composeCommandDependencies({
+  schedules,
   localeOwner,
   reportUploadProgress,
   sideChatCommands,
@@ -110,6 +112,7 @@ export function composeCommandDependencies({
   sessionFoundation: Awaited<ReturnType<typeof composeSessionFoundation>>
   sessionPackages: Awaited<ReturnType<typeof composeSessionPackages>>
   managedFiles: ReturnType<typeof composeManagedFiles>
+  schedules: ScheduleManagement
   sessionAuthority: Awaited<ReturnType<typeof composeSessionAuthority>>
   researchFilm: Awaited<ReturnType<typeof composeResearchFilm>>
   localModels: LocalModelApi
@@ -166,6 +169,7 @@ export function composeCommandDependencies({
     pdfTranslation: documentReading.pdfTranslationOwner,
     sessionReplay,
     specialist: sessionSurfaces.specialistApplicationOwner,
+    schedules,
     bookmarks: documentReading.bookmarkService,
     pdfAnnotations: documentReading.pdfAnnotationService,
     acp: {

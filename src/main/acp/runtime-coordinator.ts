@@ -1,3 +1,4 @@
+import { SessionPromptAdmissionError } from './runtime-activity-port'
 import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import {
   trackLifecycleSettlement,
@@ -1313,7 +1314,8 @@ class AcpRuntimeCoordinator {
         options?.onPromptAdmitted,
         'renderer',
         undefined,
-        cancellation
+        cancellation,
+        options?.beforeSessionWrite
       )
     )
   }
@@ -1692,7 +1694,8 @@ class AcpRuntimeCoordinator {
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer',
     startAdmission?: PromptAcceptance,
-    cancellation?: RootAdmissionCancellation
+    cancellation?: RootAdmissionCancellation,
+    beforeSessionWrite?: () => Promise<void>
   ): ReturnType<AcpRuntime['sendPrompt']> {
     let dispatchStarted = false
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> => {
@@ -1710,7 +1713,8 @@ class AcpRuntimeCoordinator {
         runtimeReviewOwner,
         startAdmission,
         undefined,
-        cancellation
+        cancellation,
+        beforeSessionWrite
       )
     }
     if (!this.promptDispatchAdmissionGuard) return dispatch()
@@ -1728,7 +1732,11 @@ class AcpRuntimeCoordinator {
           throw error
         })
       }
-      if (error instanceof DelegateMessagePreAcceptanceError) throw error
+      if (
+        error instanceof SessionPromptAdmissionError ||
+        error instanceof DelegateMessagePreAcceptanceError
+      )
+        throw error
       throw new DelegateMessagePreAcceptanceError(
         error instanceof Error ? error.message : String(error),
         error
@@ -1748,7 +1756,8 @@ class AcpRuntimeCoordinator {
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer',
     startAdmission?: PromptAcceptance,
     delegatedMessageId?: string,
-    cancellation?: RootAdmissionCancellation
+    cancellation?: RootAdmissionCancellation,
+    beforeSessionWrite?: () => Promise<void>
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.admissionClosedReason()) return this.rejectPromptForQuit()
     const resume = this.sessionResumeOperations.get(request.sessionId)
@@ -1851,7 +1860,8 @@ class AcpRuntimeCoordinator {
         if (operation === 'sendApplicationPrompt') {
           return runtime.sendApplicationPrompt(taskRequest, attribution!, {
             promptAttemptId: attempt.id,
-            onPromptAdmitted: admitPrompt
+            onPromptAdmitted: admitPrompt,
+            beforeSessionWrite
           })
         }
         if (operation === 'sendPrompt') {

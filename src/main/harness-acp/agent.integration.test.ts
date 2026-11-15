@@ -1,3 +1,6 @@
+import { ScheduleMcp } from '../schedules/mcp'
+import type { ScheduleManagement } from '../schedules/management'
+import { SCHEDULE_TURN_META, type ScheduleCreateRequest } from '../../shared/session-schedules'
 import * as acp from '@agentclientprotocol/sdk'
 import { createServer, type ServerResponse } from 'node:http'
 import { once } from 'node:events'
@@ -212,7 +215,7 @@ function finish(
 async function fixture(
   endpoint: string,
   existing?: string,
-  allow = true,
+  allow: boolean | (() => Promise<boolean>) = true,
   contextWindow = 32768,
   inputCapabilities?: { images?: boolean; files?: boolean; audio?: boolean; video?: boolean },
   token = 'local-test-token'
@@ -234,7 +237,7 @@ async function fixture(
     .onNotification(acp.methods.client.session.update, (context) => {
       updates.push(context.params)
     })
-    .onRequest(acp.methods.client.session.requestPermission, (context) => {
+    .onRequest(acp.methods.client.session.requestPermission, async (context) => {
       expect(
         updates.some(
           ({ sessionId, update }) =>
@@ -245,7 +248,8 @@ async function fixture(
         )
       ).toBe(true)
       approvals.push(context.params)
-      return { outcome: { outcome: 'selected', optionId: allow ? 'allow' : 'deny' } }
+      const approved = typeof allow === 'function' ? await allow() : allow
+      return { outcome: { outcome: 'selected', optionId: approved ? 'allow' : 'deny' } }
     })
     .connect(owner.app)
   cleanup.push(async () => {
@@ -301,7 +305,8 @@ async function mcpServer(
   disconnectAfterCall = false,
   waitForCall?: Promise<void>,
   image = false,
-  outputText = 'receipt'
+  outputText = 'receipt',
+  nestedInput = false
 ): Promise<{ config: acp.McpServer; calls: string[] }> {
   const calls: string[] = []
   const http = createServer(async (request, response) => {
@@ -313,7 +318,11 @@ async function mcpServer(
           description: 'Append a receipt',
           inputSchema: {
             type: 'object',
-            properties: { value: { type: 'integer' } },
+            properties: {
+              value: nestedInput
+                ? { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }
+                : { type: 'integer' }
+            },
             required: ['value'],
             additionalProperties: false
           }
@@ -479,32 +488,46 @@ it('uses the package across turns and resumes durable history without replay dup
   ).rejects.toThrow()
 })
 
-it('reports missing MCP fields without reflecting input values and recovers on the next step', async () => {
-  const managed = await mcpServer()
-  let requests = 0
-  const model = await modelServer((body, response) => {
-    requests++
-    if (requests === 1)
-      finish(response, '', body.tools![0].function.name, { private: 'do-not-reflect-this' })
-    else if (requests === 2) {
-      const diagnostic = JSON.stringify(body.messages.at(-1))
-      expect(diagnostic).toContain('$.value: expected required field')
-      expect(diagnostic).not.toContain('do-not-reflect-this')
-      finish(response, '', body.tools![0].function.name, { value: 1 })
-    } else finish(response, 'done')
-  })
-  const f = await fixture(model.endpoint)
-  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
-    cwd: f.directory,
-    mcpServers: [managed.config]
-  })
-  expect((await prompt(f.connection, sessionId)).stopReason).toBe('end_turn')
-  expect(requests).toBe(3)
-  expect(managed.calls).toEqual(['append'])
-  expect(f.approvals).toHaveLength(1)
-  expect(model.requests[1].tools).toEqual(model.requests[0].tools)
-  expect(model.requests[2].tools).toEqual(model.requests[0].tools)
-})
+it.each([false, true])(
+  'reports missing MCP fields without reflecting input values and recovers (nested=%s)',
+  async (nested) => {
+    const managed = await mcpServer(false, undefined, false, 'receipt', nested)
+    let requests = 0
+    const model = await modelServer((body, response) => {
+      requests++
+      if (requests === 1)
+        finish(
+          response,
+          '',
+          body.tools![0].function.name,
+          nested
+            ? { value: { private: 'do-not-reflect-this' } }
+            : { private: 'do-not-reflect-this' }
+        )
+      else if (requests === 2) {
+        const diagnostic = JSON.stringify(body.messages.at(-1))
+        expect(diagnostic).toContain(
+          `${nested ? '$.value.name' : '$.value'}: expected required field`
+        )
+        expect(diagnostic).not.toContain('do-not-reflect-this')
+        finish(response, '', body.tools![0].function.name, {
+          value: nested ? { name: 'Receipt' } : 1
+        })
+      } else finish(response, 'done')
+    })
+    const f = await fixture(model.endpoint)
+    const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: [managed.config]
+    })
+    expect((await prompt(f.connection, sessionId)).stopReason).toBe('end_turn')
+    expect(requests).toBe(3)
+    expect(managed.calls).toEqual(['append'])
+    expect(f.approvals).toHaveLength(1)
+    expect(model.requests[1].tools).toEqual(model.requests[0].tools)
+    expect(model.requests[2].tools).toEqual(model.requests[0].tools)
+  }
+)
 
 it.each([true, false])('routes MCP through host permission, allow=%s', async (allow) => {
   const managed = await mcpServer()
@@ -1346,4 +1369,86 @@ it('preserves the baseline generic HTTP failure instead of newly labeling quota 
     'service/rate-limited'
   )
   expect(JSON.stringify(failure)).not.toContain('private account')
+})
+
+it('injects Schedule identity outside model arguments and fences a cancelled permission wait', async () => {
+  const create = vi.fn(async (request: ScheduleCreateRequest) => ({
+    id: 'job',
+    revision: 1,
+    draft: request.draft
+  }))
+  const schedules = new ScheduleMcp({ create } as unknown as ScheduleManagement)
+  const host = new AgentMcpHttpHost()
+  const { token } = await host.ensureStarted()
+  cleanup.push(() => host.close())
+  const url = host.registerSchedule('route', (owns) => schedules.server('p', owns, true))
+  const target = { projectId: 'p', sessionId: 's', agentFrameId: 'f', messageBranchId: 'b' }
+  const first = schedules.open({ target, promptMessageId: 'first', isCurrent: () => true })
+  const permission = Promise.withResolvers<boolean>()
+  let approved = false
+  const model = await modelServer((body, response) => {
+    expect(JSON.stringify(body.messages)).not.toContain('schedule-turn-')
+    const tool = body.tools!.find((t) => t.function.name.endsWith('__create_schedule'))!
+    expect(JSON.stringify(tool)).not.toContain('"turnRef"')
+    expect(JSON.stringify(tool)).not.toContain('"requestId"')
+    if (body.messages.at(-1)?.role === 'user')
+      finish(response, '', tool.function.name, {
+        name: 'Review',
+        message: 'Review progress',
+        rule: { kind: 'once', at: Date.now() + 60000 }
+      })
+    else finish(response, 'done')
+  })
+  const f = await fixture(model.endpoint, undefined, () =>
+    approved ? Promise.resolve(true) : permission.promise
+  )
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: [
+      {
+        type: 'http',
+        name: 'open-science-schedule',
+        url,
+        headers: [{ name: 'authorization', value: `Bearer ${token}` }]
+      }
+    ]
+  })
+  const run = (ref?: string): Promise<acp.PromptResponse> =>
+    f.connection.agent.request(acp.methods.agent.session.prompt, {
+      sessionId,
+      prompt: [
+        {
+          type: 'text',
+          text: 'Create the task',
+          ...(ref ? { _meta: { [SCHEDULE_TURN_META]: ref } } : {})
+        }
+      ]
+    })
+  const pending = run(first.ref)
+  await vi.waitFor(() => expect(f.approvals).toHaveLength(1))
+  expect(f.approvals[0].toolCall.rawInput).toMatchObject({
+    name: 'Review',
+    message: 'Review progress'
+  })
+  expect(f.approvals[0].toolCall.rawInput).not.toHaveProperty('turnRef')
+  await f.connection.agent.notify(acp.methods.agent.session.cancel, { sessionId })
+  first.close()
+  permission.resolve(true)
+  expect((await pending).stopReason).toBe('cancelled')
+  expect(create).not.toHaveBeenCalled()
+  approved = true
+  const second = schedules.open({ target, promptMessageId: 'second', isCurrent: () => true })
+  expect((await run(second.ref)).stopReason).toBe('end_turn')
+  expect(create).toHaveBeenCalledTimes(1)
+  expect(create.mock.calls[0][0]).toMatchObject({
+    target,
+    requestId: expect.stringMatching(/^host-[a-f0-9]{64}$/),
+    draft: { action: { kind: 'send_session_message', message: 'Review progress' } }
+  })
+  expect((await run(first.ref)).stopReason).toBe('end_turn')
+  expect(create).toHaveBeenCalledTimes(1)
+  const approvals = f.approvals.length
+  expect((await run()).stopReason).toBe('end_turn')
+  expect(f.approvals).toHaveLength(approvals)
+  expect(create).toHaveBeenCalledTimes(1)
 })

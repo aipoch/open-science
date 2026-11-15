@@ -1664,6 +1664,7 @@ class AcpRuntime {
     attribution: MessageAttribution,
     options?: {
       promptAttemptId?: string
+      beforeSessionWrite?: () => Promise<void>
       // Runs under prompt ownership, before prompt events, Artifact opening or provider dispatch.
       // Throwing rejects this application turn without emitting a user-visible prompt.
       onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
@@ -1675,6 +1676,7 @@ class AcpRuntime {
         {
           kind: 'application',
           attribution,
+          beforeSessionWrite: options?.beforeSessionWrite,
           ...(options?.promptAttemptId === undefined
             ? {}
             : { promptAttemptId: options.promptAttemptId })
@@ -1745,6 +1747,7 @@ class AcpRuntime {
       | Readonly<{
           kind: 'application'
           attribution: MessageAttribution
+          beforeSessionWrite?: () => Promise<void>
           promptAttemptId?: string
         }>
       | Readonly<{

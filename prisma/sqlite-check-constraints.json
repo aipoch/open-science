@@ -934,6 +934,16 @@
       "tableName": "PdfTranslationBlock",
       "name": "PdfTranslationBlock_values_check",
       "expression": "\"sourceIndex\" >= -1 AND \"sourceIndex\" < 10000 AND \"revision\" > 0 AND ((\"sourceIndex\" = -1 AND \"translation\" IS NULL) OR (\"sourceIndex\" >= 0 AND (\"translation\" IS NULL OR (length(trim(\"translation\")) > 0 AND length(\"translation\") <= 100000))))"
+    },
+    {
+      "tableName": "SessionSchedule",
+      "name": "SessionSchedule_values_check",
+      "expression": "(\"finishReason\" IS NULL OR (\"finishedAt\" IS NOT NULL AND \"finishReason\" IN ('completed', 'cancelled'))) AND \"revision\" >= 1 AND \"admittedCount\" >= 0 AND (\"maxRuns\" IS NULL OR \"maxRuns\" > 0) AND (\"permissionProfile\" IS NULL OR (\"sessionId\" IS NULL AND \"permissionProfile\" IN ('ask', 'auto', 'full'))) AND json_valid(\"actionJson\") AND json_valid(\"ruleJson\") AND ((\"sessionId\" IS NOT NULL AND \"agentFrameId\" IS NOT NULL AND \"messageBranchId\" IS NOT NULL) OR (\"sessionId\" IS NULL AND \"agentFrameId\" IS NULL AND \"messageBranchId\" IS NULL AND json_extract(\"actionJson\", '$.kind') IS 'send_session_message'))"
+    },
+    {
+      "tableName": "ScheduleOccurrence",
+      "name": "ScheduleOccurrence_values_check",
+      "expression": "\"phase\" IN ('dispatching', 'admitted', 'settled') AND \"attemptCount\" > 0 AND \"scheduleRevision\" > 0 AND json_valid(\"actionSnapshot\") AND ((\"phase\" = 'settled') = (\"settledAt\" IS NOT NULL))"
     }
   ],
   "indexes": [
@@ -956,6 +966,11 @@
       "tableName": "BackgroundResultDelivery",
       "name": "BackgroundResultDelivery_recoverable_claim_idx",
       "sql": "CREATE INDEX \"BackgroundResultDelivery_recoverable_claim_idx\" ON \"BackgroundResultDelivery\"(\"claimExpiresAt\", \"id\") WHERE \"state\" IN ('claimed', 'dispatching')"
+    },
+    {
+      "tableName": "ScheduleOccurrence",
+      "name": "ScheduleOccurrence_unresolved_key",
+      "sql": "CREATE UNIQUE INDEX \"ScheduleOccurrence_unresolved_key\" ON \"ScheduleOccurrence\"(\"scheduleId\") WHERE \"phase\" <> 'settled'"
     }
   ]
 }

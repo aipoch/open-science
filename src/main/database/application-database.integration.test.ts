@@ -33,6 +33,33 @@ afterEach(async () => {
 })
 
 describe('application database (integration)', () => {
+  it('adds Schedule to the 0057 database without changing its existing ledger or project settings', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-schedule-upgrade-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await createDatabaseAtReleasedManifest(
+      client,
+      MIGRATION_MANIFEST.filter(({ id }) => id <= '0057_project_optimization_prompt')
+    )
+    const project = await client.project.create({
+      data: { name: 'Migration check', optimizationPrompt: 'Keep this prompt' }
+    })
+    const readLedger = (): Promise<Array<{ id: string; checksum: string }>> =>
+      client.$queryRawUnsafe('SELECT id, checksum FROM "_open_science_migrations" ORDER BY id')
+    const before = await readLedger()
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      from: '0057_project_optimization_prompt',
+      applied: ['0058_session_schedules']
+    })
+    expect((await readLedger()).slice(0, -1)).toEqual(before)
+    await expect(
+      client.project.findUniqueOrThrow({ where: { id: project.id } })
+    ).resolves.toMatchObject({ optimizationPrompt: 'Keep this prompt' })
+    await expect(client.sessionSchedule.count()).resolves.toBe(0)
+    await expect(client.scheduleOccurrence.count()).resolves.toBe(0)
+    await expect(client.scheduleMutationReceipt.count()).resolves.toBe(0)
+  })
+
   it('covers every Prisma scalar field in the runtime SQLite schema', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-schema-parity-'))
 
@@ -160,7 +187,8 @@ describe('application database (integration)', () => {
         '0054_slurm_job_reliability',
         '0055_session_discussion_parent',
         '0056_compute_kubernetes_workspace',
-        '0057_project_optimization_prompt'
+        '0057_project_optimization_prompt',
+        '0058_session_schedules'
       ]
     })
 
@@ -1192,7 +1220,8 @@ describe('application database (integration)', () => {
         '0054_slurm_job_reliability',
         '0055_session_discussion_parent',
         '0056_compute_kubernetes_workspace',
-        '0057_project_optimization_prompt'
+        '0057_project_optimization_prompt',
+        '0058_session_schedules'
       ]
     })
 

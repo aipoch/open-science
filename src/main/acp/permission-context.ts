@@ -39,6 +39,7 @@ import {
   isNativeWebFetchCandidate,
   isNativeWebSearchCandidate,
   trustedMcpToolIdentity,
+  isSchedulePermissionTool,
   withTrustedAutoOperation,
   withTrustedMcpToolIdentity,
   withTrustedNativeToolIdentity
@@ -1185,19 +1186,31 @@ class AcpPermissionContext {
       return this.restoreClaudeCodeMcpToolInput(params, sessionId, mcpServerNames)
     }
     if (framework === 'codebuddy') {
-      // Repair identity correlation only for this Auto change. Restoring unrelated CodeBuddy
-      // metadata would also change existing automatic rules and remembered-grant matching.
+      // Restore only identities used by Auto operations and scoped Schedule tools. Unrelated
+      // metadata must not change automatic rules or remembered-grant matching.
       const inputs = this.claudeCodeMcpToolInputs.get(sessionId)
       const input = inputs?.get(params.toolCall.toolCallId)
+      const requestName = extractProviderToolName(params.toolCall)
+      const requestIdentity = requestName
+        ? resolveCanonicalMcpToolIdentity(requestName, mcpServerNames)
+        : undefined
       if (
         !input ||
-        input.title !== params.toolCall.title ||
+        (input.title !== params.toolCall.title &&
+          !(
+            isSchedulePermissionTool(input.mcpIdentity) && requestIdentity === input.mcpIdentity
+          )) ||
         !isMcpToolName(input.title, mcpServerNames) ||
-        !APP_AUTO_OPERATION_IDENTITIES.has(input.mcpIdentity)
+        (!APP_AUTO_OPERATION_IDENTITIES.has(input.mcpIdentity) &&
+          !isSchedulePermissionTool(input.mcpIdentity))
       )
         return params
       inputs?.delete(params.toolCall.toolCallId)
       if (inputs?.size === 0) this.claudeCodeMcpToolInputs.delete(sessionId)
+      if (isSchedulePermissionTool(input.mcpIdentity)) {
+        if (requestName && requestIdentity !== input.mcpIdentity) return params
+        return withTrustedMcpToolIdentity(params, input.mcpIdentity)
+      }
       return withTrustedAutoOperation(params, input.mcpIdentity, input.rawInput)
     }
     if (framework === 'opencode') {
