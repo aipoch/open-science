@@ -469,7 +469,7 @@ describe.skipIf(!nsisCompiler).each(['OpenScience', 'Open-Science'])(
         // UI output to a file so an error dialog cannot block unattended regression runs.
         const observed = `${macro}\n${restore}`
           .replace(/^\s*DetailPrint (.+)$/gm, 'FileWriteUTF16LE $9 $1')
-          .replace(/^\s*MessageBox MB_OK\|MB_ICONSTOP (.+)$/gm, 'FileWriteUTF16LE $9 $1')
+          .replace(/^\s*MessageBox MB_OK\|MB_ICONSTOP (.+?)(?: \/SD \w+)?$/gm, 'FileWriteUTF16LE $9 $1')
         const output = join(root, 'result.txt')
         const executable = join(root, 'probe.exe')
         const source = join(root, 'probe.nsi')
@@ -645,7 +645,7 @@ it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as
         })
         .join('\n')
         .replace(/^\s*DetailPrint (.+)$/gm, 'FileWriteUTF16LE $9 $1')
-        .replace(/^\s*MessageBox MB_OK\|MB_ICONSTOP (.+)$/gm, 'FileWriteUTF16LE $9 $1')
+        .replace(/^\s*MessageBox MB_OK\|MB_ICONSTOP (.+?)(?: \/SD \w+)?$/gm, 'FileWriteUTF16LE $9 $1')
       const upstream = readFileSync(
         join(appBuilderLibRoot, 'templates/nsis/uninstaller.nsh'),
         'utf8'
