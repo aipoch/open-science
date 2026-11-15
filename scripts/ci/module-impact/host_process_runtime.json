@@ -905,5 +905,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "The Windows native ChildProcess facade uses EventEmitter to avoid retaining exited process listeners, expanding the trusted host boundary; retain complete validation until that boundary is reviewed on main."
 }
