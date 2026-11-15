@@ -9,6 +9,7 @@ vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: tru
 import { initDataRoot } from '../storage-root'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { SessionRepository, loadSessionMutationAuthority } from './repository'
+import { sessionJournalPath } from './journal'
 import { SessionProjectionRepository } from './projection'
 import { RuntimeSessionOwner } from './runtime-session-owner'
 import { SessionPersistenceCoordinator, type SessionFileIndex } from './coordinator'
@@ -70,6 +71,11 @@ const harness = async (
   const projection = new SessionProjectionRepository(async () => client)
   const repository = new SessionRepository(root, dependencies, projection)
   const initial = await repository.saveSession(session())
+  // Recovery promotion is a legacy-JSON path; keep this fixture on the released format so the
+  // temp/quarantine recovery assertions exercise the JSON reader rather than the JSONL journal.
+  const primary = join(root, 'sessions/project/session.json')
+  await writeFile(primary, `${JSON.stringify(createSessionFile(initial), null, 2)}\n`)
+  await rm(sessionJournalPath(primary), { force: true })
   await projection.replaceAll([initial])
   const fileIndex: SessionFileIndex = {
     syncSession: async () => [],

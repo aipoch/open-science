@@ -25,6 +25,7 @@ import {
   loadPersistedSession
 } from '../session-persistence/session-persistence'
 import type { useAcpRuntime } from './useAcpRuntime'
+import { ensureSessionContentLoaded } from '../session-persistence/session-history'
 import { resolveHistoryReplayTarget, type HistoryReplayDescriptor } from './history-preamble'
 import { getResumeFailureMessage } from './workspace-runtime-prompt-preparation-owner'
 import {
@@ -83,6 +84,9 @@ const ensureWorkspaceSessionReady = async (
   sessionId: string,
   agentTarget?: AcpSessionAgentTarget
 ): Promise<boolean> => {
+  const source = workspaceSession(sessionId)
+  if (source?.contentLoaded === false)
+    await ensureSessionContentLoaded({ projectId: source.projectId, sessionId })
   if (runtime.state.sessionIds.includes(sessionId) && !agentTarget) return false
   clearWorkspaceOperationError(sessionId)
   const session = workspaceSession(sessionId)
@@ -262,9 +266,61 @@ const resumeInterruptedWorkspaceSession = async (
       return
     }
   }
-  const session = workspaceSession(sessionId)
+  let session = workspaceSession(sessionId)
 
-  if (!session) return
+  if (session?.contentLoaded === false) {
+    const source = session
+    const sourceBranchId = source.historyPage?.messageBranchId
+    const currentRecoverySource = (): ChatSession | undefined => {
+      const current = workspaceSession(sessionId)
+      const branchId =
+        current?.historyPage?.messageBranchId ??
+        current?.conversationGraph?.frames.find(
+          (frame) => frame.id === current.conversationGraph?.activeFrameId
+        )?.activeBranchId
+      return current?.projectId === source.projectId &&
+        current.createdAt === source.createdAt &&
+        (source.resumeRecovery?.promptMessageId === undefined ||
+          current.resumeRecovery?.promptMessageId === source.resumeRecovery.promptMessageId) &&
+        (sourceBranchId === undefined || branchId === sourceBranchId)
+        ? current
+        : undefined
+    }
+    // Indexed pages omit the graph. Load its authority before capturing the recovery identity,
+    // so attachment cannot turn an absent frame/branch into a false user selection change.
+    // Remember invalidation even if a shared in-flight history read later restores an old snapshot.
+    let invalidated = false
+    const unsubscribe = useSessionStore.subscribe(() => {
+      if (!currentRecoverySource()) invalidated = true
+    })
+    try {
+      await ensureSessionContentLoaded(
+        { projectId: source.projectId, sessionId },
+        {
+          loadOne: async (request) => {
+            // Recovery needs a fresh authority read even when a cached revision matches.
+            const authority = await loadPersistedSession(request, window.api.sessions, {
+              bypassCache: true
+            })
+            return !invalidated &&
+              currentRecoverySource() &&
+              authority?.createdAt === source.createdAt
+              ? authority
+              : undefined
+          }
+        }
+      )
+    } catch (error) {
+      if (!invalidated && currentRecoverySource())
+        reportWorkspaceOperationError(sessionId, resumeOperationMessage(error))
+      return
+    } finally {
+      unsubscribe()
+    }
+    session = invalidated ? undefined : currentRecoverySource()
+  }
+
+  if (!session || session.contentLoaded === false) return
   if (session.delegationPolicyAuthorityPending) {
     try {
       await confirmPendingDelegationPolicyAuthority(session)

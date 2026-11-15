@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
+import { SessionJournalStore, sessionJournalPath } from '../session-persistence/journal'
+import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { operationJournalPath, RuntimeOperationJournal } from '@aipoch/environment'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ArtifactReproducibilityReceiptStore } from '../artifacts/artifact-reproducibility-receipts'
@@ -482,6 +484,46 @@ describe('validateProvenanceMigrationState', () => {
 
     await expect(validateProvenanceMigrationState(dataRoot, authorityRoot)).rejects.toThrow(
       /Review snapshot ownership is invalid/i
+    )
+  })
+
+  it('validates the latest journal graph during migration without rewriting the primary', async () => {
+    const authorityRoot = join(root, 'config')
+    const directory = join(authorityRoot, 'sessions', 'project-1')
+    await mkdir(directory, { recursive: true })
+    const path = join(directory, 'session-1.json')
+    const journal = new SessionJournalStore({ maxBytes: 1024 * 1024 })
+    const session = materializeSessionConversationGraph({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Journal',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    await journal.write(path, {
+      expectedRevision: 0,
+      document: { version: 2, session }
+    })
+    const primary = await readFile(sessionJournalPath(path), 'utf8')
+    await expect(validateProvenanceMigrationState(root, authorityRoot)).resolves.toBeUndefined()
+    expect(await readFile(sessionJournalPath(path), 'utf8')).toBe(primary)
+    await journal.write(path, {
+      expectedRevision: 1,
+      document: {
+        version: 2,
+        session: {
+          ...session,
+          revision: 2,
+          conversationGraph: { ...session.conversationGraph, rootFrameId: 'missing-frame' }
+        }
+      }
+    })
+    await expect(validateProvenanceMigrationState(root, authorityRoot)).rejects.toThrow(
+      /Session graph ownership is invalid/i
     )
   })
 

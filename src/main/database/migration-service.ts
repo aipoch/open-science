@@ -8,6 +8,11 @@ import { sessionReplayMigration } from './migrations/0047-session-replay'
 import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
 import { literatureSmartPauseRunMigration } from './migrations/0045-literature-smart-pause-run'
 import { literatureTranslationMigration } from './migrations/0050-literature-translation'
+import {
+  jsonlSessionHistory0055Migration,
+  legacySessionHistoryMigration,
+  sessionHistoryMigration
+} from './migrations/0058-session-history'
 import { literatureReadingStatusMigration } from './migrations/0051-literature-reading-status'
 import {
   literaturePersonalNoteSearchMigration,
@@ -1030,6 +1035,17 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...sessionHistoryMigration,
+    checksum: checksumMigrationPayload(
+      sessionHistoryMigration.id,
+      sessionHistoryMigration.statements,
+      sessionHistoryMigration.verifiers,
+      sessionHistoryMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1433,6 +1449,7 @@ const currentApplicationSchemaExtensions = {
 const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<void> => {
   await verifyCurrentRuntimeSchema(client, currentApplicationSchemaExtensions)
   await runMigrationVerifiers(client, literatureTranslationMigration.verifiers)
+  await runMigrationVerifiers(client, sessionHistoryMigration.verifiers)
   await runMigrationVerifiers(client, literatureReadingStatusMigration.verifiers)
   await runMigrationVerifiers(client, literaturePersonalNoteSearchMigration.verifiers)
   await runMigrationVerifiers(client, slurmJobReliabilityMigration.verifiers)
@@ -2362,6 +2379,61 @@ const migrateApplicationDatabaseWithManifest = async (
   }
 
   const applied: string[] = []
+  // The personal fork shipped history as 0051 before upstream assigned that number, and an
+  // intermediate fork release used 0055 before upstream assigned that number to a different
+  // migration. Only bridge an exact, complete released ledger. Keep the derived tables and
+  // authoritative Session files intact; the 0058 history migration adopts them after the
+  // upstream suffix.
+  const legacyHistoryCandidates = [
+    {
+      migration: legacySessionHistoryMigration,
+      expectedThroughId: '0050_literature_translation'
+    },
+    {
+      migration: jsonlSessionHistory0055Migration,
+      expectedThroughId: '0054_slurm_job_reliability'
+    }
+  ] as const
+  const legacyHistory = legacyHistoryCandidates
+    .map((candidate) => ({
+      ...candidate,
+      row: ledger.find(({ id }) => id === candidate.migration.id)
+    }))
+    .find(({ row }) => row !== undefined)
+  if (legacyHistory?.row && manifest.some(({ id }) => id === sessionHistoryMigration.id)) {
+    const { row, migration, expectedThroughId } = legacyHistory
+    const prefix = ledger.slice(0, -1)
+    const expectedPrefix = MIGRATION_MANIFEST.filter(({ id }) => id <= expectedThroughId)
+    const legacyChecksum = checksumMigrationPayload(
+      migration.id,
+      migration.statements,
+      migration.verifiers,
+      migration.operations
+    )
+    if (
+      ledger.at(-1) !== row ||
+      prefix.length !== expectedPrefix.length ||
+      row.checksum !== legacyChecksum
+    ) {
+      throw new DatabaseMigrationError(
+        'database_history_invalid',
+        'The fork database migration history does not match its released history migration.',
+        false,
+        migration.id
+      )
+    }
+    validateLedger(prefix, expectedPrefix)
+    // Also validate against the requested manifest before any mutation or backup retirement.
+    validateLedger(prefix, manifest)
+    const next = manifest[prefix.length]!
+    await runMigrationVerifiers(client, migration.verifiers)
+    await ensureBackupBeforeMigration(next)
+    await client.$executeRaw`
+      DELETE FROM "_open_science_migrations"
+      WHERE "id" = ${row.id} AND "checksum" = ${legacyChecksum}
+    `
+    ledger = await readLedger(client)
+  }
   const appliedCount = validateLedger(ledger, manifest)
   if (appliedCount === manifest.length) {
     return complete({ adoptedLegacy: false, applied, from, to: latest.id })

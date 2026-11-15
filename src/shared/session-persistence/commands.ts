@@ -267,6 +267,51 @@ export const editSessionDetailsRequestSchema = z.union([
     .strict()
 ])
 
+// Metadata-only commands carry field baselines instead of transmitting the conversation body.
+export const renameSessionRequestSchema = z
+  .object({
+    projectId: z.string().min(1),
+    sessionId: z.string().min(1),
+    title: z.string(),
+    expectedTitle: z.string()
+  })
+  .strict()
+
+export const setSessionPinnedRequestSchema = z
+  .object({
+    projectId: z.string().min(1),
+    sessionId: z.string().min(1),
+    pinned: z.boolean(),
+    expectedPinned: z.boolean()
+  })
+  .strict()
+
+export const sessionMetadataReceiptSchema = z
+  .object({
+    id: z.string().min(1),
+    projectId: z.string().min(1),
+    revision: z.number().int().nonnegative(),
+    updatedAt: z.number().finite().nonnegative(),
+    title: z.string(),
+    description: z.string().optional(),
+    pinned: z.boolean()
+  })
+  .strict()
+
+export type RenameSessionRequest = z.infer<typeof renameSessionRequestSchema>
+export type SetSessionPinnedRequest = z.infer<typeof setSessionPinnedRequestSchema>
+export type SessionMetadataReceipt = z.infer<typeof sessionMetadataReceiptSchema>
+
+export const sessionMetadataReceipt = (session: PersistedChatSession): SessionMetadataReceipt => ({
+  id: session.id,
+  projectId: session.projectId,
+  revision: session.revision ?? 0,
+  updatedAt: session.updatedAt,
+  title: session.title,
+  ...(session.description !== undefined ? { description: session.description } : {}),
+  pinned: session.pinned === true
+})
+
 export type DeleteSessionRequest = z.infer<typeof deleteSessionRequestSchema>
 
 // Main-process deletion failures must preserve the irreversible JSON commit boundary. Only the
@@ -398,6 +443,14 @@ export const sessionApplicationCommandContracts = Object.freeze({
   editDetails: defineApplicationCommandContract(
     validationCodec(z.tuple([editSessionDetailsRequestSchema])),
     persistedChatSessionCodec
+  ),
+  rename: defineApplicationCommandContract(
+    validationCodec(z.tuple([renameSessionRequestSchema])),
+    validationCodec(sessionMetadataReceiptSchema)
+  ),
+  setPinned: defineApplicationCommandContract(
+    validationCodec(z.tuple([setSessionPinnedRequestSchema])),
+    validationCodec(sessionMetadataReceiptSchema)
   ),
   setDelegationPolicy: defineApplicationCommandContract(
     validationCodec(z.tuple([z.string(), z.string(), delegationPolicySchema])),

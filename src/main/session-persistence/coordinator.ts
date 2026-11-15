@@ -4,6 +4,7 @@ import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/p
 import type { ReconcilePendingArtifactsRequest } from '../../shared/artifacts'
 import {
   SessionDeletionCommittedError,
+  SessionDetailsConflictError,
   SessionRevisionConflictError,
   isSessionRevisionConflictError,
   isPreparedSessionRun,
@@ -17,6 +18,7 @@ import {
   type PersistedSideChat,
   type PersistedSideChatRelay,
   type SaveSessionOptions,
+  type SetSessionPinnedRequest,
   type SaveSessionManifestRequest,
   type FailTaskSessionRunRequest,
   type SettleTaskSessionCompletionRequest,
@@ -58,7 +60,7 @@ import type { ProjectSessionDeletionState, SessionRecoverySnapshot } from './rep
 import { createLogger, diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { AcpRuntimeEvent } from '../../shared/acp'
-import { saveSessionWithRevision } from './save-session'
+import { saveSessionWithRevision, type MainSessionSaveOptions } from './save-session'
 import { observeSessionRecordWrites } from './record-facts'
 import {
   SessionPersistenceStateOwner,
@@ -95,6 +97,7 @@ import {
   SessionDelegatedWorkPersistenceOwner
 } from './delegated-work-owner'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
+import type { RuntimeSessionMutationOptions } from './runtime-session-mutation'
 import { assertSessionIdentityOwnership, isSessionCatalogAuthoritative } from './catalog-authority'
 import {
   createSafeSessionUpdatePublisher as safeSessionUpdates,
@@ -161,7 +164,7 @@ type SessionMutationRepository = {
   saveSession(
     session: PersistedChatSession,
     expectedRevision?: number,
-    onJsonCommitted?: (session: PersistedChatSession) => void
+    options?: MainSessionSaveOptions
   ): Promise<PersistedChatSession>
   saveSessionWithBindingRepair?(
     session: PersistedChatSession,
@@ -1486,8 +1489,23 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
-  // Dedicated main-owned archive mutation. Unlike full renderer saves it preserves updatedAt and
-  // never allows a stale renderer projection to alter archive state.
+  // Metadata commands retain field-level optimistic concurrency without carrying a transcript.
+  setSessionPinned(request: SetSessionPinnedRequest): Promise<PersistedChatSession> {
+    return this.mutateSessionDetailsAuthority(request.projectId, request.sessionId, (session) => {
+      if ((session.pinned === true) !== request.expectedPinned) {
+        throw new SessionDetailsConflictError(
+          'Session pin changed elsewhere. Reload and try again.'
+        )
+      }
+      // Pinning is a sidebar preference and must not reorder the recent-conversation list.
+      return { ...session, pinned: request.pinned }
+    }).then((session) => {
+      if (!session) throw new Error('Session not found.')
+      return session
+    })
+  }
+
+  // Dedicated main-owned archive mutation preserves updatedAt and archive authority.
   updateArchive(
     request: UpdateSessionArchiveRequest,
     isRuntimeBusy: () => boolean | Promise<boolean> = () => false
@@ -1693,10 +1711,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   mutateRuntimeSession(
     scope: { projectId: string; sessionId: string },
     mutate: (session: PersistedChatSession) => PersistedChatSession,
-    onJsonCommitted?: () => void
+    options?: RuntimeSessionMutationOptions
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(scope.projectId, scope.sessionId, () =>
-      this.stateOwner.mutateRuntimeSession(scope, mutate, onJsonCommitted)
+      this.stateOwner.mutateRuntimeSession(scope, mutate, options)
     )
   }
 

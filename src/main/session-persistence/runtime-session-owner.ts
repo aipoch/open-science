@@ -12,7 +12,9 @@ import {
 import { hasDurableRuntimeSessionAdmission } from '../../shared/runtime-session-admission'
 import {
   applyRuntimeSessionEvents,
+  applyRuntimeSessionEventsWithChanges,
   attachRuntimeSessionArtifacts,
+  type RuntimeSessionChanges,
   type RuntimeSessionScope
 } from '../../shared/runtime-session-projection'
 import {
@@ -25,6 +27,7 @@ import {
 } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { matchPlanDelivery } from '../session-plan/plan-delivery'
+import type { RuntimeSessionMutationOptions } from './runtime-session-mutation'
 
 const log = createLogger('session-persistence')
 
@@ -106,7 +109,7 @@ type RuntimeSessionOwnerDependencies = {
   mutateSession(
     scope: RuntimeSessionTurnScope,
     mutate: (latest: PersistedChatSession) => PersistedChatSession,
-    onJsonCommitted?: () => void
+    options?: RuntimeSessionMutationOptions
   ): Promise<PersistedChatSession>
   finalizeArtifacts(request: { claimId: string; messageId: string }): Promise<ArtifactFile[]>
   onCommitted?(session: PersistedChatSession): void
@@ -1283,7 +1286,11 @@ export class RuntimeSessionOwner {
     while (turn.pending.length > 0 || turn.replayConsumptionPending) {
       const batch = turn.pending.slice()
       const consumeReplay = turn.replayConsumptionPending
+      let projection: PersistedChatSession | undefined
+      let changes: RuntimeSessionChanges | undefined
       const applyBatch = (latest: PersistedChatSession): PersistedChatSession => {
+        projection = undefined
+        changes = undefined
         if (this.turns.get(turnKey(turn.scope.sessionId, turn.scope.promptMessageId)) !== turn)
           return latest
         // Admission may have included this batch while an older physical write was waiting for
@@ -1303,7 +1310,14 @@ export class RuntimeSessionOwner {
           latest.activeRun.startedAt > turn.runStartedAt
         )
           return latest
-        const next = this.applyTurnEvents(latest, turn, remainingBatch)
+        // A guarded handoff batch may return latest unchanged. Replay receipt cleanup still
+        // owns a fresh root so the pure-mutation path never deletes fields from its input.
+        const reduced: { session: PersistedChatSession; changes?: RuntimeSessionChanges } =
+          consumeReplay || remainingBatch.some(({ id }) => turn.approvedHandoffFailures?.has(id))
+            ? { session: this.applyTurnEvents(latest, turn, remainingBatch) }
+            : applyRuntimeSessionEventsWithChanges(latest, turn.scope, remainingBatch)
+        const next = { ...reduced.session }
+        changes = reduced.changes
         if (consumeReplay) {
           delete next.pendingHistoryReplay
           delete next.branchContextResetRequired
@@ -1338,12 +1352,24 @@ export class RuntimeSessionOwner {
           }
           next.updatedAt = Math.max(next.updatedAt, this.now())
         }
+        projection = next
         return next
       }
       const receipt = turn.terminalReceipt
       const acknowledge =
         receipt && batch.some(({ id }) => id === receipt.eventId) ? receipt.resolve : undefined
-      committed = await this.mutateSession(turn.scope, 'flush-events', applyBatch, acknowledge)
+      committed = await this.mutateSession(turn.scope, 'flush-events', applyBatch, {
+        // The projection is produced by applyBatch during the mutation, so bind the hint lazily.
+        getChanges: (candidate) =>
+          projection &&
+          candidate.conversationGraph === projection.conversationGraph &&
+          candidate.messages === projection.messages &&
+          candidate.activities === projection.activities &&
+          candidate.activityGroups === projection.activityGroups
+            ? changes
+            : undefined,
+        ...(acknowledge ? { onJsonCommitted: acknowledge } : {})
+      })
       const committedIds = new Set(batch.map(({ id }) => id))
       turn.pending = turn.pending.filter(({ id }) => !committedIds.has(id))
       for (const id of committedIds) turn.approvedHandoffFailures?.delete(id)
@@ -1469,10 +1495,16 @@ export class RuntimeSessionOwner {
     phase:
       'begin-turn' | 'prepare-permission' | 'flush-events' | 'stage-artifacts' | 'attach-artifacts',
     mutate: (latest: PersistedChatSession) => PersistedChatSession,
-    onJsonCommitted?: () => void
+    options?: RuntimeSessionMutationOptions
   ): Promise<PersistedChatSession> {
     try {
-      return await this.dependencies.mutateSession(scope, mutate, onJsonCommitted)
+      return await this.dependencies.mutateSession(scope, mutate, {
+        ...(phase === 'flush-events' || phase === 'stage-artifacts' || phase === 'attach-artifacts'
+          ? { immutableCanonicalTranscript: true as const }
+          : {}),
+        ...(options?.getChanges ? { getChanges: options.getChanges } : {}),
+        ...(options?.onJsonCommitted ? { onJsonCommitted: options.onJsonCommitted } : {})
+      })
     } catch (error) {
       try {
         log.warn('Runtime Session mutation failed', {

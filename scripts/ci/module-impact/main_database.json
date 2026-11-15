@@ -101,10 +101,12 @@
     "src/main/database/migrations/0053-literature-doi-identity.ts",
     "src/main/database/literature-doi-identity-migration.test.ts",
     "src/main/database/migrations/0054-slurm-job-reliability.ts",
-    "src/main/database/migrations/0055-session-discussion-parent.ts",
     "src/main/database/slurm-job-reliability-migration.test.ts",
+    "src/main/database/session-history-migration.test.ts",
+    "src/main/database/migrations/0055-session-discussion-parent.ts",
     "src/main/database/migrations/0056-compute-kubernetes-workspace.ts",
     "src/main/database/migrations/0057-project-optimization-prompt.ts",
+    "src/main/database/migrations/0058-session-history.ts",
     "src/main/database/migrated-database.test-support.ts"
   ],
   "interfacePaths": [
@@ -156,7 +158,8 @@
       "src/main/database/workspace-pdf-translation-migration.test.ts",
       "src/main/database/literature-personal-note-search-migration.test.ts",
       "src/main/database/literature-doi-identity-migration.test.ts",
-      "src/main/database/slurm-job-reliability-migration.test.ts"
+      "src/main/database/slurm-job-reliability-migration.test.ts",
+      "src/main/database/session-history-migration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

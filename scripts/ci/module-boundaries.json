@@ -1678,7 +1678,8 @@
         "src/main/database/migrations/0048-pdf-annotation-sharing.ts",
         "src/main/database/migrations/0049-pascalcase-table-names.ts",
         "test/fixtures/application-database.ts",
-        "src/main/database/migrations/0050-literature-translation.ts"
+        "src/main/database/migrations/0050-literature-translation.ts",
+        "src/main/database/migrations/0058-session-history.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {
@@ -5619,7 +5620,10 @@
         "src/main/session-persistence/turn-outcome-authority.ts",
         "src/main/session-persistence/record-facts.ts",
         "src/main/session-persistence/flush-protocol.ts",
-        "src/main/session-persistence/conversation-pdf-electron.ts"
+        "src/main/session-persistence/conversation-pdf-electron.ts",
+        "src/main/session-persistence/history-projection.ts",
+        "src/main/session-persistence/runtime-session-file.ts",
+        "src/main/session-persistence/runtime-session-mutation.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {},
@@ -7000,7 +7004,8 @@
         "src/renderer/src/pages/workspace/WorkspaceActivityGroup.tsx",
         "src/renderer/src/pages/workspace/WorkspaceSkillActivityRow.tsx",
         "src/renderer/src/pages/workspace/agent-authentication-error.ts",
-        "src/renderer/src/pages/workspace/use-agent-authentication-recovery.ts"
+        "src/renderer/src/pages/workspace/use-agent-authentication-recovery.ts",
+        "src/renderer/src/pages/workspace/SessionHistoryLoadButton.tsx"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -7044,7 +7049,8 @@
         "src/renderer/src/pages/workspace/WorkspaceActivityGroup.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/WorkspaceSkillActivityRow.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/agent-authentication-error.ts": "presentation-adapter",
-        "src/renderer/src/pages/workspace/use-agent-authentication-recovery.ts": "presentation-adapter"
+        "src/renderer/src/pages/workspace/use-agent-authentication-recovery.ts": "presentation-adapter",
+        "src/renderer/src/pages/workspace/SessionHistoryLoadButton.tsx": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [
@@ -9196,7 +9202,8 @@
       "sources": [
         "src/renderer/src/lib/session-persistence/session-persistence.ts",
         "src/renderer/src/lib/session-persistence/session-write-recovery.ts",
-        "src/renderer/src/lib/acp/runtime-writer-client.ts"
+        "src/renderer/src/lib/acp/runtime-writer-client.ts",
+        "src/renderer/src/lib/session-persistence/session-history.ts"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {},
@@ -11597,6 +11604,35 @@
         "src/main/host-layer-dependencies.architecture.test.ts"
       ],
       "externalImports": ["node:crypto", "node:util"]
+    },
+    "session_journal": {
+      "sources": [
+        "src/main/session-persistence/journal.ts",
+        "src/main/session-persistence/journal-codec.ts",
+        "src/main/session-persistence/session-record-codec.ts"
+      ],
+      "layer": "repository",
+      "sourceLayers": {
+        "src/main/session-persistence/journal-codec.ts": "record-codec",
+        "src/main/session-persistence/session-record-codec.ts": "record-codec"
+      },
+      "consumerModules": [],
+      "requiredTests": [
+        "src/main/session-persistence/journal-codec.test.ts",
+        "src/main/session-persistence/journal-history.test.ts",
+        "src/main/session-persistence/journal-prepared-write.test.ts",
+        "src/main/session-persistence/journal-text-events.test.ts",
+        "src/main/session-persistence/journal.test.ts",
+        "src/main/session-persistence/session-record-codec.test.ts",
+        "src/main/session-persistence/session-record-text-events.test.ts"
+      ],
+      "externalImports": [
+        "@aipoch/durable-files",
+        "node:fs",
+        "node:fs/promises",
+        "node:path",
+        "node:util"
+      ]
     },
     "harness_acp": {
       "sources": [

@@ -14,7 +14,11 @@ import {
   usePreviewWorkbenchStore,
   type PendingPdfContextSelection
 } from '@/stores/preview-workbench-store'
-import type { PdfAnnotation, TextAnnotation } from '../../../../shared/annotations'
+import {
+  ANNOTATION_LIMITS,
+  type PdfAnnotation,
+  type TextAnnotation
+} from '../../../../shared/annotations'
 import {
   SessionSizeLimitError,
   type SessionPdfContext
@@ -2390,6 +2394,85 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.annotations).toEqual([])
     act(() => expect(hook.result.current.actions.undo()).toBe(true))
     expect(hook.result.current.view.annotations).toEqual([annotation()])
+  })
+
+  it('keeps annotation callbacks stable through composer renders and uses the latest annotations', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    const { addAnnotation, updateAnnotationNote, removeAnnotation } = hook.result.current.actions
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('Unrelated composer edit')))
+    hook.selectSession({ id: 'session-a', projectId: 'project' })
+    expect(hook.result.current.actions.updateAnnotationNote).toBe(updateAnnotationNote)
+    expect(hook.result.current.actions.removeAnnotation).toBe(removeAnnotation)
+
+    act(() => addAnnotation(annotation()))
+    act(() => expect(updateAnnotationNote('annotation-1', '  First note  ')).toBeUndefined())
+    act(() => addAnnotation(annotation('annotation-2')))
+    act(() => expect(updateAnnotationNote('annotation-2', '  Latest note  ')).toBeUndefined())
+    expect(hook.result.current.view.annotations).toEqual([
+      { ...annotation(), note: 'First note' },
+      { ...annotation('annotation-2'), note: 'Latest note' }
+    ])
+    expect(hook.result.current.actions.updateAnnotationNote).toBe(updateAnnotationNote)
+    expect(hook.result.current.actions.removeAnnotation).toBe(removeAnnotation)
+
+    act(() => removeAnnotation('annotation-1'))
+    expect(hook.result.current.view.annotations).toEqual([
+      { ...annotation('annotation-2'), note: 'Latest note' }
+    ])
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(hook.result.current.view.annotations).toEqual([
+      { ...annotation(), note: 'First note' },
+      { ...annotation('annotation-2'), note: 'Latest note' }
+    ])
+  })
+
+  it('uses the active draft after switching Sessions through retained annotation callbacks', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.addAnnotation({ ...annotation(), note: 'Session A' }))
+    const { updateAnnotationNote, removeAnnotation } = hook.result.current.actions
+
+    hook.selectSession({ id: 'session-b', projectId: 'project' })
+    const second = { ...annotation(), quote: 'Session B quote', note: 'Session B' }
+    act(() => hook.result.current.actions.addAnnotation(second))
+    expect(hook.result.current.actions.updateAnnotationNote).toBe(updateAnnotationNote)
+    expect(hook.result.current.actions.removeAnnotation).toBe(removeAnnotation)
+    act(() => expect(updateAnnotationNote(second.id, '  ')).toBeUndefined())
+    expect(hook.result.current.view.annotations).toEqual([{ ...second, note: undefined }])
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(hook.result.current.view.annotations).toEqual([second])
+    act(() => removeAnnotation(second.id))
+    expect(hook.result.current.view.annotations).toEqual([])
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(hook.result.current.view.annotations).toEqual([second])
+
+    hook.selectSession({ id: 'session-a', projectId: 'project' })
+    expect(hook.result.current.view.annotations).toEqual([{ ...annotation(), note: 'Session A' }])
+  })
+
+  it('does not dirty the draft or capture undo for rejected annotation notes or absent removals', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    const { updateAnnotationNote, removeAnnotation } = hook.result.current.actions
+    act(() => hook.result.current.actions.addAnnotation(annotation()))
+    const revision = (): ReturnType<typeof hook.result.current.lifecycle.captureRevision> =>
+      hook.result.current.lifecycle.captureRevision(
+        hook.result.current.view.doc,
+        hook.result.current.view.annotations
+      )
+    const before = revision()
+
+    act(() => {
+      expect(updateAnnotationNote('annotation-1', 'x'.repeat(ANNOTATION_LIMITS.note + 1))).toBe(
+        'note-too-long'
+      )
+      removeAnnotation('absent')
+    })
+    expect(revision()).toEqual(before)
+    act(() => expect(hook.result.current.actions.undo()).toBe(true))
+    expect(hook.result.current.view.annotations).toEqual([])
   })
 
   it('restores annotations with a failed send snapshot', () => {

@@ -171,7 +171,12 @@ type RuntimeResourceProfilerOptions = {
   storageRoot?: string
 }
 
-type StorageFileKind = 'notebook-run' | 'session' | 'temporary'
+type StorageFileKind = 'notebook-run' | 'session' | 'session-sidecar' | 'temporary'
+
+const isSessionStorageSidecar = (name: string): boolean =>
+  /(?:\.journal\.[^.]+\.(?:checkpoint|jsonl)|\.pre-journal\.[^.]+\.backup|\.legacy-json\.backup)$/u.test(
+    name
+  )
 
 const emptyStorageTotals = (): RuntimeStorageTotals => ({
   notebookRunBytes: 0,
@@ -209,8 +214,10 @@ const scanStorageFiles = async (
       })
       if (!info) return // A concurrent atomic write may have already moved this temporary file.
       const bytes = info.size
-      if (kind === 'session') {
-        totals.sessionFileCount += 1
+      if (kind === 'session' || kind === 'session-sidecar') {
+        // Count primary Session identities once; include every retained generation and migration
+        // backup in their storage footprint even when it is no longer the active checkpoint/log.
+        if (kind === 'session') totals.sessionFileCount += 1
         totals.sessionBytes += bytes
       } else if (kind === 'notebook-run') {
         totals.notebookRunFileCount += 1
@@ -234,9 +241,11 @@ const readRuntimeStorageSnapshot = async (
       (name) =>
         name.endsWith('.tmp')
           ? 'temporary'
-          : name !== 'manifest.json' && name.endsWith('.json')
-            ? 'session'
-            : undefined,
+          : isSessionStorageSidecar(name)
+            ? 'session-sidecar'
+            : name !== 'manifest.json' && /\.(?:json|jsonl)$/u.test(name)
+              ? 'session'
+              : undefined,
       totals
     ),
     scanStorageFiles(
@@ -593,6 +602,9 @@ ${numberedSessionTraceRows.join('\n')}
 Phase | Session files end | Session start MB | Session end MB | Session delta MB | Notebook run files end | Notebook start MB | Notebook end MB | Notebook delta MB | Temp files peak | Temp files end
 --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---:
 ${storageRows.join('\n')}
+
+Session file counts include primary identities only. Session bytes include JSON, journal logs,
+checkpoints, and retained pre-journal backups; they are sampled disk usage, not cumulative writes.
 `
   return `# Runtime resource profile
 

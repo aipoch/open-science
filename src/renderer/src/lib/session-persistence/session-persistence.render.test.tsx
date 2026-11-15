@@ -222,6 +222,98 @@ describe('session persistence startup', () => {
     return loadOne
   }
 
+  it('opens selected history through a page without loading or saving the complete transcript', async () => {
+    const persisted = createPersistedSession({
+      number: 1,
+      messages: [
+        {
+          id: 'last-message',
+          role: 'user',
+          content: 'Latest page',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    const loadOne = installHistory([persisted])
+    window.api.sessions.loadHistoryPage = vi.fn().mockResolvedValue({
+      projectId: persisted.projectId,
+      sessionId: persisted.id,
+      revision: 0,
+      session: persisted,
+      totalItems: 200,
+      hasMore: true,
+      beforeCursor: 'earlier'
+    })
+    await act(async () => root.render(<Probe />))
+    await act(async () => {
+      useSessionStore.getState().selectSession(persisted.id)
+      await Promise.resolve()
+    })
+    expect(window.api.sessions.loadHistoryPage).toHaveBeenCalledOnce()
+    expect(loadOne).not.toHaveBeenCalled()
+    expect(saveSession).not.toHaveBeenCalled()
+    const displayed = useSessionStore.getState().sessions[0]
+    expect(displayed.messages[0].content).toBe('Latest page')
+    expect(displayed.contentLoaded).toBe(false)
+    expect(displayed.historyPage?.hasMore).toBe(true)
+  })
+
+  it('reclaims inactive history pages under the existing sixteen-session retention limit', async () => {
+    const histories = Array.from({ length: 17 }, (_, index) =>
+      createPersistedSession({
+        id: `paged-${index}`,
+        number: index + 1,
+        messages: [
+          {
+            id: `message-${index}`,
+            role: 'user',
+            content: `Page ${index}`,
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+    )
+    const loadOne = installHistory(histories)
+    window.api.sessions.loadHistoryPage = vi.fn(async ({ sessionId }) => {
+      const session = histories.find(({ id }) => id === sessionId)!
+      return {
+        projectId: session.projectId,
+        sessionId,
+        revision: 0,
+        session,
+        totalItems: 100,
+        hasMore: true,
+        beforeCursor: 'earlier'
+      }
+    })
+    await act(async () => root.render(<Probe />))
+    for (const history of histories) {
+      await act(async () => {
+        useSessionStore.getState().selectSession(history.id)
+        await Promise.resolve()
+      })
+    }
+    expect(
+      useSessionStore.getState().sessions.filter((session) => session.historyPage)
+    ).toHaveLength(16)
+    expect(
+      useSessionStore.getState().sessions.find(({ id }) => id === 'paged-0')?.messages
+    ).toEqual([])
+    expect(loadOne).not.toHaveBeenCalled()
+    expect(saveSession).not.toHaveBeenCalled()
+    await act(async () => {
+      useSessionStore.getState().selectSession('paged-0')
+      await Promise.resolve()
+    })
+    expect(window.api.sessions.loadHistoryPage).toHaveBeenCalledTimes(18)
+  })
+
   it('shows retained terminal storage failures globally and retries only the exact execution', async () => {
     loadAll.mockReset().mockResolvedValue(emptyLoadResult())
     const event: AcpRuntimeEvent = {

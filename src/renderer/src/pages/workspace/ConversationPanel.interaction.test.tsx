@@ -1807,6 +1807,25 @@ describe('ConversationPanel whole-window find', () => {
 })
 
 describe('ConversationPanel session loading presentation', () => {
+  it('shows a history page while retaining its incomplete-authority marker', () => {
+    const partial: ChatSession = {
+      id: 'paged-session',
+      projectId: 'project-a',
+      title: 'Paged',
+      cwd: '/workspace',
+      status: 'idle',
+      contentLoaded: false,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2,
+      historyPage: { revision: 1, hasMore: true, beforeCursor: 'older', totalItems: 180 }
+    }
+    renderPanel({ view: { activeSession: partial } })
+    expect(container.querySelector('[data-testid="session-switch-skeleton"]')).toBeNull()
+    expect(container.querySelector('[data-testid="scroller-pending-elicitations"]')).not.toBeNull()
+    expect(partial.contentLoaded).toBe(false)
+  })
+
   it('replaces the transcript with a skeleton until lazy Session content is hydrated', () => {
     const loadingSession: ChatSession = {
       id: 'session-loading',

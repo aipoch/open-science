@@ -19,6 +19,23 @@ const items = Array.from(
 )
 
 describe('useTranscriptWindow', () => {
+  it('keeps a bounded DOM window when older pages are revealed', () => {
+    const root = createRoot(document.createElement('div'))
+    const viewport = document.createElement('div')
+    let current!: ReturnType<typeof useTranscriptWindow>
+    const Harness = ({ rows }: { rows: typeof items }): null => {
+      current = useTranscriptWindow('session', rows, -1, { current: viewport })
+      return null
+    }
+    act(() => root.render(<Harness rows={items.slice(-80)} />))
+    act(() => root.render(<Harness rows={items} />))
+    act(() => current.revealEarlier())
+    expect(current.entries).toHaveLength(80)
+    expect(current.entries[0].item.id).toBe('message-1')
+    expect(current.isFollowingEnd).toBe(false)
+    act(() => root.unmount())
+  })
+
   it('retains paused rows after a collapse reaches bottom until deliberate following resumes', () => {
     const root = createRoot(document.createElement('div'))
     const viewport = document.createElement('div')

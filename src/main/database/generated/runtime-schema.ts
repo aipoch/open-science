@@ -148,6 +148,27 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "completedAt" DATETIME NOT NULL,
     CONSTRAINT "SessionProjectionState_identity_check" CHECK ("id" = 'session-projection' AND "projectionVersion" >= 1)
 );`,
+  `CREATE TABLE IF NOT EXISTS "SessionHistoryIndex" (
+    "sessionId" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "revision" BIGINT NOT NULL,
+    "sourceFingerprint" TEXT NOT NULL,
+    "scopeKey" TEXT NOT NULL,
+    "headerJson" TEXT NOT NULL,
+    "totalItems" INTEGER NOT NULL
+);`,
+  `CREATE TABLE IF NOT EXISTS "SessionHistoryItem" (
+    "sessionId" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "itemId" TEXT NOT NULL,
+    "ordinal" INTEGER,
+    "promptMessageId" TEXT,
+    "groupId" TEXT,
+    "payloadJson" TEXT NOT NULL,
+
+    PRIMARY KEY ("sessionId", "kind", "itemId"),
+    CONSTRAINT "SessionHistoryItem_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "SessionHistoryIndex" ("sessionId") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
   `CREATE TABLE IF NOT EXISTS "PendingSessionReconciliation" (
     "sessionId" TEXT NOT NULL PRIMARY KEY,
     "projectId" TEXT NOT NULL,
@@ -1312,6 +1333,8 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "Session_projectId_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("projectId", "deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
   `CREATE INDEX IF NOT EXISTS "Session_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
   `CREATE INDEX IF NOT EXISTS "Session_createdAtMs_idx" ON "Session"("createdAtMs");`,
+  `CREATE INDEX IF NOT EXISTS "SessionHistoryIndex_projectId_idx" ON "SessionHistoryIndex"("projectId");`,
+  `CREATE INDEX IF NOT EXISTS "SessionHistoryItem_sessionId_ordinal_idx" ON "SessionHistoryItem"("sessionId", "ordinal");`,
   `CREATE INDEX IF NOT EXISTS "PendingSessionReconciliation_projectId_idx" ON "PendingSessionReconciliation"("projectId");`,
   `CREATE INDEX IF NOT EXISTS "SessionTurnUsage_completedAtMs_idx" ON "SessionTurnUsage"("completedAtMs");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "SessionModelCallUsage_sessionId_messageId_callIndex_key" ON "SessionModelCallUsage"("sessionId", "messageId", "callIndex");`,
@@ -1481,6 +1504,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'SessionNumberSequence',
   'Session',
   'SessionProjectionState',
+  'SessionHistoryIndex',
+  'SessionHistoryItem',
   'PendingSessionReconciliation',
   'SessionTurnUsage',
   'SessionModelCallUsage',

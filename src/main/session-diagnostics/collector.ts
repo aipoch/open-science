@@ -15,6 +15,7 @@ import { projectDiagnosticSession, projectDiagnosticLog } from './projection'
 import { readDiagnosticDatabase } from './database'
 import { projectDiagnosticNotebook, type DiagnosticNotebookCodeCoverage } from './notebook'
 import { projectDiagnosticEnvironment } from './environment'
+import { sessionJournalPath, SessionJournalStore } from '../session-persistence/journal'
 import { diagnosticText } from './detail'
 import { exportResourceJournal, inspectResourceJournal } from './resources'
 
@@ -114,6 +115,14 @@ async function discoverSessionSources(
 ): Promise<Source[]> {
   const project = join(input.configRoot, 'sessions', input.projectId)
   const notebookRoot = join(input.dataRoot, 'notebooks', input.projectId, input.sessionId)
+  const legacySessionPath = join(project, `${input.sessionId}.json`)
+  const journalPath = sessionJournalPath(legacySessionPath)
+  const sessionPath = await lstat(journalPath)
+    .then(() => journalPath)
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return legacySessionPath
+      throw error
+    })
   const sources: Source[] = [
     {
       id: 'session',
@@ -121,7 +130,7 @@ async function discoverSessionSources(
       kind: 'session',
       available: false,
       root: input.configRoot,
-      path: join(project, `${input.sessionId}.json`),
+      path: sessionPath,
       output: 'session.json'
     },
     {
@@ -431,6 +440,20 @@ async function readSource(source: Source): Promise<{
   }
 }
 
+// Reconstruct JSONL through the ordinary diagnostic redaction path. It remains a read-only
+// observation: no recovery, migration or file cleanup is performed during collection.
+async function readSessionSource(source: Source): ReturnType<typeof readSource> {
+  if (!source.path!.endsWith('.jsonl')) return readSource(source)
+  await checkPath(source.root, source.path!)
+  const stat = await lstat(source.path!)
+  if (!stat.isFile() || stat.size > FILE_LIMIT)
+    throw new DiagnosticCollectionError('Source exceeds file limit or is not regular')
+  const journal = new SessionJournalStore({ maxBytes: FILE_LIMIT, maxCacheEntries: 0 })
+  const reconstructed = await journal.read(source.path!)
+  if (!reconstructed) throw new DiagnosticCollectionError('Session journal is unavailable')
+  return { text: JSON.stringify(reconstructed.document) }
+}
+
 async function readBinarySource(source: Source): Promise<Buffer> {
   await checkPath(source.root, source.path!)
   const handle = await open(source.path!, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
@@ -732,7 +755,8 @@ export async function runSessionDiagnosticWorker(
             state.status = 'truncated'
             record('Source exceeds read budget; file metadata retained')
           } else {
-            const observation = await readSource(source)
+            const observation =
+              source.kind === 'session' ? await readSessionSource(source) : await readSource(source)
             if (observation.note) record(observation.note)
             if (observation.partial) {
               partial = true

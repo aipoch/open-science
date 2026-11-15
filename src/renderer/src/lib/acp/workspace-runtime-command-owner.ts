@@ -46,6 +46,7 @@ import { validateImageAnnotationSourcesBeforeSend } from '../../pages/workspace/
 import { toPersistedSession, useSessionStore } from '../../stores/session-store'
 import { isSessionDeletionAllowed } from '../../stores/session-actionability'
 import type { ChatMessage } from '../../stores/session-store-contract'
+import { ensureSessionContentLoaded } from '../session-persistence/session-history'
 import {
   confirmPendingDelegationPolicyAuthority,
   deleteSession,
@@ -1093,6 +1094,17 @@ const performSendWorkspaceMessage = async (
   lifecycle: WorkspaceCommandLifecycle = {},
   attempt?: WorkspaceSendAttempt
 ): Promise<SendWorkspaceMessageResult | undefined> => {
+  // The wrapper installs the admission/Stop receipt before hydration can yield.
+  const sourceId = input.sessionId ?? input.branchSourceSessionId
+  const source = useSessionStore.getState().sessions.find(({ id }) => id === sourceId)
+  if (source?.contentLoaded === false) {
+    const loaded = await ensureSessionContentLoaded({
+      projectId: source.projectId,
+      sessionId: source.id
+    })
+    if (!loaded || loaded.contentLoaded === false || lifecycle.isCurrent?.() === false)
+      return undefined
+  }
   let promptPreparation: WorkspacePromptPreparation | undefined
   if (input.sessionId) clearWorkspaceOperationError(input.sessionId)
   if (input.sessionId && hasPendingWorkspacePromptRollback(input.sessionId)) {
@@ -2001,6 +2013,9 @@ const resendEditedWorkspaceMessage = async (
   input: ResendEditedMessageInput & { sessionId: string; messageId: string },
   options: ResendEditedWorkspaceMessageOptions = {}
 ): Promise<boolean> => {
+  const source = useSessionStore.getState().sessions.find((item) => item.id === input.sessionId)
+  if (source?.contentLoaded === false)
+    await ensureSessionContentLoaded({ projectId: source.projectId, sessionId: source.id })
   const session = useSessionStore.getState().sessions.find((item) => item.id === input.sessionId)
   if (!session) return false
   const sourceMessage = session.messages.find((message) => message.id === input.messageId)
