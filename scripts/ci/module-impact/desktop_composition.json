@@ -1,5 +1,10 @@
 {
   "ownerPaths": [
+    "build/macos-service-launcher.c",
+    "scripts/build-macos-service-launcher.mjs",
+    "scripts/build-macos-service-launcher.d.mts",
+    "scripts/electron-host-dependencies.mjs",
+    "scripts/electron-host-dependencies.d.mts",
     "src/main/composition/agent-activation.ts",
     "src/main/composition/agent-completion.ts",
     "src/main/composition/agent-controls.ts",
@@ -186,6 +191,7 @@
     "src/main/backend-startup-log-retention-probes.test.ts",
     "src/main/desktop-runtime-launcher.test.ts",
     "src/main/desktop-preview-proxy.ts",
+    "src/main/desktop-runtime-launcher.integration.test.ts",
     "src/main/desktop-runtime-lifecycle.ts",
     "src/main/desktop-runtime-lifecycle.test.ts",
     "src/main/desktop-startup-contract.ts",
@@ -407,6 +413,7 @@
       "src/main/backend-startup-log-retention.test.ts",
       "src/main/backend-startup-log-retention-probes.test.ts",
       "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
       "src/main/desktop-runtime-lifecycle.test.ts",
       "scripts/electron-session-revision-retry.test.ts",
       "scripts/build-dev-packages.integration.test.ts",
