@@ -746,21 +746,22 @@ describe('WorkspaceMessageItem user message actions', () => {
   it('keeps short user message content fully visible without an expand control', async () => {
     await renderItem(createMessage({ content: 'Short prompt' }))
 
-    const content = container.querySelector<HTMLElement>('[data-slot="user-message-content"]')
     const measurement = container.querySelector<HTMLElement>(
       '[data-slot="user-message-measurement"]'
-    )
-    if (!content || !measurement) throw new Error('user message content not found')
+    )!
     measurement.style.lineHeight = '20px'
     Object.defineProperty(measurement, 'scrollHeight', { configurable: true, value: 240 })
     act(() => notifyResize?.())
 
     expect(container.querySelector('[aria-label="Show more"]')).toBeNull()
-    expect(content.classList.contains('max-h-[12.5lh]')).toBe(false)
   })
 
-  it('defers skipped row measurements and preserves expansion until rendering resumes', async () => {
+  it('caps the initial height and preserves expansion while row measurements are deferred', async () => {
     await renderItem(createMessage({ content: 'Long prompt line\n'.repeat(13) }))
+    const content = container.querySelector<HTMLElement>('[data-slot="user-message-content"]')!
+    expect(content.classList.contains('max-h-[12.5lh]')).toBe(true)
+    expect(content.classList.contains('overflow-hidden')).toBe(true)
+
     const measurement = container.querySelector<HTMLElement>(
       '[data-slot="user-message-measurement"]'
     )!
@@ -774,6 +775,7 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(checkVisibility).toHaveBeenCalledWith({ contentVisibilityAuto: true })
     expect(readHeight).not.toHaveBeenCalled()
     expect(container.querySelector('[aria-label="Show more"]')).toBeNull()
+    expect(content.classList.contains('max-h-[12.5lh]')).toBe(true)
 
     checkVisibility.mockReturnValue(true)
     act(() => notifyResize?.())

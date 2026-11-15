@@ -766,7 +766,8 @@ const CollapsibleUserMessageContent = ({
       <div
         id={contentId}
         data-slot="user-message-content"
-        className={cn(isCollapsed && 'max-h-[12.5lh] overflow-hidden')}
+        // Cap the first layout even when containment defers the overflow measurement.
+        className={cn(!isExpanded && 'max-h-[12.5lh] overflow-hidden')}
       >
         {isCollapsed && hasInteractiveContent ? (
           <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
