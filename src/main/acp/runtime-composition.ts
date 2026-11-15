@@ -26,7 +26,7 @@ import {
 } from '../../shared/lifecycle-events'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings-runtime'
 import { filterSpecialistConnectorSkills } from '../../shared/specialist'
 import { imageAttachmentMimeType } from '../../shared/uploads'
 import type { ResolvedAgentBackend } from '../agent-framework'

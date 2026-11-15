@@ -9,7 +9,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { i18next } from '@/i18n'
 import { AgentInstallSourceMenu } from './AgentInstallSourceMenu'
 import { describeInstallProgress } from './claude-install-progress'
-import { getClaudeInstallSources, getOpencodeInstallSources } from '../../../../shared/settings'
+import {
+  getClaudeInstallSources,
+  getOpencodeInstallSources
+} from '../../../../shared/settings-runtime'
 
 let container: HTMLDivElement
 let root: Root

@@ -18,12 +18,12 @@ import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { defaultVendorModel } from '../../shared/provider-model-policy'
+import type { ClaudeDetectResult } from '../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
-  CODEX_SUBSCRIPTION_PROVIDER_ID,
-  type ClaudeDetectResult
-} from '../../shared/settings'
+  CODEX_SUBSCRIPTION_PROVIDER_ID
+} from '../../shared/settings-runtime'
 import type { CodexAuthControllerPort, CodexAuthStatus } from './codex-auth'
 import type {
   ClaudeIsolatedAuthControllerPort,

@@ -10,7 +10,7 @@ import type {
   CustomServerTransport
 } from '../../shared/settings'
 import { CONNECTOR_RESOURCE_LIMITS } from './connector-resource-limits'
-import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings'
+import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings-runtime'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
 import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/oauth-redirect'
 import { isRecord } from '../value-guards'

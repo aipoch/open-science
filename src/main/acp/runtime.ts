@@ -63,7 +63,8 @@ import type {
   PlanResponseCommand,
   PlanResponseIdentity
 } from '../../shared/session-plan/contract'
-import { isCodexSubscriptionProviderId, type AgentFrameworkId } from '../../shared/settings'
+import type { AgentFrameworkId } from '../../shared/settings'
+import { isCodexSubscriptionProviderId } from '../../shared/settings-runtime'
 import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
 import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
