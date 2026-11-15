@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { builtinModules } from 'node:module'
+import { existsSync, readFileSync } from 'node:fs'
 import { readFile, readdir, unlink, writeFile } from 'node:fs/promises'
-import { join, posix } from 'node:path'
+import { dirname, isAbsolute, join, posix, relative as relativePath } from 'node:path'
 
 // Standard inline maps keep diagnostics while avoiding a second installed file per module.
 // Only rewrite audited desktop copies, retaining every executable byte and map byte.
@@ -92,9 +93,9 @@ export function generatedPrismaIncludes(relativePath, { desktop = false, ...targ
 
 // These renderer imports are already compiled into out/web. Only omit their direct backend
 // roots: the dependency walker must still retain them if another runtime package needs them.
-export function desktopBackendDependencies(dependencies, metafiles) {
-  assertBackendImports(metafiles, dependencies)
-  const bundled = desktopBundledDependencies(metafiles)
+export function desktopBackendDependencies(dependencies, metafiles, allowed = new Set(), root) {
+  assertBackendImports(metafiles, dependencies, allowed)
+  const bundled = desktopBundledDependencies(metafiles, undefined, root)
   const rendererRoots = new Set([
     '@radix-ui/react-focus-scope',
     '@rc-component/qrcode',
@@ -114,34 +115,119 @@ export function desktopBackendDependencies(dependencies, metafiles) {
   )
 }
 
+// Packages that must stay on disk: they ship native code or runtime assets, or the backend
+// locates them by path for another process. Everything else is bundled. The closure is
+// computed so a package that stays on disk never depends on one that was bundled.
+const desktopExternalRoots = [
+  'pdfjs-dist',
+  '@bokuweb/zstd-wasm',
+  'tiktoken',
+  '@aipoch/notebook-syntax',
+  'web-tree-sitter',
+  '@embedpdf/pdfium',
+  'tesseract.js',
+  'tesseract.js-core',
+  '@aipoch/process-tree-native',
+  'citeme-engine-wasm',
+  'sharp',
+  '@aipoch/safe-file-publisher-native',
+  '@napi-rs/canvas',
+  '@aipoch/credential-identity-probe-native',
+  '@prisma/client',
+  '@agentclientprotocol/claude-agent-acp',
+  '@anthropic-ai/claude-agent-sdk',
+  '@aipoch/literature-citations',
+  '@aipoch/pdf-translation',
+  '@aipoch/pdf-structure',
+  '@aipoch/research-film',
+  'tslib'
+]
+
+export const desktopExternalClosure = (root) => {
+  const external = new Set()
+  const locate = (name, from) => {
+    let directory = from
+    while (true) {
+      const candidate = join(directory, 'node_modules', name, 'package.json')
+      if (existsSync(candidate)) return candidate
+      const parent = dirname(directory)
+      if (parent === directory) return undefined
+      directory = parent
+    }
+  }
+  const visit = (name, from, optional) => {
+    if (external.has(name) || builtinModules.includes(name)) return
+    const manifestPath = locate(name, from)
+    if (!manifestPath) {
+      if (optional) return
+      throw new Error('Missing external dependency: ' + name)
+    }
+    external.add(name)
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    const directory = dirname(manifestPath)
+    const optionalDependencies = new Set([
+      ...Object.keys(manifest.optionalDependencies ?? {}),
+      ...Object.entries(manifest.peerDependenciesMeta ?? {})
+        .filter(([, meta]) => meta?.optional)
+        .map(([name]) => name)
+    ])
+    for (const dependency of new Set([
+      ...Object.keys({ ...manifest.dependencies, ...manifest.optionalDependencies }),
+      ...desktopBackendPeerDependencies(manifest)
+    ]))
+      visit(dependency, directory, optionalDependencies.has(dependency))
+  }
+  // A root that is not installed has no files to keep; its own missing dependencies still fail.
+  for (const name of desktopExternalRoots) visit(name, root, true)
+  return external
+}
+
 // Use the actual build graph, never an assumed build mode, to remove a runtime root.
 // A mixed bundled/external copy would create independent module instances in one process.
-export function desktopBundledDependencies(metafiles) {
+export function desktopBundledDependencies(metafiles, external = new Set(), root) {
   const bundled = new Set()
-  if (
-    metafiles.some((meta) =>
-      Object.keys(meta.inputs).some((path) => /(?:^|[\\/])node_modules[\\/]i18next[\\/]/.test(path))
-    )
-  ) {
+  for (const meta of metafiles)
+    for (const path of Object.keys(meta.inputs)) {
+      const match = /(?:^|[\\/])node_modules[\\/]((?:@[^\\/]+[\\/])?[^\\/]+)[\\/]/.exec(path)
+      if (match) bundled.add(match[1].replaceAll('\\', '/'))
+      // Workspace packages resolve through their real path, without a node_modules segment.
+      const local = root && !match && /^packages[\\/]([^\\/]+)[\\/]/.exec(path)
+      if (local) {
+        const manifest = join(root, 'packages', local[1], 'package.json')
+        if (existsSync(manifest)) bundled.add(JSON.parse(readFileSync(manifest, 'utf8')).name)
+      }
+    }
+  for (const name of bundled) {
+    if (external.has(name))
+      throw new Error('Desktop backend cannot bundle the external dependency ' + name + '.')
     for (const meta of metafiles)
       for (const output of Object.values(meta.outputs))
-        if (output.imports.some((item) => item.external && packageName(item.path) === 'i18next'))
-          throw new Error('Desktop backend cannot mix bundled and external i18next.')
-    bundled.add('i18next')
+        if (
+          output.imports.some(
+            (item) =>
+              item.external &&
+              !item.path.startsWith('node:') &&
+              !builtinModules.includes(item.path) &&
+              packageName(item.path) === name
+          )
+        )
+          throw new Error('Desktop backend cannot mix bundled and external ' + name + '.')
   }
   return bundled
 }
 
-// Agent SDK 0.3.232 refers to the API SDK only from its .d.ts files. Desktop consumers
-// execute the prebuilt JavaScript; standalone/SDK staging retains the published type contract.
-// Keep unknown versions and every other incoming edge until separately audited.
+// Agent SDK 0.3.232 refers to the API and MCP SDKs only from its .d.ts files; its runtime
+// JavaScript inlines what it needs. Desktop consumers execute the prebuilt JavaScript, so these
+// edges must not keep the MCP SDK external, which would leave its server stack on disk.
+// Standalone/SDK staging retains the published type contract. Keep unknown versions and every
+// other incoming edge until separately audited.
 export function desktopBackendPeerDependencies(manifest) {
   return Object.keys(manifest.peerDependencies ?? {}).filter(
     (name) =>
       !(
         manifest.name === '@anthropic-ai/claude-agent-sdk' &&
         manifest.version === '0.3.232' &&
-        name === '@anthropic-ai/sdk'
+        ['@anthropic-ai/sdk', '@modelcontextprotocol/sdk'].includes(name)
       )
   )
 }
@@ -218,7 +304,64 @@ export function createDesktopDependencyFilter(manifest) {
 
 // esbuild inputs cover the entire reachable source/worker graph; outputs record actual external
 // runtime imports after type erasure. Packaging independently walks every dependency and peer.
-export function assertBackendImports(metafiles, dependencies) {
+export const missingOptionalDependencies = (root, metafiles) => {
+  const missing = new Set()
+  for (const meta of metafiles)
+    for (const path of Object.keys(meta.inputs)) {
+      const parts = path.split(/[\\/]/)
+      const at = parts.lastIndexOf('node_modules')
+      if (at < 0) continue
+      const depth = parts[at + 1].startsWith('@') ? 3 : 2
+      const manifestPath = join(root, ...parts.slice(0, at + depth), 'package.json')
+      if (!existsSync(manifestPath)) continue
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+      const optional = [
+        ...Object.keys(manifest.optionalDependencies ?? {}),
+        ...Object.entries(manifest.peerDependenciesMeta ?? {})
+          .filter(([, value]) => value?.optional)
+          .map(([name]) => name)
+      ]
+      for (const name of optional)
+        if (!existsSync(join(root, 'node_modules', name, 'package.json'))) missing.add(name)
+    }
+  return missing
+}
+
+// Bundling relocates a module to out/backend, so anything that reads a file relative to its own
+// location breaks unless the file moves with it. Fail the build on such code unless the exact file
+// has been checked and listed here. Add an entry only after confirming the read is dead, resolves
+// through node_modules, or is served by a compiled file worker.
+const bundledSelfLocationAllowlist = new Map([
+  // registerFromNodejs() is never called; the live import.meta.url is only read if it is.
+  ['node_modules/openchemlib/dist/openchemlib.js', 'dead registerFromNodejs branch'],
+  // Worker is compiled beside index.cjs, so join(__dirname, name) still resolves.
+  ['packages/compute/dist/hugging-face-bucket.js', 'compiled file worker'],
+  // createRequire(__filename) walks up to the staged node_modules, where both stay external.
+  ['packages/reproducibility/dist/output-comparison.js', 'resolves staged sharp and papaparse']
+])
+
+const selfLocationPattern =
+  /\b__dirname\b|\b__filename\b|import\.meta\.(?:url|dirname|filename)|require\.resolve\s*\(/
+
+export function assertBundledModulesStayPortable(metafiles, root) {
+  const offenders = []
+  for (const meta of metafiles)
+    for (const path of Object.keys(meta.inputs)) {
+      if (path.startsWith('raw-resource:') || path.startsWith('node-worker:')) continue
+      const relative = (isAbsolute(path) ? relativePath(root, path) : path).replaceAll('\\', '/')
+      if (relative.startsWith('src/')) continue
+      if (!selfLocationPattern.test(readFileSync(join(root, relative), 'utf8'))) continue
+      if (!bundledSelfLocationAllowlist.has(relative)) offenders.push(relative)
+    }
+  if (offenders.length)
+    throw new Error(
+      'Bundled module locates its own files and is not on the allowlist: ' +
+        offenders.sort().join(', ') +
+        '. Keep the package external, or verify the read and add the file to bundledSelfLocationAllowlist.'
+    )
+}
+
+export function assertBackendImports(metafiles, dependencies, allowed = new Set()) {
   for (const meta of metafiles) {
     for (const [source, input] of Object.entries(meta.inputs)) {
       for (const item of input.imports) {
@@ -238,7 +381,7 @@ export function assertBackendImports(metafiles, dependencies) {
         const name = packageName(item.path)
         if (isElectronPackage(name))
           throw new Error(`Node backend imports Electron: ${output} -> ${name}`)
-        if (!(name in dependencies))
+        if (!(name in dependencies) && !allowed.has(name))
           throw new Error(`Backend dependency must be declared for production: ${name}`)
       }
     }

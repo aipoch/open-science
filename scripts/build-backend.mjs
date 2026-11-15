@@ -1,13 +1,60 @@
 import { windowsSigningBuildDefines } from './windows-signing-policy.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { assertBackendImports, desktopBundledDependencies } from './backend-dependencies.mjs'
+import {
+  assertBackendImports,
+  desktopBundledDependencies,
+  desktopExternalClosure,
+  assertBundledModulesStayPortable,
+  missingOptionalDependencies
+} from './backend-dependencies.mjs'
 import { context } from 'esbuild'
 import { fileURLToPath } from 'node:url'
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { createRequire } from 'node:module'
 import { wsl2BuildDefines } from './wsl2-build-flags.mjs'
+
+// Bundled code may keep a guarded require of an optional package that is not installed (for
+// example ws and bufferutil). Only names the bundled package itself marks optional qualify.
+// Every third-party package compiled into the bundle ships its notice here. Workspace packages
+// resolve without a node_modules segment and are covered by the application license.
+async function bundledDependencyNotices(root, metafiles) {
+  const directories = new Map()
+  for (const meta of metafiles)
+    for (const path of Object.keys(meta.inputs)) {
+      const parts = path.split(/[\\/]/)
+      const at = parts.lastIndexOf('node_modules')
+      if (at < 0) continue
+      const directory = join(root, ...parts.slice(0, at + (parts[at + 1].startsWith('@') ? 3 : 2)))
+      directories.set(directory, true)
+    }
+  const notices = []
+  for (const directory of directories.keys()) {
+    const manifest = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'))
+    const files = (await readdir(directory))
+      .filter((name) => /^(?:licen[sc]e|notice|copying|copyright)/i.test(name))
+      .sort()
+    const id = manifest.name + '@' + manifest.version
+    if (files.length)
+      for (const file of files)
+        notices.push(
+          id + ' - ' + file + '\n\n' + (await readFile(join(directory, file), 'utf8')).trim()
+        )
+    else if (typeof manifest.license === 'string' && manifest.license.trim())
+      notices.push(
+        [
+          id + ' - package.json',
+          'License: ' + manifest.license,
+          manifest.author && 'Author: ' + (manifest.author.name ?? manifest.author),
+          manifest.repository && 'Repository: ' + (manifest.repository.url ?? manifest.repository)
+        ]
+          .filter(Boolean)
+          .join('\n')
+      )
+    else throw new Error('Missing bundled dependency license: ' + id)
+  }
+  return notices.sort((a, b) => a.localeCompare(b))
+}
 
 export async function createBackendBuilder({
   root = resolve(import.meta.dirname, '..'),
@@ -15,13 +62,7 @@ export async function createBackendBuilder({
   desktop = false
 } = {}) {
   const out = join(root, desktop ? 'out/desktop-backend-build' : 'out/backend')
-  const require = createRequire(join(root, 'package.json'))
-  // Only this audited, resource-free CJS implementation is inlined. New versions remain
-  // external until their runtime behavior and dependency graph have been checked again.
-  const inlineI18next =
-    desktop &&
-    JSON.parse(await readFile(require.resolve('i18next/package.json'), 'utf8')).version ===
-      '25.10.10'
+  const external = desktop ? desktopExternalClosure(root) : undefined
   await mkdir(out, { recursive: true })
   const workers = new Map()
   const contexts = new Map()
@@ -37,7 +78,7 @@ export async function createBackendBuilder({
         platform: 'node',
         target: 'node22',
         format: 'cjs',
-        packages: 'external',
+        ...(desktop ? {} : { packages: 'external' }),
         metafile: true,
         sourcemap: true,
         loader: { '.md': 'text' },
@@ -54,10 +95,14 @@ export async function createBackendBuilder({
           {
             name: 'open-science-node-resources',
             setup(plugin) {
-              if (inlineI18next)
-                plugin.onResolve({ filter: /^i18next$/ }, () => ({
-                  path: require.resolve('i18next')
-                }))
+              if (external)
+                plugin.onResolve({ filter: /^(?:@[^/]+\/[^/]+|[^@./][^/]*)(?:\/|$)/ }, (args) => {
+                  const name = args.path.startsWith('@')
+                    ? args.path.split('/').slice(0, 2).join('/')
+                    : args.path.split('/')[0]
+                  if (external.has(name)) return { path: args.path, external: true }
+                  return undefined
+                })
               plugin.onResolve({ filter: /^@aipoch\/notebook-network-sandbox$/ }, () => ({
                 path: join(root, 'packages/notebook-network-sandbox/src/index.ts')
               }))
@@ -100,30 +145,63 @@ export async function createBackendBuilder({
     const result = await builder.rebuild()
     metadata.push(result.metafile)
   }
+  // Bundled modules that start a worker from a file beside themselves. When the module is in
+  // the bundle, its worker is compiled beside index.cjs so join(__dirname, name) still finds it.
+  const fileWorkerSources = desktop
+    ? [
+        {
+          caller: 'packages/compute/dist/hugging-face-bucket.js',
+          entry: 'packages/compute/dist/hugging-face-bucket-worker.js',
+          name: 'hugging-face-bucket-worker.js'
+        }
+      ]
+    : []
+  let fileWorkers = []
   const rebuild = async () => {
     workers.clear()
     metadata = []
     await buildEntry(join(root, 'src/main/node-entry.ts'), join(out, 'index.cjs'))
     for (const [entry, name] of workers) await buildEntry(entry, join(out, name))
+    const bundledInputs = new Set(
+      metadata.flatMap((meta) => Object.keys(meta.inputs).map((path) => path.replaceAll('\\', '/')))
+    )
+    fileWorkers = fileWorkerSources
+      .filter(({ caller }) => bundledInputs.has(caller))
+      .map(({ entry, name }) => [join(root, entry), name])
+    for (const [entry, name] of fileWorkers) await buildEntry(entry, join(out, name))
     for (const [entry, builder] of contexts) {
-      if (entry !== join(root, 'src/main/node-entry.ts') && !workers.has(entry)) {
+      if (
+        entry !== join(root, 'src/main/node-entry.ts') &&
+        !workers.has(entry) &&
+        !fileWorkers.some(([file]) => file === entry)
+      ) {
         await builder.dispose()
         contexts.delete(entry)
       }
     }
     assertBackendImports(
       metadata,
-      JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).dependencies
+      JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).dependencies,
+      external && new Set([...external, ...missingOptionalDependencies(root, metadata)])
     )
-    if (desktopBundledDependencies(metadata).has('i18next')) {
-      await mkdir(join(out, 'third-party-licenses'), { recursive: true })
-      await writeFile(
-        join(out, 'third-party-licenses/i18next-LICENSE'),
-        await readFile(join(require.resolve('i18next/package.json'), '..', 'LICENSE'))
-      )
-    } else if (desktop) {
-      await rm(join(out, 'third-party-licenses/i18next-LICENSE'), { force: true })
+    desktopBundledDependencies(metadata, external, root)
+    if (desktop) assertBundledModulesStayPortable(metadata, root)
+    if (desktop) {
+      await rm(join(out, 'third-party-licenses'), { recursive: true, force: true })
+      const notices = await bundledDependencyNotices(root, metadata)
+      if (notices.length) {
+        await mkdir(join(out, 'third-party-licenses'), { recursive: true })
+        await writeFile(
+          join(out, 'third-party-licenses/THIRD-PARTY-NOTICES.txt'),
+          notices.join('\n\n---\n\n') + '\n'
+        )
+      }
     }
+    // The staged backend package is an ES module scope. Compiled file workers keep their
+    // published .js names, so pin this directory to CommonJS like the .cjs entry points.
+    if (fileWorkers.length)
+      await writeFile(join(out, 'package.json'), JSON.stringify({ type: 'commonjs' }) + '\n')
+    else if (desktop) await rm(join(out, 'package.json'), { force: true })
     await mkdir(join(out, 'native-locales'), { recursive: true })
     for (const file of await readdir(join(root, 'src/shared/i18n/locales'))) {
       if (!file.endsWith('.json')) continue

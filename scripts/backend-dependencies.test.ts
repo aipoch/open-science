@@ -458,15 +458,27 @@ describe('desktop-only dependency contents', () => {
     const manifest = {
       name: '@anthropic-ai/claude-agent-sdk',
       version: '0.3.232',
-      peerDependencies: { '@anthropic-ai/sdk': '>=0.93.0', zod: '^4.0.0' }
+      peerDependencies: {
+        '@anthropic-ai/sdk': '>=0.93.0',
+        '@modelcontextprotocol/sdk': '^1.29.0',
+        zod: '^4.0.0'
+      }
     }
     expect(desktopBackendPeerDependencies(manifest)).toEqual(['zod'])
     for (const other of [
       { ...manifest, version: '0.3.233' },
       { ...manifest, name: 'another-consumer' }
     ])
-      expect(desktopBackendPeerDependencies(other)).toEqual(['@anthropic-ai/sdk', 'zod'])
-    expect(Object.keys(manifest.peerDependencies)).toEqual(['@anthropic-ai/sdk', 'zod'])
+      expect(desktopBackendPeerDependencies(other)).toEqual([
+        '@anthropic-ai/sdk',
+        '@modelcontextprotocol/sdk',
+        'zod'
+      ])
+    expect(Object.keys(manifest.peerDependencies)).toEqual([
+      '@anthropic-ai/sdk',
+      '@modelcontextprotocol/sdk',
+      'zod'
+    ])
     expect(isBackendRuntimeDependency('@anthropic-ai/sdk', manifest.name)).toBe(true)
     expect(
       desktopBackendDependencies({ '@anthropic-ai/sdk': '1' }, [{ inputs: {}, outputs: {} }])
