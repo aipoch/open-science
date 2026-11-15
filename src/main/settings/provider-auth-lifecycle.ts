@@ -13,7 +13,7 @@ import {
   isCodexSubscriptionProvider,
   isCodexSubscriptionProviderId,
   resolveCodexSubscriptionType
-} from '../../shared/settings'
+} from '../../shared/settings-runtime'
 import { customProviderRequiresKey } from '../../shared/provider-url-policy'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {

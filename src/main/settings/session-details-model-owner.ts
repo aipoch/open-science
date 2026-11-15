@@ -1,9 +1,9 @@
+import type { SessionDetailsModelConfiguration } from '../../shared/settings'
 import {
   DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
   isCodexSubscriptionProvider,
-  providerValidationFailed,
-  type SessionDetailsModelConfiguration
-} from '../../shared/settings'
+  providerValidationFailed
+} from '../../shared/settings-runtime'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { DEFAULT_AGENT_FRAMEWORK_ID, getAgentFramework } from '../agent-framework'
 import type { AgentBackendResolver, ExplicitAgentBackendTarget } from './backend-resolver'

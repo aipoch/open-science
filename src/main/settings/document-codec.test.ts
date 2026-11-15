@@ -2,7 +2,10 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { CODEX_SUBSCRIPTION_PROVIDER_ID, SETTINGS_FILE_VERSION } from '../../shared/settings'
+import {
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
+  SETTINGS_FILE_VERSION
+} from '../../shared/settings-runtime'
 import { sanitizeSettings } from './document-codec'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 

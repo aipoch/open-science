@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { type ModelProtocol, usesVendorMessagesApiKeyHeader } from '@aipoch/providers'
 
 import type { ValidateProviderResult, ValidationCategory } from '../../shared/settings'
-import { DEFAULT_ENDPOINT_ORDER, preferredEndpoint } from '../../shared/settings'
+import { DEFAULT_ENDPOINT_ORDER, preferredEndpoint } from '../../shared/settings-runtime'
 import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import { toErrorMessage } from '../error-message'
 import {

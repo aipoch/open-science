@@ -9,6 +9,7 @@ import { MAX_PERSISTED_SESSION_BYTES, normalizeSessionFile } from '../../shared/
 import { SessionJournalStore } from '../session-persistence/journal'
 import { operationJournalPath, RuntimeOperationJournal } from '@aipoch/environment'
 import { parseNotebookEnvironmentLock } from '@aipoch/environment'
+import { NotebookRunRepository } from '../notebook/repository'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
 import { resolveContentStorageKey } from './content-repository'
@@ -212,7 +213,12 @@ const validateReferencedEnvironmentManifests = async (
       if (projectId !== project.name || document.sessionId !== session.name) {
         throw new Error(`Notebook run ownership is invalid: ${project.name}/${session.name}`)
       }
-      const runs = Array.isArray(document.runs) ? document.runs : []
+      const runs =
+        document.version === 2
+          ? (await new NotebookRunRepository(root).findExisting(project.name, session.name))!.runs
+          : Array.isArray(document.runs)
+            ? document.runs
+            : []
       for (const rawRun of runs) {
         const run = recordValue(rawRun)
         if (!run) throw new Error(`Notebook run record is invalid: ${project.name}/${session.name}`)

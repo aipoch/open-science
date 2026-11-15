@@ -1,4 +1,9 @@
 import {
+  scheduleToolDescriptions,
+  scheduleToolInputs,
+  SCHEDULE_MCP_NAME
+} from '../../shared/session-schedules'
+import {
   listPdfAnnotationsInput,
   locatePdfAnnotationInput,
   createPdfAnnotationInput
@@ -271,6 +276,7 @@ const notebookTools = (options: NotebookToolEnvironmentOptions): ResponsesNamesp
   }))
 
 export const createCodexBridgeMcpTools = (options: {
+  schedules?: boolean
   notebook?: NotebookToolEnvironmentOptions
   skillImport?: boolean
   library?:
@@ -285,6 +291,16 @@ export const createCodexBridgeMcpTools = (options: {
   artifacts?: boolean
 }): ResponsesNamespacedTool[] => {
   const tools = [
+    ...(options.schedules
+      ? Object.entries(scheduleToolInputs).map(([name, schema]) =>
+          tool(
+            SCHEDULE_MCP_NAME,
+            name,
+            scheduleToolDescriptions[name as keyof typeof scheduleToolInputs],
+            schema
+          )
+        )
+      : []),
     ...(options.artifacts ? ARTIFACT_TOOLS : []),
     ...(options.notebook ? notebookTools(options.notebook) : []),
     ...(options.skillImport ? SKILL_IMPORT_TOOLS : []),

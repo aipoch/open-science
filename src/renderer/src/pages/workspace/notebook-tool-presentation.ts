@@ -4,7 +4,7 @@ import { identityTranslate, type TranslateClause } from './workspace-translate-c
 export type ToolSummary = {
   title: string
   subtitle?: string
-  fields: Array<{ label: string; value: string; expandable?: boolean }>
+  fields: Array<{ label: string; value: string; expandable?: boolean; multiline?: boolean }>
   rows?: Array<{ title: string; detail?: string; status?: string; error?: string }>
   note?: string
   error?: string

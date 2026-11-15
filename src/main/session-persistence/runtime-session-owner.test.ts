@@ -656,6 +656,39 @@ describe('RuntimeSessionOwner', () => {
       promptMessageId: 'application-prompt'
     })
 
+    it('rejects a scheduled wake if permission becomes pending at the write boundary', async () => {
+      const turn = applicationScope()
+      const { owner, sessions } = harness([idle()])
+      const attribution = {
+        kind: 'application',
+        feature: 'schedule',
+        purpose: 'scheduled-wake',
+        scheduleId: 'check',
+        occurrenceId: 'slot',
+        scheduledAt: 1
+      } as const
+      const prompt = { text: 'Check progress', attribution }
+      await expect(
+        owner.begin(turn, {
+          applicationPrompt: {
+            ...prompt,
+            beforeSessionWrite: async () => {
+              sessions.get(turn.sessionId)!.status = 'waiting-permission'
+            }
+          }
+        })
+      ).rejects.toThrow('needs attention')
+      expect(
+        sessions.get(turn.sessionId)?.messages.some((m) => m.id === turn.promptMessageId)
+      ).toBe(false)
+      sessions.get(turn.sessionId)!.status = 'idle'
+      const saved = await owner.begin(turn, { applicationPrompt: prompt })
+      expect(saved.messages.find((m) => m.id === turn.promptMessageId)?.attribution).toEqual(
+        attribution
+      )
+      expect(saved.activeRun?.promptMessageId).toBe(turn.promptMessageId)
+    })
+
     it.each(['background-results', 'reviewer'] as const)(
       'atomically admits %s prompts and completes their durable reply',
       async (feature) => {

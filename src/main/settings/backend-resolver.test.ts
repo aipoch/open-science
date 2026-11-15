@@ -9,7 +9,7 @@ import { SideChatRuntimeOwner } from '../side-chat/runtime-owner'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
 import type { ResolvedAgentBackend } from '../agent-framework'
 
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import { SETTINGS_FILE_VERSION } from '../../shared/settings-runtime'
 import type { AgentConfigFile, AgentFrameworkId } from '../agent-framework'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'

@@ -82,7 +82,13 @@ const fixture = (() => {
       deleteSessions: vi.fn(),
       planSessionReconciliation: vi.fn(async () => [])
     },
-    applicationEvents: {},
+    applicationEvents: { publish: vi.fn() },
+    scheduleRepository: {
+      pauseTarget: vi.fn(),
+      deleteTarget: vi.fn(),
+      deleteSessions: vi.fn(async () => [] as { projectId: string; sessionId: string | null }[]),
+      sessionTargets: vi.fn(async () => [] as { projectId: string; sessionId: string }[])
+    },
     notificationInbox: {
       setSessionAvailability: vi.fn(),
       invalidateSessions: vi.fn(),
@@ -404,4 +410,34 @@ describe('Project lifecycle composition', () => {
     projects.onAgentContextChanged('project-1')
     expect(runtime.requestProjectAgentContextReload).toHaveBeenCalledWith('project-1')
   })
+})
+
+it('projects schedule archive and deletion through durable Session lifecycle recovery', async () => {
+  const { dependencies: d, handlers } = fixture()
+  const target = { projectId: 'project-1', sessionId: 'session-1' }
+  const callbacks = mocks.archive.mock.calls[0][3]
+  await callbacks.cancelSession(target.projectId, target.sessionId)
+  expect(d.scheduleRepository.pauseTarget).toHaveBeenCalledWith(target.projectId, target.sessionId)
+  expect(d.applicationEvents.publish).toHaveBeenCalledWith('schedules:changed', target)
+
+  d.scheduleRepository.sessionTargets.mockResolvedValue([target])
+  d.scheduleRepository.pauseTarget.mockClear()
+  await handlers.reconcile(['session-1'], ['session-1'])
+  expect(d.scheduleRepository.pauseTarget).toHaveBeenCalledOnce()
+  d.scheduleRepository.pauseTarget.mockClear()
+  await handlers.reconcile(['session-1'], [])
+  expect(d.scheduleRepository.pauseTarget).not.toHaveBeenCalled()
+
+  d.scheduleRepository.deleteSessions.mockRejectedValueOnce(new Error('database unavailable'))
+  await expect(handlers.commit(['session-1'])).rejects.toThrow('database unavailable')
+  const recovery = await handlers.planReconciliation!([])
+  expect(recovery).toHaveLength(1)
+  expect(d.scheduleRepository.deleteTarget).not.toHaveBeenCalled()
+  await recovery[0].apply()
+  expect(d.scheduleRepository.deleteTarget).toHaveBeenCalledWith(target.projectId, target.sessionId)
+  expect(await handlers.planReconciliation!(['session-1'])).toEqual([])
+
+  d.scheduleRepository.deleteSessions.mockResolvedValue([target])
+  await handlers.commit(['session-1'])
+  expect(d.applicationEvents.publish).toHaveBeenLastCalledWith('schedules:changed', target)
 })

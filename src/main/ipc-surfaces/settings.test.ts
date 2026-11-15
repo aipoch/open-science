@@ -32,7 +32,7 @@ vi.mock('electron', () => ({
   dialog: { showOpenDialog: native.openDialog, showSaveDialog: native.saveDialog }
 }))
 
-import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings'
+import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings-runtime'
 import {
   createIpcHandlerInstallationScope,
   disposeIpcHandlerRegistry,

@@ -53,7 +53,8 @@ it('adds unknown verification observations without changing historical content o
       '0055_session_discussion_parent',
       '0056_compute_kubernetes_workspace',
       '0057_project_optimization_prompt',
-      '0058_session_history'
+      '0058_session_schedules',
+      '0059_session_history'
     ]
   })
   expect(await client.contentBlob.findUnique({ where: { id: 'old' } })).toMatchObject({

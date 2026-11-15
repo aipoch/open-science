@@ -18,6 +18,12 @@ import { getHuggingFaceJobAccess, resolveHuggingFaceJobIdentity } from './huggin
 import type { ComputeJobRepository, UpdateJobRequest } from './job-repository'
 import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import { readHostedJournal, type HostedJobJournal } from './hugging-face-job-journal'
+import { createComputeRuntimeLoop, type ComputeRuntimePassResult } from './compute-runtime-loop'
+import {
+  nextComputeRuntimeBackoff,
+  nextComputeRuntimeWakeAfter,
+  type ComputeRuntimeBackoffState
+} from './compute-runtime-backoff'
 
 const log = createLogger('compute:hosted')
 const inputs = z.array(
@@ -129,18 +135,16 @@ async function logs(
 }
 export function createHuggingFaceJobRuntime(deps: Dependencies): {
   start(): void
+  wake(): Promise<void>
   resume(): void
   pause(): Promise<void>
   stop(): Promise<void>
   tick(): Promise<void>
+  retry(jobId: string): Promise<void>
   manualCleanup(job: ComputeJob): Promise<void>
 } {
   const repo = deps.jobRepository
   const cancel = deps.operationRepository
-  let controller: AbortController | undefined
-  let interval: ReturnType<typeof setInterval> | undefined
-  let active: Promise<void> | undefined
-  let stopped = false
   const publish = async (jobId: string): Promise<void> => {
     const job = await repo.get(jobId)
     if (job) await deps.onJobUpdated(job)
@@ -236,8 +240,8 @@ export function createHuggingFaceJobRuntime(deps: Dependencies): {
     })
     await deps.onJobUpdated(await repo.confirmHostedCleanup(job))
   }
-  const cancelOne = async (signal: AbortSignal): Promise<void> => {
-    if (!cancel) return
+  const cancelOne = async (signal: AbortSignal): Promise<boolean> => {
+    if (!cancel) return false
     const claim = await cancel.claimNext(
       'cancel',
       new Date(),
@@ -245,7 +249,7 @@ export function createHuggingFaceJobRuntime(deps: Dependencies): {
       randomUUID(),
       'hugging_face_jobs'
     )
-    if (!claim) return
+    if (!claim) return false
     const retry = (): Promise<boolean> =>
       cancel.retry(claim, new Date(), new Date(Date.now() + 5000))
     try {
@@ -265,11 +269,11 @@ export function createHuggingFaceJobRuntime(deps: Dependencies): {
           if (completed) {
             await cancel.settle(claim, new Date(), { outcome: 'superseded', job: completed })
             await publish(job.job_id)
-            return
+            return true
           }
           if (observed.phase !== 'unreconciled') await cancelHuggingFaceJob(request)
           await retry()
-          return
+          return true
         }
       }
       if (
@@ -283,16 +287,30 @@ export function createHuggingFaceJobRuntime(deps: Dependencies): {
         await publish(job.job_id)
     } catch {
       await retry()
+      return true
     }
+    return true
   }
-  const pass = async (signal: AbortSignal): Promise<void> => {
-    await cancelOne(signal)
-    for (const job of await repo.findHostedWork()) {
+  const failures = new Map<string, ComputeRuntimeBackoffState>()
+  const keepsActiveCadence = (job: ComputeJob): boolean =>
+    job.status === 'submitted' || job.status === 'running' || !job.harvested_at
+  const pass = async (signal: AbortSignal): Promise<ComputeRuntimePassResult> => {
+    const cancelled = await cancelOne(signal)
+    const jobs = await repo.findHostedWork()
+    const ids = new Set(jobs.map((job) => job.job_id))
+    for (const id of failures.keys()) if (!ids.has(id)) failures.delete(id)
+    let ready = false
+    for (const job of jobs) {
       signal.throwIfAborted()
+      const previous = failures.get(job.job_id)
+      if (previous && previous.retryAt > Date.now()) continue
       try {
         await reconcile(job, signal)
+        failures.delete(job.job_id)
+        ready ||= keepsActiveCadence(job)
       } catch (error) {
         signal.throwIfAborted()
+        failures.set(job.job_id, nextComputeRuntimeBackoff(previous, Date.now()))
         const message =
           error instanceof ApprovalChangedError
             ? error.message
@@ -305,41 +323,27 @@ export function createHuggingFaceJobRuntime(deps: Dependencies): {
         }
       }
     }
+    const nextWakeAfterMs = nextComputeRuntimeWakeAfter(failures.values(), Date.now())
+    return {
+      hasWork: cancelled || ready,
+      ...(nextWakeAfterMs === undefined ? {} : { nextWakeAfterMs })
+    }
   }
-  const tick = (): Promise<void> => {
-    if (!controller) return Promise.resolve()
-    return (active ??= pass(controller.signal)
-      .catch(() => {
-        if (!controller?.signal.aborted && controller)
-          log.warn('Hosted job reconciliation deferred.')
-      })
-      .finally(() => {
-        active = undefined
-      }))
-  }
-  const start = (): void => {
-    if (stopped || controller) return
-    controller = new AbortController()
-    interval = setInterval(() => void tick(), 5000)
-    interval.unref()
-    void tick()
-  }
-  const pause = async (): Promise<void> => {
-    clearInterval(interval)
-    controller?.abort()
-    controller = undefined
-    await active
-  }
+  const loop = createComputeRuntimeLoop({
+    run: pass,
+    activeIntervalMs: 5000,
+    onError: () => log.warn('Hosted job reconciliation deferred.')
+  })
   return {
-    start,
-    resume: start,
-    pause,
-    tick,
+    ...loop,
+    retry: async (jobId: string) => {
+      await loop.wake(() => failures.delete(jobId))
+    },
     manualCleanup: async (job) => {
-      if (!controller) throw new Error('Compute recovery is paused.')
+      const signal = loop.signal
+      if (!signal) throw new Error('Compute recovery is paused.')
       if (!repo.getManualStagedCleanup(job)) throw new Error('Cannot verify staged resources.')
       const journal = readHostedJournal(job)
-      const signal = controller.signal
       const connection = await access(job, journal, signal)
       await cleanupHuggingFaceBucketFiles({
         bucket: journal.target.bucket,
@@ -350,10 +354,6 @@ export function createHuggingFaceJobRuntime(deps: Dependencies): {
         expectedInputs: frozenInputReceipts(job)
       })
       await deps.onJobUpdated(await repo.confirmManualStagedCleanup(job))
-    },
-    stop: async () => {
-      stopped = true
-      await pause()
     }
   }
 }

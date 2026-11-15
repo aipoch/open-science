@@ -465,6 +465,7 @@ describe('Session persistence coordinator architecture', () => {
         'listLegacyProjectSessionTombstones',
         'loadAll',
         'loadAllReadOnly',
+        'findSessionForContinuation',
         'loadSessionForContinuation',
         'loadPersistedSideChats',
         'markCommittedProjectSessionsPrepared',
@@ -751,6 +752,7 @@ describe('Session persistence coordinator architecture', () => {
         'containsMessageOnActiveBranch',
         'deleteRecoveryFile',
         'failTaskRun',
+        'findSessionForContinuation',
         'loadSessionForContinuation',
         'mutateRuntimeSession',
         'mutateSessionComputeHostAccess',
@@ -1024,7 +1026,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(53)
+    expect(expectedSchedulerRoute.size).toBe(54)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')

@@ -9,7 +9,7 @@ import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-serv
 import {
   jsonlSessionHistory0055Migration,
   legacySessionHistoryMigration
-} from './migrations/0058-session-history'
+} from './migrations/0059-session-history'
 
 let root: string | undefined
 let client: PrismaClient | undefined
@@ -17,7 +17,7 @@ afterEach(async () => {
   await client?.$disconnect()
   if (root) await rm(root, { recursive: true, force: true })
 })
-it('upgrades 0057 with an empty derived history index and preserves existing application data', async () => {
+it('appends 0059 history after the 0058 schedules tail and preserves existing application data', async () => {
   root = await mkdtemp(join(tmpdir(), 'history-migration-'))
   client = createProjectDbClient(root)
   await migrateApplicationDatabase(client)
@@ -28,12 +28,12 @@ it('upgrades 0057 with an empty derived history index and preserves existing app
   await client.$executeRawUnsafe('DROP TABLE SessionHistoryIndex')
   await client.$executeRawUnsafe(
     'DELETE FROM _open_science_migrations WHERE id = ?',
-    '0058_session_history'
+    '0059_session_history'
   )
   expect(await migrateApplicationDatabase(client)).toMatchObject({
-    from: '0057_project_optimization_prompt',
-    to: '0058_session_history',
-    applied: ['0058_session_history']
+    from: '0058_session_schedules',
+    to: '0059_session_history',
+    applied: ['0059_session_history']
   })
   expect(await client.project.findUnique({ where: { id: project.id } })).toEqual(project)
   expect(await client.sessionHistoryIndex.count()).toBe(0)
@@ -140,13 +140,14 @@ it('upgrades the released 0055 JSONL ledger after the upstream suffix', async ()
   const result = await migrateApplicationDatabase(db)
   expect(result).toMatchObject({
     from: '0055_session_history',
-    to: '0058_session_history'
+    to: '0059_session_history'
   })
   expect(result.applied).toEqual([
     '0055_session_discussion_parent',
     '0056_compute_kubernetes_workspace',
     '0057_project_optimization_prompt',
-    '0058_session_history'
+    '0058_session_schedules',
+    '0059_session_history'
   ])
   expect(await db.sessionHistoryIndex.findMany({ include: { items: true } })).toEqual(before)
   expect(await db.$queryRawUnsafe('SELECT id FROM _open_science_migrations ORDER BY id')).toEqual(
@@ -157,7 +158,7 @@ it('upgrades the released 0055 JSONL ledger after the upstream suffix', async ()
   )
   expect(await migrateApplicationDatabase(db)).toMatchObject({
     applied: [],
-    to: '0058_session_history'
+    to: '0059_session_history'
   })
 })
 
@@ -188,12 +189,13 @@ it('resumes the released 0055 JSONL upgrade after an interrupted upstream suffix
   const result = await migrateApplicationDatabase(db)
   expect(result).toMatchObject({
     from: '0055_session_discussion_parent',
-    to: '0058_session_history'
+    to: '0059_session_history'
   })
   expect(result.applied).toEqual([
     '0056_compute_kubernetes_workspace',
     '0057_project_optimization_prompt',
-    '0058_session_history'
+    '0058_session_schedules',
+    '0059_session_history'
   ])
   expect(await db.sessionHistoryIndex.findMany({ include: { items: true } })).toEqual(before)
   expect(await db.$queryRawUnsafe('SELECT id FROM _open_science_migrations ORDER BY id')).toEqual(
@@ -262,7 +264,7 @@ it.each([false, true])(
     const result = await migrateApplicationDatabase(db)
     expect(result).toMatchObject({
       from: interrupted ? '0051_literature_reading_status' : '0051_session_history',
-      to: '0058_session_history'
+      to: '0059_session_history'
     })
     expect(await db.project.findUnique({ where: { id: 'existing' } })).toMatchObject({
       name: 'Existing project'

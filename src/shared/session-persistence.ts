@@ -142,6 +142,7 @@ export {
   isReviewerCorrectionAttribution,
   isComputeJobCompletionAttribution,
   isAgentResultDeliveryAttribution,
+  isScheduledWakeAttribution,
   sanitizeMessageAttribution,
   sanitizeMessage,
   sanitizeMessagePresentation,

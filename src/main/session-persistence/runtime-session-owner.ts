@@ -67,7 +67,11 @@ export type RuntimeSessionAdmission = {
   // Main-only identity of the fenced reliable message; never serialized as provider binding.
   delegatedMessageId?: string
   // Main-owned application turns create their prompt and execution authority in one commit.
-  applicationPrompt?: { text: string; attribution: MessageAttribution }
+  applicationPrompt?: {
+    text: string
+    attribution: MessageAttribution
+    beforeSessionWrite?: () => Promise<void>
+  }
   approvedHandoffContinuation?: boolean
 }
 
@@ -263,6 +267,21 @@ const admitApplicationPrompt = (
   if (!application) return session
   if (application.attribution.kind !== 'application')
     throw new Error('Runtime application prompt requires application attribution.')
+  if (application.attribution.feature === 'schedule') {
+    if (session.conversationGraph?.messages.some((message) => message.id === scope.promptMessageId))
+      throw new Error('Scheduled occurrence has already been admitted.')
+    if (
+      session.activeRun ||
+      session.status.startsWith('waiting-') ||
+      session.runtimeContext?.plan?.approval === 'pending' ||
+      session.runtimeContext?.permission?.state === 'pending' ||
+      hasPendingSandboxNetworkApproval(session) ||
+      session.resumeRecovery ||
+      session.promptPreparation ||
+      session.packageOrigin
+    )
+      throw new Error('The scheduled conversation needs attention before starting another turn.')
+  }
   if (session.archivedAt !== undefined)
     throw new Error('Cannot admit an application prompt to an archived Session.')
   if (session.activeRun && session.activeRun.promptMessageId !== scope.promptMessageId)
@@ -774,6 +793,7 @@ export class RuntimeSessionOwner {
     // The coordinator stamps Main's runtime ownership in this identity mutation. Await it before
     // provider dispatch so a renderer save can never become the first durable writer for the turn.
     const admissionStarted = Promise.withResolvers<void>()
+    await admission.applicationPrompt?.beforeSessionWrite?.()
     assertCurrent()
     const committing = this.mutateSession(scope, 'begin-turn', (latest) => {
       // This callback can be queued behind a global operation. A rejected wait must never

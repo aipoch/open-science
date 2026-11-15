@@ -60,6 +60,7 @@ beforeEach(() => {
   useSessionStore.setState(createInitialSessionState())
   useNavigationStore.setState({
     view: 'home',
+    scheduleScope: undefined,
     marketplaceListContext: undefined,
     activeProjectId: undefined,
     userNavigationRevision: 0,
@@ -1077,4 +1078,24 @@ describe('navigation store global Artifact actions', () => {
     useNavigationStore.getState().requestArtifactMention({ ...file, projectId: 'project-b' })
     expect(useNavigationStore.getState().pendingArtifactMention).toBeUndefined()
   })
+})
+
+it('opens Schedule in the current project without changing the conversation, and clears its scope on project exit', () => {
+  useSessionStore.getState().hydrateSessions([createSession({ id: 'selected' })])
+  useSessionStore.setState({ selectedSessionId: 'selected' })
+  useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+  const nav = useNavigationStore.getState()
+  nav.openSchedule('project-b')
+  expect(useNavigationStore.getState().scheduleScope).toBeUndefined()
+  nav.openSchedule('project-a', 'selected')
+  expect(useNavigationStore.getState().scheduleScope).toEqual({
+    projectId: 'project-a',
+    sessionId: 'selected',
+    revision: 1
+  })
+  expect(useSessionStore.getState().selectedSessionId).toBe('selected')
+  nav.openSchedule('project-a')
+  expect(useNavigationStore.getState().scheduleScope?.sessionId).toBeUndefined()
+  nav.goHome('user')
+  expect(useNavigationStore.getState().scheduleScope).toBeUndefined()
 })

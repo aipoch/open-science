@@ -19,7 +19,8 @@ const codexNative = process.env.CODEX_NATIVE_PATH
 const probeTools = [
   { server: 'open-science-notebook', name: 'repl_execute' },
   { server: 'open-science-artifacts', name: 'write_artifact_file' },
-  { server: 'open-science-plan', name: 'update_step_status' }
+  { server: 'open-science-plan', name: 'update_step_status' },
+  { server: 'open-science-schedule', name: 'list_schedules' }
 ] as const
 const listen = async (server: Server): Promise<string> => {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -342,9 +343,7 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
         owner: string,
         turn: string
       ): Promise<void> => {
-        session.prompt(
-          `Call each of the three test tools once with this turn: ISOLATION_TURN:${turn}`
-        )
+        session.prompt(`Call each of the test tools once with this turn: ISOLATION_TURN:${turn}`)
         while ((await session.nextUpdate()).kind !== 'stop') {
           /* drain */
         }
@@ -431,7 +430,7 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
           await prompt(original, 'original', 'original-after-rebind')
           await prompt(sibling, 'sibling-rebound', 'sibling-rebound')
           expect(requestErrors).toEqual([])
-          expect(calls).toHaveLength(27)
+          expect(calls).toHaveLength(9 * probeTools.length)
         })
         await terminateProcessTree(child!)
         await connect(async (ctx) => {
@@ -454,7 +453,7 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
             expect(calls.filter((call) => call.turn === turn)).toEqual(expectedCalls(owner, turn))
           }
           expect(requestErrors).toEqual([])
-          expect(calls).toHaveLength(36)
+          expect(calls).toHaveLength(12 * probeTools.length)
         })
       } catch (error) {
         throw new Error(

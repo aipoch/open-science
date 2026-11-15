@@ -10,7 +10,7 @@ import type {
   ConnectorView,
   CustomServerView
 } from '../../../shared/settings'
-import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../../shared/settings'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../../shared/settings-runtime'
 import {
   createInitialSettingsState,
   selectAnyInstalling,

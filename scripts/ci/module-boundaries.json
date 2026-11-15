@@ -1679,7 +1679,7 @@
         "src/main/database/migrations/0049-pascalcase-table-names.ts",
         "test/fixtures/application-database.ts",
         "src/main/database/migrations/0050-literature-translation.ts",
-        "src/main/database/migrations/0058-session-history.ts"
+        "src/main/database/migrations/0059-session-history.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {
@@ -8174,6 +8174,7 @@
       "externalImports": [
         "@aipoch/diagnostics/node",
         "@aipoch/durable-files",
+        "node:crypto",
         "node:fs/promises",
         "node:path",
         "node:url"

@@ -388,6 +388,7 @@ describe('ComputeService job workflow facade', () => {
     } as unknown as ComputeJobRepository
     const setSessionLimit = vi.fn()
     const handleJobUpdated = vi.fn()
+    const pollerWake = vi.fn()
     const concurrencyManager = {
       enqueue: vi.fn(async () => 'should_queue'),
       admit: vi.fn(
@@ -417,6 +418,8 @@ describe('ComputeService job workflow facade', () => {
       jobRepository,
       concurrencyManager
     })
+    service.bindJobPoller(pollerWake)
+    service.wakeJobPoller()
 
     const submitted = await service.submitJob(
       'ssh:biowulf',
@@ -438,6 +441,7 @@ describe('ComputeService job workflow facade', () => {
     expect(setSessionLimit).toHaveBeenCalledWith('session-1', 7)
     expect(concurrency).toMatchObject({ session_limit: 7, queued_count: 1 })
     expect(handleJobUpdated).toHaveBeenCalledWith(storedJob)
+    expect(pollerWake).toHaveBeenCalledTimes(2)
   })
 
   it('removes file-evidence staging when a queued Job is cancelled before submission', async () => {

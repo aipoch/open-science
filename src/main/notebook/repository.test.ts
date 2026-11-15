@@ -1314,7 +1314,7 @@ describe('notebook run repository', () => {
     const filePath = join(document.notebookSessionRoot, 'run.json')
     const futureDocument = {
       ...JSON.parse(await readFile(filePath, 'utf8')),
-      version: 2,
+      version: 3,
       futureNotebookState: { mustSurvive: true }
     }
     const futureBytes = `${JSON.stringify(futureDocument, null, 2)}\n`
@@ -2138,4 +2138,128 @@ describe('notebook run repository', () => {
 
     await expect(stat(leftoverPath)).resolves.toMatchObject({ size: 4096 })
   })
+})
+
+describe('large immutable Notebook records', () => {
+  it('keeps prior output files unchanged across append, restart, update and startup cleanup', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const scope = { projectId: 'default-project', sessionId: 'session-1' }
+    const lane = createRootNotebookLane(scope.projectId, scope.sessionId, 'root-frame-session-1')
+    const document = await repository.loadOrCreate({ ...scope, lane, workspaceCwd: root })
+    const large = admittedRun({
+      status: 'completed',
+      text: { stdout: 'x'.repeat(1024 * 1024), stderr: '', traceback: '', plain: [] },
+      cwdAfter: root
+    })
+    await repository.appendRun({ ...scope, lane, run: large })
+    const manifestPath = join(document.notebookSessionRoot, 'run.json')
+    const records = join(document.notebookSessionRoot, '.run-records')
+    const first = JSON.parse(await readFile(manifestPath, 'utf8'))
+    expect(first.version).toBe(2)
+    expect((await stat(manifestPath)).size).toBeLessThan(4096)
+    const recordPath = join(records, `${first.runs[0].sha256}.json`)
+    const before = await stat(recordPath)
+    const restarted = new NotebookRunRepository(root)
+    await restarted.appendRun({
+      ...scope,
+      lane,
+      run: admittedRun({ runId: 'run-2', submissionIdentity: 'submission-2' })
+    })
+    expect((await stat(recordPath)).mtimeMs).toBe(before.mtimeMs)
+    expect(
+      (await restarted.findExisting(scope.projectId, scope.sessionId))?.runs[0].text.stdout
+    ).toBe(large.text.stdout)
+    await restarted.updateRun({
+      ...scope,
+      lane,
+      run: { ...large, text: { ...large.text, stdout: 'y'.repeat(1024 * 1024) } }
+    })
+    expect(await readdir(records)).toHaveLength(2)
+    await writeFile(`${recordPath}.1700000000000-1.tmp`, 'interrupted write')
+    await new NotebookRunRepository(root).recoverAllRunLifecycles()
+    expect(await readdir(records)).toHaveLength(1)
+    const recovered = await new NotebookRunRepository(root).findExisting(
+      scope.projectId,
+      scope.sessionId
+    )
+    expect(recovered?.runs[0].text.stdout).toBe('y'.repeat(1024 * 1024))
+    expect(recovered?.runs[1].status).toBe('interrupted')
+    expect(recovered?.runs[0].cwdAfter).toBe(root)
+  })
+
+  it.each(['missing', 'corrupt', 'path'] as const)(
+    'rejects a %s record without recreating the document',
+    async (failure) => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const scope = { projectId: 'default-project', sessionId: 'session-1' }
+      const lane = createRootNotebookLane(scope.projectId, scope.sessionId, 'root-frame-session-1')
+      const document = await repository.loadOrCreate({ ...scope, lane, workspaceCwd: root })
+      await repository.appendRun({
+        ...scope,
+        lane,
+        run: admittedRun({
+          text: { stdout: 'x'.repeat(100000), stderr: '', traceback: '', plain: [] }
+        })
+      })
+      const manifestPath = join(document.notebookSessionRoot, 'run.json')
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+      const recordPath = join(
+        document.notebookSessionRoot,
+        '.run-records',
+        `${manifest.runs[0].sha256}.json`
+      )
+      if (failure === 'missing') await rm(recordPath)
+      if (failure === 'corrupt')
+        await writeFile(recordPath, (await readFile(recordPath, 'utf8')).replace('xxx', 'yyy'))
+      if (failure === 'path') {
+        manifest.runs[0].sha256 = '../../outside'
+        await writeFile(manifestPath, JSON.stringify(manifest))
+      }
+      const bytes = await readFile(manifestPath, 'utf8')
+      const reopened = new NotebookRunRepository(root)
+      await expect(reopened.findExisting(scope.projectId, scope.sessionId)).rejects.toThrow(
+        'corrupt'
+      )
+      await expect(reopened.loadOrCreate({ ...scope, lane, workspaceCwd: root })).rejects.toThrow(
+        'corrupt'
+      )
+      expect(await readFile(manifestPath, 'utf8')).toBe(bytes)
+    }
+  )
+})
+
+it('counts external record bytes against the document cache budget and upgrades legacy large output lazily', async () => {
+  const root = await createStorageRoot()
+  const repository = new NotebookRunRepository(root)
+  const scope = { projectId: 'default-project', sessionId: 'session-1' }
+  const lane = createRootNotebookLane(scope.projectId, scope.sessionId, 'root-frame-session-1')
+  const document = await repository.loadOrCreate({ ...scope, lane, workspaceCwd: root })
+  const path = join(document.notebookSessionRoot, 'run.json')
+  const legacy = JSON.parse(await readFile(path, 'utf8'))
+  legacy.runs = [
+    admittedRun({
+      status: 'completed',
+      text: { stdout: 'x'.repeat(33 * 1024 * 1024), stderr: '', traceback: '', plain: [] }
+    })
+  ]
+  await writeFile(path, JSON.stringify(legacy))
+  const reopened = new NotebookRunRepository(root)
+  expect(
+    (await reopened.findExisting(scope.projectId, scope.sessionId))?.runs[0].text.stdout.length
+  ).toBe(33 * 1024 * 1024)
+  expect(JSON.parse(await readFile(path, 'utf8')).version).toBe(1)
+  await reopened.updateKernelStatus({ ...scope, lane, status: 'idle' })
+  expect(JSON.parse(await readFile(path, 'utf8')).version).toBe(2)
+  const cache = reopened as unknown as {
+    documentCacheBytes: number
+    documentCache: Map<string, unknown>
+  }
+  expect(cache.documentCacheBytes).toBe(0)
+  expect(cache.documentCache.size).toBe(0)
+  expect(
+    (await new NotebookRunRepository(root).findExisting(scope.projectId, scope.sessionId))?.runs[0]
+      .text.stdout.length
+  ).toBe(33 * 1024 * 1024)
 })

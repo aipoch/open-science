@@ -3,7 +3,7 @@ import { resolveReasoningEffortValue } from '../../shared/reasoning-effort'
 import { type ResolvedReasoningEffort } from '@aipoch/providers'
 
 import { NO_ACTIVE_PROVIDER_MESSAGE } from '../../shared/failure/messages'
-import { DEFAULT_REASONING_EFFORT } from '../../shared/settings'
+import { DEFAULT_REASONING_EFFORT } from '../../shared/settings-runtime'
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
 import type { ExplicitAgentBackendTarget } from './backend-target'
 import type { ProviderAccountsModule, RuntimeProviderModelSelection } from './provider-accounts'

@@ -215,6 +215,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     }
   }
   const sessionCapabilities = new AcpSessionCapabilityOwner({
+    schedules: options.schedules,
     registerBridgeMcpSession: (sessionId, tools, namespaces) =>
       connectionResources.registerBridgeMcpSession(sessionId, tools, namespaces),
     unregisterBridgeMcpSession: (sessionId) =>

@@ -1,10 +1,12 @@
+import type {
+  AgentFrameworkId,
+  ProviderValidationTarget,
+  ReadinessPreflight
+} from '../../shared/settings'
 import {
   providerValidationFailed,
-  providerValidationSucceeded,
-  type AgentFrameworkId,
-  type ProviderValidationTarget,
-  type ReadinessPreflight
-} from '../../shared/settings'
+  providerValidationSucceeded
+} from '../../shared/settings-runtime'
 import type { StoredProvider, StoredSettings } from './types'
 
 // Pure computation of the startup gates from stored settings plus a couple of injected checks.

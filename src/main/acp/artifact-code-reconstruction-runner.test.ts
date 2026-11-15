@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { CODEX_SHARED_PROVIDER_ID } from '../../shared/settings'
+import { CODEX_SHARED_PROVIDER_ID } from '../../shared/settings-runtime'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codexFramework } from '../agent-framework/codex'

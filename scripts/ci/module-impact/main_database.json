@@ -106,8 +106,9 @@
     "src/main/database/migrations/0055-session-discussion-parent.ts",
     "src/main/database/migrations/0056-compute-kubernetes-workspace.ts",
     "src/main/database/migrations/0057-project-optimization-prompt.ts",
-    "src/main/database/migrations/0058-session-history.ts",
-    "src/main/database/migrated-database.test-support.ts"
+    "src/main/database/migrated-database.test-support.ts",
+    "src/main/database/migrations/0058-session-schedules.ts",
+    "src/main/database/migrations/0059-session-history.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",

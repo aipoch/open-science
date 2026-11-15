@@ -30,7 +30,7 @@ const FRAMEWORKS: Record<AgentFrameworkId, AgentFramework> = {
   'open-science-agent': harnessFramework
 }
 
-export { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/settings'
+export { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/settings-runtime'
 
 // Resolves a framework by id for the runtime/settings; ids come from a fixed union so this is total.
 export const getAgentFramework = (id: AgentFrameworkId): AgentFramework => FRAMEWORKS[id]

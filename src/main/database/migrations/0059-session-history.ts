@@ -2,7 +2,7 @@
 // Derived display history; existing authoritative Session files are unchanged.
 // Append after the upstream migrations; never reuse a released upstream number.
 const sessionHistoryMigration = {
-  id: '0058_session_history',
+  id: '0059_session_history',
   statements: [
     `CREATE TABLE IF NOT EXISTS "SessionHistoryIndex" (
     "sessionId" TEXT NOT NULL PRIMARY KEY,
@@ -53,7 +53,7 @@ const legacySessionHistoryMigration = {
 } as const
 
 // Frozen intermediate fork release. Upstream later assigned 0055 to a different migration, so the
-// current history migration moved to 0058 and this exact released row is bridged before upgrade.
+// current history migration moved to 0059 and this exact released row is bridged before upgrade.
 const jsonlSessionHistory0055Migration = {
   ...sessionHistoryMigration,
   id: '0055_session_history'

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
-import { APP_ICON_VARIANT_INFOS } from '../../../../shared/settings'
+import { APP_ICON_VARIANT_INFOS } from '../../../../shared/settings-runtime'
 import { AppIconSection } from './AppIconSection'
 
 // Actual built-in metadata, matching buildAppIconPreviews' output; only the PNG is a fixture.

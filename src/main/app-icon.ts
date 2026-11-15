@@ -1,7 +1,7 @@
 import type { App, BrowserWindow, NativeImage, NativeTheme } from 'electron'
 
 import type { AppIconPreview, AppIconVariant } from '../shared/settings'
-import { APP_ICON_VARIANT_INFOS, DEFAULT_APP_ICON_VARIANT } from '../shared/settings'
+import { APP_ICON_VARIANT_INFOS, DEFAULT_APP_ICON_VARIANT } from '../shared/settings-runtime'
 import type { WindowFindAppearance } from '../shared/window-controls'
 import { createLogger } from '@aipoch/diagnostics/node'
 

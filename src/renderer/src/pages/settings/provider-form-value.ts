@@ -17,15 +17,17 @@ import {
 } from '../../../../shared/provider-url-policy'
 import { type ReasoningEffortPresetSetting } from '../../../../shared/reasoning-effort'
 
+import type {
+  AgentFrameworkId,
+  CodexSubscriptionTransport,
+  ProviderDraft,
+  ProviderType
+} from '../../../../shared/settings'
 import {
   claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
-  xaiSubscriptionProviderIdentity,
-  type AgentFrameworkId,
-  type CodexSubscriptionTransport,
-  type ProviderDraft,
-  type ProviderType
-} from '../../../../shared/settings'
+  xaiSubscriptionProviderIdentity
+} from '../../../../shared/settings-runtime'
 
 // Editable value for the provider form, kept in its own module so the component file only exports a
 // component (satisfying react-refresh) while the wizard and settings page share this shape/factory.

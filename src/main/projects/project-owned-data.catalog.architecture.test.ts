@@ -219,6 +219,7 @@ describe('Project-owned data catalog architecture', () => {
       'session-history-index',
       'vision-evidence',
       'session-metadata-usage-history',
+      'session-schedules',
       'background-result-delivery',
       'notification-inbox-history',
       'literature-inbox-provenance',
@@ -267,6 +268,7 @@ describe('Project-owned data catalog architecture', () => {
       'project-session-json-delete',
       'provenance-tail',
       'review-tail',
+      'schedule-target-delete',
       'side-chat-profile-tail'
     ])
   })

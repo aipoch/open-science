@@ -1,7 +1,7 @@
 import { harnessFramework } from '../agent-framework/harness'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { isLoopbackProviderBaseUrl } from '@aipoch/providers/transport'
-import { isCodexSubscriptionProvider, preferredEndpoint } from '../../shared/settings'
+import { isCodexSubscriptionProvider, preferredEndpoint } from '../../shared/settings-runtime'
 import type {
   ProviderFailureObservation,
   ProviderFailureObserver

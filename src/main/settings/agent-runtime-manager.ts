@@ -1,4 +1,4 @@
-import { providerValidationRoute } from '../../shared/settings'
+import { providerValidationRoute } from '../../shared/settings-runtime'
 import { installManagedPi, uninstallManagedPi } from './managed-pi'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
@@ -32,7 +32,7 @@ import {
   DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
   requiresChatCompletionsBridge
-} from '../../shared/settings'
+} from '../../shared/settings-runtime'
 import {
   buildUnsupportedCodexAcpVersionMessage,
   CODEX_CLI_INCOMPATIBLE_MESSAGE,

@@ -1,3 +1,4 @@
+import { sessionSchedulesMigration } from './migrations/0058-session-schedules'
 import { computeKubernetesWorkspaceMigration } from './migrations/0056-compute-kubernetes-workspace'
 import { sessionDiscussionParentMigration } from './migrations/0055-session-discussion-parent'
 import { projectOptimizationPromptMigration } from './migrations/0057-project-optimization-prompt'
@@ -12,7 +13,7 @@ import {
   jsonlSessionHistory0055Migration,
   legacySessionHistoryMigration,
   sessionHistoryMigration
-} from './migrations/0058-session-history'
+} from './migrations/0059-session-history'
 import { literatureReadingStatusMigration } from './migrations/0051-literature-reading-status'
 import {
   literaturePersonalNoteSearchMigration,
@@ -1032,6 +1033,16 @@ const MIGRATION_MANIFEST = [
       projectOptimizationPromptMigration.id,
       projectOptimizationPromptMigration.statements,
       projectOptimizationPromptMigration.verifiers
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionSchedulesMigration,
+    checksum: checksumMigrationPayload(
+      sessionSchedulesMigration.id,
+      sessionSchedulesMigration.statements,
+      sessionSchedulesMigration.verifiers
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
@@ -2382,7 +2393,7 @@ const migrateApplicationDatabaseWithManifest = async (
   // The personal fork shipped history as 0051 before upstream assigned that number, and an
   // intermediate fork release used 0055 before upstream assigned that number to a different
   // migration. Only bridge an exact, complete released ledger. Keep the derived tables and
-  // authoritative Session files intact; the 0058 history migration adopts them after the
+  // authoritative Session files intact; the 0059 history migration adopts them after the
   // upstream suffix.
   const legacyHistoryCandidates = [
     {
