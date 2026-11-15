@@ -8,11 +8,8 @@ import type {
 } from './host-model-contract'
 
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
-import {
-  providerValidationFailed,
-  type ClaudeSubscriptionProviderId,
-  type ProviderView
-} from '../../shared/settings'
+import type { ClaudeSubscriptionProviderId, ProviderView } from '../../shared/settings'
+import { providerValidationFailed } from '../../shared/settings-runtime'
 import type { AcpBackendGenerationView } from '../acp/backend-generation-owner'
 import type { RestrictedInferenceResult } from '../acp/restricted-inference-contract'
 import {

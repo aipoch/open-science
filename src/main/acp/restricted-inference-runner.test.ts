@@ -5,7 +5,10 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { CODEX_SHARED_PROVIDER_ID, CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
+import {
+  CODEX_SHARED_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_PROVIDER_ID
+} from '../../shared/settings-runtime'
 import type { AcpRuntimeEvent, AcpTurnTokenUsage } from '../../shared/acp'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import { listAgentFrameworks } from '../agent-framework/registry'

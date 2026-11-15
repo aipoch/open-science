@@ -1,0 +1,28 @@
+{
+  "ownerPaths": [
+    "build/macos-service-launcher.c",
+    "scripts/build-macos-service-launcher.d.mts",
+    "scripts/build-macos-service-launcher.mjs",
+    "scripts/electron-host-dependencies.d.mts",
+    "scripts/electron-host-dependencies.mjs",
+    "src/main/desktop-runtime-launcher.integration.test.ts"
+  ],
+  "interfacePaths": [
+    "build/macos-service-launcher.c",
+    "scripts/build-macos-service-launcher.d.mts",
+    "scripts/build-macos-service-launcher.mjs",
+    "scripts/electron-host-dependencies.d.mts",
+    "scripts/electron-host-dependencies.mjs"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/main/desktop-runtime-launcher.integration.test.ts"],
+    "contract": [
+      "scripts/electron-builder-config.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
+    ],
+    "consumer": []
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

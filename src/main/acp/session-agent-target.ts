@@ -2,12 +2,12 @@ import type { AcpSessionAgentTarget } from '../../shared/acp'
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
 import { resolveSessionAgentConfiguration } from '../../shared/session-agent-configuration'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import {
-  canonicalSessionProviderId,
-  type AgentFrameworkId,
-  type SessionAgentConfiguration,
-  type SettingsSnapshot
+import type {
+  AgentFrameworkId,
+  SessionAgentConfiguration,
+  SettingsSnapshot
 } from '../../shared/settings'
+import { canonicalSessionProviderId } from '../../shared/settings-runtime'
 
 type SessionAgentTargetSource = Pick<
   PersistedChatSession,

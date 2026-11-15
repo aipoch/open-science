@@ -1,5 +1,5 @@
 import type { PDFPageProxy } from 'pdfjs-dist'
-import { nativeInkPageCurrent, nativeInkPageIdentity } from './auxiliary-native-ink.js'
+import { nativeInkPageCurrent, nativeInkPageIdentity } from './native-ink-page-state.js'
 import { nativeOutlineBox } from './native-source-geometry.js'
 import { getPdfTranslationTextContent } from './text-content.js'
 

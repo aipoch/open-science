@@ -31,7 +31,8 @@ import { ProviderAccountsModule } from './provider-accounts'
 import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'
 import { encryptKey, tryDecryptKey } from './crypto'
-import { XAI_SUBSCRIPTION_PROVIDER_ID, type UpsertProviderRequest } from '../../shared/settings'
+import type { UpsertProviderRequest } from '../../shared/settings'
+import { XAI_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings-runtime'
 
 const deferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
   let resolve!: (value: T) => void

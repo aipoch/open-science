@@ -1,6 +1,6 @@
 /* Hallmark · AgentFrameworkCard 8-state development preview; not mounted in production. */
 import { AgentFrameworkCard, type AgentFrameworkCardPreviewState } from './AgentFrameworkCard'
-import { getCodexInstallSources } from '../../../../shared/settings'
+import { getCodexInstallSources } from '../../../../shared/settings-runtime'
 
 const STATES: AgentFrameworkCardPreviewState[] = [
   'default',

@@ -6,7 +6,7 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID
-} from '../../shared/settings'
+} from '../../shared/settings-runtime'
 import { resolveProviderEffectiveModel } from '../../shared/provider-reasoning-effort'
 import type { ProviderView } from '../../shared/settings'
 import type { SettingsService } from './service'

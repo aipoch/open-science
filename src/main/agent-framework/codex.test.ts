@@ -17,7 +17,7 @@ import {
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
 import { terminateProcessTree } from '../process-tree'
 import { CODEX_VERSION } from '../settings/managed-codex'
-import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings-runtime'
 
 const fakeChild = new EventEmitter() as ChildProcessWithoutNullStreams
 afterEach(async () => {

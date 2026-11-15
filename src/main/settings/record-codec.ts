@@ -24,7 +24,10 @@ import type {
   ProviderValidationTarget,
   ValidationCategory
 } from '../../shared/settings'
-import { isCodexSubscriptionProvider, providerValidationTargetMatches } from '../../shared/settings'
+import {
+  isCodexSubscriptionProvider,
+  providerValidationTargetMatches
+} from '../../shared/settings-runtime'
 import { isRecord } from '../value-guards'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { isPositiveWholeTokenLimit } from './provider-token-limits'

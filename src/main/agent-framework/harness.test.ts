@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { harnessFramework } from './harness'
 import { harnessConfigSchema, HARNESS_ACP_ARG } from '../harness-acp/config'
 import { isRuntimeHelper } from '../runtime-helper'
-import { isProviderUsableByFramework } from '../../shared/settings'
+import { isProviderUsableByFramework } from '../../shared/settings-runtime'
 import type { AgentSpawnInput } from './types'
 
 describe('built-in Agent host boundary', () => {

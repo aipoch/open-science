@@ -62,6 +62,7 @@
     "packages/pdf-translation/src/reader/math-diagram.ts",
     "packages/pdf-translation/src/reader/native-reference-evidence.ts",
     "packages/pdf-translation/src/reader/native-source-geometry.ts",
+    "packages/pdf-translation/src/reader/native-ink-page-state.ts",
     "packages/pdf-translation/src/reader/numbered-source.ts",
     "packages/pdf-translation/src/reader/ordinal-reference-packets.ts",
     "packages/pdf-translation/src/reader/reference-columns.ts",
