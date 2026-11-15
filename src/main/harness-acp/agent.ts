@@ -52,6 +52,19 @@ const ENVELOPE_TOKENS = 64
 
 const hash = (text: string): string => createHash('sha256').update(text).digest('base64')
 
+// ACP requires every Agent to accept resource links in prompts. Keep the reference visible to the
+// model without fetching it: the host may send private file URIs, and the harness deliberately does
+// not grant arbitrary filesystem or network access to model adapters.
+const formatResourceLink = (name: string | undefined, uri: string): string => {
+  const displayName =
+    name && name.length > 0
+      ? name
+      : uri.startsWith('file://')
+        ? (uri.replace('file://', '').split('/').pop() ?? uri)
+        : undefined
+  return displayName ? `[@${displayName}](${uri})` : uri
+}
+
 const snapshot = (request: Pick<ModelRequest, 'instructions' | 'tools' | 'messages'>): Snapshot => {
   const texts = request.messages.map((message) => JSON.stringify(message))
   return {
@@ -680,6 +693,8 @@ export function createHarnessAcpAgent(directory: string): {
             }
             if (block.type === 'resource' && 'text' in block.resource)
               return { type: 'text', text: block.resource.text }
+            if (block.type === 'resource_link')
+              return { type: 'text', text: formatResourceLink(block.name, block.uri) }
             throw new Error('Unsupported prompt content; host must resolve references')
           })
           entry.active = true
