@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process'
-import { once } from 'node:events'
+import { EventEmitter, once } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { readFileSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as processTree from '../process-tree'
 import {
   runVerificationProcess,
@@ -12,6 +13,12 @@ import {
   VerificationProcessUnsettledError,
   verificationDirectoryIsSettled
 } from './verification-process'
+
+// Keep the OS tests on real spawn; the admission protocol cases temporarily supply a child fixture.
+vi.mock('node:child_process', async (original) => {
+  const actual = await original<typeof import('node:child_process')>()
+  return { ...actual, spawn: vi.fn(actual.spawn) }
+})
 
 describe('bounded verification subprocess', () => {
   it.skipIf(process.platform === 'win32')(
@@ -393,5 +400,144 @@ describe('bounded verification subprocess', () => {
       )
     ).rejects.toThrow('output exceeded')
     expect(ticked).toBe(true)
+  })
+})
+
+// Exercise the admission protocol on every CI host. Real Darwin process/identity cases above remain
+// authoritative for OS behavior; these fixtures isolate runner decisions from the native binding.
+describe('Darwin verification admission boundary', () => {
+  class Child extends EventEmitter {
+    pid: number | undefined = 43210
+    stdin = new PassThrough()
+    stdout = new PassThrough()
+    stderr = new PassThrough()
+    gate = new PassThrough()
+    stdio: (PassThrough | undefined)[] = [this.stdin, this.stdout, this.stderr, this.gate]
+    unref = vi.fn()
+  }
+  let child: Child
+  let platform: PropertyDescriptor
+  let restore: () => void = () => undefined
+  beforeEach(() => {
+    platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    child = new Child()
+    const previousSpawn = vi.mocked(spawn).getMockImplementation()!
+    vi.mocked(spawn).mockClear()
+    const spies = [
+      vi.mocked(spawn).mockReturnValue(child as never),
+      vi.spyOn(processTree, 'createPosixProcessTreeOwnership').mockImplementation((env) => ({
+        env: { ...(env ?? process.env), OPEN_SCIENCE_PROCESS_TREE_ID: 'fixture-owner' },
+        token: 'fixture-owner'
+      })),
+      vi.spyOn(processTree, 'trackOwnedPosixProcessTree').mockImplementation(() => undefined),
+      vi.spyOn(processTree, 'capturePosixProcessTreeIdentity').mockReturnValue({
+        pid: child.pid!,
+        ppid: process.pid,
+        pgid: child.pid!,
+        sid: child.pid!,
+        birthToken: 'fixture-birth',
+        parentBirthToken: undefined,
+        birthOrder: undefined
+      }),
+      vi.spyOn(processTree, 'terminateProcessTree').mockResolvedValue({ reaped: true })
+    ]
+    restore = () => {
+      for (const spy of spies) spy.mockRestore()
+      vi.mocked(spawn).mockImplementation(previousSpawn)
+    }
+  })
+  afterEach(async () => {
+    // Settle even a failed assertion while termination is still mocked; never hand a fixture PID
+    // to the real process owner after restoring the boundary.
+    child.emit('close', 0)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    restore()
+    Object.defineProperty(process, 'platform', platform)
+    for (const stream of [child.stdin, child.stdout, child.stderr, child.gate]) stream.destroy()
+  })
+
+  it.each([false, true])(
+    'admits a proven target with separate stdin (shell: %s)',
+    async (shell) => {
+      const output = runVerificationProcess('printf', ['literal'], {
+        shell,
+        stdin: 'pipe',
+        env: { VERIFICATION_FIXTURE: 'present' }
+      })
+      expect(child.gate.read()?.toString()).toBe('start\n')
+      expect(child.stdin.read()).toBeNull()
+      expect(child.stdin.destroyed).toBe(false)
+      const [command, args, options] = vi.mocked(spawn).mock.calls[0]
+      expect(command).toBe('/bin/sh')
+      expect(args).toEqual([
+        '-c',
+        'IFS= read -r start <&3 && [ "$start" = start ] || exit 125; exec 3<&-; exec "$@"',
+        'open-science-verification-start',
+        ...(shell ? ['/bin/sh', '-c', 'printf literal'] : ['printf', 'literal'])
+      ])
+      expect(options).toMatchObject({
+        shell: false,
+        stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+        env: { VERIFICATION_FIXTURE: 'present', OPEN_SCIENCE_PROCESS_TREE_ID: 'fixture-owner' }
+      })
+      expect(processTree.trackOwnedPosixProcessTree).toHaveBeenCalledExactlyOnceWith(
+        child,
+        'fixture-owner'
+      )
+      child.stdout.write('verified')
+      child.stderr.write('diagnostic')
+      child.emit('close', 0)
+      await expect(output).resolves.toEqual({ stdout: 'verified', stderr: 'diagnostic' })
+      expect(child.gate.destroyed).toBe(true)
+      expect(child.stdin.destroyed).toBe(true)
+    }
+  )
+
+  it.each(['identity', 'pipe'])(
+    'withholds admission when the %s proof is unavailable',
+    async (missing) => {
+      if (missing === 'identity')
+        vi.mocked(processTree.capturePosixProcessTreeIdentity).mockReturnValue(undefined)
+      else child.stdio[3] = undefined
+      await expect(runVerificationProcess('target', [])).rejects.toThrow(
+        'ownership could not be registered'
+      )
+      expect(child.gate.read()).toBeNull()
+      expect(processTree.terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child, 'SIGKILL')
+    }
+  )
+
+  it('revokes admission when cancellation arrives during registration', async () => {
+    const controller = new AbortController()
+    const cancelled = new Error('cancelled during registration')
+    vi.mocked(processTree.trackOwnedPosixProcessTree).mockImplementation(() =>
+      controller.abort(cancelled)
+    )
+    await expect(runVerificationProcess('target', [], { signal: controller.signal })).rejects.toBe(
+      cancelled
+    )
+    expect(child.gate.read()).toBeNull()
+    expect(child.gate.destroyed).toBe(true)
+  })
+
+  it('settles a launch-pipe error without retaining the admission stream', async () => {
+    const output = runVerificationProcess('target', [])
+    const failure = new Error('launch pipe failed')
+    child.gate.emit('error', failure)
+    await expect(output).rejects.toBe(failure)
+    expect(child.gate.destroyed).toBe(true)
+    expect(processTree.terminateProcessTree).toHaveBeenCalledOnce()
+  })
+
+  it('preserves outer spawn errno when no process was created', async () => {
+    child.pid = undefined
+    const output = runVerificationProcess('target', [])
+    child.emit('error', Object.assign(new Error('spawn failed'), { code: 'ENOENT' }))
+    child.emit('close', -2)
+    await expect(output).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(processTree.capturePosixProcessTreeIdentity).not.toHaveBeenCalled()
+    expect(child.gate.read()).toBeNull()
+    expect(child.gate.destroyed).toBe(true)
   })
 })
