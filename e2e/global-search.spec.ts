@@ -370,7 +370,7 @@ test('searches projects, sessions, message bodies and Library with paged disclos
   await details.getByRole('button', { name: 'Back to results' }).click()
   await expect(details).toHaveAttribute('data-open', 'false')
   await hit.click()
-  await page.setViewportSize({ width: 1280, height: 900 })
+  await app.setMainWindowSizeAndViewport(1280, 900)
   await details.getByRole('button', { name: 'Jump to message' }).click()
   await expect(dialog).toBeHidden()
   const target = page.locator('[data-message-id="search-message-8"]').first()

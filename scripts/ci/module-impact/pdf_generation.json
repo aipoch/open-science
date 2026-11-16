@@ -1,0 +1,24 @@
+{
+  "ownerPaths": [
+    "src/main/skills/pdf-generation.test.ts",
+    "test/pdf-generation/test_kernel.py",
+    "resources/skills/pdf-generation/README.md",
+    "resources/skills/pdf-generation/SKILL.md",
+    "resources/skills/pdf-generation/kernel.py",
+    "resources/skills/pdf-generation/open-science.json",
+    "resources/skills/pdf-generation/references/forms.md",
+    "resources/skills/pdf-generation/references/processing.md"
+  ],
+  "interfacePaths": [
+    "resources/skills/pdf-generation/SKILL.md",
+    "resources/skills/pdf-generation/kernel.py"
+  ],
+  "testFiles": {
+    "owner": ["src/main/skills/pdf-generation.test.ts"],
+    "contract": ["src/main/skills/runtime-mcp-server.test.ts"],
+    "consumer": []
+  },
+  "consumerModules": [],
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

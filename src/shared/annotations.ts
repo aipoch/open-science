@@ -11,6 +11,7 @@ import type {
   PdfNormalizedQuad,
   PdfNormalizedRect,
   PdfTextSelector,
+  PptSlideAnnotation,
   SessionTextAnnotationItemType,
   TextAnnotationAnchor,
   TextAnnotationSource
@@ -27,6 +28,7 @@ export {
   type Annotation,
   type ImagePointAnnotation,
   type PdfAnnotation,
+  type PptSlideAnnotation,
   type PdfNormalizedQuad,
   type PdfNormalizedRect,
   type PdfRegionSelector,
@@ -423,6 +425,55 @@ const sanitizeTextAnchor = (value: unknown, quote: string): TextAnnotationAnchor
   }
 }
 
+const nonNegativeInteger = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
+
+const sanitizeSlideAnnotation = (
+  value: Record<string, unknown>,
+  id: string
+): PptSlideAnnotation | undefined => {
+  const note = trimmed(value.note)
+  const source = isRecord(value.source) ? value.source : undefined
+  const slideId = nonNegativeInteger(value.slideId)
+  const slideIndex = nonNegativeInteger(value.slideIndex)
+  const shapeId = value.shapeId === undefined ? undefined : nonNegativeInteger(value.shapeId)
+  const region = value.region === undefined ? undefined : normalizedQuad(value.region)
+  if (
+    !note ||
+    !source ||
+    (source.kind !== 'artifact-version' && source.kind !== 'upload-version') ||
+    !trimmed(source.projectId) ||
+    !trimmed(source.sessionId) ||
+    !trimmed(source.versionId) ||
+    !trimmed(source.name) ||
+    !trimmed(source.path) ||
+    slideId === undefined ||
+    slideIndex === undefined ||
+    (value.shapeId !== undefined && shapeId === undefined) ||
+    (value.region !== undefined && !region)
+  ) {
+    return undefined
+  }
+  return {
+    id,
+    kind: 'pptx-slide',
+    target: 'agent',
+    note,
+    source: {
+      kind: source.kind,
+      projectId: trimmed(source.projectId)!,
+      sessionId: trimmed(source.sessionId)!,
+      versionId: trimmed(source.versionId)!,
+      name: trimmed(source.name)!,
+      path: trimmed(source.path)!
+    },
+    slideId,
+    slideIndex,
+    ...(shapeId !== undefined ? { shapeId } : {}),
+    ...(region ? { region } : {})
+  }
+}
+
 export const sanitizeAnnotation = (value: unknown): Annotation | undefined => {
   if (!isRecord(value) || value.target !== 'agent') return undefined
   const id = trimmed(value.id)
@@ -499,10 +550,13 @@ export const sanitizeAnnotation = (value: unknown): Annotation | undefined => {
       naturalSize: { width, height }
     }
   }
+  if (value.kind === 'pptx-slide') return sanitizeSlideAnnotation(value, id)
   return undefined
 }
 
-export const pdfAnnotationSourceIsFixed = (source: PdfAnnotation['source']): boolean => {
+export const pdfAnnotationSourceIsFixed = (
+  source: Omit<PdfAnnotation['source'], 'checksum' | 'sessionId'> & { sessionId?: string }
+): boolean => {
   if (source.kind === 'artifact-version') {
     const identity = parseArtifactVersionLocator(source.path)
     return (
@@ -676,7 +730,33 @@ const payloadItem = (
       x: number
       y: number
       instruction: string
+    }>
+  | Readonly<{
+      type: 'pptx-slide'
+      source: Readonly<{ kind: 'pptx'; versionId: string; name: string; path: string }>
+      slideId: number
+      slideIndex: number
+      shapeId?: number
+      region?: PdfNormalizedRect
+      instruction: string
     }> => {
+  if (annotation.kind === 'pptx-slide') {
+    return {
+      type: 'pptx-slide',
+      source: {
+        kind: 'pptx',
+        versionId: annotation.source.versionId,
+        name: annotation.source.name,
+        // read_pptx_outline and propose_pptx_operations address the deck by this path.
+        path: annotation.source.path
+      },
+      slideId: annotation.slideId,
+      slideIndex: annotation.slideIndex,
+      ...(annotation.shapeId !== undefined ? { shapeId: annotation.shapeId } : {}),
+      ...(annotation.region ? { region: annotation.region } : {}),
+      instruction: annotation.note
+    }
+  }
   if (annotation.kind === 'text') {
     return {
       type: 'quote',
@@ -813,8 +893,18 @@ const sideChatPayloadItem = (
       ...(annotation.note ? { instruction: annotation.note } : {})
     }
   }
+  if (annotation.kind === 'pptx-slide') {
+    return {
+      type: 'quote',
+      content: `Selected slide ${annotation.slideIndex + 1} of ${annotation.source.name}.`,
+      instruction: annotation.note
+    }
+  }
   const item = payloadItem(annotation, imagePoints, new Map())
   if (item.type === 'quote') return item
+  if (item.type === 'pptx-slide') {
+    throw new Error('Slide annotations must be converted before Side chat serialization.')
+  }
   if (item.type === 'pdf-region') {
     throw new Error('PDF region annotations must be converted before Side chat serialization.')
   }
@@ -1063,6 +1153,9 @@ const validateAnnotationData = (
     }
     if (annotation.kind === 'pdf' && !pdfAnnotationSourceIsFixed(annotation.source))
       return 'invalid'
+    if (annotation.kind === 'pptx-slide' && !pdfAnnotationSourceIsFixed(annotation.source)) {
+      return 'invalid'
+    }
     if (
       (annotation.kind === 'text' && annotation.quote.length > ANNOTATION_LIMITS.quote) ||
       (annotation.kind === 'pdf' &&

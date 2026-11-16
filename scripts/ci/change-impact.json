@@ -1089,6 +1089,14 @@
     {
       "paths": ["test/docx-generation/*.py"],
       "tests": ["src/main/skills/docx-generation.test.ts"]
+    },
+    {
+      "paths": ["test/pdf-generation/*.py"],
+      "tests": ["src/main/skills/pdf-generation.test.ts"]
+    },
+    {
+      "paths": ["test/pptx-generation/*.py"],
+      "tests": ["src/main/skills/pptx-generation.test.ts"]
     }
   ]
 }

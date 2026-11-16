@@ -112,4 +112,23 @@ export type PdfAnnotation = Readonly<{
   selector: PdfTextSelector | PdfRegionSelector
 }>
 
-export type Annotation = TextAnnotation | ImagePointAnnotation | PdfAnnotation
+export type PptSlideAnnotation = Readonly<{
+  id: string
+  kind: 'pptx-slide'
+  target: 'agent'
+  note: string
+  source: Readonly<{
+    kind: 'artifact-version' | 'upload-version'
+    projectId: string
+    sessionId: string
+    versionId: string
+    name: string
+    path: string
+  }>
+  slideId: number
+  slideIndex: number
+  shapeId?: number
+  region?: PdfNormalizedRect
+}>
+
+export type Annotation = TextAnnotation | ImagePointAnnotation | PdfAnnotation | PptSlideAnnotation

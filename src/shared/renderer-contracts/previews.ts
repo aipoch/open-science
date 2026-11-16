@@ -32,6 +32,21 @@ import type {
   SavePreviewStateRequest
 } from '../preview-state'
 
+import type { SaveTextEditResult } from '../managed-file-versions'
+import type {
+  PptxEditSessionApplyRequest,
+  PptxEditSessionOpenRequest,
+  PptxEditSessionResult,
+  PptxEditSessionSaveRequest,
+  PptxEditSessionView
+} from '../pptx-edit-session'
+import type {
+  PptxDraftAcceptOutcome,
+  PptxDraftChangedEvent,
+  PptxDraftReviewRequest,
+  PptxDraftSummary
+} from '../pptx-draft'
+import type { ManagedFileIdentity } from '../managed-file-versions'
 import type {
   OfficePreviewAttachResult,
   OfficePreviewOpenRequest,
@@ -101,6 +116,39 @@ export const officePreviewAttachFrameContracts = {
   'officePreview.reportState': callable<
     (sessionId: string, state: OfficePreviewRuntimeState) => void
   >()('office-preview', ['office-preview:report-state', SEND])
+} as const
+
+export const pptxEditContracts = {
+  'pptxEdit.apply': callable<
+    (request: PptxEditSessionApplyRequest) => Promise<PptxEditSessionResult<PptxEditSessionView>>
+  >()('pptx-edit', ['pptx-edit:apply', ELECTRON]),
+  'pptxEdit.close': callable<(sessionId: string) => Promise<void>>()('pptx-edit', [
+    'pptx-edit:close',
+    ELECTRON
+  ]),
+  'pptxEdit.open': callable<
+    (request: PptxEditSessionOpenRequest) => Promise<PptxEditSessionResult<PptxEditSessionView>>
+  >()('pptx-edit', ['pptx-edit:open', ELECTRON]),
+  'pptxEdit.save': callable<
+    (request: PptxEditSessionSaveRequest) => Promise<PptxEditSessionResult<SaveTextEditResult>>
+  >()('pptx-edit', ['pptx-edit:save', ELECTRON])
+} as const
+
+export const pptxDraftContracts = {
+  'pptxDraft.accept': callable<
+    (request: PptxDraftReviewRequest) => Promise<PptxDraftAcceptOutcome>
+  >()('pptx-draft', ['pptx-draft:accept', ELECTRON]),
+  'pptxDraft.get': callable<(identity: ManagedFileIdentity) => Promise<PptxDraftSummary | null>>()(
+    'pptx-draft',
+    ['pptx-draft:get', ELECTRON]
+  ),
+  'pptxDraft.onChanged': callable<
+    (listener: AcpListener<PptxDraftChangedEvent>) => RemoveListener
+  >()('pptx-draft', ['pptx-draft:changed', EVENT]),
+  'pptxDraft.reject': callable<(request: PptxDraftReviewRequest) => Promise<boolean>>()(
+    'pptx-draft',
+    ['pptx-draft:reject', ELECTRON]
+  )
 } as const
 
 export const previewDeleteContracts = {

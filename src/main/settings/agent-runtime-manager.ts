@@ -1202,7 +1202,9 @@ export class AgentRuntimeManager {
         path: join(
           configRoot,
           'skills',
-          options.directoryLayout === 'agent-facing' ? skill.name : `${OS_SKILL_PREFIX}${skill.id}`,
+          options.directoryLayout && options.directoryLayout !== 'app-owned'
+            ? skill.name
+            : `${OS_SKILL_PREFIX}${skill.id}`,
           'SKILL.md'
         ),
         enabled: isSkillEffectivelyEnabled(skill, disabled)

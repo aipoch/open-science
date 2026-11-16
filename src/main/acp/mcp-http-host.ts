@@ -27,6 +27,7 @@ import {
   type LiteratureLibraryMcpHandler
 } from '../literature/library-mcp-server'
 import { createLiteratureMcpServer, type LiteratureMcpHandler } from '../literature/mcp-server'
+import { createPptxMcpServer, type PptxMcpHandler } from '../pptx-edit/mcp-server'
 import {
   callGitHubSkillImportRpc,
   callSkillImportRpc,
@@ -65,7 +66,8 @@ const SERVER_KINDS = [
   'host-message',
   'schedule',
   'library',
-  'literature'
+  'literature',
+  'pptx'
 ] as const
 type ServerKind = (typeof SERVER_KINDS)[number]
 
@@ -85,6 +87,7 @@ type SessionEntry = {
   hostMessage?: HostMessageMcpHandler
   library?: { handler: LiteratureLibraryMcpHandler; token: symbol }
   literature?: { handler: LiteratureMcpHandler; token: symbol }
+  pptx?: { handler: PptxMcpHandler; token: symbol }
 }
 
 const RECEIPT_AUTHORITY_KEYS = {
@@ -96,7 +99,8 @@ const RECEIPT_AUTHORITY_KEYS = {
   'host-message': 'hostMessage',
   schedule: 'schedule',
   library: 'library',
-  literature: 'literature'
+  literature: 'literature',
+  pptx: 'pptx'
 } as const
 const receiptAuthority = (entry: SessionEntry | undefined, kind: ServerKind): unknown =>
   entry?.[RECEIPT_AUTHORITY_KEYS[kind]]
@@ -325,6 +329,17 @@ class AgentMcpHttpHost {
     }
   }
 
+  registerPptx(routingId: string, handler: PptxMcpHandler): () => void {
+    const entry = this.sessions.get(routingId) ?? {}
+    const token = Symbol('pptx')
+    entry.pptx = { handler, token }
+    this.sessions.set(routingId, entry)
+    return () => {
+      const current = this.sessions.get(routingId)
+      if (current?.pptx?.token === token) delete current.pptx
+    }
+  }
+
   registerLiteratureLibrary(routingId: string, handler: LiteratureLibraryMcpHandler): () => void {
     this.cancelLiteratureRoute('library', routingId)
     const entry = this.sessions.get(routingId) ?? {}
@@ -436,6 +451,10 @@ class AgentMcpHttpHost {
       return entry.schedule && entry.schedule.token === routeToken
         ? entry.schedule.server()
         : undefined
+    if (kind === 'pptx') {
+      return entry.pptx ? createPptxMcpServer(entry.pptx.handler) : undefined
+    }
+
     if (kind === 'library') {
       return entry.library ? createLiteratureLibraryMcpServer(entry.library.handler) : undefined
     }
