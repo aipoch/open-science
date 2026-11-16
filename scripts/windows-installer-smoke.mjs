@@ -1520,7 +1520,15 @@ const uninstallAndVerify = async (
   // uninstaller process has already returned.
   if (processRoot !== installDirectory) await terminate(processRoot)
   await terminate(installDirectory)
+  let lastProcessReapAt = Date.now()
   await waitFor('the installed application files to be removed', async () => {
+    // NSIS can start its detached cleanup helper after the uninstaller process exits. Reap
+    // helpers that appear during the wait without broadening the process path boundary.
+    if (Date.now() - lastProcessReapAt >= 1000) {
+      lastProcessReapAt = Date.now()
+      if (processRoot !== installDirectory) await terminate(processRoot)
+      await terminate(installDirectory)
+    }
     const pathsRemain = (await Promise.all(installedPaths.map(pathExists))).some(Boolean)
     if (pathsRemain) return undefined
     if (!(await pathExists(installDirectory))) return true
