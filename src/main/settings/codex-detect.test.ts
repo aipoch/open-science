@@ -1,8 +1,8 @@
 import type { ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, win32 } from 'node:path'
+import { delimiter, join, win32 } from 'node:path'
 import { installManagedCodex, managedCodexBinary } from './managed-codex'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -38,6 +38,7 @@ vi.mock('../process-tree', async (importActual) => ({
 
 import {
   candidateDirs,
+  createDefaultDetectDeps,
   detectCodex,
   runAcpInitializeSmoke,
   type CodexDetectDeps
@@ -59,6 +60,74 @@ const createDeps = (
 })
 
 describe('codex-detect', () => {
+  it.skipIf(process.platform === 'win32').each<{
+    name: string
+    command: string
+    run: (executable: string, signal: AbortSignal) => Promise<unknown>
+  }>([
+    {
+      name: 'Codex npm prefix',
+      command: 'npm',
+      run: (_executable, signal) => createDefaultDetectDeps().resolveNpmBinDirs(signal)
+    },
+    {
+      name: 'Codex JavaScript adapter version probe',
+      command: 'codex-adapter.js',
+      run: (executable, signal) => createDefaultDetectDeps().getAdapterVersion(executable, signal)
+    },
+    {
+      name: 'Codex native version probe',
+      command: 'codex',
+      run: (executable, signal) => createDefaultDetectDeps().getCodexVersion(executable, signal)
+    }
+  ])('reaps the real $name descendants before cancellation settles', async ({ command, run }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'codex-version-probe-'))
+    const executable = join(directory, command)
+    const pidFile = join(directory, 'pids.json')
+    const controller = new AbortController()
+    let result: Promise<unknown> | undefined
+    let pids: { parent: number; descendant: number } | undefined
+    const actual = await vi.importActual<typeof import('../process-tree')>('../process-tree')
+    terminateProcessTreeSpy.mockImplementation((...args) =>
+      actual.terminateProcessTree(...(args as Parameters<typeof actual.terminateProcessTree>))
+    )
+    try {
+      await writeFile(
+        executable,
+        `#!${process.execPath}\n` +
+          "const { spawn } = require('node:child_process');\n" +
+          "const { writeFileSync } = require('node:fs');\n" +
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });\n" +
+          `writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify({ parent: process.pid, descendant: child.pid }));\n` +
+          'setInterval(() => {}, 1000);\n'
+      )
+      await chmod(executable, 0o755)
+      vi.stubEnv('PATH', `${directory}${delimiter}${process.env.PATH ?? ''}`)
+      result = run(executable, controller.signal).catch((error: unknown) => error)
+      await vi.waitFor(async () => {
+        pids = JSON.parse(await readFile(pidFile, 'utf8'))
+      })
+      controller.abort()
+      expect(await result).toMatchObject({ name: 'AbortError' })
+      for (const pid of [pids!.descendant, pids!.parent]) {
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+      }
+    } finally {
+      controller.abort()
+      await result
+      for (const pid of Object.values(pids ?? {})) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          // The successful cancellation path has already reaped both processes.
+        }
+      }
+      terminateProcessTreeSpy.mockImplementation(() => Promise.resolve({ reaped: true }))
+      vi.unstubAllEnvs()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it.each(['0.153.4', '0.157.0', '0.157.1-alpha.1'])(
     'rejects an obsolete native CLI %s even when ACP initializes',
     async (nativeVersion) => {

@@ -28,13 +28,15 @@ export class VerificationProcessExitError extends UpdateLifecycleError {
   constructor(
     readonly command: string,
     readonly exitCode: number | null,
-    readonly stderr = ''
+    readonly stderr = '',
+    readonly signal?: NodeJS.Signals | null,
+    readonly stdout = ''
   ) {
     super('install-failed', `Installation verification failed (${command}, exit ${exitCode}).`)
   }
 }
 
-/** Bounded subprocesses keep cancellation and recovery UI responsive. Never invokes a shell. */
+/** Bounded subprocesses keep cancellation and recovery UI responsive. */
 export async function runVerificationProcess(
   command: string,
   args: string[],
@@ -44,6 +46,8 @@ export async function runVerificationProcess(
     timeoutMs?: number
     maxBytes?: number
     env?: NodeJS.ProcessEnv
+    shell?: boolean
+    stdin?: 'pipe'
   } = {}
 ): Promise<{ stdout: string; stderr: string }> {
   options.signal?.throwIfAborted()
@@ -54,14 +58,16 @@ export async function runVerificationProcess(
         ? spawnWindowsOwnedProcess(jobName, command, args, {
             cwd: options.cwd,
             env: options.env ?? process.env,
+            shell: options.shell,
             stdio: 'pipe'
           })
         : spawn(command, args, {
             cwd: options.cwd,
             detached: true,
             env: options.env,
+            shell: options.shell,
             windowsHide: true,
-            stdio: ['ignore', 'pipe', 'pipe']
+            stdio: [options.stdin ?? 'ignore', 'pipe', 'pipe']
           })
     if (process.platform === 'win32')
       registerProcessTreeOwnership(child, {
@@ -75,7 +81,7 @@ export async function runVerificationProcess(
     let failure: unknown
     let settlement: Promise<void> | undefined
     let completed = false
-    const settle = (code: number | null): Promise<void> => {
+    const settle = (code: number | null, signal?: NodeJS.Signals | null): Promise<void> => {
       settlement ??= (async () => {
         let deadline: NodeJS.Timeout | undefined
         const result = await Promise.race([
@@ -85,6 +91,7 @@ export async function runVerificationProcess(
           })
         ])
         if (deadline) clearTimeout(deadline)
+        child.stdin?.destroy()
         completed = true
         clearTimeout(timer)
         options.signal?.removeEventListener('abort', abort)
@@ -103,7 +110,15 @@ export async function runVerificationProcess(
         if (code !== 0) {
           // The existing output budget bounds this evidence. Keep it out of the display message;
           // diagnostic callers redact and shorten it through runtimeChildProcessErrorFields.
-          reject(new VerificationProcessExitError(command, code, Buffer.concat(stderr).toString()))
+          reject(
+            new VerificationProcessExitError(
+              command,
+              code,
+              Buffer.concat(stderr).toString(),
+              signal,
+              Buffer.concat(stdout).toString()
+            )
+          )
           return
         }
         resolve({
@@ -123,9 +138,12 @@ export async function runVerificationProcess(
     const timer = setTimeout(
       () =>
         stop(
-          new UpdateLifecycleError(
-            'install-failed',
-            'Installation verification exceeded its time limit.'
+          Object.assign(
+            new UpdateLifecycleError(
+              'install-failed',
+              'Installation verification exceeded its time limit.'
+            ),
+            { code: 'ETIMEDOUT' }
           )
         ),
       options.timeoutMs ?? 120_000
@@ -143,11 +161,12 @@ export async function runVerificationProcess(
     }
     child.stdout!.on('data', (chunk: Buffer) => collect(stdout, chunk))
     child.stderr!.on('data', (chunk: Buffer) => collect(stderr, chunk))
+    child.stdin?.on('error', stop)
     child.on('error', (error) => {
       failure ??= error
     })
-    child.on('close', (code) => {
-      void settle(code)
+    child.on('close', (code, signal) => {
+      void settle(code, signal)
     })
     if (options.signal?.aborted) abort()
   })

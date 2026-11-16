@@ -663,6 +663,7 @@ const namespaceToolDeclarations = (tools: ResponsesNamespacedTool[]): JsonObject
 }
 
 export class NativeResponsesCompatibilityProxy {
+  private skillSelectionAbort = new AbortController()
   private readonly host: ProviderLoopbackHttpHost<ResponsesConnection>
   private readonly reviewerSessionKeys = new Set<string>()
   private readonly scopedReviewerSessionKeys = new Set<string>()
@@ -729,7 +730,10 @@ export class NativeResponsesCompatibilityProxy {
     signal?: AbortSignal,
     observeUsage?: (observation: SkillSelectorUsageObservation) => void
   ): Promise<ResponsesSkillInput[]> {
-    if (!text.trim() || catalog.length === 0 || signal?.aborted) return []
+    const selectionSignal = signal
+      ? AbortSignal.any([signal, this.skillSelectionAbort.signal])
+      : this.skillSelectionAbort.signal
+    if (!text.trim() || catalog.length === 0 || selectionSignal.aborted) return []
     const explicit = selectExplicitConnectorSkills(text, catalog)
     if (explicit.length > 0) return explicit
     const selectorCatalog = boundedSkillSelectorCatalog(catalog)
@@ -738,8 +742,8 @@ export class NativeResponsesCompatibilityProxy {
 
     const timeout = new AbortController()
     let timedOut = false
-    const abortFromCaller = (): void => timeout.abort(signal?.reason)
-    signal?.addEventListener('abort', abortFromCaller, { once: true })
+    const abortSelection = (): void => timeout.abort(selectionSignal.reason)
+    selectionSignal.addEventListener('abort', abortSelection, { once: true })
     const timer = setTimeout(() => {
       timedOut = true
       timeout.abort()
@@ -786,6 +790,7 @@ export class NativeResponsesCompatibilityProxy {
         signal: timeout.signal
       })
       if (!response.ok) {
+        void response.body?.cancel().catch(() => undefined)
         log.warn('native Responses Skill selection failed', {
           model: this.target.model,
           reason: 'upstream-http',
@@ -826,12 +831,12 @@ export class NativeResponsesCompatibilityProxy {
     } catch {
       log.warn('native Responses Skill selection failed', {
         model: this.target.model,
-        reason: timedOut ? 'timeout' : signal?.aborted ? 'cancelled' : 'invalid-response'
+        reason: timedOut ? 'timeout' : selectionSignal.aborted ? 'cancelled' : 'invalid-response'
       })
       return []
     } finally {
       clearTimeout(timer)
-      signal?.removeEventListener('abort', abortFromCaller)
+      selectionSignal.removeEventListener('abort', abortSelection)
     }
   }
 
@@ -877,6 +882,9 @@ export class NativeResponsesCompatibilityProxy {
   }
 
   async close(): Promise<void> {
+    // Standalone Skill selection bypasses the loopback host's request ownership.
+    this.skillSelectionAbort.abort()
+    this.skillSelectionAbort = new AbortController()
     this.deterministicErrors.clear()
     this.reviewerSessionKeys.clear()
     this.scopedReviewerSessionKeys.clear()

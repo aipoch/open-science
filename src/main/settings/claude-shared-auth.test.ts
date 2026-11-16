@@ -13,7 +13,8 @@ const spawnCalls: {
 }[] = []
 let nextSpawn: (() => FakeChild) | undefined
 
-vi.mock('node:child_process', () => ({
+vi.mock('node:child_process', async (original) => ({
+  ...(await original<typeof import('node:child_process')>()),
   spawn: (
     command: string,
     args: string[],

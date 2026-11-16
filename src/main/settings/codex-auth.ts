@@ -1160,32 +1160,49 @@ export const openCodexAuthSession = async ({
       })
   )
   if (process.platform !== 'win32') registerOwnedPosixProcessGroup(child)
-  const stream = acp.ndJsonStream(
-    Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-    Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
-  )
-  const connection = acp.client({ name: 'open-science-auth' }).connect(stream)
+  // Diagnostics are not ACP messages; drain them so adapter writes cannot block authentication.
+  child.stderr.resume()
+  try {
+    // Observe the asynchronous spawn error before exposing an ACP session. A failed launch has no
+    // session for the controller to close, so this owner must also release its install admission.
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', reject)
+      child.once('spawn', resolve)
+    })
+    const stream = acp.ndJsonStream(
+      Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+      Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
+    )
+    const connection = acp.client({ name: 'open-science-auth' }).connect(stream)
 
-  return {
-    initialize: () =>
-      connection.agent.request(acp.methods.agent.initialize, {
-        protocolVersion: acp.PROTOCOL_VERSION,
-        clientInfo: { name: 'open-science-auth', version: '0.0.0' },
-        clientCapabilities: {}
-      }),
-    status: () => connection.agent.request<CodexAuthenticationStatus>('authentication/status', {}),
-    authenticateChatGpt: () =>
-      connection.agent
-        .request(acp.methods.agent.authenticate, { methodId: 'chat-gpt' })
-        .then(() => undefined),
-    logout: () =>
-      connection.agent
-        .request<Record<string, never>>('authentication/logout', {})
-        .then(() => undefined),
-    close: async () => {
-      connection.close()
-      child.stdin.end()
-      await terminateProcessTree(child)
+    return {
+      initialize: () =>
+        connection.agent.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientInfo: { name: 'open-science-auth', version: '0.0.0' },
+          clientCapabilities: {}
+        }),
+      status: () =>
+        connection.agent.request<CodexAuthenticationStatus>('authentication/status', {}),
+      authenticateChatGpt: () =>
+        connection.agent
+          .request(acp.methods.agent.authenticate, { methodId: 'chat-gpt' })
+          .then(() => undefined),
+      logout: () =>
+        connection.agent
+          .request<Record<string, never>>('authentication/logout', {})
+          .then(() => undefined),
+      close: async () => {
+        connection.close()
+        child.stdin.end()
+        await terminateProcessTree(child)
+      }
     }
+  } catch (error) {
+    child.stdin.destroy()
+    child.stdout.destroy()
+    child.stderr.destroy()
+    await terminateProcessTree(child)
+    throw error
   }
 }
