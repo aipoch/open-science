@@ -1107,11 +1107,12 @@ describe('HeadlessTaskApi adapter', () => {
     ])
     await expect(api.getSession(session.id)).resolves.toMatchObject({ title: session.title })
     await expect(api.listArtifacts(session.id)).resolves.toEqual(session.artifacts)
-    await expect(api.acquireArtifact('artifact-query')).resolves.toMatchObject({
+    const acquired = await api.acquireArtifact('artifact-query')
+    expect(acquired).toMatchObject({
       resourceId: 'resource-query',
       name: 'query.csv'
     })
-    await api.releaseArtifact('resource-query')
+    await acquired.release()
 
     expect(invoke).toHaveBeenCalledWith(
       'artifacts:resolve-version-descriptors',
@@ -1432,14 +1433,6 @@ describe('HeadlessTaskApi adapter', () => {
       { onProviderPromptAccepted: expect.any(Function) }
     )
     expect(context.isAuthorizationCurrent()).toBe(false)
-
-    await api.runWithCallerContext(context, () => api.releaseArtifact('resource-context'))
-    expect(invoke).toHaveBeenLastCalledWith(
-      'preview-resources:release',
-      expect.objectContaining({ location: 'local', actionOrigin: 'automation' }),
-      [{ resourceId: 'resource-context' }]
-    )
-    expect(invoke.mock.calls.at(-1)?.[1].isAuthorizationCurrent()).toBe(true)
   })
 
   it('does not enter the direct Agent port after captured remote authorization expires', async () => {

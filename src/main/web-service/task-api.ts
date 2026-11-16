@@ -33,7 +33,6 @@ import type {
   UpdateDeviceCredentialRequest
 } from '../../shared/settings'
 import type {
-  AcquiredTaskArtifact,
   CreateTaskProjectRequest,
   StartTaskRunRequest,
   TaskAgentRouting,
@@ -172,24 +171,33 @@ class HeadlessTaskApi {
       },
       previewResources: {
         acquire: (request) =>
-          this.invoke('preview-resources:acquire', request) as Promise<{
-            id: string
-            url: string
-            size: number
-            mimeType?: string
-            width?: number
-            height?: number
-          }>,
-        // Capability cleanup must remain available if request authorization is revoked while a
-        // response stream drains. The fixed local automation context grants no new access.
-        release: async (resourceId) => {
-          await this.commandClient.invoke(
-            this.ports.commands,
-            'preview-resources:release',
-            TASK_CALLER_CONTEXT,
-            [{ resourceId }]
-          )
-        }
+          this.withCurrentCaller(async () => {
+            const callerContext = this.currentCallerContext()
+            const callerLease = this.commandClient.leaseFor(callerContext)
+            const resource = (await this.ports.commands.invoke('preview-resources:acquire', {
+              callerContext,
+              callerLease,
+              args: [request]
+            })) as { id: string; url: string; size: number; mimeType?: string }
+            let released = false
+            return {
+              ...resource,
+              release: async () => {
+                // Cleanup is limited to this resource on the original generation. If the
+                // owner has already gone away, its abort listener has done the cleanup.
+                if (released || !callerLease.isCurrent()) return
+                released = true
+                await this.ports.commands.invoke('preview-resources:release', {
+                  callerContext: {
+                    ...callerContext,
+                    isAuthorizationCurrent: callerLease.isCurrent
+                  },
+                  callerLease,
+                  args: [{ resourceId: resource.id }]
+                })
+              }
+            }
+          })
       },
       runtimeEvents: { subscribe: subscribeEvents },
       specialists: {
@@ -607,20 +615,17 @@ class HeadlessTaskApi {
     return this.runner.listArtifacts(sessionId)
   }
 
-  acquireArtifact(artifactId: string): Promise<AcquiredTaskArtifact> {
+  acquireArtifact(artifactId: string): ReturnType<TaskRunner['acquireArtifact']> {
     return this.runner.acquireArtifact(artifactId)
   }
 
-  releaseArtifact(resourceId: string): Promise<void> {
-    return this.runner.releaseArtifact(resourceId)
+  releaseRemoteClient(clientId: string): void {
+    this.commandClient.releaseClient('task', clientId)
   }
 
   private invoke(channel: string, ...args: unknown[]): Promise<unknown> {
-    return this.commandClient.invoke(
-      this.ports.commands,
-      channel,
-      this.currentCallerContext(),
-      args
+    return this.withCurrentCaller(() =>
+      this.commandClient.invoke(this.ports.commands, channel, this.currentCallerContext(), args)
     )
   }
 
