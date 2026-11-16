@@ -213,6 +213,7 @@ export function composeCommandDependencies({
     },
     settingsRuntime: {
       workflows: settingsEffects.settingsWorkflows.runtime,
+      lab: settingsBootstrap.settingsService,
       snapshotCommits: settingsBootstrap.settingsSnapshotCommits
     },
     compute: {

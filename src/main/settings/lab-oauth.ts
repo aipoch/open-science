@@ -3,6 +3,8 @@ import { createServer, type Server } from 'node:http'
 
 import type { LabSignInChallenge } from '../../shared/lab'
 import { LAB_CALLBACK_PATH } from '../../shared/lab'
+import { desktopShellInteraction } from '../desktop-interaction'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { LabApi, LabApiError, type LabTokenResponse } from './lab-api'
 import { collectLabDeviceInfo } from './lab-device-info'
 import type { LabCredentialStore, LabStoredSession } from './lab-credential-store'
@@ -22,9 +24,11 @@ const base64Url = (bytes: number): string => randomBytes(bytes).toString('base64
 const codeChallengeFor = (verifier: string): string =>
   createHash('sha256').update(verifier).digest('base64url')
 
+// The Node backend bundle is built without Electron, so the default browser opener goes through the
+// desktop host abstraction. The desktop app supplies it directly, the runtime bridges it to Desktop,
+// and a CLI-only host fails closed with a typed "requires the desktop app" error.
 const defaultOpenExternal = async (url: string): Promise<void> => {
-  const { shell } = await import('electron')
-  await shell.openExternal(url)
+  await desktopShellInteraction().openExternal(url)
 }
 
 type CallbackResult = Readonly<{ code?: string; error?: string }>
@@ -168,13 +172,7 @@ export class LabOAuthController {
       pending.redirectUri = redirectUri
       const installationId = await this.credentials.ensureInstallationId()
       this.assertPending(pending)
-      let appVersion: string | undefined
-      try {
-        const { app } = await import('electron')
-        appVersion = app.getVersion()
-      } catch {
-        appVersion = undefined
-      }
+      const appVersion = runtimeMetadataIfConfigured()?.version
       const deviceInfo = collectLabDeviceInfo({
         appVersion,
         locale: Intl.DateTimeFormat().resolvedOptions().locale,
