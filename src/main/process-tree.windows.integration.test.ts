@@ -74,10 +74,11 @@ windows('delegated Windows Job ownership (real processes)', () => {
     )
     expect(alive(owned.pid!)).toBe(true)
     const exited = once(owned, 'exit')
-    await terminateWindowsProcessesByIdentity(identities, Date.now() + 4_000)
+    // Allow for cold PowerShell startup on shared Windows runners.
+    await terminateWindowsProcessesByIdentity(identities, Date.now() + 15_000)
     await exited
     expect(alive(unrelated.pid!)).toBe(true)
-  })
+  }, 30_000)
 
   it('releases installation files held by an orphaned update child without killing another runtime', async () => {
     root = await mkdtemp(join(tmpdir(), 'update-owned-cleanup-'))
