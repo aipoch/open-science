@@ -1660,10 +1660,13 @@ test('reveals recorded files immediately and keeps the gallery stable through de
 })
 
 test('restores Notebook and its code scrollbar after returning from a generated image', async ({
-  page
+  page,
+  stageApp
 }, info) => {
   await page.goto(`${url}?panel=1&artifacts=1&longName=1&previewRegressions=1`)
-  await page.setViewportSize({ width: 1500, height: 900 })
+  await stageApp.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setSize(1500, 900)
+  })
   const panel = page.getByTestId('replay-panel')
   await panel.getByRole('button', { name: 'Enter full screen' }).click()
   const progress = panel.getByRole('slider')
