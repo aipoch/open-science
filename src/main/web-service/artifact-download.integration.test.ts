@@ -33,6 +33,12 @@ import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { SessionRepository } from '../session-persistence/repository'
 import { startWebHttpServer } from './http-server'
 import { HeadlessTaskApi } from './task-api'
+import { createApplicationCommandRouter } from '../application-command-router'
+import {
+  dataContentApplicationCommands,
+  registerDataContentApplicationCommands
+} from '../data-content-application-commands'
+import { createManagedFileVersionHandlers } from '../managed-file-versions/ipc'
 
 it.each(['historical', 'native'] as const)(
   'downloads a %s Task artifact by its listed Version id through HTTP',
@@ -96,10 +102,15 @@ it.each(['historical', 'native'] as const)(
     })
     const owners = createManagedPreviewOwnerRegistry(resources)
     const acquiredIds: string[] = []
+    const router = createApplicationCommandRouter()
+    const installation = registerDataContentApplicationCommands(router.registrar, {
+      managedFileVersions: createManagedFileVersionHandlers(versions)
+    } as never)
     const tasks = new HeadlessTaskApi({
       commands: {
         commandNames: () => [],
-        invoke: async (name, { args, callerLease }) => {
+        invoke: async (name, invocation) => {
+          const { args, callerLease } = invocation
           if (name === 'sessions:load-all') return sessions.loadAll()
           if (name === 'artifacts:resolve-version-descriptors') {
             return provenance.resolveVersionDescriptors(
@@ -107,10 +118,11 @@ it.each(['historical', 'native'] as const)(
             )
           }
           if (name === 'managed-file-versions:inspect') {
-            return {
-              ok: true,
-              value: await versions.inspect(args[0] as Parameters<typeof versions.inspect>[0])
-            }
+            // Preserve the production identity guard between HTTP and the managed service.
+            return router.dispatcher.invoke(dataContentApplicationCommands.managedFileInspect, {
+              ...invocation,
+              args: [args[0] as Parameters<typeof versions.inspect>[0]]
+            })
           }
           if (name === 'preview-resources:acquire') {
             const resource = await owners.acquire(
@@ -369,6 +381,8 @@ it.each(['historical', 'native'] as const)(
     } finally {
       await server?.close()
       await tasks.dispose()
+      installation.uninstall()
+      router.dispose()
       await fixture.dispose()
     }
   },

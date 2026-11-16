@@ -1496,11 +1496,12 @@ const registerDataContentApplicationCommands = (
       'managed-file-versions:inspect': async (invocation) => {
         const [request] = invocation.args
         const result = await dependencies.managedFileVersions.inspect(request)
-        // The command may be reached from a remote Web caller. Never return a Version whose
-        // resolved Project or logical File identity differs from the requested scope.
+        // Artifact-only browser URLs let the service resolve the Project. Still reject any
+        // mismatch with an explicitly requested Project or the required logical File identity.
         if (
           result.ok &&
-          (result.value.projectId !== request.projectId || result.value.fileId !== request.fileId)
+          ((request.projectId !== undefined && result.value.projectId !== request.projectId) ||
+            result.value.fileId !== request.fileId)
         ) {
           throw new Error('Managed file version identity does not match the requested scope.')
         }

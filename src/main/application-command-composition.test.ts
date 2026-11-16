@@ -464,64 +464,85 @@ describe('application command composition', () => {
         args: [request]
       })
     ).rejects.toThrow('identity')
+    inspect.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: 'different-file',
+        sessionId: 'session-1'
+      }
+    })
+    await expect(
+      composition.remoteWeb.invoke('managed-file-versions:inspect', {
+        ...invocation('remote'),
+        args: [{ source: 'artifact', fileId: 'file-1' }]
+      })
+    ).rejects.toThrow('identity')
     await composition.dispose()
   })
 
-  it('acquires the selected HTML version through the real Task command view', async () => {
-    const selection = { projectId: 'project-1', versionId: 'version-1' }
-    const identity = { source: 'artifact', fileId: 'file-1', ...selection }
-    const inspect = vi.fn().mockResolvedValue({
-      ok: true,
-      value: {
-        projectId: selection.projectId,
-        fileId: identity.fileId,
-        headVersionId: 'version-2',
-        selectedVersion: {
-          id: selection.versionId,
+  it.each([{}, { versionNumber: 2 }])(
+    'acquires HTML with selection %j through the real Task command view',
+    async (selection) => {
+      const identity = { source: 'artifact', fileId: 'file-1', ...selection }
+      const inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          projectId: 'project-1',
           fileId: identity.fileId,
-          displayName: 'report.html',
-          contentType: 'text/html'
+          headVersionId: 'version-2',
+          selectedVersion: {
+            id: 'version-2',
+            versionNumber: 2,
+            fileId: identity.fileId,
+            displayName: 'report.html',
+            contentType: 'text/html'
+          }
         }
-      }
-    })
-    const acquire = vi.fn().mockResolvedValue({
-      id: 'resource-1',
-      url: 'managed-preview://resource-1',
-      mimeType: 'text/html',
-      size: 42
-    })
-    const release = vi.fn()
-    const composition = createApplicationCommandComposition({
-      ...dependencies(),
-      dataContent: {
-        managedFileVersions: { inspect },
-        managedPreview: { acquire, release }
-      } as never
-    })
-    // Keep the production Task allowlist and router between the API and its service owners.
-    const tasks = new HeadlessTaskApi({ commands: composition.task, agent: {} as never })
-    try {
-      await expect(tasks.acquireArtifact(identity.fileId, selection)).resolves.toEqual({
-        resourceId: 'resource-1',
+      })
+      const acquire = vi.fn().mockResolvedValue({
+        id: 'resource-1',
         url: 'managed-preview://resource-1',
-        name: 'report.html',
         mimeType: 'text/html',
         size: 42
       })
-      expect(inspect).toHaveBeenCalledExactlyOnceWith(identity)
-      expect(acquire).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
-        ...identity,
-        mimeType: 'text/html'
+      const release = vi.fn()
+      const composition = createApplicationCommandComposition({
+        ...dependencies(),
+        dataContent: {
+          managedFileVersions: { inspect },
+          managedPreview: { acquire, release }
+        } as never
       })
-      await tasks.releaseArtifact('resource-1')
-      expect(release).toHaveBeenCalledExactlyOnceWith(acquire.mock.calls[0][0], {
-        resourceId: 'resource-1'
-      })
-    } finally {
-      await tasks.dispose()
-      await composition.dispose()
+      // Keep the production Task allowlist and router between the API and its service owners.
+      const tasks = new HeadlessTaskApi({ commands: composition.task, agent: {} as never })
+      try {
+        await expect(tasks.acquireArtifact(identity.fileId, selection)).resolves.toEqual({
+          resourceId: 'resource-1',
+          url: 'managed-preview://resource-1',
+          name: 'report.html',
+          mimeType: 'text/html',
+          size: 42
+        })
+        expect(inspect).toHaveBeenCalledExactlyOnceWith(identity)
+        expect(acquire).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+          source: 'artifact',
+          projectId: 'project-1',
+          fileId: identity.fileId,
+          versionId: 'version-2',
+          mimeType: 'text/html'
+        })
+        await tasks.releaseArtifact('resource-1')
+        expect(release).toHaveBeenCalledExactlyOnceWith(acquire.mock.calls[0][0], {
+          resourceId: 'resource-1'
+        })
+      } finally {
+        await tasks.dispose()
+        await composition.dispose()
+      }
     }
-  })
+  )
 
   it.each([
     ['localWeb', 'web', 'local'],
