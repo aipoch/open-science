@@ -18,7 +18,7 @@ const ElicitationOptionDetails = ({
         </span>
       ) : null}
       {option.pros ? (
-        <span className="mt-1 block whitespace-pre-wrap break-words text-xs leading-4 text-text-100">
+        <span className="mt-1 block whitespace-pre-wrap break-words text-xs leading-4 text-status-success-foreground dark:text-status-success-dark-foreground">
           <span className="font-medium">
             {t('Pros')}
             {': '}
@@ -27,7 +27,7 @@ const ElicitationOptionDetails = ({
         </span>
       ) : null}
       {option.cons ? (
-        <span className="mt-1 block whitespace-pre-wrap break-words text-xs leading-4 text-text-100">
+        <span className="mt-1 block whitespace-pre-wrap break-words text-xs leading-4 text-status-warning-foreground dark:text-status-warning-dark-foreground">
           <span className="font-medium">
             {t('Cons')}
             {': '}
