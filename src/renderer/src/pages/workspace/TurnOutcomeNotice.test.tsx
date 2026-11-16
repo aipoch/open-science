@@ -48,20 +48,25 @@ describe('turn outcome notice action ownership', () => {
       error: 'Historical opaque error',
       failure: { category: 'internal' as const, diagnostics: {} }
     })
+    act(() => container.querySelector('summary')?.click())
     act(() =>
       container.querySelector<HTMLButtonElement>('[aria-label="Report this error"]')?.click()
     )
     expect(actions.onReportError).toHaveBeenCalledExactlyOnceWith('Historical opaque error')
   })
 
-  it('uses each outcome reportability without borrowing the current turn flag', () => {
+  it('keeps plain service reporting in Details and binds it to the displayed outcome', () => {
     render({
       kind: 'failed',
       settledAt: 1,
       error: 'Provider diagnostic',
       failure: { category: 'service' as const, diagnostics: {} }
     })
-    expect(container.querySelector('[aria-label="Report this error"]')).toBeNull()
+    const report = container.querySelector<HTMLButtonElement>('[aria-label="Report this error"]')!
+    expect(report.closest('details')?.open).toBe(false)
+    act(() => container.querySelector('summary')?.click())
+    act(() => report.click())
+    expect(actions.onReportError).toHaveBeenCalledExactlyOnceWith('Provider diagnostic')
     render({
       kind: 'failed',
       settledAt: 1,
@@ -71,7 +76,7 @@ describe('turn outcome notice action ownership', () => {
     expect(container.querySelector('[aria-label="Report this error"]')).not.toBeNull()
   })
 
-  it('shows the provider response directly without an application report action', () => {
+  it('keeps a provider response in Details without an application report action', () => {
     render({
       kind: 'failed',
       settledAt: 1,
@@ -81,13 +86,17 @@ describe('turn outcome notice action ownership', () => {
         diagnostics: { status: 503, provider: 'Example Provider', model: 'example-model' }
       }
     })
-    expect(container.querySelector('h2')?.textContent).toBe('Model provider error')
-    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+    expect(container.querySelector('h2')?.textContent).toBe("The model service couldn't respond")
+    expect(container.querySelector('[role="status"]')?.textContent).not.toContain(
       'Example service is unavailable'
     )
-    expect(container.textContent).toContain('status: 503')
-    expect(container.textContent).toContain('provider: Example Provider')
-    expect(container.textContent).toContain('model: example-model')
+    expect(container.querySelector('details')?.textContent).toContain(
+      'Example service is unavailable'
+    )
+    expect(container.querySelector('dd')?.textContent).toBe('example-model')
+    expect(container.textContent).toContain('503')
+    expect(container.textContent).toContain('Example Provider')
+    expect(container.textContent).toContain('example-model')
     expect(container.querySelector('[data-notice-action="report"]')).toBeNull()
     expect(container.textContent).not.toContain('Report this error')
   })
@@ -105,9 +114,10 @@ describe('turn outcome notice action ownership', () => {
         diagnostics: { status: 404 }
       }
     })
-    expect(container.querySelector('h2')?.textContent).toBe('Model provider error')
+    expect(container.querySelector('h2')?.textContent).toBe('Model configuration needs attention')
     expect(container.textContent).toContain('Example model unavailable')
     expect(container.querySelector('[data-notice-action="report"]')).toBeNull()
+    act(() => container.querySelector('summary')?.click())
     act(() =>
       container
         .querySelector<HTMLButtonElement>('[data-notice-action="open-provider-settings"]')
@@ -123,11 +133,7 @@ describe('turn outcome notice action ownership', () => {
       error: 'Detailed native finalization failure',
       recovery: 'retry-artifact-publication'
     })
-    act(() =>
-      container
-        .querySelector<HTMLButtonElement>('[aria-label="Retry Artifact publication"]')
-        ?.click()
-    )
+    act(() => container.querySelector<HTMLButtonElement>('[data-notice-action="retry"]')?.click())
     expect(actions.onRetryArtifact).toHaveBeenCalledExactlyOnceWith('historical-prompt')
   })
 

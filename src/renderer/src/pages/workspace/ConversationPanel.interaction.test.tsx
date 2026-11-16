@@ -1466,17 +1466,19 @@ describe('ConversationPanel composer errors', () => {
   it('uses the shared ErrorNotice with the semantic failure tone', () => {
     renderPanel({ composer: { view: { error: 'Annotation payload is too large.' } } })
 
-    const alert = container.querySelector('[role="alert"]')
-    expect(alert?.textContent).toContain('An unexpected application error occurred')
+    const alert = container.querySelector('[data-testid="composer-notice-slot"] [role="status"]')
+    expect(alert?.textContent).toContain("Couldn't complete your request")
     const notice = container.querySelector('[data-testid="composer-notice-slot"]')
-    expect(notice?.querySelector('pre')?.textContent).toContain('Annotation payload is too large.')
+    expect(notice?.querySelector('[data-testid="composer-error-details"]')?.textContent).toContain(
+      'Annotation payload is too large.'
+    )
     expect(notice?.querySelector('.text-status-failure-foreground')).not.toBeNull()
     expect(alert?.className).not.toContain('bg-red-50')
   })
 
   it.each([false, true])(
     'gates Artifact publication retry for imported history (%s)',
-    (imported) => {
+    async (imported) => {
       const request = vi.fn()
       const pendingPath = '/data/artifacts/project-a/artifact-session-1/.pending/run-1/report.md'
       const activeSession: ChatSession = {
@@ -1538,21 +1540,43 @@ describe('ConversationPanel composer errors', () => {
         workflows: { artifactFinalization: { request } }
       })
 
-      const retry = container.querySelector<HTMLButtonElement>(
-        '[aria-label="Retry Artifact publication"]'
-      )
+      const retry = container.querySelector<HTMLButtonElement>('[aria-label="Retry"]')
       const report = container.querySelector<HTMLButtonElement>('[aria-label="Report this error"]')
       expect(retry).not.toBeNull()
       expect(report).not.toBeNull()
       expect(
-        container.querySelector('[data-slot="turn-outcome-notice"] pre')?.textContent
+        container.querySelector(
+          '[data-slot="turn-outcome-notice"] [data-testid="composer-error-details"]'
+        )?.textContent
       ).toContain(activeSession.error)
-      expect(retry?.parentElement?.classList.contains('flex-wrap')).toBe(true)
       expect(container.querySelector('[data-slot="turn-outcome-notice"]')).not.toBeNull()
       expect(retry?.disabled).toBe(imported)
-      act(() => retry?.click())
+      await act(async () => retry?.click())
       if (imported) expect(request).not.toHaveBeenCalled()
-      else expect(request).toHaveBeenCalledExactlyOnceWith('session-artifact-retry', 'plan-origin')
+      else {
+        expect(request).toHaveBeenCalledExactlyOnceWith('session-artifact-retry', 'plan-origin')
+        renderPanel({
+          view: { activeSession },
+          workflows: {
+            artifactFinalization: { request, running: true, retryingPromptMessageId: 'plan-origin' }
+          }
+        })
+        const pending = container.querySelector<HTMLButtonElement>('[data-notice-action="retry"]')!
+        expect(pending.textContent).toBe('Retrying…')
+        expect(pending.disabled).toBe(true)
+        expect(pending.getAttribute('aria-busy')).toBe('true')
+        renderPanel({
+          view: { activeSession },
+          workflows: {
+            artifactFinalization: {
+              request,
+              running: true,
+              retryingPromptMessageId: 'another-prompt'
+            }
+          }
+        })
+        expect(container.querySelector('[data-notice-action="retry"]')?.textContent).toBe('Retry')
+      }
     }
   )
 
@@ -1605,9 +1629,7 @@ describe('ConversationPanel composer errors', () => {
 
     renderPanel({ view: { activeSession } })
 
-    expect(
-      container.querySelector<HTMLButtonElement>('[aria-label="Retry Artifact publication"]')
-    ).toBeNull()
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Retry"]')).toBeNull()
   })
 })
 
@@ -2005,7 +2027,7 @@ describe('ConversationPanel Specialist reconfigure recovery', () => {
     })
 
     const banner = container.querySelector('[data-notice-operation="reconfigure"]')
-    expect(banner?.textContent).toContain('An unexpected application error occurred')
+    expect(banner?.textContent).toContain("Couldn't complete your request")
     expect(banner?.textContent).toContain('switch rejected')
     clickRetry()
 
@@ -2025,7 +2047,7 @@ describe('ConversationPanel Specialist reconfigure recovery', () => {
       }
     })
     const banner = container.querySelector('[data-notice-operation="reconfigure"]')
-    expect(banner?.textContent).toContain('An unexpected application error occurred')
+    expect(banner?.textContent).toContain("Couldn't complete your request")
     expect(banner?.textContent).toContain('connection lost')
   })
 
@@ -2037,7 +2059,7 @@ describe('ConversationPanel Specialist reconfigure recovery', () => {
       }
     })
     const banner = container.querySelector('[data-notice-operation="reconfigure"]')
-    expect(banner?.textContent).toContain('An unexpected application error occurred')
+    expect(banner?.textContent).toContain("Couldn't complete your request")
     expect(banner?.textContent).toContain('The agent session could not be reconfigured.')
     expect(banner?.textContent).toContain('Retry')
     expect(banner?.textContent).toContain('Choose another specialist')
@@ -2108,7 +2130,7 @@ describe('ConversationPanel Specialist reconfigure recovery', () => {
       })
       const banner = container.querySelector('[data-notice-operation="reconfigure"]')
       expect(banner?.textContent).toContain('switch rejected')
-      expect(banner?.textContent).toContain('An unexpected application error occurred')
+      expect(banner?.textContent).toContain("Couldn't complete your request")
       expect(container.querySelector('[data-testid="specialist-switch-loading"]')).toBeNull()
     }
   )
@@ -4077,7 +4099,7 @@ describe('ConversationPanel composer intake', () => {
       // pending question; the event consumer must deliver it to that surface.
       renderPanel({ view: { ...view, actionError: failure }, elicitation: { requests: [] } })
       expect(container.textContent).toContain(
-        authenticationRequired ? 'Model configuration needs attention' : failure
+        authenticationRequired ? 'Model authentication failed' : failure
       )
       renderPanel({
         view: {
@@ -4097,7 +4119,7 @@ describe('ConversationPanel composer intake', () => {
             .querySelector('[data-testid="ordinary-composer-form"]')
             ?.hasAttribute('inert') ?? true
         ).toBe(true)
-        expect(container.textContent).toContain('Model configuration needs attention')
+        expect(container.textContent).toContain('Model authentication failed')
         expect(
           [...container.querySelectorAll('button')].some(
             (button) => button.textContent === 'Model settings'
@@ -4112,7 +4134,7 @@ describe('ConversationPanel composer intake', () => {
           },
           elicitation: { requests: [] }
         })
-        expect(container.textContent).not.toContain('Model configuration needs attention')
+        expect(container.textContent).not.toContain('Model authentication failed')
         expect(pendingWorkspaceElicitations(current)[0]?.requestId).toBe('report-choice')
         expect(
           current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.answers
@@ -4820,7 +4842,7 @@ describe('ConversationPanel composer intake', () => {
     renderPanel({ agentControls: { modelUnavailable: true } })
 
     expect(container.querySelector('[data-testid="mock-model-picker"]')).not.toBeNull()
-    expect(container.textContent).not.toContain('Model configuration needs attention')
+    expect(container.textContent).not.toContain('Model authentication failed')
     expect(container.querySelector('[data-notice-action="open-provider-settings"]')).toBeNull()
   })
 
@@ -6183,7 +6205,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
       renderPanel({ view: { activeSession }, conversation: { actions: { resume } } })
       expect(container.querySelectorAll('[data-slot="session-recovery-notice"]')).toHaveLength(1)
       expect(container.querySelectorAll('[data-testid="composer-notice-slot"] h2')).toHaveLength(1)
-      const button = container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')
+      const button = container.querySelector<HTMLButtonElement>('[data-notice-action="resume"]')
       expect(button?.disabled).toBe(false)
       await act(async () => button?.click())
       expect(resume).toHaveBeenCalledOnce()
@@ -6198,10 +6220,10 @@ describe('ConversationPanel interrupted Session recovery', () => {
         conversation: { availability: { resume: false }, actions: { resume } }
       })
       expect(
-        container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+        container.querySelector<HTMLButtonElement>('[data-notice-action="resume"]')?.disabled
       ).toBe(true)
       await act(async () =>
-        container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.click()
+        container.querySelector<HTMLButtonElement>('[data-notice-action="resume"]')?.click()
       )
       expect(resume).toHaveBeenCalledOnce()
     }
@@ -6247,7 +6269,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
     renderPanel({ view: { activeSession: projected } })
     expect(container.textContent).toContain('Session was interrupted before the app closed.')
     expect(
-      container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+      container.querySelector<HTMLButtonElement>('[data-notice-action="resume"]')?.disabled
     ).toBe(true)
     expect(container.querySelector('[data-slot="turn-outcome-notice"]')).toBeNull()
 
@@ -6261,12 +6283,12 @@ describe('ConversationPanel interrupted Session recovery', () => {
       }
     })
     expect(
-      container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+      container.querySelector<HTMLButtonElement>('[data-notice-action="resume"]')?.disabled
     ).toBe(false)
     selectAdditionalNotice()
     expect(container.textContent).toContain('New prompt preparation failed.')
     renderPanel({ view: { activeSession: { ...projected, promptPreparation: undefined } } })
-    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+    expect(container.querySelector('[data-notice-action="resume"]')).toBeNull()
     expect(container.textContent).not.toContain('Session was interrupted before the app closed.')
     expect(container.querySelector('[data-slot="historical-turn-outcome"]')).toBeNull()
   })
@@ -6317,7 +6339,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
 
     expect(container.querySelector('[data-slot="session-recovery-notice"]')).not.toBeNull()
     expect(container.querySelector('[data-slot="turn-outcome-notice"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Resume session"]')).not.toBeNull()
+    expect(container.querySelector('[data-notice-action="resume"]')).not.toBeNull()
   })
 
   it.each(['cancelled', 'interrupted', 'legacy-failed'] as const)(
@@ -6418,14 +6440,14 @@ describe('ConversationPanel interrupted Session recovery', () => {
           expect(container.textContent).toContain('Original latest error')
         } else {
           expect(
-            container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+            container.querySelector<HTMLButtonElement>('[data-notice-action="resume"]')?.disabled
           ).toBe(true)
         }
         renderPanel({
           view: { activeSession: { ...rendererSession, promptPreparation: undefined } }
         })
         expect(container.querySelector('[data-slot="turn-outcome-notice"]')).toBeNull()
-        expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+        expect(container.querySelector('[data-notice-action="resume"]')).toBeNull()
       }
     }
   )
@@ -6448,9 +6470,9 @@ describe('ConversationPanel interrupted Session recovery', () => {
       conversation: { actions: { resume } }
     })
     await act(async () =>
-      container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.click()
+      container.querySelector<HTMLButtonElement>('[data-notice-action="resume"]')?.click()
     )
-    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+    expect(container.querySelector('[data-notice-action="resume"]')).toBeNull()
     expect(resume).not.toHaveBeenCalled()
   })
 
@@ -6493,7 +6515,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
       }
     })
 
-    expect(container.querySelector('[aria-label="Resume session"]')).not.toBeNull()
+    expect(container.querySelector('[data-notice-action="resume"]')).not.toBeNull()
     expect(container.textContent).toContain('Session was interrupted before the app closed.')
   })
 
@@ -6534,12 +6556,14 @@ describe('ConversationPanel interrupted Session recovery', () => {
       'Connection lost'
     )
     selectAdditionalNotice()
-    const composerError = container.querySelector('[data-notice-operation="action"] pre')
+    const composerError = container.querySelector(
+      '[data-notice-operation="action"] [data-testid="composer-error-details"]'
+    )
     expect(composerError?.textContent).toContain('Resume preparation could not be saved.')
     expect(composerError?.closest('[data-slot="turn-outcome-notice"]')).toBeNull()
     selectAdditionalNotice()
     expect(
-      container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+      container.querySelector<HTMLButtonElement>('[data-notice-action="resume"]')?.disabled
     ).toBe(false)
   })
 
@@ -6592,19 +6616,19 @@ describe('ConversationPanel interrupted Session recovery', () => {
       expect(container.querySelector('[data-slot="session-recovery-notice"]')).not.toBeNull()
       expect(container.querySelector('[data-slot="turn-outcome-notice"]')).toBeNull()
       expect(
-        container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+        container.querySelector<HTMLButtonElement>('[data-notice-action="resume"]')?.disabled
       ).toBe(true)
 
       renderPanel({ view: { activeSession: base, actionError: 'New prompt preparation failed.' } })
       expect(
-        container.querySelector<HTMLButtonElement>('[aria-label="Resume session"]')?.disabled
+        container.querySelector<HTMLButtonElement>('[data-notice-action="resume"]')?.disabled
       ).toBe(false)
       selectAdditionalNotice()
       expect(container.textContent).toContain('New prompt preparation failed.')
 
       renderPanel({ view: { activeSession: { ...preparing, promptPreparation: undefined } } })
       expect(container.querySelector('[data-slot="turn-outcome-notice"]')).toBeNull()
-      expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+      expect(container.querySelector('[data-notice-action="resume"]')).toBeNull()
       expect(container.querySelector('[data-slot="historical-turn-outcome"]')).toBeNull()
     }
   )
@@ -6733,7 +6757,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
       }
     })
     expect(container.querySelector('[data-slot="turn-outcome-notice"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+    expect(container.querySelector('[data-notice-action="resume"]')).toBeNull()
     expect(container.textContent).not.toContain('ACP connection closed')
   })
 
@@ -6771,7 +6795,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
       renderPanel({ view: { activeSession } })
       expect(
         container.querySelector('[data-slot="session-recovery-notice"]')?.textContent
-      ).toContain('连接已断开 — 恢复以重新连接并继续。')
+      ).toContain('无法完成您的请求')
       expect(activeSession.messages[0].turnOutcome).toMatchObject({
         error: 'ACP connection closed'
       })
@@ -6819,7 +6843,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
       expect(container.querySelectorAll('[data-slot="session-recovery-notice"]')).toHaveLength(1)
       expect(container.querySelector('[data-slot="turn-outcome-notice"]')).toBeNull()
       const resumeButton = container.querySelector<HTMLButtonElement>(
-        'button[aria-label="Resume session"]'
+        'button[data-notice-action="resume"]'
       )
       expect(resumeButton).not.toBeNull()
       expect(resumeButton?.disabled).toBe(false)
@@ -6866,7 +6890,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
     })
 
     const resumeButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Resume session"]'
+      'button[data-notice-action="resume"]'
     )
     await act(async () => resumeButton?.click())
 
@@ -6923,7 +6947,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
       }
     })
     await act(async () =>
-      container.querySelector<HTMLButtonElement>('button[aria-label="Resume session"]')?.click()
+      container.querySelector<HTMLButtonElement>('button[data-notice-action="resume"]')?.click()
     )
     expect(container.querySelector('[data-testid="resume-progress-indicator"]')).not.toBeNull()
 
@@ -6979,7 +7003,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
         conversation: { availability: { submit: true }, actions: { resume } }
       })
     const resumeButton = (): HTMLButtonElement | null =>
-      container.querySelector('[aria-label="Resume session"]')
+      container.querySelector('[data-notice-action="resume"]')
     const sendButton = (): HTMLButtonElement | null =>
       container.querySelector('[aria-label="Send message"]')
 
@@ -7043,7 +7067,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
     })
 
     const resumeButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Resume session"]'
+      'button[data-notice-action="resume"]'
     )
     expect(resumeButton?.disabled).toBe(true)
     expect(resumeButton?.dataset.slot).toBe('button')
@@ -9696,11 +9720,12 @@ describe('ConversationPanel unified failure notices', () => {
         }
       })
       expect(slot()?.dataset.noticeCategory).toBe(category)
-      expect(action('report') !== null).toBe(category === 'internal')
-      expect(slot()?.textContent?.includes('Still need help? Report this error')).toBe(
-        ['configuration', 'service', 'environment'].includes(category)
-      )
-      expect(slot()?.querySelector('pre')?.textContent).toContain('Opaque detail')
+      expect(action('report') !== null).toBe(category !== 'input')
+      if (category !== 'input')
+        expect(slot()?.querySelector('details')?.contains(action('report'))).toBe(true)
+      expect(
+        slot()?.querySelector('[data-testid="composer-error-details"]')?.textContent
+      ).toContain('Opaque detail')
       expect(action('copy-error')).not.toBeNull()
     }
   )
@@ -9792,7 +9817,7 @@ describe('ConversationPanel unified failure notices', () => {
       }
     })
     expect(slot()?.dataset.noticeCategory).toBe('configuration')
-    expect(action('report')).toBeNull()
+    expect(action('report')).not.toBeNull()
     selectAdditionalNotice()
     expect(slot()?.dataset.noticeCategory).toBe('internal')
     expect(action('report')).not.toBeNull()
@@ -9849,7 +9874,7 @@ describe('ConversationPanel unified failure notices', () => {
     })
     act(() => action(button)?.click())
     expect(openSettingsToPanel).toHaveBeenCalledWith(panel)
-    expect(action('report')).toBeNull()
+    expect(action('report')).not.toBeNull()
   })
 
   it('retries a service failure through the existing revision command and preserves the current draft', async () => {
@@ -9875,6 +9900,54 @@ describe('ConversationPanel unified failure notices', () => {
     expect(getComposerEditor().textContent).toBe('Keep unsent draft')
   })
 
+  it('shows verified auth readiness, then retry failure without reasserting the old auth error', async () => {
+    const revise = vi
+      .fn()
+      .mockResolvedValue({ ok: false, displayMessage: 'Attempt failed without a new auth error' })
+    const failure = {
+      category: 'configuration' as const,
+      reason: 'configuration/auth-failed' as const,
+      diagnostics: { raw: 'Authentication required' }
+    }
+    const prompt = {
+      ...planOriginMessages()[0],
+      turnOutcome: { kind: 'failed' as const, settledAt: 2, failure }
+    }
+    const props = (required: boolean): DeepPartial<PanelProps> => ({
+      view: {
+        activeSession: {
+          ...errorSession,
+          status: 'idle' as const,
+          error: undefined,
+          messages: [prompt]
+        },
+        authenticationRecovery: { required, openSettings: vi.fn() }
+      },
+      composer: { view: { doc: docFromText('Keep the unsent draft') } },
+      conversation: { availability: { revise: true }, actions: { revise } }
+    })
+    renderPanel(props(true))
+    expect(slot()?.querySelector('h2')?.textContent).toBe('Model authentication failed')
+    renderPanel(props(false))
+    expect(slot()?.querySelector('h2')?.textContent).toBe('Ready to retry')
+    await act(async () => action('retry')?.click())
+    expect(revise).toHaveBeenCalledTimes(1)
+    expect(slot()?.querySelector('h2')?.textContent).toBe('Retry failed')
+    expect(slot()?.querySelector('[role="status"]')?.textContent).not.toContain(
+      'authentication failed'
+    )
+    expect(getComposerEditor().textContent).toBe('Keep the unsent draft')
+    dismiss()
+    const entry = container.querySelector('[data-testid="composer-notice-recovery-entry"]')!
+    expect(entry.textContent).toContain('Retry failed')
+    act(() =>
+      [...entry.querySelectorAll('button')]
+        .find((button) => button.textContent === 'Details')!
+        .click()
+    )
+    expect(slot()?.querySelector('h2')?.textContent).toBe('Retry failed')
+  })
+
   it('deduplicates the same composer and operation error', () => {
     renderPanel({
       view: { actionError: 'This annotation could not be added.' },
@@ -9882,7 +9955,7 @@ describe('ConversationPanel unified failure notices', () => {
     })
     expect(container.querySelectorAll('[data-testid="composer-notice-slot"]')).toHaveLength(1)
     expect(slot()?.textContent).not.toContain('more notice')
-    expect(slot()?.querySelector('pre')?.textContent).toContain(
+    expect(slot()?.querySelector('[data-testid="composer-error-details"]')?.textContent).toContain(
       'This annotation could not be added.'
     )
   })
@@ -9896,11 +9969,11 @@ describe('ConversationPanel unified failure notices', () => {
         'textarea[aria-label="Error details"]'
       )
       expect(details?.value).toContain('The run failed with no error message.')
-      expect(details?.value).toContain('An unexpected application error occurred')
+      expect(details?.value).toContain("Couldn't complete your request")
     }
   )
 
-  it('keeps session recovery non-dismissible while folded operation diagnostics remain accessible', () => {
+  it('retains dismissed session recovery while folded operation diagnostics remain accessible', () => {
     const resume = vi.fn().mockResolvedValue(undefined)
     const activeSession = {
       ...errorSession,
@@ -9911,7 +9984,7 @@ describe('ConversationPanel unified failure notices', () => {
       conversation: { actions: { resume } }
     })
     expect(slot()?.dataset.noticeCategory).toBe('session')
-    expect(slot()?.querySelector('[aria-label="Dismiss error"]')).toBeNull()
+    expect(slot()?.querySelector('[aria-label="Dismiss error"]')).not.toBeNull()
     expect(action('resume')?.disabled).toBe(false)
     selectAdditionalNotice()
     expect(slot()?.textContent).toContain('Resume preparation could not be saved.')
@@ -9941,9 +10014,15 @@ describe('ConversationPanel unified failure notices', () => {
         view: { activeSession, actionError: message },
         sessionTools: { exportDiagnostics: canExport ? exportDiagnostics : undefined }
       })
-      expect(slot()?.querySelector('pre')?.textContent).toContain(raw.stack)
+      expect(
+        slot()?.querySelector('[data-testid="composer-error-details"]')?.textContent
+      ).toContain(message)
+      expect(
+        slot()?.querySelector('[data-testid="composer-error-details"]')?.textContent
+      ).not.toContain('at ')
       await act(async () => action('copy-error')?.click())
-      expect(writeText).toHaveBeenCalledWith(expect.stringContaining(raw.stack!))
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining(message))
+      expect(writeText.mock.calls[0][0]).not.toContain(raw.stack)
       expect(slot()?.textContent).toContain(
         'The action could not be completed. See details and try again.'
       )
@@ -9960,7 +10039,9 @@ describe('ConversationPanel unified failure notices', () => {
       renderPanel({
         view: { activeSession: { ...activeSession, id: 'different-session' }, actionError: message }
       })
-      expect(slot()?.querySelector('pre')?.textContent).not.toContain(raw.stack)
+      expect(
+        slot()?.querySelector('[data-testid="composer-error-details"]')?.textContent
+      ).not.toContain(raw.stack)
       act(() => clearWorkspaceOperationError(activeSession.id))
     }
   )
@@ -10318,10 +10399,11 @@ describe('prompt optimization admission', () => {
         ? 'Shorten your question to optimize it (maximum 16,000 characters).'
         : 'Could not optimize your question. Your draft was kept. Please try again.'
       expect(notices[0].textContent).toContain(description)
-      const details = notices[0].querySelector('pre')!.textContent!
-      expect(details.split(description)).toHaveLength(2)
-      if (oversized) expect(details).not.toContain('requestId:')
-      else expect(details).toMatch(/requestId: [\da-f-]{36}/)
+      const details = notices[0].querySelector(
+        '[data-testid="composer-error-details"]'
+      )!.textContent!
+      expect(details).not.toContain(description)
+      expect(details).not.toContain('requestId:')
       expect(details).not.toContain('Optimization unavailable')
       expect(notices[0].querySelector('[data-notice-action="retry"]')).toBeNull()
       expect(submit).not.toHaveBeenCalled()
