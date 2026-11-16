@@ -1497,7 +1497,7 @@ const terminateDirectoryProcesses = async (directory, run = runProcess) => {
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      `$ErrorActionPreference = 'Stop'; $root = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedRoot}')); Get-CimInstance -ClassName Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) -or ($_.CommandLine -and $_.CommandLine.IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
+      `$ErrorActionPreference = 'Stop'; $root = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedRoot}')); Get-CimInstance -ClassName Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
     ],
     {}
   )

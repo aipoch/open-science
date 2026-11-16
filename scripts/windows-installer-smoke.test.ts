@@ -158,6 +158,16 @@ describe('Windows installer smoke plan', () => {
     }
   )
 
+  it('limits directory process cleanup to executable paths below the owned root', async () => {
+    let script
+    await terminateDirectoryProcesses('D:\\owned smoke root', async (_executable, args) => {
+      script = args[3]
+      return { code: 0, stdout: '', stderr: '' }
+    })
+    expect(script).toContain('ExecutablePath.StartsWith')
+    expect(script).not.toContain('CommandLine')
+  })
+
   it('derives the packaged version from stable and nightly installer names', () => {
     expect(installerVersion('aipoch-open-science-0.8.0-win-x64-setup.exe')).toBe('0.8.0')
     expect(installerVersion('aipoch-open-science-0.8.0-nightly.abc1234-win-x64-setup.exe')).toBe(

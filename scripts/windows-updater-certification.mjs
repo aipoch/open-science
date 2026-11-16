@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve, win32 } from 'node:path'
@@ -41,6 +42,14 @@ import {
 const UPDATE_TIMEOUT_MS = 180_000
 const SMOKE_ROOT_PREFIX = 'open-science-installer-smoke-updater-'
 const WINDOWS_SIGNING_PUBLISHER_DN = 'CN=AIPOCH PTE. LTD., O=AIPOCH PTE. LTD., L=Singapore, C=SG'
+const compileWindowsInstallPublication = createRequire(import.meta.url)(
+  '../build/compile-windows-install-publication.cjs'
+)
+
+const buildWindowsUninstallHelper = (destination) => {
+  compileWindowsInstallPublication.uninstallHelper(destination)
+  return destination
+}
 
 const sha512Base64 = async (path) =>
   createHash('sha512')
@@ -968,12 +977,14 @@ const main = async () => {
   if (installed)
     await cleanup(async () => {
       // Surface the real uninstall guard's reason without leaving an unattended NSIS message box.
-      // The packaging build stages the same helper the uninstaller embeds.
-      await runProcess(
-        resolve(`out/windows-installer/${process.arch}/windows-uninstall-helper.exe`),
-        ['update-handoff', '--install-path', installDirectory],
-        { env }
+      // Compile the helper from the repository source so certification does not depend on a
+      // pre-existing out/windows-installer directory or the caller's current working directory.
+      const uninstallHelper = buildWindowsUninstallHelper(
+        join(root, 'windows-uninstall-helper.exe')
       )
+      await runProcess(uninstallHelper, ['update-handoff', '--install-path', installDirectory], {
+        env
+      })
       await uninstallAndVerify(installDirectory, env, { processRoot: root })
     })
   // NSIS can leave its Un_A helper in this fixture's Temp after the installation and uninstall
@@ -998,6 +1009,7 @@ if (invokedAsScript) {
 export {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
+  buildWindowsUninstallHelper,
   classifyUpdaterDownloadStatus,
   certifyForeignProcessRecovery,
   invokeWebRpc,
