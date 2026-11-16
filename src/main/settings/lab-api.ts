@@ -1,7 +1,13 @@
 import { fetchProviderRequest, readBoundedResponseText } from '@aipoch/providers/transport'
 
-import type { LabBootstrap, LabBootstrapModel, LabDeviceInfo, LabErrorCode } from '../../shared/lab'
-import { LAB_CLIENT_ID } from '../../shared/lab'
+import type {
+  LabBootstrap,
+  LabBootstrapModel,
+  LabDeviceInfo,
+  LabErrorCode,
+  LabUsage
+} from '../../shared/lab'
+import { LAB_CLIENT_ID, readLabUsage } from '../../shared/lab'
 import { netFetchStandard } from '../network-fetch'
 import { LAB_RESOURCE_LIMITS } from './lab-resource-limits'
 
@@ -210,6 +216,17 @@ export class LabApi {
         'The address did not return an Open-Science Lab service identity.'
       )
     }
+  }
+
+  async usage(serverUrl: string, accessToken: string): Promise<LabUsage> {
+    const body = await this.request(
+      `${serverUrl}/api/me/usage`,
+      { method: 'GET', headers: { authorization: `Bearer ${accessToken}` } },
+      LAB_RESOURCE_LIMITS.usageTimeoutMs
+    )
+    const usage = readLabUsage(body)
+    if (!usage) throw new LabApiError('invalid-response', 'Lab returned invalid usage data.')
+    return usage
   }
 
   async logout(serverUrl: string, accessToken: string): Promise<void> {

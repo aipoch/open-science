@@ -131,6 +131,51 @@ describe('Lab settings panel', () => {
     expect(container.textContent).toContain('Non-streaming')
   })
 
+  it('shows token and organization usage in the authenticated panel', async () => {
+    await renderPanel({
+      state: 'authenticated',
+      accountName: 'Ada Lovelace',
+      deviceName: 'MacBook Pro',
+      modelCount: 0,
+      models: [],
+      usage: {
+        available: true,
+        token: {
+          available: true,
+          status: 'active',
+          quota: { limit: 500_000, used: 165_900, remaining: 334_100, unlimited: false }
+        },
+        org: {
+          available: true,
+          unlimited: false,
+          quota: { limit: 69_349_151, used: 166_271, remaining: 69_268_880, unlimited: false },
+          stale: false
+        },
+        effective: { remaining: 334_100, limitedBy: 'token' },
+        display: {
+          perUnit: 500_000,
+          exchangeRate: 7.3,
+          currency: 'CNY',
+          cny: {
+            token: { limit: 7.3, used: 2.42, remaining: 4.88 },
+            org: { limit: 1_012.3, used: 2.43, remaining: 1_009.87 }
+          },
+          usd: {
+            token: { limit: 1, used: 0.3318, remaining: 0.6682 },
+            org: { limit: 138.7, used: 0.33, remaining: 138.37 }
+          }
+        },
+        stale: false
+      }
+    })
+
+    expect(container.textContent).toContain('Usage')
+    expect(container.textContent).toContain('Access token quota')
+    expect(container.textContent).toContain('¥4.88 / ¥7.30')
+    expect(container.textContent).toContain('Organization wallet')
+    expect(container.textContent).toContain('Effective remaining: ¥4.88')
+  })
+
   it('shows the blocked reason and retries the connection check', async () => {
     await renderPanel({
       state: 'blocked',

@@ -7,7 +7,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useSettingsStore } from '@/stores/settings-store'
-import type { LabConnectionState, LabErrorCode } from '../../../../shared/lab'
+import type {
+  LabConnectionState,
+  LabErrorCode,
+  LabUsage,
+  LabUsageAmount
+} from '../../../../shared/lab'
 import { SettingsField, SettingsSection } from './SettingsLayout'
 import {
   labErrorCopyKey,
@@ -64,6 +69,42 @@ const labErrorCodeFrom = (error: unknown): LabErrorCode | undefined => {
 
 const errorCopyKey = (error: unknown): string =>
   labErrorCopyKey(labErrorCodeFrom(error)) ?? 'The Lab server rejected the request.'
+const usageCurrency = (usage: LabUsage): string => {
+  const currency = usage.display?.currency ?? 'CNY'
+  if (currency === 'USD') return '$'
+  if (currency === 'CNY' || currency === 'RMB') return '¥'
+  return currency
+}
+
+const usageAmount = (usage: LabUsage, amount: LabUsageAmount | undefined): string | undefined => {
+  if (!amount) return undefined
+  const symbol = usageCurrency(usage)
+  return `${symbol}${amount.remaining.toFixed(2)} / ${symbol}${amount.limit.toFixed(2)}`
+}
+
+const usageQuotaText = (
+  usage: LabUsage,
+  quota: { unlimited: boolean } | undefined,
+  amount: LabUsageAmount | undefined,
+  t: (key: string) => string
+): string => {
+  if (quota?.unlimited) return t('Unlimited')
+  const formatted = usageAmount(usage, amount)
+  return formatted ?? t('Unavailable')
+}
+
+const usageAmountFor = (usage: LabUsage, layer: 'token' | 'org'): LabUsageAmount | undefined =>
+  usage.display?.currency === 'USD' ? usage.display.usd[layer] : usage.display?.cny[layer]
+
+const effectiveUsageText = (usage: LabUsage): string | undefined => {
+  if (!usage.effective) return undefined
+  if (!usage.display) return `${usage.effective.remaining}`
+  const value =
+    usage.display.currency === 'USD'
+      ? usage.effective.remaining / usage.display.perUnit
+      : (usage.effective.remaining / usage.display.perUnit) * usage.display.exchangeRate
+  return `${usageCurrency(usage)}${value.toFixed(2)}`
+}
 
 export function LabPanel(): React.JSX.Element {
   const { t } = useTranslation()
@@ -375,6 +416,52 @@ export function LabPanel(): React.JSX.Element {
                     })}
                   </p>
                 </div>
+                {lab?.usage ? (
+                  <div
+                    data-settings-anchor="lab.usage"
+                    className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="font-medium text-foreground">{t('Usage')}</h4>
+                      {lab.usage.stale || lab.usage.org.stale ? (
+                        <Badge variant="outline">{t('Cached')}</Badge>
+                      ) : null}
+                    </div>
+                    {lab.usage.available ? (
+                      <div className="space-y-1 text-muted-foreground">
+                        <p>
+                          {t('Access token quota')}:{' '}
+                          {usageQuotaText(
+                            lab.usage,
+                            lab.usage.token.quota,
+                            usageAmountFor(lab.usage, 'token'),
+                            t
+                          )}
+                        </p>
+                        <p>
+                          {t('Organization wallet')}:{' '}
+                          {usageQuotaText(
+                            lab.usage,
+                            { unlimited: lab.usage.org.unlimited },
+                            usageAmountFor(lab.usage, 'org'),
+                            t
+                          )}
+                        </p>
+                        {effectiveUsageText(lab.usage) ? (
+                          <p>
+                            {t('Effective remaining: {{amount}}', {
+                              amount: effectiveUsageText(lab.usage)
+                            })}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground">
+                        {t('Usage information is unavailable.')}
+                      </p>
+                    )}
+                  </div>
+                ) : null}
                 <div className="space-y-2">
                   <h4 className="text-sm font-medium text-foreground">{t('Available models')}</h4>
                   {models.length > 0 ? (

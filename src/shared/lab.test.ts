@@ -9,7 +9,8 @@ import {
   labModelWireId,
   labProviderApiEndpoints,
   labProtocolsToEndpoints,
-  readLabModelCapabilities
+  readLabModelCapabilities,
+  readLabUsage
 } from './lab'
 
 describe('Lab shared contract', () => {
@@ -113,5 +114,61 @@ describe('readLabModelCapabilities', () => {
     })
     expect(readLabModelCapabilities('not-an-object')).toBeUndefined()
     expect(readLabModelCapabilities(undefined)).toBeUndefined()
+  })
+})
+
+describe('readLabUsage', () => {
+  it('narrows token, organization, effective and display amounts', () => {
+    const usage = readLabUsage({
+      available: true,
+      token: {
+        available: true,
+        name: 'osl:usr_1:1',
+        status: 'active',
+        quota: { limit: 500_000, used: 165_900, remaining: 334_100, unlimited: false }
+      },
+      org: {
+        available: true,
+        unlimited: false,
+        quota: { limit: 69_349_151, used: 166_271, remaining: 69_268_880, unlimited: false },
+        stale: true,
+        synced_at: '2026-11-16T08:40:00Z'
+      },
+      effective: { remaining: 334_100, limited_by: 'token' },
+      display: {
+        per_unit: 500_000,
+        exchange_rate: 7.3,
+        currency: 'CNY',
+        cny: {
+          token: { limit: 7.3, used: 2.42, remaining: 4.88 },
+          org: { limit: 1_012.3, used: 2.43, remaining: 1_009.87 }
+        },
+        usd: {
+          token: { limit: 1, used: 0.3318, remaining: 0.6682 },
+          org: { limit: 138.7, used: 0.33, remaining: 138.37 }
+        }
+      },
+      fetched_at: '2026-11-16T08:40:00Z',
+      stale: false
+    })
+    expect(usage).toMatchObject({
+      available: true,
+      token: { available: true, status: 'active', quota: { remaining: 334_100 } },
+      org: { unlimited: false, stale: true, syncedAt: '2026-11-16T08:40:00Z' },
+      effective: { remaining: 334_100, limitedBy: 'token' },
+      display: { currency: 'CNY', cny: { token: { remaining: 4.88 } } },
+      fetchedAt: '2026-11-16T08:40:00Z',
+      stale: false
+    })
+  })
+
+  it('preserves unavailable responses and drops malformed nested values', () => {
+    expect(readLabUsage({ available: false, reason: '额度查询未启用' })).toMatchObject({
+      available: false,
+      reason: '额度查询未启用',
+      token: { available: false },
+      org: { available: false, unlimited: false, stale: false }
+    })
+    expect(readLabUsage('invalid')).toBeUndefined()
   })
 })

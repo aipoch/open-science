@@ -159,6 +159,51 @@ describe('Lab API client', () => {
     expect(bootstrap.models[0]).not.toHaveProperty('upstream_model')
   })
 
+  it('reads the authenticated usage snapshot without exposing the token', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(200, {
+        available: true,
+        token: {
+          available: true,
+          name: 'osl:usr_1:1',
+          status: 'active',
+          quota: { limit: 500_000, used: 165_900, remaining: 334_100, unlimited: false }
+        },
+        org: {
+          available: true,
+          unlimited: false,
+          quota: { limit: 69_349_151, used: 166_271, remaining: 69_268_880, unlimited: false }
+        },
+        effective: { remaining: 334_100, limited_by: 'token' },
+        display: {
+          per_unit: 500_000,
+          exchange_rate: 7.3,
+          currency: 'CNY',
+          cny: {
+            token: { limit: 7.3, used: 2.42, remaining: 4.88 },
+            org: { limit: 1_012.3, used: 2.43, remaining: 1_009.87 }
+          },
+          usd: {
+            token: { limit: 1, used: 0.3318, remaining: 0.6682 },
+            org: { limit: 138.7, used: 0.33, remaining: 138.37 }
+          }
+        },
+        stale: false
+      })
+    )
+    const api = new LabApi({ fetch: fetchMock })
+    const usage = await api.usage(SERVER, 'at_1')
+    expect(usage).toMatchObject({
+      available: true,
+      token: { available: true, quota: { remaining: 334_100 } },
+      effective: { limitedBy: 'token' }
+    })
+    const call = fetchMock.mock.calls[0]!
+    expect(String(call[0])).toBe(`${SERVER}/api/me/usage`)
+    expect((call[1] as RequestInit).headers).toMatchObject({ authorization: 'Bearer at_1' })
+    expect(JSON.stringify(usage)).not.toContain('at_1')
+  })
+
   it('probes only a real Lab service identity', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()

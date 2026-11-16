@@ -63,8 +63,57 @@ export type LabView = Readonly<{
   deviceId?: string
   modelCount?: number
   models?: readonly LabModelSummary[]
+  usage?: LabUsage
   error?: Readonly<{ code: LabErrorCode; message?: string }>
   sessionExpiresAt?: number
+}>
+
+export type LabUsageQuota = Readonly<{
+  limit: number
+  used: number
+  remaining: number
+  unlimited: boolean
+}>
+
+export type LabUsageAmount = Readonly<{
+  limit: number
+  used: number
+  remaining: number
+}>
+
+export type LabUsageToken = Readonly<{
+  available: boolean
+  reason?: string
+  name?: string
+  status?: string
+  expiresAt?: string | null
+  quota?: LabUsageQuota
+}>
+
+export type LabUsageOrg = Readonly<{
+  available: boolean
+  reason?: string
+  unlimited: boolean
+  quota?: LabUsageQuota
+  stale: boolean
+  syncedAt?: string | null
+}>
+
+export type LabUsage = Readonly<{
+  available: boolean
+  reason?: string
+  token: LabUsageToken
+  org: LabUsageOrg
+  effective?: Readonly<{ remaining: number; limitedBy: string }>
+  display?: Readonly<{
+    perUnit: number
+    exchangeRate: number
+    currency: string
+    cny: Readonly<{ token?: LabUsageAmount; org?: LabUsageAmount }>
+    usd: Readonly<{ token?: LabUsageAmount; org?: LabUsageAmount }>
+  }>
+  fetchedAt?: string | null
+  stale: boolean
 }>
 
 export type SetLabServerRequest = Readonly<{ serverUrl: string }>
@@ -231,6 +280,96 @@ export const joinLabBaseUrl = (serverUrl: string, modelBaseUrl: string | undefin
     throw new Error('Lab model_base_url must stay on the configured deployment.')
   }
   return resolved.toString().replace(/\/+$/u, '')
+}
+
+const finiteNumber = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
+const readUsageQuota = (raw: unknown): LabUsageQuota | undefined => {
+  if (!isRecord(raw)) return undefined
+  const limit = finiteNumber(raw.limit)
+  const used = finiteNumber(raw.used)
+  const remaining = finiteNumber(raw.remaining)
+  if (limit === undefined || used === undefined || remaining === undefined) return undefined
+  return { limit, used, remaining, unlimited: raw.unlimited === true }
+}
+
+const readUsageAmount = (raw: unknown): LabUsageAmount | undefined => {
+  if (!isRecord(raw)) return undefined
+  const limit = finiteNumber(raw.limit)
+  const used = finiteNumber(raw.used)
+  const remaining = finiteNumber(raw.remaining)
+  if (limit === undefined || used === undefined || remaining === undefined) return undefined
+  return { limit, used, remaining }
+}
+
+const readUsageAmounts = (
+  raw: unknown
+): Readonly<{ token?: LabUsageAmount; org?: LabUsageAmount }> => {
+  if (!isRecord(raw)) return {}
+  const token = readUsageAmount(raw.token)
+  const org = readUsageAmount(raw.org)
+  return { ...(token ? { token } : {}), ...(org ? { org } : {}) }
+}
+
+// Keeps the optional usage payload render-safe: malformed nested values are omitted rather than
+// making the whole Lab connection fail. The server's `available:false` state is preserved.
+export const readLabUsage = (raw: unknown): LabUsage | undefined => {
+  if (!isRecord(raw)) return undefined
+  const tokenRecord = isRecord(raw.token) ? raw.token : {}
+  const orgRecord = isRecord(raw.org) ? raw.org : {}
+  const tokenQuota = readUsageQuota(tokenRecord.quota)
+  const orgQuota = readUsageQuota(orgRecord.quota)
+  const token = {
+    available: tokenRecord.available === true,
+    ...(typeof tokenRecord.reason === 'string' ? { reason: tokenRecord.reason } : {}),
+    ...(typeof tokenRecord.name === 'string' ? { name: tokenRecord.name } : {}),
+    ...(typeof tokenRecord.status === 'string' ? { status: tokenRecord.status } : {}),
+    ...(tokenRecord.expires_at === null || typeof tokenRecord.expires_at === 'string'
+      ? { expiresAt: tokenRecord.expires_at }
+      : {}),
+    ...(tokenQuota ? { quota: tokenQuota } : {})
+  }
+  const org = {
+    available: orgRecord.available === true,
+    ...(typeof orgRecord.reason === 'string' ? { reason: orgRecord.reason } : {}),
+    unlimited: orgRecord.unlimited === true,
+    ...(orgQuota ? { quota: orgQuota } : {}),
+    stale: orgRecord.stale === true,
+    ...(orgRecord.synced_at === null || typeof orgRecord.synced_at === 'string'
+      ? { syncedAt: orgRecord.synced_at }
+      : {})
+  }
+  const effectiveRaw = isRecord(raw.effective) ? raw.effective : undefined
+  const effectiveRemaining = finiteNumber(effectiveRaw?.remaining)
+  const displayRaw = isRecord(raw.display) ? raw.display : undefined
+  const display =
+    displayRaw &&
+    finiteNumber(displayRaw.per_unit) !== undefined &&
+    finiteNumber(displayRaw.exchange_rate) !== undefined &&
+    typeof displayRaw.currency === 'string'
+      ? {
+          perUnit: finiteNumber(displayRaw.per_unit)!,
+          exchangeRate: finiteNumber(displayRaw.exchange_rate)!,
+          currency: displayRaw.currency,
+          cny: readUsageAmounts(displayRaw.cny),
+          usd: readUsageAmounts(displayRaw.usd)
+        }
+      : undefined
+  return {
+    available: raw.available === true,
+    ...(typeof raw.reason === 'string' ? { reason: raw.reason } : {}),
+    token,
+    org,
+    ...(effectiveRemaining !== undefined && typeof effectiveRaw?.limited_by === 'string'
+      ? { effective: { remaining: effectiveRemaining, limitedBy: effectiveRaw.limited_by } }
+      : {}),
+    ...(display ? { display } : {}),
+    ...(raw.fetched_at === null || typeof raw.fetched_at === 'string'
+      ? { fetchedAt: raw.fetched_at }
+      : {}),
+    stale: raw.stale === true
+  }
 }
 
 // Narrows a Lab capability document to the values this client actually consumes. Unknown fields

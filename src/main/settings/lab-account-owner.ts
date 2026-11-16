@@ -1,4 +1,10 @@
-import type { LabBootstrap, LabCheckRequest, LabErrorCode, LabView } from '../../shared/lab'
+import type {
+  LabBootstrap,
+  LabCheckRequest,
+  LabErrorCode,
+  LabUsage,
+  LabView
+} from '../../shared/lab'
 import { getLabServerUrlError, labModelSummaries, normalizeLabServerUrl } from '../../shared/lab'
 import { LAB_PROVIDER_ID } from '../../shared/settings'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
@@ -508,6 +514,32 @@ export class LabAccountOwner {
     return this.api.bootstrap(document.serverUrl, refreshed)
   }
 
+  // Quota is optional information: a slow/failed usage request must never fail a Lab login or
+  // catalog refresh. Fetch it after publishing the authenticated view and update the view later.
+  private async loadUsage(serverUrl: string, generation: number): Promise<LabUsage | undefined> {
+    try {
+      const token = await this.getAccessToken(false, serverUrl)
+      const usage = await this.api.usage(serverUrl, token)
+      return this.isCurrentConnection(generation, serverUrl) ? usage : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  private refreshUsageInBackground(serverUrl: string, generation: number): void {
+    void this.loadUsage(serverUrl, generation)
+      .then((usage) => {
+        if (
+          usage &&
+          this.isCurrentConnection(generation, serverUrl) &&
+          this.view.state === 'authenticated'
+        ) {
+          this.publish({ ...this.view, usage })
+        }
+      })
+      .catch(() => undefined)
+  }
+
   private async applyBootstrap(
     serverUrl: string,
     bootstrap: LabBootstrap,
@@ -560,7 +592,7 @@ export class LabAccountOwner {
       return this.view
     }
     const models = labModelSummaries(bootstrap.models)
-    return this.publish({
+    const view = this.publish({
       state: 'authenticated',
       serverUrl,
       accountName: bootstrap.user.display_name,
@@ -571,6 +603,8 @@ export class LabAccountOwner {
       models,
       ...(this.view.sessionExpiresAt ? { sessionExpiresAt: this.view.sessionExpiresAt } : {})
     })
+    this.refreshUsageInBackground(serverUrl, generation)
+    return view
   }
 
   private async handleRequestFailure(

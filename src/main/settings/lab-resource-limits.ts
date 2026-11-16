@@ -8,6 +8,7 @@ export const LAB_RESOURCE_LIMITS = Object.freeze({
   loginAttemptTimeoutMs: 8_000,
   tokenTimeoutMs: 8_000,
   bootstrapTimeoutMs: 8_000,
+  usageTimeoutMs: 8_000,
   logoutTimeoutMs: 5_000,
   // Registration window from POST /api/auth/login-attempts. The server expires it after five
   // minutes; the client must not outlive it either.

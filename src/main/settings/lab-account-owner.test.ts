@@ -11,7 +11,7 @@ vi.mock('./crypto', () => ({
   maskKey: (value: string) => value
 }))
 
-import type { LabBootstrap } from '../../shared/lab'
+import type { LabBootstrap, LabUsage } from '../../shared/lab'
 import { LAB_PROVIDER_ID } from '../../shared/lab'
 import { LabAccountOwner } from './lab-account-owner'
 import { buildLabProviderRecord } from './lab-provider'
@@ -99,8 +99,39 @@ const seedSettings = async (dir: string): Promise<void> => {
   )
 }
 
+const USAGE: LabUsage = {
+  available: true,
+  token: {
+    available: true,
+    status: 'active',
+    quota: { limit: 500_000, used: 165_900, remaining: 334_100, unlimited: false }
+  },
+  org: {
+    available: true,
+    unlimited: false,
+    quota: { limit: 69_349_151, used: 166_271, remaining: 69_268_880, unlimited: false },
+    stale: false
+  },
+  effective: { remaining: 334_100, limitedBy: 'token' },
+  display: {
+    perUnit: 500_000,
+    exchangeRate: 7.3,
+    currency: 'CNY',
+    cny: {
+      token: { limit: 7.3, used: 2.42, remaining: 4.88 },
+      org: { limit: 1_012.3, used: 2.43, remaining: 1_009.87 }
+    },
+    usd: {
+      token: { limit: 1, used: 0.3318, remaining: 0.6682 },
+      org: { limit: 138.7, used: 0.33, remaining: 138.37 }
+    }
+  },
+  stale: false
+}
+
 const createApi = (): Record<string, ReturnType<typeof vi.fn>> => ({
   bootstrap: vi.fn(async () => BOOTSTRAP),
+  usage: vi.fn(async () => USAGE),
   refreshToken: vi.fn(),
   logout: vi.fn(async () => undefined),
   clientBootstrap: vi.fn(async () => undefined),
@@ -180,6 +211,19 @@ describe('Lab account owner', () => {
     expect(lab?.baseUrl).toBe(`${SERVER}/v1`)
     expect(lab?.apiEndpoints).toEqual(['chat-completions'])
     expect(lab?.fetchedModels).toEqual(['lab:research-default'])
+  })
+
+  it('loads the usage snapshot after an authenticated bootstrap', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const api = createApi()
+    const { owner } = await createOwner(dir, api)
+    await seedSession(new LabCredentialStore(dir))
+
+    await owner.check()
+    await vi.waitFor(() => expect(owner.getView().usage).toMatchObject({ available: true }))
+    expect(owner.getView().usage?.effective?.limitedBy).toBe('token')
+    expect(api.usage).toHaveBeenCalledWith(SERVER, 'at_1')
   })
 
   it('coalesces concurrent refreshes into one request', async () => {
