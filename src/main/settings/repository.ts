@@ -203,13 +203,21 @@ class SettingsRepository {
         StoredProvider,
         'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'
       >
-    }
+    },
+    guard?: { expectedLabCatalogToken?: string }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
       if (existingId && !settings.providers.some(({ id }) => id === existingId))
         throw new Error('Provider no longer exists.')
       const source = settings.providers.find(({ id }) => id === (existingId ?? provider.id))
+      if (
+        guard &&
+        Object.hasOwn(guard, 'expectedLabCatalogToken') &&
+        source?.labCatalogToken !== guard.expectedLabCatalogToken
+      ) {
+        throw new Error('Lab catalog changed. The stale catalog was not written.')
+      }
       if (
         configEdit?.expectedConfigRevision !== undefined &&
         (!source || (source.configRevision ?? 0) !== configEdit.expectedConfigRevision)
@@ -615,10 +623,19 @@ class SettingsRepository {
   // the whole subscription group atomically, including its persisted display preference.
   async deleteProvider(
     id: string,
-    scenarioModelHandling: ProviderDeletionScenarioModelHandling = 'preserve'
+    scenarioModelHandling: ProviderDeletionScenarioModelHandling = 'preserve',
+    guard?: { expectedLabCatalogToken?: string }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
       const deletingClaudeSubscription = isClaudeSubscriptionProviderId(id)
+      if (
+        guard &&
+        Object.hasOwn(guard, 'expectedLabCatalogToken') &&
+        settings.providers.find((provider) => provider.id === id)?.labCatalogToken !==
+          guard.expectedLabCatalogToken
+      ) {
+        return settings
+      }
       const removedIds = new Set(
         deletingClaudeSubscription ? [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID] : [id]
       )

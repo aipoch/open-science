@@ -102,6 +102,15 @@ export type StoredProvider = {
   // Model ids fetched live from the vendor (via "refresh from vendor"). When present, these take
   // precedence over the bundled registry catalog for this provider.
   fetchedModels?: string[]
+  // Per-model protocol sets for app-managed heterogeneous catalogs (Lab). Keys are the stored model
+  // ids (namespaced for Lab); absent means apiEndpoints applies to every model.
+  modelProtocols?: Record<string, ModelProtocol[]>
+  // Exact Lab deployment address this record was derived from (non-secret). Used to bind the model
+  // catalog and host-owned credentials to one institution even when two deployments share an origin.
+  labServerUrl?: string
+  // Monotonic per-catalog-write identity used to conditionally clean up a stale Lab catalog without
+  // deleting a newer login's record at the same address.
+  labCatalogToken?: string
   // Non-secret identity returned by xAI after device authorization.
   accountEmail?: string
   keyRef?: string

@@ -82,6 +82,9 @@ export const resolveProviderReasoningEffortProfile = (
       return model ? resolveVendorModelReasoningEffort('anthropic', model) : { supported: false }
     case 'xai-subscription':
       return resolveVendorModelReasoningEffort('xai', model)
+    // The Lab gateway has no reasoning-effort contract; leave the request untouched.
+    case 'lab':
+      return { supported: false }
     case 'custom':
       return resolveReasoningEffortProfile(provider.reasoningEffortPreset)
   }

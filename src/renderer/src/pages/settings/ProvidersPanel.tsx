@@ -32,7 +32,8 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   isClaudeSubscriptionProvider,
-  isCodexSubscriptionProvider
+  isCodexSubscriptionProvider,
+  isLabProvider
 } from '../../../../shared/settings'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { errorDetail } from '@/lib/error-detail'
@@ -226,6 +227,9 @@ const ProvidersPanel = ({
 
   // Subscription accounts stay visible for the frameworks that own their authentication transport.
   const visibleProviders = providers.filter((provider) => {
+    // Lab is a separate enterprise surface with its own Settings panel; it is never an editable
+    // personal provider and must not offer Add/Edit/Delete/Test controls here.
+    if (isLabProvider(provider.type)) return false
     if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
       return agentFrameworkId === 'claude-code'
     if (isCodexSubscriptionProvider(provider.type))

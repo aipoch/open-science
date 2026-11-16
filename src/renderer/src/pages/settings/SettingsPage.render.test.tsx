@@ -1381,6 +1381,7 @@ describe('SettingsPage layout', () => {
       'Memory',
       'Network',
       'Remote',
+      'Lab',
       'Credentials',
       'Compute',
       'Tags',

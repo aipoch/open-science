@@ -1,0 +1,181 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { LabApi, LabApiError } from './lab-api'
+
+const SERVER = 'https://lab.example.com'
+
+const jsonResponse = (status: number, body: unknown): Response =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' }
+  })
+
+const requestBody = (fetchMock: ReturnType<typeof vi.fn>, index = 0): Record<string, unknown> => {
+  const call = fetchMock.mock.calls[index]!
+  return JSON.parse(String((call[1] as RequestInit).body)) as Record<string, unknown>
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+describe('Lab API client', () => {
+  it('registers a PKCE login attempt with the stable installation id', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(201, {
+        request_id: 'req_1',
+        authorization_url: 'https://lab.example.com/oauth/authorize?request_id=req_1',
+        expires_at: '2026-11-15T10:05:00Z'
+      })
+    )
+    const api = new LabApi({ fetch: fetchMock, now: () => Date.parse('2026-11-15T10:00:00Z') })
+    const attempt = await api.registerLoginAttempt({
+      serverUrl: SERVER,
+      redirectUri: 'http://127.0.0.1:49152/oauth/callback',
+      state: 'state-0123456789abcdef',
+      codeChallenge: 'challenge',
+      installationId: 'installation-1',
+      deviceName: 'lab-mac',
+      deviceInfo: { hostname: 'lab-mac', platform: 'darwin' }
+    })
+
+    expect(attempt.requestId).toBe('req_1')
+    expect(attempt.expiresAt).toBe(Date.parse('2026-11-15T10:05:00Z'))
+    expect(requestBody(fetchMock)).toMatchObject({
+      client_id: 'open-science-desktop',
+      redirect_uri: 'http://127.0.0.1:49152/oauth/callback',
+      state: 'state-0123456789abcdef',
+      code_challenge: 'challenge',
+      code_challenge_method: 'S256',
+      installation_id: 'installation-1',
+      device_name: 'lab-mac',
+      device_info: { hostname: 'lab-mac', platform: 'darwin' }
+    })
+  })
+
+  it('exchanges the code with the exact registered redirect uri', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(200, {
+        access_token: 'at_1',
+        token_type: 'Bearer',
+        expires_in: 900,
+        refresh_token: 'rt_1',
+        refresh_expires_in: 2592000,
+        session_expires_at: '2026-12-15T10:00:00Z'
+      })
+    )
+    const api = new LabApi({ fetch: fetchMock, now: () => 1_000 })
+    const tokens = await api.exchangeCode({
+      serverUrl: SERVER,
+      code: 'code_1',
+      redirectUri: 'http://127.0.0.1:49152/oauth/callback',
+      codeVerifier: 'verifier'
+    })
+    const body = new URLSearchParams(String((fetchMock.mock.calls[0]![1] as RequestInit).body))
+    expect(body.get('grant_type')).toBe('authorization_code')
+    expect(body.get('redirect_uri')).toBe('http://127.0.0.1:49152/oauth/callback')
+    expect(body.get('code_verifier')).toBe('verifier')
+    expect(tokens).toMatchObject({ accessToken: 'at_1', refreshToken: 'rt_1', expiresIn: 900 })
+  })
+
+  it('treats invalid_grant on refresh as an expired sign-in', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        jsonResponse(400, { error: 'invalid_grant', error_description: 'refresh token rotated' })
+      )
+    const api = new LabApi({ fetch: fetchMock })
+    const error = await api.refreshToken(SERVER, 'rt_old').catch((cause: unknown) => cause)
+    expect(error).toBeInstanceOf(LabApiError)
+    expect((error as LabApiError).code).toBe('unauthorized')
+  })
+
+  it('does not retry a failed request', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(502, {}))
+    const api = new LabApi({ fetch: fetchMock })
+    await expect(api.bootstrap(SERVER, 'at_1')).rejects.toMatchObject({ code: 'server-error' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('maps entitlement failures and the device limit to actionable codes', async () => {
+    const cases: Array<[number, unknown, string]> = [
+      [403, { error: { code: 'SEAT_REQUIRED' } }, 'seat-required'],
+      [403, { error: 'invalid_grant', reason: 'LICENSE_INACTIVE' }, 'license-inactive'],
+      [
+        409,
+        {
+          error: 'device limit reached; choose a device to replace',
+          details: { device_limit: 2 }
+        },
+        'device-limit'
+      ]
+    ]
+    for (const [status, body, code] of cases) {
+      const api = new LabApi({
+        fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(status, body))
+      })
+      await expect(api.bootstrap(SERVER, 'at_1')).rejects.toMatchObject({ code })
+    }
+  })
+
+  it('parses bootstrap models and keeps only the fields this client uses', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(200, {
+        user: { id: 'usr_1', display_name: 'Researcher', org_id: 'org_1' },
+        device: { id: 'dev_1', name: 'Research workstation' },
+        models: [
+          {
+            id: 'research-default',
+            name: 'Research Assistant',
+            protocol: 'openai',
+            protocols: ['openai', 'openai-response'],
+            streaming: true,
+            enabled: true,
+            available: true,
+            upstream_model: 'must-not-be-used'
+          }
+        ],
+        default_model_id: 'research-default',
+        model_base_url: '/v1'
+      })
+    )
+    const api = new LabApi({ fetch: fetchMock })
+    const bootstrap = await api.bootstrap(SERVER, 'at_1')
+    expect(bootstrap.user.display_name).toBe('Researcher')
+    expect(bootstrap.models[0]).toMatchObject({
+      id: 'research-default',
+      protocols: ['openai', 'openai-response']
+    })
+    expect(bootstrap.models[0]).not.toHaveProperty('upstream_model')
+  })
+
+  it('probes only a real Lab service identity', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse(200, { service: 'open-science-lab', protocol_version: '1' })
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { service: 'some-other-service' }))
+    const api = new LabApi({ fetch: fetchMock })
+    await expect(api.clientBootstrap(SERVER)).resolves.toBeUndefined()
+    await expect(api.clientBootstrap(SERVER)).rejects.toMatchObject({ code: 'invalid-response' })
+  })
+
+  it('fails fast with a timeout instead of hanging', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          )
+        })
+    )
+    const api = new LabApi({ fetch: fetchMock })
+    const pending = api.bootstrap(SERVER, 'at_1').catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(9_000)
+    const error = await pending
+    expect(error).toBeInstanceOf(LabApiError)
+    expect((error as LabApiError).code).toBe('timeout')
+  })
+})

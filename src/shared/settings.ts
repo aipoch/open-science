@@ -16,6 +16,7 @@ import {
   type CustomReasoningEffortTransport
 } from '@aipoch/providers'
 import { type ReasoningEffort } from './model-preference-contract'
+import { LAB_PROVIDER_ID, type LabView } from './lab'
 import { customProviderRequiresKey, isOfficialOpenAiResponsesBase } from './provider-url-policy'
 import { type ReasoningEffortPresetSetting } from './reasoning-effort'
 import type { AgentModelRoute, AgentFrameworkId } from './agent-framework-id'
@@ -23,6 +24,7 @@ export { DEFAULT_AGENT_FRAMEWORK_ID } from './agent-framework-id'
 export type { AgentFrameworkId } from './agent-framework-id'
 export type { ModelProtocol } from '@aipoch/providers'
 export type { ReasoningEffort } from './model-preference-contract'
+export { LAB_PROVIDER_ID } from './lab'
 
 // Shared model-settings & onboarding types crossing the main <-> renderer IPC boundary.
 //
@@ -54,6 +56,7 @@ export type ProviderType =
   | 'codex-shared'
   | 'codex-isolated'
   | 'xai-subscription'
+  | 'lab'
 
 // The stored Codex subscription always uses the app-owned runtime type. This discriminator preserves
 // which setup choice produced it so editing an imported profile does not masquerade as an isolated
@@ -87,8 +90,17 @@ export const xaiSubscriptionProviderIdentity = (): { id: string; name: string } 
 
 export const isXaiSubscriptionProvider = (type: ProviderType): type is 'xai-subscription' =>
   type === 'xai-subscription'
+
+// The optional Lab enterprise provider. One fixed record exists only while the user is signed in;
+// its models and base URL are derived from GET /api/me/bootstrap and never edited by hand.
+export const labProviderIdentity = (): { id: string; name: string } => ({
+  id: LAB_PROVIDER_ID,
+  name: 'Lab'
+})
+export const isLabProvider = (type: ProviderType): type is 'lab' => type === 'lab'
+
 export const usesAppProviderTransport = (type: ProviderType): boolean =>
-  type === 'custom' || type === 'xai-subscription'
+  type === 'custom' || type === 'xai-subscription' || type === 'lab'
 export type ClaudeSubscriptionProviderId =
   typeof CLAUDE_SHARED_PROVIDER_ID | typeof CLAUDE_ISOLATED_PROVIDER_ID
 
@@ -171,12 +183,21 @@ export const providerEndpoints = (provider: {
 }): ModelProtocol[] =>
   provider.type && isCodexSubscriptionProvider(provider.type)
     ? ['responses']
-    : provider.apiEndpoints && provider.apiEndpoints.length > 0
-      ? [...provider.apiEndpoints]
-      : ['messages']
+    : provider.type && isLabProvider(provider.type)
+      ? provider.apiEndpoints && provider.apiEndpoints.length > 0
+        ? [...provider.apiEndpoints]
+        : ['chat-completions', 'responses']
+      : provider.apiEndpoints && provider.apiEndpoints.length > 0
+        ? [...provider.apiEndpoints]
+        : ['messages']
+
+// App-managed providers keep separate transport families: an xAI OAuth bridge and a Lab bridge
+// cannot be reused across a model switch, while every API-key provider keeps sharing one family.
+const providerTransportFamily = (type: ProviderType): 'xai' | 'lab' | 'app' =>
+  isXaiSubscriptionProvider(type) ? 'xai' : isLabProvider(type) ? 'lab' : 'app'
 
 export const shareProviderTransportFamily = (left: ProviderType, right: ProviderType): boolean =>
-  isXaiSubscriptionProvider(left) === isXaiSubscriptionProvider(right)
+  providerTransportFamily(left) === providerTransportFamily(right)
 
 export const canUseClaudeProviderTransport = (provider: {
   type: ProviderType
@@ -239,10 +260,15 @@ export const isProviderUsableByFramework = (
 ): boolean => {
   if (
     framework.id === 'open-science-agent' &&
-    !['custom', 'official', 'xai-subscription'].includes(provider.type) &&
+    !['custom', 'official', 'xai-subscription', 'lab'].includes(provider.type) &&
     !isCodexSubscriptionProvider(provider.type)
   )
     return false
+  // Lab speaks the two gateway protocols natively. It deliberately has no compatibility-bridge
+  // path: a model that does not natively speak the framework's protocol is reported as incompatible
+  // instead of being routed through a conversion bridge that cannot resolve a host-owned credential.
+  if (isLabProvider(provider.type))
+    return isProviderCompatibleWith(providerEndpoints(provider), framework.supportedApiTypes)
   if (isCodexSubscriptionProvider(provider.type))
     return (
       framework.id === 'codex' ||
@@ -374,6 +400,11 @@ export type ProviderView = {
   // Models selectable for this provider in the composer: the vendor catalog for official providers,
   // or the single configured model for custom. Derived from the registry in main.
   models: string[]
+  // Per-model protocol sets for app-managed providers whose catalog is heterogeneous (Lab). Absent
+  // means the provider-level apiEndpoints apply to every model.
+  modelProtocols?: Record<string, ModelProtocol[]>
+  // Exact Lab deployment address for app-managed Lab providers; non-secret.
+  labServerUrl?: string
   // A short, non-secret hint like "sk-…abcd" for display only.
   maskedKey?: string
   // Non-secret account label returned by the provider during subscription sign-in.
@@ -622,6 +653,9 @@ export type SettingsSnapshot = {
   // for official providers it's the chosen catalog entry. Undefined until a provider exists.
   activeModel?: string
   providers: ProviderView[]
+  // Optional Lab enterprise connection status. Absent on builds without the Lab feature and on
+  // every snapshot produced before the Lab owner has been constructed.
+  lab?: LabView
   // The selected agent backend, and the frameworks available to choose from.
   agentFrameworkId: AgentFrameworkId
   agentFrameworks: AgentFrameworkView[]

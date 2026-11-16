@@ -60,7 +60,7 @@ const usable = (
 ): provider is StoredProvider => {
   if (
     !provider ||
-    !['custom', 'official', 'xai-subscription'].includes(provider.type) ||
+    !['custom', 'official', 'xai-subscription', 'lab'].includes(provider.type) ||
     provider.disconnectedAt !== undefined
   )
     return false
@@ -152,7 +152,11 @@ export class HarnessSessionOwner {
       controller.signal.throwIfAborted()
       if (!usable(baseline, model)) throw new Error('Harness provider is unavailable')
       const target = this.projection.resolveProviderTarget(baseline, { kind: 'required', model })
-      if (baseline.type !== 'xai-subscription' && baseline.keyRef && !target.provider.key)
+      if (
+        !['xai-subscription', 'lab'].includes(baseline.type) &&
+        baseline.keyRef &&
+        !target.provider.key
+      )
         throw new Error('Harness provider credentials are unavailable')
       lease = await this.transports.acquireHarness(target, controller.signal)
       const current = (await this.repository.getSettings()).providers.find(

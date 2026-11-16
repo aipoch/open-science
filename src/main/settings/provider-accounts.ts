@@ -33,6 +33,8 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
+  isLabProvider,
+  labProviderIdentity,
   isXaiSubscriptionProvider,
   DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
@@ -103,6 +105,8 @@ type ProviderAccountsModuleOptions = {
   claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
   claudeSharedAuth?: ClaudeSharedAuthControllerPort
   xaiOAuth?: XaiOAuthControllerPort
+  // The optional Lab account owner; supplies the "signed in" probe without owning provider records.
+  lab?: { isUsable: () => Promise<boolean> }
 }
 // Owns durable provider records and every provider-specific validation/authentication lifecycle;
 // executable installation, runtime spawn, live ACP reconnect, and transports remain outside.
@@ -299,7 +303,9 @@ class ProviderAccountsModule {
           ? claudeSharedProviderIdentity()
           : request.type === 'xai-subscription'
             ? xaiSubscriptionProviderIdentity()
-            : undefined
+            : request.type === 'lab'
+              ? labProviderIdentity()
+              : undefined
     const requestedId = subscriptionIdentity?.id ?? request.id
     const existing = requestedId
       ? settings.providers.find((provider) => provider.id === requestedId)
@@ -522,6 +528,9 @@ class ProviderAccountsModule {
     scenarioModelHandling?: ProviderDeletionScenarioModelHandling
   ): Promise<void> {
     const settings = await this.repository.getSettings()
+    if (settings.providers.some((provider) => provider.id === id && isLabProvider(provider.type))) {
+      throw new Error('The Lab provider is managed in Settings → Lab.')
+    }
     if (settings.providers.some((provider) => provider.id === id && isXaiRecord(provider))) {
       await this.xai.logout()
     }
@@ -925,6 +934,7 @@ class ProviderAccountsModule {
     frameworkId?: AgentFrameworkId
   ): Promise<boolean> {
     if (isXaiSubscriptionProvider(provider.type)) return this.xai.isUsable()
+    if (isLabProvider(provider.type)) return (await this.options.lab?.isUsable()) ?? false
     if (!isCodexSubscriptionProvider(provider.type)) return this.auth.isProviderKeyUsable(provider)
     return this.auth.isProviderKeyUsable(
       provider,

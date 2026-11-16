@@ -6,6 +6,7 @@ import {
   resolveVendorModelApiEndpoints
 } from '@aipoch/providers'
 import { isModelBridgeSupported } from './provider-bridge-policy'
+import { labModelLabel } from './lab'
 
 import {
   isClaudeSubscriptionProvider,
@@ -60,12 +61,17 @@ export const parseConfiguredModelKey = (
 }
 
 export const configuredModelApiEndpoints = (
-  provider: Pick<ProviderView, 'type' | 'vendorId' | 'apiEndpoints'>,
+  provider: Pick<ProviderView, 'type' | 'vendorId' | 'apiEndpoints' | 'modelProtocols'>,
   model: string
-): readonly ModelProtocol[] =>
-  provider.type === 'official' && provider.vendorId
+): readonly ModelProtocol[] => {
+  if (provider.type === 'lab') {
+    const declared = provider.modelProtocols?.[model]
+    if (declared && declared.length > 0) return declared
+  }
+  return provider.type === 'official' && provider.vendorId
     ? resolveVendorModelApiEndpoints(provider.vendorId, model)
     : providerEndpoints(provider)
+}
 
 export const buildConfiguredModelInventory = (
   input: Readonly<{
@@ -109,7 +115,7 @@ export const buildConfiguredModelInventory = (
             providerType: provider.type,
             ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
             model,
-            label: model || provider.name,
+            label: provider.type === 'lab' ? labModelLabel(model) : model || provider.name,
             supportsImageInput: supportsImageInput(provider, model)
           })
       )

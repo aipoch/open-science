@@ -14,6 +14,7 @@ import {
   resolveModelContextWindow
 } from '../../shared/provider-model-policy'
 import { getCustomProviderBaseUrlError } from '../../shared/provider-url-policy'
+import { labModelWireId } from '../../shared/lab'
 import { isModelBridgeSupported } from '../../shared/provider-bridge-policy'
 import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
 
@@ -28,6 +29,7 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
+  isLabProvider,
   isXaiSubscriptionProvider,
   providerEndpoints,
   requiresChatCompletionsBridge
@@ -36,6 +38,7 @@ import type { AgentFrameworkId } from '../agent-framework'
 import { isOfficialOpenAiResponsesBase } from '../agent-framework/codex'
 import { hardenKeyMask, tryDecryptKey } from './crypto'
 import type { ResolvedProvider } from './provider-env'
+
 import type { StoredProvider } from './types'
 
 type RuntimeProviderModelSelection =
@@ -79,6 +82,14 @@ class ProviderRuntimeProjectionOwner {
     if (isCodexSubscriptionProvider(provider.type)) return ['responses']
     if (isXaiSubscriptionProvider(provider.type))
       return ['messages', 'chat-completions', 'responses']
+    if (isLabProvider(provider.type)) {
+      const model = activeModel ?? provider.model ?? provider.fetchedModels?.[0]
+      const declared = model ? provider.modelProtocols?.[model] : undefined
+      if (declared && declared.length > 0) return [...declared]
+      return provider.apiEndpoints && provider.apiEndpoints.length > 0
+        ? [...provider.apiEndpoints]
+        : ['chat-completions', 'responses']
+    }
     if (provider.type === 'official' && provider.vendorId) {
       return resolveVendorModelApiEndpoints(
         provider.vendorId,
@@ -116,6 +127,8 @@ class ProviderRuntimeProjectionOwner {
       vendorId: provider.vendorId,
       region: provider.region,
       models: this.availableModels(provider),
+      ...(provider.modelProtocols ? { modelProtocols: provider.modelProtocols } : {}),
+      ...(provider.labServerUrl ? { labServerUrl: provider.labServerUrl } : {}),
       maskedKey: hardenKeyMask(provider.keyMask),
       accountEmail: provider.accountEmail,
       hasKey,
@@ -275,6 +288,18 @@ class ProviderRuntimeProjectionOwner {
         supportsImageInput: isVendorModelMultimodal('xai', model)
       }
     }
+    if (isLabProvider(provider.type)) {
+      const model = modelOverride ?? provider.model ?? provider.fetchedModels?.[0]
+      if (!provider.baseUrl) throw new Error('The Lab provider has no server address.')
+      return {
+        type: 'lab',
+        baseUrl: provider.baseUrl,
+        ...(provider.labServerUrl ? { labServerUrl: provider.labServerUrl } : {}),
+        ...(model ? { model: labModelWireId(model) } : {}),
+        apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
+        supportsImageInput: false
+      }
+    }
     if (provider.type === 'official' && provider.vendorId) {
       const model = modelOverride ?? defaultVendorModel(provider.vendorId, provider.region)
       const contextWindow = resolveModelContextWindow(provider.vendorId, model)
@@ -355,6 +380,8 @@ class ProviderRuntimeProjectionOwner {
         ? provider.fetchedModels
         : getOfficialVendorModelIds('xai')
     }
+    if (isLabProvider(provider.type))
+      return provider.fetchedModels ? [...provider.fetchedModels] : []
     if (provider.type === 'official' && provider.vendorId) {
       return getOfficialVendorModelIds(provider.vendorId, provider.region, provider.fetchedModels)
     }

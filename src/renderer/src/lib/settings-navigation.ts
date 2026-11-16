@@ -145,6 +145,7 @@ export type SettingsPanelId =
   | 'storage'
   | 'network'
   | 'runtimes'
+  | 'lab'
   | 'remote-control'
 
 export type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' }

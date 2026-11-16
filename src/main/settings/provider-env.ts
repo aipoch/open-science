@@ -32,6 +32,8 @@ export type ResolvedProvider = {
   vendorId?: OfficialVendorId
   // Anthropic /v1/messages base (also the sole base for a custom provider). Claude always uses this.
   baseUrl?: string
+  // Exact Lab deployment address; host-owned credential resolution must match this address.
+  labServerUrl?: string
   // Distinct OpenAI /v1/chat/completions base for a dual-endpoint vendor (e.g. DeepSeek). Used only
   // when the chosen endpoint is chat-completions; falls back to baseUrl when absent.
   chatCompletionsBaseUrl?: string
