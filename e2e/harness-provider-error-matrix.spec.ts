@@ -50,7 +50,7 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
             : item.wire === 'plain'
               ? 'text/plain'
               : 'application/json',
-        'x-request-id': `matrix-${protocol}-${item.id}`,
+        'x-request-id': item.requestId ?? `matrix-${protocol}-${item.id}`,
         ...(item.wire === 'spoofed-connection'
           ? { 'x-open-science-provider-failure': 'connection' }
           : {})
@@ -66,6 +66,7 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
         return
       }
       let wire = JSON.stringify({
+        request_id: 'PRIVATE_BODY_REQUEST_ID',
         error: {
           ...(item.code ? { code: item.code } : {}),
           message: item.message ?? 'Request rejected'
@@ -169,7 +170,7 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
                     ? 'stream'
                     : 'response'
           expect.soft(failure?.diagnostics.phase, `${protocol}/${item.id}: 阶段`).toBe(phase)
-          if (item.wire !== 'disconnect')
+          if (item.wire !== 'disconnect' && !item.requestId)
             expect
               .soft(failure?.diagnostics.requestId, `${protocol}/${item.id}: 请求标识`)
               .toBe(`matrix-${protocol}-${item.id}`)
@@ -177,14 +178,28 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
             expect
               .soft(failure?.diagnostics.status, `${protocol}/${item.id}: HTTP 状态`)
               .toBe(item.status)
-          if (item.code)
-            expect
-              .soft(failure?.diagnostics.upstreamCode, `${protocol}/${item.id}: 上游码`)
-              .toBe(item.code)
-          if (item.message)
-            expect
-              .soft(failure?.diagnostics.safeMessage, `${protocol}/${item.id}: 上游消息`)
-              .toBe(item.message.length <= 300 ? item.message : item.message.slice(0, 299) + '…')
+          if (item.requestId) expect.soft(failure?.diagnostics.requestId).toBeUndefined()
+          const standardCodes: Record<string, string> = {
+            'configuration/model-unavailable': 'model_not_found',
+            'configuration/endpoint-invalid': 'endpoint_not_found',
+            'configuration/auth-failed': 'authentication_error',
+            'configuration/billing': 'insufficient_quota',
+            'configuration/request-invalid': 'invalid_request_error',
+            'service/rate-limited': 'rate_limit_exceeded',
+            'service/unavailable': 'server_error',
+            'service/provider-error': 'provider_error',
+            'input/context-overflow': 'context_length_exceeded'
+          }
+          expect
+            .soft(failure?.diagnostics.code, `${protocol}/${item.id}: 标准原因`)
+            .toBe(standardCodes[item.reason])
+          const serialized = JSON.stringify(outcome)
+          expect
+            .soft(serialized)
+            .not.toMatch(
+              /safeMessage|upstreamCode|responseMessage|"raw"|private account|unknown_private_code|PRIVATE_BODY_REQUEST_ID/
+            )
+          if (item.message) expect.soft(serialized).not.toContain(item.message)
           expect
             .soft(JSON.stringify(failure), `${protocol}/${item.id}: HTML 不透传`)
             .not.toContain('PRIVATE_GATEWAY_PAGE')
@@ -222,6 +237,8 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
           await notice.locator('summary').click()
           await expect(notice.locator('pre')).toBeVisible()
           await expect(notice.locator('pre')).toContainText(phase)
+          await expect(notice.locator('pre')).not.toContainText('private account')
+          if (item.message) await expect(notice.locator('pre')).not.toContainText(item.message)
           if (item.wire === 'interrupt')
             expect
               .soft(await notice.getByRole('button', { name: '关闭错误提示', exact: true }).count())
@@ -266,12 +283,16 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
           }
         })
         .filter((record) => record.msg === 'model request failed')
+      expect(JSON.stringify(records)).not.toMatch(
+        /private account|unknown_private_code|PRIVATE_BODY_REQUEST_ID|safeMessage|upstreamCode/
+      )
       for (const item of cases) {
         expect(
           records.some(
             (record) =>
               record.data?.model === `error-${item.id.toLowerCase()}` &&
-              record.data?.protocol === protocol
+              record.data?.protocol === protocol &&
+              record.data?.reason === item.reason
           ),
           `${protocol}/${item.id}: 真实主进程日志`
         ).toBe(true)

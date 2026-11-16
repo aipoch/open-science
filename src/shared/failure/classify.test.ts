@@ -65,7 +65,7 @@ describe('classifyFailure', () => {
       'configuration/model-unavailable'
     ],
     [
-      { origin: 'provider', status: 400, upstreamCode: 'model_unavailable' },
+      { origin: 'provider', status: 400, code: 'model_unavailable' },
       'configuration/model-unavailable'
     ],
     [
@@ -85,14 +85,11 @@ describe('classifyFailure', () => {
       'configuration/request-invalid'
     ],
     [
-      { origin: 'provider', status: 400, upstreamCode: 'context_window_exceeded' },
+      { origin: 'provider', status: 400, code: 'context_window_exceeded' },
       'input/context-overflow'
     ],
-    [
-      { origin: 'provider', status: 429, upstreamCode: 'insufficient_quota' },
-      'configuration/billing'
-    ],
-    [{ origin: 'provider', upstreamCode: 'overloaded_error' }, 'service/unavailable'],
+    [{ origin: 'provider', status: 429, code: 'insufficient_quota' }, 'configuration/billing'],
+    [{ origin: 'provider', code: 'overloaded_error' }, 'service/unavailable'],
     [
       {
         origin: 'provider',
@@ -119,7 +116,7 @@ describe('classifyFailure', () => {
       'service/response-invalid'
     ],
     [
-      { origin: 'provider', adapterCode: 'protocol', phase: 'provider', upstreamCode: 'new_error' },
+      { origin: 'provider', adapterCode: 'protocol', phase: 'provider', code: 'new_error' },
       'service/provider-error'
     ]
   ])('classifies structured provider facts %j as %s', (facts, reason) => {

@@ -17,12 +17,49 @@ export const recognizeProvider: Recognizer = ({
   origin,
   status,
   code,
-  upstreamCode,
   adapterCode,
+  protocol,
   phase,
   responseMessage,
   text = ''
 }) => {
+  if (origin === 'provider' && protocol) {
+    // 内置适配器已丢弃上游文案，只按真实状态、标准 code 和失败阶段分类。
+    const reasons = {
+      authentication_error: 'configuration/auth-failed',
+      insufficient_quota: 'configuration/billing',
+      rate_limit_exceeded: 'service/rate-limited',
+      model_not_found: 'configuration/model-unavailable',
+      endpoint_not_found: 'configuration/endpoint-invalid',
+      invalid_request_error: 'configuration/request-invalid',
+      server_error: 'service/unavailable',
+      provider_error: 'service/provider-error'
+    } as const
+    if (status === 413 || code === 'context_length_exceeded') return undefined
+    const reason =
+      status === 401 || status === 403
+        ? 'configuration/auth-failed'
+        : status === 429
+          ? code === 'insufficient_quota'
+            ? 'configuration/billing'
+            : 'service/rate-limited'
+          : status !== undefined && status >= 500 && status <= 599
+            ? 'service/unavailable'
+            : (reasons[code as keyof typeof reasons] ??
+              (adapterCode === 'network'
+                ? phase === 'stream'
+                  ? 'service/response-interrupted'
+                  : 'service/connection-failed'
+                : adapterCode === 'protocol' && phase !== 'provider'
+                  ? 'service/response-invalid'
+                  : 'service/provider-error'))
+    return {
+      category: reason.startsWith('configuration/') ? 'configuration' : 'service',
+      reason,
+      diagnostics: {}
+    }
+  }
+
   // 保留历史框架的固定错误包装识别；任意服务商文案只在确认来源后参与分类。
   if (
     /^(?:(?:ApplicationCommandError|RequestError|Error|Agent session resume failed):\s*)*Authentication required\.?$/i.test(
@@ -39,7 +76,7 @@ export const recognizeProvider: Recognizer = ({
     return { category: 'service', reason: 'service/connection-failed', diagnostics: {} }
   if (origin !== 'provider') return undefined
 
-  const structuredCode = String(upstreamCode ?? code ?? '').toLowerCase()
+  const structuredCode = String(code ?? '').toLowerCase()
   const detail = responseMessage ?? text
   const billingCode = BILLING.test(structuredCode)
   // 明确传输状态优先，429 中的结构化额度错误属于账户配置。

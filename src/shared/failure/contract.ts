@@ -6,9 +6,7 @@ export type FailureReason = `${FailureCategory}/${string}`
 export type FailureDiagnostics = Readonly<{
   status?: number
   code?: string
-  safeMessage?: string
   adapterCode?: string
-  upstreamCode?: string
   protocol?: 'chat-completions' | 'responses' | 'messages'
   phase?: string
   provider?: string
@@ -31,7 +29,6 @@ export type FailureFacts = Readonly<{
   status?: number
   code?: string | number
   adapterCode?: string
-  upstreamCode?: string
   phase?: string
   provider?: string
   model?: string
@@ -40,3 +37,21 @@ export type FailureFacts = Readonly<{
 }>
 
 export type Recognizer = (facts: FailureFacts) => ClassifiedFailure | undefined
+
+/** 内置 harness 只传这组标准 code；禁止透传服务商自定义标识。 */
+export const PROVIDER_ERROR_CODES = [
+  'authentication_error',
+  'insufficient_quota',
+  'rate_limit_exceeded',
+  'model_not_found',
+  'endpoint_not_found',
+  'context_length_exceeded',
+  'invalid_request_error',
+  'server_error',
+  'provider_error'
+] as const
+export type ProviderErrorCode = (typeof PROVIDER_ERROR_CODES)[number]
+export const readProviderErrorCode = (value: unknown): ProviderErrorCode | undefined =>
+  typeof value === 'string' && (PROVIDER_ERROR_CODES as readonly string[]).includes(value)
+    ? (value as ProviderErrorCode)
+    : undefined

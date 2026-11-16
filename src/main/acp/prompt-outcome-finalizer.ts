@@ -348,7 +348,7 @@ export class AcpPromptOutcomeFinalizer {
       safeLog('error', 'prompt failed', errorLogFields(error))
       const failure = classifyFailure(collectPromptFailureFacts(error, handles))
       if (failure.diagnostics.protocol)
-        safeLog('error', 'model request failed', { ...failure.diagnostics })
+        safeLog('error', 'model request failed', { reason: failure.reason, ...failure.diagnostics })
       const text = failure.responseMessage ?? describePromptError(error, { model: handles.model })
       const recoverable =
         failure.category === 'session'

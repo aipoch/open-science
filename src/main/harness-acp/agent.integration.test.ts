@@ -1329,16 +1329,12 @@ it.each([
   ['response.failed', 'model_unavailable', 'configuration/model-unavailable'],
   ['error', 'authentication_error', 'configuration/auth-failed']
 ] as const)(
-  'preserves Responses %s/%s diagnostics without executing partial tools',
+  'classifies Responses %s/%s without leaking prose or executing partial tools',
   async (type, code, reason) => {
     const managed = await mcpServer()
     const model = await modelServer((body, response) => {
       const tool = (body.tools as unknown as { name: string }[])[0].name
-      const error = {
-        code,
-        message: 'Provider rejected the request',
-        private_payload: 'private account'
-      }
+      const error = { code, message: 'private account and token must not escape' }
       response.end(
         [
           {
@@ -1370,9 +1366,6 @@ it.each([
     expect(failure).toMatchObject({ data: { errorName: 'APIError' } })
     expect(classifyFailure(collectPromptFailureFacts(failure)).reason).toBe(reason)
     expect(JSON.stringify(failure)).not.toContain('private account')
-    expect(failure).toMatchObject({
-      data: { upstreamCode: code, safeMessage: 'Provider rejected the request' }
-    })
     expect((failure as Error).message).not.toContain('private account')
     expect(managed.calls).toEqual([])
     expect(f.approvals).toEqual([])
@@ -1386,8 +1379,7 @@ it('classifies HTTP quota rejection as billing while retaining bounded diagnosti
     response.writeHead(429, { 'content-type': 'application/json' })
     response.end(
       JSON.stringify({
-        error: { code: 'insufficient_quota', message: 'Quota exhausted' },
-        private_payload: 'private account'
+        error: { code: 'insufficient_quota', message: 'private account and token must not escape' }
       })
     )
   })
@@ -1533,8 +1525,12 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
           protocol,
           model: 'test',
           status,
-          upstreamCode: code,
-          safeMessage: message,
+          code:
+            status === 401 || status === 403
+              ? 'authentication_error'
+              : code === 'model_unavailable'
+                ? 'model_not_found'
+                : code,
           requestId: 'provider-request-123',
           phase: 'response'
         }
@@ -1544,20 +1540,21 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
       )
       expect(classified).toMatchObject({
         reason,
-        responseMessage: message,
         diagnostics: {
           protocol,
           model: 'test',
           provider: 'Fixture Provider',
           status,
-          requestId: 'provider-request-123',
-          safeMessage: message
+          requestId: 'provider-request-123'
         }
       })
       expect(readPersistedFailure({ failure: JSON.parse(JSON.stringify(classified)) })).toEqual(
         classified
       )
       expect(JSON.stringify(failure)).not.toMatch(/PRIVATE_REQUEST_DATA|local-test-token/)
+      expect(JSON.stringify(failure)).not.toContain(message)
+      expect(classified.responseMessage).toBeUndefined()
+      expect(classified.diagnostics.raw).toBeUndefined()
       const checkpoint = await createJournalAgentStore({
         directory: join(f.directory, 'checkpoints')
       }).load(sessionId)

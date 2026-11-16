@@ -1,3 +1,4 @@
+import { readProviderErrorCode } from '../failure/contract'
 import type {
   ClassifiedFailure,
   FailureCategory,
@@ -33,6 +34,7 @@ export const readPersistedFailure = (value: Record<string, unknown>): Classified
     const category = failure.category as FailureCategory
     const diagnostics: { -readonly [K in keyof FailureDiagnostics]: FailureDiagnostics[K] } = {}
     const source = failure.diagnostics
+    const harness = ['chat-completions', 'responses', 'messages'].includes(String(source.protocol))
     if (
       typeof source.status === 'number' &&
       Number.isInteger(source.status) &&
@@ -47,11 +49,22 @@ export const readPersistedFailure = (value: Record<string, unknown>): Classified
       'requestId',
       'raw',
       'adapterCode',
-      'upstreamCode',
-      'safeMessage',
       'phase'
     ] as const)
-      if (typeof source[key] === 'string') diagnostics[key] = source[key]
+      if (
+        typeof source[key] === 'string' &&
+        !(harness && (key === 'raw' || key === 'code' || key === 'requestId'))
+      )
+        diagnostics[key] = source[key]
+    if (harness) {
+      const code = readProviderErrorCode(source.code)
+      if (code) diagnostics.code = code
+      if (
+        typeof source.requestId === 'string' &&
+        /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(source.requestId)
+      )
+        diagnostics.requestId = source.requestId
+    }
     if (
       source.protocol === 'chat-completions' ||
       source.protocol === 'responses' ||
@@ -60,7 +73,8 @@ export const readPersistedFailure = (value: Record<string, unknown>): Classified
       diagnostics.protocol = source.protocol
     return {
       category,
-      ...((category === 'service' || category === 'configuration') &&
+      ...(!harness &&
+      (category === 'service' || category === 'configuration') &&
       typeof failure.responseMessage === 'string' &&
       failure.responseMessage.trim()
         ? { responseMessage: failure.responseMessage }

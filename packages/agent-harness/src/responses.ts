@@ -329,62 +329,17 @@ export function createResponsesModel(input: ResponsesModelOptions): AgentModel {
             const detail = object(
               type === 'response.failed' ? object(event.response).error : (event.error ?? event)
             )
-            // 保留既有语义 code；额外诊断只提取白名单字段。
-            const codes = [detail.code, detail.type]
-            if (
-              codes.some((code) =>
-                [
-                  'insufficient_quota',
-                  'quota_exceeded',
-                  'usage_limit_reached',
-                  'subscription_sharing_usage_limit_exceeded',
-                  'billing_error'
-                ].includes(String(code))
-              )
-            )
-              throw new ResponsesError(
-                'insufficient_quota',
-                undefined,
-                normalizeProviderError({ ...event, error: detail })
-              )
-            if (
-              codes.some((code) =>
-                ['rate_limit_exceeded', 'rate_limit_error'].includes(String(code))
-              )
-            )
-              throw new ResponsesError(
-                'rate_limit_exceeded',
-                429,
-                normalizeProviderError({ ...event, error: detail })
-              )
-            if (
-              codes.some((code) => ['model_not_found', 'model_unavailable'].includes(String(code)))
-            )
-              throw new ResponsesError(
-                'model_not_found',
-                404,
-                normalizeProviderError({ ...event, error: detail })
-              )
-            if (
-              codes.some((code) =>
-                [
-                  'authentication_error',
-                  'invalid_api_key',
-                  'unauthorized',
-                  'token_expired'
-                ].includes(String(code))
-              )
-            )
-              throw new ResponsesError(
-                'authentication_error',
-                401,
-                normalizeProviderError({ ...event, error: detail })
-              )
-            throw new ResponsesError(
-              'protocol',
-              undefined,
-              normalizeProviderError({ ...event, error: detail })
-            )
+            // 原有四种语义 code 继续有效；其他原因走 protocol，并只附固定枚举。
+            const diagnostics = normalizeProviderError({ error: detail })
+            const reason = diagnostics.reason
+            const code =
+              reason === 'insufficient_quota' ||
+              reason === 'rate_limit_exceeded' ||
+              reason === 'model_not_found' ||
+              reason === 'authentication_error'
+                ? reason
+                : 'protocol'
+            throw new ResponsesError(code, response.status, diagnostics)
           }
         }
         phase = 'missing-finish'

@@ -2,7 +2,8 @@ import { mediaCapabilities, nativeMedia, requestBody, type InputCapabilities } f
 import {
   normalizeProviderError,
   normalizeUpstreamError,
-  responseErrorDiagnostics
+  responseErrorDiagnostics,
+  type ProviderErrorReason
 } from './errors/normalize-upstream-error'
 import { frozen, json } from './session-state'
 import type { AgentModel, Json, ModelRequest, ModelUsage, ToolCall } from './session-types'
@@ -45,8 +46,7 @@ export type ChatCompletionsDiagnostics = Readonly<{
   /** Observed usage before failure, not proof that the response or task completed. */
   usage?: Readonly<ModelUsage>
   /** Allowlisted provider diagnostics for HTTP/SSE failures. */
-  upstreamCode?: string
-  safeMessage?: string
+  reason?: ProviderErrorReason
   requestId?: string
 }>
 
@@ -412,7 +412,7 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
           phase = 'provider'
           if (event.error || (event.base_resp && object(event.base_resp).status_code !== 0)) {
             const detail = event.error ?? event.base_resp ?? event
-            throw new ChatCompletionsError('protocol', undefined, {
+            throw new ChatCompletionsError('protocol', response.status, {
               httpStatus: response.status,
               phase: 'provider',
               eventCount,
@@ -571,8 +571,7 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
             receivedDone: ended,
             ...(error instanceof ChatCompletionsError
               ? {
-                  upstreamCode: error.diagnostics?.upstreamCode,
-                  safeMessage: error.diagnostics?.safeMessage,
+                  reason: error.diagnostics?.reason,
                   requestId: error.diagnostics?.requestId
                 }
               : {}),

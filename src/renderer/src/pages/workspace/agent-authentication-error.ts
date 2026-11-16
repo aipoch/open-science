@@ -50,10 +50,7 @@ export const sessionAuthenticationFailure = (
     const message = graph?.messages.find(({ id }) => id === outcome.promptMessageId)
     const segment = graph?.runtimeSegments.find(({ id }) => id === message?.runtimeSegmentId)
     return {
-      message:
-        outcome.outcome.error ??
-        outcome.outcome.failure?.diagnostics.safeMessage ??
-        'Authentication required',
+      message: outcome.outcome.error ?? 'Authentication required',
       at: outcome.outcome.settledAt,
       providerId: segment?.providerId
     }
@@ -69,8 +66,7 @@ export const sessionAuthenticationFailure = (
   const legacy = baseline && !baseline.promptMessageId ? baseline.state : session
   return legacy.status === 'error' && authenticationFailure(legacy.error, legacy.failure)
     ? {
-        message:
-          legacy.error ?? legacy.failure?.diagnostics.safeMessage ?? 'Authentication required',
+        message: legacy.error ?? 'Authentication required',
         at: session.updatedAt
       }
     : undefined

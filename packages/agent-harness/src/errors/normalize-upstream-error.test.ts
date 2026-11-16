@@ -21,18 +21,18 @@ async function upstream(write: (response: ServerResponse) => void): Promise<Resp
 }
 
 it.each([
-  ['application/json', '{"error":{"message":"' + 'x'.repeat(20_000) + '"}}', undefined],
-  ['application/json', '{"error":{"message":"unfinished', undefined],
-  ['text/plain', 'x'.repeat(20_000), 'x'.repeat(299) + '…'],
-  ['text/plain', '  <!doctype html><html>gateway error</html>', undefined]
-])('bounds and releases a real %s error response', async (contentType, body, safeMessage) => {
+  ['application/json', '{"error":{"message":"' + 'x'.repeat(20_000) + '"}}'],
+  ['application/json', '{"error":{"message":"unfinished'],
+  ['text/plain', 'x'.repeat(20_000)],
+  ['text/plain', '  <!doctype html><html>gateway error</html>']
+])('bounds and releases a real %s error response', async (contentType, body) => {
   const response = await upstream((reply) => {
     reply.writeHead(400, { 'content-type': contentType, 'x-request-id': 'bounded-request' })
     reply.end(body)
   })
   expect(await normalizeUpstreamError(response, new AbortController().signal)).toEqual({
     requestId: 'bounded-request',
-    ...(safeMessage ? { safeMessage } : {})
+    reason: 'provider_error'
   })
   expect(response.body?.locked).toBe(false)
 })
@@ -43,21 +43,25 @@ it('does not wait indefinitely for an error body that never ends', async () => {
     reply.write('{"error":')
   })
   expect(await normalizeUpstreamError(response, new AbortController().signal)).toEqual({
-    requestId: 'stalled-request'
+    requestId: 'stalled-request',
+    reason: 'server_error'
   })
   expect(response.body?.locked).toBe(false)
 }, 5000)
 
 it.each([16_384, 16_385])('distinguishes EOF from overflow at %i bytes', async (size) => {
-  const body = { error: { message: 'Error at byte limit' }, padding: '' }
+  const body = {
+    error: { message: 'Model is unavailable; private account and token must not escape' },
+    padding: ''
+  }
   body.padding = 'x'.repeat(size - Buffer.byteLength(JSON.stringify(body)))
   const response = await upstream((reply) => {
-    reply.writeHead(422, { 'content-type': 'application/json', 'x-request-id': 'limit-request' })
+    reply.writeHead(400, { 'content-type': 'application/json', 'x-request-id': 'limit-request' })
     reply.end(JSON.stringify(body))
   })
   expect(await normalizeUpstreamError(response, new AbortController().signal)).toEqual({
     requestId: 'limit-request',
-    ...(size === 16_384 ? { safeMessage: body.error.message } : {})
+    reason: size === 16_384 ? 'model_not_found' : 'provider_error'
   })
   expect(response.body?.locked).toBe(false)
 })

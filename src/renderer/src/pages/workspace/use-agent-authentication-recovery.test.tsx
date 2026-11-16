@@ -212,7 +212,7 @@ it('keeps structured provider authentication visible until matching credentials 
     diagnostics: {
       protocol: 'chat-completions' as const,
       status: 401,
-      safeMessage: 'Invalid API key'
+      code: 'authentication_error'
     }
   }
   failed.error = 'Invalid API key'

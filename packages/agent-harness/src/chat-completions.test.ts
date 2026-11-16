@@ -412,12 +412,12 @@ describe('independent Chat Completions wire adapter', () => {
       const error = await run().catch((error: unknown) => error)
       expect(error).toMatchObject({
         code: 'protocol',
-        message: 'Chat Completions protocol error',
+        ...(scenario === 'upstream error' || scenario === 'provider status error'
+          ? { status: 200 }
+          : { message: 'Chat Completions protocol error' }),
         diagnostics: { phase }
       })
-      if (scenario === 'upstream error')
-        expect(error).toMatchObject({ diagnostics: { safeMessage: 'secret-upstream' } })
-      else expect(JSON.stringify(error)).not.toMatch(/secret|private|late/)
+      expect(JSON.stringify(error)).not.toMatch(/secret|private|late/)
       expect(events.some((event) => event.type === 'finish')).toBe(false)
       expect(fetch).toHaveBeenCalledOnce()
     }

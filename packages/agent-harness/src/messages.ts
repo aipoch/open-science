@@ -311,7 +311,7 @@ export function createMessagesModel(input: MessagesModelOptions): AgentModel {
           if (type === 'message_stop') break
           if (type === 'error') {
             const diagnostics = normalizeProviderError(event)
-            throw new MessagesError('protocol', undefined, diagnostics)
+            throw new MessagesError('protocol', response.status, diagnostics)
           }
         }
         phase = 'missing-finish'

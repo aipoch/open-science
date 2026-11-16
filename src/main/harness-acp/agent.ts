@@ -777,11 +777,6 @@ export function createHarnessAcpAgent(directory: string): {
                       : error.code === 'http' || error.code === 'network'
                         ? 'response'
                         : 'provider'
-                  const upstreamCode =
-                    diagnostics.upstreamCode ??
-                    (!['http', 'network', 'protocol', 'limit'].includes(error.code)
-                      ? error.code
-                      : undefined)
                   throw new acp.RequestError(-32603, error.message, {
                     errorName: 'APIError',
                     errorKind: 'provider-error',
@@ -789,8 +784,7 @@ export function createHarnessAcpAgent(directory: string): {
                     protocol,
                     adapterCode: error.code,
                     ...(error.status === undefined ? {} : { status: error.status }),
-                    ...(upstreamCode ? { upstreamCode } : {}),
-                    ...(diagnostics.safeMessage ? { safeMessage: diagnostics.safeMessage } : {}),
+                    ...(diagnostics.reason ? { code: diagnostics.reason } : {}),
                     ...(diagnostics.requestId ? { requestId: diagnostics.requestId } : {}),
                     phase
                   })

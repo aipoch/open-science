@@ -1,3 +1,4 @@
+import { readProviderErrorCode } from '../../shared/failure/contract'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 
 import { classifyFailure } from '../../shared/failure/classify'
@@ -335,13 +336,40 @@ export const collectPromptFailureFacts = (
       const text = value.replace(/\s+/g, ' ').trim()
       return !text || text.startsWith('<') ? undefined : text.slice(0, max)
     }
-    const responseMessage = field(data.safeMessage)
-    const upstreamCode = field(data.upstreamCode, 120)
-    const adapterCode = field(data.adapterCode, 120)
-    const phase = field(data.phase, 120)
-    const requestId = field(data.requestId, 200)
+    const code = readProviderErrorCode(data.code)
+    const adapterCode = [
+      'http',
+      'network',
+      'protocol',
+      'limit',
+      'insufficient_quota',
+      'rate_limit_exceeded',
+      'model_not_found',
+      'authentication_error'
+    ].includes(String(data.adapterCode))
+      ? String(data.adapterCode)
+      : undefined
+    const phase = [
+      'response',
+      'stream',
+      'event-json',
+      'provider',
+      'choice',
+      'usage',
+      'tool-delta',
+      'missing-done',
+      'missing-finish',
+      'tool-arguments'
+    ].includes(String(data.phase))
+      ? String(data.phase)
+      : undefined
+    const requestId =
+      typeof data.requestId === 'string' &&
+      /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(data.requestId)
+        ? data.requestId
+        : undefined
     const model = context.model ?? field(data.model)
-    const provider = context.providerName ?? field(data.provider)
+    const provider = context.providerName
     const status =
       typeof data.status === 'number' &&
       Number.isInteger(data.status) &&
@@ -353,8 +381,7 @@ export const collectPromptFailureFacts = (
       origin: 'provider',
       protocol,
       ...(status === undefined ? {} : { status }),
-      ...(responseMessage ? { responseMessage, text: responseMessage } : {}),
-      ...(upstreamCode ? { code: upstreamCode, upstreamCode } : {}),
+      ...(code ? { code } : {}),
       ...(adapterCode ? { adapterCode } : {}),
       ...(phase ? { phase } : {}),
       ...(requestId ? { requestId } : {}),

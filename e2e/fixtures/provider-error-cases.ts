@@ -7,6 +7,7 @@ export type ProviderErrorCase = Readonly<{
   status?: number
   code?: string
   message?: string
+  requestId?: string
   wire?:
     | 'plain'
     | 'html'
@@ -174,11 +175,11 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
     name: '400 空错误正文',
     status: 400,
     wire: 'empty',
-    reason: 'configuration/request-invalid'
+    reason: 'service/provider-error'
   },
   {
     id: 'E22',
-    name: '错误消息超过 300 字符',
+    name: '超长错误消息仅供内部识别',
     status: 422,
     message: 'Invalid parameter: ' + 'x'.repeat(600),
     reason: 'configuration/request-invalid'
@@ -186,17 +187,17 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   {
     id: 'E23',
     name: 'JSON 正文恰好 16 KiB',
-    status: 422,
+    status: 400,
     wire: 'body-limit',
-    message: 'Invalid parameter at byte limit',
-    reason: 'configuration/request-invalid'
+    message: 'Model is unavailable at byte limit',
+    reason: 'configuration/model-unavailable'
   },
   {
     id: 'E24',
     name: 'JSON 正文超过 16 KiB',
-    status: 422,
+    status: 400,
     wire: 'body-overflow',
-    reason: 'configuration/request-invalid'
+    reason: 'service/provider-error'
   },
   {
     id: 'E25',
@@ -212,6 +213,38 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
     wire: 'spoofed-connection',
     message: 'Upstream gateway unavailable',
     reason: 'service/unavailable'
+  },
+  {
+    id: 'E27',
+    name: '已知错误的 message 含敏感文本',
+    status: 400,
+    code: 'model_unavailable',
+    message: 'private account and token must not escape',
+    reason: 'configuration/model-unavailable'
+  },
+  {
+    id: 'E28',
+    name: '未知错误码和敏感 message 均不得外传',
+    status: 400,
+    code: 'unknown_private_code',
+    message: 'private account and token must not escape',
+    reason: 'service/provider-error'
+  },
+  {
+    id: 'E29',
+    name: '非法请求标识头被丢弃',
+    status: 400,
+    code: 'model_unavailable',
+    requestId: 'private account and token must not escape',
+    reason: 'configuration/model-unavailable'
+  },
+  {
+    id: 'E30',
+    name: '超长请求标识头被丢弃',
+    status: 400,
+    code: 'model_unavailable',
+    requestId: 'r'.repeat(129),
+    reason: 'configuration/model-unavailable'
   }
 ]
 
