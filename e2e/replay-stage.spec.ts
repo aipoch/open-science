@@ -1667,6 +1667,14 @@ test('restores Notebook and its code scrollbar after returning from a generated 
   await stageApp.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0].setSize(1500, 900)
   })
+  await expect
+    .poll(() =>
+      stageApp.evaluate(({ BrowserWindow }) => {
+        const bounds = BrowserWindow.getAllWindows()[0].getBounds()
+        return { width: bounds.width, height: bounds.height }
+      })
+    )
+    .toEqual({ width: 1500, height: 900 })
   const panel = page.getByTestId('replay-panel')
   await panel.getByRole('button', { name: 'Enter full screen' }).click()
   const progress = panel.getByRole('slider')

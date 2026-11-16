@@ -1641,6 +1641,14 @@ class ElectronAppHarness implements ElectronApp {
     await this.page.setViewportSize({ width, height })
     await this.setMainWindowSize(width, height)
     await expect
+      .poll(() =>
+        this.runningApplication.evaluate(({ BrowserWindow }) => {
+          const bounds = BrowserWindow.getAllWindows()[0].getBounds()
+          return { width: bounds.width, height: bounds.height }
+        })
+      )
+      .toEqual({ width, height })
+    await expect
       .poll(() => this.page.evaluate(() => ({ width: innerWidth, height: innerHeight })))
       .toEqual({ width, height })
   }
