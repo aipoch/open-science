@@ -15,6 +15,7 @@ import {
 } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
+import { useMessageScroller } from '@/components/ui/message-scroller'
 
 import type { WorkspaceConversationTimelineItem } from './workspace-conversation-timeline'
 import {
@@ -48,21 +49,13 @@ type RunMarkRailPosition = {
   top: number
 }
 
-const scrollViewportTo = (
-  viewport: HTMLDivElement,
-  top: number,
-  behavior: ScrollBehavior
-): void => {
-  if (typeof viewport.scrollTo === 'function') viewport.scrollTo({ top, behavior })
-  else viewport.scrollTop = top
-}
-
 const WorkspaceRunMarks = ({
   items,
   viewport,
   onRevealMessage
 }: WorkspaceRunMarksProps): React.JSX.Element | null => {
   const { t } = useTranslation()
+  const { stopAutoScroll, scrollToMessage } = useMessageScroller()
   const marks = useMemo(() => createRunMarks(items), [items])
   const markIndexByItemId = useMemo(() => createRunMarkItemIndex(items, marks), [items, marks])
   const [visibleIndices, setVisibleIndices] = useState<number[]>([])
@@ -85,7 +78,7 @@ const WorkspaceRunMarks = ({
   const pointerFrameRef = useRef<number | undefined>(undefined)
   const pointerPositionRef = useRef(0)
   const pointerFocusRef = useRef(false)
-  const pendingRevealRef = useRef<{ id: string; behavior: ScrollBehavior } | undefined>(undefined)
+  const pendingRevealRef = useRef<{ id: string } | undefined>(undefined)
   const cancelPointerFrame = (): void => {
     if (pointerFrameRef.current !== undefined) {
       window.cancelAnimationFrame(pointerFrameRef.current)
@@ -288,35 +281,39 @@ const WorkspaceRunMarks = ({
   }, [marks, railPosition, updateRailScroll, viewport, visibleIndices])
 
   const scrollToMountedRun = useCallback(
-    (mark: RunMark, index: number, behavior: ScrollBehavior): boolean => {
+    (mark: RunMark, index: number): boolean => {
       if (!viewport) return false
       const target = findMessageTarget(viewport, mark.id)
       if (!target) return false
 
-      const viewportTop = viewport.getBoundingClientRect().top
-      const targetTop = target.getBoundingClientRect().top
-      const maximumScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-      const nextScrollTop = Math.min(
-        Math.max(0, viewport.scrollTop + targetTop - viewportTop - RUN_MARK_TOP_OFFSET_PX),
-        maximumScrollTop
+      if (
+        !scrollToMessage(mark.id, {
+          align: 'start',
+          scrollMargin: RUN_MARK_TOP_OFFSET_PX,
+          behavior: 'instant'
+        })
       )
-      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-      scrollViewportTo(viewport, nextScrollTop, reduceMotion ? 'auto' : behavior)
+        return false
       setCurrentIndex(index)
       return true
     },
-    [viewport]
+    [viewport, scrollToMessage]
   )
 
-  const scrollToRun = (mark: RunMark, index: number, behavior: ScrollBehavior = 'smooth'): void => {
+  const scrollToRun = (mark: RunMark, index: number): void => {
+    // Release the primitive's following/turn anchor, then commit the history window
+    // before navigating. Otherwise its observers or the window restore undo the jump.
+    flushSync(() => {
+      stopAutoScroll()
+      onRevealMessage?.(mark.id)
+    })
     const targetMounted = viewport ? findMessageTarget(viewport, mark.id) !== undefined : false
-    onRevealMessage?.(mark.id)
     if (targetMounted) {
       pendingRevealRef.current = undefined
-      scrollToMountedRun(mark, index, behavior)
+      scrollToMountedRun(mark, index)
       return
     }
-    if (onRevealMessage) pendingRevealRef.current = { id: mark.id, behavior }
+    if (onRevealMessage) pendingRevealRef.current = { id: mark.id }
     setCurrentIndex(index)
   }
 
@@ -333,7 +330,7 @@ const WorkspaceRunMarks = ({
       return
     }
     const pendingMark = marks[pendingIndex]!
-    if (scrollToMountedRun(pendingMark, pendingIndex, pending.behavior)) {
+    if (scrollToMountedRun(pendingMark, pendingIndex)) {
       pendingRevealRef.current = undefined
     }
   }, [items, marks, onRevealMessage, scrollToMountedRun, visibleIndices])
@@ -439,7 +436,7 @@ const WorkspaceRunMarks = ({
                     }
                     onClick={() => {
                       closePreview()
-                      scrollToRun(mark, index, 'auto')
+                      scrollToRun(mark, index)
                     }}
                     onBlur={() => {
                       setFocusedId(null)

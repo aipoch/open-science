@@ -14,6 +14,14 @@ import {
 } from './workspace-run-marks'
 import { WorkspaceRunMarks } from './WorkspaceRunMarks'
 
+const { stopAutoScroll, scrollToMessage } = vi.hoisted(() => ({
+  stopAutoScroll: vi.fn(),
+  scrollToMessage: vi.fn(() => true)
+}))
+vi.mock('@/components/ui/message-scroller', () => ({
+  useMessageScroller: () => ({ stopAutoScroll, scrollToMessage })
+}))
+
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
   id: 'message-1',
   role: 'user',
@@ -195,6 +203,8 @@ describe('WorkspaceRunMarks interaction', () => {
   let panel: HTMLElement | undefined
 
   beforeEach(() => {
+    stopAutoScroll.mockClear()
+    scrollToMessage.mockClear()
     viewport = document.createElement('div')
     viewport.getBoundingClientRect = () => createRect(100)
     Object.defineProperties(viewport, {
@@ -572,7 +582,7 @@ describe('WorkspaceRunMarks interaction', () => {
   })
 
   it.each(['mark', 'preview'])(
-    'scrolls from the %s to the selected run with a clamped offset',
+    'delegates navigation from the %s to the scroller after releasing following',
     (source) => {
       appendMessageTarget(viewport, 'prompt-1', 120)
       appendMessageTarget(viewport, 'prompt-2', 1_100)
@@ -598,9 +608,13 @@ describe('WorkspaceRunMarks interaction', () => {
       fireEvent.click(source === 'preview' ? preview : mark)
       expect(queryPreview()).toBeNull()
       if (source === 'preview') expect(document.activeElement).toBe(mark)
-      expect(scrollTo).toHaveBeenCalledWith({
-        top: 800,
-        behavior: source === 'mark' ? 'auto' : 'smooth'
+      expect(stopAutoScroll.mock.invocationCallOrder[0]).toBeLessThan(
+        scrollToMessage.mock.invocationCallOrder[0]!
+      )
+      expect(scrollToMessage).toHaveBeenCalledWith('prompt-2', {
+        align: 'start',
+        scrollMargin: 8,
+        behavior: 'instant'
       })
     }
   )
@@ -689,7 +703,11 @@ describe('WorkspaceRunMarks interaction', () => {
       vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList)
       fireEvent.focus(screen.getAllByRole('button')[1]!)
       fireEvent.click(source === 'preview' ? getPreview() : screen.getAllByRole('button')[1]!)
-      expect(viewport.scrollTo).toHaveBeenCalledWith({ top: 192, behavior: 'auto' })
+      expect(scrollToMessage).toHaveBeenCalledWith('prompt-1', {
+        align: 'start',
+        scrollMargin: 8,
+        behavior: 'instant'
+      })
       fireEvent.focus(screen.getAllByRole('button')[0]!)
       rerender(
         <WorkspaceRunMarks
@@ -733,7 +751,11 @@ describe('WorkspaceRunMarks interaction', () => {
     )
 
     await waitFor(() => {
-      expect(scrollTo).toHaveBeenCalledWith({ top: 492, behavior: 'auto' })
+      expect(scrollToMessage).toHaveBeenCalledWith('prompt-1', {
+        align: 'start',
+        scrollMargin: 8,
+        behavior: 'instant'
+      })
     })
   })
 

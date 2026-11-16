@@ -1786,8 +1786,10 @@ const WorkspaceMessageScrollerImpl = ({
               ref={messageScrollerContentRef}
               className={cn(
                 'mx-auto w-full max-w-4xl gap-0 px-4 pb-[56px]',
-                // Native find must scroll against final row heights, not deferred containment sizes.
-                windowFindOpen && '[&>[data-message-id]]:[content-visibility:visible]'
+                // Find and history navigation need final row heights. History remains
+                // bounded by the transcript window; the following tail still defers layout.
+                (windowFindOpen || !transcriptWindow.isFollowingEnd) &&
+                  '[&>[data-message-id]]:[content-visibility:visible]'
               )}
             >
               {reviewLoadError ? (

@@ -460,6 +460,7 @@ const launchEnvironment = (
       'comspec',
       'temp',
       'tmp',
+      'tmpdir',
       'number_of_processors',
       'processor_architecture',
       'systemdrive',
@@ -703,6 +704,15 @@ const launchOpenScience = async (
     ...electronLaunchTarget(userDataRoot),
     args: [...electronLaunchTarget(userDataRoot).args, ...(packagePath ? [packagePath] : [])],
     cwd: fakeRemoteItEnabled ? fakeRemoteItRoot : APP_ROOT,
+    // Opt-in recordings stay outside disposable fixture profiles for before/after evidence.
+    ...(process.env.OPEN_SCIENCE_E2E_VIDEO_DIR
+      ? {
+          recordVideo: {
+            dir: process.env.OPEN_SCIENCE_E2E_VIDEO_DIR,
+            size: { width: 1280, height: 900 }
+          }
+        }
+      : {}),
     env: {
       ...environment,
       ...(process.platform === 'darwin' && !process.env.OPEN_SCIENCE_E2E_EXECUTABLE
