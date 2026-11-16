@@ -58,6 +58,7 @@ export async function runVerificationProcess(
     const ownership = createPosixProcessTreeOwnership(options.env)
     // Darwin commands such as ps can exit before kernel identity capture. Hold the same process
     // behind fd3 until tracking is installed; stdin stays dedicated to the target command.
+    // Linux pins /proc birth in this JS turn, including an exited, not-yet-reaped zombie.
     const gateLaunch = process.platform === 'darwin'
     const child =
       process.platform === 'win32'

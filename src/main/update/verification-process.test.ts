@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { readFileSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -105,6 +106,57 @@ describe('bounded verification subprocess', () => {
             // Successful production teardown already reaped this fixture.
           }
         }
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'linux')(
+    'retains birth proof when a Linux target exits before synchronous registration',
+    async () => {
+      const track = processTree.trackOwnedPosixProcessTree
+      const root = await mkdtemp(join(tmpdir(), 'verification-linux-zombie-'))
+      let observedState: string | undefined
+      let expectedBirthToken: string | undefined
+      let exitCodeAtCapture: number | null | undefined
+      let birthToken: string | undefined
+      const registration = vi
+        .spyOn(processTree, 'trackOwnedPosixProcessTree')
+        .mockImplementation((child, token) => {
+          // Hold this JS turn until the real target has exited. Linux retains its /proc identity
+          // as a zombie until libuv can process SIGCHLD on a subsequent event-loop turn.
+          const pause = new Int32Array(new SharedArrayBuffer(4))
+          const deadline = Date.now() + 2000
+          while (Date.now() < deadline) {
+            const stat = readFileSync(`/proc/${child.pid}/stat`, 'utf8')
+            const fields = stat
+              .slice(stat.lastIndexOf(')') + 1)
+              .trim()
+              .split(/\s+/u)
+            observedState = fields[0]
+            if (observedState === 'Z') {
+              expectedBirthToken = `linux-proc-starttime:${fields[19]}`
+              break
+            }
+            Atomics.wait(pause, 0, 0, 5)
+          }
+          exitCodeAtCapture = child.exitCode
+          track(child, token)
+          birthToken = processTree.capturePosixProcessTreeIdentity(child)?.birthToken
+        })
+      try {
+        await expect(
+          runVerificationProcess(process.execPath, ['-e', "process.stdout.write('completed')"], {
+            cwd: root
+          })
+        ).resolves.toEqual({ stdout: 'completed', stderr: '' })
+        expect(observedState).toBe('Z')
+        expect(exitCodeAtCapture).toBeNull()
+        expect(expectedBirthToken).toMatch(/^linux-proc-starttime:\d+$/u)
+        expect(birthToken).toBe(expectedBirthToken)
+        expect(verificationDirectoryIsSettled(root)).toBe(true)
+      } finally {
+        registration.mockRestore()
         await rm(root, { recursive: true, force: true })
       }
     }
