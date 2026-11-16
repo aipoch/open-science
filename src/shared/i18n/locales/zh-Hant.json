@@ -7663,6 +7663,7 @@
     "English_language": "英語",
     "OCR languages": "OCR 語言",
     "OCR installed. Read the PDF again.": "OCR 已安裝，請重新讀取 PDF。",
+    "Image support is not configured": "尚未設定圖片支援",
     "Model configuration needs attention": "模型設定需要處理",
     "Check your credentials, model and account settings, then retry.": "請檢查憑證、模型和帳戶設定，然後重試。",
     "The model service is temporarily unavailable": "模型服務暫時無法使用",
