@@ -302,7 +302,7 @@ const settlesWithin = async (promise: Promise<void>, timeoutMs: number): Promise
 
 // Allow platform-specific shutdown latency while keeping each cleanup phase bounded.
 const CLEANUP_GRACEFUL_TIMEOUT_MS =
-  process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
+  process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 30_000 : 10_000
 const CLEANUP_FORCED_TIMEOUT_MS =
   process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
 

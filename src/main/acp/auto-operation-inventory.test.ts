@@ -39,6 +39,11 @@ const registrations: Record<
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.queryExecutionLog': 'legacy',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.readArtifact': 'legacy',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.submitFindings': 'legacy',
+  "schedules/mcp.ts:'list_schedules'": 'allow_once',
+  "schedules/mcp.ts:'create_schedule'": 'allow_once',
+  "schedules/mcp.ts:'update_schedule'": 'allow_once',
+  "schedules/mcp.ts:'close_schedule'": 'allow_once',
+  "schedules/mcp.ts:'manage_current_schedule'": 'allow_once',
   "session-plan/plan-mcp-server.ts:'generate_plan'": 'operations',
   "session-plan/plan-mcp-server.ts:'update_step_status'": 'legacy',
   'side-chat/host-message-mcp-server.ts:HOST_SEND_MESSAGE_TOOL_NAME': 'legacy',
@@ -178,6 +183,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Tool schemas, method routing, callbacks, classifiers and Auto dispositions are unchanged.
         'notebook/mcp-server.ts':
           '8139613ad55b96cb965a52dfb6b28fa9f7ddc3663183fcc6c4c6fa55cb2ed1bd',
+        // Reviewed: calls require a mounted route and current turn. Task edits are scoped to the
+        // originating conversation, and unattended mutations are limited to the task's own trigger.
+        'schedules/mcp.ts': '4c7322e66195808835ae282899a90c51777f79cf0ccf07ee7cdb6d2607b63f52',
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':

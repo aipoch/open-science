@@ -19,7 +19,7 @@ import {
   DEFAULT_REASONING_EFFORT,
   isCodexSubscriptionProvider,
   usesAppProviderTransport
-} from '../../shared/settings'
+} from '../../shared/settings-runtime'
 import {
   getAgentFramework,
   releaseResolvedAgentBackendLeases,

@@ -2,7 +2,7 @@ import { APP } from '../../../../shared/app-config'
 import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   isCodexSubscriptionProviderId
-} from '../../../../shared/settings'
+} from '../../../../shared/settings-runtime'
 
 // Assembles a failed-run diagnostic report locally. Nothing here transmits anything: the helpers only
 // build human-readable text and a pre-filled GitHub "new issue" URL, so the user reviews every field

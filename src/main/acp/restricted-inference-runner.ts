@@ -11,7 +11,7 @@ import {
 
 import { type AcpRuntimeEvent } from '../../shared/acp'
 import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
-import { isCodexSubscriptionProviderId } from '../../shared/settings'
+import { isCodexSubscriptionProviderId } from '../../shared/settings-runtime'
 import type { ResolvedAgentBackend } from '../agent-framework/types'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-target'
 import { prepareRestrictedBackend } from './restricted-runtime-profile'

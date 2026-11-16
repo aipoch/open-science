@@ -26,7 +26,7 @@ import {
 } from '../../shared/lifecycle-events'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings-runtime'
 import { filterSpecialistConnectorSkills } from '../../shared/specialist'
 import { imageAttachmentMimeType } from '../../shared/uploads'
 import type { ResolvedAgentBackend } from '../agent-framework'
@@ -139,6 +139,7 @@ type AcpRuntimeArtifacts = {
 }
 
 type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
+  schedules?: import('../schedules/mcp').ScheduleMcp
   appVersion: string
   mcpEntryPath: string
   uploadRepository: UploadRepository
@@ -267,6 +268,7 @@ const isPdfAttachmentVersion = (version: { filename: string; contentType: string
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
 const createAcpRuntime = ({
+  schedules,
   appVersion,
   mcpEntryPath,
   repository,
@@ -500,6 +502,7 @@ const createAcpRuntime = ({
         ...(spawnAgent ? { spawnAgent } : {}),
         ...(spawnProcess ? { spawnProcess } : {}),
         ...(registerOpenCodeStoreRelease ? { registerOpenCodeStoreRelease } : {}),
+        schedules: delegatedNotebookConnection ? undefined : schedules,
         mcpHttpHost: new AgentMcpHttpHost({
           receiptDirectory: join(dataRoot, 'open-science-agent', 'tool-receipts')
         }),

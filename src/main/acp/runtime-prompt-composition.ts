@@ -373,6 +373,7 @@ const composeAcpRuntimePromptOwners = (
     }
   })
   const promptTurnWorkflow = new AcpPromptTurnWorkflow({
+    schedules: options.schedules,
     registry: session.sessionRegistry,
     interactions: base.sessionInteractions,
     skills: base.turnSkills,
@@ -470,6 +471,20 @@ const composeAcpRuntimePromptOwners = (
           const origin =
             request.provenanceContext?.originMessageId ?? request.provenanceContext?.promptMessageId
           intent = origin ? notebook.resolveExecutionIntent?.(scope, origin) : undefined
+          if (
+            !intent &&
+            mode.kind === 'application' &&
+            mode.attribution.feature === 'schedule' &&
+            request.provenanceContext?.promptMessageId
+          ) {
+            // A trusted scheduled wake keeps the Session's existing execution context, including
+            // refusals. Its first context remains pending until the ordinary prompt preparation.
+            intent = current
+            if (!intent && notebook.createExecutionIntent) {
+              intent = notebook.createExecutionIntent(scope)
+              intent.prepareUserExecution()
+            }
+          }
         }
         if (!intent) {
           intent = new NotebookExecutionIntent(scope)

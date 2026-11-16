@@ -183,6 +183,9 @@ const WorkspaceToolDetailsRow = ({
   const { t } = useTranslation()
   const [setRowElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
   const notebookRunId = details.notebookRunId
+  const isSchedule = details.sections.some(
+    (section) => section.kind === 'summary' && section.schedule
+  )
   const notebookFigureMeta = notebookRun ? formatNotebookRunFigureMeta(notebookRun, t) : undefined
   const notebookOutputLineMeta = notebookRun
     ? formatNotebookRunOutputLineMeta(notebookRun, t)
@@ -247,7 +250,15 @@ const WorkspaceToolDetailsRow = ({
         />
       )
     if (section.kind === 'summary')
-      return <WorkspaceToolSummaryCard key={index} summary={section.summary} file={section.file} />
+      return (
+        <WorkspaceToolSummaryCard
+          key={index}
+          summary={section.summary}
+          file={section.file}
+          schedule={section.schedule}
+          hideHeader={section.schedule}
+        />
+      )
     if (section.kind === 'literature') {
       return (
         <WorkspaceLiteratureToolCard
@@ -322,6 +333,7 @@ const WorkspaceToolDetailsRow = ({
         activity={activity}
         phase={phase}
         label={translateKnownCopy(details.displayName)}
+        subtitleSeparator={isSchedule ? '' : undefined}
         subtitle={
           details.displayName === 'Write file' && details.subtitle ? (
             <ExtensionPreservingFileName name={details.subtitle} />

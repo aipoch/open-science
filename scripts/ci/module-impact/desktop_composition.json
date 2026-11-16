@@ -254,7 +254,8 @@
     "scripts/ocr/worker.mjs",
     "src/main/composition/research-film.ts",
     "src/main/composition/research-film.test.ts",
-    "src/main/composition/session-package-lifecycle.integration.test.ts"
+    "src/main/composition/session-package-lifecycle.integration.test.ts",
+    "src/main/composition/notebook-approvals.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -456,7 +457,8 @@
       "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/composition/research-film.test.ts",
       "src/main/composition/background-results.integration.test.ts",
-      "src/main/composition/session-package-lifecycle.integration.test.ts"
+      "src/main/composition/session-package-lifecycle.integration.test.ts",
+      "src/main/composition/notebook-approvals.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

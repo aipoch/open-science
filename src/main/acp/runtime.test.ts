@@ -33549,8 +33549,8 @@ it('connects the optional built-in harness through the host runtime and releases
   }
 })
 
-it.each(['new', 'resume', 'task'] as const)(
-  'keeps Notebook %s bootstrap read-only until a trusted user prompt creates execution authority',
+it.each(['new', 'resume', 'task', 'schedule', 'schedule-without-origin'] as const)(
+  'keeps Notebook %s bootstrap read-only until an authorized prompt creates execution authority',
   async (entry) => {
     const root = await mkdtemp(join(tmpdir(), 'acp-notebook-bootstrap-'))
     const child = new FakeAgentProcess()
@@ -33654,7 +33654,48 @@ it.each(['new', 'resume', 'task'] as const)(
       expect(execute).not.toHaveBeenCalled()
       expect(service.currentExecutionIntent(scope)).toBeUndefined()
 
-      if (entry === 'task') {
+      if (entry === 'schedule' || entry === 'schedule-without-origin') {
+        const scheduledPrompt = (promptMessageId?: string): Promise<unknown> =>
+          runtime.sendApplicationPrompt(
+            {
+              sessionId: scope.sessionId,
+              text: 'Execute the scheduled Notebook.',
+              ...(promptMessageId ? { provenanceContext: { promptMessageId } } : {}),
+              permissionPrompts: 'none'
+            },
+            {
+              kind: 'application',
+              feature: 'schedule',
+              purpose: 'scheduled-wake',
+              scheduleId: 'notebook-schedule',
+              occurrenceId: promptMessageId ?? 'schedule-without-origin',
+              scheduledAt: 1
+            }
+          )
+        if (entry === 'schedule-without-origin') {
+          await scheduledPrompt()
+          expect(promptResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
+          expect(execute).not.toHaveBeenCalled()
+          return
+        }
+        await scheduledPrompt('scheduled-notebook-first')
+        expect(promptResult).toContain('"status":"completed"')
+        expect(execute).toHaveBeenCalledOnce()
+        const accepted = service.currentExecutionIntent(scope)!
+        expect(accepted.refusalId).toBeUndefined()
+        pressured = true
+        await scheduledPrompt('scheduled-notebook-pressure')
+        expect(promptResult).toContain('NOTEBOOK_MEMORY_PRESSURE')
+        pressured = false
+        expect(accepted.refusalId).toEqual(expect.any(String))
+        await scheduledPrompt('scheduled-notebook-pressure')
+        expect(promptResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
+        await scheduledPrompt('scheduled-notebook-next')
+        expect(promptResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
+        expect(service.currentExecutionIntent(scope)).toBe(accepted)
+        expect(execute).toHaveBeenCalledOnce()
+        return
+      } else if (entry === 'task') {
         const task = createAcpTaskAgentPort(
           {
             captureNotebookTaskIntent: (request) => runtime.captureNotebookTaskIntent(request),

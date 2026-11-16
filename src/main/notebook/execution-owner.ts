@@ -12,6 +12,10 @@ import {
   prepareNotebookExecution,
   guardNotebookExecutionAdmission
 } from './execution-admission'
+import {
+  markTrustedNotebookBindingPermissionPrompts,
+  readTrustedNotebookBindingPermissionPrompts
+} from './runtime-binding-admission'
 
 import type { Logger } from '@aipoch/diagnostics/node'
 import {
@@ -162,7 +166,8 @@ type NotebookExecutionOwnerOptions = {
     session: NotebookSessionAggregate,
     run: NotebookRunRecord,
     context: NotebookSourceFileAccessContext | undefined,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    permissionPrompts?: 'none'
   ) => Promise<void>
   prepareRuntimeSelection?: (
     session: NotebookSessionAggregate,
@@ -627,7 +632,10 @@ class NotebookExecutionOwner {
     // Snapshot caller-owned inputs before the first queue/preparation/persistence wait.
     // The host-owned input lease stays live so resolver access reaches the completed run.
     const { registeredInputFiles, ...submittedRequest } = request
-    const frozenRequest = { ...structuredClone(submittedRequest), registeredInputFiles }
+    const frozenRequest = markTrustedNotebookBindingPermissionPrompts(
+      { ...structuredClone(submittedRequest), registeredInputFiles },
+      readTrustedNotebookBindingPermissionPrompts(request)
+    )
     const executionAdmission = notebookExecutionAdmission(request)
     const executionRequest = executionAdmission
       ? withNotebookExecutionAdmission(frozenRequest, executionAdmission)
@@ -913,7 +921,8 @@ class NotebookExecutionOwner {
                     session,
                     executionRun,
                     sourceFileAccessContext,
-                    signal
+                    signal,
+                    readTrustedNotebookBindingPermissionPrompts(request)
                   )
                   try {
                     await prepareNotebookExecution(request, 'dispatch')
@@ -1403,7 +1412,13 @@ class NotebookExecutionOwner {
               const sourceFileAccessContext = await this.options
                 .sourceFileAccessContext?.(session, queuedRun)
                 .catch(() => undefined)
-              await this.options.reviewCode?.(session, queuedRun, sourceFileAccessContext, signal)
+              await this.options.reviewCode?.(
+                session,
+                queuedRun,
+                sourceFileAccessContext,
+                signal,
+                readTrustedNotebookBindingPermissionPrompts(request)
+              )
               await prepareNotebookExecution(request, 'dispatch')
               signal?.throwIfAborted()
               if (session.currentKernelEpochId('repl') !== epoch.id) {
@@ -1830,7 +1845,8 @@ class NotebookExecutionOwner {
                 session,
                 durableAdmission.run,
                 undefined,
-                lifecycleSignal
+                lifecycleSignal,
+                readTrustedNotebookBindingPermissionPrompts(request)
               )
               try {
                 await prepareNotebookExecution(request, 'dispatch')

@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils'
 import { ProviderKindIcon } from '../settings/provider-icons'
 import { providerKindKey } from '../settings/provider-form-value'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
-import { isProviderUsableByFramework } from '../../../../shared/settings'
+import { isProviderUsableByFramework } from '../../../../shared/settings-runtime'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   buildConfiguredModelCatalog,

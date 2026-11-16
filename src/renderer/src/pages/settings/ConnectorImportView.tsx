@@ -5,13 +5,13 @@ import { AlertTriangle, FileJson, Upload } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  CONNECTOR_TEMPLATE_MAX_BYTES,
-  type ConnectorTemplateDefinition,
-  type ConnectorTemplateDiagnostic,
-  type ConnectorTemplateSelectionResult,
-  type SelectCustomServerTemplateRequest
+import type {
+  ConnectorTemplateDefinition,
+  ConnectorTemplateDiagnostic,
+  ConnectorTemplateSelectionResult,
+  SelectCustomServerTemplateRequest
 } from '../../../../shared/settings'
+import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../../../shared/settings-runtime'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
 import { useFileDropZone } from '@/hooks/useFileDropZone'

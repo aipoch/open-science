@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { resolve } from 'node:path'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { harnessFramework } from '../agent-framework/harness'
 import { createSkillRuntimeAcpServerConfig } from '../skills/runtime-mcp-server'
 
+import { SCHEDULE_MCP_NAME, scheduleToolInputs } from '../../shared/session-schedules'
+import type { ScheduleMcp } from '../schedules/mcp'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import { NotebookExecutionIntent } from '../notebook/execution-intent'
 import {
@@ -11,13 +14,14 @@ import {
   codexFramework,
   opencodeFramework
 } from '../agent-framework'
-import type { AgentMcpHttpHost } from './mcp-http-host'
+import { AgentMcpHttpHost } from './mcp-http-host'
 import {
   AcpSessionCapabilityOwner,
   CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   REVIEWER_SESSION_CAPABILITY_POLICY,
   SIDE_CHAT_SESSION_CAPABILITY_POLICY,
-  policyAllowsSessionCapability
+  policyAllowsSessionCapability,
+  type SessionCapabilityProvision
 } from './session-capability-owner'
 
 const createOwner = (
@@ -177,6 +181,140 @@ describe('ACP session capability owner', () => {
         expect(refresh.mcpServers.find(({ name }) => name === server.name)).toBe(server)
     }
   )
+
+  it('admits Schedule identities only for a committed primary provision', async () => {
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerSchedule: vi.fn(() => 'http://127.0.0.1:5/schedule/session'),
+      captureScheduleRoute: vi.fn(),
+      unregister: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      schedules: { server: vi.fn() } as unknown as ScheduleMcp,
+      mcpHttpHost: host
+    })
+    for (const [id, policy] of [
+      ['primary', CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY],
+      ['side-chat', SIDE_CHAT_SESSION_CAPABILITY_POLICY]
+    ] as const) {
+      const provision = await owner.provision({
+        stableAppSessionId: id,
+        framework: claudeCodeFramework,
+        nativeMcpEnabled: true,
+        bridgeMcpAliasesEnabled: false,
+        policy,
+        sessionCwd: '/workspace',
+        projectId: 'project'
+      })
+      expect(owner.piPermissionCapabilitiesFor(id)).toBeUndefined()
+      provision.commit(id)
+      expect([...owner.piPermissionCapabilitiesFor(id)!.allowedToolIdentities].sort()).toEqual(
+        id === 'primary'
+          ? Object.keys(scheduleToolInputs)
+              .map((tool) => `${SCHEDULE_MCP_NAME}/${tool}`)
+              .sort()
+          : []
+      )
+      owner.revokeSession(id)
+      expect(owner.piPermissionCapabilitiesFor(id)).toBeUndefined()
+    }
+  })
+
+  it.each([false, true])(
+    'restores the committed Schedule URL after replacement provisioning rolls back (Notebook refresh: %s)',
+    async (refreshNotebook) => {
+      const host = new AgentMcpHttpHost()
+      let notebookSequence = 0
+      const owner = createOwner({
+        artifacts: undefined,
+        notebook: refreshNotebook
+          ? {
+              projectId: 'project-1',
+              mcpEntryPath: '/app/main.js',
+              getRpcConnection: async () => ({
+                endpoint: 'http://127.0.0.1:1',
+                token: `notebook-${++notebookSequence}`
+              })
+            }
+          : undefined,
+        skillImport: undefined,
+        schedules: {
+          server: () => new McpServer({ name: SCHEDULE_MCP_NAME, version: '1' })
+        } as unknown as ScheduleMcp,
+        mcpHttpHost: host
+      })
+      const provision = (): Promise<SessionCapabilityProvision> =>
+        owner.provision({
+          stableAppSessionId: 'session-1',
+          framework: codexFramework,
+          nativeMcpEnabled: true,
+          bridgeMcpAliasesEnabled: false,
+          policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+          sessionCwd: '/workspace',
+          projectId: 'project-1'
+        })
+      const status = async (candidate: Awaited<ReturnType<typeof provision>>): Promise<number> => {
+        const server = candidate.mcpServers.find((server) => server.name === SCHEDULE_MCP_NAME)
+        if (!server || !('url' in server)) throw new Error('Expected the Schedule HTTP server')
+        const response = await fetch(server.url, {
+          method: 'POST',
+          headers: {
+            ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+            accept: 'application/json, text/event-stream',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: {
+              protocolVersion: '2025-03-26',
+              capabilities: {},
+              clientInfo: { name: 'schedule-test', version: '1' }
+            }
+          })
+        })
+        await response.text()
+        return response.status
+      }
+      try {
+        const committed = await provision()
+        committed.commit('session-1')
+        expect(await status(committed)).toBe(200)
+        if (refreshNotebook) {
+          expect(owner.notebookCredentialFor('session-1')).toBe('notebook-1')
+          const intent = new NotebookExecutionIntent({
+            projectId: 'project-1',
+            sessionId: 'session-1'
+          })
+          const refreshed = await owner.prepareNotebookConnectionRefresh({
+            appSessionId: 'session-1',
+            projectId: 'project-1',
+            cwd: '/workspace',
+            executionIntent: intent
+          })
+          refreshed.commit()
+          expect(owner.notebookCredentialFor('session-1')).toBe('notebook-2')
+          expect(owner.notebookExecutionIntentFor('session-1')).toBe(intent)
+          expect(JSON.stringify(owner.mcpServersFor('session-1'))).toContain('notebook-2')
+          expect(await status(committed)).toBe(200)
+        }
+        const replacement = await provision()
+        expect(await status(replacement)).toBe(200)
+        await replacement.release({ ownsStableIdentity: true })
+        expect(await status(committed)).toBe(200)
+        expect(await status(replacement)).toBe(404)
+        if (refreshNotebook) expect(owner.notebookCredentialFor('session-1')).toBe('notebook-2')
+      } finally {
+        owner.revokeSession('session-1')
+        await host.close()
+      }
+    }
+  )
+
   it('releases provisional and committed HTTP Skill loaders without revoking a successor', async () => {
     const releases: ReturnType<typeof vi.fn>[] = []
     const host = {

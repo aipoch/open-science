@@ -1,3 +1,4 @@
+import { freshSessionAttachment } from './session-agent-target'
 import { HARNESS_OWNER } from '../harness-acp/config'
 import type { AcpSpecialistResolutionContext } from './runtime-contract'
 import {
@@ -673,11 +674,11 @@ export class AcpProviderSessionResumer {
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
     const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
     const backend = this.deps.currentBackend()
-    if (request.specialistBindingPending === true) {
+    if (request.specialistBindingPending === true || freshSessionAttachment in request) {
       if (compatibleOnly) {
         throw new Error('ACP capability reconfiguration requires a compatible provider resume.')
       }
-      log.info('adopting fresh provider context for pending Specialist binding', {
+      log.info('adopting explicitly requested fresh provider context', {
         sessionId: request.sessionId,
         ...this.deps.diagnosticContext()
       })

@@ -17,6 +17,7 @@ import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
 import { parseArgs } from 'node:util'
 import { stageDesktopPdfLib } from './desktop-pdf-lib.mjs'
+import { syncFileEvidenceCodec } from './sync-file-evidence-codec.mjs'
 import {
   assertPrivateDependencyChain,
   stageDesktopDependencyChain
@@ -49,6 +50,10 @@ await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
 await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,
   filter: (path) => !relative(join(root, 'resources'), path).split(sep).includes('bin')
+})
+await syncFileEvidenceCodec({
+  root,
+  target: join(stage, 'resources/notebook/file_evidence_codec.mjs')
 })
 const platformDirectory = { darwin: 'mac', win32: 'win', linux: 'linux' }[process.platform]
 const micromamba = process.platform === 'win32' ? 'micromamba.exe' : 'micromamba'

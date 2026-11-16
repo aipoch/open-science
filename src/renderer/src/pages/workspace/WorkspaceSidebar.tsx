@@ -1,3 +1,6 @@
+import type { ScheduleSummary } from '../../../../shared/session-schedules'
+import { OverlayLayerProvider } from '@/components/ui/overlay-layer'
+import { SchedulePage } from './schedules/SchedulePage'
 import { useSessionStore } from '@/stores/session-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -14,8 +17,10 @@ import {
   ChevronRight,
   Download,
   Files,
+  Clock,
   Cpu,
   Lock,
+  FolderOpen,
   MoreVertical,
   PanelLeft,
   Plus,
@@ -96,6 +101,11 @@ type WorkspaceSidebarProps = {
   onOpenLiterature?: () => void
   isMarketplaceOpen?: boolean
   onOpenMarketplace?: () => void
+  isScheduleOpen?: boolean
+  scheduleSessionId?: string
+  onScheduleDetail?: (task?: ScheduleSummary) => void
+  scheduleDetailId?: string
+  onOpenSchedule?: () => void
   isComputeOpen?: boolean
   onOpenCompute?: () => void
   onOpenSession: (sessionId: string) => void
@@ -783,6 +793,8 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
     onOpenLiterature,
     isMarketplaceOpen = false,
     onOpenMarketplace,
+    isScheduleOpen = false,
+    onOpenSchedule,
     isComputeOpen = false,
     onOpenCompute,
     onPreviewSession,
@@ -835,6 +847,40 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
       .map((session, index) => [session.id, index + 1])
   )
   const isMac = window.api?.platform === 'darwin'
+  const scheduleProjectId = isScheduleOpen ? importProjectId : undefined
+  const sidebarControls = (
+    <>
+      {!mobileMode && sidebarToggle && sidebarToggle.state !== 'collapsed' ? (
+        <button
+          ref={sidebarToggleButtonRef}
+          type="button"
+          data-testid="workspace-sidebar-toggle"
+          className={cn(
+            'grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg text-action-panel-toggle hover:bg-bg-300',
+            sidebarInteractiveTransitionClassName
+          )}
+          aria-label={t('Collapse sidebar panel')}
+          aria-expanded={true}
+          aria-controls="left-panel"
+          aria-keyshortcuts={isMac ? 'Meta+B' : 'Control+B'}
+          title={t('Collapse sidebar panel')}
+          onClick={sidebarToggle.onToggle}
+        >
+          <PanelLeft className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
+        </button>
+      ) : null}
+      {mobileMode ? (
+        <button
+          type="button"
+          onClick={onMobileClose}
+          className="grid size-8 shrink-0 place-items-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
+          aria-label={t('Close navigation')}
+        >
+          <X className="size-4" aria-hidden="true" />
+        </button>
+      ) : null}
+    </>
+  )
   const projectMatches = providedProjectMatches ?? matchProjects(otherProjects, projectQuery)
   const visibleProjectMatches = showAllProjects
     ? projectMatches
@@ -855,7 +901,23 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
       )}
     >
       <div className="m-[0.7px] flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card">
-        <div className="px-3 pt-3">
+        {scheduleProjectId && (
+          <OverlayLayerProvider value={mobileMode ? 70 : 40}>
+            <SchedulePage
+              key={scheduleProjectId}
+              projectId={scheduleProjectId}
+              sessionId={props.scheduleSessionId}
+              onBack={onOpenSchedule}
+              onScheduleDetail={props.onScheduleDetail}
+              scheduleDetailId={props.scheduleDetailId}
+              headerActions={sidebarControls}
+              onNavigate={mobileMode ? onMobileClose : undefined}
+            />
+          </OverlayLayerProvider>
+        )}
+        <div
+          className={scheduleProjectId ? 'shrink-0 border-t border-border px-3 py-2' : 'px-3 pt-3'}
+        >
           <div className="flex items-center">
             <button
               type="button"
@@ -867,7 +929,11 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                 sidebarInteractiveTransitionClassName
               )}
             >
-              <ChevronLeft className="size-4" strokeWidth={2} aria-hidden="true" />
+              {scheduleProjectId ? (
+                <FolderOpen className="size-4" aria-hidden="true" />
+              ) : (
+                <ChevronLeft className="size-4" strokeWidth={2} aria-hidden="true" />
+              )}
             </button>
             <DropdownMenu onOpenChange={onProjectMenuOpenChange}>
               <DropdownMenuTrigger asChild>
@@ -875,7 +941,10 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                   type="button"
                   title={projectName}
                   className={cn(
-                    'flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-lg py-1 pl-1 pr-2 text-left font-serif text-[15px] font-bold tracking-[-0.02em] text-text-000 hover:bg-bg-300 data-[state=open]:bg-bg-300',
+                    'flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-lg py-1 pl-1 pr-2 text-left hover:bg-bg-300 data-[state=open]:bg-bg-300',
+                    scheduleProjectId
+                      ? 'text-sm font-medium text-muted-foreground'
+                      : 'font-serif text-[15px] font-bold tracking-[-0.02em] text-text-000',
                     sidebarInteractiveTransitionClassName
                   )}
                 >
@@ -1143,39 +1212,14 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            {!mobileMode && sidebarToggle && sidebarToggle.state !== 'collapsed' ? (
-              <button
-                ref={sidebarToggleButtonRef}
-                type="button"
-                data-testid="workspace-sidebar-toggle"
-                className={cn(
-                  'grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg text-action-panel-toggle hover:bg-bg-300',
-                  sidebarInteractiveTransitionClassName
-                )}
-                aria-label={t('Collapse sidebar panel')}
-                aria-expanded={true}
-                aria-controls="left-panel"
-                aria-keyshortcuts={isMac ? 'Meta+B' : 'Control+B'}
-                title={t('Collapse sidebar panel')}
-                onClick={sidebarToggle.onToggle}
-              >
-                <PanelLeft className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
-              </button>
-            ) : null}
-            {mobileMode ? (
-              <button
-                type="button"
-                onClick={onMobileClose}
-                className="grid size-8 shrink-0 place-items-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
-                aria-label={t('Close navigation')}
-              >
-                <X className="size-4" aria-hidden="true" />
-              </button>
-            ) : null}
+            {!scheduleProjectId && sidebarControls}
           </div>
         </div>
 
-        <nav aria-label={t('Sessions')} className="flex min-h-0 flex-1 flex-col">
+        <nav
+          aria-label={t('Sessions')}
+          className={scheduleProjectId ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}
+        >
           {/* New stays disabled until persistence hydration has reconciled restored sessions. */}
           <div className="flex h-9 items-center gap-1 px-1.5">
             <button
@@ -1256,6 +1300,27 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                 <Cpu className="size-3.5" strokeWidth={2} />
               </span>
               <span>{t('Compute')}</span>
+            </button>
+          </div>
+          <div className="flex h-9 items-center gap-1 px-1.5">
+            <button
+              type="button"
+              className={cn(
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+                isScheduleOpen && 'bg-bg-300',
+                sidebarInteractiveTransitionClassName
+              )}
+              aria-expanded={isScheduleOpen}
+              disabled={!onOpenSchedule}
+              onClick={onOpenSchedule}
+            >
+              <span
+                className="flex size-3.5 shrink-0 items-center justify-center"
+                aria-hidden="true"
+              >
+                <Clock className="size-3.5" strokeWidth={2} />
+              </span>
+              <span>{t('Schedule')}</span>
             </button>
           </div>
           <div className="flex h-9 items-center gap-1 px-1.5">
@@ -1550,7 +1615,6 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   )
   const nextSectionRefreshAt = getNextSessionSectionRefreshAt(sessions, now)
   const isMac = window.api?.platform === 'darwin'
-
   // Reclassify recent completions after their 15-minute grace period without waiting for unrelated
   // Session activity to trigger a render.
   useEffect(() => {

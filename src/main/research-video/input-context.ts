@@ -1,12 +1,12 @@
 import { getTokenizer } from '@anthropic-ai/tokenizer'
 import { get_encoding, type Tiktoken } from 'tiktoken'
 import type { ResearchVideoSessionSource } from '@aipoch/research-film'
+import type { ProviderView } from '../../shared/settings'
 import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
-  isXaiSubscriptionProvider,
-  type ProviderView
-} from '../../shared/settings'
+  isXaiSubscriptionProvider
+} from '../../shared/settings-runtime'
 import {
   DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW,
   resolveCustomModelContextWindow,

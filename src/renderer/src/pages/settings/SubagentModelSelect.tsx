@@ -23,7 +23,7 @@ import {
 } from '../../../../shared/reasoning-effort'
 import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
 
-import { isCodexSubscriptionProvider } from '../../../../shared/settings'
+import { isCodexSubscriptionProvider } from '../../../../shared/settings-runtime'
 import { providerKindKey } from './provider-form-value'
 import { ProviderKindIcon } from './provider-icons'
 import { SettingsField, SettingsRow } from './SettingsLayout'

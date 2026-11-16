@@ -7,7 +7,8 @@ import {
   type NativeImage
 } from 'electron'
 
-import { DEFAULT_APP_ICON_VARIANT, type AppIconVariant } from '../shared/settings'
+import type { AppIconVariant } from '../shared/settings'
+import { DEFAULT_APP_ICON_VARIANT } from '../shared/settings-runtime'
 import type { ActiveSessionInfo } from '../shared/storage'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import { createLogger } from '@aipoch/diagnostics/node'

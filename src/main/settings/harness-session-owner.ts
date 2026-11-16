@@ -7,7 +7,7 @@ import {
   type HarnessModelObserver,
   type HarnessModelResult
 } from './harness-model-request'
-import { preferredEndpoint, providerValidationFailed } from '../../shared/settings'
+import { preferredEndpoint, providerValidationFailed } from '../../shared/settings-runtime'
 import { ProviderRuntimeProjectionOwner } from './provider-runtime-projection'
 import type { ProviderTransportOwner, HarnessProviderLease } from './provider-transport-owner'
 import type { SettingsRepository } from './repository'

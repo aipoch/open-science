@@ -63,6 +63,7 @@ const SERVER_KINDS = [
   'skills',
   'plan',
   'host-message',
+  'schedule',
   'library',
   'literature'
 ] as const
@@ -81,6 +82,7 @@ type SessionEntry = {
   skillImport?: SkillImportMcpEnvironment
   plan?: PlanMcpEnvironment
   planRouteToken?: string
+  schedule?: { token: string; server: () => ModelContextProtocolServer }
   hostMessage?: HostMessageMcpHandler
   library?: { handler: LiteratureLibraryMcpHandler; token: symbol }
   literature?: { handler: LiteratureMcpHandler; token: symbol }
@@ -93,6 +95,7 @@ const RECEIPT_AUTHORITY_KEYS = {
   skills: 'skills',
   plan: 'planRouteToken',
   'host-message': 'hostMessage',
+  schedule: 'schedule',
   library: 'library',
   literature: 'literature'
 } as const
@@ -297,6 +300,33 @@ class AgentMcpHttpHost {
     }
   }
 
+  registerSchedule(
+    routingId: string,
+    create: (ownsRoute: () => boolean) => ModelContextProtocolServer
+  ): string {
+    const entry = this.sessions.get(routingId) ?? {}
+    const token = randomUUID()
+    entry.schedule = {
+      token,
+      server: () => create(() => this.sessions.get(routingId)?.schedule?.token === token)
+    }
+    this.sessions.set(routingId, entry)
+    return this.urlFor('schedule', routingId) + '?token=' + encodeURIComponent(token)
+  }
+
+  captureScheduleRoute(routingId: string): (() => void) | undefined {
+    const entry = this.sessions.get(routingId)
+    const schedule = entry?.schedule
+    if (!schedule) return
+    const scope = entry.receiptScopes?.schedule
+    return () => {
+      const restored = this.sessions.get(routingId) ?? {}
+      restored.schedule = schedule
+      if (scope) restored.receiptScopes = { ...restored.receiptScopes, schedule: scope }
+      this.sessions.set(routingId, restored)
+    }
+  }
+
   registerLiteratureLibrary(routingId: string, handler: LiteratureLibraryMcpHandler): () => void {
     this.cancelLiteratureRoute('library', routingId)
     const entry = this.sessions.get(routingId) ?? {}
@@ -406,6 +436,10 @@ class AgentMcpHttpHost {
       return entry.literature ? createLiteratureMcpServer(entry.literature.handler) : undefined
     }
 
+    if (kind === 'schedule')
+      return entry.schedule && entry.schedule.token === routeToken
+        ? entry.schedule.server()
+        : undefined
     if (kind === 'library') {
       return entry.library ? createLiteratureLibraryMcpServer(entry.library.handler) : undefined
     }

@@ -1,4 +1,5 @@
-import { providerValidationFailed, type ReviewerModelConfiguration } from '../../shared/settings'
+import type { ReviewerModelConfiguration } from '../../shared/settings'
+import { providerValidationFailed } from '../../shared/settings-runtime'
 import { DEFAULT_AGENT_FRAMEWORK_ID, getAgentFramework } from '../agent-framework'
 import type { AgentBackendResolver, ExplicitAgentBackendTarget } from './backend-resolver'
 import type { ProviderAccountsModule } from './provider-accounts'

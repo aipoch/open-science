@@ -81,6 +81,7 @@ import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { copySessionBookmarks, readSessionBookmarkTargets } from '../bookmarks/repository'
 import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
 import { paceFileIo } from '../file-io-pacing'
+import { encodeRunDocumentDataPaths } from '../notebook/run-document-data-path-codec'
 import { ensureWorkingFileEvidenceProject } from '../notebook/working-file-observer'
 import type { PublishedSessionHandoff } from '../session-persistence/coordinator'
 import { SessionProjectionRepository } from '../session-persistence/projection'
@@ -974,6 +975,14 @@ export class SessionPackageService {
     }
     const notebookKeys = await readNotebookKeys()
     const notebooks = await readPackageNotebooks(this.options.storageRoot, notebookKeys)
+    const portableNotebooks = new Map<string, NotebookRunDocument>()
+    let notebookIndex = 0
+    for (const key of notebookKeys) {
+      if (!notebookDocumentIdentity(key)) continue
+      const document = notebooks[notebookIndex++]
+      const stored = await readPackageJson(resolveStorageKey(this.options.storageRoot, key))
+      if ((stored as { version?: number }).version === 2) portableNotebooks.set(key, document)
+    }
     diagnostic.phase('collect-records')
     const bookmarkTargets = options.consumeSnapshot
       ? await readSessionBookmarkTargets(client, request)
@@ -1083,6 +1092,19 @@ export class SessionPackageService {
       if (optionalKeys.has(key)) continue
       this.signal.throwIfAborted()
       await assertPackageSourcePath(this.options.storageRoot, sourceKey(key))
+      const portableNotebook = portableNotebooks.get(key)
+      if (portableNotebook) {
+        const contents = JSON.stringify(
+          encodeRunDocumentDataPaths(portableNotebook, this.options.storageRoot)
+        )
+        retainedFiles.push({
+          storageKey: key,
+          filename: key,
+          sizeBytes: Buffer.byteLength(contents),
+          checksum: sha256(contents)
+        })
+        continue
+      }
       const original = resolveStorageKey(this.options.storageRoot, sourceKey(key))
       const metadata = await lstat(original)
       // Shared evidence paths can name one immutable inode; do not reread it per activity.
@@ -1154,8 +1176,26 @@ export class SessionPackageService {
         'open-science-package-export-'
       )
     )
+    let notebookStaging: string | undefined
     return withPackageCleanup(
       async () => {
+        // Keep the portable package format independent of the local record layout.
+        const notebookSources = new Map<string, string>()
+        for (const [key, document] of portableNotebooks) {
+          notebookStaging ??= await mkdtemp(join(tmpdir(), 'open-science-notebook-export-'))
+          const snapshot = join(notebookStaging, `${notebookSources.size}.json`)
+          const contents = JSON.stringify(
+            encodeRunDocumentDataPaths(document, this.options.storageRoot)
+          )
+          const bytes = Buffer.byteLength(contents)
+          if (bytes > PACKAGE_MAX_FILE_BYTES)
+            throw new Error('Invalid or oversized package source file.')
+          await assertPackageCapacity(notebookStaging, bytes)
+          await writeFile(snapshot, contents)
+          notebookSources.set(key, snapshot)
+        }
+        const sourcePath = (key: string): string =>
+          notebookSources.get(key) ?? resolveStorageKey(this.options.storageRoot, sourceKey(key))
         diagnostic.phase('copy-content')
         if (!options.consumeSnapshot && !options.allowSensitiveContent)
           await assertShareable(records, this.signal, 'records.json')
@@ -1175,7 +1215,7 @@ export class SessionPackageService {
         let physicalContentBytes = 0
         for (const key of storageKeys) {
           await assertPackageSourcePath(this.options.storageRoot, sourceKey(key))
-          const original = resolveStorageKey(this.options.storageRoot, sourceKey(key))
+          const original = sourcePath(key)
           const metadata = await lstat(original)
           if (
             isNotebookInputCopy(key) &&
@@ -1225,7 +1265,7 @@ export class SessionPackageService {
         for (const storageKey of sizes.keys()) {
           assertPortablePackageStorageKey(storageKey)
           await assertPackageSourcePath(this.options.storageRoot, sourceKey(storageKey))
-          const original = resolveStorageKey(this.options.storageRoot, sourceKey(storageKey))
+          const original = sourcePath(storageKey)
           const metadata = await lstat(original)
           if (!metadata.isFile() || metadata.size > PACKAGE_MAX_FILE_BYTES)
             throw new Error('Invalid or oversized package source file.')
@@ -1363,11 +1403,18 @@ export class SessionPackageService {
         assertSettled()
         if (JSON.stringify(await readNotebookKeys()) !== JSON.stringify(notebookKeys))
           throw new Error('The Session changed during export. Try again.')
+        if (
+          !isDeepStrictEqual(
+            await readPackageNotebooks(this.options.storageRoot, notebookKeys),
+            notebooks
+          )
+        )
+          throw new Error('The Session changed during export. Try again.')
         for (const entry of inventory) {
           if (!entry.storageKey) continue
           await assertPackageSourcePath(this.options.storageRoot, sourceKey(entry.storageKey))
           const currentFile = await digestFileWithinBudget(
-            resolveStorageKey(this.options.storageRoot, sourceKey(entry.storageKey)),
+            sourcePath(entry.storageKey),
             entry.sizeBytes,
             this.signal
           )
@@ -1435,7 +1482,10 @@ export class SessionPackageService {
         }
         return preview(manifest, session)
       },
-      () => rm(directory, { recursive: true, force: true })
+      async () => {
+        await rm(directory, { recursive: true, force: true })
+        if (notebookStaging) await rm(notebookStaging, { recursive: true, force: true })
+      }
     )
   }
 

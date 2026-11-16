@@ -2,6 +2,7 @@ import type { McpServer } from '@agentclientprotocol/sdk'
 
 import type { SideChatSendMessageRequest, SideChatSendMessageResult } from '../../shared/side-chat'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
+import { SCHEDULE_MCP_NAME } from '../../shared/session-schedules'
 import type { AgentFramework } from '../agent-framework'
 import {
   appMcpToolIdentities,
@@ -47,7 +48,7 @@ import {
   HOST_MESSAGE_MCP_SERVER_NAME,
   HOST_SEND_MESSAGE_TOOL_NAME
 } from '../side-chat/host-message-mcp-server'
-import type { AgentMcpHttpHost } from './mcp-http-host'
+import type { AgentMcpHttpHost, ServerKind } from './mcp-http-host'
 import {
   captureShellRuntimeBinding,
   defaultShellRuntimeBinding,
@@ -65,6 +66,7 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'notebook',
   'skill-import',
   'plan',
+  'schedule',
   'literature-library',
   'literature',
   'host-agents',
@@ -260,7 +262,6 @@ export type SessionCapabilityProvision = Readonly<{
 type CommitSessionCapabilitiesRequest = {
   appSessionId: string
   routingIds: SessionCapabilityRoutingIds
-  mcpServers: readonly McpServer[]
   descriptor: EffectiveSessionCapabilityDescriptor
   shellRuntime?: ShellRuntimeBinding
   notebookRelease?: () => void
@@ -312,6 +313,7 @@ type SessionCapabilityOwnerOptions = {
     ) => LiteratureLibraryMcpHandler
   }>
   mcpHttpHost?: AgentMcpHttpHost
+  schedules?: import('../schedules/mcp').ScheduleMcp
   wslSetupSessions?: Readonly<{
     authorizeToken(token: unknown): boolean
     bind(token: string, sessionId: string): Promise<void>
@@ -362,7 +364,10 @@ export class AcpSessionCapabilityOwner {
   private readonly planRoutingIds = new Map<string, string>()
   private readonly planCapabilityReleases = new Map<string, () => void>()
   private readonly sideChatRoutingIds = new Map<string, string>()
-  private readonly mcpServers = new Map<string, readonly McpServer[]>()
+  private readonly mcpServers = new Map<
+    string,
+    { servers: readonly McpServer[]; restoreScheduleRoute?: () => void }
+  >()
   private readonly literatureRoutingIds = new Map<string, string>()
   private readonly literatureEnabledSessionIds = new Set<string>()
   private readonly descriptors = new Map<string, EffectiveSessionCapabilityDescriptor>()
@@ -459,7 +464,10 @@ export class AcpSessionCapabilityOwner {
           ownsStableIdentity &&
           (request.policy.role === 'side-chat' ||
             !request.framework.acceptsStdioMcp ||
-            Boolean((this.options.literature || this.options.library) && this.options.mcpHttpHost)),
+            Boolean(
+              (this.options.literature || this.options.library || this.options.schedules) &&
+              this.options.mcpHttpHost
+            )),
         notebookSessionId: routingIds.notebook || undefined,
         notebookRelease,
         skillImportRelease,
@@ -468,7 +476,7 @@ export class AcpSessionCapabilityOwner {
         ownsStableIdentity
       })
       if (ownsStableIdentity && request.stableAppSessionId) {
-        this.restoreCommittedLiteratureRoute(
+        this.restoreCommittedHttpRoutes(
           request.stableAppSessionId,
           request.projectId,
           request.sessionCwd
@@ -618,7 +626,8 @@ export class AcpSessionCapabilityOwner {
               (request.policy.role === 'side-chat' ||
                 !request.framework.acceptsStdioMcp ||
                 Boolean(
-                  (this.options.literature || this.options.library) && this.options.mcpHttpHost
+                  (this.options.literature || this.options.library || this.options.schedules) &&
+                  this.options.mcpHttpHost
                 )),
             notebookSessionId: routingIds.notebook || undefined,
             notebookRelease,
@@ -628,7 +637,7 @@ export class AcpSessionCapabilityOwner {
             ownsStableIdentity: ownsRoutingIds
           })
           if (ownsRoutingIds && request.stableAppSessionId) {
-            this.restoreCommittedLiteratureRoute(
+            this.restoreCommittedHttpRoutes(
               request.stableAppSessionId,
               request.projectId,
               request.sessionCwd
@@ -686,7 +695,6 @@ export class AcpSessionCapabilityOwner {
           capabilityTokens,
           appSessionId,
           routingIds,
-          mcpServers: built.mcpServers,
           descriptor: built.descriptor,
           shellRuntime: built.shellRuntime,
           notebookRelease,
@@ -696,16 +704,19 @@ export class AcpSessionCapabilityOwner {
           planRelease
         })
         if (request.framework.id === 'open-science-agent') {
-          for (const [kind, routingId] of [
-            ['notebook', routingIds.notebook],
-            ['artifact', routingIds.artifact],
-            ['skill-import', routingIds.skillImport],
-            ['plan', routingIds.plan],
-            ['host-message', routingIds.sideChat],
-            ['literature', routingIds.literature],
-            ['library', routingIds.literature],
-            ['skills', skillRuntimeRoutingId]
-          ] as const) {
+          const receiptRoutes: Record<ServerKind, string | undefined> = {
+            notebook: routingIds.notebook,
+            artifact: routingIds.artifact,
+            'skill-import': routingIds.skillImport,
+            plan: routingIds.plan,
+            'host-message': routingIds.sideChat,
+            literature: routingIds.literature,
+            library: routingIds.literature,
+            schedule: routingIds.literature,
+            skills: skillRuntimeRoutingId
+          }
+          for (const kind of Object.keys(receiptRoutes) as ServerKind[]) {
+            const routingId = receiptRoutes[kind]
             if (routingId)
               this.options.mcpHttpHost?.registerReceiptScope(
                 routingId,
@@ -714,6 +725,12 @@ export class AcpSessionCapabilityOwner {
               )
           }
         }
+        this.mcpServers.set(appSessionId, {
+          servers: Object.freeze([...built.mcpServers]),
+          restoreScheduleRoute: built.descriptor.capabilities.includes('schedule')
+            ? this.options.mcpHttpHost?.captureScheduleRoute(routingIds.literature)
+            : undefined
+        })
         if (ownedSkillServer && isOwnedSkillRuntimeAcpServer(ownedSkillServer)) {
           this.piOwnedSkillServers.set(built.descriptor, ownedSkillServer)
         }
@@ -761,7 +778,8 @@ export class AcpSessionCapabilityOwner {
             (request.policy.role === 'side-chat' ||
               !request.framework.acceptsStdioMcp ||
               Boolean(
-                (this.options.literature || this.options.library) && this.options.mcpHttpHost
+                (this.options.literature || this.options.library || this.options.schedules) &&
+                this.options.mcpHttpHost
               )),
           notebookSessionId: routingIds.notebook || undefined,
           notebookRelease,
@@ -771,7 +789,7 @@ export class AcpSessionCapabilityOwner {
           ownsStableIdentity
         })
         if (ownsStableIdentity && request.stableAppSessionId) {
-          this.restoreCommittedLiteratureRoute(
+          this.restoreCommittedHttpRoutes(
             request.stableAppSessionId,
             request.projectId,
             request.sessionCwd
@@ -791,7 +809,10 @@ export class AcpSessionCapabilityOwner {
         skillImport: this.options.skillImport ? stableAppSessionId : '',
         plan: this.options.plan ? stableAppSessionId : '',
         sideChat: this.options.sideChat ? stableAppSessionId : '',
-        literature: this.options.literature || this.options.library ? stableAppSessionId : ''
+        literature:
+          this.options.literature || this.options.library || this.options.schedules
+            ? stableAppSessionId
+            : ''
       })
     }
 
@@ -801,7 +822,8 @@ export class AcpSessionCapabilityOwner {
     if (this.options.skillImport) this.skillImportSessionSequence += 1
     if (this.options.plan) this.planSessionSequence += 1
     if (this.options.sideChat) this.sideChatSessionSequence += 1
-    if (this.options.literature || this.options.library) this.literatureSessionSequence += 1
+    if (this.options.literature || this.options.library || this.options.schedules)
+      this.literatureSessionSequence += 1
 
     return Object.freeze({
       artifact: this.options.artifacts
@@ -818,7 +840,7 @@ export class AcpSessionCapabilityOwner {
         ? `side-chat-session-${timestamp}-${this.sideChatSessionSequence}`
         : '',
       literature:
-        this.options.literature || this.options.library
+        this.options.literature || this.options.library || this.options.schedules
           ? `literature-session-${timestamp}-${this.literatureSessionSequence}`
           : ''
     })
@@ -941,6 +963,30 @@ export class AcpSessionCapabilityOwner {
         headers: [{ name: 'authorization', value: `Bearer ${token}` }]
       })
     }
+    const scheduleMcp = this.options.schedules
+    if (
+      scheduleMcp &&
+      policyAllowsSessionCapability(request.policy, 'schedule') &&
+      this.options.mcpHttpHost &&
+      this.canPublishHttpRoute(request)
+    ) {
+      const host = this.options.mcpHttpHost
+      const { token } = await host.ensureStarted()
+      const route = request.routingIds.literature
+      const url = host.registerSchedule(route, (ownsRoute) =>
+        scheduleMcp.server(
+          request.projectId,
+          (id) => ownsRoute() && this.literatureRoutingIds.get(id) === route,
+          notebookAllowed && Boolean(this.options.notebook)
+        )
+      )
+      servers.push({
+        type: 'http',
+        name: 'open-science-schedule',
+        url,
+        headers: [{ name: 'authorization', value: 'Bearer ' + token }]
+      })
+    }
     const modelFacingServers = servers.map((server) => {
       const name = (server as { name?: unknown }).name
       if (typeof name !== 'string') return server
@@ -953,6 +999,7 @@ export class AcpSessionCapabilityOwner {
       .filter((name): name is string => typeof name === 'string')
     const canonicalMcpServerNames = modelFacingMcpServerNames.map(canonicalAppMcpServerName)
     const capabilities: SessionCapabilityName[] = []
+    if (canonicalMcpServerNames.includes('open-science-schedule')) capabilities.push('schedule')
     if (canonicalMcpServerNames.includes(ARTIFACT_MCP_SERVER_NAME)) capabilities.push('artifacts')
     if (canonicalMcpServerNames.includes(NOTEBOOK_MCP_SERVER_NAME)) capabilities.push('notebook')
     if (canonicalMcpServerNames.includes(SKILL_IMPORT_MCP_SERVER_NAME)) {
@@ -1028,6 +1075,7 @@ export class AcpSessionCapabilityOwner {
 
     const bridgeMcpTools = request.bridgeMcpAliasesEnabled
       ? createCodexBridgeMcpTools({
+          schedules: capabilities.includes('schedule'),
           artifacts: artifactsAllowed,
           notebook: notebookAllowed
             ? {
@@ -1113,7 +1161,6 @@ export class AcpSessionCapabilityOwner {
       )
     }
     if (routingIds.sideChat) this.sideChatRoutingIds.set(appSessionId, routingIds.sideChat)
-    this.mcpServers.set(appSessionId, Object.freeze([...request.mcpServers]))
     if (routingIds.literature) {
       this.literatureRoutingIds.set(appSessionId, routingIds.literature)
     }
@@ -1125,7 +1172,7 @@ export class AcpSessionCapabilityOwner {
     this.commitPlanRelease(appSessionId, request.planRelease)
   }
 
-  private restoreCommittedLiteratureRoute(
+  private restoreCommittedHttpRoutes(
     appSessionId: string,
     projectId: string,
     workspaceCwd: string
@@ -1134,6 +1181,7 @@ export class AcpSessionCapabilityOwner {
     const routingId = this.literatureRoutingIds.get(appSessionId)
     if (!routingId || !descriptor || !this.options.mcpHttpHost) return
     try {
+      this.mcpServers.get(appSessionId)?.restoreScheduleRoute?.()
       if (descriptor.capabilities.includes('literature') && this.options.literature) {
         this.options.mcpHttpHost.registerLiterature(
           routingId,
@@ -1147,7 +1195,7 @@ export class AcpSessionCapabilityOwner {
         )
       }
     } catch (error) {
-      safeLogError('committed Literature route restoration failed', {
+      safeLogError('committed HTTP MCP route restoration failed', {
         ...diagnosticErrorFields(error),
         sessionId: appSessionId,
         routingId
@@ -1368,6 +1416,7 @@ export class AcpSessionCapabilityOwner {
     if (descriptor.capabilities.includes('skill-import'))
       ownedServers.add(SKILL_IMPORT_MCP_SERVER_NAME)
     if (descriptor.capabilities.includes('plan')) ownedServers.add(PLAN_MCP_SERVER_NAME)
+    if (descriptor.capabilities.includes('schedule')) ownedServers.add(SCHEDULE_MCP_NAME)
     if (descriptor.capabilities.includes('literature')) ownedServers.add(LITERATURE_MCP_SERVER_NAME)
     if (descriptor.capabilities.includes('literature-library'))
       ownedServers.add(LITERATURE_LIBRARY_MCP_SERVER_NAME)
@@ -1392,7 +1441,7 @@ export class AcpSessionCapabilityOwner {
   }
 
   mcpServersFor(appSessionId: string): readonly McpServer[] {
-    return this.mcpServers.get(appSessionId) ?? []
+    return this.mcpServers.get(appSessionId)?.servers ?? []
   }
 
   notebookExecutionIntentFor(appSessionId: string): NotebookExecutionIntent | undefined {
@@ -1410,13 +1459,14 @@ export class AcpSessionCapabilityOwner {
     executionIntent: NotebookExecutionIntent
   }): Promise<{ mcpServers: readonly McpServer[]; commit(): void; release(): void }> {
     const { appSessionId, projectId, cwd, executionIntent } = request
-    const previous = this.mcpServersFor(appSessionId)
-    const old = previous.find(
+    const previous = this.mcpServers.get(appSessionId)
+    const old = previous?.servers.find(
       (server) => canonicalAppMcpServerName(server.name) === NOTEBOOK_MCP_SERVER_NAME
     )
     const routingId = this.notebookRoutingIds.get(appSessionId)
     const notebook = this.options.notebook
-    if (!old || !routingId || !notebook) throw new Error('Notebook capability is unavailable.')
+    if (!previous || !old || !routingId || !notebook)
+      throw new Error('Notebook capability is unavailable.')
     let connection: NotebookRpcConnection | undefined
     let commitExecution: (() => void) | undefined
     try {
@@ -1459,7 +1509,7 @@ export class AcpSessionCapabilityOwner {
         }
       }
       const mcpServers = Object.freeze(
-        previous.map((server) => (server === old ? replacement : server))
+        previous.servers.map((server) => (server === old ? replacement : server))
       )
       let finalized = false
       return {
@@ -1477,7 +1527,7 @@ export class AcpSessionCapabilityOwner {
           ])
           this.notebookTokens.set(appSessionId, ownedConnection.token)
           this.notebookIntents.set(appSessionId, executionIntent)
-          this.mcpServers.set(appSessionId, mcpServers)
+          this.mcpServers.set(appSessionId, { ...previous, servers: mcpServers })
           this.commitNotebookRelease(appSessionId, ownedConnection.release)
           finalized = true
         },
