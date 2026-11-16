@@ -22,6 +22,9 @@ vi.mock('@/stores/navigation-store', () => ({
     })
   }
 }))
+vi.mock('@/pages/literature/public/events', () => ({
+  useLiteratureChanges: () => undefined
+}))
 
 const citation: LiteratureSourceCitation = {
   itemId: 'paper-1',
@@ -61,12 +64,24 @@ const button = (text: string): HTMLButtonElement => {
   expect(found).toBeTruthy()
   return found!
 }
-const show = async (value = citation): Promise<void> => {
+const show = async (value = citation, snapshotOnly = false): Promise<void> => {
   await act(async () =>
-    root.render(<LibrarySourceCitationLink citation={value}>1</LibrarySourceCitationLink>)
+    root.render(
+      <LibrarySourceCitationLink citation={value} snapshotOnly={snapshotOnly}>
+        1
+      </LibrarySourceCitationLink>
+    )
   )
   await click(button('1'))
 }
+
+it('opens package citation metadata in a read-only snapshot dialog', async () => {
+  await show({ ...citation, kind: 'pdf' }, true)
+  await click(button('View reference'))
+  expect(document.body.textContent).toContain('Saved reference metadata from the Session package.')
+  expect(document.body.textContent).toContain(citation.title)
+  expect(harness.openReference).not.toHaveBeenCalled()
+})
 
 it('shows the excerpt on demand and reveals the original immutable PDF version at its page', async () => {
   await show()

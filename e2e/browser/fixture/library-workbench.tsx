@@ -41,15 +41,17 @@ function QuestionFixture(): React.JSX.Element {
   }))
   const [focusRequest, setFocusRequest] = useState(0)
   const [submitted, setSubmitted] = useState('')
+  const quote =
+    'The intervention improved reproducibility (in this cohort), but external validation remains necessary.'
   const citation = {
     itemId: 'sample-paper',
     citationId: '0123456789abcdef',
     title: 'Example reference: assessing reproducibility across scientific workflows',
     kind: 'abstract' as const,
-    quote:
-      'The intervention improved reproducibility (in this cohort), but external validation remains necessary.',
-    context:
-      'Reproducibility was assessed over six months. The intervention improved reproducibility (in this cohort), but external validation remains necessary. Larger studies should confirm the finding.'
+    quote,
+    context: params.has('long-context')
+      ? `${'Background observations preceded the cohort study. '.repeat(12)}${quote} ${'Follow-up work should assess independent populations. '.repeat(12)}The surrounding text ends here.`
+      : `Reproducibility was assessed over six months. ${quote} Larger studies should confirm the finding.`
   }
   const citationHref = createLiteratureSourceCitationHref(citation)
   const answerHref = params.has('forged')

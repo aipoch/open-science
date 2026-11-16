@@ -7,6 +7,8 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { createLiteratureAttachmentVersionReference } from '../../../../shared/literature-attachment-reference'
 import type { LiteratureSourceCitation } from '../../../../shared/literature-source-citation'
 import { requestPdfSourceReveal } from './annotations/annotation-reveal'
+import { ArtifactLiteratureDetailDialog } from './ArtifactLiteratureDetailDialog'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 
 function highlightQuote(text: string, quote: string | undefined): ReactNode {
   const index = quote ? text.indexOf(quote) : -1
@@ -76,16 +78,19 @@ function CitationExcerpt({
 export function LibrarySourceCitationLink({
   citation,
   children,
-  className
+  className,
+  snapshotOnly = false
 }: {
   citation: LiteratureSourceCitation
   children: ReactNode
   className?: string
+  snapshotOnly?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState(false)
+  const [showSnapshot, setShowSnapshot] = useState(false)
   const controller = useRef<AbortController | undefined>(undefined)
   useEffect(() => () => controller.current?.abort(), [])
 
@@ -173,13 +178,28 @@ export function LibrarySourceCitationLink({
             size="sm"
             variant="outline"
             onClick={() => {
-              useNavigationStore.getState().openLiteratureItem(citation.itemId, 'user')
+              if (snapshotOnly) setShowSnapshot(true)
+              else useNavigationStore.getState().openLiteratureItem(citation.itemId, 'user')
             }}
           >
             {t('View reference')}
           </Button>
         </div>
       </PopoverContent>
+      {snapshotOnly && showSnapshot ? (
+        <ArtifactLiteratureDetailDialog
+          snapshotOnly
+          reference={{
+            itemId: citation.itemId,
+            metadataRevision: 1,
+            item: literatureItemInputSchema.parse({
+              itemType: 'document',
+              title: citation.title
+            })
+          }}
+          onOpenChange={setShowSnapshot}
+        />
+      ) : null}
     </Popover>
   )
 }

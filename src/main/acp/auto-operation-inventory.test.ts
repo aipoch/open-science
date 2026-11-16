@@ -183,8 +183,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Full-text guidance names the record-page and passage-limit axes; behavior is unchanged.
         // Passage guidance explicitly bounds limit to 1–8 and rejects the metadata limit of 20;
         // schemas, handlers and allow-once authorization remain unchanged.
+        // Metadata display links are issued only when retained in the bounded presentation receipt;
+        // search records, abstract previews, schemas and allow-once authorization are unchanged.
         'literature/library-mcp-server.ts':
-          '41233b13196f66698a1d9ba986a305fe4270e155b93b43c158a0c99029b0a188',
+          '0d43d8e4f32903bfea45e7099e2c3694801bb003c7201a2860eab9db3f989ac9',
         // Reviewed: errors keep specific codes with a next step and annotation cursors are opaque
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':

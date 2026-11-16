@@ -1,4 +1,15 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
+
+const citationQuote =
+  'The intervention improved reproducibility (in this cohort), but external validation remains necessary.'
+
+async function openSourceExcerpt(page: Page): Promise<Locator> {
+  const citation = page.getByRole('button', { name: 'Source excerpt', exact: true })
+  await citation.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByText('Abstract only', { exact: true })).toBeVisible()
+  return citation
+}
 
 test('altered source snapshots cannot become evidence cards', async ({ page }) => {
   await page.goto('/library-workbench.html?qa&forged')
@@ -38,26 +49,12 @@ for (const withDraft of [false, true]) {
       await expect(page.locator('output')).toContainText('My unsent research question')
       return
     }
-    const citation = page.getByRole('button', { name: 'Source excerpt', exact: true })
-    await citation.focus()
-    await page.keyboard.press('Enter')
-    await expect(page.getByText('Abstract only', { exact: true })).toBeVisible()
+    const citation = await openSourceExcerpt(page)
     await expect(page.locator('blockquote')).toHaveText(
-      'The intervention improved reproducibility (in this cohort), but external validation remains necessary.'
+      `Reproducibility was assessed over six months. ${citationQuote} Larger studies should confirm the finding.`
     )
-    const surrounding = page.locator('details').filter({ hasText: 'View surrounding text' })
-    await expect(surrounding).not.toHaveAttribute('open')
-    await expect(surrounding.locator('p')).not.toBeVisible()
-    const summary = surrounding.locator('summary')
-    await summary.focus()
-    await page.keyboard.press('Enter')
-    await expect(surrounding).toHaveAttribute('open')
-    await expect(surrounding.locator('p')).toContainText(
-      'Reproducibility was assessed over six months.'
-    )
-    await expect(page.locator('blockquote')).toHaveText(
-      'The intervention improved reproducibility (in this cohort), but external validation remains necessary.'
-    )
+    await expect(page.locator('blockquote mark')).toHaveText(citationQuote)
+    await expect(page.locator('details')).toHaveCount(0)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await page.screenshot({ path: testInfo.outputPath('library-qa-citation-mobile.png') })
     await page.keyboard.press('Escape')
@@ -65,6 +62,44 @@ for (const withDraft of [false, true]) {
     await expect(citation).toBeFocused()
   })
 }
+
+test('long source context expands and collapses without duplicate visible excerpts', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 375, height: 850 })
+  await page.goto('/library-workbench.html?qa&long-context')
+  const citation = await openSourceExcerpt(page)
+  const surrounding = page.locator('details').filter({ hasText: 'View surrounding text' })
+  const fullExcerpt = surrounding.locator('blockquote')
+  const visibleExcerpt = page.locator('blockquote:visible')
+  await expect(surrounding).not.toHaveAttribute('open')
+  await expect(fullExcerpt).not.toBeVisible()
+  await expect(visibleExcerpt).toHaveCount(1)
+  await expect(visibleExcerpt.locator('mark')).toHaveText(citationQuote)
+  const preview = await visibleExcerpt.innerText()
+  expect(preview).toMatch(/^….+…$/)
+  expect(preview.length).toBeLessThan((await fullExcerpt.textContent())!.length)
+
+  const summary = surrounding.locator('summary')
+  await summary.focus()
+  await page.keyboard.press('Enter')
+  await expect(surrounding).toHaveAttribute('open')
+  await expect(fullExcerpt).toBeVisible()
+  await expect(visibleExcerpt).toHaveCount(1)
+  await expect(fullExcerpt).toContainText('Background observations preceded the cohort study.')
+  await expect(fullExcerpt).toContainText('The surrounding text ends here.')
+  await expect(fullExcerpt.locator('mark')).toHaveText(citationQuote)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+
+  await summary.press('Enter')
+  await expect(surrounding).not.toHaveAttribute('open')
+  await expect(fullExcerpt).not.toBeVisible()
+  await expect(visibleExcerpt).toHaveCount(1)
+  await expect(visibleExcerpt).toHaveText(preview)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('blockquote')).not.toBeVisible()
+  await expect(citation).toBeFocused()
+})
 
 for (const width of [320, 375, 414, 768]) {
   for (const dark of [false, true]) {

@@ -5,6 +5,15 @@ import { LiteratureCatalog } from './catalog'
 export const createLiteraturePackageSource = (
   getClient: () => Promise<PrismaClient>
 ): PackageLiteratureSource => ({
+  async resolveItemId(itemId) {
+    const client = await getClient()
+    const row = await client.literatureItem.findUnique({
+      where: { id: itemId },
+      select: { mergedIntoItemId: true }
+    })
+    const view = await new LiteratureCatalog(getClient).get(row?.mergedIntoItemId ?? itemId)
+    return view?.id
+  },
   async readVersions(versionIds) {
     const client = await getClient()
     const rows = await client.literatureAttachmentVersion.findMany({

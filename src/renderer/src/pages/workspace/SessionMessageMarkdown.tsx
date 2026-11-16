@@ -44,6 +44,7 @@ type SessionMessageMarkdownProps = {
   isAnimating?: boolean
   artifacts: MessageArtifact[]
   sourceCitationHrefs?: readonly string[]
+  snapshotOnly?: boolean
   workspaceCwd?: string
   notebookReference?: NotebookSessionReference
   onPreviewArtifact: (artifact: MessageArtifact) => void
@@ -56,6 +57,7 @@ const SessionArtifactContext = createContext<Pick<
   SessionMessageMarkdownProps,
   | 'artifacts'
   | 'sourceCitationHrefs'
+  | 'snapshotOnly'
   | 'workspaceCwd'
   | 'notebookReference'
   | 'onPreviewArtifact'
@@ -281,6 +283,7 @@ const SessionMessageMarkdown = memo(
     isAnimating = false,
     artifacts,
     sourceCitationHrefs,
+    snapshotOnly,
     workspaceCwd,
     notebookReference,
     onPreviewArtifact,
@@ -312,7 +315,12 @@ const SessionMessageMarkdown = memo(
               return <span className={className}>{children}</span>
             }
             return (
-              <LibrarySourceCitationLink key={href} citation={citation} className={className}>
+              <LibrarySourceCitationLink
+                key={href}
+                citation={citation}
+                className={className}
+                snapshotOnly={context.snapshotOnly}
+              >
                 {children}
               </LibrarySourceCitationLink>
             )
@@ -418,6 +426,7 @@ const SessionMessageMarkdown = memo(
       () => ({
         artifacts,
         sourceCitationHrefs,
+        snapshotOnly,
         workspaceCwd,
         notebookReference,
         onPreviewArtifact,
@@ -426,6 +435,7 @@ const SessionMessageMarkdown = memo(
       [
         artifacts,
         sourceCitationHrefs,
+        snapshotOnly,
         workspaceCwd,
         notebookReference,
         onPreviewArtifact,

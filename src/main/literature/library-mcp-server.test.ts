@@ -2183,11 +2183,83 @@ describe('Literature Library MCP server', () => {
     const issuedHrefs = structuredContent.items.flatMap((item) =>
       item.citationHref ? [item.citationHref] : []
     )
-    expect(receiptHrefs(result).every((href) => issuedHrefs.includes(href))).toBe(true)
+    expect(receiptHrefs(result)).toEqual(issuedHrefs)
+    for (const href of issuedHrefs) {
+      expect(resolveLiteratureSourceCitationHref(href, receiptHrefs(result))).toBeDefined()
+    }
 
     await client.close()
     await server.close()
   })
+
+  it.each([
+    { name: 'ASCII', title: 'A'.repeat(390) },
+    { name: 'Unicode', title: '文献研究'.repeat(95) }
+  ])(
+    'issues only metadata links retained in the bounded receipt for $name search titles',
+    async ({ title }) => {
+      const abstract = 'Treatment reduced mortality. Follow-up lasted a year.'
+      const items = Array.from({ length: 20 }, (_, index) => {
+        const base = searchItem(`item-${index + 20}`, abstract)
+        return { ...base, item: { ...base.item, title: `${title} ${index}` } }
+      })
+      const searchLibrary = vi.fn(async () => ({
+        items,
+        totalCount: 45,
+        hasMore: true,
+        nextOffset: 40
+      }))
+      await withCitationClient({ searchLibrary }, async (client) => {
+        const result = await client.callTool({
+          name: 'search_library',
+          arguments: { offset: 20 }
+        })
+        const output = result.structuredContent as {
+          items: {
+            id: string
+            title: string
+            abstractPreview: string
+            abstractTruncated?: boolean
+            citationHref?: string
+          }[]
+        }
+        expect(searchLibrary).toHaveBeenCalledWith({ scope: 'project', offset: 20, limit: 20 })
+        expect(output).toMatchObject({ totalCount: 45, hasMore: true, nextOffset: 40 })
+        expect(output.items.map(({ id }) => id)).toEqual(items.map(({ id }) => id))
+        expect(output.items.map(({ title }) => title)).toEqual(items.map(({ item }) => item.title))
+        for (const item of output.items) {
+          expect(item.abstractPreview).toBe(abstract)
+          expect(item.abstractTruncated).toBeUndefined()
+        }
+        const issuedHrefs = output.items.flatMap(({ citationHref }) =>
+          citationHref ? [citationHref] : []
+        )
+        const receipts = receiptHrefs(result)
+        expect(issuedHrefs.length).toBeGreaterThan(0)
+        expect(issuedHrefs.length).toBeLessThan(20)
+        expect(receipts).toEqual(issuedHrefs)
+        for (const item of output.items.filter(({ citationHref }) => citationHref)) {
+          expect(resolveLiteratureSourceCitationHref(item.citationHref, receipts)).toEqual({
+            itemId: item.id,
+            title: item.title,
+            kind: 'metadata',
+            quote: ''
+          })
+        }
+        const content = result.content as { type: string; text: string }[]
+        expect(JSON.parse(content[0].text).openScienceLiteraturePresentation).toMatchObject({
+          resultCount: 20,
+          totalCount: 45,
+          offset: 20,
+          limit: 20,
+          hasMore: true,
+          nextOffset: 40
+        })
+        expect(content[0].text.length).toBeLessThanOrEqual(8_000)
+        expect(JSON.stringify(content).length).toBeLessThanOrEqual(38_000)
+      })
+    }
+  )
 
   it('reads up to five abstracts in one bounded call', async () => {
     const abstracts = new Map(

@@ -119,7 +119,9 @@ import { ForkRecoveryRequiredError, createForkSession, nextForkTitle } from './f
 import { capturePackageHistory, type PackageHistory } from './history'
 import { assertSettledHistory, inspectSessionPackage, preview, readSession } from './inspection'
 import {
+  canonicalizeSessionLiteratureCitations,
   capturePackageLiterature,
+  remapSessionLiteratureCitations,
   sessionLiteratureReferences,
   validatePackageLiteratureSession
 } from './literature'
@@ -746,14 +748,18 @@ export class SessionPackageService {
         await assertShareable(manifest, this.signal, 'manifest.json')
       const sourceSessionEnvelope = await readPackageJson(join(source, 'session.json'))
       const sourceSession = await readSession(source)
+      const inverseIds = Object.fromEntries(
+        Object.entries(origin.identities).map(([oldId, localId]) => [localId, oldId])
+      )
       const forwardedSession = withoutPrivateAuthority(
         options.consumeSnapshot
-          ? (mapPackageReferences(
-              encodeSessionDataPaths(session, this.options.storageRoot),
-              Object.fromEntries(
-                Object.entries(origin.identities).map(([oldId, localId]) => [localId, oldId])
-              )
-            ) as PersistedChatSession)
+          ? remapSessionLiteratureCitations(
+              mapPackageReferences(
+                encodeSessionDataPaths(session, this.options.storageRoot),
+                inverseIds
+              ) as PersistedChatSession,
+              inverseIds
+            )
           : sourceSession
       )
       if (!options.consumeSnapshot && !options.allowSensitiveContent)
@@ -768,9 +774,6 @@ export class SessionPackageService {
       const previousFilmKeys = new Set(researchFilmStorageKeys(packageFilms(records)))
       delete records.researchFilms
       delete records.operationReplayFilms
-      const inverseIds = Object.fromEntries(
-        Object.entries(origin.identities).map(([oldId, localId]) => [localId, oldId])
-      )
       const forwardedFilms: CapturedResearchFilms = {
         films: mapPackageReferences(capturedFilms.films, inverseIds) as PackageResearchFilms,
         files: new Map(
@@ -1072,7 +1075,9 @@ export class SessionPackageService {
       this.signal
     )
     const sharedSession = encodeSessionDataPaths(
-      withoutPrivateAuthority(session),
+      withoutPrivateAuthority(
+        await canonicalizeSessionLiteratureCitations(this.options.literatureSource, session)
+      ),
       this.options.storageRoot
     )
     const optionalKeys = new Set(
@@ -1847,12 +1852,15 @@ export class SessionPackageService {
         )
       }
       const mappedSession = withoutPrivateAuthority(
-        mapPackageReferences(
-          sourceSession,
-          native.identities,
-          '',
-          native.checksums
-        ) as PersistedChatSession
+        remapSessionLiteratureCitations(
+          mapPackageReferences(
+            sourceSession,
+            native.identities,
+            '',
+            native.checksums
+          ) as PersistedChatSession,
+          native.identities
+        )
       )
       let session: PersistedChatSession = {
         ...mappedSession,

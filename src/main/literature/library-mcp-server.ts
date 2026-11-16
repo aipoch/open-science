@@ -927,18 +927,22 @@ const compactSearchResult = (
         const item = items[index]
         const previousText = content[1].text
         const previousPresentation = content[0]
-        items[index] = {
-          ...item,
-          citationHref: createLiteratureSourceCitationHref({
-            itemId: item.id,
-            title: item.title,
-            kind: 'metadata',
-            quote: ''
-          })
-        }
+        const citationHref = createLiteratureSourceCitationHref({
+          itemId: item.id,
+          title: item.title,
+          kind: 'metadata',
+          quote: ''
+        })
+        items[index] = { ...item, citationHref }
         content[1].text = JSON.stringify(searchResult)
         content[0] = presentationContent(presentation, searchResult)
-        if (JSON.stringify(content).length > LITERATURE_LIBRARY_SEARCH_OUTPUT_MAX_CHARACTERS) {
+        // The receipt has its own tighter budget; an unretained link cannot resolve.
+        const retainedHrefs: string[] =
+          JSON.parse(content[0].text).openScienceLiteraturePresentation.sourceCitationHrefs ?? []
+        if (
+          !retainedHrefs.includes(citationHref) ||
+          JSON.stringify(content).length > LITERATURE_LIBRARY_SEARCH_OUTPUT_MAX_CHARACTERS
+        ) {
           items[index] = item
           content[1].text = previousText
           content[0] = previousPresentation

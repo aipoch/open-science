@@ -10,7 +10,8 @@ import { createTestPdf } from '../../../test/fixtures/literature-pdf'
 import {
   createLinearConversationGraph,
   forkEditedConversationMessage,
-  resolveActiveConversationMessages
+  resolveActiveConversationMessages,
+  synchronizeActiveConversationActivities
 } from '../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { sha256 } from '../artifacts/provenance-canonical'
@@ -25,7 +26,18 @@ import { SessionRepository } from '../session-persistence/repository'
 import * as storageRoots from '../storage-root'
 import { ContentRepository } from '../storage/content-repository'
 import { packageEntry, readPackageArchive, writePackageArchive } from './archive'
-import { sessionLiteratureReferences } from './literature'
+import {
+  remapSessionLiteratureCitations,
+  sessionLiteratureReferences,
+  validatePackageLiteratureSession
+} from './literature'
+import {
+  createLiteratureSourceCitationHref,
+  parseLiteratureSourceCitationHref,
+  resolveLiteratureSourceCitationHref,
+  type LiteratureSourceCitation
+} from '../../shared/literature-source-citation'
+import type { PersistedToolActivity } from '../../shared/session-message-contract'
 import { PackageLiteratureReader } from './literature-reader'
 import { SessionPackageService } from './service'
 
@@ -129,6 +141,292 @@ const seed = async (source: Awaited<ReturnType<typeof setup>>): Promise<void> =>
   })
   await new SessionRepository(storageRoot).saveSession(session())
 }
+
+const sourceCitation = (): LiteratureSourceCitation => ({
+  itemId: 'item-1',
+  citationId: '0123456789abcdef',
+  title: 'Evidence paper',
+  kind: 'pdf',
+  quote: 'Evidence retained in the original PDF.',
+  context: 'Evidence retained in the original PDF. Further validation is needed.',
+  source: {
+    attachmentId: 'attachment-1',
+    versionId: 'version-1',
+    checksum: sha256(createTestPdf()),
+    name: 'paper.pdf'
+  },
+  pageStart: 1,
+  pageEnd: 1
+})
+
+const citationSession = (graph = false, citation = sourceCitation()): PersistedChatSession => {
+  const href = createLiteratureSourceCitationHref(citation)
+  const value = session()
+  value.runtimeContext = undefined
+  value.messages = [
+    {
+      id: 'prompt',
+      role: 'user',
+      content: `Review the project. ${href}`,
+      parts: [{ type: 'literature-scope', scope: 'project' }],
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    },
+    {
+      id: 'answer',
+      role: 'agent',
+      responseToMessageId: 'prompt',
+      content: `[1](#library-cite=${citation.citationId}) [legacy](${href})`,
+      parts: [{ type: 'text', text: `[legacy](${href})` }],
+      status: 'complete',
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+  ]
+  const activity: PersistedToolActivity = {
+    id: 'citation-tool',
+    kind: 'tool',
+    title: 'Read Library PDF',
+    providerToolName: 'mcp__open_science_library__read_library_pdf',
+    promptMessageId: 'prompt',
+    status: 'completed',
+    sortIndex: 0,
+    eventIds: [],
+    createdAt: 2,
+    updatedAt: 2,
+    toolContent: [
+      {
+        type: 'content',
+        content: {
+          type: 'text',
+          text: JSON.stringify({
+            openScienceLiteraturePresentation: {
+              libraryAction: 'read',
+              sourceCitationHrefs: [href]
+            }
+          })
+        }
+      }
+    ]
+  }
+  value.activities = [activity]
+  if (graph)
+    value.conversationGraph = synchronizeActiveConversationActivities(
+      createLinearConversationGraph({
+        sessionId: value.id,
+        messages: value.messages,
+        frameworkId: 'claude-code',
+        createdAt: 1,
+        updatedAt: 3
+      }),
+      [activity],
+      []
+    )
+  return value
+}
+
+const citationReceipt = (value: PersistedChatSession): string => {
+  const activity =
+    (value.conversationGraph?.activities ?? value.activities)!.find(
+      ({ id }) => id === 'citation-tool'
+    ) ?? (value.conversationGraph?.activities ?? value.activities)![0]
+  const output = activity.toolContent![0] as { content: { text: string } }
+  return JSON.parse(output.content.text).openScienceLiteraturePresentation.sourceCitationHrefs[0]
+}
+
+it('collects and maps only completed, prompt-bound Library citation receipts', () => {
+  const valid = citationSession()
+  expect(sessionLiteratureReferences(valid).versionIds).toEqual(new Set(['version-1']))
+  for (const patch of [
+    { status: 'failed' as const },
+    { status: 'in_progress' as const },
+    { providerToolName: 'mcp__unrelated__read_library_pdf' },
+    { promptMessageId: 'missing-prompt' }
+  ]) {
+    const invalid = structuredClone(valid)
+    Object.assign(invalid.activities![0], patch)
+    expect(sessionLiteratureReferences(invalid).versionIds.size).toBe(0)
+    expect(remapSessionLiteratureCitations(invalid, { 'version-1': 'local-version' })).toEqual(
+      invalid
+    )
+  }
+  const mapped = remapSessionLiteratureCitations(valid, {
+    'item-1': 'local-item',
+    'attachment-1': 'local-attachment',
+    'version-1': 'local-version'
+  })
+  const href = citationReceipt(mapped)
+  expect(parseLiteratureSourceCitationHref(href)).toEqual({
+    ...sourceCitation(),
+    itemId: 'local-item',
+    source: {
+      ...sourceCitation().source!,
+      attachmentId: 'local-attachment',
+      versionId: 'local-version'
+    }
+  })
+  expect(mapped.messages[0].content).toBe(valid.messages[0].content)
+  expect(mapped.messages[1].content).toContain(`(${href})`)
+  expect(mapped.messages[1].content).toContain('(#library-cite=0123456789abcdef)')
+  expect(mapped.messages[1].parts).toEqual([{ type: 'text', text: `[legacy](${href})` }])
+  expect(citationReceipt(valid)).toBe(createLiteratureSourceCitationHref(sourceCitation()))
+})
+
+it.each([
+  { graph: false, excluded: false, merged: false },
+  { graph: false, excluded: true, merged: false },
+  { graph: true, excluded: false, merged: false },
+  { graph: true, excluded: true, merged: false },
+  { graph: true, excluded: false, merged: true }
+])(
+  'round-trips citation-only Library PDF evidence (graph=$graph, excluded=$excluded, merged=$merged)',
+  async ({ graph, excluded, merged }) => {
+    const source = await setup(),
+      target = await setup()
+    await seed(source)
+    const snapshot = sourceCitation()
+    if (merged) {
+      await source.client.literatureItem.create({
+        data: {
+          id: 'merged-alias',
+          itemType: 'journalArticle',
+          title: 'Merged paper',
+          deletedAt: new Date(),
+          mergedIntoItemId: 'item-1'
+        }
+      })
+      snapshot.itemId = 'merged-alias'
+    }
+    const value = citationSession(graph, snapshot)
+    await new SessionRepository(source.storageRoot).saveSession(value)
+    const archive = join(source.storageRoot, 'citations.science')
+    await source.service.exportTo({ projectId: value.projectId, sessionId: value.id }, archive, {
+      selectFiles: async (files) => {
+        expect(files).toHaveLength(1)
+        expect(files[0]).toMatchObject({ source: 'literature', filename: 'paper.pdf' })
+        return excluded ? files.map(({ storageKey }) => storageKey) : []
+      }
+    })
+    const imported = await target.service.importFrom(archive)
+    const saved = (await new SessionRepository(target.storageRoot).loadSession(
+      imported.projectId,
+      imported.sessionId
+    ))!
+    const href = citationReceipt(saved)
+    const citation = resolveLiteratureSourceCitationHref('#library-cite=0123456789abcdef', [href])!
+    expect(citation).toBeDefined()
+    expect(citation.itemId).not.toBe('item-1')
+    expect(citation.source!.attachmentId).not.toBe('attachment-1')
+    expect(citation.source!.versionId).not.toBe('version-1')
+    expect(citation).toMatchObject({
+      quote: sourceCitation().quote,
+      context: sourceCitation().context,
+      pageStart: 1,
+      pageEnd: 1
+    })
+    expect(citation.source!.checksum).toBe(sha256(createTestPdf()))
+    expect(saved.messages.find(({ role }) => role === 'agent')!.content).toContain(`(${href})`)
+    expect(await target.client.literatureItem.count()).toBe(0)
+    const reader = new PackageLiteratureReader({
+      storageRoot: target.storageRoot,
+      getClient: async () => target.client,
+      files: new ManagedFileVersionService({
+        storageRoot: target.storageRoot,
+        getClient: async () => target.client
+      })
+    })
+    if (excluded) {
+      await expect(reader.resolveVersion(citation.source!.versionId)).rejects.toThrow(
+        'not included'
+      )
+    } else {
+      expect(await reader.resolveVersion(citation.source!.versionId)).toMatchObject({
+        itemId: citation.itemId,
+        attachmentId: citation.source!.attachmentId,
+        versionId: citation.source!.versionId,
+        checksum: citation.source!.checksum
+      })
+      const lease = await reader.openContent(citation.source!.versionId)
+      try {
+        expect(await lease.readRange(0, lease.size)).toEqual(new Uint8Array(createTestPdf()))
+      } finally {
+        await lease.close()
+      }
+    }
+    if (graph && !excluded) {
+      const forwarded = join(target.storageRoot, 'forwarded-citations.science')
+      await target.service.exportTo(imported, forwarded)
+      const second = await target.service.importFrom(forwarded)
+      const restored = (await new SessionRepository(target.storageRoot).loadSession(
+        second.projectId,
+        second.sessionId
+      ))!
+      const forwardedCitation = parseLiteratureSourceCitationHref(citationReceipt(restored))!
+      expect(forwardedCitation.source!.versionId).not.toBe(citation.source!.versionId)
+      expect(await reader.resolveVersion(forwardedCitation.source!.versionId)).toMatchObject({
+        checksum: citation.source!.checksum
+      })
+      if (merged) {
+        const forked = await target.service.fork(second)
+        const forkedSession = (await new SessionRepository(target.storageRoot).loadSession(
+          forked.projectId,
+          forked.sessionId
+        ))!
+        const forkedCitation = parseLiteratureSourceCitationHref(citationReceipt(forkedSession))!
+        expect(forkedCitation.source!.versionId).not.toBe(forwardedCitation.source!.versionId)
+        expect(await reader.resolveVersion(forkedCitation.source!.versionId)).toMatchObject({
+          checksum: citation.source!.checksum
+        })
+        const original = (await new SessionRepository(source.storageRoot).loadSession(
+          value.projectId,
+          value.id
+        ))!
+        expect(parseLiteratureSourceCitationHref(citationReceipt(original))!.itemId).toBe(
+          'merged-alias'
+        )
+      }
+    }
+  }
+)
+
+it('retains citation-only PDF dependencies from inactive conversation branches', () => {
+  const value = citationSession(true)
+  value.conversationGraph = forkEditedConversationMessage(
+    value.conversationGraph!,
+    'prompt',
+    'edited-prompt',
+    4
+  )
+  value.messages = resolveActiveConversationMessages(value.conversationGraph)
+  expect(value.messages.some(({ id }) => id === 'prompt')).toBe(false)
+  expect(sessionLiteratureReferences(value).versionIds).toEqual(new Set(['version-1']))
+})
+
+it.each(['item', 'attachment', 'checksum'] as const)(
+  'rejects citation-only PDF evidence with mismatched %s identity',
+  async (field) => {
+    const source = await setup()
+    await seed(source)
+    const citation = sourceCitation()
+    if (field === 'item') citation.itemId = 'another-item'
+    if (field === 'attachment') citation.source!.attachmentId = 'another-attachment'
+    if (field === 'checksum') citation.source!.checksum = '0'.repeat(64)
+    const value = citationSession(false, citation)
+    await new SessionRepository(source.storageRoot).saveSession(value)
+    await expect(
+      source.service.exportTo(
+        { projectId: value.projectId, sessionId: value.id },
+        join(source.storageRoot, 'invalid-citations.science')
+      )
+    ).rejects.toThrow('citation content identity mismatch')
+    expect(() => validatePackageLiteratureSession({ tables: {} } as never, value)).toThrow(
+      'no packaged Version'
+    )
+  }
+)
 
 it.each(['deleted', 'unavailable', 'checksum', 'size', 'content-type'] as const)(
   'rejects a live Literature source with invalid %s identity',
