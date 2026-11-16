@@ -33,7 +33,6 @@ import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { SessionRepository } from '../session-persistence/repository'
 import { startWebHttpServer } from './http-server'
 import { HeadlessTaskApi } from './task-api'
-import { registerAuthenticatedArtifactBrowserBinding } from './artifact-url'
 
 it.each(['historical', 'native'] as const)(
   'downloads a %s Task artifact by its listed Version id through HTTP',
@@ -312,42 +311,24 @@ it.each(['historical', 'native'] as const)(
           expect(head.headers.get(header)).toBe(inline.headers.get(header))
         }
       }
-      const newerBinding = registerAuthenticatedArtifactBrowserBinding(
-        fixture.storageRoot,
-        'synthetic-download-token',
-        {
-          artifactId: version.artifactId,
-          projectId: session.projectId,
-          versionId: newer.versionId
-        }
-      )
-      const boundInline = await fetch(
-        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&binding=${newerBinding}&token=synthetic-download-token`
-      )
-      expect(boundInline.status).toBe(200)
-      expect(await boundInline.text()).toBe('newer content')
-      const latestBinding = registerAuthenticatedArtifactBrowserBinding(
-        fixture.storageRoot,
-        'synthetic-download-token',
-        { artifactId: version.artifactId, projectId: session.projectId }
-      )
       const latestInline = await fetch(
-        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&binding=${latestBinding}&token=synthetic-download-token`
+        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&projectId=${session.projectId}&token=synthetic-download-token`
       )
       expect(latestInline.status).toBe(200)
       expect(await latestInline.text()).toBe('newer content')
-      const firstBindingStillWorks = await fetch(
-        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&binding=${newerBinding}&token=synthetic-download-token`
+      const latestHead = await fetch(
+        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&projectId=${session.projectId}&token=synthetic-download-token`,
+        { method: 'HEAD' }
       )
-      expect(firstBindingStillWorks.status).toBe(200)
-      expect(await firstBindingStillWorks.text()).toBe('newer content')
-      expect(
-        (
-          await fetch(
-            `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&token=synthetic-download-token`
-          )
-        ).status
-      ).toBe(400)
+      expect(latestHead.status).toBe(200)
+      for (const header of [
+        'content-type',
+        'content-disposition',
+        'content-length',
+        'referrer-policy'
+      ]) {
+        expect(latestHead.headers.get(header)).toBe(latestInline.headers.get(header))
+      }
       for (const url of [
         inlineUrl(newer.versionId, 'missing-project'),
         inlineUrl(newer.versionId, session.projectId, 'missing-file'),
@@ -356,11 +337,9 @@ it.each(['historical', 'native'] as const)(
         expect((await fetch(url)).ok).toBe(false)
       }
       for (const method of ['GET', 'HEAD']) {
-        for (const omitted of ['projectId', 'versionId']) {
-          const malformed = new URL(inlineUrl(newer.versionId))
-          malformed.searchParams.delete(omitted)
-          expect((await fetch(malformed, { method })).status).toBe(400)
-        }
+        const malformed = new URL(inlineUrl(newer.versionId))
+        malformed.searchParams.delete('projectId')
+        expect((await fetch(malformed, { method })).status).toBe(400)
       }
       const downloadWithScope = await fetch(
         inlineUrl(newer.versionId).replace('disposition=inline', 'disposition=attachment')

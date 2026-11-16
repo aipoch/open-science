@@ -74,7 +74,6 @@ import {
   projectWebRendererEvent
 } from './application-event-projections'
 import { authenticateRequest, persistAuthCookie } from './auth'
-import { resolveAuthenticatedArtifactBrowserBinding } from './artifact-url'
 import { InternalWebEventStream } from './internal-web-event-stream'
 import { PublicTaskEventStream } from './public-task-event-stream'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
@@ -1004,8 +1003,7 @@ const handleTaskApiRequest = async (
   idempotencyRegistry: TaskIdempotencyRegistry,
   externalAuthorization?: ExternalWebAccessAuthorization,
   waitUntilTasksReady?: () => Promise<void>,
-  fetchPreview?: WebServerOptions['fetchPreview'],
-  artifactBrowserBindingContext?: { configRoot: string; token: string }
+  fetchPreview?: WebServerOptions['fetchPreview']
 ): Promise<boolean> =>
   tasks.runWithCallerContext(callerContext, async () => {
     try {
@@ -1351,43 +1349,18 @@ const handleTaskApiRequest = async (
         const inline = url.searchParams.get('disposition') === 'inline'
         const projectId = url.searchParams.get('projectId')
         const versionId = url.searchParams.get('versionId')
-        const browserBindingId = url.searchParams.get('binding')
-        if (inline && (projectId !== null || versionId !== null) && (!projectId || !versionId)) {
+        if (inline && (!projectId || (versionId !== null && !versionId))) {
           throw new TaskApiError(
             'invalid_request',
-            'Inline Version requests require projectId and versionId.'
+            'Inline artifact requests require projectId; versionId is optional.'
           )
         }
-        const browserBinding =
-          inline && projectId === null && versionId === null && browserBindingId
-            ? resolveAuthenticatedArtifactBrowserBinding(
-                artifactBrowserBindingContext?.configRoot ?? '',
-                artifactBrowserBindingContext?.token ?? '',
-                browserBindingId
-              )
-            : undefined
-        if (inline && projectId === null && versionId === null) {
-          if (!browserBinding) {
-            throw new TaskApiError(
-              'invalid_request',
-              'The artifact browser binding is missing or expired. Open the artifact again.'
-            )
-          }
-          if (browserBinding.artifactId !== artifactId) {
-            throw new TaskApiError(
-              'invalid_request',
-              'The artifact browser binding does not match this artifact.'
-            )
-          }
-        }
-        const selectedProjectId = projectId ?? browserBinding?.projectId
-        const selectedVersionId = versionId ?? browserBinding?.versionId
         // Scoped browser reads must not change the default Task artifact download contract.
         const artifact =
-          inline && selectedProjectId
+          inline && projectId
             ? await tasks.acquireArtifact(artifactId, {
-                projectId: selectedProjectId,
-                ...(selectedVersionId ? { versionId: selectedVersionId } : {})
+                projectId,
+                ...(versionId ? { versionId } : {})
               })
             : await tasks.acquireArtifact(artifactId)
         try {
@@ -1667,8 +1640,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           taskIdempotencyRegistry,
           externalAuthorization,
           options.waitUntilTasksReady,
-          options.fetchPreview,
-          { configRoot: options.bootstrap.configRoot, token: options.token }
+          options.fetchPreview
         ))
       ) {
         return
