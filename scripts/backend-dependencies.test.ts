@@ -22,6 +22,7 @@ import {
   desktopBackendDependencies,
   desktopBackendPeerDependencies,
   desktopBundledDependencies,
+  desktopExternalClosure,
   generatedPrismaIncludes,
   isElectronPackage,
   isBackendRuntimeDependency,
@@ -29,6 +30,10 @@ import {
   inlineDesktopDependencyMaps,
   prismaEngineFilenames
 } from './backend-dependencies.mjs'
+
+it('stages dynamically loaded connector providers in the desktop backend', () => {
+  expect(desktopExternalClosure(process.cwd())).toContain('@aipoch/connector-builtins')
+})
 
 describe('generated native Prisma payload', () => {
   it.each(['/', '\\'])('preserves native runtime and SDK types (%s)', (separator) => {
