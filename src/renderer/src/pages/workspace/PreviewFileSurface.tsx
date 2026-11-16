@@ -1170,8 +1170,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       setLocalActionFailure(undefined)
       try {
         if (resolvedPreviewItem.source === 'local') {
-          const result = await window.api.localFs.openPath(resolvedPreviewItem.path)
-          if (result) throw new Error(result)
+          await window.api.localFs.openInBrowser(resolvedPreviewItem.path)
         } else {
           // Use the same immutable selection as the rendered bytes, including default head previews.
           const artifactId = contentItem.artifactId ?? contentItem.managedFileId

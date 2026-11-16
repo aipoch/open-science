@@ -395,6 +395,7 @@ describe('ManagedPreviewResources', () => {
   it('keeps trusted text/html MIME metadata for extension-mismatched managed versions', async () => {
     const trustedBytes = Buffer.from('<!doctype html><p>report</p>')
     const resources = new ManagedPreviewResources({
+      resolvePath: vi.fn(),
       openManagedFileVersion: vi.fn().mockResolvedValue({
         path: '/managed/report.pdf',
         size: trustedBytes.byteLength,

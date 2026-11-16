@@ -4782,7 +4782,8 @@ const setupLocalApi = (): void => {
   })
   window.api.localFs = {
     reveal: vi.fn(),
-    openPath: vi.fn()
+    openPath: vi.fn(),
+    openInBrowser: vi.fn()
   } as unknown as typeof window.api.localFs
   window.api.saveManagedFile = vi.fn().mockResolvedValue({ saved: true })
   window.api.uploads = {
@@ -4900,7 +4901,7 @@ describe('PreviewFileSurface file header actions', () => {
     ).toEqual(['copy-path', 'open-in-browser', 'reveal-in-folder', 'download', 'save-as-artifact'])
 
     await clickMenuItem('Open in browser')
-    expect(window.api.localFs.openPath).toHaveBeenCalledWith(localHtmlItem.path)
+    expect(window.api.localFs.openInBrowser).toHaveBeenCalledWith(localHtmlItem.path)
 
     await openMenu(container.querySelector('[aria-label="More actions"]'))
     await clickMenuItem('Reveal in folder')

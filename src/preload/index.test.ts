@@ -441,6 +441,7 @@ describe('preload bridge — public surface inventory', () => {
       'localFs.listDir',
       'localFs.listDrives',
       'localFs.listGrantedRoots',
+      'localFs.openInBrowser',
       'localFs.openPath',
       'localFs.readPreview',
       'localFs.removeGrantedRoot',

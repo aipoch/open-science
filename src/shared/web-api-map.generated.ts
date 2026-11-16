@@ -134,6 +134,7 @@ export const WEB_INVOKE_CHANNELS = {
   'localFs.listDir': 'local-fs:list-dir',
   'localFs.listDrives': 'local-fs:list-drives',
   'localFs.listGrantedRoots': 'local-fs:granted-roots:list',
+  'localFs.openInBrowser': 'local-fs:open-in-browser',
   'localFs.openPath': 'local-fs:open-path',
   'localFs.readPreview': 'local-fs:read-preview',
   'localFs.removeGrantedRoot': 'local-fs:granted-roots:remove',

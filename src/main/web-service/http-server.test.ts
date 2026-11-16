@@ -4786,6 +4786,7 @@ describe('startWebHttpServer', () => {
     })
     servers.push(server)
     const endpoint = `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-html/content`
+    const inlineEndpoint = `${endpoint}?disposition=inline&projectId=project-1&versionId=version-1`
     const headers = { authorization: 'Bearer test-token' }
 
     vi.mocked(net.fetch).mockResolvedValue(
@@ -4803,13 +4804,12 @@ describe('startWebHttpServer', () => {
         headers: { 'content-type': 'text/plain', 'content-length': '15' }
       })
     )
-    const inline = await fetch(`${endpoint}?disposition=inline`, { headers })
+    const inline = await fetch(inlineEndpoint, { headers })
     expect(inline.status).toBe(200)
     expect(inline.headers.get('content-disposition')).toBe('inline')
     expect(inline.headers.get('content-type')).toBe('text/html; charset=utf-8')
-    const inlineBody = await inline.text()
-    expect(inlineBody).toContain('<title>Open-Science | HTML Preview</title>')
-    expect(inlineBody).toContain('data-open-science-favicon="true"')
+    expect(inline.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(await inline.text()).toBe('<!doctype html>')
 
     tasks.acquireArtifact.mockResolvedValueOnce({
       resourceId: 'resource-html-mime',
@@ -4823,21 +4823,24 @@ describe('startWebHttpServer', () => {
         headers: { 'content-type': 'application/octet-stream', 'content-length': '16' }
       })
     )
-    const mimeInline = await fetch(`${endpoint}?disposition=inline`, { headers })
+    const mimeInline = await fetch(inlineEndpoint, { headers })
     expect(mimeInline.status).toBe(200)
     expect(mimeInline.headers.get('content-disposition')).toBe('inline')
     expect(mimeInline.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    expect(mimeInline.headers.get('referrer-policy')).toBe('no-referrer')
 
     vi.mocked(net.fetch).mockResolvedValue(
       new Response(null, {
         status: 200,
-        headers: { 'content-type': 'text/plain', 'content-length': '16' }
+        headers: { 'content-type': 'text/plain', 'content-length': '15' }
       })
     )
-    const head = await fetch(`${endpoint}?disposition=inline`, { method: 'HEAD', headers })
+    const head = await fetch(inlineEndpoint, { method: 'HEAD', headers })
     expect(head.status).toBe(200)
     expect(head.headers.get('content-disposition')).toBe(inline.headers.get('content-disposition'))
     expect(head.headers.get('content-type')).toBe(inline.headers.get('content-type'))
+    expect(head.headers.get('content-length')).toBe(inline.headers.get('content-length'))
+    expect(head.headers.get('referrer-policy')).toBe(inline.headers.get('referrer-policy'))
   })
 
   it('rejects inline display for non-HTML artifacts', async () => {
@@ -4882,7 +4885,7 @@ describe('startWebHttpServer', () => {
     })
     servers.push(server)
     const response = await fetch(
-      `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-text/content?disposition=inline`,
+      `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-text/content?disposition=inline&projectId=project-1&versionId=version-1`,
       { headers: { authorization: 'Bearer test-token' } }
     )
     expect(response.status).toBe(400)

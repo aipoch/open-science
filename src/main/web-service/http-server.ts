@@ -78,7 +78,6 @@ import { resolveAuthenticatedArtifactBrowserBinding } from './artifact-url'
 import { InternalWebEventStream } from './internal-web-event-stream'
 import { PublicTaskEventStream } from './public-task-event-stream'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
-import { brandHtmlPreviewDocument } from './html-branding'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 // Preserve one maximum-size request per logical client while leaving the same amount of capacity
@@ -916,8 +915,7 @@ const streamPreviewResource = async (
   response: ServerResponse,
   fetchPreview: WebServerOptions['fetchPreview'],
   resourceUrl: string,
-  responseOverrides: Record<string, string> = {},
-  transformBody?: (body: string) => string
+  responseOverrides: Record<string, string> = {}
 ): Promise<void> => {
   const abortController = new AbortController()
   const abortOnDisconnect = (): void => {
@@ -943,19 +941,9 @@ const streamPreviewResource = async (
         responseHeaders[key] = value
     })
     Object.assign(responseHeaders, responseOverrides)
-    let transformedBody: Buffer | undefined
-    if (transformBody && upstream.ok && upstream.body) {
-      transformedBody = Buffer.from(transformBody(await upstream.text()), 'utf8')
-      delete responseHeaders['content-encoding']
-      responseHeaders['content-length'] = String(transformedBody.byteLength)
-    }
     response.writeHead(upstream.status, responseHeaders)
-    if ((!upstream.body && !transformedBody) || request.method === 'HEAD') {
+    if (!upstream.body || request.method === 'HEAD') {
       response.end()
-      return
-    }
-    if (transformedBody) {
-      response.end(transformedBody)
       return
     }
     try {
@@ -989,7 +977,8 @@ const artifactContentResponseOverrides = (
     }
     return {
       'content-disposition': 'inline',
-      'content-type': 'text/html; charset=utf-8'
+      'content-type': 'text/html; charset=utf-8',
+      'referrer-policy': 'no-referrer'
     }
   }
   if (disposition !== null && disposition !== 'attachment') {
@@ -1362,6 +1351,7 @@ const handleTaskApiRequest = async (
         const inline = url.searchParams.get('disposition') === 'inline'
         const projectId = url.searchParams.get('projectId')
         const versionId = url.searchParams.get('versionId')
+        const browserBindingId = url.searchParams.get('binding')
         if (inline && (projectId !== null || versionId !== null) && (!projectId || !versionId)) {
           throw new TaskApiError(
             'invalid_request',
@@ -1369,13 +1359,27 @@ const handleTaskApiRequest = async (
           )
         }
         const browserBinding =
-          inline && projectId === null && versionId === null
+          inline && projectId === null && versionId === null && browserBindingId
             ? resolveAuthenticatedArtifactBrowserBinding(
                 artifactBrowserBindingContext?.configRoot ?? '',
                 artifactBrowserBindingContext?.token ?? '',
-                artifactId
+                browserBindingId
               )
             : undefined
+        if (inline && projectId === null && versionId === null) {
+          if (!browserBinding) {
+            throw new TaskApiError(
+              'invalid_request',
+              'The artifact browser binding is missing or expired. Open the artifact again.'
+            )
+          }
+          if (browserBinding.artifactId !== artifactId) {
+            throw new TaskApiError(
+              'invalid_request',
+              'The artifact browser binding does not match this artifact.'
+            )
+          }
+        }
         const selectedProjectId = projectId ?? browserBinding?.projectId
         const selectedVersionId = versionId ?? browserBinding?.versionId
         // Scoped browser reads must not change the default Task artifact download contract.
@@ -1392,8 +1396,7 @@ const handleTaskApiRequest = async (
             response,
             fetchPreview,
             artifact.url,
-            artifactContentResponseOverrides(artifact, url.searchParams.get('disposition')),
-            url.searchParams.get('disposition') === 'inline' ? brandHtmlPreviewDocument : undefined
+            artifactContentResponseOverrides(artifact, url.searchParams.get('disposition'))
           )
         } finally {
           await tasks.releaseArtifact(artifact.resourceId)
