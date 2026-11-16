@@ -91,6 +91,11 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
     ]
   },
   {
+    canonicalName: 'open-science-pptx',
+    openCodeName: 'open_science_pptx',
+    tools: ['read_pptx_outline', 'propose_pptx_operations']
+  },
+  {
     canonicalName: 'open-science-host-message',
     openCodeName: 'open_science_host_message',
     tools: ['send_message'],

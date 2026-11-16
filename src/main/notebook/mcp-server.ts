@@ -184,7 +184,31 @@ const bindRuntimeToolSchema = {
 
 const userChoiceOptionSchema = z.object({
   label: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS).regex(/\S/),
-  description: z.string().trim().min(1).max(MAX_ELICITATION_MESSAGE_CHARS).optional()
+  description: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_ELICITATION_MESSAGE_CHARS)
+    .optional()
+    .describe('Additional context when the label alone is unclear.'),
+  pros: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_ELICITATION_MESSAGE_CHARS)
+    .optional()
+    .describe(
+      "One concrete advantage of choosing this option for the user's task. Omit if not applicable."
+    ),
+  cons: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_ELICITATION_MESSAGE_CHARS)
+    .optional()
+    .describe(
+      'One concrete cost, limitation, or prerequisite of choosing this option. Omit if not applicable.'
+    )
 })
 
 const userChoiceQuestionSchema = z.object({
@@ -811,7 +835,9 @@ const compactExecutionOutputs = (
 const BUNDLED_KERNEL_SKILL_PSEUDO_MODULES = new Map([
   ['figure_style', 'figure-style'],
   ['figure_composer', 'figure-composer'],
-  ['paper_narrative', 'paper-narrative']
+  ['paper_narrative', 'paper-narrative'],
+  ['pdf_generation', 'pdf-generation'],
+  ['pptx_generation', 'pptx-generation']
 ])
 
 // Projects one immediate execution result for the next model step. Code, roots, provenance, and
@@ -1624,7 +1650,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'ask_user_question',
     title: 'Ask the user to choose',
     description:
-      '1-3 questions, 2-16 uniquely labeled options each; kind sets single/multi choice. Never list options or "Other" in text; the UI adds custom, let-agent-decide and Skip. Multi-select answer: JSON label array. "pending": end the turn; answers arrive next message.',
+      '1-3 questions, 2-16 uniquely labeled options each; kind sets single/multi choice. Never list options or "Other" in text; the UI adds custom, let-agent-decide and Skip. Multi-select answer: JSON label array. "pending": end the turn; answers arrive next message. Include pros and/or cons only for meaningful trade-offs. Use the user\'s language and omit unsupported claims.',
     method: 'requestUserInput',
     inputSchema: requestUserInputToolSchema,
     mapResult: compactUserChoiceResult,

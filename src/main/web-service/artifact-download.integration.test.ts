@@ -214,8 +214,14 @@ it.each(['historical', 'native'] as const)(
       expect(newer.artifactId).toBe(version.artifactId)
       expect(await readFile(version.path, 'utf8')).toBe(content)
       const emptyCommands = { commandNames: () => [], invoke: async () => undefined }
+      let pairedCurrent = true
+      let revokeOnOpen = false
       server = await startWebHttpServer({
-        fetchPreview: protocol,
+        fetchPreview: async (request) => {
+          const upstream = await protocol(request)
+          if (revokeOnOpen) pairedCurrent = false
+          return upstream
+        },
         host: '127.0.0.1',
         port: 0,
         token: 'synthetic-download-token',
@@ -223,6 +229,17 @@ it.each(['historical', 'native'] as const)(
         applicationCommands: {
           localWeb: emptyCommands,
           remoteWeb: { ...emptyCommands, rejectedCommandNames: () => [] }
+        },
+        externalAccess: {
+          authorizeHttp: async (request) =>
+            request.headers.authorization === 'Bearer paired-fixture'
+              ? {
+                  kind: 'authorized',
+                  principalId: 'paired-fixture',
+                  isCurrent: () => pairedCurrent
+                }
+              : 'denied',
+          authorizeWebSocket: async () => undefined
         },
         applicationEvents: new ApplicationEventHub(),
         tasks,
@@ -250,7 +267,7 @@ it.each(['historical', 'native'] as const)(
       expect(listed).toHaveLength(1)
       expect(listed[0].id).toBe(version.versionId)
       const httpResponse = await fetch(`${baseUrl}/api/v1/artifacts/${listed[0].id}/content`, {
-        headers: { authorization: 'Bearer synthetic-download-token' }
+        headers: { authorization: 'Bearer paired-fixture' }
       })
       const httpBody = await httpResponse.text()
       expect({ status: httpResponse.status, body: httpBody }).toEqual({
@@ -277,13 +294,21 @@ it.each(['historical', 'native'] as const)(
       for (const resourceId of acquiredIds) {
         await expect(resources.resolveProtocolResource(resourceId)).rejects.toThrow()
       }
+      // Losing authorization after opening the file must still retire its remote owner's resource.
+      revokeOnOpen = true
+      const revoked = await fetch(`${baseUrl}/api/v1/artifacts/${listed[0].id}/content`, {
+        headers: { authorization: 'Bearer paired-fixture' }
+      })
+      expect(revoked.status).toBe(401)
+      expect(acquiredIds).toHaveLength(4)
+      await expect(resources.resolveProtocolResource(acquiredIds[3])).rejects.toThrow()
       // The same Session record must not make finalized-but-unpublished bytes downloadable.
       await fixture.client.artifactVersion.update({
         where: { id: version.versionId },
         data: { managedVisibleAt: null }
       })
       await expect(client.downloadArtifact(listed[0].id)).rejects.toMatchObject({ status: 500 })
-      expect(acquiredIds).toHaveLength(3)
+      expect(acquiredIds).toHaveLength(4)
       await fixture.client.artifactVersion.update({
         where: { id: version.versionId },
         data: { managedVisibleAt: new Date() }
@@ -298,7 +323,7 @@ it.each(['historical', 'native'] as const)(
       })
       // A listed id and a known path cannot grant access across the Session's Project boundary.
       await expect(client.downloadArtifact(listed[0].id)).rejects.toMatchObject({ status: 500 })
-      expect(acquiredIds).toHaveLength(3)
+      expect(acquiredIds).toHaveLength(4)
       // Download must not repair historical records by writing back to Session storage.
       expect((await sessions.loadSession(session.projectId, session.id))?.artifacts).toEqual(
         session.artifacts

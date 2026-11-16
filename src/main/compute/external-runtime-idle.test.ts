@@ -114,7 +114,7 @@ describe('external runtime idle cadence', () => {
     )
   })
 
-  it('stops Ray active polling after publication is already recorded', async () => {
+  it('stops Ray active polling after cleanup settles', async () => {
     const job = baseJob('ray_jobs')
     job.remote_handle = initialRayJournal(job.job_id, job.provider_id, {
       endpoint: 'https://ray.example',
@@ -124,15 +124,21 @@ describe('external runtime idle cadence', () => {
       cpus: 1,
       gpus: 0
     })
+    const settleRayCleanup = vi.fn(async () => ({
+      ...job,
+      remote_cleanup_disposition: 'cleaned' as const
+    }))
     await assertIdleRuntime((findWork) =>
       createRayJobRuntime({
         jobRepository: {
-          findRayWork: findWork.mockImplementation(async () => [{ ...job, harvested_at: 1 }])
+          findRayWork: findWork.mockImplementationOnce(async () => [job]),
+          settleRayCleanup
         } as unknown as ComputeJobRepository,
         storageRoot: '/data',
         onJobUpdated: vi.fn(),
         harvest: vi.fn(async () => undefined)
       })
     )
+    expect(settleRayCleanup).toHaveBeenCalledExactlyOnceWith(job)
   })
 })

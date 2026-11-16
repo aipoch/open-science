@@ -2519,7 +2519,9 @@ if (process.argv.includes('--version')) {
           })
           reply = ''
         } else if (prompt.includes('Run the tool collapse scroll probe.')) {
-          const gates = JSON.parse(prompt.split('Probe gates: ')[1])
+          const gatesPayload = prompt.match(/Probe gates: (\{[^\r\n]+\})/u)?.[1]
+          if (!gatesPayload) throw new Error('Missing collapse probe gates.')
+          const gates = JSON.parse(gatesPayload)
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {

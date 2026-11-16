@@ -48,6 +48,7 @@ import {
   HOST_MESSAGE_MCP_SERVER_NAME,
   HOST_SEND_MESSAGE_TOOL_NAME
 } from '../side-chat/host-message-mcp-server'
+import { PPTX_MCP_SERVER_NAME, type PptxMcpHandler } from '../pptx-edit/mcp-server'
 import type { AgentMcpHttpHost, ServerKind } from './mcp-http-host'
 import {
   captureShellRuntimeBinding,
@@ -69,6 +70,7 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'schedule',
   'literature-library',
   'literature',
+  'pptx',
   'host-agents',
   'host-skills',
   'host-frames',
@@ -311,6 +313,9 @@ type SessionCapabilityOwnerOptions = {
       projectId: string,
       workspaceCwd: string
     ) => LiteratureLibraryMcpHandler
+  }>
+  pptx?: Readonly<{
+    handlerFor: (appSessionId: string, projectId: string) => PptxMcpHandler
   }>
   mcpHttpHost?: AgentMcpHttpHost
   schedules?: import('../schedules/mcp').ScheduleMcp
@@ -688,6 +693,18 @@ export class AcpSessionCapabilityOwner {
             this.options.library.handlerFor(appSessionId, request.projectId, request.sessionCwd)
           )
         }
+        if (
+          built.descriptor.capabilities.includes('pptx') &&
+          routingIds.literature &&
+          routingIds.literature !== appSessionId &&
+          this.options.pptx &&
+          this.options.mcpHttpHost
+        ) {
+          this.options.mcpHttpHost.registerPptx(
+            routingIds.literature,
+            this.options.pptx.handlerFor(appSessionId, request.projectId)
+          )
+        }
         if (request.setupSessionToken && preparedSetupSessionId !== appSessionId) {
           throw new Error('WSL setup Session capability was not prepared.')
         }
@@ -713,6 +730,7 @@ export class AcpSessionCapabilityOwner {
             literature: routingIds.literature,
             library: routingIds.literature,
             schedule: routingIds.literature,
+            pptx: routingIds.literature,
             skills: skillRuntimeRoutingId
           }
           for (const kind of Object.keys(receiptRoutes) as ServerKind[]) {
@@ -888,6 +906,10 @@ export class AcpSessionCapabilityOwner {
       policyAllowsSessionCapability(request.policy, 'literature-library') &&
       Boolean(this.options.library) &&
       Boolean(this.options.mcpHttpHost)
+    const pptxAllowed =
+      policyAllowsSessionCapability(request.policy, 'pptx') &&
+      Boolean(this.options.pptx) &&
+      Boolean(this.options.mcpHttpHost)
     const literatureHandler =
       literatureAllowed && this.options.literature
         ? this.options.literature.handlerFor(request.routingIds.literature, request.projectId)
@@ -987,6 +1009,23 @@ export class AcpSessionCapabilityOwner {
         headers: [{ name: 'authorization', value: 'Bearer ' + token }]
       })
     }
+    if (
+      pptxAllowed &&
+      this.options.pptx &&
+      this.options.mcpHttpHost &&
+      this.canPublishHttpRoute(request)
+    ) {
+      const host = this.options.mcpHttpHost
+      const { token } = await host.ensureStarted()
+      const routingId = request.routingIds.literature
+      host.registerPptx(routingId, this.options.pptx.handlerFor(routingId, request.projectId))
+      servers.push({
+        type: 'http',
+        name: PPTX_MCP_SERVER_NAME,
+        url: host.urlFor('pptx', routingId),
+        headers: [{ name: 'authorization', value: `Bearer ${token}` }]
+      })
+    }
     const modelFacingServers = servers.map((server) => {
       const name = (server as { name?: unknown }).name
       if (typeof name !== 'string') return server
@@ -1012,6 +1051,7 @@ export class AcpSessionCapabilityOwner {
     if (canonicalMcpServerNames.includes(LITERATURE_LIBRARY_MCP_SERVER_NAME)) {
       capabilities.push('literature-library')
     }
+    if (canonicalMcpServerNames.includes(PPTX_MCP_SERVER_NAME)) capabilities.push('pptx')
     if (canonicalMcpServerNames.includes(HOST_MESSAGE_MCP_SERVER_NAME)) {
       capabilities.push('host-message')
     }
@@ -1093,6 +1133,7 @@ export class AcpSessionCapabilityOwner {
               }
             : false,
           skillImport: capabilities.includes('skill-import'),
+          pptx: capabilities.includes('pptx'),
           literature: literatureAllowed
             ? {
                 elements: Boolean(literatureHandler?.elements),
@@ -1109,7 +1150,8 @@ export class AcpSessionCapabilityOwner {
           // bridge-wide declaration; tools are still advertised only when the capability mounts.
           namespaceFor(SKILL_IMPORT_MCP_SERVER_NAME),
           namespaceFor(LITERATURE_LIBRARY_MCP_SERVER_NAME),
-          namespaceFor(LITERATURE_MCP_SERVER_NAME)
+          namespaceFor(LITERATURE_MCP_SERVER_NAME),
+          namespaceFor(PPTX_MCP_SERVER_NAME)
         ]
       : []
 
@@ -1192,6 +1234,12 @@ export class AcpSessionCapabilityOwner {
         this.options.mcpHttpHost.registerLiteratureLibrary(
           routingId,
           this.options.library.handlerFor(appSessionId, projectId, workspaceCwd)
+        )
+      }
+      if (descriptor.capabilities.includes('pptx') && this.options.pptx) {
+        this.options.mcpHttpHost.registerPptx(
+          routingId,
+          this.options.pptx.handlerFor(appSessionId, projectId)
         )
       }
     } catch (error) {
@@ -1420,6 +1468,7 @@ export class AcpSessionCapabilityOwner {
     if (descriptor.capabilities.includes('literature')) ownedServers.add(LITERATURE_MCP_SERVER_NAME)
     if (descriptor.capabilities.includes('literature-library'))
       ownedServers.add(LITERATURE_LIBRARY_MCP_SERVER_NAME)
+    if (descriptor.capabilities.includes('pptx')) ownedServers.add(PPTX_MCP_SERVER_NAME)
     for (const identity of appMcpToolIdentities()) {
       const slash = identity.indexOf('/')
       if (slash > 0 && ownedServers.has(identity.slice(0, slash))) allowed.add(identity)

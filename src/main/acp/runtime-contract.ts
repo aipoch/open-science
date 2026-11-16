@@ -189,6 +189,9 @@ export type AcpRuntimeOptions = {
       input: LiteratureReadDocumentRequest
     }) => Promise<unknown>
   }>
+  pptx?: Readonly<{
+    agent: import('../pptx-edit/agent-handler').PptxAgentHandler
+  }>
   literatureLibrary?: Readonly<{
     acquirePdf?: (request: {
       candidate: LiteratureLibraryDiscovery

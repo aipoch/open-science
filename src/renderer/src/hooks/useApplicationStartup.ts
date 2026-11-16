@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { StorageInfo, StorageStatus } from '../../../shared/storage'
 import { useDeepLinkNavigation } from '@/lib/deep-link'
@@ -59,6 +59,7 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
 
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const loadDeletionCleanup = useProjectStore((state) => state.loadDeletionCleanup)
+  const projectLoadError = useProjectStore((state) => state.loadError)
   const isSettingsLoaded = useSettingsStore((state) => state.isLoaded)
   const isSettingsLoading = useSettingsStore((state) => state.isLoading)
   const settingsLoadAttempt = useSettingsStore((state) => state.settingsLoadGeneration)
@@ -75,6 +76,7 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
   const retryEnvironment = useNotebookEnvStore((state) => state.retry)
   const [missingDataRoot, setMissingDataRoot] = useState<string>()
   const [legacyMove, setLegacyMove] = useState<LegacyDataMove>()
+  const previousSessionLoading = useRef(sessions.isLoading)
 
   const applyStorageStatus = useCallback((status: StorageStatus): void => {
     if (status.dataRootMissing) setMissingDataRoot(status.dataRoot)
@@ -117,13 +119,30 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
       .catch(() => undefined)
   }, [loadStorageStatus])
 
+  // Project metadata is independent of Session body hydration. Start it as soon as Settings has
+  // selected the application route so the home navigation can arrive while the Session catalog is
+  // still loading. A failed early read is retried by the guarded effect below after hydration.
+  useEffect(() => {
+    if (!isSettingsLoaded) return
+    void loadProjects()
+  }, [isSettingsLoaded, loadProjects])
+
   // A successful Session retry re-runs this effect and clears a Project-list error caused by the
   // same transient storage outage.
   useEffect(() => {
-    if (!isSettingsLoaded || !sessions.isHydrated || sessions.isLoading) return
-    void loadProjects()
+    const wasLoading = previousSessionLoading.current
+    previousSessionLoading.current = sessions.isLoading
+    if (!isSettingsLoaded || !sessions.isHydrated || sessions.isLoading || !wasLoading) return
+    if (projectLoadError) void loadProjects()
     void loadDeletionCleanup()
-  }, [isSettingsLoaded, loadDeletionCleanup, loadProjects, sessions.isHydrated, sessions.isLoading])
+  }, [
+    isSettingsLoaded,
+    loadDeletionCleanup,
+    loadProjects,
+    projectLoadError,
+    sessions.isHydrated,
+    sessions.isLoading
+  ])
 
   // Hydrate the persisted framework before checking it so the launch probe uses the selected runtime.
   useEffect(() => {

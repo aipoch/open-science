@@ -14,6 +14,7 @@ import {
   type Annotation,
   type ImagePointAnnotation,
   type PdfAnnotation,
+  type PptSlideAnnotation,
   type TextAnnotation
 } from './annotations'
 
@@ -599,5 +600,68 @@ describe('annotations', () => {
       false
     )
     expect(imageAnnotationSourceIsFixed({ ...source, mimeType: 'image/gif' })).toBe(false)
+  })
+})
+
+const slideAnnotation = (overrides: Partial<PptSlideAnnotation> = {}): PptSlideAnnotation => ({
+  id: 'slide-1',
+  kind: 'pptx-slide',
+  target: 'agent',
+  note: 'Shorten the title.',
+  source: {
+    kind: 'artifact-version',
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    versionId: 'version-1',
+    name: 'deck.pptx',
+    path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+  },
+  slideId: 257,
+  slideIndex: 1,
+  shapeId: 4,
+  ...overrides
+})
+
+describe('PowerPoint slide annotations', () => {
+  it('keeps a valid slide annotation and rejects malformed anchors', () => {
+    const valid = slideAnnotation({ region: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 } })
+    expect(sanitizeAnnotations([valid])).toEqual([valid])
+    for (const bad of [
+      slideAnnotation({ note: ' ' }),
+      slideAnnotation({ slideId: -1 }),
+      slideAnnotation({ slideIndex: 1.5 }),
+      slideAnnotation({ shapeId: -3 }),
+      slideAnnotation({ region: { x: 0.9, y: 0, width: 0.5, height: 0.1 } })
+    ]) {
+      expect(sanitizeAnnotations([bad])).toEqual([])
+    }
+  })
+
+  it('requires a fixed version source', () => {
+    expect(validateAnnotations([slideAnnotation()])).toBeUndefined()
+    const mutable = slideAnnotation({
+      source: { ...slideAnnotation().source, path: '/mutable/deck.pptx' }
+    })
+    expect(validateAnnotations([mutable])).toBe('invalid')
+  })
+
+  it('delivers slide, shape and note without attaching an image', () => {
+    const prepared = prepareAnnotationsForAgent('Fix it', [slideAnnotation()])
+    expect(prepared.images).toBeUndefined()
+    expect(prepared.promptText).toContain('"type":"pptx-slide"')
+    expect(prepared.promptText).toContain(
+      '"path":"artifact-version:project-1/session-1/artifact-1/version-1"'
+    )
+    expect(prepared.promptText).toContain('"slideId":257')
+    expect(prepared.promptText).toContain('"shapeId":4')
+    expect(prepared.promptText).toContain('"instruction":"Shorten the title."')
+    expect(annotationRequiresImageInput(slideAnnotation())).toBe(false)
+  })
+
+  it('serializes to a quote for Side chat', () => {
+    const text = sideChatAnnotationText('Fix it', [slideAnnotation()])
+    expect(parseSideChatAnnotationText(text)?.items).toEqual([
+      expect.objectContaining({ type: 'quote', instruction: 'Shorten the title.' })
+    ])
   })
 })

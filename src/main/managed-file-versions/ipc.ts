@@ -6,6 +6,7 @@ import type {
   ManagedFileVersionInspectRequest,
   ManagedFileVersionInspectResult,
   ManagedFileVersionIpcResult,
+  ManagedFileVersionSaveBinaryEditRequest,
   ManagedFileVersionSaveTextEditRequest,
   ManagedFileVersionCancelDiffRequest,
   ManagedFileVersionDiffRequest,
@@ -20,6 +21,7 @@ type ManagedFileVersionIpcService = {
   diffText(request: ManagedFileVersionDiffRequest): Promise<ManagedFileVersionDiffResult>
   cancelDiff(requestId: string): boolean
   saveTextEdit(request: ManagedFileVersionSaveTextEditRequest): Promise<SaveTextEditResult>
+  saveBinaryEdit(request: ManagedFileVersionSaveBinaryEditRequest): Promise<SaveTextEditResult>
 }
 
 type ManagedFileVersionHandlerDependencies = {
@@ -39,6 +41,9 @@ type ManagedFileVersionHandlers = {
   ): ManagedFileVersionIpcResult<{ cancelled: boolean }>
   saveTextEdit(
     request: ManagedFileVersionSaveTextEditRequest
+  ): Promise<ManagedFileVersionIpcResult<SaveTextEditResult>>
+  saveBinaryEdit(
+    request: ManagedFileVersionSaveBinaryEditRequest
   ): Promise<ManagedFileVersionIpcResult<SaveTextEditResult>>
 }
 
@@ -82,12 +87,25 @@ const createManagedFileVersionHandlers = (
         })
       }
       return result
+    }),
+  saveBinaryEdit: (request) =>
+    rendererResult(async () => {
+      const result = await dependencies.withDataRootWrite(() => service.saveBinaryEdit(request))
+      if (result.kind === 'created' && !result.replayed) {
+        dependencies.onChanged?.({
+          projectId: request.projectId,
+          sources: [request.source],
+          kind: 'upsert'
+        })
+      }
+      return result
     })
 })
 
 export type ManagedFileVersionCommandOwner = Readonly<{
   inspect: ManagedFileVersionHandlers['inspect']
   saveTextEdit: ManagedFileVersionHandlers['saveTextEdit']
+  saveBinaryEdit: ManagedFileVersionHandlers['saveBinaryEdit']
   diffText(
     invocation: ApplicationInvocation<readonly [ManagedFileVersionDiffRequest]>
   ): ReturnType<ManagedFileVersionHandlers['diffText']>
@@ -114,6 +132,7 @@ export const createManagedFileVersionCommandOwner = (
   return {
     inspect: handlers.inspect,
     saveTextEdit: handlers.saveTextEdit,
+    saveBinaryEdit: handlers.saveBinaryEdit,
     diffText: async ({ callerLease, args: [request] }) => {
       if (
         callerLease.signal.aborted ||
@@ -177,6 +196,10 @@ const registerManagedFileVersionIpcHandlers = (owner: ManagedFileVersionCommandO
   ipcMainHandle(
     'managed-file-versions:save-text-edit',
     (_event, request: ManagedFileVersionSaveTextEditRequest) => owner.saveTextEdit(request)
+  )
+  ipcMainHandle(
+    'managed-file-versions:save-binary-edit',
+    (_event, request: ManagedFileVersionSaveBinaryEditRequest) => owner.saveBinaryEdit(request)
   )
   ipcMainHandle(
     'managed-file-versions:diff-text',

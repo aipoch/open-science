@@ -421,7 +421,11 @@ export const sessionFileVersionIds = (session: PersistedChatSession): string[] =
   for (const message of session.conversationGraph?.messages ?? session.messages) {
     for (const binding of message.pdfContext?.bindings ?? []) ids.add(binding.sourceVersionId)
     for (const annotation of message.annotations ?? []) {
-      if (annotation.kind === 'pdf' || annotation.kind === 'image-point')
+      if (
+        annotation.kind === 'pdf' ||
+        annotation.kind === 'image-point' ||
+        annotation.kind === 'pptx-slide'
+      )
         ids.add(annotation.source.versionId)
       else if (annotation.source.kind === 'project-file') {
         const identity = resolveManagedProjectFileAnnotationIdentity(annotation.source)

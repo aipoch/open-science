@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "helpers": [
+    {
+      "id": "pdf-generation",
+      "language": "python",
+      "interfaceRevision": 1,
+      "implementation": "kernel.py",
+      "exports": [
+        "register_pdf_fonts",
+        "render_pdf_pages",
+        "inspect_pdf",
+        "pdf_form_fields",
+        "fill_pdf_form"
+      ],
+      "dependencies": []
+    }
+  ]
+}
