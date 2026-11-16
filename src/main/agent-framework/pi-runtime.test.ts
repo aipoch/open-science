@@ -120,7 +120,7 @@ it.each(['compatible', 'wrong-version', 'invalid-json', 'timeout', 'cleanup-fail
     })
     const spawn =
       process.platform === 'win32'
-        ? vi.mocked(windowsOwnedProcess.spawnWindowsOwnedProcess).mockReturnValue(child)
+        ? vi.mocked(windowsOwnedProcess.spawnWindowsOwnedProcess).mockReturnValue(child as never)
         : vi.spyOn(childProcess, 'spawn').mockReturnValue(child)
     spawn.mockClear()
     const options = { configRoot: join(tmpdir(), 'pi-probe-fixture') }
