@@ -39,7 +39,10 @@ export const useComposerNotices = (input: {
       recoveryCause: recovery.cause,
       occurredAt: turn?.outcome.settledAt ?? 0,
       blocksSend: true,
-      failure: classifyFailure({ origin: 'session', text: recovery.error })
+      failure:
+        turn?.outcome.kind === 'interrupted' && turn.outcome.failure?.diagnostics.protocol
+          ? turn.outcome.failure
+          : classifyFailure({ origin: 'session', text: recovery.error })
     })
   if (turn?.outcome.kind === 'failed')
     notices.push({
@@ -113,7 +116,7 @@ export const useComposerNotices = (input: {
       .filter((notice) => !dismissed.has(notice.id))
       .sort((a, b) => noticePriority(a) - noticePriority(b) || b.occurredAt - a.occurredAt),
     dismiss: (notice) => {
-      if (notice.failure.category === 'session') return
+      if (notice.source === 'session' || notice.failure.category === 'session') return
       setDismissed((current) => new Set([...current, notice.id]))
     }
   }

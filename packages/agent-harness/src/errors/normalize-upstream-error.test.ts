@@ -48,6 +48,20 @@ it('does not wait indefinitely for an error body that never ends', async () => {
   expect(response.body?.locked).toBe(false)
 }, 5000)
 
+it.each([16_384, 16_385])('distinguishes EOF from overflow at %i bytes', async (size) => {
+  const body = { error: { message: 'Error at byte limit' }, padding: '' }
+  body.padding = 'x'.repeat(size - Buffer.byteLength(JSON.stringify(body)))
+  const response = await upstream((reply) => {
+    reply.writeHead(422, { 'content-type': 'application/json', 'x-request-id': 'limit-request' })
+    reply.end(JSON.stringify(body))
+  })
+  expect(await normalizeUpstreamError(response, new AbortController().signal)).toEqual({
+    requestId: 'limit-request',
+    ...(size === 16_384 ? { safeMessage: body.error.message } : {})
+  })
+  expect(response.body?.locked).toBe(false)
+})
+
 it('keeps user cancellation distinct from an HTTP failure while releasing the body', async () => {
   const response = await upstream((reply) => {
     reply.writeHead(400, { 'content-type': 'application/json' })

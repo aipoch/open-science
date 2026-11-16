@@ -98,11 +98,14 @@ const ComposerFailureNoticeSlot = ({
     ? undefined
     : current.failure.responseMessage
   const title = providerMessage ? t('Model provider error') : t(presentation.titleKey)
-  const description = providerMessage
-    ? providerMessage.startsWith('{') || providerMessage.startsWith('[')
-      ? ''
+  const description =
+    current.source === 'session' && current.failure.diagnostics.protocol
+      ? t('This turn was interrupted. Resume to continue.')
       : providerMessage
-    : t(presentation.descriptionKey)
+        ? providerMessage.startsWith('{') || providerMessage.startsWith('[')
+          ? ''
+          : providerMessage
+        : t(presentation.descriptionKey)
   const diagnosticText = formatNoticeDiagnostics(current, title, description)
   const diagnosticFields = Object.entries(current.failure.diagnostics).filter(
     ([key, value]) =>
@@ -150,12 +153,17 @@ const ComposerFailureNoticeSlot = ({
   const available = (action: NoticeActionId, notice = current): boolean =>
     action === 'copy-error' ||
     Boolean(handlers[action] && (handlers[action]?.available?.(notice) ?? true))
-  const primary =
-    presentation.primaryAction && available(presentation.primaryAction)
-      ? presentation.primaryAction
-      : presentation.primaryAction === 'open-environment' && available('retry')
-        ? 'retry'
-        : undefined
+  const primaryAction = (notice: ComposerNotice): NoticeActionId | undefined => {
+    const action = noticePresentation(notice.failure).primaryAction
+    return notice.source === 'session' && available('resume', notice)
+      ? 'resume'
+      : action && available(action, notice)
+        ? action
+        : action === 'open-environment' && available('retry', notice)
+          ? 'retry'
+          : undefined
+  }
+  const primary = primaryAction(current)
   const actionButton = (
     action: NoticeActionId,
     notice: ComposerNotice,
@@ -295,7 +303,7 @@ const ComposerFailureNoticeSlot = ({
                         }
                       />
                     </button>
-                    {item.primaryAction ? actionButton(item.primaryAction, notice) : null}
+                    {primaryAction(notice) ? actionButton(primaryAction(notice)!, notice) : null}
                   </li>
                 )
               })}
@@ -399,7 +407,7 @@ const ComposerFailureNoticeSlot = ({
           </>
         }
         dismissButton={
-          onDismiss
+          onDismiss && current.source !== 'session'
             ? {
                 label: t('Dismiss error'),
                 onClick: () => {

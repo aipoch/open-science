@@ -100,7 +100,11 @@ const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Hea
 const responseHeaders = (source: Headers): Record<string, string> => {
   const headers: Record<string, string> = {}
   for (const [name, value] of source) {
-    if (!HOP_BY_HOP_HEADERS.has(name.toLowerCase())) headers[name] = value
+    if (
+      !HOP_BY_HOP_HEADERS.has(name.toLowerCase()) &&
+      name.toLowerCase() !== 'x-open-science-provider-failure'
+    )
+      headers[name] = value
   }
   return headers
 }
@@ -249,12 +253,20 @@ export class ProtocolForwardingBridge {
     const transport: typeof fetch = connection
       ? (url, init) => this.fetchImpl(url, { ...init, redirect: 'error', credentials: 'omit' })
       : this.fetchImpl
-    const upstream = await fetchProviderRequest(transport, endpoint, {
-      method: 'POST',
-      headers: headersToForward,
-      body,
-      signal: request.signal
-    })
+    let upstream: Response
+    try {
+      upstream = await fetchProviderRequest(transport, endpoint, {
+        method: 'POST',
+        headers: headersToForward,
+        body,
+        signal: request.signal
+      })
+    } catch (error) {
+      // 这是宿主建立上游连接失败，不是服务商返回的 HTTP 502。
+      if (!request.signal.aborted)
+        response.setHeader('x-open-science-provider-failure', 'connection')
+      throw error
+    }
     if (connection && !upstream.ok) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })
       let code = 'provider_error'

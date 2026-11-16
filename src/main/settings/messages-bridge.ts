@@ -105,7 +105,11 @@ const requestHeaders = (
 const responseHeaders = (source: Headers): Record<string, string> => {
   const headers: Record<string, string> = {}
   for (const [name, value] of source) {
-    if (!HOP_BY_HOP_HEADERS.has(name.toLowerCase())) headers[name] = value
+    if (
+      !HOP_BY_HOP_HEADERS.has(name.toLowerCase()) &&
+      name.toLowerCase() !== 'x-open-science-provider-failure'
+    )
+      headers[name] = value
   }
   return headers
 }
@@ -233,6 +237,8 @@ export class MessagesBridge {
         }
       )
     } catch (error) {
+      if (!request.signal.aborted)
+        response.setHeader('x-open-science-provider-failure', 'connection')
       const origin = upstreamOrigin(baseUrl)
       this.diagnostics.error('anthropic provider request failed', {
         targetId: target.id,

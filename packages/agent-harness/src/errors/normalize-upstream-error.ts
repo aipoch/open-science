@@ -91,7 +91,7 @@ export const normalizeUpstreamError = async (
   }
   stop.addEventListener('abort', cancel, { once: true })
   try {
-    while (!stop.aborted && size < MAX_ERROR_BODY_BYTES) {
+    while (!stop.aborted) {
       const chunk = await Promise.race([reader.read(), cancelled])
       if (!chunk) break
       if (chunk.done) {
@@ -99,9 +99,12 @@ export const normalizeUpstreamError = async (
         body += decoder.decode()
         break
       }
-      const part = chunk.value.subarray(0, MAX_ERROR_BODY_BYTES - size)
+      const remaining = MAX_ERROR_BODY_BYTES - size
+      const part = chunk.value.subarray(0, remaining)
       size += part.byteLength
       body += decoder.decode(part, { stream: true })
+      // 恰好达到上限仍需确认 EOF；只有多出字节才判为截断，额外字节不保留。
+      if (chunk.value.byteLength > remaining) break
     }
   } catch {
     // 上游中断时仍保留响应头的 request-id；不把异常或请求信息写进诊断。
