@@ -22,6 +22,7 @@ import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 import {
   ProcessTreeUnavailableError,
   assertProcessTreeSupport,
+  capturePosixProcessTreeIdentity,
   createPosixProcessTreeOwnership,
   terminateProcessTree,
   trackOwnedPosixProcessTree,
@@ -779,6 +780,10 @@ const runShellCommand = (
     return new Promise((resolve) => {
       let releaseProcessOwnership: (() => void) | undefined
       try {
+        if (gateLaunch && child.pid !== undefined && !capturePosixProcessTreeIdentity(child)) {
+          child.stdio[3]?.destroy()
+          throw new Error('Shell launch ownership could not be confirmed.')
+        }
         releaseProcessOwnership = launchOwnership
           ? launchOwnership.claim(child, platform)
           : options.claimProcess?.(child, platform)

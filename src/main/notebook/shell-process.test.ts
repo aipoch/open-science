@@ -1266,6 +1266,40 @@ describe('notebook shell process behavior', () => {
       expect(cleanup).toHaveBeenCalledOnce()
     })
 
+    it.runIf(process.platform === 'darwin')(
+      'withholds the workload when birth proof is missing',
+      async () => {
+        const marker = join(runtimeRoot, 'unproven-workload')
+        const proof = vi
+          .spyOn(processTree, 'capturePosixProcessTreeIdentity')
+          .mockReturnValue(undefined)
+        try {
+          const result = await runShellCommand({
+            command: 'unused',
+            processSandbox: {
+              wrap: async (invocation) => ({
+                executable: '/bin/sh',
+                args: ['-c', 'printf ran > "$1"', 'test-shell', marker],
+                env: invocation.env,
+                annotateStderr: (stderr) => stderr,
+                cleanup: vi.fn()
+              })
+            },
+            cwd: runtimeRoot,
+            handoffDir: runtimeRoot,
+            runtimeRoot,
+            sessionId: 'missing-birth',
+            projectId: 'project-1'
+          })
+          expect(existsSync(marker)).toBe(false)
+          expect(result.exitCode).toBeNull()
+          expect(result.stderr).toContain('ownership')
+        } finally {
+          proof.mockRestore()
+        }
+      }
+    )
+
     it.skipIf(process.platform !== 'darwin')(
       'does not release the launch gate when cancelled during ownership claim',
       async () => {
