@@ -760,7 +760,7 @@ test('reviews classified papers in the library table using a local fixture servi
     ).toBeVisible()
     await page.setViewportSize({ width: 1024, height: 768 })
     await page.screenshot({ path: testInfo.outputPath('smart-collection-compact.png') })
-    await app.setMainWindowSize(1440, 1048)
+    await app.setMainWindowSizeAndViewport(1440, 1048)
     await page.getByRole('tab', { name: 'Included 3', exact: true }).click()
     const decisionSource = page.getByRole('combobox', { name: 'Decision source', exact: true })
     await decisionSource.click()

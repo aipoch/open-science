@@ -425,6 +425,7 @@ type ElectronApp = {
   captureResourceTimings: (prefix?: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
   setMainWindowSize: (width: number, height: number) => Promise<void>
+  setMainWindowSizeAndViewport: (width: number, height: number) => Promise<void>
   auditSourceAttachments: () => Promise<JSHandle<boolean[]>>
   pressSourcePreviewShortcut: (
     url: string,
@@ -1634,6 +1635,14 @@ class ElectronAppHarness implements ElectronApp {
       },
       { width, height }
     )
+  }
+
+  async setMainWindowSizeAndViewport(width: number, height: number): Promise<void> {
+    await this.page.setViewportSize({ width, height })
+    await this.setMainWindowSize(width, height)
+    await expect
+      .poll(() => this.page.evaluate(() => ({ width: innerWidth, height: innerHeight })))
+      .toEqual({ width, height })
   }
 
   async pressSourcePreviewShortcut(
