@@ -158,6 +158,47 @@ describe('Windows installer smoke plan', () => {
     }
   )
 
+  it.skipIf(process.platform !== 'win32')(
+    'does not terminate an external process whose command line mentions the owned root',
+    async () => {
+      let result: Awaited<ReturnType<typeof runProcess>> | undefined
+      await terminateDirectoryProcesses(
+        'D:\\owned smoke root',
+        async (executable, args, options) => {
+          const script = args[3]
+          const probe = `
+function Get-CimInstance {
+  param([string]$ClassName)
+  @(
+    [pscustomobject]@{
+      ExecutablePath = 'D:\\other\\windows-uninstall-helper.exe'
+      CommandLine = '"D:\\owned smoke root\\windows-uninstall-helper.exe" cleanup'
+      ProcessId = 101
+    }
+    [pscustomobject]@{
+      ExecutablePath = 'D:\\owned smoke root\\open-science.exe'
+      CommandLine = '"D:\\owned smoke root\\open-science.exe"'
+      ProcessId = 202
+    }
+  )
+}
+function Stop-Process {
+  param([int]$Id, [switch]$Force, [string]$ErrorAction)
+  [Console]::Write("$Id,")
+}
+${script}`
+          result = await runProcess(executable, [...args.slice(0, 3), probe, ...args.slice(4)], {
+            ...options,
+            allowNonZero: true
+          })
+          return result
+        }
+      )
+      expect(result?.code, result?.stderr).toBe(0)
+      expect(result?.stdout).toBe('202,')
+    }
+  )
+
   it('limits directory process cleanup to executable paths below the owned root', async () => {
     let script
     await terminateDirectoryProcesses('D:\\owned smoke root', async (_executable, args) => {
