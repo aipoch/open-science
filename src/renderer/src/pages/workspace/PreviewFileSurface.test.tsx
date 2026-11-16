@@ -15,6 +15,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
 import { useProjectStore } from '@/stores/project-store'
 import { i18next } from '@/i18n'
+import { installWebRendererContracts } from '../../../web/api-installer'
 import { createNotebookInputPreviewKey } from '../../../../shared/notebook'
 import {
   createInitialSessionState,
@@ -4975,6 +4976,74 @@ describe('PreviewFileSurface file header actions', () => {
       versionNumber: 1
     })
   })
+
+  it.each(['local', 'remote'] as const)(
+    'hides unavailable browser actions on %s Web while keeping downloads usable',
+    async (location) => {
+      // Install the actual Web contract surface; Electron-only actions must stay absent.
+      const webApi: Record<string, unknown> = {}
+      const saveManagedFile = vi.fn().mockResolvedValue({ saved: true })
+      installWebRendererContracts(webApi, {
+        availableRpcChannels: new Set(location === 'local' ? ['artifacts:open-file'] : []),
+        restrictedRpcChannels: new Set(location === 'remote' ? ['artifacts:open-file'] : []),
+        invoke: vi.fn(),
+        subscribe: () => () => undefined,
+        nativeAdapters: { saveManagedFile }
+      })
+      window.api.artifacts = webApi.artifacts as typeof window.api.artifacts
+      window.api.saveManagedFile = webApi.saveManagedFile as typeof window.api.saveManagedFile
+      window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          ...managedInspect,
+          source: 'artifact',
+          fileId: 'artifact-html-1',
+          headVersionId: 'html-v1',
+          selectedVersionId: 'html-v1',
+          canEdit: false,
+          versions: [
+            {
+              ...managedInspect.versions[0],
+              id: 'html-v1',
+              source: 'artifact',
+              fileId: 'artifact-html-1',
+              displayName: 'immersive-showcase.html',
+              contentType: 'text/html'
+            }
+          ]
+        }
+      })
+      await act(async () => {
+        root.render(<PreviewFileSurface item={managedHtmlItem} onClose={vi.fn()} />)
+      })
+
+      expect(container.querySelector('[aria-label="Open in browser"]')).toBeNull()
+      await click(container.querySelector('[aria-label="Download immersive-showcase.html"]'))
+      expect(saveManagedFile).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        container
+          .querySelector('[data-testid="preview-content"]')
+          ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      })
+      const menu = document.body.querySelector('[data-testid="preview-content-context-menu"]')
+      expect(menu).not.toBeNull()
+      expect(menu?.textContent).not.toContain('Open in browser')
+      await clickMenuItem('Download')
+      expect(saveManagedFile).toHaveBeenCalledTimes(2)
+      expect(saveManagedFile).toHaveBeenLastCalledWith({
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: 'artifact-html-1',
+        versionId: 'html-v1',
+        suggestedName: 'immersive-showcase.html'
+      })
+      expect(container.querySelector('[aria-label="Saved immersive-showcase.html"]')).not.toBeNull()
+      expect(
+        document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+      ).toBeNull()
+    }
+  )
 
   it('shows the browser action for extensionless managed HTML MIME previews', async () => {
     await act(async () => {

@@ -1123,6 +1123,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const isLocalHtmlFile = resolvedPreviewItem.source === 'local' && isHtmlFile
     const isManagedArtifactHtmlFile =
       (resolvedPreviewItem.source ?? 'artifact') === 'artifact' && isHtmlFile
+    // Web does not install this Electron-only action; gate the shared header/menu binding.
+    const canOpenManagedHtmlInBrowser =
+      isManagedArtifactHtmlFile && typeof window.api.artifacts?.openInBrowser === 'function'
 
     const copyPath = async (): Promise<void> => {
       setLocalActionFailure(undefined)
@@ -1699,7 +1702,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
           }
         : {
             ...addPdfBinding,
-            ...(isManagedArtifactHtmlFile
+            ...(canOpenManagedHtmlInBrowser
               ? { 'open-in-browser': { execute: openHtmlInBrowser } }
               : {}),
             ...(visiblePdfContextAction
