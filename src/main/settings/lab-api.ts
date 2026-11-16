@@ -253,7 +253,8 @@ export class LabApi {
               ...(typeof candidate.enabled === 'boolean' ? { enabled: candidate.enabled } : {}),
               ...(typeof candidate.available === 'boolean'
                 ? { available: candidate.available }
-                : {})
+                : {}),
+              ...(isRecord(candidate.capabilities) ? { capabilities: candidate.capabilities } : {})
             }
           ]
         })

@@ -14,7 +14,7 @@ import {
   resolveModelContextWindow
 } from '../../shared/provider-model-policy'
 import { getCustomProviderBaseUrlError } from '../../shared/provider-url-policy'
-import { labModelWireId } from '../../shared/lab'
+import { labModelWireId, readLabModelCapabilities } from '../../shared/lab'
 import { isModelBridgeSupported } from '../../shared/provider-bridge-policy'
 import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
 
@@ -129,6 +129,7 @@ class ProviderRuntimeProjectionOwner {
       models: this.availableModels(provider),
       ...(provider.modelProtocols ? { modelProtocols: provider.modelProtocols } : {}),
       ...(provider.labServerUrl ? { labServerUrl: provider.labServerUrl } : {}),
+      ...(provider.modelCapabilities ? { modelCapabilities: provider.modelCapabilities } : {}),
       maskedKey: hardenKeyMask(provider.keyMask),
       accountEmail: provider.accountEmail,
       hasKey,
@@ -291,13 +292,20 @@ class ProviderRuntimeProjectionOwner {
     if (isLabProvider(provider.type)) {
       const model = modelOverride ?? provider.model ?? provider.fetchedModels?.[0]
       if (!provider.baseUrl) throw new Error('The Lab provider has no server address.')
+      const capabilities = readLabModelCapabilities(provider.modelCapabilities?.[model ?? ''])
       return {
         type: 'lab',
         baseUrl: provider.baseUrl,
         ...(provider.labServerUrl ? { labServerUrl: provider.labServerUrl } : {}),
         ...(model ? { model: labModelWireId(model) } : {}),
+        ...(capabilities?.contextWindow !== undefined
+          ? { contextWindow: capabilities.contextWindow }
+          : {}),
+        ...(capabilities?.maxOutputTokens !== undefined
+          ? { maxOutputTokens: capabilities.maxOutputTokens }
+          : {}),
         apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
-        supportsImageInput: false
+        supportsImageInput: capabilities?.inputModalities.includes('image') ?? false
       }
     }
     if (provider.type === 'official' && provider.vendorId) {
@@ -358,6 +366,15 @@ class ProviderRuntimeProjectionOwner {
   }
 
   private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
+    if (isLabProvider(provider.type)) {
+      // Lab has a heterogeneous catalog; without a selected model there is no single image
+      // capability to advertise. Do not guess from the first catalog entry.
+      return activeModel
+        ? (readLabModelCapabilities(
+            provider.modelCapabilities?.[activeModel]
+          )?.inputModalities.includes('image') ?? false)
+        : false
+    }
     if (isCodexSubscriptionProvider(provider.type)) return true
     if (isClaudeSubscriptionProvider(provider.type)) return true
     if (isXaiSubscriptionProvider(provider.type)) return true

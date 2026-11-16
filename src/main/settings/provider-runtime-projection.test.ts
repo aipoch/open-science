@@ -485,6 +485,50 @@ describe('ProviderRuntimeProjectionOwner', () => {
     )
   })
 
+  it('projects Lab per-model context, output and image capabilities', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'builtin-lab',
+      type: 'lab',
+      name: 'Lab',
+      baseUrl: 'https://lab.example/v1',
+      labServerUrl: 'https://lab.example.com',
+      fetchedModels: ['lab:vision-model', 'lab:text-model'],
+      modelCapabilities: {
+        'lab:vision-model': {
+          reasoning_options: [{ type: 'effort', values: ['low', 'high', 'max'] }],
+          modalities: { input: ['text', 'image'] },
+          limit: { context: 1_000_000, output: 64_000 }
+        },
+        'lab:text-model': { modalities: { input: ['text'] } }
+      }
+    }
+
+    expect(owner.resolveProvider(provider, 'lab:vision-model')).toMatchObject({
+      contextWindow: 1_000_000,
+      maxOutputTokens: 64_000,
+      supportsImageInput: true
+    })
+    expect(owner.resolveProvider(provider, 'lab:text-model')).toMatchObject({
+      supportsImageInput: false
+    })
+    expect(owner.resolveProvider(provider, 'lab:text-model')).not.toHaveProperty('contextWindow')
+    expect(owner.toProviderView(provider, 'lab:vision-model')).toMatchObject({
+      modelCapabilities: provider.modelCapabilities,
+      supportsImageInput: true
+    })
+    expect(owner.toProviderView(provider)).toMatchObject({ supportsImageInput: false })
+    const target = owner.resolveRuntimeTarget(
+      provider,
+      { kind: 'required', model: 'lab:vision-model' },
+      getAgentFramework('open-science-agent')
+    )
+    expect(target.reasoningEffortProfile).toEqual({
+      supported: true,
+      slots: ['low', 'high', 'max', 'max', 'max']
+    })
+  })
+
   it('projects a configured target without mutating or exposing the stored credential', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {

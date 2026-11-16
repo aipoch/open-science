@@ -8,7 +8,8 @@ import {
   labModelSummaries,
   labModelWireId,
   labProviderApiEndpoints,
-  labProtocolsToEndpoints
+  labProtocolsToEndpoints,
+  readLabModelCapabilities
 } from './lab'
 
 describe('Lab shared contract', () => {
@@ -69,5 +70,48 @@ describe('Lab shared contract', () => {
     ])
     expect(models.map((model) => model.id)).toEqual(['lab:a'])
     expect(models[0]?.protocols).toEqual(['chat-completions'])
+  })
+})
+
+describe('readLabModelCapabilities', () => {
+  it('keeps known effort values, modalities and limits', () => {
+    expect(
+      readLabModelCapabilities({
+        reasoning_options: [{ type: 'effort', values: ['low', 'high', 'max'] }],
+        modalities: { input: ['text', ' image ', 'text'] },
+        limit: { context: 1_000_000, output: 64_000 }
+      })
+    ).toEqual({
+      reasoningValues: ['low', 'high', 'max'],
+      inputModalities: ['text', 'image'],
+      contextWindow: 1_000_000,
+      maxOutputTokens: 64_000
+    })
+  })
+
+  it('supports a toggle-only reasoning profile', () => {
+    expect(readLabModelCapabilities({ reasoning_options: [{ type: 'toggle' }] })).toEqual({
+      reasoningToggle: true,
+      inputModalities: []
+    })
+  })
+
+  it('returns an empty profile for an empty capability object', () => {
+    expect(readLabModelCapabilities({})).toEqual({ inputModalities: [] })
+  })
+
+  it('drops malformed values and unknown effort levels', () => {
+    expect(
+      readLabModelCapabilities({
+        reasoning_options: [{ type: 'effort', values: ['low', 'turbo', 3, 'max'] }],
+        modalities: { input: ['image', 4, ''] },
+        limit: { context: '1000', output: -1 }
+      })
+    ).toEqual({
+      reasoningValues: ['low', 'max'],
+      inputModalities: ['image']
+    })
+    expect(readLabModelCapabilities('not-an-object')).toBeUndefined()
+    expect(readLabModelCapabilities(undefined)).toBeUndefined()
   })
 })

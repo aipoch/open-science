@@ -10,6 +10,7 @@ import type {
   CustomReasoningEffortTransport
 } from '@aipoch/providers'
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import type { LabModelCapabilities } from '../../shared/lab'
 import type { ReasoningEffortPresetSetting } from '../../shared/reasoning-effort'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
@@ -111,6 +112,8 @@ export type StoredProvider = {
   // Monotonic per-catalog-write identity used to conditionally clean up a stale Lab catalog without
   // deleting a newer login's record at the same address.
   labCatalogToken?: string
+  // Raw per-model capability documents from Lab, keyed by namespaced stored model id.
+  modelCapabilities?: Record<string, LabModelCapabilities>
   // Non-secret identity returned by xAI after device authorization.
   accountEmail?: string
   keyRef?: string

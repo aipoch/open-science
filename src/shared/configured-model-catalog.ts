@@ -6,7 +6,7 @@ import {
   resolveVendorModelApiEndpoints
 } from '@aipoch/providers'
 import { isModelBridgeSupported } from './provider-bridge-policy'
-import { labModelLabel } from './lab'
+import { labModelLabel, readLabModelCapabilities } from './lab'
 
 import {
   isClaudeSubscriptionProvider,
@@ -92,6 +92,13 @@ export const buildConfiguredModelInventory = (
       return true
     }
     if (isXaiSubscriptionProvider(provider.type)) return isVendorModelMultimodal('xai', model)
+    if (provider.type === 'lab') {
+      return (
+        readLabModelCapabilities(provider.modelCapabilities?.[model])?.inputModalities.includes(
+          'image'
+        ) ?? false
+      )
+    }
     if (provider.type === 'custom') return provider.supportsImageInput === true
     return provider.vendorId ? isVendorModelMultimodal(provider.vendorId, model) : false
   }

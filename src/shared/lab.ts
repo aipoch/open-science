@@ -1,4 +1,4 @@
-import type { ModelProtocol } from '@aipoch/providers'
+import type { ModelProtocol, ModelReasoningEffort } from '@aipoch/providers'
 import { getCustomProviderBaseUrlError } from './provider-url-policy'
 
 // Shared, renderer-safe contract for the optional Lab enterprise provider.
@@ -13,6 +13,9 @@ export const LAB_PROVIDER_ID = 'builtin-lab'
 export const LAB_CLIENT_ID = 'open-science-desktop'
 export const LAB_MODEL_ID_PREFIX = 'lab:'
 export const LAB_CALLBACK_PATH = '/oauth/callback'
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 export type LabConnectionState =
   | 'unconfigured'
@@ -78,6 +81,35 @@ export type LabSignInChallenge = Readonly<{
   expiresAt: number
 }>
 
+// Raw per-model capability document from Lab. It is deliberately kept open-ended so a newer
+// server can add fields without breaking older clients; consumers narrow it with
+// readLabModelCapabilities and never guess from a model name.
+export type LabModelCapabilities = Readonly<Record<string, unknown>>
+
+export type LabModelCapabilityProfile = Readonly<{
+  reasoningValues?: readonly ModelReasoningEffort[]
+  reasoningToggle?: boolean
+  inputModalities: readonly string[]
+  contextWindow?: number
+  maxOutputTokens?: number
+}>
+
+const LAB_REASONING_EFFORTS = new Set<string>([
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra'
+])
+
+const positiveInteger = (value: unknown): number | undefined => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined
+  return Math.floor(value)
+}
+
 // A bootstrap model entry as returned by GET /api/me/bootstrap. Only the fields this client uses
 // are typed; unknown fields are ignored.
 export type LabBootstrapModel = Readonly<{
@@ -88,6 +120,7 @@ export type LabBootstrapModel = Readonly<{
   streaming?: boolean
   enabled?: boolean
   available?: boolean
+  capabilities?: LabModelCapabilities
 }>
 
 export type LabBootstrap = Readonly<{
@@ -200,6 +233,46 @@ export const joinLabBaseUrl = (serverUrl: string, modelBaseUrl: string | undefin
   return resolved.toString().replace(/\/+$/u, '')
 }
 
+// Narrows a Lab capability document to the values this client actually consumes. Unknown fields
+// and unknown effort values are dropped; absence of a capability document must fall back to the
+// legacy behavior (no effort control, no image input, runtime default context).
+export const readLabModelCapabilities = (raw: unknown): LabModelCapabilityProfile | undefined => {
+  if (!isRecord(raw)) return undefined
+  // Lab publishes the models.dev/OpenCode shape:
+  //   reasoning_options: [{ type: 'effort', values: [...] }, { type: 'toggle' }]
+  // Only explicit known fields and effort values are consumed.
+  const options = Array.isArray(raw.reasoning_options) ? raw.reasoning_options.filter(isRecord) : []
+  const effortOption = options.find(
+    (option) => option.type === 'effort' && Array.isArray(option.values)
+  )
+  const toggleOption = options.some((option) => option.type === 'toggle')
+  const rawValues = Array.isArray(effortOption?.values) ? effortOption.values : []
+  const reasoningValues = [
+    ...new Set(
+      rawValues.filter(
+        (value): value is ModelReasoningEffort =>
+          typeof value === 'string' && LAB_REASONING_EFFORTS.has(value)
+      )
+    )
+  ]
+  const modalities =
+    isRecord(raw.modalities) && Array.isArray(raw.modalities.input)
+      ? raw.modalities.input
+          .filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+          .map((value) => value.trim().toLowerCase())
+      : []
+  const limit = isRecord(raw.limit) ? raw.limit : undefined
+  const contextWindow = positiveInteger(limit?.context)
+  const maxOutputTokens = positiveInteger(limit?.output)
+  return {
+    ...(reasoningValues.length > 0 ? { reasoningValues: Object.freeze(reasoningValues) } : {}),
+    ...(toggleOption ? { reasoningToggle: true } : {}),
+    inputModalities: Object.freeze([...new Set(modalities)]),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {})
+  }
+}
+
 export const labModelSummaries = (
   models: readonly LabBootstrapModel[]
 ): readonly LabModelSummary[] =>
@@ -215,9 +288,6 @@ export const labModelSummaries = (
         })
       )
   )
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 // Maps a gateway error body to the token-free message forwarded through the provider bridge. Only
 // stable gateway codes are echoed; unknown upstream details fall back to the caller's generic text.

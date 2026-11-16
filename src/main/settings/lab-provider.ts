@@ -11,6 +11,7 @@ import {
   labProviderApiEndpoints
 } from '../../shared/lab'
 import { LAB_PROVIDER_ID, labProviderIdentity } from '../../shared/settings'
+import type { LabModelCapabilities } from '../../shared/lab'
 import type { StoredProvider } from './types'
 
 // Pure helpers for the single `builtin-lab` provider record. The record is derived entirely from
@@ -43,6 +44,11 @@ export const buildLabProviderRecord = (
       return [labModelId(model.id), endpoints.length > 0 ? endpoints : ['chat-completions']]
     })
   )
+  const modelCapabilities: Record<string, LabModelCapabilities> = Object.fromEntries(
+    models.flatMap((model) =>
+      model.capabilities ? [[labModelId(model.id), model.capabilities] as const] : []
+    )
+  )
   return {
     ...labProviderIdentity(),
     type: 'lab',
@@ -51,7 +57,8 @@ export const buildLabProviderRecord = (
     labCatalogToken: randomUUID(),
     apiEndpoints: labProviderApiEndpoints(bootstrap.models),
     fetchedModels: labProviderModels(bootstrap),
-    ...(Object.keys(modelProtocols).length > 0 ? { modelProtocols } : {})
+    ...(Object.keys(modelProtocols).length > 0 ? { modelProtocols } : {}),
+    ...(Object.keys(modelCapabilities).length > 0 ? { modelCapabilities } : {})
   }
 }
 

@@ -12,6 +12,7 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
 import type { PackageMirror } from '../../shared/mirror'
 import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
+import type { LabModelCapabilities } from '../../shared/lab'
 import {
   isCustomReasoningEffortTransport,
   isReasoningEffortPresetSetting
@@ -268,6 +269,24 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     if (entries.length > 0) modelProtocols = Object.fromEntries(entries)
   }
 
+  // Raw per-model capability documents are stored alongside the model catalog and narrowed by
+  // readLabModelCapabilities at consumption time. Key/value bounds prevent wildly malformed files.
+  let modelCapabilities: Record<string, LabModelCapabilities> | undefined
+  if (isRecord(value.modelCapabilities)) {
+    const entries: Array<[string, LabModelCapabilities]> = []
+    for (const [modelId, rawCapabilities] of Object.entries(value.modelCapabilities)) {
+      if (
+        !modelId ||
+        characterCount(modelId) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters ||
+        !isRecord(rawCapabilities)
+      )
+        continue
+      entries.push([modelId, rawCapabilities])
+      if (entries.length >= PROVIDER_RESOURCE_LIMITS.fetchedModels) break
+    }
+    if (entries.length > 0) modelCapabilities = Object.fromEntries(entries)
+  }
+
   // Migrate the removed scalar apiType to the explicit endpoint array.
   const rawEndpoints = Array.isArray(value.apiEndpoints) ? value.apiEndpoints : []
   const knownEndpoints = rawEndpoints
@@ -309,6 +328,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   }
   if (apiEndpoints.length > 0) provider.apiEndpoints = apiEndpoints
   if (modelProtocols) provider.modelProtocols = modelProtocols
+  if (modelCapabilities) provider.modelCapabilities = modelCapabilities
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels

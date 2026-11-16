@@ -739,6 +739,7 @@ describe('Settings backend ownership architecture', () => {
       'maxInputTokens',
       'maxOutputTokens',
       'model',
+      'modelCapabilities',
       'modelProtocols',
       'name',
       'reasoningEffortPreset',

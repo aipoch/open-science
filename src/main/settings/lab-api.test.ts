@@ -132,6 +132,11 @@ describe('Lab API client', () => {
             streaming: true,
             enabled: true,
             available: true,
+            capabilities: {
+              reasoning_options: [{ type: 'effort', values: ['low', 'high', 'max'] }],
+              modalities: { input: ['text', 'image'] },
+              limit: { context: 1_000_000, output: 64_000 }
+            },
             upstream_model: 'must-not-be-used'
           }
         ],
@@ -144,7 +149,12 @@ describe('Lab API client', () => {
     expect(bootstrap.user.display_name).toBe('Researcher')
     expect(bootstrap.models[0]).toMatchObject({
       id: 'research-default',
-      protocols: ['openai', 'openai-response']
+      protocols: ['openai', 'openai-response'],
+      capabilities: {
+        reasoning_options: [{ type: 'effort', values: ['low', 'high', 'max'] }],
+        modalities: { input: ['text', 'image'] },
+        limit: { context: 1_000_000, output: 64_000 }
+      }
     })
     expect(bootstrap.models[0]).not.toHaveProperty('upstream_model')
   })

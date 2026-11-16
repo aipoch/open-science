@@ -16,7 +16,7 @@ import {
   type CustomReasoningEffortTransport
 } from '@aipoch/providers'
 import { type ReasoningEffort } from './model-preference-contract'
-import { LAB_PROVIDER_ID, type LabView } from './lab'
+import { LAB_PROVIDER_ID, type LabModelCapabilities, type LabView } from './lab'
 import { customProviderRequiresKey, isOfficialOpenAiResponsesBase } from './provider-url-policy'
 import { type ReasoningEffortPresetSetting } from './reasoning-effort'
 import type { AgentModelRoute, AgentFrameworkId } from './agent-framework-id'
@@ -405,6 +405,8 @@ export type ProviderView = {
   modelProtocols?: Record<string, ModelProtocol[]>
   // Exact Lab deployment address for app-managed Lab providers; non-secret.
   labServerUrl?: string
+  // Raw per-model capability documents from Lab, keyed by namespaced stored model id.
+  modelCapabilities?: Record<string, LabModelCapabilities>
   // A short, non-secret hint like "sk-…abcd" for display only.
   maskedKey?: string
   // Non-secret account label returned by the provider during subscription sign-in.

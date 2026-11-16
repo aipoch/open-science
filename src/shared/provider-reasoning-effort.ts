@@ -1,4 +1,5 @@
 import {
+  profileFromEffortValues,
   resolveVendorModelReasoningEffort,
   resolveReasoningEffortProfile,
   type ReasoningEffortPresetSetting,
@@ -11,6 +12,7 @@ import {
   isCodexSubscriptionProvider,
   type ProviderType
 } from './settings'
+import { readLabModelCapabilities, type LabModelCapabilities } from './lab'
 
 export type ProviderReasoningEffortSource = {
   type: ProviderType
@@ -18,6 +20,7 @@ export type ProviderReasoningEffortSource = {
   model?: string
   models?: readonly string[]
   reasoningEffortPreset?: ReasoningEffortPresetSetting
+  modelCapabilities?: Readonly<Record<string, LabModelCapabilities>>
 }
 
 // Resolves the effective selection with the same rules in main and renderer. Subscription runtimes
@@ -82,9 +85,18 @@ export const resolveProviderReasoningEffortProfile = (
       return model ? resolveVendorModelReasoningEffort('anthropic', model) : { supported: false }
     case 'xai-subscription':
       return resolveVendorModelReasoningEffort('xai', model)
-    // The Lab gateway has no reasoning-effort contract; leave the request untouched.
-    case 'lab':
-      return { supported: false }
+    case 'lab': {
+      const capabilities = readLabModelCapabilities(
+        model ? provider.modelCapabilities?.[model] : undefined
+      )
+      if (!capabilities) return { supported: false }
+      if (capabilities.reasoningValues?.length) {
+        return profileFromEffortValues(capabilities.reasoningValues)
+      }
+      return capabilities.reasoningToggle
+        ? profileFromEffortValues(['none', 'high'])
+        : { supported: false }
+    }
     case 'custom':
       return resolveReasoningEffortProfile(provider.reasoningEffortPreset)
   }

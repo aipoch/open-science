@@ -16,7 +16,8 @@
     "src/main/settings/lab-provider.ts",
     "src/main/settings/lab-resource-limits.ts",
     "src/main/settings/lab-harness-routing.test.ts",
-    "src/main/settings/lab-e2e-routing.test.ts"
+    "src/main/settings/lab-e2e-routing.test.ts",
+    "src/main/settings/lab-provider.test.ts"
   ],
   "interfacePaths": [
     "src/main/settings/lab-account-owner.ts",
@@ -36,7 +37,8 @@
       "src/main/settings/lab-model-routing.test.ts",
       "src/main/settings/lab-oauth.test.ts",
       "src/main/settings/lab-harness-routing.test.ts",
-      "src/main/settings/lab-e2e-routing.test.ts"
+      "src/main/settings/lab-e2e-routing.test.ts",
+      "src/main/settings/lab-provider.test.ts"
     ],
     "contract": [
       "src/main/settings/service.test.ts",
