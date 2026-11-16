@@ -636,9 +636,15 @@ jobs:
             done
             # Keep the Azure configuration on the stable Windows leg only. electron-builder signs
             # the application and NSIS installer before generating latest.yml and blockmaps.
+            windows_signing_publisher="$AZURE_SIGNING_PUBLISHER"
+            if [ "$windows_signing_publisher" = "AIPOCH PTE. LTD." ]; then
+              # electron-updater compares publisherNames against the certificate subject. Keep the
+              # runtime trust define simple, while writing the full DN into app-update.yml.
+              windows_signing_publisher='CN=AIPOCH PTE. LTD., O=AIPOCH PTE. LTD., L=Singapore, C=SG'
+            fi
             windows_signing_args=(
               -c.win.forceCodeSigning=true
-              "-c.win.azureSignOptions.publisherName=$AZURE_SIGNING_PUBLISHER"
+              "-c.win.azureSignOptions.publisherName=$windows_signing_publisher"
               "-c.win.azureSignOptions.endpoint=$AZURE_SIGNING_ENDPOINT"
               "-c.win.azureSignOptions.codeSigningAccountName=$AZURE_SIGNING_ACCOUNT"
               "-c.win.azureSignOptions.certificateProfileName=$AZURE_SIGNING_PROFILE"

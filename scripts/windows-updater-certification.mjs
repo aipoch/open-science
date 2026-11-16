@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -40,6 +40,21 @@ import {
 
 const UPDATE_TIMEOUT_MS = 180_000
 const SMOKE_ROOT_PREFIX = 'open-science-installer-smoke-updater-'
+
+const sha512Base64 = async (path) =>
+  createHash('sha512')
+    .update(await readFile(path))
+    .digest('base64')
+
+const verifyCachedInstaller = async (source, cached) => {
+  const [sourceHash, cachedHash] = await Promise.all([sha512Base64(source), sha512Base64(cached)])
+  if (sourceHash !== cachedHash) {
+    throw new Error(
+      `The previous NSIS install retained an unexpected installer cache. Expected ${sourceHash}, found ${cachedHash}.`
+    )
+  }
+  return sourceHash
+}
 
 const singleFile = async (directory, pattern, description) => {
   const matches = (await readdir(directory))
@@ -803,6 +818,7 @@ const main = async () => {
         'The previous NSIS install did not retain its installer for differential use.'
       )
     }
+    const previousInstallerSha512 = await verifyCachedInstaller(previousInstaller, cachedInstaller)
 
     const installerBytes = (await stat(currentInstaller)).size
     const persistObservation = async (ownedEvidence) => {
@@ -814,7 +830,8 @@ const main = async () => {
         installerBytes,
         ...assetServer.metrics,
         versionedFeed: true,
-        previousInstallerCacheVerified: true
+        previousInstallerCacheVerified: true,
+        previousInstallerSha512
       })
       if (ownedEvidence)
         observation.ownedProcessRecovery = { ...ownedEvidence, processTreeReaped: false }
@@ -981,5 +998,7 @@ export {
   parseArguments,
   parseSingleRange,
   rewriteFeedPaths,
+  sha512Base64,
+  verifyCachedInstaller,
   startAssetServer
 }

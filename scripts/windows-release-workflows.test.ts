@@ -629,8 +629,12 @@ describe('post-merge Windows validation', () => {
     )
     expect(packageStep.run).toContain('unsigned_args=(-c.dmg.sign=false)')
     expect(packageStep.run).toContain('-c.win.forceCodeSigning=true')
+    expect(packageStep.run).toContain('windows_signing_publisher=\"$AZURE_SIGNING_PUBLISHER\"')
     expect(packageStep.run).toContain(
-      '"-c.win.azureSignOptions.publisherName=$AZURE_SIGNING_PUBLISHER"'
+      "windows_signing_publisher='CN=AIPOCH PTE. LTD., O=AIPOCH PTE. LTD., L=Singapore, C=SG'"
+    )
+    expect(packageStep.run).toContain(
+      '"-c.win.azureSignOptions.publisherName=$windows_signing_publisher"'
     )
     expect(verifyWindows).toMatchObject({
       if: "${{ matrix.platform == 'win' && inputs.sign_windows }}",
