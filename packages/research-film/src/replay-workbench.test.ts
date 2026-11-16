@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { researchFilmResources } from './resources.js'
 import { expect, it } from 'vitest'
 import { replayWorkbench } from './replay-workbench.js'
 import { replayNarrationSpec } from './replay-case.js'
@@ -115,4 +119,15 @@ it('projects real inputs, Notebook failures and result previews without inventin
     ])
   })
   expect(data.results).toHaveLength(1)
+})
+
+it('keeps adapted replay asset hashes aligned with the bundled bytes', async () => {
+  const { replayDirectory } = researchFilmResources()
+  const manifest = JSON.parse(
+    await readFile(join(replayDirectory, 'asset-provenance.json'), 'utf8')
+  ) as { files: Array<{ path: string; bundledSha256: string }> }
+  for (const entry of manifest.files) {
+    const bytes = await readFile(join(replayDirectory, entry.path))
+    expect(createHash('sha256').update(bytes).digest('hex'), entry.path).toBe(entry.bundledSha256)
+  }
 })
