@@ -8,6 +8,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   stat,
@@ -1138,7 +1139,10 @@ describe('working-file evidence', () => {
                 !Number.isSafeInteger(original.ino)
               )
                 expect(item.immutableSource).toBeUndefined()
-              else expect(item.immutableSource).toMatchObject({ physicalPath: originalPath })
+              else
+                expect(item.immutableSource).toMatchObject({
+                  physicalPath: await realpath(originalPath)
+                })
               // Keep the old inode allocated so Linux cannot reuse it for the frozen copy.
               if (condition === 'missing') await rename(originalPath, `${originalPath}.old`)
               if (condition === 'replaced') {

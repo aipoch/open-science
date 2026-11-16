@@ -15,6 +15,11 @@ const OfficePreviewRenderer = lazy(() =>
     default: OfficePreviewRenderer
   }))
 )
+const PptxAnnotatedPreviewRenderer = lazy(() =>
+  import('./renderers/PptxAnnotatedPreview').then(({ PptxAnnotatedPreviewRenderer }) => ({
+    default: PptxAnnotatedPreviewRenderer
+  }))
+)
 const PdfPreviewRenderer = lazy(() =>
   import('./renderers/PdfPreview').then(({ PdfPreviewRenderer }) => ({
     default: PdfPreviewRenderer
@@ -112,9 +117,10 @@ export const renderPreviewFile = ({
           onPdfTranslationChange={onPdfTranslationChange}
         />
       )
+    case 'presentation':
+      return <PptxAnnotatedPreviewRenderer {...props} />
     case 'word':
     case 'spreadsheet':
-    case 'presentation':
       return <OfficePreviewRenderer item={item} />
     case 'unknown':
       return undefined
