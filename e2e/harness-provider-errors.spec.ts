@@ -115,7 +115,7 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
                 return []
               }
             })
-            .find((record) => record.msg === 'model request failed')
+            .find((record) => record.msg === 'model request failed')?.data
         })
         .toMatchObject({
           protocol,
