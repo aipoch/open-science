@@ -3,6 +3,7 @@ import {
   verifyRayJobsAccess,
   inspectRayDashboard,
   inspectRayJob,
+  deleteRayJob,
   readRayJobLogs,
   stopRayJob,
   submitRayJob
@@ -180,6 +181,32 @@ describe('Ray job control', () => {
       'GET',
       'GET'
     ])
+  })
+
+  it.each(['SUCCEEDED', 'FAILED', 'STOPPED'] as const)(
+    'deletes a %s job after verifying its declaration',
+    async (status) => {
+      const server = target(
+        Response.json({ ...record, status, driver_exit_code: status === 'SUCCEEDED' ? 0 : 1 }),
+        Response.json({ deleted: true })
+      )
+      await expect(deleteRayJob(server, claim)).resolves.toBeUndefined()
+      expect(server.fetch.mock.calls.map(([, init]) => init?.method ?? 'GET')).toEqual([
+        'GET',
+        'DELETE'
+      ])
+    }
+  )
+
+  it('treats an already missing job as cleaned', async () => {
+    const server = target(new Response(null, { status: 404 }))
+    await expect(deleteRayJob(server, claim)).resolves.toBeUndefined()
+  })
+
+  it('does not delete a non-terminal job', async () => {
+    const server = target(Response.json(record))
+    await expect(deleteRayJob(server, claim)).rejects.toThrow('not terminal')
+    expect(server.fetch).toHaveBeenCalledTimes(1)
   })
 
   it('checks the JSON stream budget in bytes and cancels on overflow', async () => {
