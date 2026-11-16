@@ -346,6 +346,117 @@ it('checkpoints an already admitted cell during closure with missing storage and
   expect(extract).toHaveBeenCalledTimes(3)
 })
 
+it('drains four-way disposal and resumes only unfinished cells after restart', async () => {
+  const path = await location()
+  const pending = Array.from({ length: 4 }, () => deferred())
+  const extract = vi.fn<Extract>(async (_table, _field, itemId) => {
+    await pending[['a', 'b', 'c', 'd'].indexOf(itemId)].promise
+    return { status: 'succeeded', sourceKey: 'source', value: `Saved ${itemId}`, evidence: [] }
+  })
+  const options = {
+    path: () => path,
+    comparisonConcurrency: 4,
+    extractor: {
+      member: async (itemId: string) => ({
+        itemId,
+        title: itemId,
+        abstract: 'text',
+        sourceKey: 'source'
+      })
+    },
+    capture: vi.fn(async () => ({ extract }))
+  }
+  const owner = new LiteratureComparisons(options)
+  owners.push(owner)
+  await owner.start()
+  const created = (
+    await owner.run({
+      action: 'create',
+      name: 'Four-way restart',
+      language: 'en',
+      sourcePolicy: 'abstract',
+      fields: [{ id: 'f', name: 'F', rule: 'extract' }],
+      itemIds: ['a', 'b', 'c', 'd', 'e', 'f']
+    })
+  ).tables[0]
+  const admitted = (
+    await withDataRootWrite(() => owner.run({ action: 'run', tableId: created.id }))
+  ).tables[0]
+  await vi.waitFor(() => expect(extract).toHaveBeenCalledTimes(4))
+  pending[0].resolve()
+  await vi.waitFor(async () => {
+    const saved = JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable
+    expect(saved.cells[0]).toMatchObject({ status: 'succeeded', history: [{ value: 'Saved a' }] })
+  })
+  const savedFirst = (JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable)
+    .cells[0]
+  let disposed = false
+  const closing = owner.dispose().then(() => {
+    disposed = true
+  })
+  await Promise.resolve()
+  expect(disposed).toBe(false)
+  expect(extract.mock.calls.every(([, , , signal]) => signal.aborted)).toBe(true)
+  pending[3].resolve()
+  pending[1].resolve()
+  await vi.waitFor(async () => {
+    const saved = JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable
+    expect(saved.cells[1].status).toBe('pending')
+    expect(saved.cells[3].status).toBe('pending')
+  })
+  expect(disposed).toBe(false)
+  pending[2].resolve()
+  await closing
+  await waitForDataRootWriters()
+  const saved = JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable
+  expect(saved).toMatchObject({
+    state: 'interrupted',
+    taskId: admitted.taskId,
+    taskSources: admitted.taskSources
+  })
+  expect(saved.cells[0]).toEqual(savedFirst)
+  expect(saved.remainingCellIds).toEqual(saved.cells.slice(1).map((cell) => cell.id))
+  expect(
+    saved.cells.slice(1).every((cell) => cell.status === 'pending' && cell.history.length === 0)
+  ).toBe(true)
+  expect(extract.mock.calls.map(([, , itemId]) => itemId)).toEqual(['a', 'b', 'c', 'd'])
+
+  const resumedExtract = vi.fn<Extract>(async (_table, _field, itemId) => ({
+    status: 'succeeded',
+    sourceKey: 'source',
+    value: `Resumed ${itemId}`,
+    evidence: []
+  }))
+  const capture = vi.fn(async () => ({ extract: resumedExtract }))
+  const restarted = new LiteratureComparisons({ ...options, capture })
+  owners.push(restarted)
+  await restarted.start()
+  const restored = (await restarted.run({ action: 'read', tableId: created.id })).tables[0]
+  expect(restored).toMatchObject({
+    state: 'interrupted',
+    taskId: admitted.taskId,
+    remainingCellIds: saved.remainingCellIds
+  })
+  expect(restored.cells[0]).toEqual(savedFirst)
+  expect(capture).not.toHaveBeenCalled()
+  expect(resumedExtract).not.toHaveBeenCalled()
+  await restarted.run({ action: 'resume', tableId: created.id })
+  await vi.waitFor(async () =>
+    expect((await restarted.run({ action: 'read', tableId: created.id })).tables[0].state).toBe(
+      'completed'
+    )
+  )
+  const completed = JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable
+  expect(completed.taskId).toBe(admitted.taskId)
+  expect(completed.cells[0]).toEqual(savedFirst)
+  expect(completed.remainingCellIds).toEqual([])
+  expect(
+    completed.cells.every((cell) => cell.status === 'succeeded' && cell.history.length === 1)
+  ).toBe(true)
+  expect(resumedExtract.mock.calls.map(([, , itemId]) => itemId)).toEqual(['b', 'c', 'd', 'e', 'f'])
+  expect(capture).toHaveBeenCalledTimes(1)
+})
+
 it('exports the selected matrix without generating an oversized unselected evidence CSV', async () => {
   const path = await location()
   const members = Array.from({ length: 5 }, (_, index) => ({

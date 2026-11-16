@@ -356,7 +356,7 @@ function BackgroundTasks({
                             ? t('Running')
                             : table.state === 'paused'
                               ? table.running > 0
-                                ? t('Saving the current cell before pausing…')
+                                ? t('Finishing and saving the current batch before pausing…')
                                 : t('Paused')
                               : table.state === 'interrupted'
                                 ? t('Interrupted')

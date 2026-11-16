@@ -647,6 +647,164 @@ it('bounds parallel extraction and does not admit a second batch while paused', 
     await f.owner.dispose()
   }
 })
+it('drains four admitted cells before recovering a failed checkpoint without duplicating saved siblings', async () => {
+  const pending = Array.from({ length: 4 }, () => deferred<ComparisonExtraction>())
+  const extract = vi.fn<Extract>(async (_table, _field, itemId) => ({
+    ...ready(),
+    value: `Result for ${itemId}`
+  }))
+  for (const cell of pending) extract.mockImplementationOnce(() => cell.promise)
+  const f = await fixture(extract)
+  const onError = vi.fn()
+  f.options.onError = onError
+  f.options.comparisonConcurrency = 4
+  try {
+    await f.owner.run({
+      action: 'add-members',
+      tableId: f.table.id,
+      itemIds: ['paper3', 'paper4', 'paper5', 'paper6']
+    })
+    const admitted = (await f.owner.run({ action: 'run', tableId: f.table.id })).tables[0]
+    await vi.waitFor(() => expect(extract).toHaveBeenCalledTimes(4))
+    const writes = vi.mocked(writeDurableJsonFile).mock.calls.length
+    vi.mocked(writeDurableJsonFile).mockRejectedValueOnce(new Error('checkpoint unavailable'))
+    pending[0].resolve(ready())
+    await vi.waitFor(() =>
+      expect(vi.mocked(writeDurableJsonFile).mock.calls.length).toBe(writes + 1)
+    )
+    expect((await f.read()).state).toBe('running')
+    expect(onError).not.toHaveBeenCalled()
+    await expect(f.owner.run({ action: 'delete', tableId: f.table.id })).rejects.toThrow(
+      'comparison-busy'
+    )
+
+    pending[1].resolve(ready())
+    await vi.waitFor(async () => expect((await f.read()).cells[1].status).toBe('succeeded'))
+    expect(onError).not.toHaveBeenCalled()
+    expect(extract).toHaveBeenCalledTimes(4)
+    pending[3].resolve(ready())
+    pending[2].resolve(ready())
+    await vi.waitFor(async () => expect((await f.read()).state).toBe('paused'))
+    const paused = await f.read()
+    expect(onError).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ message: 'checkpoint unavailable' })
+    )
+    expect(paused).toMatchObject({ taskId: admitted.taskId, issue: 'checkpoint-failed' })
+    expect(paused.cells.map((cell) => cell.status)).toEqual([
+      'pending',
+      'succeeded',
+      'succeeded',
+      'succeeded',
+      'pending',
+      'pending'
+    ])
+    expect(paused.remainingCellIds).toEqual([
+      paused.cells[0].id,
+      paused.cells[4].id,
+      paused.cells[5].id
+    ])
+    const saved = JSON.parse(await readFile(f.path, 'utf8')).tables[0] as ComparisonTable
+    expect(saved.cells).toEqual(paused.cells)
+    expect(saved.remainingCellIds).toEqual(paused.remainingCellIds)
+    expect(extract).toHaveBeenCalledTimes(4)
+
+    await f.owner.run({ action: 'resume', tableId: f.table.id })
+    await vi.waitFor(async () => expect((await f.read()).state).toBe('completed'))
+    const completed = await f.read()
+    expect(completed.taskId).toBe(admitted.taskId)
+    expect(extract.mock.calls.map(([, , itemId]) => itemId)).toEqual([
+      'paper1',
+      'paper2',
+      'paper3',
+      'paper4',
+      'paper1',
+      'paper5',
+      'paper6'
+    ])
+    expect(completed.cells.slice(1, 4)).toEqual(paused.cells.slice(1, 4))
+    expect(
+      completed.cells.every((cell) => cell.status === 'succeeded' && cell.history.length === 1)
+    ).toBe(true)
+    expect(completed.remainingCellIds).toEqual([])
+    expect((JSON.parse(await readFile(f.path, 'utf8')).tables[0] as ComparisonTable).cells).toEqual(
+      completed.cells
+    )
+  } finally {
+    for (const cell of pending) cell.resolve(ready())
+    await f.owner.dispose()
+  }
+})
+it('rejects changed and deleted sources among four late completions while saving unchanged siblings', async () => {
+  const pending = Array.from({ length: 4 }, () => deferred<ComparisonExtraction>())
+  const extract = vi.fn<Extract>()
+  for (const cell of pending) extract.mockImplementationOnce(() => cell.promise)
+  const f = await fixture(extract)
+  f.options.comparisonConcurrency = 4
+  try {
+    await f.owner.run({ action: 'add-members', tableId: f.table.id, itemIds: ['paper3', 'paper4'] })
+    const admitted = (await f.owner.run({ action: 'run', tableId: f.table.id })).tables[0]
+    await vi.waitFor(() => expect(extract).toHaveBeenCalledTimes(4))
+    const member = f.options.extractor.member
+    f.options.extractor.member = async (itemId) => {
+      if (itemId === 'paper2') throw new Error('source-unavailable')
+      return { ...(await member(itemId)), sourceKey: itemId === 'paper1' ? 'source-2' : 'source-1' }
+    }
+    await f.owner.run({ action: 'list' })
+    const running = await f.read()
+    expect(running.taskSources).toEqual(admitted.taskSources)
+    expect(running.cells.every((cell) => cell.status === 'running')).toBe(true)
+    for (const index of [3, 1, 2, 0]) pending[index].resolve(ready())
+    await vi.waitFor(async () => expect((await f.read()).state).toBe('completed'))
+    const completed = await f.read()
+    expect(completed).toMatchObject({
+      taskId: admitted.taskId,
+      taskSources: admitted.taskSources,
+      remainingCellIds: []
+    })
+    expect(completed.cells.map((cell) => cell.status)).toEqual([
+      'unavailable',
+      'unavailable',
+      'succeeded',
+      'succeeded'
+    ])
+    for (const [index, issue] of [
+      [0, 'source-changed'],
+      [1, 'source-unavailable']
+    ] as const) {
+      expect(completed.cells[index].history).toEqual([
+        expect.objectContaining({
+          status: 'failed',
+          sourceKey: 'source-1',
+          value: null,
+          evidence: [],
+          issue
+        })
+      ])
+    }
+    for (const cell of completed.cells.slice(2)) {
+      expect(cell.history).toEqual([
+        expect.objectContaining({ status: 'succeeded', sourceKey: 'source-1', value: 'Result' })
+      ])
+    }
+    expect(
+      extract.mock.calls.map(([snapshot, , itemId]) => [
+        itemId,
+        snapshot.members.find((entry) => entry.itemId === itemId)?.sourceKey
+      ])
+    ).toEqual([
+      ['paper1', 'source-1'],
+      ['paper2', 'source-1'],
+      ['paper3', 'source-1'],
+      ['paper4', 'source-1']
+    ])
+    expect((JSON.parse(await readFile(f.path, 'utf8')).tables[0] as ComparisonTable).cells).toEqual(
+      completed.cells
+    )
+  } finally {
+    for (const cell of pending) cell.resolve(ready())
+    await f.owner.dispose()
+  }
+})
 it('completes a paused task when its last in-flight result is saved', async () => {
   const pending = deferred<ComparisonExtraction>()
   const f = await fixture(vi.fn(() => pending.promise))

@@ -564,7 +564,7 @@ describe('comparison workflow', () => {
     await waitFor(() => expect(command).toHaveBeenCalledWith({ action: 'pause', tableId: 'table' }))
     const saving = { ...table, state: 'paused' as const }
     rerender(<LiteratureComparisonPage table={saving} {...props} />)
-    expect(screen.getByText('Saving the current cell before pausing…')).toBeTruthy()
+    expect(screen.getByText('Finishing and saving the current batch before pausing…')).toBeTruthy()
     expect(screen.queryByText('Paused')).toBeNull()
     expect(
       screen.queryByRole('button', { name: 'Continue extraction ({{count}} cells)' })
@@ -573,7 +573,7 @@ describe('comparison workflow', () => {
     const paused = { ...saving, remainingCellIds: [], cells: fixture().cells }
     rerender(<LiteratureComparisonPage table={paused} {...props} />)
     expect(screen.getByText('Paused')).toBeTruthy()
-    expect(screen.queryByText('Saving the current cell before pausing…')).toBeNull()
+    expect(screen.queryByText('Finishing and saving the current batch before pausing…')).toBeNull()
     expect(
       (
         screen.getByRole('button', {
@@ -2092,6 +2092,178 @@ describe('comparison workflow', () => {
         }) as HTMLButtonElement
       ).disabled
     ).toBe(true)
+  })
+  it.each(['inspect', 'resume'] as const)(
+    'shows completed source batches during %s and admits no partial extraction',
+    async (mode) => {
+      const table = fixture()
+      table.members = Array.from({ length: 9 }, (_, index) => ({
+        ...table.members[0],
+        itemId: `paper-${index}`
+      }))
+      table.itemIds = table.members.map((member) => member.itemId)
+      table.cells = table.itemIds.map((itemId) => ({
+        id: `${itemId}-cell`,
+        itemId,
+        fieldId: 'field',
+        status: 'pending',
+        history: []
+      }))
+      if (mode === 'resume') {
+        table.state = 'interrupted'
+        table.remainingCellIds = table.cells.map((cell) => cell.id)
+        table.taskSources = table.cells.map((cell) => ({
+          cellId: cell.id,
+          sourceKey: 'source',
+          fieldVersion: 1
+        }))
+      }
+      const batches = Array.from({ length: 3 }, () => Promise.withResolvers<ComparisonResult>())
+      let nextBatch = 0
+      const command = page(
+        table,
+        vi
+          .fn()
+          .mockImplementation((request) =>
+            request.action === 'check-sources'
+              ? batches[nextBatch++].promise
+              : Promise.resolve({ tables: [] })
+          )
+      )
+      if (mode === 'inspect') chooseTableAction('Check sources')
+      else
+        fireEvent.click(
+          screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' })
+        )
+      const progress = (): HTMLElement =>
+        screen.getByRole('progressbar', { name: 'Checking sources…' })
+      expect(progress().getAttribute('aria-valuenow')).toBe('0')
+      expect(translate).toHaveBeenCalledWith('Checking sources: {{done}} / {{total}} references', {
+        done: 0,
+        total: 9
+      })
+      for (let index = 0; index < 3; index++) {
+        const ids = table.itemIds.slice(index * 4, index * 4 + 4)
+        expect(command).toHaveBeenLastCalledWith({
+          action: 'check-sources',
+          tableId: 'table',
+          itemIds: ids
+        })
+        await act(async () =>
+          batches[index].resolve({
+            tables: [],
+            sourceChecks: ids.map((itemId) => ({
+              itemId,
+              sourceKey: 'source',
+              status: 'available'
+            }))
+          })
+        )
+        if (index < 2) {
+          expect(progress().getAttribute('aria-valuenow')).toBe(
+            String(Math.round((((index + 1) * 4) / 9) * 100))
+          )
+          expect(command.mock.calls.every(([request]) => request.action === 'check-sources')).toBe(
+            true
+          )
+        }
+      }
+      if (mode === 'resume')
+        expect(command).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'resume' }))
+      else {
+        expect(screen.queryByRole('progressbar')).toBeNull()
+        expect(screen.getByText(/Ready cells/)).toBeTruthy()
+        expect(command).toHaveBeenCalledTimes(3)
+      }
+    }
+  )
+
+  it('stops checking later batches when a multi-batch preflight is dismissed', async () => {
+    const table = fixture()
+    table.members = Array.from({ length: 9 }, (_, index) => ({
+      ...table.members[0],
+      itemId: `paper-${index}`
+    }))
+    table.itemIds = table.members.map((member) => member.itemId)
+    const pending = Promise.withResolvers<ComparisonResult>()
+    const command = page(table, vi.fn().mockReturnValue(pending.promise))
+    chooseTableAction('Check sources')
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
+    await act(async () =>
+      pending.resolve({
+        tables: [],
+        sourceChecks: table.itemIds
+          .slice(0, 4)
+          .map((itemId) => ({ itemId, sourceKey: 'source', status: 'available' }))
+      })
+    )
+    expect(command).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
+  it('keeps partial source checks from admitting extraction and restarts progress on retry', async () => {
+    const table = fixture()
+    table.members = Array.from({ length: 5 }, (_, index) => ({
+      ...table.members[0],
+      itemId: `paper-${index}`
+    }))
+    table.itemIds = table.members.map((member) => member.itemId)
+    table.cells = table.itemIds.map((itemId) => ({
+      id: `${itemId}-cell`,
+      itemId,
+      fieldId: 'field',
+      status: 'pending',
+      history: []
+    }))
+    table.state = 'interrupted'
+    table.remainingCellIds = table.cells.map((cell) => cell.id)
+    const first = Promise.withResolvers<ComparisonResult>()
+    const failed = Promise.withResolvers<ComparisonResult>()
+    const retry = Promise.withResolvers<ComparisonResult>()
+    const command = page(
+      table,
+      vi
+        .fn()
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(failed.promise)
+        .mockReturnValueOnce(retry.promise)
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' }))
+    await act(async () =>
+      first.resolve({
+        tables: [],
+        sourceChecks: table.itemIds
+          .slice(0, 4)
+          .map((itemId) => ({ itemId, sourceKey: 'source', status: 'available' }))
+      })
+    )
+    expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('80')
+    await act(async () => failed.reject(new Error('offline')))
+    expect(screen.getByText('Source checks failed.')).toBeTruthy()
+    expect(
+      (screen.getByRole('button', { name: 'Confirm and start' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    expect(command.mock.calls.every(([request]) => request.action === 'check-sources')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(command).toHaveBeenLastCalledWith({
+      action: 'check-sources',
+      tableId: 'table',
+      itemIds: table.itemIds.slice(0, 4)
+    })
+    expect(
+      screen.getAllByRole('progressbar').every((bar) => bar.getAttribute('aria-valuenow') === '0')
+    ).toBe(true)
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    await act(async () =>
+      retry.resolve({
+        tables: [],
+        sourceChecks: table.itemIds
+          .slice(0, 4)
+          .map((itemId) => ({ itemId, sourceKey: 'source', status: 'available' }))
+      })
+    )
+    expect(command).toHaveBeenCalledTimes(3)
   })
   it('extracts only the open pending cell before confirming a saved manual draft', async () => {
     const table = fixture()

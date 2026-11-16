@@ -235,6 +235,7 @@ export function LiteratureComparisonPage({
     revision: number
   }>()
   const [sourceChecks, setSourceChecks] = useState<ComparisonResult['sourceChecks']>()
+  const [sourceCheckProgress, setSourceCheckProgress] = useState<{ done: number; total: number }>()
   const [exportOpen, setExportOpen] = useState(false)
   const checkGeneration = useRef(0)
   const resumeTrigger = useRef<HTMLButtonElement | null>(null)
@@ -427,6 +428,7 @@ export function LiteratureComparisonPage({
     if (busy && sourceChecks) return
     checkGeneration.current++
     setConfirmation(undefined)
+    setSourceCheckProgress(undefined)
     setBusy(false)
   }
   const launchBlocked = taskActive || table.remainingCellIds.length > 0
@@ -438,6 +440,7 @@ export function LiteratureComparisonPage({
     if (request?.action !== 'resume')
       setConfirmation({ request, revision: table.revision, singleCell })
     setSourceChecks(undefined)
+    setSourceCheckProgress(undefined)
     setBusy(true)
     setError(false)
     try {
@@ -455,17 +458,30 @@ export function LiteratureComparisonPage({
         request?.action === 'run' || (singleCell && request?.action === 'rerun-field')
           ? request.itemIds
           : resumeItemIds
-      const result = await command({
-        action: 'check-sources',
-        tableId: table.id,
-        ...(itemIds && { itemIds })
-      })
-      if (
-        !result.sourceChecks ||
-        result.sourceChecks.length !== (itemIds?.length ?? table.members.length) ||
-        itemIds?.some((id) => !result.sourceChecks?.some((check) => check.itemId === id))
-      )
-        throw new Error('Missing source checks')
+      const ids = [...new Set(itemIds ?? table.members.map((member) => member.itemId))]
+      const checks: NonNullable<ComparisonResult['sourceChecks']> = []
+      setSourceCheckProgress({ done: 0, total: ids.length })
+      // Keep each request within the owner's four-source batch so completed work is
+      // observable without a second progress channel or an unbounded request fan-out.
+      for (let offset = 0; offset < Math.max(1, ids.length); offset += 4) {
+        if (!mounted.current || generation !== checkGeneration.current) return
+        const batchIds = ids.slice(offset, offset + 4)
+        const batch = await command({
+          action: 'check-sources',
+          tableId: table.id,
+          ...(ids.length > 4 ? { itemIds: batchIds } : itemIds && { itemIds })
+        })
+        if (!mounted.current || generation !== checkGeneration.current) return
+        if (
+          !batch.sourceChecks ||
+          batch.sourceChecks.length !== batchIds.length ||
+          batchIds.some((id) => !batch.sourceChecks?.some((check) => check.itemId === id))
+        )
+          throw new Error('Missing source checks')
+        checks.push(...batch.sourceChecks)
+        setSourceCheckProgress({ done: checks.length, total: ids.length })
+      }
+      const result = { sourceChecks: checks }
       if (!mounted.current || generation !== checkGeneration.current) return
       setSourceChecks(result.sourceChecks)
       if (request?.action === 'resume') {
@@ -981,6 +997,19 @@ export function LiteratureComparisonPage({
         })}
       </Button>
     ) : null
+  const checkingSources = sourceCheckProgress && (
+    <div className="mt-2 w-full max-w-md space-y-1.5" role="status">
+      <p>{t('Checking sources: {{done}} / {{total}} references', sourceCheckProgress)}</p>
+      <ProgressBar
+        label={t('Checking sources…')}
+        value={
+          sourceCheckProgress.total
+            ? (sourceCheckProgress.done / sourceCheckProgress.total) * 100
+            : 0
+        }
+      />
+    </div>
+  )
   return (
     <div
       className="relative flex h-full min-h-0 min-w-0 flex-1"
@@ -1573,11 +1602,11 @@ export function LiteratureComparisonPage({
             role="status"
             aria-live="polite"
           >
-            {busy && resumable && <p>{t('Checking sources…')}</p>}
+            {busy && resumable && !sourceChecks && checkingSources}
             {!resumable && (
               <p className="font-medium">
                 {pausing
-                  ? t('Saving the current cell before pausing…')
+                  ? t('Finishing and saving the current batch before pausing…')
                   : running
                     ? t('Running')
                     : table.state === 'paused'
@@ -2412,25 +2441,7 @@ export function LiteratureComparisonPage({
                     }}
                   />
                 )}
-                {busy && !sourceChecks && (
-                  <div className="mt-2 w-full max-w-md space-y-1.5" role="status">
-                    <p>{t('Checking sources…')}</p>
-                    <ProgressBar label={t('Checking sources…')} pulse />
-                    <p className="text-xs text-muted-foreground">
-                      {t('Checking sources for {{count}} references…', {
-                        count: new Set(
-                          (request?.action === 'resume'
-                            ? table.cells
-                                .filter((cell) => table.remainingCellIds.includes(cell.id))
-                                .map((cell) => cell.itemId)
-                            : request && 'itemIds' in request
-                              ? request.itemIds
-                              : undefined) ?? table.members.map((member) => member.itemId)
-                        ).size
-                      })}
-                    </p>
-                  </div>
-                )}
+                {busy && !sourceChecks && checkingSources}
                 {sourceChecks && (
                   <>
                     <div

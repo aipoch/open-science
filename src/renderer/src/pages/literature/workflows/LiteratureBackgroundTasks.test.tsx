@@ -440,7 +440,7 @@ it.each([1, 0])(
     fireEvent.click(await screen.findByRole('button', { name: 'Background tasks' }))
     const row = screen.getByText('Paused comparison').closest('li')!
     expect(row.textContent).toContain(
-      running ? 'Saving the current cell before pausing…' : 'Paused'
+      running ? 'Finishing and saving the current batch before pausing…' : 'Paused'
     )
     expect(within(row).queryByRole('button', { name: 'Pause after current batch' })).toBeNull()
   }
