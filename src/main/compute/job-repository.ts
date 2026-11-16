@@ -1715,6 +1715,8 @@ export class ComputeJobRepository {
     const data: ComputeJobUpdateData = {}
 
     if (updates.status !== undefined) data.status = updates.status
+    if (updates.remoteCleanupDisposition !== undefined)
+      data.remoteCleanupDisposition = updates.remoteCleanupDisposition
     if (updates.remoteHandle !== undefined)
       data.remoteHandle = this.protectJson(updates.remoteHandle, 'object', sensitiveDataEncrypted)
     if (updates.remoteWorkdir !== undefined)
