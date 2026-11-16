@@ -8149,7 +8149,6 @@
     "Continue generation": "Continuar la generación",
     "Generating animations…": "Generando animaciones…",
     "Writing research film…": "Preparando el cortometraje de investigación…",
-    "Create a short film from this conversation.": "Crear un cortometraje a partir de esta conversación.",
     "Generating a new film may take several minutes. Continue?": "Generar un nuevo cortometraje puede tardar varios minutos. ¿Continuar?",
     "Research film ready": "Cortometraje de investigación listo",
     "This session is unavailable.": "Esta sesión no está disponible.",
@@ -8565,6 +8564,12 @@
     "Link": "Enlace",
     "Text color": "Color del texto",
     "Remove link": "Eliminar enlace",
-    "Select text to format it, or format the entire text box.": "Seleccione texto para darle formato o aplique el formato a todo el cuadro de texto."
+    "Select text to format it, or format the entire text box.": "Seleccione texto para darle formato o aplique el formato a todo el cuadro de texto.",
+    "Film mode": "Modo de película",
+    "Research explanation": "Explicación de la investigación",
+    "Operation replay": "Reproducción de operaciones",
+    "Explains the research question, methods, and findings with visuals.": "Explica con recursos visuales la pregunta, los métodos y los hallazgos de la investigación.",
+    "Replays the conversation, actions, and results in order.": "Reproduce la conversación, las acciones y los resultados en orden.",
+    "Another film is being generated. Wait for it to finish.": "Se está generando otra película. Espera a que termine."
   }
 }

@@ -1,6 +1,7 @@
 export * from './generation.js'
 export * from './screenplay.js'
 export * from './source.js'
+export * from './replay-case.js'
 export {
   writeResearchVideoAnimations,
   type ResearchVideoAnimationInput,

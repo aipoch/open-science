@@ -7813,7 +7813,6 @@
     "Continue generation": "生成を続ける",
     "Generating animations…": "アニメーションを生成中…",
     "Writing research film…": "研究ショート動画を構成中…",
-    "Create a short film from this conversation.": "既存の会話から研究ショート動画を作成します。",
     "Generating a new film may take several minutes. Continue?": "新しい動画の生成には数分かかる場合があります。続行しますか？",
     "Research film ready": "研究ショート動画の準備ができました",
     "This session is unavailable.": "このセッションは利用できません。",
@@ -8217,6 +8216,12 @@
     "Link": "リンク",
     "Text color": "文字色",
     "Remove link": "リンクを削除",
-    "Select text to format it, or format the entire text box.": "文字を選択して書式を設定するか、テキストボックス全体に適用します。"
+    "Select text to format it, or format the entire text box.": "文字を選択して書式を設定するか、テキストボックス全体に適用します。",
+    "Film mode": "動画モード",
+    "Research explanation": "研究の解説",
+    "Operation replay": "操作の再現",
+    "Explains the research question, methods, and findings with visuals.": "研究の問い、手法、結果を図で解説します。",
+    "Replays the conversation, actions, and results in order.": "会話、操作、結果を順に再現します。",
+    "Another film is being generated. Wait for it to finish.": "別の動画を生成中です。完了するまでお待ちください。"
   }
 }

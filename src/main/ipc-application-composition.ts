@@ -367,6 +367,7 @@ export const createApplicationModules = async (
     runner: optimizationRunner
   })
   const researchFilm = await composeResearchFilm({
+    previewResources: managedFiles.previewResources,
     ...settingsBootstrap,
     ...sessionFoundation,
     ...sessionAuthority,
