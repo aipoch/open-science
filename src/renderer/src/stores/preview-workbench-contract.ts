@@ -67,6 +67,7 @@ export type PreviewToolItem = PreviewItemBase & {
     | 'library'
     | 'marketplace'
     | 'compute'
+    | 'schedule'
     | 'reviewer'
     | 'plan'
     | 'subagents'

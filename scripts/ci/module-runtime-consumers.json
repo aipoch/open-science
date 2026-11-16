@@ -16,6 +16,7 @@
     "src/main/process-tree-native-loading.macos.integration.test.ts",
     "src/main/update/installation-occupancy.ts",
     "src/main/process-birth-identity.ts",
+    "src/main/update/windows-update-handoff.ts",
     "src/main/windows-process-query.ts"
   ],
   "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc": [
@@ -124,10 +125,7 @@
     "src/main/notebook/kernel-executor.ts",
     "src/main/notebook/runtime-service.ts"
   ],
-  "resources/notebook/file_evidence_codec.mjs": [
-    "resources/notebook/file_evidence_shadow.js",
-    "src/main/artifacts/execution-evidence-log.ts"
-  ],
+  "resources/notebook/file_evidence_codec.mjs": ["resources/notebook/file_evidence_shadow.js"],
   "resources/notebook/file_evidence_shadow.js": ["resources/notebook/file_evidence_worker.js"],
   "resources/notebook/file_evidence_worker.js": ["src/main/notebook/working-file-observer.ts"],
   "resources/find-overlay/index.html": [
@@ -209,7 +207,12 @@
   ],
   "packages/research-film/src/generation-worker.ts": [
     "packages/research-film/src/resources.ts",
-    "packages/research-film/src/generation.ts"
+    "packages/research-film/src/generation.ts",
+    "packages/research-film/src/speech-process.ts"
+  ],
+  "packages/research-film/src/speech-process.ts": [
+    "packages/research-film/src/resources.ts",
+    "packages/research-film/src/speech-client.ts"
   ],
   "packages/research-film/resources/stage/index.html": [
     "packages/research-film/src/build-player.ts"

@@ -127,6 +127,7 @@ const createWebServiceController = (
     },
     {
       runJournal: createTaskRunJournal(getConfigRoot()),
+      submissionRoot: getConfigRoot(),
       subscribeEvents: (listener) =>
         applicationEvents.subscribe((event) => {
           for (const runtimeEvent of projectTaskRuntimeEvents(event)) listener(runtimeEvent)

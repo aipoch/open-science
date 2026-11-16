@@ -51,8 +51,10 @@ export const inspectOwnedWindowsProcessIds = (): number[] => {
 
 // Notebook hosts use their own supervisor Jobs. Include only their live, birth-checked ancestry
 // rooted in this backend, alongside Agent Job members that may outlive their original leader.
-export const inspectRuntimeWindowsProcessIds = (): number[] => {
+// Synchronous: a cancel frame cannot interrupt it, so only a request already cancelled is skipped.
+export const inspectRuntimeWindowsProcessIds = (signal?: AbortSignal): number[] => {
   if (process.platform !== 'win32') return []
+  signal?.throwIfAborted()
   return [
     ...new Set([
       ...inspectOwnedWindowsProcessIds(),

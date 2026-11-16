@@ -32,6 +32,15 @@ vi.mock('./WorkspaceActivityGroup', async (importOriginal) => {
   }
 })
 
+vi.mock('./schedules/ScheduleMessageCard', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./schedules/ScheduleMessageCard')>()
+  return {
+    ...actual,
+    SessionScheduleBanner: ({ promptId, latest }: { promptId?: string; latest?: boolean }) =>
+      latest ? <div data-testid="schedule-association" data-prompt={promptId} /> : null
+  }
+})
+
 const reviewStoreMock = vi.hoisted(() => ({ loadError: undefined as string | undefined }))
 
 vi.mock('./WorkspaceRunMarks', () => ({
@@ -3041,5 +3050,34 @@ describe('settled process presentation', () => {
       const isolated = await renderScroller(input)
       expect(isolated).toContain('Intermediate explanation')
     }
+  )
+})
+
+it('attaches the schedule association only below the last reply in the transcript', async () => {
+  const messages = [
+    createMessage({ id: 'first', createdAt: 1 }),
+    createMessage({
+      id: 'reply-first',
+      role: 'agent',
+      responseToMessageId: 'first',
+      content: 'First reply',
+      completedAt: 2,
+      createdAt: 2
+    }),
+    createMessage({ id: 'last', createdAt: 3 }),
+    createMessage({
+      id: 'reply-last',
+      role: 'agent',
+      responseToMessageId: 'last',
+      content: 'Last reply',
+      completedAt: 4,
+      createdAt: 4
+    })
+  ]
+  const html = await renderScroller(createSession({ status: 'idle', messages }))
+  expect(html.match(/data-testid="schedule-association"/g)).toHaveLength(1)
+  expect(html).toContain('data-prompt="last"')
+  expect(html.indexOf('data-testid="schedule-association"')).toBeGreaterThan(
+    html.indexOf('Last reply')
   )
 })

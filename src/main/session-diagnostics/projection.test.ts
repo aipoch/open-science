@@ -509,7 +509,16 @@ it('retains classified failure evidence in session and turn diagnostics with red
 
 it('retains film request evidence without exporting the generated content', () => {
   const fields = {
+    invocationId: 'film-invocation',
     operationId: 'film-job',
+    frameworkId: 'pi',
+    providerId: 'provider-1',
+    purpose: 'correction',
+    workerRole: 'speech',
+    lane: 1,
+    exitCode: 23,
+    totalMs: 54000,
+    stagesMs: { readiness: 100, voice: 200 },
     requestId: 'call-1',
     attempt: 2,
     phase: 'animation',
@@ -522,7 +531,12 @@ it('retains film request evidence without exporting the generated content', () =
   expect(
     projectDiagnosticLog({
       scope: 'research-video',
-      data: { ...fields, text: 'private draft', prompt: 'private session' }
+      data: {
+        ...fields,
+        stagesMs: { ...fields.stagesMs, 'private stage': 200, build: -1 },
+        text: 'private draft',
+        prompt: 'private session'
+      }
     })
   ).toEqual({ scope: 'research-video', diagnostics: fields })
 })

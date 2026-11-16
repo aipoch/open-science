@@ -1,3 +1,4 @@
+import { scheduleToolPresentation } from './schedules/schedule-tool-presentation'
 import { formatNetworkHostname } from '../../../../shared/notebook-network-settings'
 import {
   SplitButton,
@@ -638,10 +639,12 @@ const useNotebookEnvironment = (
 
 const PermissionImpactTip = ({
   description,
-  detail
+  detail,
+  scopeDescription
 }: {
   description: string
   detail?: string
+  scopeDescription?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -662,6 +665,7 @@ const PermissionImpactTip = ({
           <div className="space-y-1">
             {detail ? <p>{detail}</p> : null}
             <p className={detail ? 'text-muted-foreground' : undefined}>{description}</p>
+            {scopeDescription ? <p>{scopeDescription}</p> : null}
           </div>
         </TooltipContent>
       </Tooltip>
@@ -785,6 +789,9 @@ const PermissionApprovalCard = ({
     : libraryAction
       ? buildLiteratureLibraryToolSummary(libraryAction, request.rawInput)
       : undefined
+  const schedule = isMcpPermissionRequest(request)
+    ? scheduleToolPresentation(request.mcpIdentity, request.rawInput, t)
+    : undefined
   const notebookSummary = isMcpPermissionRequest(request)
     ? buildNotebookToolSummary(request.mcpIdentity, request.rawInput, undefined, t, true)
     : undefined
@@ -825,10 +832,12 @@ const PermissionApprovalCard = ({
   const sourcePresentation = describePermissionRequest(request)
   const presentation: PermissionPresentation = {
     ...sourcePresentation,
-    actionTitle: t(sourcePresentation.actionTitleKey ?? sourcePresentation.actionTitle, {
-      ...sourcePresentation.actionTitleValues
-    }),
-    categoryLabel: t(sourcePresentation.categoryLabel),
+    actionTitle:
+      schedule?.summary.title ??
+      t(sourcePresentation.actionTitleKey ?? sourcePresentation.actionTitle, {
+        ...sourcePresentation.actionTitleValues
+      }),
+    categoryLabel: schedule ? t('Schedule') : t(sourcePresentation.categoryLabel),
     description: t(sourcePresentation.description)
   }
   const allowOptionId = getAllowOptionId(request.options, effectiveScope)
@@ -1025,14 +1034,20 @@ const PermissionApprovalCard = ({
               <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
                 {presentation.actionTitle}
               </span>
-              <PermissionImpactTip description={presentation.description} detail={titleDetail} />
+              <PermissionImpactTip
+                description={presentation.description}
+                detail={titleDetail}
+                scopeDescription={schedule ? scopeDescription : undefined}
+              />
             </div>
-            <PermissionHeaderBadges
-              lookup={notebookLookup}
-              runtime={presentation.notebookRuntime}
-              categoryLabel={presentation.categoryLabel}
-              scopeDescription={scopeDescription}
-            />
+            {!schedule && (
+              <PermissionHeaderBadges
+                lookup={notebookLookup}
+                runtime={presentation.notebookRuntime}
+                categoryLabel={presentation.categoryLabel}
+                scopeDescription={scopeDescription}
+              />
+            )}
           </>
         )}
       </div>
@@ -1089,6 +1104,16 @@ const PermissionApprovalCard = ({
               {t("Switching environments clears the current kernel's variables.")}
             </p>
           ) : null}
+        </div>
+      ) : schedule ? (
+        <div className="space-y-2">
+          <WorkspaceToolSummaryCard summary={schedule.summary} schedule />
+          {schedule.script && (
+            <details>
+              <summary className="cursor-pointer">{t('Script')}</summary>
+              <WorkspaceToolCodeBlock {...schedule.script} />
+            </details>
+          )}
         </div>
       ) : notebookSummary || fileSummary ? (
         <div key={requestId} className="space-y-2">

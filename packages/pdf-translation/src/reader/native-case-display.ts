@@ -208,6 +208,149 @@ function opaqueConditionalItems(items: Part[], width: number): ReadonlySet<numbe
   return selected
 }
 
+// Parenthesized value labels do not make aligned modular branches ordinary prose.
+// Retain the whole display: free wrapping can move a branch value onto its prior row.
+function annotatedModularItems(items: Part[]): ReadonlySet<number> {
+  const result = new Set<number>()
+  for (let at = 0; at < items.length; at++) {
+    if (items[at].str !== '\uF8F1') continue
+    let end = at + 1
+    while (end < items.length && /^[\uF8F2\uF8F4]$/u.test(items[end].str)) end++
+    const frame = items.slice(at, end + 1),
+      top = frame[0],
+      bottom = frame.at(-1)!,
+      size = top.height,
+      x = top.transform[4],
+      right = x + top.width
+    if (
+      !/^\uF8F1\uF8F4*\uF8F2\uF8F4*\uF8F3$/u.test(frame.map((i) => i.str).join('')) ||
+      frame.length > 12 ||
+      frame.some(
+        (i, n) =>
+          !valid(i) ||
+          i.fontName !== top.fontName ||
+          Math.abs(i.height - size) > size * 0.01 ||
+          Math.abs(i.width - top.width) > size * 0.01 ||
+          Math.abs(i.transform[4] - x) > size * 0.01 ||
+          i.fontAscent !== top.fontAscent ||
+          i.fontDescent !== top.fontDescent ||
+          (n > 0 && i.transform[5] >= frame[n - 1].transform[5])
+      ) ||
+      top.fontAscent! < 0 ||
+      top.fontAscent! > 0.2 ||
+      top.fontDescent! >= -0.3
+    )
+      continue
+    const high = top.transform[5] + size * top.fontAscent!,
+      low = bottom.transform[5] + size * bottom.fontDescent!,
+      labels = items.filter(
+        (i) =>
+          i.index > bottom.index &&
+          i.transform[4] >= right &&
+          i.transform[4] - right < size * 0.5 &&
+          i.transform[5] > low &&
+          i.transform[5] < high &&
+          /^\d+(?:\.\d+)?\s*\([A-Za-z]+(?:[ -][A-Za-z]+)*\)$/u.test(i.str)
+      )
+    if (high - low < size * 2 || high - low > size * 9 || labels.length < 2 || labels.length > 8)
+      continue
+    const pitch = labels[0].transform[5] - labels[1].transform[5],
+      center = (labels[0].transform[5] + labels.at(-1)!.transform[5]) / 2
+    if (
+      pitch < size * 0.9 ||
+      pitch > size * 1.8 ||
+      labels.some(
+        (i, n) =>
+          Math.abs(i.transform[4] - labels[0].transform[4]) > size * 0.05 ||
+          (n > 0 && Math.abs(labels[n - 1].transform[5] - i.transform[5] - pitch) > size * 0.05)
+      )
+    )
+      continue
+    const rows = labels.map((label, rowIndex) =>
+        items.filter(
+          (i) =>
+            i.index >= label.index &&
+            (!labels[rowIndex + 1] || i.index < labels[rowIndex + 1].index) &&
+            i.transform[4] >= right &&
+            Math.abs(i.transform[5] - label.transform[5]) < size * 0.05
+        )
+      ),
+      conditions: Part[][] = []
+    if (
+      rows.some((row, n) => {
+        const condition = row.slice(2)
+        conditions.push(condition)
+        return (
+          row[0] !== labels[n] ||
+          row[1]?.str !== ',' ||
+          !condition.length ||
+          row.some(
+            (i, k) =>
+              !valid(i) ||
+              i.fontAscent! <= i.fontDescent! ||
+              Math.abs(i.height - size) > size * 0.05 ||
+              (k > 0 &&
+                (i.index <= row[k - 1].index ||
+                  i.transform[4] - row[k - 1].transform[4] - row[k - 1].width < -size * 0.05 ||
+                  i.transform[4] - row[k - 1].transform[4] - row[k - 1].width > size * 3))
+          ) ||
+          !/^[A-Za-z\p{Script=Greek}]\s*≡\s*[±+−-]?\s*\d+\s*\(mod\s+\d+\)[,.]$/u.test(
+            condition.map((i) => i.str).join('')
+          )
+        )
+      }) ||
+      conditions.some(
+        (row) => Math.abs(row[0].transform[4] - conditions[0][0].transform[4]) > size * 0.05
+      )
+    )
+      continue
+    const lhs: Part[] = []
+    for (let n = at - 1; n >= 0 && lhs.length < 12; n--) {
+      const i = items[n]
+      if (
+        !valid(i) ||
+        i.transform[4] + i.width > x ||
+        i.transform[4] < x - size * 8 ||
+        Math.abs(i.transform[5] - center) > size * 0.65 ||
+        !mathematical(i.str)
+      )
+        break
+      lhs.unshift(i)
+    }
+    if (
+      !/^[A-Za-z\p{Script=Greek}]['′″]{0,2}\([A-Za-z\p{Script=Greek}]\)\s*=$/u.test(
+        lhs.map((i) => i.str).join('')
+      ) ||
+      x - lhs.at(-1)!.transform[4] - lhs.at(-1)!.width > size * 0.6
+    )
+      continue
+    const packet = [...lhs, ...frame, ...rows.flat()],
+      keys = new Set(packet.map((i) => i.index)),
+      start = Math.min(...keys),
+      finish = Math.max(...keys),
+      left = Math.min(...packet.map((i) => i.transform[4])),
+      far = Math.max(...packet.map((i) => i.transform[4] + i.width))
+    if (
+      packet.length !== keys.size ||
+      items.some(
+        (i) =>
+          !keys.has(i.index) &&
+          ((i.index >= start && i.index <= finish) ||
+            ![...i.transform, i.width, i.height, i.fontAscent, i.fontDescent].every(
+              Number.isFinite
+            ) ||
+            (i.transform[4] < far &&
+              i.transform[4] + i.width > left &&
+              i.transform[5] + i.height * i.fontDescent! < high &&
+              i.transform[5] + i.height * i.fontAscent! > low))
+      )
+    )
+      continue
+    for (const key of keys) result.add(key)
+  }
+  return result
+}
+
 /** Only closed native case rows or a complete conditional display lose eligibility. */
 export function nativeCaseDisplayItems(page: PdfLayoutPage): ReadonlySet<number> {
   const result = new Set<number>()
@@ -348,5 +491,6 @@ export function nativeCaseDisplayItems(page: PdfLayoutPage): ReadonlySet<number>
     for (const index of keys) result.add(index)
   }
   for (const index of opaqueConditionalItems(items, page.width)) result.add(index)
+  for (const index of annotatedModularItems(items)) result.add(index)
   return result
 }

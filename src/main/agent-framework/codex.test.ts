@@ -17,7 +17,7 @@ import {
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
 import { terminateProcessTree } from '../process-tree'
 import { CODEX_VERSION } from '../settings/managed-codex'
-import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings-runtime'
 
 const fakeChild = new EventEmitter() as ChildProcessWithoutNullStreams
 afterEach(async () => {
@@ -413,7 +413,9 @@ describe('codexFramework', () => {
         remote_plugin: false,
         code_mode: {
           direct_only_tool_namespaces:
-            index === 2 ? ['mcp__skills', 'mcp__open_science_plan'] : ['mcp__skills']
+            index === 2
+              ? ['mcp__skills', 'mcp__open_science_plan', 'mcp__open_science_schedule']
+              : ['mcp__skills']
         },
         shell_tool: false
       }))
@@ -703,7 +705,11 @@ describe('codexFramework', () => {
       developer_instructions: 'Stable bridge guidance.',
       features: {
         code_mode: {
-          direct_only_tool_namespaces: ['mcp__skills', 'mcp__open_science_plan']
+          direct_only_tool_namespaces: [
+            'mcp__skills',
+            'mcp__open_science_plan',
+            'mcp__open_science_schedule'
+          ]
         }
       },
       model_context_window: 128_000,

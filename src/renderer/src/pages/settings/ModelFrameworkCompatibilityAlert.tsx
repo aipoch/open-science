@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { ErrorNotice } from '@/components/error-notice'
 
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
-import { isProviderUsableByFramework } from '../../../../shared/settings'
+import { isProviderUsableByFramework } from '../../../../shared/settings-runtime'
 import { isModelBridgeSupported } from '../../../../shared/provider-bridge-policy'
 import { incompatibilityReason } from '../workspace/composer-model-picker-utils'
 

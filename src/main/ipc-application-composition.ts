@@ -1,5 +1,13 @@
 import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
 import { PromptOptimizationService } from './projects/prompt-optimization'
+import { ScheduleRunSessions } from './schedules/run-session'
+import { ScheduleMcp } from './schedules/mcp'
+import { ScheduleManagement } from './schedules/management'
+import { ScheduleRepository } from './schedules/repository'
+import { ScheduleDispatcher } from './schedules/dispatcher'
+import { createScheduleExecution } from './schedules/execution'
+import { getProjectDbClient as getScheduleDatabase } from './projects/prisma-client'
+import { resolveConfigRoot as scheduleConfigRoot } from './storage-root'
 import { composeResearchFilm } from './composition/research-film'
 import { createLocalModelApi } from './local-models/owner'
 import { registerLocalModelIpcHandlers } from './desktop-surface-declarations'
@@ -175,7 +183,9 @@ export type ApplicationRuntimeInterfaces = {
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   listTrayNavigationSessions: () => Promise<readonly TrayNavigationSession[]>
   prepareDesktopUpdate: import('./update/strategy').InstallGate
-  inspectDesktopUpdate: () => Promise<import('./update/strategy').InstallReadiness>
+  inspectDesktopUpdate: (
+    signal?: AbortSignal
+  ) => Promise<import('./update/strategy').InstallReadiness>
   abortDesktopUpdate: () => void
   hasActivePackageTransfer: () => boolean
   hasActiveReviewerWork: () => boolean
@@ -367,8 +377,10 @@ export const createApplicationModules = async (
     researchFilm.videoExportModels
   )
   declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModels))
+  const scheduleRepository = new ScheduleRepository(() => getScheduleDatabase(scheduleConfigRoot()))
   const projectLifecycle = composeProjectLifecycle({
     promptOptimization,
+    scheduleRepository,
     applicationEvents,
     ...storageStartup,
     uploadRepository: uploadStorage.uploadRepository,
@@ -545,7 +557,19 @@ export const createApplicationModules = async (
     sessionAuthority,
     translate
   })
+  let wakeSchedules = (): void => {}
+  const publishScheduleChange = (projectId: string, sessionId: string | null): void => {
+    applicationEvents.publish('schedules:changed', { projectId, sessionId })
+    wakeSchedules()
+  }
+  const schedules = new ScheduleManagement(
+    scheduleRepository,
+    sessionAuthority.sessionPersistenceCoordinator,
+    projectLifecycle.archiveCoordinator,
+    publishScheduleChange
+  )
   const agentRuntime = await composeAgentRuntime({
+    schedules: new ScheduleMcp(schedules),
     sandboxNetworkApprovalOwner: sessionProjection.sandboxNetworkApprovalOwner,
     ...settingsBootstrap,
     ...storageStartup,
@@ -629,7 +653,8 @@ export const createApplicationModules = async (
   })
   const handoff = await composeHandoff({
     holdUpdateAdmission: () => applicationCommandComposition.holdUpdateAdmission(),
-    loadSessionSummaries: () => sessionFoundation.sessionRepository.loadSessionSummaries(),
+    loadSessionSummaries: (signal) =>
+      sessionFoundation.sessionRepository.loadSessionSummaries(signal),
     declareElectronAdapter,
     webSessionPersistenceFlush,
     ...settingsBootstrap,
@@ -807,6 +832,7 @@ export const createApplicationModules = async (
   })
   sessionAuthority.reviewerCommandOwnerRef.current = reviewerCommandOwner
   const commandDependencies = composeCommandDependencies({
+    schedules,
     localeOwner,
     reportUploadProgress,
     sideChatCommands,
@@ -878,12 +904,45 @@ export const createApplicationModules = async (
       disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
     }
   })
+  const scheduleDispatcher = await modules.add(undefined, () => {
+    const owner = new ScheduleDispatcher(
+      () => getScheduleDatabase(scheduleConfigRoot()),
+      createScheduleExecution({
+        runSessions: new ScheduleRunSessions(
+          sessionAuthority.sessionPersistenceCoordinator,
+          projectLifecycle.archiveCoordinator,
+          (id) => sessionPackages.projectRepository.get(id),
+          () => settingsBootstrap.settingsService.getSettingsView()
+        ),
+        sessions: sessionAuthority.sessionPersistenceCoordinator,
+        runtime: agentRuntime.runtime,
+        notebook: notebookRuntime.notebookService,
+        archive: projectLifecycle.archiveCoordinator,
+        resolveAgentTarget: settingsBootstrap.resolveSessionAgentTarget
+      }),
+      publishScheduleChange
+    )
+    wakeSchedules = () => owner.wake()
+    owner.start()
+    return {
+      name: 'session-schedules',
+      capability: owner,
+      dispose: () => owner.dispose(QUIT_SHUTDOWN_BUDGET_MS),
+      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
+    }
+  })
   composition.phase('commands')
   const quitPreparation = createQuitPreparation({
     quiesceAuthentication: () => settingsBootstrap.settingsService.quiesceAuthentication(),
-    prepareAgent: () => agentRuntime.runtime.prepareForQuit(),
+    prepareAgent: () => {
+      scheduleDispatcher.suspend()
+      return agentRuntime.runtime.prepareForQuit()
+    },
     prepareBackends: () => handoff.shutdownCoordinator.runForQuitPreparation(),
-    abortAgent: () => agentRuntime.runtime.abortQuitPreparation(),
+    abortAgent: () => {
+      agentRuntime.runtime.abortQuitPreparation()
+      scheduleDispatcher.start()
+    },
     resumeSideChat: () => sideChat.sideChatRuntime.resumeAfterHandoff()
   })
 

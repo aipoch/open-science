@@ -770,6 +770,50 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().sessions[1]?.contentLoaded).not.toBe(false)
   })
 
+  it('keeps the catalog usable when one selected Session body cannot be read', async () => {
+    const selected = createPersistedSession({ id: 'broken', projectId: 'project-1' })
+    const healthy = createPersistedSession({ id: 'healthy', projectId: 'project-1' })
+    const summary = (session: PersistedChatSession): SessionSummary => ({
+      number: session.id === selected.id ? 1 : 2,
+      id: session.id,
+      projectId: session.projectId,
+      title: session.title,
+      status: session.status,
+      presentedStatus: session.status,
+      pinned: false,
+      revision: 1,
+      activeMessageCount: 0,
+      artifactCount: 0,
+      filesRevision: 0,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      needsStartupRecovery: session.id === selected.id
+    })
+    const api = createApi({
+      list: vi.fn().mockResolvedValue({
+        sessions: [summary(selected), summary(healthy)],
+        manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: selected.id }
+      }),
+      loadOne: vi.fn().mockRejectedValue(new Error('corrupt body'))
+    })
+    const errors: string[] = []
+
+    await loadPersistedSessions(
+      api,
+      () => true,
+      { sessionId: selected.id },
+      false,
+      new Set(),
+      (failed, error) => errors.push(`${failed.projectId}\0${failed.id}:${String(error)}`)
+    )
+
+    expect(errors).toEqual(['project-1\0broken:Error: corrupt body'])
+    expect(useSessionStore.getState().sessions).toMatchObject([
+      { id: selected.id, contentLoaded: false },
+      { id: healthy.id, contentLoaded: false }
+    ])
+  })
+
   it('opens the explicitly selected Session again during a recovery retry', async () => {
     const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
     const list = vi.fn().mockResolvedValue({

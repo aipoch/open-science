@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 
 import type { ClaudeDetectResult } from '../../shared/settings'
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
-import { augmentedPathEnv } from './shell-path'
+import { augmentedPathEnv, withNpmBinFallback } from './shell-path'
 
 const execFileAsync = promisify(execFile)
 
@@ -50,7 +50,7 @@ const claudeBinaryNames = (platform: NodeJS.Platform): string[] =>
 
 // Common non-PATH install locations by platform. Unix: Homebrew + /usr/local. Windows: npm's global
 // bin (%APPDATA%\npm) and the native installer's Programs dir. `~/.local/bin` (the install script's
-// target on every OS) is added separately by collectCandidateDirs.
+// target on every OS) is added separately by candidateDirs.
 const wellKnownDirs = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] => {
   if (platform === 'win32') {
     const p = pathFor(platform)
@@ -66,30 +66,18 @@ const wellKnownDirs = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): strin
 }
 
 // Builds the ordered list of directories to search for the claude binary.
-const collectCandidateDirs = async (
-  deps: ClaudeDetectDeps,
-  signal?: AbortSignal
-): Promise<string[]> => {
+const candidateDirs = (deps: ClaudeDetectDeps, signal?: AbortSignal): AsyncGenerator<string> => {
   const p = pathFor(deps.platform)
-  const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter((dir) => dir.length > 0)
-  let npmBinDirs: string[] = []
-  try {
-    npmBinDirs = await deps.resolveNpmBinDirs(signal)
-  } catch {
-    signal?.throwIfAborted()
-  }
-  signal?.throwIfAborted()
-  const localBin = p.join(deps.homePath, '.local', 'bin')
-
-  // De-duplicate while preserving first-seen order so the first real hit wins.
-  return Array.from(
-    new Set([
+  const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter(Boolean)
+  return withNpmBinFallback(
+    [
       ...pathDirs,
-      localBin,
+      p.join(deps.homePath, '.local', 'bin'),
       ...(deps.extraDirs ?? []),
-      ...wellKnownDirs(deps.platform, deps.env),
-      ...npmBinDirs
-    ])
+      ...wellKnownDirs(deps.platform, deps.env)
+    ],
+    deps,
+    signal
   )
 }
 
@@ -111,11 +99,10 @@ const detectClaude = async (
 ): Promise<ClaudeDetectResult> => {
   const p = pathFor(deps.platform)
   signal?.throwIfAborted()
-  const candidateDirs = await collectCandidateDirs(deps, signal)
   const binaryNames = claudeBinaryNames(deps.platform)
   const resolveSpawnTarget = deps.resolveSpawnTarget ?? ((candidate: string) => candidate)
 
-  for (const dir of candidateDirs) {
+  for await (const dir of candidateDirs(deps, signal)) {
     for (const name of binaryNames) {
       const candidate = p.join(dir, name)
 
@@ -234,4 +221,4 @@ const createDefaultDetectDeps = (): ClaudeDetectDeps => {
   }
 }
 
-export { collectCandidateDirs, createDefaultDetectDeps, detectClaude, parseVersion }
+export { candidateDirs, createDefaultDetectDeps, detectClaude, parseVersion }

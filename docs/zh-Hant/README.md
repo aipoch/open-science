@@ -53,19 +53,18 @@
 
 > 本文件是英文 `README.md` 的翻譯。若內容有差異，請以[英文原文](../../README.md)為準。
 
-### 💡 AIPOCH Open-Science v1.2.1 更新
+### 💡 AIPOCH Open-Science v1.2.2 更新
 
-_2026 年 11 月 11 日_
+_2026 年 11 月 12 日_
 
-- **統一資源中心**：集中管理技能、連接器、專家及市集安裝；Web 介面也支援從市集安裝。
-- **手動最佳化提示詞**：從輸入區呼叫已設定的服務商，檢閱、編輯或復原結果；自訂範本儲存在專案設定中。
-- **內建智能體升級**：主智能體與子智能體可使用 Codex 訂閱；新增支援 1M 詞元上下文的 Claude Fable 5.2，並採用服務商支援的輸出上限。
-- **文獻 CSV 匯出**：匯出所選文獻、整個專案或文獻集的中繼資料，使用 16 個固定英文欄位名稱。
-- **精簡研究匯出**：Notebook 與 Compute 對相同內容的證據只儲存一次，縮小長篇 `.science` 紀錄並加快匯出。
-- **雲端運算登入**：Modal 與 Hugging Face 在瀏覽器授權前準備相容的 Python，帳戶驗證使用系統代理。
-- **可靠性改進**：改善 Windows 更新復原、回答提問後的繼續執行，以及切換會話時的研究影片產生；會話無活動 15 分鐘後回收閒置直譯器。
+- **嚴格網路模式**：可為 Notebook 網路選用 Strict 白名單，請求必須在通訊協定、主機與埠號上都符合你的規則，未符合的請求會直接被封鎖，不會出現授權提示。
+- **影片繼續產生**：中斷的研究影片產生會從已驗證的檢查點繼續，並以五步驟檢視顯示進度；已完成的場景與旁白會重複使用。
+- **PDF 保真度**：外部 PDF 保留原生圖形、表格、圖註與閱讀順序，翻譯後的文件也會保留原始結構與版面配置。
+- **更安全的 Windows 授權**：受保護模式下的資料夾授權會在儲存前先檢查，更新、解除安裝與交接流程能更可靠地復原並保留診斷資訊。
+- **供應商更新**：Qwen4 Max Preview 加入北京與新加坡的 Bailian Token Plans，官方連線的預設模型也已更新。
+- **可靠性修正**：工作階段匯入會回報結果、服務復原會在連線恢復前封鎖工作區，並在各介面上保留深色模式的對比度。
 
-[查看 v1.2.1 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
+[查看 v1.2.2 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
 
 <a id="share-your-research"></a>
 
@@ -173,6 +172,7 @@ AIPOCH 對 AIPOCH Open-Science 進行了評測，任務涵蓋尋找論文、回�
 | 根據文獻回答問題 | LitQA2-FullText        | 在獨立的 LitQA2-FullText 測試中，Open-Science **答對 75 題中的 70 題**（**準確率 93.33%**，deepseek-flash，Max 推理）。                     |
 | 綜合附引用的答案 | ScholarQA-CS2          | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道驗證題上獲得 **0.9289/1 的綜合品質分數**。官方測試參考結果使用不同的題目。                |
 | 執行研究流程     | ASI-Bench              | 在使用相同模型的本機 ASI-Bench 測試中，Open-Science 的 B4 得分為 **59.46**，Codex 為 **55.45**。B2 得分幾乎相同（**56.11** 與 **56.09**）。 |
+| 執行科研工作流程 | TB-Science 0.1         | 70 道任務，GPT-6 Astra/max：210 次本機執行中 **145 次通過**（**69.05%**）；非官方排行榜名次，逐次紀錄未公開。                               |
 | 分析生物醫學資料 | BiomniBench-DA         | 在 BiomniBench-DA Public 50 上，兩個評審模型的評分分別為 **81.04** 和 **77.06**，等權平均為 **79.05**。                                     |
 | 重現已發表的結果 | CORE-Bench-Hard        | CORE-Bench-Hard — 本機評測答對 37 項測試任務中的 36 項（97.30%），最終統計包含複測。                                                        |
 | 根據資料提出假設 | DiscoveryBench         | DiscoveryBench — 在驗證集的 25 項任務上，本機模型評分平均為 0.7467/1。                                                                      |
@@ -182,7 +182,7 @@ AIPOCH 對 AIPOCH Open-Science 進行了評測，任務涵蓋尋找論文、回�
 
 **評測範圍：** 報告涵蓋 2026 年 8 月至 11 月、使用所列模型與資料劃分進行的本機或內部測試，並未針對目前版本重新執行。參考成績是歷史快照，並非即時排名。不同基準系列的分數不能直接比較，數值差距不代表統計顯著性。
 
-評測詳情見 [AstaBench 與 ASI-Bench 報告](https://aipoch.com/benchmark/open-science)及 [BiomniBench-DA 報告](https://aipoch.com/blog/open-science-biomnibench-da)。
+評測詳情見 [AstaBench 與 ASI-Bench 報告](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA 報告](https://aipoch.com/blog/open-science-biomnibench-da)及 [TB-Science 0.1 本機測試報告](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)。
 
 [CORE-Bench-Hard · 重現性評測報告](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

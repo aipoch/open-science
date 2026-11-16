@@ -8,7 +8,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { SettingsRepository } from './repository'
 import { ClassificationSettingsOwner } from './classification-settings'
 import { classificationSettingsSchema } from './classification-config'
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import { SETTINGS_FILE_VERSION } from '../../shared/settings-runtime'
 import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
 
 vi.mock('./crypto', async (importOriginal) => ({

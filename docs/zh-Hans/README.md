@@ -53,19 +53,18 @@
 
 > 本文档是英文 `README.md` 的翻译。如内容存在差异，请以[英文原文](../../README.md)为准。
 
-### 💡 AIPOCH Open-Science v1.2.1 更新
+### 💡 AIPOCH Open-Science v1.2.2 更新
 
-_2026 年 11 月 11 日_
+_2026 年 11 月 12 日_
 
-- **统一资源中心**：集中管理技能、连接器、专家及市场安装；Web 界面也支持从市场安装。
-- **手动优化提示词**：从输入区调用已配置的服务商，审阅、编辑或撤销结果；自定义模板保存在项目设置中。
-- **内置智能体升级**：主智能体和子智能体可使用 Codex 订阅；新增支持 1M 词元上下文的 Claude Fable 5.2，并采用服务商支持的输出上限。
-- **文献 CSV 导出**：导出选中文献、整个项目或文献集的元数据，使用 16 个固定英文列名。
-- **紧凑研究导出**：Notebook 和 Compute 对相同内容的证据只存储一次，缩小长篇 `.science` 记录并加快导出。
-- **云端计算登录**：Modal 和 Hugging Face 在浏览器授权前准备兼容的 Python，账户验证使用系统代理。
-- **可靠性改进**：改善 Windows 更新恢复、回答提问后的继续执行及切换会话时的研究影片生成；会话无活动 15 分钟后回收空闲解释器。
+- **Strict 网络模式**：为 Notebook 网络选择 Strict mode——请求必须按协议、主机和端口匹配你的规则，不匹配的请求直接拦截，不再弹出授权询问。
+- **影片续传**：中断的研究影片从已验证检查点继续，五步进度视图显示当前阶段；已完成的场景和旁白自动复用。
+- **PDF 保真**：外部 PDF 保留原生图形、表格、图注和阅读顺序；翻译后的文档保留原有结构和版式。
+- **更安全的 Windows 授权**：保护模式下的文件夹授权在保存前校验；更新、卸载和移交流程恢复更可靠，并保留诊断信息。
+- **服务商更新**：Qwen4 Max Preview 加入位于北京和新加坡的 Bailian Token Plans；官方连接的默认模型已更新。
+- **可靠性修复**：会话导入报告结果；服务恢复期间阻断工作区直至连接恢复；深色模式各界面保持对比度。
 
-[查看 v1.2.1 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
+[查看 v1.2.2 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
 
 <a id="share-your-research"></a>
 
@@ -173,6 +172,7 @@ AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回�
 | 根据文献回答问题 | LitQA2-FullText        | 在独立的 LitQA2-FullText 测试中，Open-Science **答对 75 题中的 70 题**（**准确率 93.33%**，deepseek-flash，Max 推理）。                     |
 | 综合带引用的答案 | ScholarQA-CS2          | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道验证题上获得 **0.9289/1 的综合质量分数**。官方测试参考结果使用不同的题目。                |
 | 执行研究流程     | ASI-Bench              | 在使用相同模型的本地 ASI-Bench 测试中，Open-Science 的 B4 得分为 **59.46**，Codex 为 **55.45**。B2 得分几乎相同（**56.11** 与 **56.09**）。 |
+| 执行科研工作流   | TB-Science 0.1         | 70 道任务，GPT-6 Astra/max：210 次本地执行中 **145 次通过**（**69.05%**）；非官方榜单名次，逐次记录未公开。                                 |
 | 分析生物医学数据 | BiomniBench-DA         | 在 BiomniBench-DA Public 50 上，两位评审模型的评分分别为 **81.04** 和 **77.06**，等权平均为 **79.05**。                                     |
 | 复现已发表的结果 | CORE-Bench-Hard        | CORE-Bench-Hard — 本地评测答对 37 项测试任务中的 36 项（97.30%），最终统计包含复测。                                                        |
 | 根据数据提出假设 | DiscoveryBench         | DiscoveryBench — 在验证集的 25 项任务上，本地模型评分的均值为 0.7467/1。                                                                    |
@@ -182,7 +182,7 @@ AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回�
 
 **评测范围：** 报告涵盖 2026 年 8 月至 11 月、使用所列模型与数据划分开展的本地或内部测试，并未针对当前版本重新运行。参考成绩是历史快照，并非实时排名。不同基准系列的分数不能直接比较，数值差距不代表统计显著性。
 
-评测详情见 [AstaBench 与 ASI-Bench 报告](https://aipoch.com/benchmark/open-science)及 [BiomniBench-DA 报告](https://aipoch.com/blog/open-science-biomnibench-da)。
+评测详情见 [AstaBench 与 ASI-Bench 报告](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA 报告](https://aipoch.com/blog/open-science-biomnibench-da)和 [TB-Science 0.1 本地测试报告](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)。
 
 [CORE-Bench-Hard · 复现评测报告](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

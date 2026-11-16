@@ -8168,6 +8168,7 @@
       "externalImports": [
         "@aipoch/diagnostics/node",
         "@aipoch/durable-files",
+        "node:crypto",
         "node:fs/promises",
         "node:path",
         "node:url"

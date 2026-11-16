@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ConfiguredModelCatalogEntry } from '../../../../shared/configured-model-catalog'
+import type { ProviderView } from '../../../../shared/settings'
 import {
   CODEX_ISOLATED_PROVIDER_ID,
-  CODEX_SUBSCRIPTION_PROVIDER_ID,
-  type ProviderView
-} from '../../../../shared/settings'
+  CODEX_SUBSCRIPTION_PROVIDER_ID
+} from '../../../../shared/settings-runtime'
 import {
   isConfigurationSelectable,
   resolveSelectableConfiguration,

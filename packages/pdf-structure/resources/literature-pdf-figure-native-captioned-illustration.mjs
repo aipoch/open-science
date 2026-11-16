@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { nativeVectorCaptionPeer } from './literature-pdf-native-raster-peer-ownership.mjs'
 import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
@@ -5754,6 +5755,7 @@ export function nativeCaptionedRasterVectorStrip(
     if (!paths.some((rect) => rect[0] < gutter - edge && rect[2] > gutter + edge))
       paths = paths.filter((rect) => (right ? rect[2] < gutter : rect[0] > gutter))
   }
+  if (nativeVectorCaptionPeer(page, caption, captions, nativeTokens)) return
   // Staggered captions can terminate independent raster and vector columns.
   // Veto a mixed candidate when its selected paths are an independent native
   // vector packet or separate earlier marks above both graphic bands. The

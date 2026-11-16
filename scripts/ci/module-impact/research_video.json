@@ -3,6 +3,7 @@
     "src/main/research-video/export-control.test.ts",
     "src/main/research-video/export-control.ts",
     "src/main/research-video/export-electron.ts",
+    "src/main/research-video/export-electron.test.ts",
     "src/main/research-video/mcp-contract.test.ts",
     "src/renderer/src/components/local-narration-control.test.tsx",
     "src/renderer/src/components/local-narration-control.tsx",
@@ -24,7 +25,8 @@
     "src/main/research-video/lifecycle.test.ts",
     "src/main/research-video/stored-presentation.ts",
     "src/main/research-video/input-context.ts",
-    "src/main/research-video/input-context.test.ts"
+    "src/main/research-video/input-context.test.ts",
+    "src/main/research-video/wait.ts"
   ],
   "interfacePaths": [
     "src/main/research-video/export-control.ts",
@@ -47,6 +49,7 @@
   "testFiles": {
     "owner": [
       "src/main/research-video/export-control.test.ts",
+      "src/main/research-video/export-electron.test.ts",
       "src/renderer/src/components/local-narration-control.test.tsx",
       "src/shared/research-video-presentation.test.ts",
       "src/main/research-video/runtime.test.ts",

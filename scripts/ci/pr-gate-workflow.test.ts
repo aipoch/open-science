@@ -1988,7 +1988,7 @@ describe('PR Gate workflow', () => {
     )
 
     expect(rustTest?.run).toBe(
-      'cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml'
+      'cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml -- --test-threads=1'
     )
     expect(build?.run).toBe('node packages/notebook-network-sandbox/vendor/windows/build.mjs x64')
     expect(steps.indexOf(rustTest!)).toBeLessThan(steps.indexOf(build!))

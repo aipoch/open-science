@@ -35,7 +35,7 @@ import {
   isClaudeSubscriptionProvider,
   isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider
-} from '../../shared/settings'
+} from '../../shared/settings-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type { LocalShellRuntimePreference, WslSelection } from '../../shared/wsl-setup'
 import { relocateManagedRuntimeEnablement } from '../notebook/managed-runtime-relocation'

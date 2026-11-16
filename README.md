@@ -51,19 +51,18 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-### 💡 AIPOCH Open-Science v1.2.1 updates
+### 💡 AIPOCH Open-Science v1.2.2 updates
 
-_November 11, 2026_
+_November 12, 2026_
 
-- **Unified Resource Center**: Manage skills, connectors, specialists, and Marketplace installs together; installation also works in the Web UI.
-- **Manual prompt optimization**: Invoke your configured provider from the composer, review or edit the result, and undo it; save custom templates in Project settings.
-- **Built-in Agent upgrades**: Use Codex subscriptions for the main agent and subagents, select Claude Fable 5.2 with a 1M context window, and use provider-supported output limits.
-- **Bibliography CSV**: Export selected references or a whole project or collection with 16 stable English column names.
-- **Compact research exports**: Notebook and Compute histories store unique evidence once, reducing the size and export time of long `.science` histories.
-- **Cloud compute sign-in**: Modal and Hugging Face prepare compatible Python before browser authorization; account verification follows the system proxy.
-- **Reliability improvements**: Windows update recovery, answered questions, and research films across session switches improve; idle interpreters are reclaimed after 15 minutes without session activity.
+- **Strict network mode**: Opt in to a Strict whitelist for Notebook networking — requests must match your rules by protocol, host, and port; unmatched requests are blocked without an authorization prompt.
+- **Films resume**: Interrupted research-film generation continues from validated checkpoints with a five-step progress view; completed scenes and narration are reused.
+- **PDF fidelity**: External PDFs keep native figures, tables, captions, and reading order, and translated documents preserve the original structure and layout.
+- **Safer Windows grants**: Folder grants in protected mode are checked before saving, and update, uninstall, and handoff flows recover more reliably with diagnostics preserved.
+- **Provider updates**: Qwen4 Max Preview joins Bailian Token Plans in Beijing and Singapore, and default models for official connections are refreshed.
+- **Reliability fixes**: Session imports report their outcome, service recovery blocks the workspace until the connection returns, and dark-mode contrast is preserved across surfaces.
 
-[View the full v1.2.1 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
+[View the full v1.2.2 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
 
 <a id="share-your-research"></a>
 
@@ -171,6 +170,7 @@ AIPOCH evaluated Open-Science on research tasks ranging from literature search t
 | Answer a question from the literature | LitQA2-FullText, Test                     | **70/75** correct answers (93.33% accuracy).                                            |
 | Write a cited answer                  | ScholarQA-CS2, 100 validation questions   | **0.9289/1** composite quality score. Official test references use different questions. |
 | Carry out a workflow                  | ASI-Bench, local runs with the same model | **59.46** on B4 (Codex 55.45) and **56.11** on B2 (Codex 56.09).                        |
+| Execute scientific workflows          | TB-Science 0.1 (70 tasks)                 | **69.05%** (145/210 local runs; GPT-6 Astra/max); no official rank or public run logs.  |
 | Reproduce published results           | CORE-Bench-Hard                           | **36/37** tasks correct (97.30%, including retests).                                    |
 | Analyze biomedical data               | BiomniBench-DA, Public 50                 | **79.05** mean judge score (81.04 and 77.06, weighted equally).                         |
 | Generate hypotheses                   | DiscoveryBench, 25 validation tasks       | **0.7467/1** mean score using a local model judge.                                      |
@@ -180,7 +180,7 @@ AIPOCH evaluated Open-Science on research tasks ranging from literature search t
 
 These local runs used different metrics, models, and task sets from August to November 2026. The scores describe those runs. They were not rerun for this release.
 
-[Evaluation overview](https://aipoch.com/benchmark/open-science) · [CORE-Bench-Hard report](https://aipoch.com/blog/aipoch-open-science-core-bench-hard) · [BiomniBench-DA report](https://aipoch.com/blog/open-science-biomnibench-da)
+[Evaluation overview](https://aipoch.com/benchmark/open-science) · [CORE-Bench-Hard report](https://aipoch.com/blog/aipoch-open-science-core-bench-hard) · [BiomniBench-DA report](https://aipoch.com/blog/open-science-biomnibench-da) · [TB-Science 0.1 local result](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)
 
 </details>
 

@@ -531,3 +531,14 @@ it('passes a catalog slug to main without treating it as a dropped File', async 
   expect(port.getPathForFile).not.toHaveBeenCalled()
   expect(port.invoke).toHaveBeenCalledWith('sessions:import-package', {}, { useCase: 'research' })
 })
+
+it('preserves schedule error codes as plain rejections through contextBridge', async () => {
+  const port = createPort()
+  const error = { code: 'schedule-limit-reached', message: 'Run limit reached.' }
+  port.invoke.mockResolvedValue({ ok: false, error })
+  const rejected = await createElectronRendererContractAdapter(port)
+    .invoke('schedules.edit', {})
+    .catch((error) => error)
+  expect(rejected).toEqual(error)
+  expect(rejected).not.toBeInstanceOf(Error)
+})

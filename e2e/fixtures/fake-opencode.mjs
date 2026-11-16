@@ -922,13 +922,19 @@ const verifyWindowsReplLifecycle = async (sessionId) =>
 
 const verifyGlobalNpmTools = async (sessionId, mode) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    // Hosted Windows runners can spend 30-80s launching each AppContainer-backed
+    // Shell operation. Keep the MCP request alive for the certification cell budget.
     const execute = async (command) => {
       const result = toolResult(
         'bash_execute',
-        await client.callTool({
-          name: 'bash_execute',
-          arguments: { command }
-        })
+        await client.callTool(
+          {
+            name: 'bash_execute',
+            arguments: { command }
+          },
+          undefined,
+          { timeout: 240_000 }
+        )
       )
       if (result.exitCode !== 0)
         throw new Error(`npm application check failed: ${JSON.stringify(result)}`)
@@ -1387,6 +1393,41 @@ const createProvenanceArtifact = async (sessionId, markdown = false, withoutExec
     throw new Error('The artifact Version did not retain its Notebook producer run.')
   }
   return `Artifact provenance verified for session ${sessionId}, artifact ${stored.artifact.artifact_id}, version ${stored.artifact.version_id}.`
+}
+
+const createLongFilenameArtifacts = async (sessionId) => {
+  await withMcpClient(sessionId, 'open-science-artifacts', async (client) => {
+    const stem = '非小细胞肺癌免疫治疗耐药与肿瘤相关巨噬细胞_综述'
+    for (const filename of [
+      stem + '.md',
+      stem + '.docx',
+      '研究'.repeat(30) + '.md',
+      'a'.repeat(252) + '.md'
+    ]) {
+      const word = filename.endsWith('.docx')
+      const stored = toolResult(
+        'write_artifact_file',
+        await client.callTool({
+          name: 'write_artifact_file',
+          arguments: {
+            filename,
+            mimeType: word
+              ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+              : 'text/markdown',
+            source: {
+              kind: 'inline',
+              content: word
+                ? PREVIEW_CONTEXT_MENU_DOCX_BASE64
+                : '# Long filename report\n\n中文附件完整内容。\n',
+              encoding: word ? 'base64' : 'utf8'
+            }
+          }
+        })
+      )
+      if (!stored.artifact?.version_id) throw new Error('Long filename artifact was not staged.')
+    }
+  })
+  return 'Long filename artifacts published.'
 }
 
 const createPreviewContextMenuArtifacts = async (sessionId) => {
@@ -2478,7 +2519,9 @@ if (process.argv.includes('--version')) {
           })
           reply = ''
         } else if (prompt.includes('Run the tool collapse scroll probe.')) {
-          const gates = JSON.parse(prompt.split('Probe gates: ')[1])
+          const gatesPayload = prompt.match(/Probe gates: (\{[^\r\n]+\})/u)?.[1]
+          if (!gatesPayload) throw new Error('Missing collapse probe gates.')
+          const gates = JSON.parse(gatesPayload)
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -3026,6 +3069,8 @@ if (process.argv.includes('--version')) {
           if (controlResultValue(result).marker !== 'markdown-task-read-verified')
             throw new Error(JSON.stringify(result))
           reply = 'Markdown task read verified.'
+        } else if (prompt.includes('Create long filename artifacts.')) {
+          reply = await createLongFilenameArtifacts(context.params.sessionId)
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {
           if (prompt.includes('Observe the Task before publication.')) {
             await new Promise((resolve) => setTimeout(resolve, 8_000))
@@ -3681,6 +3726,16 @@ if (process.argv.includes('--version')) {
             const faultKey = `${faultRoot}:${mode}`
             const attempt = (classificationFaultAttempts.get(faultKey) ?? 0) + 1
             classificationFaultAttempts.set(faultKey, attempt)
+            if (mode === 'timeout') {
+              const receivedAt = performance.now()
+              response.once('close', () => {
+                const elapsedMs = performance.now() - receivedAt
+                void writeFile(
+                  join(faultRoot, `timeout-${attempt}.json`),
+                  JSON.stringify(elapsedMs)
+                ).catch((error) => console.error('Could not record classification timeout.', error))
+              })
+            }
             await appendFile(
               join(faultRoot, 'requests.jsonl'),
               `${JSON.stringify({
@@ -3690,8 +3745,7 @@ if (process.argv.includes('--version')) {
                 sessionId,
                 messageId,
                 pid: process.pid,
-                infoPresent: true,
-                delayMs: mode === 'timeout' ? 2_500 : 0
+                infoPresent: true
               })}\n`
             )
             if (
@@ -3702,7 +3756,8 @@ if (process.argv.includes('--version')) {
               response.writeHead(mode.endsWith('500') ? 500 : 404).end()
               return
             }
-            if (mode === 'timeout') await delay(2_500)
+            // Leave both attempts unanswered so the real client deadlines close them.
+            if (mode === 'timeout') return
             if (mode === 'body-reset' || (mode === 'transient-body-reset' && attempt === 1)) {
               response.writeHead(200, { 'content-type': 'application/json' })
               response.write('{"info":')

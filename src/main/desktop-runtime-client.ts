@@ -137,7 +137,7 @@ export type DesktopRuntimeClient = Readonly<{
   processId(): number
   ownsRuntime(): boolean
   runtimeInfo(): DesktopRuntimeInfo
-  refreshControl(): Promise<DesktopRuntimeInfo>
+  refreshControl(signal?: AbortSignal): Promise<DesktopRuntimeInfo>
   waitForStopped(
     signal?: AbortSignal,
     requireCleanExit?: boolean,
@@ -149,7 +149,7 @@ export type DesktopRuntimeClient = Readonly<{
   ): Promise<RuntimeDirectoryLease>
   lifecycle(request: DesktopLifecycleRequest): Promise<unknown>
   loadSessionForEvent(request: { projectId: string; sessionId: string }): Promise<unknown>
-  invokeHost(channel: string, args?: readonly unknown[]): Promise<unknown>
+  invokeHost(channel: string, args?: readonly unknown[], signal?: AbortSignal): Promise<unknown>
   invoke(clientId: string, channel: string, args: readonly unknown[]): Promise<unknown>
   release(clientId: string): void
   notificationAction(token: string, action: 'clicked' | 'closed'): void
@@ -190,6 +190,7 @@ export async function connectDesktopRuntime(options: {
   >()
   let supportsPayload = false
   let supportsResourceActivity = false
+  let supportsHostCancel = false
   let lastResourceActivity: { foreground: boolean; suspended: boolean } | undefined
   let requestId = 0
   let channels: readonly string[] = []
@@ -294,7 +295,10 @@ export async function connectDesktopRuntime(options: {
     })
   }
   const request = (frame: Record<string, unknown>): { id: number; response: Promise<unknown> } => {
-    if (pending.size >= 256) throw new Error('Too many pending desktop requests.')
+    // The runtime counts an abandoned request until its handler settles and closes the connection
+    // above 256, so abandoned requests keep their slot until their late response arrives.
+    if (pending.size + expiredRequests.size >= 256)
+      throw new Error('Too many pending desktop requests.')
     const id = ++requestId
     const response = new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject })
@@ -306,6 +310,44 @@ export async function connectDesktopRuntime(options: {
       }
     })
     return { id, response }
+  }
+  const requestWithCancellation = (
+    frame: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<unknown> => {
+    signal?.throwIfAborted()
+    const operation = request(frame)
+    if (!signal) return operation.response
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const cleanup = (): void => signal.removeEventListener('abort', abort)
+      const settle = (callback: () => void): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        callback()
+      }
+      const abort = (): void => {
+        if (settled) return
+        // A response already consumed this ID; its settlement is queued behind this listener.
+        if (pending.delete(operation.id)) {
+          expiredRequests.add(operation.id)
+          if (supportsHostCancel)
+            try {
+              send({ kind: 'cancel', id: operation.id })
+            } catch {
+              // Disconnect handling owns transport errors and rejects the remaining requests.
+            }
+        }
+        settle(() => reject(signal.reason ?? new Error('Desktop host operation cancelled.')))
+      }
+      signal.addEventListener('abort', abort, { once: true })
+      operation.response.then(
+        (value) => settle(() => resolve(value)),
+        (error) => settle(() => reject(error))
+      )
+      if (signal.aborted) abort()
+    })
   }
   const boundedRequest = async (
     frame: Record<string, unknown>,
@@ -319,8 +361,7 @@ export async function connectDesktopRuntime(options: {
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
             () => {
-              pending.delete(operation.id)
-              expiredRequests.add(operation.id)
+              if (pending.delete(operation.id)) expiredRequests.add(operation.id)
               reject(new Error('Desktop lifecycle acknowledgement timed out.'))
             },
             Math.max(0, deadlineAt - Date.now())
@@ -428,6 +469,8 @@ export async function connectDesktopRuntime(options: {
         supportsPayload = bootstrap.rpcCapabilities?.includes(RUNTIME_PAYLOAD_CAPABILITY) ?? false
         supportsResourceActivity =
           bootstrap.rpcCapabilities?.includes('resource-activity-v1') ?? false
+        // Older runtimes reject unknown frames by closing the connection.
+        supportsHostCancel = bootstrap.rpcCapabilities?.includes('host-cancel-v1') ?? false
         channels = Object.freeze([...bootstrap.rpcChannels])
         cursor = bootstrap.eventStream
         runtimeInfo = desktopRuntimeInfoSchema.parse(
@@ -798,30 +841,51 @@ export async function connectDesktopRuntime(options: {
     }))
 
   return {
-    refreshControl: () => {
-      if (refreshing) return refreshing.promise
-      let resolve!: (value: DesktopRuntimeInfo) => void
-      let reject!: (error: Error) => void
-      const promise = new Promise<DesktopRuntimeInfo>((yes, no) => {
-        resolve = yes
-        reject = no
-      })
-      const timer = setTimeout(
-        () => fail(new Error('Desktop control refresh timed out.'), 'bootstrap-timeout'),
-        5000
-      )
-      refreshing = { promise, resolve, reject, timer }
-      try {
-        send({
-          kind: 'bootstrap',
-          desktopInstanceId: options.desktopInstanceId ?? desktopInstanceId
+    refreshControl: (signal) => {
+      if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('Refresh cancelled.'))
+      let promise: Promise<DesktopRuntimeInfo>
+      if (!refreshing) {
+        let resolve!: (value: DesktopRuntimeInfo) => void
+        let reject!: (error: Error) => void
+        promise = new Promise<DesktopRuntimeInfo>((yes, no) => {
+          resolve = yes
+          reject = no
         })
-      } catch (error) {
-        clearTimeout(timer)
-        refreshing = undefined
-        reject(error as Error)
-      }
-      return promise
+        const timer = setTimeout(
+          () => fail(new Error('Desktop control refresh timed out.'), 'bootstrap-timeout'),
+          5000
+        )
+        refreshing = { promise, resolve, reject, timer }
+        try {
+          send({
+            kind: 'bootstrap',
+            desktopInstanceId: options.desktopInstanceId ?? desktopInstanceId
+          })
+        } catch (error) {
+          clearTimeout(timer)
+          refreshing = undefined
+          reject(error as Error)
+        }
+      } else promise = refreshing.promise
+      if (!signal) return promise
+      return new Promise<DesktopRuntimeInfo>((resolve, reject) => {
+        let settled = false
+        const cleanup = (): void => signal.removeEventListener('abort', abort)
+        const settle = (callback: () => void): void => {
+          if (settled) return
+          settled = true
+          cleanup()
+          callback()
+        }
+        const abort = (): void =>
+          settle(() => reject(signal.reason ?? new Error('Refresh cancelled.')))
+        signal.addEventListener('abort', abort, { once: true })
+        promise.then(
+          (value) => settle(() => resolve(value)),
+          (error) => settle(() => reject(error))
+        )
+        if (signal.aborted) abort()
+      })
     },
     commandNames: () => channels,
     startupState: () => startupState,
@@ -887,13 +951,16 @@ export async function connectDesktopRuntime(options: {
       if (!closed) send({ kind: 'notification-action', token, action })
     },
     loadSessionForEvent: (request) => eventPayloadClient.invoke('sessions:load-one', [request]),
-    invokeHost: async (channel, args = []) =>
-      request({
-        kind: 'host-invoke',
-        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
-        channel,
-        args
-      }).response,
+    invokeHost: async (channel, args = [], signal) =>
+      requestWithCancellation(
+        {
+          kind: 'host-invoke',
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          channel,
+          args
+        },
+        signal
+      ),
     invoke: async (clientId, channel, args) => {
       if (!channels.includes(channel))
         throw new Error(`Desktop runtime command is unavailable: ${channel}`)

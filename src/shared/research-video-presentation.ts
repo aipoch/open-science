@@ -3,6 +3,9 @@ import { z } from 'zod'
 import { sanitizeExportFilename } from './conversation-export'
 import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
 
+export const RESEARCH_VIDEO_STATUS_TIMEOUT_MS = 30_000
+export const RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE = 'Research film status timed out. Try again.'
+
 export const researchVideoPresentationRequestSchema = z
   .object({
     projectId: z.string().min(1).max(512),

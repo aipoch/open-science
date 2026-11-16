@@ -29,6 +29,7 @@ export type AcpRuntimeActivityPort = {
     attribution: MessageAttribution,
     options?: {
       promptAttemptId?: string
+      beforeSessionWrite?: () => Promise<void>
       // Runs under prompt ownership, before prompt events, Artifact opening or provider dispatch.
       // Throwing rejects this application turn without emitting a user-visible prompt.
       onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
@@ -40,3 +41,6 @@ export type AcpRuntimeActivityPort = {
     cwd: string
   }): ReturnType<AcpProviderPromptExecutor['beginObservation']>
 }
+
+// Raised only by begin, before the provider is invoked. The durable prompt still decides whether a write committed.
+export class SessionPromptAdmissionError extends Error {}

@@ -9,7 +9,6 @@ import {
   isComputeProviderId,
   type JobSummary
 } from '../../../../shared/compute'
-import { ComputeJobOutputs } from '@/components/ComputeJobOutputs'
 import type {
   NotebookProjectActivity,
   NotebookProjectBackgroundRunActivity,
@@ -457,9 +456,9 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                       className="relative border-t border-border-200 px-3.5 py-3 text-xs first:border-t-0"
                     >
                       <details className="group pr-8 @3xl/compute:hidden">
-                        <summary className="flex cursor-pointer list-none items-center gap-2 pr-1 [&::-webkit-details-marker]:hidden">
+                        <summary className="flex cursor-pointer list-none items-start gap-2 rounded-md outline-none focus-visible:keyboard-focus [&::-webkit-details-marker]:hidden">
                           <RadioTower
-                            className="size-3.5 shrink-0 text-text-100"
+                            className="mt-px size-3.5 shrink-0 text-text-100"
                             aria-hidden="true"
                           />
                           <span className="min-w-0 flex-1">
@@ -477,10 +476,13 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                               </time>
                             </span>
                           </span>
-                          <ChevronDown
-                            className="size-3.5 shrink-0 transition-transform group-open:rotate-180"
-                            aria-hidden="true"
-                          />
+                          <span className="-mt-1 flex size-7 shrink-0 items-center justify-center rounded-lg text-text-100 transition-colors group-hover:bg-bg-100 group-hover:text-text-000">
+                            <ChevronDown
+                              className="size-4 transition-transform motion-reduce:transition-none group-open:rotate-180"
+                              strokeWidth={1.75}
+                              aria-hidden="true"
+                            />
+                          </span>
                         </summary>
                         <dl className="mt-3 grid gap-2 border-t border-border-200 pt-3">
                           <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
@@ -536,16 +538,15 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                       <Button
                         type="button"
                         variant="ghost"
-                        size="icon-xs"
-                        className="absolute top-3 right-3 text-text-100 hover:text-text-000"
+                        size="icon-sm"
+                        className="absolute top-2 right-2.5 text-text-100 hover:text-text-000 @3xl/compute:top-1/2 @3xl/compute:-translate-y-1/2"
                         disabled={!session}
                         aria-label={t('Go to Session')}
                         title={t('Go to Session')}
                         onClick={() => goToSession(job.session_id)}
                       >
-                        <ArrowUpRight aria-hidden="true" />
+                        <ArrowUpRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
                       </Button>
-                      <ComputeJobOutputs job={job} />
                     </div>
                   )
                 })}

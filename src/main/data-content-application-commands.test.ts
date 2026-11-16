@@ -2578,6 +2578,19 @@ describe('Data and content application commands', () => {
       router.dispatcher.invoke(dataContentApplicationCommands.sessionFork, forkInvocation)
     ).resolves.toBeNull()
     expect(deps.electron.forkSession).toHaveBeenCalledWith(forkInvocation)
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionFork,
+        invocation([{ projectId: 'project-1', sessionId: 'session-1' }] as const)
+      )
+    ).resolves.toBeNull()
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionFork,
+        invocation([{ projectId: 'project-1', sessionId: 'session-1' }] as const, remoteCaller)
+      )
+    ).rejects.toThrow('local')
+
     const exportInvocation = invocation([exportRequest] as const, electronCaller)
     await expect(
       router.dispatcher.invoke(

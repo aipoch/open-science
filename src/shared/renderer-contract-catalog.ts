@@ -125,6 +125,7 @@ export const RENDERER_API_CONTRACT = composeRendererApiContract(
   specialist.contracts,
   storage.contracts,
   projects.bookmarksResolvePdfSourceContracts,
+  projects.scheduleContracts,
   previews.pdfAnnotationsListContracts,
   projects.tagsCreateContracts,
   update.updateApplyContracts,

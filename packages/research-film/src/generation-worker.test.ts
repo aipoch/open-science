@@ -62,7 +62,7 @@ it('still transfers the original PCM for final audio requests', async () => {
 it('reports predictor failure to the owner instead of hanging the pending probe', async () => {
   mocks.narrator.mockResolvedValue({
     measureDuration: vi.fn(async () => {
-      throw new Error('predictor failed')
+      throw Object.assign(new Error('predictor failed'), { code: 'ENOMEM' })
     }),
     synthesize: vi.fn()
   })
@@ -71,7 +71,8 @@ it('reports predictor failure to the owner instead of hanging the pending probe'
   await vi.waitFor(() =>
     expect(mocks.post).toHaveBeenCalledExactlyOnceWith({
       kind: 'error',
-      message: 'predictor failed'
+      message: 'predictor failed',
+      code: 'ENOMEM'
     })
   )
 })

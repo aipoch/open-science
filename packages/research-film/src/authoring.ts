@@ -192,7 +192,7 @@ export async function authorResearchFilmSource(options: {
 /** Complete source-to-player pipeline. Storage publication and model leases remain host-owned. */
 export async function generateResearchFilm(
   options: Parameters<typeof authorResearchFilmSource>[0] & {
-    generate: ReturnType<typeof import('./generation.js').createResearchVideoGenerator>
+    generate: import('./generation.js').ResearchVideoGenerate
     modelDirectory: string
     modelRevision: string
     engineDirectory: string

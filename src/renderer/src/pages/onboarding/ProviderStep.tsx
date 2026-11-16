@@ -10,7 +10,7 @@ import type {
   ValidateProviderResult,
   XaiOAuthDeviceAuthorization
 } from '../../../../shared/settings'
-import { isProviderUsableByFramework } from '../../../../shared/settings'
+import { isProviderUsableByFramework } from '../../../../shared/settings-runtime'
 import {
   selectActiveAgentFramework,
   selectFrameworkApiEndpoints,

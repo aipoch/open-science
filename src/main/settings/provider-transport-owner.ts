@@ -1,13 +1,14 @@
 import { harnessFramework } from '../agent-framework/harness'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { isLoopbackProviderBaseUrl } from '@aipoch/providers/transport'
-import { isCodexSubscriptionProvider, preferredEndpoint } from '../../shared/settings'
+import { isCodexSubscriptionProvider, preferredEndpoint } from '../../shared/settings-runtime'
 import type {
   ProviderFailureObservation,
   ProviderFailureObserver
 } from './provider-failure-observation'
 
 import { usesVendorMessagesApiKeyHeader, type ModelReasoningEffort } from '@aipoch/providers'
+import { resolveProviderOutputLimit } from './provider-env'
 
 import {
   CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID,
@@ -604,6 +605,10 @@ class ProviderTransportOwner {
     const targetId = JSON.stringify(['codebuddy', input.activeTarget.providerId, model])
     const transport = input.plan.transport
     const usesXaiOAuth = provider.type === 'xai-subscription'
+    const maxOutputTokens =
+      transport.kind === 'codebuddy-provider-compatibility' && transport.wire === 'messages'
+        ? resolveProviderOutputLimit({ ...provider, model })
+        : undefined
     const bridge: ChatCompletionsCompatibilityBridgePort =
       transport.kind === 'codebuddy-provider-compatibility'
         ? this.createChatCompletionsCompatibilityBridge({
@@ -612,6 +617,9 @@ class ProviderTransportOwner {
             endpoint: codeBuddyCompatibilityEndpoint(provider, transport.wire),
             ...(provider.key ? { key: provider.key } : {}),
             model,
+            ...(transport.wire === 'messages' && maxOutputTokens !== undefined
+              ? { maxOutputTokens }
+              : {}),
             adaptRequest: adaptCodeBuddyChatCompletionsRequest
           })
         : usesXaiOAuth

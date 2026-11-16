@@ -119,6 +119,40 @@ const harness = (resolved: 'terminal' | 'not-ready' | 'missing' = 'terminal') =>
 describe('BackgroundResultDeliveryOwner', () => {
   afterEach(() => vi.restoreAllMocks())
 
+  it('redelivers an expired claim while the catalog scan is still blocked', async () => {
+    vi.useFakeTimers()
+    const { owner, repository, loadSessionCatalog } = harness()
+    const resume = deferred()
+    repository.listOwnership.mockResolvedValue([delivery('run-1')])
+    loadSessionCatalog.mockImplementationOnce(async () => {
+      await resume.promise
+      return { complete: true, sessions: [] }
+    })
+    repository.recoverExpiredClaims.mockImplementationOnce(async () => {
+      repository.listPendingSessionIds.mockResolvedValueOnce(['session-1'])
+      return 1
+    })
+    try {
+      await vi.advanceTimersByTimeAsync(90_000)
+      expect(loadSessionCatalog).toHaveBeenCalledOnce()
+      expect(repository.recoverExpiredClaims).toHaveBeenCalledTimes(3)
+      expect(repository.claimPending).toHaveBeenCalledExactlyOnceWith(
+        'session-1',
+        expect.anything()
+      )
+      expect(repository.deleteIds).not.toHaveBeenCalled()
+      resume.resolve()
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(repository.deleteIds).toHaveBeenCalledWith(['local-run:run-1'])
+      expect(loadSessionCatalog).toHaveBeenCalledTimes(2)
+    } finally {
+      owner.dispose()
+      resume.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+    }
+  })
+
   it.each(['authority', 'source', 'dispatch'] as const)(
     'does not start a continuation when %s work finishes after disposal',
     async (stage) => {
@@ -345,7 +379,7 @@ describe('BackgroundResultDeliveryOwner', () => {
     const drain = vi.spyOn(owner, 'drainSession').mockResolvedValue('idle')
     repository.listPendingSessionIds.mockResolvedValue(['session-1'])
     try {
-      await vi.advanceTimersByTimeAsync(60_000)
+      await vi.advanceTimersByTimeAsync(60_250)
       expect(repository.listOwnership).toHaveBeenCalledTimes(2)
       expect(loadSessionCatalog).not.toHaveBeenCalled()
       expect(repository.deleteIds).not.toHaveBeenCalled()

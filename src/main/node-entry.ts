@@ -676,8 +676,10 @@ async function main(): Promise<void> {
         invoke: async (channel, invocation) => {
           if (channel === 'locale:snapshot') return localeOwner.snapshot()
           if (!runtime) throw new Error('The runtime is still starting.')
-          if (channel === 'desktop:update-inspect') return runtime.inspectDesktopUpdate()
-          if (channel === 'desktop:update-owned-processes') return inspectRuntimeWindowsProcessIds()
+          if (channel === 'desktop:update-inspect')
+            return runtime.inspectDesktopUpdate(invocation.callerLease.signal)
+          if (channel === 'desktop:update-owned-processes')
+            return inspectRuntimeWindowsProcessIds(invocation.callerLease.signal)
           if (channel === 'desktop:update-gate')
             return runtime.prepareDesktopUpdate(
               z

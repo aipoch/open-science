@@ -1,6 +1,9 @@
 import { lstat, mkdir, readdir, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './managed-workspace-ownership-dir'
+import {
+  MANAGED_WORKSPACE_OWNERSHIP_DIR,
+  RETIRED_WORKSPACES_DIR
+} from './managed-workspace-ownership-dir'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -391,7 +394,7 @@ const planProvisionalManagedWorkspaceReconciliation = async (
     dataRoot,
     'workspaces',
     MANAGED_WORKSPACE_OWNERSHIP_DIR,
-    '.retired-workspaces'
+    RETIRED_WORKSPACES_DIR
   )
   const retiredRootInfo = await lstat(retiredRoot).catch((error: unknown) => {
     if (isFileSystemError(error, 'ENOENT')) return undefined

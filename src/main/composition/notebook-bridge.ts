@@ -98,7 +98,10 @@ export async function composeNotebookBridge({
   configRoot: ReturnType<typeof resolveConfigRoot>
   projectFilesRepository: ReturnType<typeof createManagedFileIndexRepository>
   notebookInputRegistry: NotebookInputRegistry
-  sessionPersistenceCoordinator: Pick<SessionPersistenceCommands, 'runSessionMutation'>
+  sessionPersistenceCoordinator: Pick<
+    SessionPersistenceCommands,
+    'runSessionMutation' | 'findSessionForContinuation'
+  >
   visionEvidenceRepository: VisionEvidenceRepository
   notebookService: NotebookRuntimeService
   grantedRootsRepository: GrantedLocalRootsRepository
@@ -246,7 +249,19 @@ export async function composeNotebookBridge({
       ? { projectId: summary.projectId }
       : undefined
   }
-  bindNotebookApprovals(notebookService, () => runtimeRef.current)
+  bindNotebookApprovals(
+    notebookService,
+    () => runtimeRef.current,
+    async (projectId, sessionId) => {
+      const session = await sessionPersistenceCoordinator.findSessionForContinuation(
+        projectId,
+        sessionId
+      )
+      return session && session.archivedAt === undefined && !session.packageOrigin
+        ? session.permissionProfile
+        : undefined
+    }
+  )
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
       authorizedDirectories: () => grantedRootsRepository.authorizedSnapshot(),

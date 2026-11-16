@@ -6,7 +6,7 @@ import {
   codexSubscriptionProviderIdentity,
   xaiSubscriptionProviderIdentity,
   isCodexSubscriptionProvider
-} from '../../../shared/settings'
+} from '../../../shared/settings-runtime'
 import type {
   AgentFrameworkId,
   ProviderDeletionScenarioModelHandling,

@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SkillUsageAgents } from '@/pages/settings/SkillUsageAgents'
 import { SpecialistAvatar } from '@/pages/settings/specialist-avatar'
+import { SessionPackageEntryRow } from '@/pages/workspace/EmptyConversationBanner'
 import { CitationStylesView } from '@/pages/literature/CitationStylesView'
 import { LiteratureRendererProvider } from '@/pages/literature/public/host'
 import { literatureRendererHost } from '@/lib/literature-renderer-host'
@@ -32,6 +33,18 @@ const longCopy =
 
 export function Fixture(): React.JSX.Element {
   const [opened, setOpened] = useState('')
+  if (params.has('package')) {
+    return (
+      <main className="min-h-screen bg-background p-8 text-foreground">
+        <button>Outside</button>
+        <p onPointerDown={(event) => event.preventDefault()}>Outside text</p>
+        <div className="mt-64">
+          <SessionPackageEntryRow projectId="fixture" compact={params.has('compact')} />
+        </div>
+        <button>After guide</button>
+      </main>
+    )
+  }
   if (params.has('csl')) {
     return (
       <LiteratureRendererProvider host={literatureRendererHost}>

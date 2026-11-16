@@ -53,19 +53,18 @@
 
 > Ce document est une traduction de `README.md` en anglais. En cas de divergence, la [version anglaise](../../README.md) fait foi.
 
-### 💡 AIPOCH Open-Science v1.2.1 — Nouveautés
+### 💡 AIPOCH Open-Science v1.2.2 — Nouveautés
 
-_11 novembre 2026_
+_12 novembre 2026_
 
-- **Centre de ressources unifié**: Gérez compétences, connecteurs, spécialistes et installations depuis la place de marché au même endroit ; l’installation fonctionne aussi dans l’interface web.
-- **Optimisation manuelle des invites**: Sollicitez le fournisseur configuré depuis le composeur, vérifiez ou modifiez le résultat, puis annulez si nécessaire ; enregistrez vos modèles dans les paramètres du projet.
-- **Agent intégré amélioré**: Utilisez les abonnements Codex pour l’agent principal et les sous-agents, Claude Fable 5.2 avec un contexte d’un million de jetons et les limites de sortie prises en charge par les fournisseurs.
-- **Bibliographie en CSV**: Exportez les références sélectionnées, un projet entier ou une collection avec 16 noms de colonnes fixes en anglais.
-- **Exports de recherche compacts**: Notebook et Compute stockent une seule fois chaque contenu de preuve unique, réduisant la taille et le temps d’export des longs historiques `.science`.
-- **Connexion au calcul cloud**: Modal et Hugging Face préparent un environnement Python compatible avant l’autorisation dans le navigateur ; la vérification du compte utilise le proxy système.
-- **Fiabilité**: Amélioration de la récupération des mises à jour Windows, de la reprise après réponse aux questions et des films de recherche lors des changements de session ; les interpréteurs sont libérés après 15 minutes sans activité de la session.
+- **Mode réseau Strict**: Optez pour une liste blanche Strict pour le réseau du Notebook — les requêtes doivent correspondre à vos règles par protocole, hôte et port ; les requêtes sans correspondance sont bloquées sans demande d’autorisation.
+- **Reprise des films**: La génération d’un film de recherche interrompu reprend depuis des points de contrôle validés avec une vue de progression en cinq étapes ; les scènes terminées et la narration sont réutilisées.
+- **Fidélité des PDF**: Les PDF externes conservent les figures, tableaux, légendes et ordre de lecture natifs, et les documents traduits préservent la structure et la mise en page d’origine.
+- **Octrois Windows plus sûrs**: Les octrois de dossiers en mode protégé sont vérifiés avant l’enregistrement, et les flux de mise à jour, de désinstallation et de transfert récupèrent plus fiabilité en préservant leurs diagnostics.
+- **Mises à jour des fournisseurs**: Qwen4 Max Preview rejoint Bailian Token Plans à Beijing et Singapore, et les modèles par défaut des connexions officielles sont actualisés.
+- **Correctifs de fiabilité**: Les importations de sessions rapportent leur résultat, la récupération de service bloque l’espace de travail jusqu’au retour de la connexion et le contraste du mode sombre est préservé sur toutes les surfaces.
 
-[Notes complètes v1.2.1](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
+[Notes complètes v1.2.2](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
 
 <a id="share-your-research"></a>
 
@@ -173,6 +172,7 @@ AIPOCH a évalué AIPOCH Open-Science sur des tâches allant de la recherche d�
 | Répondre à partir de la littérature         | LitQA2-FullText        | Lors d’un essai distinct sur LitQA2-FullText, Open-Science a répondu correctement à **70 questions sur 75** (**93.33% d’exactitude**, deepseek-flash avec raisonnement Max).                                |
 | Produire une synthèse avec citations        | ScholarQA-CS2          | Sur 100 questions de validation de ScholarQA-CS2, Open-Science a obtenu un **score composite de qualité de 0.9289/1** avec deepseek-v4-flash. Les références du test officiel utilisent d’autres questions. |
 | Exécuter des workflows de recherche         | ASI-Bench              | Lors d’essais locaux ASI-Bench avec le même modèle, Open-Science a obtenu **59.46** en B4 et Codex **55.45**. Les scores B2 étaient presque identiques (**56.11** et **56.09**).                            |
+| Exécuter des tâches scientifiques           | TB-Science 0.1         | Sur 70 tâches, **145/210** essais locaux réussis (**69.05%**) avec GPT-6 Astra/max. Ni rang officiel ni relevés individuels publics.                                                                        |
 | Analyser des données biomédicales           | BiomniBench-DA         | Sur BiomniBench-DA Public 50, deux modèles juges ont attribué **81.04** et **77.06** aux résultats. Leur moyenne à poids égaux était de **79.05**.                                                          |
 | Reproduire des résultats publiés            | CORE-Bench-Hard        | CORE-Bench-Hard — 36 tâches de test sur 37 réussies en local (97,30 %), nouveaux essais compris.                                                                                                            |
 | Formuler des hypothèses à partir de données | DiscoveryBench         | DiscoveryBench — Sur 25 tâches du jeu de validation, la note moyenne attribuée par le modèle juge en local est de 0,7467/1.                                                                                 |
@@ -182,7 +182,7 @@ AIPOCH a évalué AIPOCH Open-Science sur des tâches allant de la recherche d�
 
 **Périmètre de l’évaluation :** ces rapports couvrent des essais locaux ou internes d’août à novembre 2026, avec les modèles et partitions indiqués ; ils n’ont pas été réexécutés pour la version actuelle. Les références sont des instantanés historiques, pas des classements en direct. Les scores de familles de benchmarks différentes ne sont pas directement comparables, et les écarts numériques ne prouvent pas une significativité statistique.
 
-Consultez le [rapport AstaBench et ASI-Bench](https://aipoch.com/benchmark/open-science) et le [rapport BiomniBench-DA](https://aipoch.com/blog/open-science-biomnibench-da) pour les détails.
+Consultez le [rapport AstaBench et ASI-Bench](https://aipoch.com/benchmark/open-science) et le [rapport BiomniBench-DA](https://aipoch.com/blog/open-science-biomnibench-da) pour les détails. Voir aussi le [résultat local TB-Science 0.1](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result).
 
 [CORE-Bench-Hard · Rapport de reproductibilité](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

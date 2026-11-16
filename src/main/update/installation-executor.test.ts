@@ -126,7 +126,7 @@ it.each([
     const child = spawn(
       process.execPath,
       [join(executor, 'executor.cjs'), join(executor, 'request.json')],
-      { stdio: 'ignore' }
+      { stdio: ['ignore', 'ignore', 'ignore'] }
     )
     try {
       const deadline = Date.now() + 3000
@@ -161,7 +161,7 @@ it.each([
           join(executor, 'executor.cjs'),
           join(executor, 'request.json')
         ],
-        { stdio: 'pipe' }
+        { stdio: ['ignore', 'pipe', 'pipe'] }
       )
       if (native)
         void (async () => {

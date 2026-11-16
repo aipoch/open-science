@@ -1,5 +1,5 @@
 import type { HistoryReplayDescriptor, HistoryReplayTarget } from './history-replay-contract'
-import { isReviewerCorrectionAttribution } from './session-persistence'
+import { isReviewerCorrectionAttribution, isScheduledWakeAttribution } from './session-persistence'
 import type { MessagePart } from './session-message-contract'
 export { type HistoryReplayDescriptor, type HistoryReplayTarget } from './history-replay-contract'
 
@@ -59,14 +59,16 @@ const isSideChatAdvisory = (message: HistoryMessage): boolean =>
   message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
 const speakerFor = (
   message: HistoryMessage
-): 'User' | 'Assistant' | 'Side chat advisory' | 'Reviewer correction' =>
+): 'User' | 'Assistant' | 'Side chat advisory' | 'Reviewer correction' | 'Scheduled wake' =>
   isSideChatAdvisory(message)
     ? 'Side chat advisory'
-    : isReviewerCorrectionAttribution(message.attribution)
-      ? 'Reviewer correction'
-      : isUserMessage(message)
-        ? 'User'
-        : 'Assistant'
+    : isScheduledWakeAttribution(message.attribution)
+      ? 'Scheduled wake'
+      : isReviewerCorrectionAttribution(message.attribution)
+        ? 'Reviewer correction'
+        : isUserMessage(message)
+          ? 'User'
+          : 'Assistant'
 const speakerPrefixFor = (message: HistoryMessage): string => `**${speakerFor(message)}:** `
 // These are the selected historical snapshots, never fresh Library lookups or current instructions.
 const historicalReferences = (message: HistoryMessage, compact = false): string => {
