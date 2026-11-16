@@ -69,6 +69,34 @@ describe('ManagedPreviewResources', () => {
     ])
   }
 
+  it('protects open previews and admitted readers, and reserves files during retention', async () => {
+    const path = await createFile(Buffer.from('film'), 'player.html')
+    const owner = new ManagedPreviewResources({ resolvePath: async () => path })
+    const request = { source: 'local' as const, path }
+    const resource = await owner.acquire(1, request)
+    const remove = vi.fn(async () => undefined)
+    expect(await owner.withUnusedFiles([path], remove)).toBe(false)
+    const reader = await owner.resolveProtocolResource(resource.id)
+    if (!('fileHandle' in reader)) throw new Error('Expected pinned file reader')
+    owner.release(1, { resourceId: resource.id })
+    expect(await owner.withUnusedFiles([path], remove)).toBe(false)
+    await reader.fileHandle.close()
+    expect(
+      await owner.withUnusedFiles([path], async () => {
+        await expect(owner.acquire(2, request)).rejects.toThrow('being removed')
+        await remove()
+      })
+    ).toBe(true)
+    expect(remove).toHaveBeenCalledOnce()
+    await expect(
+      owner.withUnusedFiles([path], async () => {
+        throw new Error('disk failure')
+      })
+    ).rejects.toThrow('disk failure')
+    const next = await owner.acquire(2, request)
+    owner.release(2, { resourceId: next.id })
+  })
+
   it('registers the preview scheme for streaming and cross-scheme capability fetches', () => {
     expect(MANAGED_PREVIEW_SCHEME).toEqual({
       scheme: 'open-science-preview',

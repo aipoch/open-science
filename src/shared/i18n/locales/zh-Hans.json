@@ -7813,7 +7813,6 @@
     "Continue generation": "继续生成",
     "Generating animations…": "生成动画…",
     "Writing research film…": "正在编写研究短片…",
-    "Create a short film from this conversation.": "根据已有会话生成研究短片。",
     "Generating a new film may take several minutes. Continue?": "生成新短片可能需要几分钟，是否继续？",
     "Research film ready": "研究短片已就绪",
     "This session is unavailable.": "此会话不可用。",
@@ -8217,6 +8216,12 @@
     "Link": "链接",
     "Text color": "文字颜色",
     "Remove link": "移除链接",
-    "Select text to format it, or format the entire text box.": "选中文字设置格式，或为整个文本框设置格式。"
+    "Select text to format it, or format the entire text box.": "选中文字设置格式，或为整个文本框设置格式。",
+    "Film mode": "影片模式",
+    "Research explanation": "研究讲解",
+    "Operation replay": "操作回放",
+    "Explains the research question, methods, and findings with visuals.": "用图解呈现研究问题、方法和结论。",
+    "Replays the conversation, actions, and results in order.": "按顺序回放对话、操作和结果。",
+    "Another film is being generated. Wait for it to finish.": "正在生成另一部影片，请等待完成。"
   }
 }

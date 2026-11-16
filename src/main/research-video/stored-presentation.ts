@@ -1,17 +1,28 @@
+import { createLogger } from '@aipoch/diagnostics/node'
 import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from '@aipoch/research-film/contracts'
 import { createHash } from 'node:crypto'
 import { lstat, readdir, rm, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DurableJsonReadLimitError, readFileWithinLimit } from '@aipoch/durable-files'
 import { z } from 'zod'
+import { researchFilmModeSchema } from '../../shared/research-video-presentation'
 import type {
   ResearchVideoPresentation,
   ResearchVideoPresentationRequest
 } from '../../shared/research-video-presentation'
 
+const log = createLogger('research-video')
+
 export const researchFilmScopeKey = (request: ResearchVideoPresentationRequest): string =>
   createHash('sha256')
-    .update(JSON.stringify([request.projectId, request.sessionId, request.branchId ?? null]))
+    .update(
+      JSON.stringify([
+        request.projectId,
+        request.sessionId,
+        request.branchId ?? null,
+        ...(request.mode === 'operation-replay' ? [request.mode] : [])
+      ])
+    )
     .digest('hex')
 
 export const researchFilmReceiptSchema = z
@@ -95,6 +106,62 @@ export async function readStoredResearchFilm(
   }
 }
 
+/** Retention runs only after publication; unknown or unfinished directories are never candidates. */
+export async function pruneStoredResearchFilms(
+  root: string,
+  request: ResearchVideoPresentationRequest,
+  currentId: string,
+  previousId: string,
+  withUnusedFiles: (paths: string[], remove: () => Promise<void>) => Promise<boolean>
+): Promise<void> {
+  const base = await researchFilmDirectory(root, request)
+  if (!base || (await readResearchFilmReceipt(base))?.id !== currentId) return
+  const owner = z.object({
+    provenance: z.object({
+      projectId: z.string(),
+      sessionId: z.string(),
+      branchId: z.string().optional(),
+      mode: researchFilmModeSchema.optional()
+    })
+  })
+  for (const entry of await readdir(base, { withFileTypes: true })) {
+    if (
+      !entry.isDirectory() ||
+      entry.isSymbolicLink() ||
+      !z.string().uuid().safeParse(entry.name).success ||
+      entry.name === currentId ||
+      entry.name === previousId
+    )
+      continue
+    try {
+      const directory = join(base, entry.name)
+      if (!(await hasResearchFilmOutputs(directory))) continue
+      const sourcePath = join(directory, 'session.json')
+      const stat = await lstat(sourcePath).catch(missing)
+      if (!stat?.isFile() || stat.isSymbolicLink()) continue
+      const source = owner.safeParse(
+        JSON.parse(await readFileWithinLimit(sourcePath, RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES))
+      )
+      if (
+        !source.success ||
+        researchFilmScopeKey(source.data.provenance) !== researchFilmScopeKey(request)
+      )
+        continue
+      await withUnusedFiles(
+        ['player.html', 'sources.zip'].map((name) => join(directory, 'output', name)),
+        () => rm(directory, { recursive: true, force: true })
+      )
+    } catch (error) {
+      // Unproven or inaccessible output must not prevent retiring independent old films.
+      log.info('film retention candidate skipped', {
+        scope: researchFilmScopeKey(request),
+        filmId: entry.name,
+        reason: error instanceof SyntaxError ? 'invalid-json' : 'candidate-io-failed'
+      })
+    }
+  }
+}
+
 async function researchFilmDirectory(
   root: string,
   request: ResearchVideoPresentationRequest
@@ -130,7 +197,7 @@ export async function deleteStoredResearchFilms(
       'artifacts',
       request.projectId,
       request.sessionId,
-      '.research-films',
+      request.mode === 'operation-replay' ? '.operation-replay-films' : '.research-films',
       importedId
     ]) {
       current = join(current, segment)
@@ -147,7 +214,10 @@ export async function deleteStoredResearchFilms(
     }
     if (exists) await rm(current, { recursive: true, force: true })
   }
-  const requests = request.branchId ? [request, { ...request, branchId: undefined }] : [request]
+  const requests =
+    request.branchId && request.mode !== 'operation-replay'
+      ? [request, { ...request, branchId: undefined }]
+      : [request]
   for (const scope of requests) {
     const base = await researchFilmDirectory(root, scope)
     if (!base) continue
@@ -170,7 +240,8 @@ export async function deleteStoredResearchFilms(
           provenance: z.object({
             projectId: identity,
             sessionId: identity,
-            branchId: z.string().optional()
+            branchId: z.string().optional(),
+            mode: researchFilmModeSchema.optional()
           })
         })
         .parse(

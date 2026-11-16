@@ -1,0 +1,33 @@
+{
+  "source": "User-supplied build-preview.zip (2026-11-16), approved NVDA/BTC preview",
+  "files": [
+    {
+      "path": "generic.js",
+      "sourceSha256": "4c2c16c171f0135b2202f71036c419a5b08ed12ec71f061a38e0228129fd13af"
+    },
+    {
+      "path": "generic.css",
+      "sourceSha256": "77a1106e12b157b742d1f76d63ff3aa495f57dce08baae749773d3cccef76983"
+    },
+    {
+      "path": "opening-layout.css",
+      "sourceSha256": "d183bdfd9ccf840f04f40309c9da8415c10c1e738d863e056d9b893423fdb7f5"
+    },
+    {
+      "path": "end-card.css",
+      "sourceSha256": "0b11bfc7c97ceb1285c505c8d1232dbe290d1e605fd10ccf9029f55de560dd6d"
+    },
+    {
+      "path": "libs/operations-composer-v2.js",
+      "sourceSha256": "7027eb0a0e2231e97bf83c24be814f0f1e2a4fa506114d22a2ecb05256dfbe7c"
+    },
+    {
+      "path": "libs/operation-opening.js",
+      "sourceSha256": "1a0e7653b74d890b4c97c926c9ca7f30437a7a0fdbc5a22b9e03429c3840254b"
+    },
+    {
+      "path": "libs/operation-end-card.js",
+      "sourceSha256": "04c31c5cc030326a4e2044a8475ba8937a6e1a8451bb09f1f8dfc9363370fcd0"
+    }
+  ]
+}
