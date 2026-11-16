@@ -1,7 +1,7 @@
 import { getRayToken } from './ray-token'
 import { randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   RayJobCreationNotSentError,
   RayJobCreationRejectedError,
@@ -11,6 +11,7 @@ import {
   uploadRayWorkingDirectory,
   readRayJobLogs,
   stopRayJob,
+  deleteRayJob,
   shellSingleQuote,
   type RayJobsTarget,
   type RayJobClaim,
@@ -142,7 +143,22 @@ export function createRayJobRuntime(deps: Dependencies): {
     Date.now() >= job.submitted_at + job.timeout_seconds * 1000
   const reconcile = async (job: ComputeJob, signal: AbortSignal): Promise<void> => {
     const journal = readRayJournal(job)
-    if (job.harvested_at || journal.published) return
+    if (job.remote_cleanup_disposition !== 'pending') return
+    const harvestComplete =
+      !job.harvest_error && (job.harvested_at !== undefined || journal.published !== undefined)
+    if (job.harvested_at !== undefined && !journal.launch) {
+      const updated = await repo.settleRayCleanup(job)
+      await deps.onJobUpdated(updated)
+      return
+    }
+    if (harvestComplete && journal.launch) {
+      const target = { ...journal.target, getToken: getRayToken }
+      await verifyDashboard(target, signal)
+      await deleteRayJob(target, claimFor(job, journal), signal)
+      const updated = await repo.settleRayCleanup(job)
+      await deps.onJobUpdated(updated)
+      return
+    }
     const target = { ...journal.target, getToken: getRayToken }
     if (job.status !== 'submitted' && job.status !== 'running') {
       if (journal.directory)
@@ -279,7 +295,7 @@ export function createRayJobRuntime(deps: Dependencies): {
   }
   const backoff = new Map<string, ComputeRuntimeBackoffState>()
   const keepsActiveCadence = (job: ComputeJob): boolean =>
-    job.status === 'submitted' || job.status === 'running' || !job.harvested_at
+    job.remote_cleanup_disposition === 'pending'
   const pass = async (signal: AbortSignal): Promise<ComputeRuntimePassResult> => {
     const cancelled = await cancelOne(signal)
     const jobs = await repo.findRayWork()
@@ -294,8 +310,12 @@ export function createRayJobRuntime(deps: Dependencies): {
         await reconcile(job, signal)
         backoff.delete(job.job_id)
         ready ||= keepsActiveCadence(job)
-      } catch {
+      } catch (error) {
         signal.throwIfAborted()
+        log.warn('Ray job reconciliation deferred.', {
+          jobId: job.job_id,
+          ...errorLogFields(error)
+        })
         backoff.set(job.job_id, nextComputeRuntimeBackoff(previous, Date.now()))
         const message =
           'Ray job reconciliation is pending. Check the approved cluster and shared output directory before resubmitting.'
