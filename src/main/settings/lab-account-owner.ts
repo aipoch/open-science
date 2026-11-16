@@ -515,7 +515,12 @@ export class LabAccountOwner {
   ): Promise<LabView> {
     if (!this.isCurrentConnection(generation, serverUrl)) return this.view
     assertLabModelCatalog(bootstrap.models)
-    const record = buildLabProviderRecord(serverUrl, bootstrap)
+    const record = {
+      ...buildLabProviderRecord(serverUrl, bootstrap),
+      // A successful bootstrap is the Lab account's validation proof. Without it the renderer's
+      // authentication recovery cannot distinguish a fresh sign-in from the failed attempt.
+      lastValidatedAt: this.now()
+    }
     const existing = (await this.repository.getSettings()).providers.find(
       (provider) => provider.id === LAB_PROVIDER_ID
     )

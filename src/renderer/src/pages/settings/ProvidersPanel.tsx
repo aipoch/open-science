@@ -516,7 +516,9 @@ const ProvidersPanel = ({
     })
   }
 
-  const recoveryProvider = providers.find(({ id }) => id === recoveryProviderId)
+  const recoveryProvider = providers.find(
+    (provider) => provider.id === recoveryProviderId && !isLabProvider(provider.type)
+  )
   const [recoveryBaseline, setRecoveryBaseline] = useState({
     id: recoveryProviderId,
     model: recoveryModel,

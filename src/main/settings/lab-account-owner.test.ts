@@ -829,6 +829,7 @@ describe('Lab account owner', () => {
     )
     expect(record?.fetchedModels).toContain('lab:research-fast')
     expect(record?.fetchedModels).toEqual(['lab:research-default', 'lab:research-fast'])
+    expect(record?.lastValidatedAt).toBeGreaterThan(0)
     const view = new ProviderRuntimeProjectionOwner().toProviderView(record!)
     expect(
       buildConfiguredModelCatalog({

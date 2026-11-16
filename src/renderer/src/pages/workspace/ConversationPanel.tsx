@@ -1377,14 +1377,20 @@ const ConversationPanel = ({
       run: (notice) => {
         if (notice.failure.reason === 'configuration/auth-failed' && view.authenticationRecovery)
           view.authenticationRecovery.openSettings()
-        else
+        else {
+          const failedProvider = useSettingsStore
+            .getState()
+            .providers.find((provider) => provider.id === modelConfiguration?.providerId)
           openSettingsToPanel(
-            notice.failure.reason === 'configuration/claude-cli' ||
-              notice.failure.reason === 'configuration/codex-cli' ||
-              notice.failure.reason === 'configuration/codex-adapter'
-              ? 'agent'
-              : 'model'
+            failedProvider?.type === 'lab'
+              ? 'lab'
+              : notice.failure.reason === 'configuration/claude-cli' ||
+                  notice.failure.reason === 'configuration/codex-cli' ||
+                  notice.failure.reason === 'configuration/codex-adapter'
+                ? 'agent'
+                : 'model'
           )
+        }
       }
     },
     'open-environment': {
