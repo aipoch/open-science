@@ -23,6 +23,8 @@ vi.mock('node:child_process', async (importOriginal) => {
 })
 
 const windows = process.platform === 'win32' ? describe : describe.skip
+// Include cold PowerShell startup on shared Windows runners.
+const cleanupTimeoutMs = 15_000
 let root: string | undefined
 const children: ChildProcessWithoutNullStreams[] = []
 afterEach(async () => {
@@ -74,8 +76,7 @@ windows('delegated Windows Job ownership (real processes)', () => {
     )
     expect(alive(owned.pid!)).toBe(true)
     const exited = once(owned, 'exit')
-    // Allow for cold PowerShell startup on shared Windows runners.
-    await terminateWindowsProcessesByIdentity(identities, Date.now() + 15_000)
+    await terminateWindowsProcessesByIdentity(identities, Date.now() + cleanupTimeoutMs)
     await exited
     expect(alive(unrelated.pid!)).toBe(true)
   }, 30_000)
@@ -101,11 +102,11 @@ windows('delegated Windows Job ownership (real processes)', () => {
             process.stdout.write(output);
             await once(process.stdin,'data');
             const exited=once(child,'exit');child.stdin.write('exit');await exited;
-            await cleanup(Date.now()+4000);
+            await cleanup(Date.now()+${cleanupTimeoutMs});
             const late=spawn(process.execPath,['-e',${JSON.stringify(worker)},${JSON.stringify(file)}],{stdio:'pipe',windowsHide:true});
             await once(late.stdout,'data');
             const lateExited=once(late,'exit');
-            await cleanup(Date.now()+4000);await lateExited;
+            await cleanup(Date.now()+${cleanupTimeoutMs});await lateExited;
             process.exit(0);
           })().catch(e=>{console.error(e);process.exit(1)});
         `,
@@ -125,6 +126,11 @@ windows('delegated Windows Job ownership (real processes)', () => {
       env: { ...process.env, NODE_PATH: join(process.cwd(), 'node_modules') }
     })
     children.push(application)
+    let stderr = ''
+    application.stderr.setEncoding('utf8')
+    application.stderr.on('data', (chunk: string) => {
+      stderr += chunk
+    })
     const exited = once(application, 'exit')
     const workerPid = Number((await once(application.stdout, 'data'))[0])
     const unrelated = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
@@ -138,7 +144,7 @@ windows('delegated Windows Job ownership (real processes)', () => {
         reason: 'installation-busy'
       })
       application.stdin.write('cleanup')
-      expect((await exited)[0]).toBe(0)
+      expect((await exited)[0], stderr).toBe(0)
       expect(alive(workerPid)).toBe(false)
       expect(alive(unrelated.pid!)).toBe(true)
       await expect(inspectInstallationAvailability(location)).resolves.toBeUndefined()
@@ -146,7 +152,7 @@ windows('delegated Windows Job ownership (real processes)', () => {
       // The worker intentionally outlives its parent; retain cleanup for a failing regression too.
       if (alive(workerPid)) process.kill(workerPid)
     }
-  }, 20_000)
+  }, 45_000)
 
   it('admits live Notebook-style child hosts and their workers before requiring cleanup', async () => {
     root = await mkdtemp(join(tmpdir(), 'notebook-update-admission-'))
