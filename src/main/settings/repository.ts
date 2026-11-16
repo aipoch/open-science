@@ -204,9 +204,12 @@ class SettingsRepository {
         'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'
       >
     },
-    guard?: { expectedLabCatalogToken?: string }
+    guard?: { expectedLabCatalogToken?: string; isCurrent?: () => boolean }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
+      if (guard?.isCurrent && !guard.isCurrent()) {
+        throw new Error('Lab catalog changed. The stale catalog was not written.')
+      }
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
       if (existingId && !settings.providers.some(({ id }) => id === existingId))
         throw new Error('Provider no longer exists.')
@@ -624,9 +627,10 @@ class SettingsRepository {
   async deleteProvider(
     id: string,
     scenarioModelHandling: ProviderDeletionScenarioModelHandling = 'preserve',
-    guard?: { expectedLabCatalogToken?: string }
+    guard?: { expectedLabCatalogToken?: string; isCurrent?: () => boolean }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
+      if (guard?.isCurrent && !guard.isCurrent()) return settings
       const deletingClaudeSubscription = isClaudeSubscriptionProviderId(id)
       if (
         guard &&

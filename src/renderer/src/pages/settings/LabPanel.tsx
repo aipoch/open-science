@@ -71,6 +71,7 @@ export function LabPanel(): React.JSX.Element {
   const [serverUrl, setServerUrl] = useState(() => lab?.serverUrl ?? '')
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [actionErrorKey, setActionErrorKey] = useState<string>()
+  const [actionSuccessKey, setActionSuccessKey] = useState<string>()
   const [authorizationUrl, setAuthorizationUrl] = useState<string>()
   const [pendingSignIn, setPendingSignIn] = useState(false)
   const signingInRef = useRef(false)
@@ -97,6 +98,7 @@ export function LabPanel(): React.JSX.Element {
     if (busyAction !== null) return
     setBusyAction('save')
     setActionErrorKey(undefined)
+    setActionSuccessKey(undefined)
     try {
       const view = await window.api.settings.labSetServer({ serverUrl })
       if (view.error?.code) setActionErrorKey(labErrorCopyKey(view.error.code))
@@ -111,10 +113,12 @@ export function LabPanel(): React.JSX.Element {
     if (busyAction !== null) return
     setBusyAction('check')
     setActionErrorKey(undefined)
+    setActionSuccessKey(undefined)
     try {
       // Probe the address in the field without changing the saved deployment or clearing a login.
       const view = await window.api.settings.labCheck({ serverUrl })
       if (view.error?.code) setActionErrorKey(labErrorCopyKey(view.error.code))
+      else setActionSuccessKey('Lab server address is reachable.')
     } catch (error) {
       setActionErrorKey(errorCopyKey(error))
     } finally {
@@ -126,6 +130,7 @@ export function LabPanel(): React.JSX.Element {
     if (busyAction !== null) return
     setBusyAction('sign-in')
     setActionErrorKey(undefined)
+    setActionSuccessKey(undefined)
     setPendingSignIn(true)
     signingInRef.current = true
     try {
@@ -146,6 +151,7 @@ export function LabPanel(): React.JSX.Element {
     if (busyAction === 'cancel') return
     setBusyAction('cancel')
     setActionErrorKey(undefined)
+    setActionSuccessKey(undefined)
     try {
       await window.api.settings.labCancelLogin()
     } catch (error) {
@@ -380,6 +386,10 @@ export function LabPanel(): React.JSX.Element {
 
             {actionErrorKey ? (
               <ErrorNotice inline level="error" role="alert" description={t(actionErrorKey)} />
+            ) : null}
+
+            {actionSuccessKey ? (
+              <ErrorNotice inline level="success" role="status" description={t(actionSuccessKey)} />
             ) : null}
           </div>
         )}

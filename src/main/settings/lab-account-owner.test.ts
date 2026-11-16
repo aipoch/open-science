@@ -12,6 +12,7 @@ vi.mock('./crypto', () => ({
 import type { LabBootstrap } from '../../shared/lab'
 import { LAB_PROVIDER_ID } from '../../shared/lab'
 import { LabAccountOwner } from './lab-account-owner'
+import { buildLabProviderRecord } from './lab-provider'
 import { LabApi, LabApiError } from './lab-api'
 import { LabCredentialStore } from './lab-credential-store'
 import { defaultVendorModel } from '../../shared/provider-model-policy'
@@ -341,6 +342,52 @@ describe('Lab account owner', () => {
     expect(owner.getView().state).not.toBe('expired')
   })
 
+  it('cancels a login that is still loading its catalog after browser authorization', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const credentials = new LabCredentialStore(dir)
+    await credentials.saveServerUrl(SERVER)
+    let resolveBootstrap: ((value: LabBootstrap) => void) | undefined
+    const api = createApi()
+    api.bootstrap.mockImplementation(
+      () =>
+        new Promise<LabBootstrap>((resolve) => {
+          resolveBootstrap = resolve
+        })
+    )
+    const session = {
+      accessToken: 'at_login',
+      refreshToken: 'rt_login',
+      tokenExpiresAt: Date.now() + 900_000
+    }
+    const oauth = {
+      beginLogin: vi.fn(async () => ({
+        authorizationUrl: 'https://lab.example.com/sign-in',
+        expiresAt: Date.now() + 60_000
+      })),
+      waitForLogin: vi.fn(async () => session),
+      cancelLogin: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined)
+    }
+    const repository = new SettingsRepository(dir)
+    const owner = new LabAccountOwner({
+      configRoot: dir,
+      repository,
+      credentials,
+      api: api as unknown as LabApi,
+      oauth: oauth as unknown as never
+    })
+    await owner.beginLogin()
+    const waiting = owner.waitLogin()
+    await vi.waitFor(() => expect(api.bootstrap).toHaveBeenCalledTimes(1))
+    await owner.cancelLogin()
+    resolveBootstrap?.(BOOTSTRAP)
+    const view = await waiting
+    expect(view).toMatchObject({ state: 'signedOut', error: { code: 'cancelled' } })
+    expect(await credentials.readSession()).toBeUndefined()
+    expect(owner.getView().state).toBe('signedOut')
+  })
+
   it('does not let a stale startup restore clear a newer login', async () => {
     const dir = await createRoot()
     await seedSettings(dir)
@@ -370,6 +417,55 @@ describe('Lab account owner', () => {
     await initializing
     expect((await credentials.readSession())?.accessToken).toBe('at_new_login')
     expect(owner.getView().serverUrl).toBe('https://another-lab.example.com')
+  })
+
+  it('does not overwrite a newer same-address catalog with a stale write', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const api = createApi()
+    const { owner, repository } = await createOwner(dir, api)
+    const credentials = new LabCredentialStore(dir)
+    await seedSession(credentials)
+    await owner.check()
+
+    let releaseSettings: (() => void) | undefined
+    const settingsGate = new Promise<void>((resolve) => {
+      releaseSettings = resolve
+    })
+    const originalGetSettings = repository.getSettings.bind(repository)
+    let paused = false
+    const spy = vi.spyOn(repository, 'getSettings').mockImplementation(async () => {
+      if (!paused) {
+        paused = true
+        await settingsGate
+      }
+      return originalGetSettings()
+    })
+    let resolveBootstrap: ((value: LabBootstrap) => void) | undefined
+    api.bootstrap.mockImplementationOnce(
+      () =>
+        new Promise<LabBootstrap>((resolve) => {
+          resolveBootstrap = resolve
+        })
+    )
+    const refreshing = owner.refreshCatalog()
+    await vi.waitFor(() => expect(api.bootstrap).toHaveBeenCalledTimes(2))
+    resolveBootstrap?.(BOOTSTRAP)
+    await vi.waitFor(() => expect(paused).toBe(true))
+
+    // Simulate a newer login at the same address while the old refresh is suspended between its
+    // connection check and its catalog write.
+    await owner.logout()
+    const newer = buildLabProviderRecord(SERVER, BOOTSTRAP)
+    await repository.upsertProvider(newer)
+    releaseSettings?.()
+    await refreshing
+    spy.mockRestore()
+
+    const remaining = (await repository.getSettings()).providers.find(
+      (provider) => provider.id === LAB_PROVIDER_ID
+    )
+    expect(remaining?.labCatalogToken).toBe(newer.labCatalogToken)
   })
 
   it('does not recreate a stale catalog after logout', async () => {

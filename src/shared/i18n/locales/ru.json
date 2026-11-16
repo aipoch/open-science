@@ -8536,6 +8536,7 @@
     "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Установленные навыки могут изменить поведение агентов. Доверяйте только знакомым источникам.",
     "Lab": "Lab",
     "Lab server": "Сервер Lab",
+    "Lab server address is reachable.": "Адрес сервера Lab доступен.",
     "Lab server address": "Адрес сервера Lab",
     "Connect Open-Science to your organization's Lab gateway.": "Подключите Open-Science к шлюзу Lab вашей организации.",
     "Server address": "Адрес сервера",

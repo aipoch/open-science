@@ -8038,6 +8038,7 @@
     "Installed Skills can change Agent behavior. Only trust sources you recognize.": "설치한 스킬은 에이전트 동작을 변경할 수 있습니다. 신뢰할 수 있는 소스만 추가하세요.",
     "Lab": "Lab",
     "Lab server": "Lab 서버",
+    "Lab server address is reachable.": "Lab 서버 주소에 연결할 수 있습니다.",
     "Lab server address": "Lab 서버 주소",
     "Connect Open-Science to your organization's Lab gateway.": "Open-Science를 기관의 Lab 게이트웨이에 연결합니다.",
     "Server address": "서버 주소",

@@ -257,7 +257,16 @@ export class LabAccountOwner {
   }
 
   async cancelLogin(): Promise<LabView> {
+    const wasSigningIn = this.view.state === 'signingIn'
+    if (wasSigningIn) {
+      // Cancel covers the whole sign-in flow, including the catalog load that runs after the
+      // browser callback. Advancing the generation makes any in-flight waitLogin/applyBootstrap
+      // result stale, and the session saved by the OAuth exchange must not become a silent login.
+      this.refreshGeneration += 1
+      this.access = undefined
+    }
     await this.oauth.cancelLogin()
+    if (wasSigningIn) await this.credentials.clearSession().catch(() => undefined)
     const document = await this.credentials.readDocument()
     return this.publish({
       state: document.serverUrl ? 'signedOut' : 'unconfigured',
@@ -463,7 +472,10 @@ export class LabAccountOwner {
     )
     try {
       await this.repository.upsertProvider(record, undefined, undefined, {
-        expectedLabCatalogToken: existing?.labCatalogToken
+        expectedLabCatalogToken: existing?.labCatalogToken,
+        // Evaluate the connection generation inside the serialized repository mutation, not
+        // before the asynchronous settings read: a new login may win between those two steps.
+        isCurrent: () => this.isCurrentConnection(generation, serverUrl)
       })
     } catch (error) {
       // A concurrent catalog write or login won the race; never overwrite its record.
@@ -485,7 +497,8 @@ export class LabAccountOwner {
       // has a different token and must never be deleted by this stale cleanup.
       if (current?.labCatalogToken && current.labCatalogToken === record.labCatalogToken) {
         await this.repository.deleteProvider(LAB_PROVIDER_ID, 'inherit', {
-          expectedLabCatalogToken: record.labCatalogToken
+          expectedLabCatalogToken: record.labCatalogToken,
+          isCurrent: () => this.isCurrentConnection(generation, serverUrl)
         })
       }
       return this.view

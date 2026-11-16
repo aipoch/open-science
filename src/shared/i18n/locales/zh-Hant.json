@@ -8040,6 +8040,7 @@
     "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安裝的技能可能改變智能體的行為。請僅信任您認可的來源。",
     "Lab": "Lab",
     "Lab server": "Lab 伺服器",
+    "Lab server address is reachable.": "Lab 伺服器位址可存取。",
     "Lab server address": "Lab 伺服器位址",
     "Connect Open-Science to your organization's Lab gateway.": "將 Open-Science 連線到機構的 Lab 閘道。",
     "Server address": "伺服器位址",

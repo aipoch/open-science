@@ -151,6 +151,7 @@ describe('Lab settings panel', () => {
     await click('Test connection')
     expect(settingsApi.labCheck).toHaveBeenCalledWith({ serverUrl: 'https://draft.example.com' })
     expect(settingsApi.labSetServer).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Lab server address is reachable.')
   })
 
   it('shows the browser wait state and cancels the attempt', async () => {
