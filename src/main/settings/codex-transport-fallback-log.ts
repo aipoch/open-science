@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DatabaseSync as NodeDatabaseSync } from 'node:sqlite'
 
-import { isCodexSubscriptionProviderId } from '../../shared/settings'
+import { isCodexSubscriptionProviderId } from '../../shared/settings-runtime'
 
 const codexLogDatabasePath = (codexHome: string): string => join(codexHome, 'logs_2.sqlite')
 

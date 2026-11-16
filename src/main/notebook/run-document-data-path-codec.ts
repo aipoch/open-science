@@ -55,7 +55,10 @@ const decodeWorkingFile = (file: NotebookWorkingFile, dataRoot: string): Noteboo
 })
 
 // Encodes/decodes one run record's cwd fields plus working files and historical artifacts.
-const encodeRun = (run: NotebookRunRecord, dataRoot: string): NotebookRunRecord => ({
+export const encodeNotebookRunDataPaths = (
+  run: NotebookRunRecord,
+  dataRoot: string
+): NotebookRunRecord => ({
   ...run,
   cwdBefore: encodeDataPath(run.cwdBefore, dataRoot),
   cwdAfter: encodeDataPath(run.cwdAfter, dataRoot),
@@ -96,7 +99,7 @@ export const encodeRunDocumentDataPaths = (
       ...doc.kernel,
       runtimeRoot: encodeDataPath(doc.kernel.runtimeRoot, dataRoot) as string
     },
-    runs: doc.runs.map((run) => encodeRun(run, dataRoot))
+    runs: doc.runs.map((run) => encodeNotebookRunDataPaths(run, dataRoot))
   }
 }
 

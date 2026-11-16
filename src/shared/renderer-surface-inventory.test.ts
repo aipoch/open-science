@@ -221,7 +221,6 @@ const WEB_UNAVAILABLE_CHANNELS = [
   'sessions:inspect-diagnostics',
   'sessions:export-diagnostics',
   'sessions:export-conversation',
-  'sessions:fork',
   'sessions:open-recovery-folder',
   'settings:import-agent-home-skills',
   'settings:list-agent-home-skills',
@@ -276,6 +275,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   notebook: ['export-ipynb', 'export-ipynb-all'],
   'remote-access': ['probe'],
   sessions: [
+    'fork',
     'export-package',
     'import-package',
     'package-operation',

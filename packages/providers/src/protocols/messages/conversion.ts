@@ -33,7 +33,11 @@ const messagesContent = (content: unknown): unknown => {
   return converted
 }
 
-export const chatCompletionsToMessages = (body: Json, model: string): Json => {
+export const chatCompletionsToMessages = (
+  body: Json,
+  model: string,
+  maxOutputTokens?: number
+): Json => {
   const system: string[] = []
   const messages: Json[] = []
   for (const value of Array.isArray(body.messages) ? body.messages : []) {
@@ -103,15 +107,19 @@ export const chatCompletionsToMessages = (body: Json, model: string): Json => {
             typeof toolChoice.function.name === 'string'
           ? { type: 'tool', name: toolChoice.function.name }
           : undefined
+  const requestedOutputTokens =
+    typeof body.max_completion_tokens === 'number'
+      ? body.max_completion_tokens
+      : typeof body.max_tokens === 'number'
+        ? body.max_tokens
+        : undefined
   return {
     model,
     stream: false,
-    max_tokens:
-      typeof body.max_completion_tokens === 'number'
-        ? body.max_completion_tokens
-        : typeof body.max_tokens === 'number'
-          ? body.max_tokens
-          : 4096,
+    max_tokens: Math.min(
+      requestedOutputTokens ?? maxOutputTokens ?? 4096,
+      maxOutputTokens ?? Infinity
+    ),
     ...(system.length > 0 ? { system: system.join('\n\n') } : {}),
     messages,
     ...(tools && tools.length > 0 ? { tools } : {}),
@@ -122,11 +130,12 @@ export const chatCompletionsToMessages = (body: Json, model: string): Json => {
 }
 
 export const messagesToChatCompletions = (message: Json, model: string): Json => {
+  const lengthLimited =
+    message.stop_reason === 'max_tokens' || message.stop_reason === 'model_context_window_exceeded'
   if (
     message.stop_reason != null &&
-    !['end_turn', 'stop_sequence', 'tool_use', 'max_tokens', 'refusal'].includes(
-      String(message.stop_reason)
-    )
+    !lengthLimited &&
+    !['end_turn', 'stop_sequence', 'tool_use', 'refusal'].includes(String(message.stop_reason))
   ) {
     throw new Error('Unsupported upstream Messages stop reason.')
   }
@@ -166,14 +175,13 @@ export const messagesToChatCompletions = (message: Json, model: string): Json =>
           ...(reasoning ? { reasoning_content: reasoning } : {}),
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
         },
-        finish_reason:
-          message.stop_reason === 'max_tokens'
-            ? 'length'
-            : message.stop_reason === 'refusal'
-              ? 'content_filter'
-              : toolCalls.length > 0
-                ? 'tool_calls'
-                : 'stop'
+        finish_reason: lengthLimited
+          ? 'length'
+          : message.stop_reason === 'refusal'
+            ? 'content_filter'
+            : toolCalls.length > 0
+              ? 'tool_calls'
+              : 'stop'
       }
     ],
     usage: {

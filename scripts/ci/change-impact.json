@@ -357,6 +357,7 @@
         "src/shared/renderer-contract-catalog.ts",
         "src/shared/renderer-contracts/**",
         "src/shared/settings.ts",
+        "src/shared/settings-runtime.ts",
         "src/shared/update.ts",
         "src/shared/web-api-map.generated.ts",
         "src/shared/wsl-setup.ts",

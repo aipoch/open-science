@@ -66,6 +66,7 @@ export type ApplicationEventMap = {
   'notebook-env:progress': ProvisionProgress
   'runtime:policy-changed': undefined
   'notifications:changed': NotificationInboxChanged
+  'schedules:changed': { projectId: string; sessionId: string | null }
   'background-result-delivery:changed': ProjectBackgroundActivityChangedEvent
   'project:created': Project
   'project:updated': Project

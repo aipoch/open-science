@@ -1073,6 +1073,9 @@ it.each(['claim', 'read', 'retry'] as const)(
     process.on('unhandledRejection', observe)
     try {
       reaper.start()
+      await vi.waitFor(() => expect(claimNext.mock.calls.length).toBe(1))
+      const wake = (reaper as unknown as { wake: () => void }).wake
+      wake()
       await vi.waitFor(() => expect(claimNext.mock.calls.length).toBeGreaterThanOrEqual(2))
       if (stage === 'retry') expect(retry).toHaveBeenCalledOnce()
       expect(failures).toEqual([])
@@ -1082,6 +1085,24 @@ it.each(['claim', 'read', 'retry'] as const)(
     }
   }
 )
+
+it('does not keep a short timer alive while the cancellation queue is idle', async () => {
+  const claimNext = vi.fn().mockResolvedValue(null)
+  const reaper = createComputeExecution().createCancellationReaper(
+    { claimNext } as never,
+    {} as never,
+    {} as never,
+    { intervalMs: 5, fallbackIntervalMs: 100 } as never
+  )
+  reaper.start()
+  try {
+    await vi.waitFor(() => expect(claimNext).toHaveBeenCalledOnce())
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(claimNext).toHaveBeenCalledOnce()
+  } finally {
+    await reaper.stop()
+  }
+})
 
 it('reports an in-flight cancellation failure to stop without abandoning background error handling', async () => {
   let reject!: (error: Error) => void

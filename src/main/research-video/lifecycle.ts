@@ -3,8 +3,10 @@ import type { Stats } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { lstat, readdir, rm, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { readFileWithinLimit } from '@aipoch/durable-files'
+import { DurableJsonReadLimitError, readFileWithinLimit } from '@aipoch/durable-files'
 import { z } from 'zod'
+import { PENDING_FILM_OWNER, pendingFilmOwnerSchema, pendingFilmSchema } from './checkpoint'
+import { researchFilmScopeKey } from './stored-presentation'
 
 const identity = z.string().min(1).max(512)
 const sourceOwner = z.object({
@@ -34,14 +36,26 @@ const directories = async (path: string): Promise<string[]> => {
 }
 const readReceipt = async (path: string, limit: number): Promise<unknown> => {
   const stat = await info(path)
-  if (!stat?.isFile() || stat.isSymbolicLink()) return undefined
+  if (!stat?.isFile() || stat.size > limit) return undefined
   try {
     return JSON.parse(await readFileWithinLimit(path, limit))
   } catch (error) {
-    if (error instanceof SyntaxError) return undefined
+    if (
+      error instanceof SyntaxError ||
+      error instanceof DurableJsonReadLimitError ||
+      (error as NodeJS.ErrnoException).code === 'ENOENT'
+    )
+      return undefined
     throw error
   }
 }
+const sameInode = (current: Stats | undefined, before: Stats): current is Stats =>
+  current !== undefined && current.dev === before.dev && current.ino === before.ino
+const unchanged = (current: Stats | undefined, before: Stats): boolean =>
+  sameInode(current, before) &&
+  current.mtimeMs === before.mtimeMs &&
+  current.ctimeMs === before.ctimeMs
+type ReceiptProof = { path: string; before: Stats }
 
 export interface ResearchFilmLifecycle {
   withSessionStopped<T>(
@@ -206,65 +220,38 @@ export function createResearchFilmLifecycle(options: {
         string,
         { projectId: string; sessionId: string; actions: Array<() => Promise<void>> }
       >()
-      const collect = async (
+      const predatesStartup = (stat: Stats): boolean =>
+        stat.mtimeMs < startupCutoff && stat.ctimeMs < startupCutoff
+      const captureReceipt = async (
+        path: string,
+        limit: number
+      ): Promise<{ proof: ReceiptProof; value: unknown } | undefined> => {
+        const before = await info(path)
+        if (!before?.isFile() || !predatesStartup(before) || before.size > limit) return
+        const value = await readReceipt(path, limit)
+        if (value === undefined || !unchanged(await info(path), before)) return
+        return { proof: { path, before }, value }
+      }
+      const collect = (
         projectId: string,
         sessionId: string,
         directory: string,
-        receiptName: string,
+        before: Stats,
+        receipts: ReceiptProof[],
         remove: () => Promise<void>
-      ): Promise<void> => {
+      ): void => {
         if (existing.has(sessionId)) return
-        const before = await info(directory)
-        if (!before || before.mtimeMs >= startupCutoff || before.ctimeMs >= startupCutoff) return
-        const receiptPath = join(directory, receiptName)
-        const receiptBefore = await info(receiptPath)
-        if (
-          !receiptBefore?.isFile() ||
-          receiptBefore.isSymbolicLink() ||
-          receiptBefore.mtimeMs >= startupCutoff ||
-          receiptBefore.ctimeMs >= startupCutoff
-        )
-          return
-        const receipt = await readReceipt(receiptPath, RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES)
-        const receiptOwner =
-          receiptName === 'session.json'
-            ? sourceOwner.safeParse(receipt)
-            : jobOwner.safeParse(receipt)
-        if (!receiptOwner.success) return
-        const parsedOwner =
-          'provenance' in receiptOwner.data
-            ? receiptOwner.data.provenance
-            : { projectId: receiptOwner.data.projectId, sessionId: receiptOwner.data.appSessionId }
-        if (parsedOwner.projectId !== projectId || parsedOwner.sessionId !== sessionId) return
-        const receiptAfter = await info(receiptPath)
-        if (
-          !receiptAfter ||
-          receiptAfter.ino !== receiptBefore.ino ||
-          receiptAfter.mtimeMs !== receiptBefore.mtimeMs ||
-          receiptAfter.ctimeMs !== receiptBefore.ctimeMs
-        )
-          return
         const key = JSON.stringify([projectId, sessionId])
         const owner = planned.get(key) ?? { projectId, sessionId, actions: [] }
         owner.actions.push(async () => {
           const current = await info(directory)
           if (!current) return
-          if (
-            current.dev !== before.dev ||
-            current.ino !== before.ino ||
-            current.mtimeMs !== before.mtimeMs ||
-            current.ctimeMs !== before.ctimeMs
-          )
+          if (!unchanged(current, before))
             throw new Error('Research film cleanup ownership changed.')
-          const receiptCurrent = await info(receiptPath)
-          if (
-            !receiptCurrent ||
-            receiptCurrent.ino !== receiptBefore.ino ||
-            receiptCurrent.dev !== receiptBefore.dev ||
-            receiptCurrent.mtimeMs !== receiptBefore.mtimeMs ||
-            receiptCurrent.ctimeMs !== receiptBefore.ctimeMs
-          )
-            throw new Error('Research film cleanup receipt changed.')
+          for (const receipt of receipts) {
+            if (!unchanged(await info(receipt.path), receipt.before))
+              throw new Error('Research film cleanup receipt changed.')
+          }
           await remove()
         })
         planned.set(key, owner)
@@ -274,14 +261,58 @@ export function createResearchFilmLifecycle(options: {
         if (!/^[a-f0-9]{64}$/.test(key)) continue
         const base = join(root, 'research-video-presentations', key)
         for (const id of await directories(base)) {
-          if (!uuid.safeParse(id).success) continue
+          if (id !== 'pending' && !uuid.safeParse(id).success) continue
           const directory = join(base, id)
-          const parsed = sourceOwner.safeParse(
-            await readReceipt(
-              join(directory, 'session.json'),
-              RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES
+          const before = await info(directory)
+          if (!before?.isDirectory() || !predatesStartup(before)) continue
+          if (id === 'pending') {
+            const baseBefore = await info(base)
+            if (!baseBefore?.isDirectory()) continue
+            const receipt = await captureReceipt(join(directory, PENDING_FILM_OWNER), 16 * 1024)
+            if (!receipt) continue
+            const owner = pendingFilmOwnerSchema.safeParse(receipt.value)
+            if (
+              !owner.success ||
+              researchFilmScopeKey(owner.data) !== key ||
+              existing.has(owner.data.sessionId)
             )
+              continue
+            const pointer = await captureReceipt(join(base, 'pending.json'), 4096)
+            if (!pointer) continue
+            const pending = pendingFilmSchema.safeParse(pointer.value)
+            if (
+              !pending.success ||
+              pending.data.id !== owner.data.id ||
+              (pending.data.built && pending.data.built.id !== pending.data.id)
+            )
+              continue
+            collect(
+              owner.data.projectId,
+              owner.data.sessionId,
+              directory,
+              before,
+              [receipt.proof, pointer.proof],
+              async () => {
+                if (!sameInode(await info(base), baseBefore))
+                  throw new Error('Research film cleanup ownership changed.')
+                // Leave the pointer alone if directory removal fails.
+                await rm(directory, { recursive: true, force: true })
+                if (!unchanged(await info(pointer.proof.path), pointer.proof.before))
+                  throw new Error('Research film cleanup receipt changed.')
+                await rm(pointer.proof.path, { force: true })
+                await rmdir(base).catch((error: NodeJS.ErrnoException) => {
+                  if (error.code !== 'ENOTEMPTY' && error.code !== 'ENOENT') throw error
+                })
+              }
+            )
+            continue
+          }
+          const receipt = await captureReceipt(
+            join(directory, 'session.json'),
+            RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES
           )
+          if (!receipt) continue
+          const parsed = sourceOwner.safeParse(receipt.value)
           if (!parsed.success) continue
           const owner = parsed.data.provenance
           if (
@@ -293,32 +324,42 @@ export function createResearchFilmLifecycle(options: {
             )
           )
             continue
-          await collect(owner.projectId, owner.sessionId, directory, 'session.json', async () => {
-            const latest = z
-              .object({ id: z.string().uuid() })
-              .safeParse(await readReceipt(join(base, 'latest.json'), 4096))
-            if (latest.success && latest.data.id === id)
-              await rm(join(base, 'latest.json'), { force: true })
-            await rm(directory, { recursive: true, force: true })
-            await rm(join(base, 'deleted.json'), { force: true })
-            await rmdir(base).catch((error: NodeJS.ErrnoException) => {
-              if (error.code !== 'ENOTEMPTY' && error.code !== 'ENOENT') throw error
-            })
-          })
+          collect(
+            owner.projectId,
+            owner.sessionId,
+            directory,
+            before,
+            [receipt.proof],
+            async () => {
+              const latest = z
+                .object({ id: z.string().uuid() })
+                .safeParse(await readReceipt(join(base, 'latest.json'), 4096))
+              if (latest.success && latest.data.id === id)
+                await rm(join(base, 'latest.json'), { force: true })
+              await rm(directory, { recursive: true, force: true })
+              await rm(join(base, 'deleted.json'), { force: true })
+              await rmdir(base).catch((error: NodeJS.ErrnoException) => {
+                if (error.code !== 'ENOTEMPTY' && error.code !== 'ENOENT') throw error
+              })
+            }
+          )
         }
       }
       for (const id of await directories(join(root, 'research-video-jobs'))) {
         if (!uuid.safeParse(id).success) continue
         const directory = join(root, 'research-video-jobs', id)
-        const parsed = jobOwner.safeParse(
-          await readReceipt(join(directory, 'job.json'), 1024 * 1024)
-        )
+        const before = await info(directory)
+        if (!before?.isDirectory() || !predatesStartup(before)) continue
+        const receipt = await captureReceipt(join(directory, 'job.json'), 1024 * 1024)
+        if (!receipt) continue
+        const parsed = jobOwner.safeParse(receipt.value)
         if (parsed.success && parsed.data.id === id)
-          await collect(
+          collect(
             parsed.data.projectId,
             parsed.data.appSessionId,
             directory,
-            'job.json',
+            before,
+            [receipt.proof],
             () => rm(directory, { recursive: true, force: true })
           )
       }

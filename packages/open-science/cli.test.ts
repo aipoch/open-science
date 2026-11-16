@@ -552,7 +552,7 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['run', '--jsonl'])).toThrow('--jsonl requires run --wait.')
     expect(() => parseCliArgs(['run', '--timeout-ms', '0', '--wait'])).toThrow('Invalid timeout: 0')
     expect(() => parseCliArgs(['run', '--timeout-ms', '1000'])).toThrow(
-      '--timeout-ms requires run --wait or session export/import.'
+      '--timeout-ms requires start, run --wait, run wait or session export/import/fork.'
     )
     expect(() => parseCliArgs(['run', '--cancel-on-timeout', '--wait'])).toThrow(
       '--cancel-on-timeout requires --timeout-ms.'
@@ -879,12 +879,15 @@ describe('task CLI', () => {
       { connect: vi.fn().mockResolvedValue(client), log, stdinIsTTY: true }
     )
 
-    expect(client.startRun).toHaveBeenCalledWith({
-      project: 'project-1',
-      prompt: 'Research this.',
-      sessionId: 'session-1',
-      computeHostIds: ['ssh:alpha', 'ssh:beta', 'ssh:alpha']
-    })
+    expect(client.startRun).toHaveBeenCalledWith(
+      {
+        project: 'project-1',
+        prompt: 'Research this.',
+        sessionId: 'session-1',
+        computeHostIds: ['ssh:alpha', 'ssh:beta', 'ssh:alpha']
+      },
+      expect.objectContaining({ requestId: expect.any(String) })
+    )
     expect(JSON.parse(log.mock.calls[0][0]).preferredComputeHostIds).toEqual(['ssh:authority'])
   })
 
@@ -911,12 +914,15 @@ describe('task CLI', () => {
       { connect: vi.fn().mockResolvedValue(client), log: vi.fn(), stdinIsTTY: true }
     )
 
-    expect(client.startRun).toHaveBeenCalledWith({
-      project: 'project-1',
-      prompt: 'Run locally.',
-      enabledComputeHostIds: [],
-      computeHostIds: []
-    })
+    expect(client.startRun).toHaveBeenCalledWith(
+      {
+        project: 'project-1',
+        prompt: 'Run locally.',
+        enabledComputeHostIds: [],
+        computeHostIds: []
+      },
+      expect.objectContaining({ requestId: expect.any(String) })
+    )
   })
 
   it('rejects the startup sandbox option on other commands', () => {
@@ -961,12 +967,15 @@ describe('task CLI', () => {
       }
     )
 
-    expect(client.startRun).toHaveBeenCalledWith({
-      project: 'project-1',
-      prompt: 'Research this.',
-      cwd: resolve('workspace'),
-      permissionProfile: 'auto'
-    })
+    expect(client.startRun).toHaveBeenCalledWith(
+      {
+        project: 'project-1',
+        prompt: 'Research this.',
+        cwd: resolve('workspace'),
+        permissionProfile: 'auto'
+      },
+      expect.objectContaining({ requestId: expect.any(String) })
+    )
     expect(client.waitForRun).toHaveBeenCalledWith('run-1')
     expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({ status: 'completed', output: 'Done' })
     expect(log).toHaveBeenCalledTimes(1)
@@ -994,10 +1003,13 @@ describe('task CLI', () => {
       { connect: vi.fn().mockResolvedValue(client), log: vi.fn(), stdinIsTTY: true }
     )
 
-    expect(client.startRun).toHaveBeenCalledWith({
-      project: 'project-1',
-      prompt: 'Review these papers.'
-    })
+    expect(client.startRun).toHaveBeenCalledWith(
+      {
+        project: 'project-1',
+        prompt: 'Review these papers.'
+      },
+      expect.objectContaining({ requestId: expect.any(String) })
+    )
   })
 
   it('requires an id when project names are duplicated', async () => {
@@ -1074,14 +1086,17 @@ describe('task CLI', () => {
       }
     )
 
-    expect(client.startRun).toHaveBeenCalledWith({
-      project: 'project-1',
-      prompt: 'Plan this.',
-      turnIntent: 'plan-first',
-      autoReviewEnabled: true,
-      specialist: 'literature-specialist',
-      delegationPolicy: 'deny'
-    })
+    expect(client.startRun).toHaveBeenCalledWith(
+      {
+        project: 'project-1',
+        prompt: 'Plan this.',
+        turnIntent: 'plan-first',
+        autoReviewEnabled: true,
+        specialist: 'literature-specialist',
+        delegationPolicy: 'deny'
+      },
+      expect.objectContaining({ requestId: expect.any(String) })
+    )
     expect(client.waitForRun).toHaveBeenCalledWith('run-1', {
       returnOnAttention: true
     })
@@ -1753,10 +1768,13 @@ describe('task CLI', () => {
       }
     )
 
-    expect(client.startRun).toHaveBeenCalledWith({
-      project: 'project-1',
-      prompt: 'Research from stdin.'
-    })
+    expect(client.startRun).toHaveBeenCalledWith(
+      {
+        project: 'project-1',
+        prompt: 'Research from stdin.'
+      },
+      expect.objectContaining({ requestId: expect.any(String) })
+    )
     expect(log.mock.calls.map(([line]) => JSON.parse(line))).toEqual([
       PUBLIC_TERMINAL_FIXTURE,
       expect.objectContaining({ id: 'run-1', status: 'failed' })
@@ -1817,11 +1835,14 @@ describe('task CLI', () => {
       { connect: vi.fn().mockResolvedValue(client), stdinIsTTY: true, log }
     )
 
-    expect(client.startRun).toHaveBeenCalledWith({
-      project: 'project-1',
-      prompt: 'Continue research.',
-      sessionId: stableSessionId
-    })
+    expect(client.startRun).toHaveBeenCalledWith(
+      {
+        project: 'project-1',
+        prompt: 'Continue research.',
+        sessionId: stableSessionId
+      },
+      expect.objectContaining({ requestId: expect.any(String) })
+    )
     expect(log.mock.calls.map(([line]) => JSON.parse(line))).toEqual([
       stableEvent,
       expect.objectContaining({ id: 'run-1', sessionId: stableSessionId, status: 'completed' })
@@ -1877,7 +1898,9 @@ describe('task CLI', () => {
       }
     )
 
-    expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: 60_000 })
+    expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: expect.any(Number) })
+    expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeGreaterThan(0)
+    expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeLessThanOrEqual(60_000)
     expect(warn.mock.calls.map(([message]) => message)).toEqual([
       'Run event history could not be fully replayed. Final Run state will still be read from Open-Science.',
       'Run is waiting for approval. Approve the request in Open-Science Desktop or the Web UI.'
@@ -1944,6 +1967,28 @@ describe('task CLI', () => {
     ])
   })
 
+  it('bounds event readiness by the run wait deadline without resubmitting', async () => {
+    vi.useFakeTimers()
+    try {
+      const startRun = vi.fn()
+      const getRun = vi.fn()
+      const events = (): { ready: Promise<void> } => ({ ready: new Promise<void>(() => {}) })
+      const pending = runTaskCommand(
+        parseCliArgs(['run', 'wait', 'run-1', '--timeout-ms', '100']),
+        {
+          connect: async () => ({ events, startRun, getRun })
+        }
+      )
+      const assertion = expect(pending).rejects.toMatchObject({ code: 'timeout' })
+      await vi.advanceTimersByTimeAsync(100)
+      await assertion
+      expect(startRun).not.toHaveBeenCalled()
+      expect(getRun).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('stops only the CLI event wait when a timeout occurs by default', async () => {
     const timeout = Object.assign(new Error('Timed out waiting for run run-1.'), {
       code: 'timeout'
@@ -1996,7 +2041,9 @@ describe('task CLI', () => {
       )
     ).rejects.toBe(timeout)
 
-    expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: 25 })
+    expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: expect.any(Number) })
+    expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeGreaterThan(0)
+    expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeLessThanOrEqual(25)
     expect(eventSignal?.aborted).toBe(true)
     expect(client.cancelRun).not.toHaveBeenCalled()
   })
@@ -2197,7 +2244,9 @@ describe('task CLI', () => {
       )
     ).rejects.toBe(timeout)
 
-    expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: 25 })
+    expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: expect.any(Number) })
+    expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeGreaterThan(0)
+    expect(client.waitForRun.mock.calls[0][1].timeoutMs).toBeLessThanOrEqual(25)
     expect(client.cancelRun).toHaveBeenCalledWith('run-1')
   })
 
@@ -2500,34 +2549,44 @@ describe('service interruption results', () => {
     expect(startRun).toHaveBeenCalledOnce()
   })
 
-  it('returns nonzero for a cancelled wait while keeping a successful cancel command successful', async () => {
-    const cancelled = { id: 'run-1', sessionId: 'session-1', status: 'cancelled' }
-    const client = {
-      listProjects,
-      startRun: async () => ({ ...cancelled, status: 'running' }),
-      waitForRun: async () => cancelled,
-      cancelRun: async () => cancelled
-    }
-    const setExitCode = vi.fn(),
-      log = vi.fn()
-    await runTaskCommand(
-      parseCliArgs(['run', '--project', 'Research', '--prompt', 'work', '--wait', '--json']),
-      {
+  it.each([false, true])(
+    'returns nonzero for cancelled waiting (reattach=%s) while keeping cancel successful',
+    async (reattach) => {
+      const cancelled = { id: 'run-1', sessionId: 'session-1', status: 'cancelled' }
+      const client = {
+        listProjects,
+        startRun: vi.fn(async () => ({ ...cancelled, status: 'running' })),
+        getRun: vi.fn(async () => ({ ...cancelled, status: 'running' })),
+        waitForRun: async () => cancelled,
+        cancelRun: async () => cancelled
+      }
+      const setExitCode = vi.fn(),
+        log = vi.fn()
+      await runTaskCommand(
+        parseCliArgs(
+          reattach
+            ? ['run', 'wait', 'run-1', '--json']
+            : ['run', '--project', 'Research', '--prompt', 'work', '--wait', '--json']
+        ),
+        {
+          connect: async () => client,
+          stdinIsTTY: true,
+          setExitCode,
+          log
+        }
+      )
+      expect(client.startRun).toHaveBeenCalledTimes(reattach ? 0 : 1)
+      expect(client.getRun).toHaveBeenCalledTimes(reattach ? 1 : 0)
+      expect(setExitCode).toHaveBeenCalledExactlyOnceWith(1)
+      setExitCode.mockClear()
+      await runTaskCommand(parseCliArgs(['run', 'cancel', 'run-1', '--json']), {
         connect: async () => client,
-        stdinIsTTY: true,
         setExitCode,
         log
-      }
-    )
-    expect(setExitCode).toHaveBeenCalledExactlyOnceWith(1)
-    setExitCode.mockClear()
-    await runTaskCommand(parseCliArgs(['run', 'cancel', 'run-1', '--json']), {
-      connect: async () => client,
-      setExitCode,
-      log
-    })
-    expect(setExitCode).not.toHaveBeenCalled()
-  })
+      })
+      expect(setExitCode).not.toHaveBeenCalled()
+    }
+  )
 
   it.each(['text', 'json'])('explains submit-only Plan attention in %s output', async (format) => {
     const started = {
@@ -2825,4 +2884,22 @@ describe('local service CLI status', () => {
       lifetime
     })
   })
+})
+
+it('forks explicitly without importing a package or creating a run', async () => {
+  const client = {
+    listProjects: async () => [{ id: 'project-1', name: 'Research' }],
+    forkSession: vi.fn(async () => ({ projectId: 'project-1', sessionId: 'fork-1' })),
+    importSessionPackage: vi.fn(),
+    startRun: vi.fn()
+  }
+  const log = vi.fn()
+  await runTaskCommand(
+    parseCliArgs(['session', 'fork', 'import-1', '--project', 'Research', '--json']),
+    { connect: async () => client, log }
+  )
+  expect(client.forkSession).toHaveBeenCalledWith('project-1', 'import-1', { timeoutMs: undefined })
+  expect(client.importSessionPackage).not.toHaveBeenCalled()
+  expect(client.startRun).not.toHaveBeenCalled()
+  expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({ sessionId: 'fork-1' })
 })

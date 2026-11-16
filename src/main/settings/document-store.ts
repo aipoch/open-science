@@ -8,7 +8,7 @@ import {
 import { renameSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import { SETTINGS_FILE_VERSION } from '../../shared/settings-runtime'
 import {
   readDurableJsonFile,
   readFileWithinLimit,

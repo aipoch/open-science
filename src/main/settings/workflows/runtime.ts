@@ -1,16 +1,18 @@
+import type {
+  ProviderDeletionScenarioModelHandling,
+  RefreshProviderModelsRequest,
+  SetActiveProviderRequest,
+  SetAgentFrameworkRequest,
+  SetAgentRoutingRequest,
+  SetReasoningEffortRequest,
+  UpsertProviderRequest
+} from '../../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
-  XAI_SUBSCRIPTION_PROVIDER_ID,
-  type ProviderDeletionScenarioModelHandling,
-  type RefreshProviderModelsRequest,
-  type SetActiveProviderRequest,
-  type SetAgentFrameworkRequest,
-  type SetAgentRoutingRequest,
-  type SetReasoningEffortRequest,
-  type UpsertProviderRequest
-} from '../../../shared/settings'
+  XAI_SUBSCRIPTION_PROVIDER_ID
+} from '../../../shared/settings-runtime'
 import type { AgentFrameworkId } from '../../agent-framework'
 import type { SettingsService } from '../service'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'

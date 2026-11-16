@@ -13,7 +13,7 @@ import type {
   ResolvedAgentBackend
 } from './types'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
-import type { ResolvedProvider } from '../settings/provider-env'
+import { resolveProviderOutputLimit, type ResolvedProvider } from '../settings/provider-env'
 
 const PI_PROVIDER = 'open-science'
 const PLACEHOLDER_KEY = 'open-science-bridge-awaiting-authentication'
@@ -82,6 +82,7 @@ const piModelEntry = (provider: ResolvedProvider, reasoning: boolean): Record<st
   const model = provider.model?.trim()
   if (!model || !provider.agentProviderId) throw new Error('Pi model entries require a model id.')
   const { baseUrl, wire } = loopbackBaseUrl(provider)
+  const maxOutputTokens = resolveProviderOutputLimit({ ...provider, model })
   return {
     id: provider.agentProviderId,
     name: model,
@@ -94,7 +95,7 @@ const piModelEntry = (provider: ResolvedProvider, reasoning: boolean): Record<st
       ? { samplingParams: { reasoning_split: true } }
       : {}),
     ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
-    ...(provider.maxOutputTokens ? { maxTokens: provider.maxOutputTokens } : {}),
+    ...(maxOutputTokens === undefined ? {} : { maxTokens: maxOutputTokens }),
     ...(provider.supportsImageInput ? { input: ['text', 'image'] } : {})
   }
 }

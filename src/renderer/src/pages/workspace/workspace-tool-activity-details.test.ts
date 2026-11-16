@@ -2017,3 +2017,101 @@ it.each([
   expect(serialized).toContain(result.status ?? result.message)
   if (result.notices?.length) expect(serialized).toContain(result.notices[0])
 })
+
+it('renders invalid schedule drafts and MCP failures as readable task facts', () => {
+  const draft = {
+    name: 'Literature tracking',
+    rule: { kind: 'once', at: 1794715368677, timeZone: 'UTC' },
+    action: { kind: 'send_session_message', message: 'Search PubMed and report new results.' },
+    maxRuns: 1,
+    permissionProfile: 'auto'
+  }
+  const details = buildToolActivityDetails(
+    createActivity({
+      providerToolName: 'mcp__open_science_schedule__create_schedule',
+      status: 'failed',
+      rawInput: { draft },
+      rawOutput: {
+        isError: true,
+        content: [{ type: 'text', text: 'MCP error -32602: Input validation error' }]
+      }
+    })
+  )!
+  expect(details.subtitle).toBe('Literature tracking')
+  expect(details.sections).toHaveLength(1)
+  expect(details.sections[0]).toMatchObject({
+    kind: 'summary',
+    summary: {
+      error: 'One-time tasks run once. Remove the end time and maximum runs.',
+      fields: expect.arrayContaining([
+        { label: 'Instructions', value: draft.action.message, multiline: true }
+      ])
+    }
+  })
+  expect(JSON.stringify(details)).not.toContain('MCP error')
+  const list = buildToolActivityDetails(
+    createActivity({
+      providerToolName: 'mcp__open_science_schedule__list_schedules',
+      rawOutput: {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify([
+              { id: 'job', draft: { name: 'Review' }, pausedAt: null, finishedAt: null }
+            ])
+          }
+        ]
+      }
+    })
+  )!
+  expect(list.sections[0]).toMatchObject({
+    kind: 'summary',
+    summary: { rows: [{ title: 'Review', status: 'Active' }] }
+  })
+})
+
+it('shows a schedule using the computer timezone when creation omits it', () => {
+  const draft = {
+    name: 'Daily review',
+    rule: { kind: 'daily', time: '09:00' },
+    message: 'Review progress.'
+  }
+  const details = buildToolActivityDetails(
+    createActivity({
+      providerToolName: 'mcp__open_science_schedule__create_schedule',
+      rawInput: draft
+    })
+  )!
+  expect(details.sections[0]).toMatchObject({
+    kind: 'summary',
+    summary: {
+      fields: expect.arrayContaining([
+        {
+          label: 'Repeat',
+          value: `Daily at 09:00 (${Intl.DateTimeFormat().resolvedOptions().timeZone})`
+        }
+      ])
+    }
+  })
+  expect(JSON.stringify(details)).not.toContain('Some task settings are invalid')
+  expect(draft.rule).not.toHaveProperty('timeZone')
+})
+
+it('flags conflicting flat Schedule actions without exposing raw arguments', () => {
+  const details = buildToolActivityDetails(
+    createActivity({
+      providerToolName: 'mcp__open_science_schedule__create_schedule',
+      rawInput: {
+        name: 'Review',
+        rule: { kind: 'daily', time: '09:00' },
+        message: 'Review progress',
+        script: { language: 'python', code: 'print(1)' }
+      }
+    })
+  )!
+  expect(details.sections).toHaveLength(1)
+  expect(details.sections[0]).toMatchObject({
+    kind: 'summary',
+    summary: { note: 'Some task settings are invalid. Ask the agent to correct them.' }
+  })
+})

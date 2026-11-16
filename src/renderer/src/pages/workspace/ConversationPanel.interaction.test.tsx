@@ -1158,6 +1158,38 @@ describe('ConversationPanel header spacing', () => {
     expect(exportDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ id: session.id }))
   })
 
+  it('keeps a failed Session body error inside the conversation region', () => {
+    const session: ChatSession = {
+      id: 'broken-session',
+      projectId: 'project-1',
+      title: 'Broken history',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1,
+      contentLoaded: false
+    }
+    const retry = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: session,
+        sessionLoadError:
+          'Could not reload the saved conversation. Retained changes were kept. Please try again.',
+        onRetrySessionLoad: retry
+      }
+    })
+
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-switch-skeleton"]')).toBeNull()
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-retry"]'
+    )
+    expect(button).not.toBeNull()
+    act(() => button?.click())
+    expect(retry).toHaveBeenCalledOnce()
+  })
+
   it('opens an empty side chat from the persistent header menu without sending the main draft', async () => {
     const createDraft = vi.fn(() => 'empty-side-chat')
     const start = vi.fn()

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
-import { isCodexSubscriptionProviderId, type AgentFrameworkId } from '../../shared/settings'
+import type { AgentFrameworkId } from '../../shared/settings'
+import { isCodexSubscriptionProviderId } from '../../shared/settings-runtime'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'

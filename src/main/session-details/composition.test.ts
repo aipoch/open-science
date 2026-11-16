@@ -1,7 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import type { ApplicationModuleBuilder } from '../application-runtime'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { CODEX_SHARED_PROVIDER_ID, CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
+import {
+  CODEX_SHARED_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_PROVIDER_ID
+} from '../../shared/settings-runtime'
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import { SessionDetailsModelOwner } from '../settings/session-details-model-owner'
 import { buildSessionProjection } from '../session-persistence/projection'

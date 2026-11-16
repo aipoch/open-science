@@ -1,0 +1,37 @@
+{
+  "ownerPaths": [
+    "src/main/schedules/application-commands.ts",
+    "src/main/schedules/dispatcher.test.ts",
+    "src/main/schedules/dispatcher.ts",
+    "src/main/schedules/execution.ts",
+    "src/main/schedules/run-session.ts",
+    "src/main/schedules/management.ts",
+    "src/main/schedules/mcp.test.ts",
+    "src/main/schedules/mcp.ts",
+    "src/main/schedules/repository.ts",
+    "src/main/schedules/run-session.test.ts"
+  ],
+  "interfacePaths": [
+    "src/main/schedules/application-commands.ts",
+    "src/main/schedules/dispatcher.ts",
+    "src/main/schedules/execution.ts",
+    "src/main/schedules/management.ts",
+    "src/main/schedules/mcp.ts",
+    "src/main/schedules/repository.ts"
+  ],
+  "consumerModules": ["desktop_composition", "acp_runtime", "host_command_runtime"],
+  "testFiles": {
+    "owner": [
+      "src/main/schedules/dispatcher.test.ts",
+      "src/main/schedules/mcp.test.ts",
+      "src/main/schedules/run-session.test.ts"
+    ],
+    "contract": [
+      "src/main/application-command-wiring.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts"
+    ],
+    "consumer": ["src/main/composition/project-lifecycle.test.ts"]
+  },
+  "capabilityOverlays": ["e2e_regressions"],
+  "fallbackCapability": "main_runtime"
+}

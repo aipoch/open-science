@@ -2148,14 +2148,39 @@ export function usePdfTranslationDocument(
             const bracketedOwners = nativeBracketedSources.filter((unit) => {
               const unitIndex = units.indexOf(unit),
                 translation = runSnapshot.units[unitIndex].translation
+              // One serialized native item can carry a digit and exactly one
+              // boundary delimiter. Its identity is still proved below by the
+              // complete closed vector, its occurrence and the same owner.
+              const numericHit = (
+                items: TextItem[]
+              ):
+                | {
+                    linked: TextItem[]
+                    label: string
+                    open: string
+                    close: string
+                  }
+                | undefined => {
+                const linked =
+                  items.length > 1 && /^[,，]$/u.test(textKey(items.at(-1)!.str))
+                    ? items.slice(0, -1)
+                    : items
+                const label = textKey(linked.map((item) => item.str).join(''))
+                if (/^\d{1,4}$/u.test(label)) return { linked, label, open: '', close: '' }
+                if (items.length !== 1) return
+                const opening = label.match(/^([[［])(\d{1,4})$/u),
+                  closing = label.match(/^(\d{1,4})([\]］])$/u)
+                return opening
+                  ? { linked, label: opening[2], open: opening[1], close: '' }
+                  : closing
+                    ? { linked, label: closing[1], open: '', close: closing[2] }
+                    : undefined
+              }
               const located = (rect: readonly number[], token: string, offset: number): boolean => {
                 const hit = linkedItems(text, rect),
-                  linked =
-                    hit.length > 1 && /^[,，]$/u.test(textKey(hit.at(-1)!.str))
-                      ? hit.slice(0, -1)
-                      : hit
-                if (!linked.length || textKey(linked.map((item) => item.str).join('')) !== token)
-                  return false
+                  numeric = numericHit(hit)
+                if (!numeric || numeric.label !== token) return false
+                const linked = numeric.linked
                 const first = linked[0],
                   within = (item: TextItem, fragment: (typeof unit.fragments)[number]): boolean =>
                     [
@@ -2218,14 +2243,20 @@ export function usePdfTranslationDocument(
                     actual = spans.filter((span) => linked.includes(span.item)),
                     full = translatedPdfBracketedReference(unit.source, translation, token, offset)
                   if (actual.length !== linked.length || !full) return false
+                  const before = textKey(translation.slice(full.targetBlock.start, full.start)),
+                    after = textKey(translation.slice(full.end, full.targetBlock.end))
+                  if (
+                    (numeric.open && before !== numeric.open) ||
+                    (numeric.close && after !== numeric.close)
+                  )
+                    return false
                   const block = textKey(full.targetBlock.text),
-                    blockStart =
-                      actual[0].start -
-                      textKey(translation.slice(full.targetBlock.start, full.start)).length
+                    blockStart = actual[0].start + numeric.open.length - before.length
                   if (
                     blockStart < 0 ||
                     line.slice(blockStart, blockStart + block.length) !== block ||
-                    actual.at(-1)!.end - actual[0].start !== token.length
+                    actual.at(-1)!.end - actual[0].start !==
+                      token.length + numeric.open.length + numeric.close.length
                   )
                     return false
                   const parts = spans.filter(
@@ -2383,15 +2414,7 @@ export function usePdfTranslationDocument(
                       )
                         return []
                       const targetItems = linkedItems(text, targetAnnotations[position].rect),
-                        label = textKey(
-                          (targetItems.length > 1 &&
-                          /^[,，]$/u.test(textKey(targetItems.at(-1)!.str))
-                            ? targetItems.slice(0, -1)
-                            : targetItems
-                          )
-                            .map((item) => item.str)
-                            .join('')
-                        ),
+                        label = numericHit(targetItems)?.label,
                         sourceItem = linkedItems(originalText!, candidate.rect, true).find((item) =>
                           digitOwners.has(item)
                         )!
