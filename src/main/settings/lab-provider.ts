@@ -49,6 +49,11 @@ export const buildLabProviderRecord = (
       model.capabilities ? [[labModelId(model.id), model.capabilities] as const] : []
     )
   )
+  const modelStreaming: Record<string, boolean> = Object.fromEntries(
+    models.flatMap((model) =>
+      model.streaming !== undefined ? [[labModelId(model.id), model.streaming] as const] : []
+    )
+  )
   return {
     ...labProviderIdentity(),
     type: 'lab',
@@ -58,7 +63,8 @@ export const buildLabProviderRecord = (
     apiEndpoints: labProviderApiEndpoints(bootstrap.models),
     fetchedModels: labProviderModels(bootstrap),
     ...(Object.keys(modelProtocols).length > 0 ? { modelProtocols } : {}),
-    ...(Object.keys(modelCapabilities).length > 0 ? { modelCapabilities } : {})
+    ...(Object.keys(modelCapabilities).length > 0 ? { modelCapabilities } : {}),
+    ...(Object.keys(modelStreaming).length > 0 ? { modelStreaming } : {})
   }
 }
 

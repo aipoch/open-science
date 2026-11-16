@@ -8210,6 +8210,7 @@
     "Lab": "Lab",
     "Lab server": "Lab-Server",
     "Lab server address is reachable.": "Die Lab-Serveradresse ist erreichbar.",
+    "This model does not support streaming. Pick a streaming-capable model for the Agent.": "Dieses Modell unterstützt kein Streaming. Wählen Sie ein streamingfähiges Modell für den Agenten.",
     "Access token quota": "Token-Kontingent",
     "Organization wallet": "Organisations-Wallet",
     "Usage information is unavailable.": "Nutzungsinformationen sind nicht verfügbar.",

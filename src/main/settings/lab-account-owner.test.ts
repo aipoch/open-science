@@ -141,19 +141,21 @@ const createApi = (): Record<string, ReturnType<typeof vi.fn>> => ({
 
 const createOwner = async (
   dir: string,
-  api: ReturnType<typeof createApi>
+  api: ReturnType<typeof createApi>,
+  options: { now?: () => number; credentials?: LabCredentialStore } = {}
 ): Promise<{
   owner: LabAccountOwner
   repository: SettingsRepository
   credentials: LabCredentialStore
 }> => {
   const repository = new SettingsRepository(dir)
-  const credentials = new LabCredentialStore(dir)
+  const credentials = options.credentials ?? new LabCredentialStore(dir)
   const owner = new LabAccountOwner({
     configRoot: dir,
     repository,
     credentials,
-    api: api as unknown as LabApi
+    api: api as unknown as LabApi,
+    ...(options.now ? { now: options.now } : {})
   })
   return { owner, repository, credentials }
 }
@@ -224,6 +226,70 @@ describe('Lab account owner', () => {
     await vi.waitFor(() => expect(owner.getView().usage).toMatchObject({ available: true }))
     expect(owner.getView().usage?.effective?.limitedBy).toBe('token')
     expect(api.usage).toHaveBeenCalledWith(SERVER, 'at_1')
+  })
+
+  it('does not refresh an almost-expired token just to read optional usage', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const api = createApi()
+    const now = 1_000_000
+    let clock = now
+    api.bootstrap.mockImplementationOnce(async () => {
+      clock += 2_000
+      return BOOTSTRAP
+    })
+    api.refreshToken.mockRejectedValue(new LabApiError('unauthorized', 'refresh timed out'))
+    const { owner } = await createOwner(dir, api, { now: () => clock })
+    await seedSession(new LabCredentialStore(dir), { tokenExpiresAt: now + 61_000 })
+
+    const view = await owner.check()
+    await vi.waitFor(() => expect(api.usage).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(owner.getView().usage).toBeDefined())
+
+    expect(view.state).toBe('authenticated')
+    expect(api.refreshToken).not.toHaveBeenCalled()
+    expect(owner.getView().state).toBe('authenticated')
+  })
+
+  it('publishes only the latest quota response on the same connection', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const api = createApi()
+    let resolveFirst: ((usage: LabUsage) => void) | undefined
+    let resolveSecond: ((usage: LabUsage) => void) | undefined
+    api.usage
+      .mockImplementationOnce(
+        () =>
+          new Promise<LabUsage>((resolve) => {
+            resolveFirst = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<LabUsage>((resolve) => {
+            resolveSecond = resolve
+          })
+      )
+    const { owner } = await createOwner(dir, api)
+    await seedSession(new LabCredentialStore(dir))
+
+    await owner.check()
+    await vi.waitFor(() => expect(api.usage).toHaveBeenCalledTimes(1))
+    await owner.check()
+    await vi.waitFor(() => expect(api.usage).toHaveBeenCalledTimes(2))
+
+    resolveSecond?.({
+      ...USAGE,
+      effective: { remaining: 25, limitedBy: 'org' }
+    })
+    await vi.waitFor(() => expect(owner.getView().usage?.effective?.remaining).toBe(25))
+    resolveFirst?.({
+      ...USAGE,
+      effective: { remaining: 334_100, limitedBy: 'token' }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(owner.getView().usage?.effective?.remaining).toBe(25)
   })
 
   it('coalesces concurrent refreshes into one request', async () => {
@@ -629,6 +695,45 @@ describe('Lab account owner', () => {
     await initializing
     expect((await credentials.readSession())?.accessToken).toBe('at_new_login')
     expect(owner.getView().serverUrl).toBe('https://another-lab.example.com')
+  })
+
+  it('does not let a delayed startup credential read replace a newer login', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const credentials = new LabCredentialStore(dir)
+    await seedSession(credentials)
+    const oldSnapshot = await credentials.readCredentialSnapshot()
+    let releaseRead: (() => void) | undefined
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    const readSpy = vi
+      .spyOn(credentials, 'readCredentialSnapshot')
+      .mockImplementationOnce(async () => {
+        await readGate
+        return oldSnapshot
+      })
+    const api = createApi()
+    const { owner } = await createOwner(dir, api, { credentials })
+    const initializing = owner.initialize()
+    await vi.waitFor(() => expect(readSpy).toHaveBeenCalledTimes(1))
+
+    const newerServer = 'https://another-lab.example.com'
+    await owner.setServerUrl(newerServer)
+    await credentials.saveSession(
+      {
+        accessToken: 'at_new_login',
+        refreshToken: 'rt_new_login',
+        tokenExpiresAt: Date.now() + 900_000
+      },
+      newerServer
+    )
+    releaseRead?.()
+    await initializing
+
+    expect(owner.getView().serverUrl).toBe(newerServer)
+    expect(owner.getView().state).toBe('signedOut')
+    expect((await credentials.readSession())?.accessToken).toBe('at_new_login')
   })
 
   it('does not overwrite a newer same-address catalog with a stale write', async () => {

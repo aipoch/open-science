@@ -104,6 +104,41 @@ describe('configured model catalog', () => {
     ])
   })
 
+  it('marks a non-streaming Lab model unavailable to the streaming-only built-in Agent', () => {
+    const lab = provider('builtin-lab', ['lab:stream', 'lab:batch'], {
+      type: 'lab',
+      model: 'lab:stream',
+      modelStreaming: { 'lab:stream': true, 'lab:batch': false }
+    })
+    const entries = buildConfiguredModelCatalog({
+      providers: [lab],
+      frameworkId: 'open-science-agent',
+      frameworkEndpoints: ['chat-completions']
+    })
+    expect(entries).toEqual([
+      expect.objectContaining({ model: 'lab:stream', selectable: true }),
+      expect.objectContaining({
+        model: 'lab:batch',
+        selectable: false,
+        unavailableReason: 'streaming-unsupported'
+      })
+    ])
+  })
+
+  it('does not synthesize a default entry for an empty Lab catalog', () => {
+    const lab = provider('builtin-lab', [], {
+      type: 'lab',
+      model: 'lab:removed'
+    })
+    expect(
+      buildConfiguredModelCatalog({
+        providers: [lab],
+        frameworkId: 'open-science-agent',
+        frameworkEndpoints: ['chat-completions']
+      })
+    ).toEqual([])
+  })
+
   it('keeps same-named models distinct by compound provider identity', () => {
     const entries = buildConfiguredModelCatalog({
       providers: [provider('first', ['shared']), provider('second', ['shared'])],

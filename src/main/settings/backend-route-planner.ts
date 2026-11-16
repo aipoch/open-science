@@ -469,6 +469,15 @@ class BackendRoutePlanner {
         !shareProviderTransportFamily(active.provider.type, candidate.provider.type)
       )
         return false
+      // A Pi session that is using a personal model must not start Lab's bridge. Lab forwarding is
+      // optional infrastructure; a Lab bridge failure must not take down an otherwise personal
+      // session. Lab is included only after the session has explicitly switched to Lab.
+      if (
+        frameworkId === 'pi' &&
+        !isLabProvider(active.provider.type) &&
+        isLabProvider(candidate.provider.type)
+      )
+        return false
       const endpoint =
         frameworkId === 'claude-code'
           ? normalizeMessagesRootUrl(candidate.provider.baseUrl ?? '')

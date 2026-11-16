@@ -74,6 +74,9 @@ export class LabAccountOwner {
   private refreshGeneration = 0
   private loginAttempt = 0
   private activeLoginAttempt: number | undefined
+  // Distinguishes concurrent quota reads on the same connection. A slower earlier response must
+  // not overwrite a newer snapshot.
+  private usageRequest = 0
 
   constructor(options: LabAccountOwnerOptions) {
     this.repository = options.repository
@@ -105,8 +108,12 @@ export class LabAccountOwner {
   private async restore(): Promise<void> {
     let hadSession = false
     const generation = this.refreshGeneration
+    const loginAttempt = this.loginAttempt
     try {
       const snapshot = await this.credentials.readCredentialSnapshot()
+      // A server switch or a sign-in can advance the connection while this disk read is in flight.
+      // Never let that older snapshot replace the newer connection.
+      if (generation !== this.refreshGeneration || loginAttempt !== this.loginAttempt) return
       if (!snapshot.serverUrl) {
         this.publish({ state: 'unconfigured' })
         return
@@ -129,8 +136,8 @@ export class LabAccountOwner {
         serverUrl
       }
       this.publish({ state: 'signedOut', serverUrl })
-      const generation = this.refreshGeneration
       const bootstrap = await this.bootstrapWithAuth()
+      if (generation !== this.refreshGeneration || loginAttempt !== this.loginAttempt) return
       await this.applyBootstrap(serverUrl, bootstrap, generation)
     } catch (error) {
       log.warn('lab restore failed', {
@@ -517,9 +524,19 @@ export class LabAccountOwner {
   // Quota is optional information: a slow/failed usage request must never fail a Lab login or
   // catalog refresh. Fetch it after publishing the authenticated view and update the view later.
   private async loadUsage(serverUrl: string, generation: number): Promise<LabUsage | undefined> {
+    if (generation !== this.refreshGeneration) return undefined
+    const cached = this.access
+    if (
+      !cached ||
+      normalizeLabServerUrl(cached.serverUrl) !== normalizeLabServerUrl(serverUrl) ||
+      cached.expiresAt <= this.now()
+    )
+      return undefined
     try {
-      const token = await this.getAccessToken(false, serverUrl)
-      const usage = await this.api.usage(serverUrl, token)
+      // Reuse the access token that just authenticated the catalog. Calling getAccessToken() here
+      // would eagerly refresh inside the 60-second lead window and could turn an otherwise valid
+      // session into expired when the refresh fails.
+      const usage = await this.api.usage(serverUrl, cached.token)
       return this.isCurrentConnection(generation, serverUrl) ? usage : undefined
     } catch {
       return undefined
@@ -527,9 +544,11 @@ export class LabAccountOwner {
   }
 
   private refreshUsageInBackground(serverUrl: string, generation: number): void {
+    const request = ++this.usageRequest
     void this.loadUsage(serverUrl, generation)
       .then((usage) => {
         if (
+          request === this.usageRequest &&
           usage &&
           this.isCurrentConnection(generation, serverUrl) &&
           this.view.state === 'authenticated'

@@ -8041,6 +8041,7 @@
     "Lab": "Lab",
     "Lab server": "Lab サーバー",
     "Lab server address is reachable.": "Lab サーバーアドレスに接続できます。",
+    "This model does not support streaming. Pick a streaming-capable model for the Agent.": "このモデルはストリーミングに対応していません。エージェントにはストリーミング対応のモデルを選択してください。",
     "Access token quota": "トークン枠",
     "Organization wallet": "組織ウォレット",
     "Usage information is unavailable.": "使用状況を取得できません。",

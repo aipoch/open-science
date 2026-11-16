@@ -741,6 +741,7 @@ describe('Settings backend ownership architecture', () => {
       'model',
       'modelCapabilities',
       'modelProtocols',
+      'modelStreaming',
       'name',
       'reasoningEffortPreset',
       'reasoningEffortTransport',

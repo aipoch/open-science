@@ -709,7 +709,7 @@ class ProviderTransportOwner {
                 )
               })()
     let selector: ReturnType<typeof createCodeBuddySkillSelectorTransport> | undefined =
-      transport.kind === 'codebuddy-provider-compatibility' || usesXaiOAuth
+      transport.kind === 'codebuddy-provider-compatibility' || usesXaiOAuth || usesLab
         ? undefined
         : createCodeBuddySkillSelectorTransport({
             activeTarget: input.activeTarget,

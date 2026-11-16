@@ -130,6 +130,7 @@ class ProviderRuntimeProjectionOwner {
       ...(provider.modelProtocols ? { modelProtocols: provider.modelProtocols } : {}),
       ...(provider.labServerUrl ? { labServerUrl: provider.labServerUrl } : {}),
       ...(provider.modelCapabilities ? { modelCapabilities: provider.modelCapabilities } : {}),
+      ...(provider.modelStreaming ? { modelStreaming: provider.modelStreaming } : {}),
       maskedKey: hardenKeyMask(provider.keyMask),
       accountEmail: provider.accountEmail,
       hasKey,
@@ -168,6 +169,16 @@ class ProviderRuntimeProjectionOwner {
           }
         : selection
     const target = this.resolveProviderTarget(storedProvider, modelSelection)
+    if (
+      framework.id === 'open-science-agent' &&
+      storedProvider.type === 'lab' &&
+      target.effectiveModel &&
+      storedProvider.modelStreaming?.[target.effectiveModel] === false
+    ) {
+      throw new Error(
+        `The model "${target.effectiveModel}" does not support streaming and cannot be used with the built-in Agent.`
+      )
+    }
     return {
       ...target,
       frameworkCompatible: isProviderUsableByFramework(
@@ -190,6 +201,20 @@ class ProviderRuntimeProjectionOwner {
     selection: RuntimeProviderModelSelection
   ): ProviderRuntimeTarget {
     const availableModels = this.availableModels(storedProvider)
+    if (storedProvider.type === 'lab' && availableModels.length === 0) {
+      const requestedModel =
+        selection.kind === 'required'
+          ? selection.model
+          : selection.kind === 'configured'
+            ? (selection.requestedModel ?? storedProvider.model)
+            : undefined
+      throw new Error(
+        buildConfiguredModelUnavailableMessage(
+          requestedModel ?? storedProvider.name,
+          storedProvider.name
+        )
+      )
+    }
     if (
       selection.kind === 'configured' &&
       selection.requestedModel &&
@@ -250,9 +275,18 @@ class ProviderRuntimeProjectionOwner {
     storedProvider: StoredProvider,
     framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget[] {
-    return this.availableModels(storedProvider).map((model) =>
-      this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
-    )
+    return this.availableModels(storedProvider)
+      .filter(
+        (model) =>
+          !(
+            framework.id === 'open-science-agent' &&
+            storedProvider.type === 'lab' &&
+            storedProvider.modelStreaming?.[model] === false
+          )
+      )
+      .map((model) =>
+        this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
+      )
   }
 
   resolveRuntimeReasoningEffortProfile(

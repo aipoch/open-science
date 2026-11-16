@@ -149,6 +149,20 @@ describe('settings record codec', () => {
     expect(provider?.modelCapabilities).toEqual({ 'lab:research-default': capabilities })
   })
 
+  it('retains per-model streaming flags and drops malformed entries', () => {
+    const provider = sanitizeProvider({
+      id: 'builtin-lab',
+      type: 'lab',
+      name: 'Lab',
+      modelStreaming: {
+        'lab:stream': true,
+        'lab:batch': false,
+        'lab:invalid': 'no'
+      }
+    })
+    expect(provider?.modelStreaming).toEqual({ 'lab:stream': true, 'lab:batch': false })
+  })
+
   it('rejects unusable provider identities and invalid compute grants', () => {
     expect(sanitizeProvider({ id: 'official', type: 'official', name: 'Unknown' })).toBeUndefined()
     expect(sanitizeProvider({ id: 'provider-1', type: 'removed', name: 'Old' })).toBeUndefined()

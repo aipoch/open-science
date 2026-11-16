@@ -8041,6 +8041,7 @@
     "Lab": "Lab",
     "Lab server": "Lab 伺服器",
     "Lab server address is reachable.": "Lab 伺服器位址可存取。",
+    "This model does not support streaming. Pick a streaming-capable model for the Agent.": "此模型不支援串流回應。請為智能體選擇支援串流回應的模型。",
     "Access token quota": "權杖額度",
     "Organization wallet": "組織錢包",
     "Usage information is unavailable.": "無法取得用量資訊。",

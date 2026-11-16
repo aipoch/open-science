@@ -403,6 +403,9 @@ export type ProviderView = {
   // Per-model protocol sets for app-managed providers whose catalog is heterogeneous (Lab). Absent
   // means the provider-level apiEndpoints apply to every model.
   modelProtocols?: Record<string, ModelProtocol[]>
+  // Per-model streaming support for app-managed catalogs (Lab). Absent means streaming is
+  // supported; false makes the model unavailable to streaming-only runtimes.
+  modelStreaming?: Record<string, boolean>
   // Exact Lab deployment address for app-managed Lab providers; non-secret.
   labServerUrl?: string
   // Raw per-model capability documents from Lab, keyed by namespaced stored model id.

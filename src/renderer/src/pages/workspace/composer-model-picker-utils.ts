@@ -30,6 +30,9 @@ export const modelUnavailableReason = (
       'This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.'
     )
   }
+  if (option.unavailableReason === 'streaming-unsupported') {
+    return t('This model does not support streaming. Pick a streaming-capable model for the Agent.')
+  }
 
   return t('{{model}} uses {{modelRoutes}}, but {{framework}} supports {{frameworkRoutes}}.', {
     model: option.label,

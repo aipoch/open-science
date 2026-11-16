@@ -269,6 +269,22 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     if (entries.length > 0) modelProtocols = Object.fromEntries(entries)
   }
 
+  let modelStreaming: Record<string, boolean> | undefined
+  if (isRecord(value.modelStreaming)) {
+    const entries: Array<[string, boolean]> = []
+    for (const [modelId, rawStreaming] of Object.entries(value.modelStreaming)) {
+      if (
+        !modelId ||
+        characterCount(modelId) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters ||
+        typeof rawStreaming !== 'boolean'
+      )
+        continue
+      entries.push([modelId, rawStreaming])
+      if (entries.length >= PROVIDER_RESOURCE_LIMITS.fetchedModels) break
+    }
+    if (entries.length > 0) modelStreaming = Object.fromEntries(entries)
+  }
+
   // Raw per-model capability documents are stored alongside the model catalog and narrowed by
   // readLabModelCapabilities at consumption time. Key/value bounds prevent wildly malformed files.
   let modelCapabilities: Record<string, LabModelCapabilities> | undefined
@@ -329,6 +345,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (apiEndpoints.length > 0) provider.apiEndpoints = apiEndpoints
   if (modelProtocols) provider.modelProtocols = modelProtocols
   if (modelCapabilities) provider.modelCapabilities = modelCapabilities
+  if (modelStreaming) provider.modelStreaming = modelStreaming
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels

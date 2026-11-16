@@ -1031,6 +1031,48 @@ describe('ProviderRuntimeProjectionOwner', () => {
     })
   })
 
+  it('excludes non-streaming Lab models from the built-in Agent runtime catalog', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'builtin-lab',
+      type: 'lab',
+      name: 'Lab',
+      baseUrl: 'https://lab.example.com/v1',
+      model: 'lab:stream',
+      fetchedModels: ['lab:stream', 'lab:batch'],
+      modelStreaming: { 'lab:stream': true, 'lab:batch': false },
+      apiEndpoints: ['chat-completions']
+    }
+    const framework = getAgentFramework('open-science-agent')
+    expect(owner.resolveRuntimeModelCatalog(provider, framework)).toEqual([
+      expect.objectContaining({ effectiveModel: 'lab:stream' })
+    ])
+    expect(() =>
+      owner.resolveRuntimeTarget(provider, { kind: 'required', model: 'lab:batch' }, framework)
+    ).toThrow(/does not support streaming/)
+  })
+
+  it('rejects every Lab runtime target when the fetched catalog is empty', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'builtin-lab',
+      type: 'lab',
+      name: 'Lab',
+      baseUrl: 'https://lab.example.com/v1',
+      model: 'lab:removed',
+      fetchedModels: []
+    }
+    const framework = getAgentFramework('open-science-agent')
+    expect(owner.resolveRuntimeModelCatalog(provider, framework)).toEqual([])
+    expect(() =>
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'configured', requestedModel: 'lab:removed' },
+        framework
+      )
+    ).toThrow(/no longer available/)
+  })
+
   it('builds a catalog and reasoning profile through the same effective-model policy', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {

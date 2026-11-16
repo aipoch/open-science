@@ -17,6 +17,7 @@ const BOOTSTRAP: LabBootstrap = {
       }
     },
     { id: 'plain-chat', protocol: 'openai' },
+    { id: 'non-streaming', protocol: 'openai', streaming: false },
     { id: 'disabled-model', protocol: 'openai', enabled: false }
   ],
   model_base_url: '/v1'
@@ -32,7 +33,12 @@ describe('buildLabProviderRecord', () => {
         limit: { context: 1_000_000, output: 64_000 }
       }
     })
-    expect(record.fetchedModels).toEqual(['lab:research-default', 'lab:plain-chat'])
+    expect(record.fetchedModels).toEqual([
+      'lab:research-default',
+      'lab:plain-chat',
+      'lab:non-streaming'
+    ])
+    expect(record.modelStreaming).toEqual({ 'lab:non-streaming': false })
   })
 
   it('omits the map when no model advertises capabilities', () => {

@@ -35,7 +35,10 @@ export type ConfiguredModelCatalogEntry = Readonly<{
   label: string
   selectable: boolean
   supportsImageInput: boolean
-  unavailableReason?: 'framework-incompatible' | 'model-bridge-unsupported'
+  // False only for a Lab model explicitly marked as non-streaming. Absent means streaming-capable.
+  streaming?: boolean
+  unavailableReason?:
+    'framework-incompatible' | 'model-bridge-unsupported' | 'streaming-unsupported'
 }>
 
 export type ConfiguredModelInventoryEntry = Readonly<
@@ -112,21 +115,33 @@ export const buildConfiguredModelInventory = (
         (!providerValidationFailed(provider) ||
           provider.lastValidationFailure?.target !== undefined)
     )
-    .flatMap((provider) =>
-      (provider.models.length > 0 ? provider.models : provider.model ? [provider.model] : ['']).map(
-        (model) =>
-          Object.freeze({
-            key: configuredModelKey(provider.id, model),
-            providerId: provider.id,
-            providerName: provider.name,
-            providerType: provider.type,
-            ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
-            model,
-            label: provider.type === 'lab' ? labModelLabel(model) : model || provider.name,
-            supportsImageInput: supportsImageInput(provider, model)
-          })
+    .flatMap((provider) => {
+      // Lab's fetched catalog is authoritative. An empty catalog means the organization has no
+      // models; it must not fall back to a synthetic "default" entry that the gateway cannot serve.
+      const models =
+        provider.type === 'lab'
+          ? provider.models
+          : provider.models.length > 0
+            ? provider.models
+            : provider.model
+              ? [provider.model]
+              : ['']
+      return models.map((model) =>
+        Object.freeze({
+          key: configuredModelKey(provider.id, model),
+          providerId: provider.id,
+          providerName: provider.name,
+          providerType: provider.type,
+          ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
+          model,
+          label: provider.type === 'lab' ? labModelLabel(model) : model || provider.name,
+          supportsImageInput: supportsImageInput(provider, model),
+          ...(provider.type === 'lab' && provider.modelStreaming?.[model] === false
+            ? { streaming: false }
+            : {})
+        })
       )
-    )
+    })
 }
 
 export const buildConfiguredModelCatalog = (
@@ -171,15 +186,20 @@ export const buildConfiguredModelCatalog = (
     )
       return []
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)
+    const streamingSupported = !(
+      input.frameworkId === 'open-science-agent' && entry.streaming === false
+    )
     return [
       Object.freeze({
         ...entry,
-        selectable: frameworkCompatible && bridgeSupported,
+        selectable: frameworkCompatible && bridgeSupported && streamingSupported,
         ...(!frameworkCompatible
           ? { unavailableReason: 'framework-incompatible' as const }
           : !bridgeSupported
             ? { unavailableReason: 'model-bridge-unsupported' as const }
-            : {})
+            : !streamingSupported
+              ? { unavailableReason: 'streaming-unsupported' as const }
+              : {})
       })
     ]
   })
