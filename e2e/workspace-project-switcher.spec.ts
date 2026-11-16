@@ -74,6 +74,8 @@ test('switches projects from the Workspace project menu and expands remaining pr
   await createProject(page, 'Project 16', 'Description 16', false)
   await reloadAndOpenProject(page, 'Project 16')
 
+  // The native window enforces a 720px minimum height, so keep this compact-layout check as
+  // renderer viewport emulation rather than changing the test's requested geometry.
   await page.setViewportSize({ width: 1280, height: 600 })
   await page.locator('button[title="Project 16"]').click()
   const menu = page.locator('[aria-label="Project actions"]')

@@ -1303,7 +1303,7 @@ for (const variant of [
     if (variant === 'standard') {
       // Shared resizing is a docked-sidebar contract; narrow readers use floating sidebars.
       const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
-      await page.setViewportSize({ width: 1440, height: 900 })
+      await app.setMainWindowSize(1440, 900)
       const translationToggle = page.getByRole('button', {
         name: 'View translation',
         exact: true
