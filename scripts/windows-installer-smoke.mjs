@@ -1913,7 +1913,7 @@ const main = async () => {
         'Windows installer smoke completed successfully; installation retained for administrator-authorized teardown.'
       )
     } else {
-      await uninstallAndVerify(installDirectory, env)
+      await uninstallAndVerify(installDirectory, env, { processRoot: root })
       console.log('Windows installer smoke completed successfully.')
     }
   } catch (error) {
