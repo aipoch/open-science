@@ -132,7 +132,7 @@ describe('Windows installer smoke plan', () => {
       await mkdir(installDirectory, { recursive: true })
       await writeFile(uninstaller, '')
       await uninstallAndVerify(installDirectory, {}, { processRoot: root, terminate, run })
-      expect(terminated).toEqual([installDirectory, root, installDirectory])
+      expect(terminated).toEqual([installDirectory, root])
     } finally {
       await rm(root, { recursive: true, force: true })
     }

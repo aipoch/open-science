@@ -1511,24 +1511,14 @@ const uninstallAndVerify = async (
   const uninstaller = await findUninstaller(installDirectory)
   const installedPaths = packagedResourcePaths(installDirectory)
   await terminate(installDirectory)
+  // Reap app and MCP children before NSIS starts its self-deleting helper. Killing the smoke
+  // root after the uninstaller returns can terminate that helper before it removes the tree.
+  if (processRoot !== installDirectory) await terminate(processRoot)
   const result = await run(uninstaller, ['/S', '/KEEP_APP_DATA'], {
     allowNonZero: true,
     env
   })
-  // NSIS starts its detached Un_A cleanup helper below the smoke root. Reap it before checking
-  // the install tree, otherwise the helper can still hold the uninstaller or resources while the
-  // uninstaller process has already returned.
-  if (processRoot !== installDirectory) await terminate(processRoot)
-  await terminate(installDirectory)
-  let lastProcessReapAt = Date.now()
   const cleanupCheck = async () => {
-    // NSIS can start its detached cleanup helper after the uninstaller process exits. Reap
-    // helpers that appear during the wait without broadening the process path boundary.
-    if (Date.now() - lastProcessReapAt >= 1000) {
-      lastProcessReapAt = Date.now()
-      if (processRoot !== installDirectory) await terminate(processRoot)
-      await terminate(installDirectory)
-    }
     const remainingPaths = (
       await Promise.all(
         installedPaths.map(async (path) => ((await pathExists(path)) ? path : undefined))
