@@ -712,6 +712,11 @@ console.log(JSON.stringify(result))
     expect(await adapter.execute(request(command('value=old', '$value="old"')))).toMatchObject({
       exitCode: 0
     })
+    const [oldProcess] = adapter.monitoredProcesses()
+    expect(oldProcess.lastCell).toEqual({
+      code: command('value=old', '$value="old"'),
+      truncated: false
+    })
     const result = await adapter.execute({
       ...request(
         command(
@@ -722,6 +727,9 @@ console.log(JSON.stringify(result))
       protectedDirs: [join(root, 'private')]
     })
     expect(result).toMatchObject({ exitCode: 0, stdout: 'unset' })
+    const [newProcess] = adapter.monitoredProcesses()
+    expect(newProcess.identity).not.toBe(oldProcess.identity)
+    await expect(oldProcess.terminate()).rejects.toThrow('changed')
     expect(result.stderr).toContain('interpreter state was reset')
     expect(
       await adapter.execute(request(command('value=other', '$value="other"'), 'two'))
@@ -732,6 +740,15 @@ console.log(JSON.stringify(result))
         request(command('printf "%s" "$value"', '[Console]::Write($value)'), 'two')
       )
     ).toMatchObject({ exitCode: 0, stdout: 'other' })
+  })
+
+  it('terminates a running Shell through its monitored owner and settles the pending call', async () => {
+    const running = adapter.execute(request(command('sleep 60', 'Start-Sleep -Seconds 60')))
+    await vi.waitFor(() => expect(adapter.monitoredProcesses()[0]?.status).toBe('running'))
+    const [owned] = adapter.monitoredProcesses()
+    await owned.terminate()
+    expect(await running).toMatchObject({ cancelled: true })
+    expect(adapter.monitoredProcesses()).toEqual([])
   })
 })
 
