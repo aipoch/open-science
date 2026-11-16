@@ -3455,6 +3455,30 @@ describe('compactNotebookExecutionResult', () => {
     expect(compact.traceback).toBe(traceback)
   })
 
+  it('corrects imports of injected document Skill helpers without suggesting package installation', () => {
+    for (const [skillId, moduleName] of [
+      ['pdf-generation', 'pdf_generation'],
+      ['pptx-generation', 'pptx_generation']
+    ] as const) {
+      const traceback = [
+        'Traceback (most recent call last):',
+        '  File "<cell>", line 3, in <module>',
+        `ModuleNotFoundError: No module named '${moduleName}'`
+      ].join('\n')
+      const compact = compactNotebookExecutionResult(
+        {
+          ...runSummary({ traceback }),
+          kernelKind: 'python',
+          status: 'failed'
+        },
+        { kernelSkillIds: [skillId] }
+      ) as { hint?: string; traceback: string }
+
+      expect(compact.hint).toContain(`Kernel Skill "${skillId}"`)
+      expect(compact.hint).toContain(`Do not install ${moduleName}`)
+    }
+  })
+
   it('corrects imports of injected figure Skill helpers without suggesting package installation', () => {
     const kernelSkillIds = ['figure-style', 'figure-composer', 'paper-narrative']
 

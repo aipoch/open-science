@@ -24,7 +24,7 @@ import {
 } from './permission-policy'
 import { appMcpToolIdentities } from '../agent-framework/app-mcp-names'
 
-const servers = ['open-science-library', 'open-science-literature']
+const servers = ['open-science-library', 'open-science-literature', 'open-science-pptx']
 const request = (title: string): RequestPermissionRequest => ({
   sessionId: 'session',
   toolCall: { toolCallId: 'call', title, kind: 'other', rawInput: { query: 'evidence' } },
@@ -89,7 +89,8 @@ describe('Library Auto policy', () => {
       expect(resolveAutomaticPermission(trusted, { ...policy, mcpServerNames: [] })).toBeUndefined()
       expect(resolveAutomaticPermission(trusted, { ...policy, profile: 'ask' })).toBe(
         identity.endsWith('/list_pdf_annotations') ||
-          identity.endsWith('/locate_pdf_annotation_target')
+          identity.endsWith('/locate_pdf_annotation_target') ||
+          identity.endsWith('/read_pptx_outline')
           ? 'once'
           : undefined
       )
@@ -185,7 +186,8 @@ describe('Library Auto policy', () => {
             (scopedSchedule && tool !== 'create_schedule' && tool !== 'close_schedule') ||
               (framework !== 'codebuddy' &&
                 (identity.endsWith('/list_pdf_annotations') ||
-                  identity.endsWith('/locate_pdf_annotation_target')))
+                  identity.endsWith('/locate_pdf_annotation_target') ||
+                  identity.endsWith('/read_pptx_outline')))
               ? 'once'
               : undefined
           )

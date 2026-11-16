@@ -53,6 +53,8 @@ export const RENDERER_API_CONTRACT = composeRendererApiContract(
   notebook.contracts,
   notifications.contracts,
   previews.officePreviewAttachFrameContracts,
+  previews.pptxEditContracts,
+  previews.pptxDraftContracts,
   permissions.contracts,
   files.platformContracts,
   sessionReplay.contracts,

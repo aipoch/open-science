@@ -96,6 +96,7 @@ type ManagedPreviewResourcesOptions = {
     request: Extract<AcquireManagedPreviewRequest, { source: 'notebook-input' }>
   ) => Promise<ManagedPreviewTrustedLease>
   openLiterature?: (reference: string) => Promise<ManagedPreviewTrustedLease>
+  openStagedEdit?: (key: string) => Promise<ManagedPreviewTrustedLease>
   createId?: () => string
 }
 
@@ -671,6 +672,12 @@ class ManagedPreviewResources {
         return Promise.reject(new Error('Literature preview lease is not configured.'))
       return this.options.openLiterature(request.path)
     }
+    if (request.source === 'staged-edit') {
+      if (!this.options.openStagedEdit) {
+        return Promise.reject(new Error('Staged edit preview lease is not configured.'))
+      }
+      return this.options.openStagedEdit(request.path)
+    }
     if (request.source === 'compute-output') {
       if (!this.options.openComputeOutput)
         return Promise.reject(new Error('Compute output preview is unavailable.'))
@@ -728,5 +735,6 @@ export type {
   AcquireManagedPreviewOptions,
   ManagedPreviewResourceSnapshot,
   ManagedPreviewResourcesOptions,
+  ManagedPreviewTrustedLease,
   PreviewProtocolResource
 }

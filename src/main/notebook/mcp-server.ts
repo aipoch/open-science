@@ -827,7 +827,9 @@ const compactExecutionOutputs = (
 const BUNDLED_KERNEL_SKILL_PSEUDO_MODULES = new Map([
   ['figure_style', 'figure-style'],
   ['figure_composer', 'figure-composer'],
-  ['paper_narrative', 'paper-narrative']
+  ['paper_narrative', 'paper-narrative'],
+  ['pdf_generation', 'pdf-generation'],
+  ['pptx_generation', 'pptx-generation']
 ])
 
 // Projects one immediate execution result for the next model step. Code, roots, provenance, and

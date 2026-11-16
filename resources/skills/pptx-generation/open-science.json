@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "helpers": [
+    {
+      "id": "pptx-generation",
+      "language": "python",
+      "interfaceRevision": 1,
+      "implementation": "kernel.py",
+      "exports": [
+        "pptx_outline",
+        "lint_pptx",
+        "place_picture",
+        "set_run_fonts",
+        "render_pptx_pages"
+      ],
+      "dependencies": []
+    }
+  ]
+}
