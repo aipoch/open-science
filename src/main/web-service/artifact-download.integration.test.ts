@@ -104,7 +104,9 @@ it.each(['historical', 'native'] as const)(
     const acquiredIds: string[] = []
     const router = createApplicationCommandRouter()
     const installation = registerDataContentApplicationCommands(router.registrar, {
-      managedFileVersions: createManagedFileVersionHandlers(versions)
+      managedFileVersions: createManagedFileVersionHandlers(versions, {
+        withDataRootWrite: (operation) => operation()
+      })
     } as never)
     const tasks = new HeadlessTaskApi({
       commands: {
@@ -232,8 +234,14 @@ it.each(['historical', 'native'] as const)(
       expect(newer.artifactId).toBe(version.artifactId)
       expect(await readFile(version.path, 'utf8')).toBe(content)
       const emptyCommands = { commandNames: () => [], invoke: async () => undefined }
+      let pairedCurrent = true
+      let revokeOnOpen = false
       server = await startWebHttpServer({
-        fetchPreview: protocol,
+        fetchPreview: async (request) => {
+          const upstream = await protocol(request)
+          if (revokeOnOpen) pairedCurrent = false
+          return upstream
+        },
         host: '127.0.0.1',
         port: 0,
         token: 'synthetic-download-token',
@@ -241,6 +249,17 @@ it.each(['historical', 'native'] as const)(
         applicationCommands: {
           localWeb: emptyCommands,
           remoteWeb: { ...emptyCommands, rejectedCommandNames: () => [] }
+        },
+        externalAccess: {
+          authorizeHttp: async (request) =>
+            request.headers.authorization === 'Bearer paired-fixture'
+              ? {
+                  kind: 'authorized',
+                  principalId: 'paired-fixture',
+                  isCurrent: () => pairedCurrent
+                }
+              : 'denied',
+          authorizeWebSocket: async () => undefined
         },
         applicationEvents: new ApplicationEventHub(),
         tasks,
@@ -268,7 +287,7 @@ it.each(['historical', 'native'] as const)(
       expect(listed).toHaveLength(1)
       expect(listed[0].id).toBe(version.versionId)
       const httpResponse = await fetch(`${baseUrl}/api/v1/artifacts/${listed[0].id}/content`, {
-        headers: { authorization: 'Bearer synthetic-download-token' }
+        headers: { authorization: 'Bearer paired-fixture' }
       })
       const httpBody = await httpResponse.text()
       expect({ status: httpResponse.status, body: httpBody }).toEqual({
@@ -349,6 +368,25 @@ it.each(['historical', 'native'] as const)(
       for (const resourceId of acquiredIds) {
         await expect(resources.resolveProtocolResource(resourceId)).rejects.toThrow()
       }
+      // Losing authorization after opening the file must still retire its remote owner's resource.
+      for (const endpoint of [
+        `${baseUrl}/api/v1/artifacts/${listed[0].id}/content`,
+        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline`,
+        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&version=${version.versionNumber}`
+      ]) {
+        const beforeRevocation = acquiredIds.length
+        pairedCurrent = true
+        revokeOnOpen = true
+        const revoked = await fetch(endpoint, {
+          headers: { authorization: 'Bearer paired-fixture' }
+        })
+        expect(revoked.status).toBe(401)
+        expect(acquiredIds).toHaveLength(beforeRevocation + 1)
+        await expect(
+          resources.resolveProtocolResource(acquiredIds[beforeRevocation])
+        ).rejects.toThrow()
+      }
+      revokeOnOpen = false
       const successfulAcquisitions = acquiredIds.length
       // The same Session record must not make finalized-but-unpublished bytes downloadable.
       await fixture.client.artifactVersion.update({
@@ -370,6 +408,9 @@ it.each(['historical', 'native'] as const)(
         where: { id: version.artifactId },
         data: { projectId: 'other-project' }
       })
+      // A listed id and a known path cannot grant access across the Session's Project boundary.
+      await expect(client.downloadArtifact(listed[0].id)).rejects.toMatchObject({ status: 500 })
+      expect(acquiredIds).toHaveLength(successfulAcquisitions)
       // Browser URLs resolve the globally unique artifactId without exposing project identity.
       const movedInline = await fetch(inlineUrl(version.versionNumber))
       expect(movedInline.status).toBe(200)

@@ -238,8 +238,12 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
       create: async (request) => ({ ...project, ...request })
     },
     previewResources: {
-      acquire: async () => ({ id: 'resource-1', url: 'preview://resource-1', size: 0 }),
-      release: async () => undefined
+      acquire: async () => ({
+        id: 'resource-1',
+        url: 'preview://resource-1',
+        size: 0,
+        release: async () => undefined
+      })
     },
     runtimeEvents: { subscribe: () => () => undefined },
     settings: { get: async () => settings },
@@ -1712,24 +1716,23 @@ describe('TaskRunner', () => {
         }
       ]
     }
-    const released: string[] = []
+    const release = vi.fn(async () => undefined)
     const previewResources: TaskPreviewResourcePort = {
       acquire: vi.fn(async () => ({
         id: 'resource-1',
         url: 'open-science-preview://resource-1/report.md',
         size: 12,
-        mimeType: 'text/markdown'
-      })),
-      release: async (resourceId) => {
-        released.push(resourceId)
-      }
+        mimeType: 'text/markdown',
+        release
+      }))
     }
     const runner = createRunner({
       sessions: { list: async () => [artifactSession], save: async () => undefined },
       previewResources
     })
 
-    await expect(runner.acquireArtifact('version-1')).resolves.toMatchObject({
+    const acquired = await runner.acquireArtifact('version-1')
+    expect(acquired).toMatchObject({
       resourceId: 'resource-1',
       name: 'report.md',
       mimeType: 'text/markdown'
@@ -1741,8 +1744,8 @@ describe('TaskRunner', () => {
       versionId: 'version-1',
       mimeType: 'text/markdown'
     })
-    await runner.releaseArtifact('resource-1')
-    expect(released).toEqual(['resource-1'])
+    await acquired.release()
+    expect(release).toHaveBeenCalledOnce()
   })
 
   it('rejects malformed run requests before crossing a port', async () => {
@@ -7080,8 +7083,12 @@ const crashedRestartTaskRun = async (owner?: 'main') => {
     new TaskRunner({
       projects: { list: async () => [], create: async () => ({}) as never },
       previewResources: {
-        acquire: async () => ({ id: 'r', url: 'preview://r', size: 0 }),
-        release: async () => undefined
+        acquire: async () => ({
+          id: 'r',
+          url: 'preview://r',
+          size: 0,
+          release: async () => undefined
+        })
       },
       runtimeEvents: { subscribe: () => () => undefined },
       settings: { get: async () => ({}) as never },

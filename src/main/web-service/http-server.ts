@@ -97,7 +97,7 @@ const MAX_TASK_IDEMPOTENCY_BYTES_PER_PRINCIPAL = 8 * 1024 * 1024
 const MIN_TASK_IDEMPOTENCY_ENTRY_BYTES = 16 * 1024
 const MAX_IDEMPOTENCY_KEY_LENGTH = 255
 const MAX_CACHED_TASK_ERROR_MESSAGE_LENGTH = 4_096
-const MAX_WEB_CLIENTS_PER_PRINCIPAL = 64
+const MAX_WEB_CLIENTS_PER_PRINCIPAL = 16
 const MAX_WEB_CLIENT_NONCE_LENGTH = 64
 const DEFAULT_HTTP_CLIENT_IDLE_TTL_MS = 5 * 60_000
 const WEB_CLIENT_NONCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
@@ -166,12 +166,12 @@ type WebServerOptions = {
     | 'subscribeProgress'
     | 'listArtifacts'
     | 'acquireArtifact'
-    | 'releaseArtifact'
     | 'runWithCallerContext'
   > &
     Partial<
       Pick<
         HeadlessTaskApi,
+        | 'releaseRemoteClient'
         | 'supportsSubmissions'
         | 'submitRun'
         | 'getSubmission'
@@ -314,20 +314,24 @@ class InvalidWebClientNonceError extends Error {
 }
 
 type RetainedWebClient = {
+  principalId: string
   clientId: string
   httpRequests: number
   sockets: number
   idleTimer?: ReturnType<typeof setTimeout>
 }
 
-type WebClientLease = Readonly<{ release: (disconnected?: boolean) => void }>
+type WebClientLease = Readonly<{
+  isCurrent: () => boolean
+  release: (disconnected?: boolean) => void
+}>
 
 class WebClientLeaseRegistry {
   private readonly clientsByPrincipal = new Map<string, Map<string, RetainedWebClient>>()
   private disposed = false
 
   constructor(
-    private readonly releaseClient: (clientId: string) => void,
+    private readonly releaseClient: (clientId: string, principalId: string) => void,
     private readonly maxClientsPerPrincipal = MAX_WEB_CLIENTS_PER_PRINCIPAL,
     private readonly httpIdleTtlMs = DEFAULT_HTTP_CLIENT_IDLE_TTL_MS
   ) {
@@ -358,7 +362,7 @@ class WebClientLeaseRegistry {
     for (const client of clients) {
       if (client.idleTimer) clearTimeout(client.idleTimer)
       try {
-        this.releaseClient(client.clientId)
+        this.releaseClient(client.clientId, client.principalId)
       } catch (error) {
         failures.push(error)
       }
@@ -383,9 +387,9 @@ class WebClientLeaseRegistry {
         if (!idle) throw new WebClientCapacityExceededError()
         clients.delete(idle[0])
         if (idle[1].idleTimer) clearTimeout(idle[1].idleTimer)
-        this.releaseClient(idle[1].clientId)
+        this.releaseClient(idle[1].clientId, principalId)
       }
-      client = { clientId, httpRequests: 0, sockets: 0 }
+      client = { principalId, clientId, httpRequests: 0, sockets: 0 }
     } else if (client.clientId !== clientId) {
       throw new Error('Web client identity changed within one principal scope.')
     }
@@ -400,6 +404,7 @@ class WebClientLeaseRegistry {
     let released = false
 
     return Object.freeze({
+      isCurrent: () => !released && clients.get(clientNonce) === client,
       release: (disconnected = false) => {
         if (released) return
         released = true
@@ -413,7 +418,7 @@ class WebClientLeaseRegistry {
           clients.delete(clientNonce)
           if (clients.size === 0) this.clientsByPrincipal.delete(principalId)
           if (client.idleTimer) clearTimeout(client.idleTimer)
-          this.releaseClient(client.clientId)
+          this.releaseClient(client.clientId, client.principalId)
           return
         }
         clients.delete(clientNonce)
@@ -430,7 +435,7 @@ class WebClientLeaseRegistry {
             clients.delete(clientNonce)
             if (clients.size === 0) this.clientsByPrincipal.delete(principalId)
             delete client.idleTimer
-            this.releaseClient(client.clientId)
+            this.releaseClient(client.clientId, client.principalId)
           }, this.httpIdleTtlMs)
           client.idleTimer.unref()
         }
@@ -661,7 +666,7 @@ const parseTaskPlanResponseRequest = (value: unknown): TaskPlanResponseRequest =
 
 class ExternalAuthorizationExpiredError extends Error {
   constructor() {
-    super('Remote authorization expired before the request was executed.')
+    super('Remote access authorization expired.')
     this.name = 'ExternalAuthorizationExpiredError'
   }
 }
@@ -890,7 +895,8 @@ const streamPreview = async (
   request: IncomingMessage,
   response: ServerResponse,
   url: URL,
-  fetchPreview: WebServerOptions['fetchPreview']
+  fetchPreview: WebServerOptions['fetchPreview'],
+  authorization?: ExternalWebAccessAuthorization
 ): Promise<void> => {
   const previewPath = url.pathname.slice('/preview/'.length)
   const slash = previewPath.indexOf('/')
@@ -905,7 +911,8 @@ const streamPreview = async (
     request,
     response,
     fetchPreview,
-    `open-science-preview://${encodeURIComponent(resourceId)}${suffix}`
+    `open-science-preview://${encodeURIComponent(resourceId)}${suffix}`,
+    authorization
   )
 }
 
@@ -914,6 +921,7 @@ const streamPreviewResource = async (
   response: ServerResponse,
   fetchPreview: WebServerOptions['fetchPreview'],
   resourceUrl: string,
+  authorization?: ExternalWebAccessAuthorization,
   responseOverrides: Record<string, string> = {}
 ): Promise<void> => {
   const abortController = new AbortController()
@@ -925,6 +933,8 @@ const streamPreviewResource = async (
   const headers = new Headers()
   if (request.headers.range) headers.set('range', request.headers.range)
   try {
+    if (response.destroyed) return
+    assertExternalAuthorizationCurrent(authorization)
     if (!fetchPreview) throw new Error('Managed preview serving is not configured.')
     const upstream = await fetchPreview(
       new Request(resourceUrl, {
@@ -933,7 +943,13 @@ const streamPreviewResource = async (
         signal: abortController.signal
       })
     )
-    if (abortController.signal.aborted) return
+    // Recheck before committing headers; an already committed read may drain.
+    if (abortController.signal.aborted || (authorization && !authorization.isCurrent())) {
+      abortController.abort()
+      await upstream.body?.cancel().catch(() => undefined)
+      if (!response.destroyed) throw new ExternalAuthorizationExpiredError()
+      return
+    }
     const responseHeaders: Record<string, string> = {}
     upstream.headers.forEach((value, key) => {
       if (!['connection', 'transfer-encoding'].includes(key.toLowerCase()))
@@ -951,6 +967,9 @@ const streamPreviewResource = async (
     } catch (error) {
       if (!abortController.signal.aborted) throw error
     }
+  } catch (error) {
+    if (!response.headersSent) assertExternalAuthorizationCurrent(authorization)
+    throw error
   } finally {
     response.off('close', abortOnDisconnect)
     response.off('error', abortOnDisconnect)
@@ -1006,13 +1025,16 @@ const handleTaskApiRequest = async (
   fetchPreview?: WebServerOptions['fetchPreview']
 ): Promise<boolean> =>
   tasks.runWithCallerContext(callerContext, async () => {
+    const reply = (status: number, body: unknown): void => {
+      assertExternalAuthorizationCurrent(externalAuthorization)
+      json(response, status, body)
+    }
     try {
       await waitUntilTasksReady?.()
       if (url.pathname === '/api/v1/doctor' && request.method === 'GET' && tasks.doctor) {
         assertExternalAuthorizationCurrent(externalAuthorization)
         const data = await tasks.doctor()
-        assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, { data })
+        reply(200, { data })
         return true
       }
       if (url.pathname === '/api/v1/bootstrap' && request.method === 'POST' && tasks.bootstrap) {
@@ -1026,19 +1048,18 @@ const handleTaskApiRequest = async (
         const data = await tasks.bootstrap(
           body as import('../../shared/bootstrap').BootstrapRequest
         )
-        json(response, 200, { data })
+        reply(200, { data })
         return true
       }
       if (url.pathname === '/api/v1/cli/install' && request.method === 'POST' && tasks.installCli) {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, { data: await tasks.installCli() })
+        reply(200, { data: await tasks.installCli() })
         return true
       }
       if (url.pathname === '/api/v1/runtimes' && request.method === 'GET' && tasks.listRuntimes) {
         assertExternalAuthorizationCurrent(externalAuthorization)
         const data = await tasks.listRuntimes()
-        assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, { data })
+        reply(200, { data })
         return true
       }
       const connectorMatch = url.pathname.match(
@@ -1100,14 +1121,13 @@ const handleTaskApiRequest = async (
         }
         if (operation) {
           const data = await operation()
-          assertExternalAuthorizationCurrent(externalAuthorization)
-          json(response, 200, { data })
+          reply(200, { data })
           return true
         }
       }
       if (url.pathname === '/api/v1/projects' && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, { data: await tasks.listProjects() })
+        reply(200, { data: await tasks.listProjects() })
         return true
       }
       if (url.pathname === '/api/v1/projects' && request.method === 'POST') {
@@ -1118,7 +1138,7 @@ const handleTaskApiRequest = async (
           requestBodyClientId
         )) as CreateTaskProjectRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 201, {
+        reply(201, {
           data: await runIdempotentTask(
             idempotencyRegistry,
             request,
@@ -1140,7 +1160,7 @@ const handleTaskApiRequest = async (
         tasks.getProjectSessionDefaults
       ) {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, {
+        reply(200, {
           data: await tasks.getProjectSessionDefaults(
             decodeURIComponent(projectSessionDefaultsMatch[1])
           )
@@ -1159,7 +1179,7 @@ const handleTaskApiRequest = async (
           requestBodyClientId
         )) as UpdateProjectSessionDefaultsRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, {
+        reply(200, {
           data: await tasks.updateProjectSessionDefaults(
             decodeURIComponent(projectSessionDefaultsMatch[1]),
             body
@@ -1176,14 +1196,14 @@ const handleTaskApiRequest = async (
           requestBodyClientId
         )) as UpdateTaskProjectRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, {
+        reply(200, {
           data: await tasks.updateProject(decodeURIComponent(projectMatch[1]), body)
         })
         return true
       }
       if (url.pathname === '/api/v1/sessions' && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, {
+        reply(200, {
           data: await tasks.listSessions(url.searchParams.get('project') ?? undefined)
         })
         return true
@@ -1194,7 +1214,7 @@ const handleTaskApiRequest = async (
         tasks.getAgentRouting
       ) {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, { data: await tasks.getAgentRouting() })
+        reply(200, { data: await tasks.getAgentRouting() })
         return true
       }
       if (
@@ -1209,7 +1229,7 @@ const handleTaskApiRequest = async (
           requestBodyClientId
         )) as UpdateTaskAgentRoutingRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, { data: await tasks.updateAgentRouting(body) })
+        reply(200, { data: await tasks.updateAgentRouting(body) })
         return true
       }
       const submissionMatch = url.pathname.match(/^\/api\/v1\/run-submissions\/([^/]+)$/)
@@ -1221,14 +1241,14 @@ const handleTaskApiRequest = async (
       ) {
         assertExternalAuthorizationCurrent(externalAuthorization)
         if (callerContext.location !== 'local') {
-          json(response, 403, {
+          reply(403, {
             error: { code: 'forbidden', message: 'Durable submissions require local access.' }
           })
           return true
         }
         const requestId = decodeURIComponent(submissionMatch[1])
         if (request.method === 'GET') {
-          json(response, 200, { data: await tasks.getSubmission(requestId) })
+          reply(200, { data: await tasks.getSubmission(requestId) })
         } else {
           const body = await readJsonBody(
             request,
@@ -1236,7 +1256,7 @@ const handleTaskApiRequest = async (
             requestBodyBudgetRegistry,
             requestBodyClientId
           )
-          json(response, 202, {
+          reply(202, {
             data: await tasks.submitRun(requestId, body as StartTaskRunRequest)
           })
         }
@@ -1251,7 +1271,7 @@ const handleTaskApiRequest = async (
           requestBodyClientId
         )) as StartTaskRunRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 202, {
+        reply(202, {
           data: await runIdempotentTask(
             idempotencyRegistry,
             request,
@@ -1268,14 +1288,14 @@ const handleTaskApiRequest = async (
       const runMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)$/)
       if (runMatch && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, { data: tasks.getRun(decodeURIComponent(runMatch[1])) })
+        reply(200, { data: tasks.getRun(decodeURIComponent(runMatch[1])) })
         return true
       }
       const cancelRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/cancel$/)
       if (cancelRunMatch && request.method === 'POST') {
         await readJsonBody(request, response, requestBodyBudgetRegistry, requestBodyClientId)
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, {
+        reply(200, {
           data: await tasks.cancelRun(decodeURIComponent(cancelRunMatch[1]))
         })
         return true
@@ -1283,7 +1303,7 @@ const handleTaskApiRequest = async (
       const sessionPlanMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/plan$/)
       if (sessionPlanMatch && request.method === 'GET' && tasks.getSessionPlan) {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, {
+        reply(200, {
           data: await tasks.getSessionPlan(decodeURIComponent(sessionPlanMatch[1]))
         })
         return true
@@ -1296,7 +1316,7 @@ const handleTaskApiRequest = async (
           await readJsonBody(request, response, requestBodyBudgetRegistry, requestBodyClientId)
         )
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, {
+        reply(200, {
           data: await tasks.respondSessionPlan(
             decodeURIComponent(sessionPlanResponseMatch[1]),
             body
@@ -1307,7 +1327,7 @@ const handleTaskApiRequest = async (
       const sessionArtifactsMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/artifacts$/)
       if (sessionArtifactsMatch && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, {
+        reply(200, {
           data: await tasks.listArtifacts(decodeURIComponent(sessionArtifactsMatch[1]))
         })
         return true
@@ -1315,7 +1335,7 @@ const handleTaskApiRequest = async (
       const sessionConfigMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/config$/)
       if (sessionConfigMatch && request.method === 'GET' && tasks.getSessionConfiguration) {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, {
+        reply(200, {
           data: await tasks.getSessionConfiguration(decodeURIComponent(sessionConfigMatch[1]))
         })
         return true
@@ -1328,7 +1348,7 @@ const handleTaskApiRequest = async (
           requestBodyClientId
         )) as UpdateSessionConfigurationRequest
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, {
+        reply(200, {
           data: await tasks.updateSessionConfiguration(
             decodeURIComponent(sessionConfigMatch[1]),
             body
@@ -1339,7 +1359,7 @@ const handleTaskApiRequest = async (
       const sessionMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/)
       if (sessionMatch && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, 200, { data: await tasks.getSession(decodeURIComponent(sessionMatch[1])) })
+        reply(200, { data: await tasks.getSession(decodeURIComponent(sessionMatch[1])) })
         return true
       }
       const artifactMatch = url.pathname.match(/^\/api\/v1\/artifacts\/([^/]+)\/content$/)
@@ -1375,10 +1395,11 @@ const handleTaskApiRequest = async (
             response,
             fetchPreview,
             artifact.url,
+            externalAuthorization,
             artifactContentResponseOverrides(artifact, url.searchParams.get('disposition'))
           )
         } finally {
-          await tasks.releaseArtifact(artifact.resourceId)
+          await artifact.release()
         }
         return true
       }
@@ -1389,7 +1410,12 @@ const handleTaskApiRequest = async (
         location: callerContext.location,
         ...diagnosticErrorFields(error)
       })
-      taskError(response, error)
+      taskError(
+        response,
+        externalAuthorization && !externalAuthorization.isCurrent()
+          ? new ExternalAuthorizationExpiredError()
+          : error
+      )
       return true
     }
     return false
@@ -1488,8 +1514,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     }
   )
   const webClientLeases = new WebClientLeaseRegistry(
-    (clientId) => {
-      commandClient.releaseClient('web', clientId)
+    (clientId, principalId) => {
+      try {
+        commandClient.releaseClient('web', clientId)
+      } finally {
+        if (principalId !== 'local') options.tasks?.releaseRemoteClient?.(clientId)
+      }
     },
     options.webClientRetention?.maxClientsPerPrincipal,
     options.webClientRetention?.httpIdleTtlMs
@@ -1623,35 +1653,63 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         return
       }
 
-      if (
-        url.pathname.startsWith('/api/v1/') &&
-        options.tasks &&
-        (await handleTaskApiRequest(
-          request,
-          response,
-          url,
-          options.tasks,
-          createTaskCallerContext({
-            ...(externalAuthorization
-              ? {
-                  clientId,
-                  location: 'remote' as const,
-                  isAuthorizationCurrent: externalAuthorization.isCurrent
-                }
-              : {})
-          }),
-          clientPrincipalId,
-          requestBodyClientId,
-          requestBodyBudgetRegistry,
-          taskIdempotencyRegistry,
-          externalAuthorization,
-          options.waitUntilTasksReady,
-          options.fetchPreview
-        ))
-      ) {
-        return
-      }
       if (url.pathname.startsWith('/api/v1/')) {
+        if (options.tasks) {
+          let lease: WebClientLease
+          try {
+            lease = webClientLeases.acquireHttp(clientPrincipalId, clientNonce, clientId)
+          } catch (error) {
+            if (!(error instanceof WebClientCapacityExceededError)) throw error
+            if (!request.complete) closeRequestAfterResponse(request, response)
+            json(response, 429, { error: { code: 'client_busy', message: error.message } })
+            return
+          }
+          const disconnected = (): void => {
+            if (!response.writableFinished) lease.release(true)
+          }
+          response.once('close', disconnected)
+          try {
+            if (response.destroyed) {
+              lease.release(true)
+              return
+            }
+            const external = externalAuthorization
+            const authorization = external && {
+              ...external,
+              isCurrent: () => lease.isCurrent() && external.isCurrent()
+            }
+            const context = createTaskCallerContext(
+              authorization
+                ? {
+                    clientId,
+                    location: 'remote',
+                    isAuthorizationCurrent: authorization.isCurrent
+                  }
+                : {}
+            )
+            if (
+              await handleTaskApiRequest(
+                request,
+                response,
+                url,
+                options.tasks,
+                context,
+                clientPrincipalId,
+                requestBodyClientId,
+                requestBodyBudgetRegistry,
+                taskIdempotencyRegistry,
+                authorization,
+                options.waitUntilTasksReady,
+                options.fetchPreview
+              )
+            )
+              return
+            assertExternalAuthorizationCurrent(authorization)
+          } finally {
+            response.off('close', disconnected)
+            lease.release()
+          }
+        }
         json(response, 404, {
           error: { code: 'not_found', message: 'Task API endpoint not found.' }
         })
@@ -1823,7 +1881,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         url.pathname.startsWith('/preview/') &&
         (request.method === 'GET' || request.method === 'HEAD')
       ) {
-        await streamPreview(request, response, url, options.fetchPreview)
+        await streamPreview(request, response, url, options.fetchPreview, externalAuthorization)
         return
       }
 
@@ -1833,7 +1891,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
 
       response.writeHead(404).end()
-    } catch {
+    } catch (error) {
+      if (error instanceof ExternalAuthorizationExpiredError) {
+        taskError(response, error)
+        return
+      }
       json(response, 500, {
         error: INTERNAL_SERVER_ERROR_MESSAGE
       })

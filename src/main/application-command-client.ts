@@ -4,13 +4,14 @@ import { runtimePayloadTransfers } from './runtime-payload-transfers'
 import type { RuntimePayloadOptions } from '../shared/runtime-payload-transfer'
 import {
   ApplicationCallerLeaseRegistry,
-  callerLeaseOwnershipKeyForContext
+  callerLeaseOwnershipKeyForContext,
+  type OwnedApplicationCallerLease
 } from './caller-lifecycle'
 
 type ActiveCaller = Readonly<{
   clientId: string
   surface: CallerSurface
-  lease: ReturnType<ApplicationCallerLeaseRegistry['acquire']>
+  lease: OwnedApplicationCallerLease
 }>
 
 type ApplicationCommandClient = Readonly<{
@@ -22,6 +23,7 @@ type ApplicationCommandClient = Readonly<{
     payloadOptions?: RuntimePayloadOptions,
     signal?: AbortSignal
   ) => Promise<unknown>
+  leaseFor: (context: CallerContext) => OwnedApplicationCallerLease['lease']
   releaseClient: (surface: CallerSurface, clientId: string) => void
   dispose: () => void
 }>
@@ -47,6 +49,7 @@ const createApplicationCommandClient = (): ApplicationCommandClient => {
   }
 
   return Object.freeze({
+    leaseFor: (context) => callerFor(context).lease.lease,
     invoke: async (dispatcher, commandName, callerContext, args, payloadOptions = {}, signal) => {
       const caller = callerFor(callerContext)
       signal?.throwIfAborted()

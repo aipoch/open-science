@@ -133,6 +133,8 @@ type TaskSettingsPort = {
   get(): Promise<SettingsSnapshot>
 }
 
+type TaskArtifactLease = AcquiredTaskArtifact & { release: () => Promise<void> }
+
 type TaskPreviewResourcePort = {
   acquire(request: {
     source: 'artifact'
@@ -140,8 +142,13 @@ type TaskPreviewResourcePort = {
     fileId: string
     versionId?: string
     mimeType?: string
-  }): Promise<{ id: string; url: string; size: number; mimeType?: string }>
-  release(resourceId: string): Promise<void>
+  }): Promise<{
+    id: string
+    url: string
+    size: number
+    mimeType?: string
+    release: () => Promise<void>
+  }>
 }
 
 type TaskAgentSession = {
@@ -1173,7 +1180,7 @@ class TaskRunner {
     return [...((await this.findSession(sessionId)).artifacts ?? [])]
   }
 
-  async acquireArtifact(artifactId: string): Promise<AcquiredTaskArtifact> {
+  async acquireArtifact(artifactId: string): Promise<TaskArtifactLease> {
     const sessions = await this.dependencies.sessions.list()
     const candidates = sessions.flatMap((session) =>
       (session.artifacts ?? []).map((artifact) => ({ session, artifact }))
@@ -1204,16 +1211,13 @@ class TaskRunner {
       mimeType: artifact.mimeType
     })
     return {
+      release: resource.release,
       resourceId: resource.id,
       url: resource.url,
       name: artifact.name ?? artifact.path.split(/[\\/]/).at(-1) ?? artifact.id,
       mimeType: resource.mimeType ?? artifact.mimeType,
       size: resource.size
     }
-  }
-
-  async releaseArtifact(resourceId: string): Promise<void> {
-    await this.dependencies.previewResources.release(resourceId)
   }
 
   private assertAcceptingRuns(): void {

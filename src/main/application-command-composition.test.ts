@@ -518,7 +518,8 @@ describe('application command composition', () => {
       // Keep the production Task allowlist and router between the API and its service owners.
       const tasks = new HeadlessTaskApi({ commands: composition.task, agent: {} as never })
       try {
-        await expect(tasks.acquireArtifact(identity.fileId, selection)).resolves.toEqual({
+        const acquired = await tasks.acquireArtifact(identity.fileId, selection)
+        expect(acquired).toMatchObject({
           resourceId: 'resource-1',
           url: 'managed-preview://resource-1',
           name: 'report.html',
@@ -533,7 +534,7 @@ describe('application command composition', () => {
           versionId: 'version-2',
           mimeType: 'text/html'
         })
-        await tasks.releaseArtifact('resource-1')
+        await acquired.release()
         expect(release).toHaveBeenCalledExactlyOnceWith(acquire.mock.calls[0][0], {
           resourceId: 'resource-1'
         })

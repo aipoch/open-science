@@ -266,6 +266,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'granted-roots:set-access',
     'list-dir',
     'list-drives',
+    'open-in-browser',
     'open-path',
     'read-preview',
     'reveal'
