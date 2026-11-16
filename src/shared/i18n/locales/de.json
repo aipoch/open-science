@@ -7828,6 +7828,7 @@
     "English_language": "Englisch",
     "OCR languages": "OCR-Sprachen",
     "OCR installed. Read the PDF again.": "OCR installiert. Lesen Sie die PDF erneut.",
+    "Image support is not configured": "Bildunterstützung ist nicht konfiguriert",
     "Model configuration needs attention": "Die Modellkonfiguration muss überprüft werden",
     "Check your credentials, model and account settings, then retry.": "Prüfen Sie Ihre Zugangsdaten sowie die Modell- und Kontoeinstellungen und versuchen Sie es erneut.",
     "The model service is temporarily unavailable": "Der Modelldienst ist vorübergehend nicht verfügbar",

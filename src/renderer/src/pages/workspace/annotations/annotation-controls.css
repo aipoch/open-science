@@ -139,8 +139,8 @@
   transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 .pdf-annotation-toolbar button[data-size='icon'] {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 2rem;
+  height: 2rem;
 }
 .annotation-tool-button:active:not(:disabled),
 .annotation-color-button:active:not(:disabled) {
@@ -194,4 +194,8 @@
     transition: none;
     transform: none;
   }
+}
+
+.pdf-tool-options[data-split-panel] {
+  box-shadow: var(--shadow-menu);
 }

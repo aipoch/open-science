@@ -544,7 +544,8 @@ const PdfToolbarTooltip = ({
 }): React.JSX.Element => (
   <TooltipContent
     side={side}
-    className={cn('z-[120]', !plain && 'pdf-toolbar-tooltip min-w-32 max-w-64 px-3 py-2')}
+    sideOffset={8}
+    className="pdf-toolbar-tooltip z-[120] max-w-64 rounded-md border border-border bg-popover px-2.5 py-1.5 text-popover-foreground shadow-menu"
   >
     {plain ? (
       (description ?? label)
@@ -552,7 +553,7 @@ const PdfToolbarTooltip = ({
       <>
         <div className="font-medium leading-4">{label}</div>
         {description ? (
-          <div className="mt-1 text-[11px] leading-4 text-bg-000/70">{description}</div>
+          <div className="mt-1 text-[11px] leading-4 text-muted-foreground">{description}</div>
         ) : null}
       </>
     )}
@@ -630,9 +631,9 @@ const PdfInteractionControls = ({
         data-pdf-controls="interaction"
         role="group"
         aria-label={t('PDF interaction tools')}
-        className="pdf-annotation-toolbar absolute top-3 left-3 z-40 max-w-[calc(100%-1.5rem)] rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-menu"
+        className="pdf-annotation-toolbar min-w-0 p-1.5 text-popover-foreground"
       >
-        <div className="flex flex-wrap items-center gap-0.5">
+        <div className="flex flex-wrap items-center justify-center gap-0.5">
           {navigationAvailable ? (
             <>
               <Tooltip>
@@ -646,7 +647,7 @@ const PdfInteractionControls = ({
                     type="button"
                     variant={navigationOpen ? 'secondary' : 'ghost'}
                     size="icon-sm"
-                    className="size-7 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
+                    className="size-8 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
                     aria-label={navigationOpen ? t('Hide navigation') : t('Show navigation')}
                     aria-controls="pdf-navigation-sidebar"
                     aria-expanded={navigationOpen}
@@ -656,10 +657,11 @@ const PdfInteractionControls = ({
                   </Button>
                 </TooltipTrigger>
                 <PdfToolbarTooltip
+                  side="top"
                   label={navigationOpen ? t('Hide navigation') : t('Show navigation')}
                 />
               </Tooltip>
-              <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+              <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
             </>
           ) : null}
           {actions.map(({ mode: actionMode, label, icon: Icon }) => (
@@ -669,7 +671,7 @@ const PdfInteractionControls = ({
                   type="button"
                   variant={mode === actionMode ? 'secondary' : 'ghost'}
                   size="icon-sm"
-                  className="size-7 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
+                  className="size-8 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
                   aria-label={label}
                   aria-pressed={mode === actionMode}
                   onClick={() => onModeChange(actionMode)}
@@ -677,10 +679,10 @@ const PdfInteractionControls = ({
                   <Icon aria-hidden="true" />
                 </Button>
               </TooltipTrigger>
-              <PdfToolbarTooltip label={label} />
+              <PdfToolbarTooltip side="top" label={label} />
             </Tooltip>
           ))}
-          <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+          <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
           <SplitButton
             kind="popover"
             open={styleOpen}
@@ -690,14 +692,14 @@ const PdfInteractionControls = ({
             }}
           >
             <SplitButtonGroup className="annotation-style-split">
-              <Tooltip>
+              <Tooltip open={openOptions ? false : undefined}>
                 <TooltipTrigger asChild>
                   <SplitButtonPrimary
                     type="button"
                     variant={mode === 'text-annotation' ? 'secondary' : 'ghost'}
                     size="icon-sm"
                     className={cn(
-                      'annotation-style-apply size-7 p-0',
+                      'annotation-style-apply size-8 p-0',
                       !canAnnotateText && 'opacity-50 cursor-not-allowed'
                     )}
                     aria-disabled={!canAnnotateText}
@@ -721,6 +723,7 @@ const PdfInteractionControls = ({
                   </SplitButtonPrimary>
                 </TooltipTrigger>
                 <PdfToolbarTooltip
+                  side="top"
                   label={t('Annotate')}
                   plain={!canAnnotateText}
                   description={
@@ -730,7 +733,7 @@ const PdfInteractionControls = ({
                   }
                 />
               </Tooltip>
-              <Tooltip>
+              <Tooltip open={openOptions ? false : undefined}>
                 <TooltipTrigger
                   asChild
                   onFocus={(event) => {
@@ -742,7 +745,7 @@ const PdfInteractionControls = ({
                     variant="ghost"
                     size="icon-sm"
                     className={cn(
-                      'annotation-style-trigger h-7 w-6 text-muted-foreground',
+                      'annotation-style-trigger h-8 w-4 text-muted-foreground',
                       !canAnnotateText && 'opacity-50 cursor-not-allowed'
                     )}
                     aria-disabled={!canAnnotateText}
@@ -771,6 +774,7 @@ const PdfInteractionControls = ({
                   </SplitButtonTrigger>
                 </TooltipTrigger>
                 <PdfToolbarTooltip
+                  side="top"
                   label={t('Mark style')}
                   plain={!canAnnotateText}
                   description={canAnnotateText ? undefined : annotationUnavailableReason}
@@ -778,6 +782,7 @@ const PdfInteractionControls = ({
               </Tooltip>
             </SplitButtonGroup>
             <SplitButtonContent
+              side="top"
               align="start"
               onPointerEnter={cancelOptionsHover}
               onPointerLeave={closeHoveredOptions}
@@ -793,7 +798,7 @@ const PdfInteractionControls = ({
               }}
               sideOffset={8}
               collisionPadding={8}
-              className="annotation-popover z-[110] w-fit max-w-[calc(100vw-1rem)] space-y-3 rounded-lg border border-border bg-popover p-2.5 text-popover-foreground shadow-menu"
+              className="pdf-tool-options annotation-popover z-[110] w-fit max-w-[calc(100vw-1rem)] space-y-3 rounded-lg border border-border bg-popover p-2.5 text-popover-foreground shadow-menu"
             >
               <PdfTextMarkControls
                 value={textMarkStyle}
@@ -813,7 +818,7 @@ const PdfInteractionControls = ({
               }}
             >
               <SplitButtonGroup className="pdf-area-split annotation-style-split">
-                <Tooltip>
+                <Tooltip open={openOptions ? false : undefined}>
                   <TooltipTrigger asChild>
                     <SplitButtonPrimary
                       type="button"
@@ -821,7 +826,7 @@ const PdfInteractionControls = ({
                         mode === 'area' || mode === 'area-annotation' ? 'secondary' : 'ghost'
                       }
                       size="icon-sm"
-                      className="pdf-area-action annotation-style-apply size-7 p-0"
+                      className="pdf-area-action annotation-style-apply size-8 p-0"
                       disabled={!canAnnotateArea && !canSelectArea}
                       aria-pressed={mode === 'area' || mode === 'area-annotation'}
                       aria-label={
@@ -845,6 +850,7 @@ const PdfInteractionControls = ({
                     </SplitButtonPrimary>
                   </TooltipTrigger>
                   <PdfToolbarTooltip
+                    side="top"
                     label={
                       mode === 'area-annotation' || !canSelectArea
                         ? t('Select area to annotate')
@@ -858,7 +864,7 @@ const PdfInteractionControls = ({
                     }
                   />
                 </Tooltip>
-                <Tooltip>
+                <Tooltip open={openOptions ? false : undefined}>
                   <TooltipTrigger
                     asChild
                     onFocus={(event) => {
@@ -874,7 +880,7 @@ const PdfInteractionControls = ({
                       type="button"
                       variant="ghost"
                       size="icon-sm"
-                      className="pdf-area-menu-trigger annotation-style-trigger h-7 w-6 text-muted-foreground"
+                      className="pdf-area-menu-trigger annotation-style-trigger h-8 w-4 text-muted-foreground"
                       aria-label={t('Area selection actions')}
                       onPointerEnter={(event) => {
                         cancelOptionsHover()
@@ -889,14 +895,15 @@ const PdfInteractionControls = ({
                       <ChevronDown className="size-3" aria-hidden="true" />
                     </SplitButtonTrigger>
                   </TooltipTrigger>
-                  <PdfToolbarTooltip label={t('Area selection actions')} />
+                  <PdfToolbarTooltip side="top" label={t('Area selection actions')} />
                 </Tooltip>
               </SplitButtonGroup>
               <SplitButtonContent
+                side="top"
                 align="start"
                 sideOffset={8}
                 collisionPadding={8}
-                className="annotation-popover z-[110]"
+                className="pdf-tool-options annotation-popover z-[110]"
                 onPointerEnter={cancelOptionsHover}
                 onPointerLeave={closeHoveredOptions}
                 onKeyDownCapture={() => {
@@ -946,10 +953,10 @@ const PdfInteractionControls = ({
                     </TooltipTrigger>
                     {!available ? (
                       <PdfToolbarTooltip
+                        side="top"
                         label={label}
                         plain={!available}
                         description={reason}
-                        side="right"
                       />
                     ) : null}
                   </Tooltip>
@@ -957,14 +964,14 @@ const PdfInteractionControls = ({
               </SplitButtonContent>
             </SplitButton>
           ) : null}
-          <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+          <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 type="button"
                 variant={searchOpen ? 'secondary' : 'ghost'}
                 size="icon-sm"
-                className="size-7 text-text-100 hover:text-text-000"
+                className="size-8 text-text-100 hover:text-text-000"
                 aria-label={t('Search')}
                 aria-pressed={searchOpen}
                 onClick={onSearchToggle}
@@ -972,23 +979,23 @@ const PdfInteractionControls = ({
                 <Search aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <PdfToolbarTooltip label={t('Search')} />
+            <PdfToolbarTooltip side="top" label={t('Search')} />
           </Tooltip>
           {children}
         </div>
-        {mode === 'area' || mode === 'area-annotation' || mode === 'text-annotation' ? (
-          <div
-            role="status"
-            className="mt-1 border-t border-border/60 px-2 py-1.5 text-xs text-muted-foreground"
-          >
-            {mode === 'text-annotation'
-              ? t('Select text to annotate. Press Esc to exit.')
-              : mode === 'area-annotation' || !canSelectArea
-                ? t('Drag to annotate an area · Esc to cancel')
-                : t('Drag to send an area to Agent · Esc to cancel')}
-          </div>
-        ) : null}
       </div>
+      {mode === 'area' || mode === 'area-annotation' || mode === 'text-annotation' ? (
+        <div
+          role="status"
+          className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 max-w-full rounded-md border border-border bg-popover px-3 py-2 text-xs text-muted-foreground shadow-sm"
+        >
+          {mode === 'text-annotation'
+            ? t('Select text to annotate. Press Esc to exit.')
+            : mode === 'area-annotation' || !canSelectArea
+              ? t('Drag to annotate an area · Esc to cancel')
+              : t('Drag to send an area to Agent · Esc to cancel')}
+        </div>
+      ) : null}
     </TooltipProvider>
   )
 }
@@ -1018,7 +1025,7 @@ const PdfSearchControls = ({
   const coverageNoticeId = useId()
   return (
     <TooltipProvider delayDuration={250} skipDelayDuration={300}>
-      <div className="absolute top-3 right-3 z-40 flex h-8 max-w-[calc(100%-1.5rem)] items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
+      <div className="absolute top-3 left-3 z-40 flex h-8 max-w-[calc(100%-1.5rem)] items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
         {onScopeChange ? (
           <Button
             size="sm"
@@ -1040,7 +1047,7 @@ const PdfSearchControls = ({
           aria-label={t('Search document')}
           aria-describedby={incomplete ? coverageNoticeId : undefined}
           placeholder={t('Search document')}
-          className="h-7 w-44 bg-transparent px-1 text-xs text-text-000 outline-none placeholder:text-text-400"
+          className="h-7 w-44 min-w-0 bg-transparent px-1 text-xs text-text-000 outline-none placeholder:text-text-400"
           onChange={(event) => onQueryChange(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') onFindAgain(event.shiftKey)
@@ -1115,7 +1122,6 @@ const PdfSearchControls = ({
   )
 }
 
-// Bottom-right overlay is deliberately view-only: interaction modes live at the top-left.
 const PdfZoomControls = ({
   children,
   zoom,
@@ -1182,7 +1188,7 @@ const PdfZoomControls = ({
         data-pdf-controls="view"
         role="group"
         aria-label={t('PDF view controls')}
-        className="absolute right-3 bottom-3 z-10 flex min-h-9 max-w-[calc(100%-1.5rem)] flex-wrap items-center justify-end gap-1 rounded-lg border border-border-300/50 bg-bg-000/90 p-1 shadow-sm backdrop-blur"
+        className="flex min-h-9 min-w-0 flex-wrap items-center justify-center gap-1 rounded-lg bg-muted/60 p-1"
       >
         <div
           data-pdf-page-control
@@ -5037,47 +5043,6 @@ const PdfReaderContent = ({
                         'bottom-1/2 @min-[720px]/pdf-reader:bottom-0 @min-[720px]/pdf-reader:right-1/2'
                     )}
                   >
-                    <PdfInteractionControls
-                      mode={cursorMode}
-                      canSelectArea={canSelectArea && effectiveRendition !== 'translated'}
-                      areaAgentUnavailableReason={
-                        annotationProps?.onAddAnnotation
-                          ? t(
-                              'PDF source is unavailable for Agent. Reopen the preview and try again.'
-                            )
-                          : t('Open this PDF in a conversation to send an area to Agent.')
-                      }
-                      annotationUnavailableReason={
-                        pdfAnnotations.scoped && !pdfAnnotations.available
-                          ? t('This session is read-only.')
-                          : pdfAnnotations.loading || annotationProps?.annotationVersionPending
-                            ? t('Loading annotations…')
-                            : t('PDF annotations are unavailable for this source.')
-                      }
-                      canAnnotateArea={canAnnotateArea && effectiveRendition !== 'translated'}
-                      canAnnotateText={canAnnotateText && effectiveRendition !== 'translated'}
-                      textMarkStyle={textMarkStyle}
-                      onTextMarkStyleChange={setTextMarkStyle}
-                      navigationAvailable={
-                        !hasReadingTabs &&
-                        (pageCount > 1 || outlineItems.length > 0 || Boolean(attachmentVersionId))
-                      }
-                      navigationOpen={showNavigationSidebar}
-                      searchOpen={searchOpen}
-                      onNavigationToggle={toggleNavigation}
-                      onSearchToggle={() => {
-                        if (searchOpen) closeSearch()
-                        else openDocumentSearch()
-                      }}
-                      onModeChange={changeCursorMode}
-                    >
-                      {pdfBookmarkSource ? (
-                        <PdfAnnotationHistoryControls
-                          source={pdfBookmarkSource}
-                          onError={() => setHistoryError(true)}
-                        />
-                      ) : null}
-                    </PdfInteractionControls>
                     {searchOpen ? (
                       <PdfSearchControls
                         translated={searchTranslated}
@@ -5107,22 +5072,68 @@ const PdfReaderContent = ({
                         onClose={closeSearch}
                       />
                     ) : null}
-                    <PdfZoomControls
-                      canGoBack={readingHistory.back.length > 0}
-                      canGoForward={readingHistory.forward.length > 0}
-                      onGoBack={() => travelReadingHistory('back')}
-                      onGoForward={() => travelReadingHistory('forward')}
-                      zoom={zoom}
-                      currentPage={currentPage}
-                      pageCount={viewPageCount}
-                      onNavigate={navigateToPage}
-                      onZoomIn={() => zoomBy(ZOOM_BUTTON_STEP)}
-                      onZoomOut={() => zoomBy(-ZOOM_BUTTON_STEP)}
-                      onReset={() => updateZoom(() => 1)}
+                    <div
+                      data-pdf-toolbar-dock
+                      className="absolute bottom-3 left-1/2 z-40 flex w-max max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-menu"
                     >
-                      {translationRenditionControl}
-                      {!showTranslationSidebar ? pdfRefreshControl : null}
-                    </PdfZoomControls>
+                      <PdfInteractionControls
+                        mode={cursorMode}
+                        canSelectArea={canSelectArea && effectiveRendition !== 'translated'}
+                        areaAgentUnavailableReason={
+                          annotationProps?.onAddAnnotation
+                            ? t(
+                                'PDF source is unavailable for Agent. Reopen the preview and try again.'
+                              )
+                            : t('Open this PDF in a conversation to send an area to Agent.')
+                        }
+                        annotationUnavailableReason={
+                          pdfAnnotations.scoped && !pdfAnnotations.available
+                            ? t('This session is read-only.')
+                            : pdfAnnotations.loading || annotationProps?.annotationVersionPending
+                              ? t('Loading annotations…')
+                              : t('PDF annotations are unavailable for this source.')
+                        }
+                        canAnnotateArea={canAnnotateArea && effectiveRendition !== 'translated'}
+                        canAnnotateText={canAnnotateText && effectiveRendition !== 'translated'}
+                        textMarkStyle={textMarkStyle}
+                        onTextMarkStyleChange={setTextMarkStyle}
+                        navigationAvailable={
+                          !hasReadingTabs &&
+                          (pageCount > 1 || outlineItems.length > 0 || Boolean(attachmentVersionId))
+                        }
+                        navigationOpen={showNavigationSidebar}
+                        searchOpen={searchOpen}
+                        onNavigationToggle={toggleNavigation}
+                        onSearchToggle={() => {
+                          if (searchOpen) closeSearch()
+                          else openDocumentSearch()
+                        }}
+                        onModeChange={changeCursorMode}
+                      >
+                        {pdfBookmarkSource ? (
+                          <PdfAnnotationHistoryControls
+                            source={pdfBookmarkSource}
+                            onError={() => setHistoryError(true)}
+                          />
+                        ) : null}
+                      </PdfInteractionControls>
+                      <PdfZoomControls
+                        canGoBack={readingHistory.back.length > 0}
+                        canGoForward={readingHistory.forward.length > 0}
+                        onGoBack={() => travelReadingHistory('back')}
+                        onGoForward={() => travelReadingHistory('forward')}
+                        zoom={zoom}
+                        currentPage={currentPage}
+                        pageCount={viewPageCount}
+                        onNavigate={navigateToPage}
+                        onZoomIn={() => zoomBy(ZOOM_BUTTON_STEP)}
+                        onZoomOut={() => zoomBy(-ZOOM_BUTTON_STEP)}
+                        onReset={() => updateZoom(() => 1)}
+                      >
+                        {translationRenditionControl}
+                        {!showTranslationSidebar ? pdfRefreshControl : null}
+                      </PdfZoomControls>
+                    </div>
                   </div>
                 ) : null}
               </div>

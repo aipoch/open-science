@@ -7665,6 +7665,7 @@
     "English_language": "英語",
     "OCR languages": "OCR 言語",
     "OCR installed. Read the PDF again.": "OCR をインストールしました。PDF を再度読み込んでください。",
+    "Image support is not configured": "画像入力が設定されていません",
     "Model configuration needs attention": "モデル設定の確認が必要です",
     "Check your credentials, model and account settings, then retry.": "認証情報、モデル、アカウントの設定を確認してから再試行してください。",
     "The model service is temporarily unavailable": "モデルサービスは一時的に利用できません",

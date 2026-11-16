@@ -8143,6 +8143,7 @@
     "English_language": "Английский",
     "OCR languages": "Языки OCR",
     "OCR installed. Read the PDF again.": "OCR установлен. Прочитайте PDF повторно.",
+    "Image support is not configured": "Поддержка изображений не настроена",
     "Model configuration needs attention": "Необходимо проверить настройки модели",
     "Check your credentials, model and account settings, then retry.": "Проверьте учётные данные, настройки модели и аккаунта, затем повторите попытку.",
     "The model service is temporarily unavailable": "Сервис модели временно недоступен",

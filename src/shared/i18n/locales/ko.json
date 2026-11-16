@@ -7663,6 +7663,7 @@
     "English_language": "영어",
     "OCR languages": "OCR 언어",
     "OCR installed. Read the PDF again.": "OCR이 설치되었습니다. PDF를 다시 읽으세요.",
+    "Image support is not configured": "이미지 지원이 설정되지 않았습니다",
     "Model configuration needs attention": "모델 설정을 확인해야 합니다",
     "Check your credentials, model and account settings, then retry.": "자격 증명, 모델 및 계정 설정을 확인한 후 다시 시도하세요.",
     "The model service is temporarily unavailable": "모델 서비스를 일시적으로 사용할 수 없습니다",
