@@ -31,7 +31,11 @@ test_round() {
   local native_prefix
   native_prefix="$(cygpath -aw "$prefix")"
   pwsh -NoProfile -NonInteractive -File "$diag/process-trace.ps1" start "$session" "$native_prefix" > "$prefix-trace.log" 2>&1 || start_exit=$?
-  node --test packages/process-tree-native/test/*.cjs > "$prefix.tap" 2>&1 || status=$?
+  if [[ $mode == focused ]]; then
+    node --test --test-name-pattern 'does not report terminated processes|treats a (Delegation|Notebook) process that exited with code 259' packages/process-tree-native/test/windows-process-identity.cjs > "$prefix.tap" 2>&1 || status=$?
+  else
+    node --test packages/process-tree-native/test/*.cjs > "$prefix.tap" 2>&1 || status=$?
+  fi
   if ((start_exit == 0)); then
     pwsh -NoProfile -NonInteractive -File "$diag/process-trace.ps1" stop "$session" "$native_prefix" >> "$prefix-trace.log" 2>&1 || stop_exit=$?
   else
@@ -41,7 +45,7 @@ test_round() {
   grep -E '^(not ok|# tests|# pass|# fail)|EBUSY|ERR_ASSERTION' "$prefix.tap" || true
 }
 
-for mode in original observed; do
+for mode in original focused observed; do
   for version in b c; do
     cd "$root/$version"
     commit=$(git rev-parse HEAD)
@@ -52,16 +56,19 @@ for mode in original observed; do
     if [[ $mode == original ]]; then
       test -z "$(git status --porcelain)"
       record_build dependencies npm ci --ignore-scripts --no-audit --no-fund
-    else
+    elif [[ $mode == observed ]]; then
       python "$diag/instrument.py"
       git diff -- packages/process-tree-native > "$evidence/$mode-$version/observation.patch"
     fi
+    if [[ $mode == focused ]]; then continue; fi
     record_build build node scripts/produce-native-components.mjs build
     record_build collect node scripts/produce-native-components.mjs collect
     record_build credential-tests node --test packages/credential-identity-probe-native/test/*.test.cjs || true
     record_build smoke-load node -e "require('./packages/process-tree-native'); require('./packages/safe-file-publisher-native')" || true
   done
-  for round in 1 2 3; do
+  last_round=5
+  if [[ $mode == original ]]; then last_round=8; fi
+  for ((round=1; round<=last_round; round++)); do
     versions=(b c)
     if (( round % 2 == 0 )); then versions=(c b); fi
     for version in "${versions[@]}"; do

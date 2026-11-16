@@ -79,6 +79,9 @@ section = replace(section, '''      await once(killer, 'exit')
       trace('taskkill-exit-event', { round, host: host.pid, worker, killer: killer.pid, taskkillCode, taskkillSignal })
       const sync = native.listWindowsInstallationOccupants([executable])
       trace('post-kill-sync', { round, occupants: sync })
+      if (sync.length > 0) {
+        trace('unexpected-processes', { round, rows: native.listWindowsProcesses().filter(row => sync.includes(row.pid)) })
+      }
       assert.deepEqual(sync, [], `round ${round}`)
       const asyncOccupants = await native.listWindowsInstallationOccupantsAsync([executable])
       trace('post-kill-async', { round, occupants: asyncOccupants })
@@ -96,4 +99,41 @@ section = replace(section, '''    rmSync(root, { recursive: true, force: true })
       }
       throw error
     }''')
-test_path.write_bytes((test[:start] + section + test[end:]).encode('utf-8'))
+remaining = test[end:]
+remaining = replace(
+    remaining, '''      try {
+        assert.equal(await native.windowsOwnedProcessExitCodeAsync(child.handle), 259)''',
+    '''      const trace = (event, details = {}) => {
+        process._rawDebug('TEST_TRACE ' + JSON.stringify({ event, utc: new Date().toISOString(), testPid: process.pid, namespace, child: child.pid, executable, ...details }))
+      }
+      trace('exit259-fixture')
+      try {
+        const code = await native.windowsOwnedProcessExitCodeAsync(child.handle)
+        trace('exit259-wait-return', { code })
+        assert.equal(code, 259)'''
+)
+remaining = replace(
+    remaining, '''        assert.deepEqual(native.listWindowsInstallationOccupants([executable]), [])
+        assert.deepEqual(await native.listWindowsInstallationOccupantsAsync([executable]), [])''',
+    '''        const sync = native.listWindowsInstallationOccupants([executable])
+        trace('exit259-sync', { occupants: sync })
+        if (sync.length > 0) {
+          trace('unexpected-processes', { rows: native.listWindowsProcesses().filter(row => sync.includes(row.pid)) })
+        }
+        assert.deepEqual(sync, [])
+        const asyncOccupants = await native.listWindowsInstallationOccupantsAsync([executable])
+        trace('exit259-async', { occupants: asyncOccupants })
+        assert.deepEqual(asyncOccupants, [])'''
+)
+remaining = replace(
+    remaining, '''        rmSync(root, { recursive: true, force: true })''',
+    '''        trace('cleanup-start')
+        try {
+          rmSync(root, { recursive: true, force: true })
+          trace('cleanup-finished')
+        } catch (error) {
+          trace('cleanup-error', { code: error.code, syscall: error.syscall, path: error.path })
+          throw error
+        }'''
+)
+test_path.write_bytes((test[:start] + section + remaining).encode('utf-8'))
