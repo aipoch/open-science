@@ -221,7 +221,7 @@ test('links a multi-page PDF upload as Reading context in a new project', async 
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
-  await page.setViewportSize({ width: 1440, height: 900 })
+  await app.setMainWindowSize(1440, 900)
   const captureChinese = async (name: string): Promise<void> => {
     await page.keyboard.press('Escape')
     await page.mouse.move(5, 5)
