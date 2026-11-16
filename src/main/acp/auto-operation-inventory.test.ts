@@ -178,10 +178,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':
           '561a62c02556d3677874d524dd7c9433b3131a42eda21f526d8684888a673cd9',
-        // Reviewed: interpreter descriptions now explain idle reclamation and volatile variables.
-        // Tool schemas, handlers, operation classifiers and Auto dispositions are unchanged.
+        // Reviewed: ask_user_question adds bounded, optional pros/cons display annotations.
+        // The RPC handler, trusted app-interaction classifier and inner authorization are unchanged.
         'notebook/mcp-server.ts':
-          '40c4edee0775cde34095c02aee02764a465792fb657ed62a40b64dcf666b1718',
+          '0414babc27b5fa0d5c0b287e8ccd81d62621f9b68a6190bb96b7cc4c639345c3',
         // Reviewed: calls require a mounted route and current turn. Task edits are scoped to the
         // originating conversation, and unattended mutations are limited to the task's own trigger.
         'schedules/mcp.ts': '4c7322e66195808835ae282899a90c51777f79cf0ccf07ee7cdb6d2607b63f52',
@@ -193,8 +193,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         'skills/mcp-server.ts': '75e23698e0b11be9919ae224e1516ba82241aa703a20ae29c50448c35ce1d8da'
       },
       notebookSchemas: {
-        // Reviewed: required question and option label strings must contain non-whitespace.
-        ask_user_question: 'eaf58cc178cc28d01fd208393f67dc394f374b4dd80f822158942db8a3c48afb',
+        // Reviewed: pros/cons are optional trimmed strings capped at 4000 characters; they only
+        // annotate choices and do not affect option identities, answers or authorization.
+        ask_user_question: '7c4a9484087130798fec4a767b43804bed689aceceaa250db53ef79d6c09f003',
         background_run: '4198921bb3f61261431524f7e57c92d8713bfe5db49c360a30b66b3cc4e027fd',
         manage_environments: '15d33c6e75c14aaddad62bc062f714238ae7c87ab08976d77efd1f77e8641675',
         request_network_access: '019beadbad4627d5ad4dc2c1bfbf5cc3f777ecf5382df20291952cadbba3eeaf'

@@ -4,6 +4,8 @@ export type ElicitationOption = {
   value: string
   label: string
   description?: string
+  pros?: string
+  cons?: string
 }
 
 export type ElicitationField = {
@@ -118,6 +120,8 @@ export type ElicitationResponse = {
 export type AgentUserChoiceOption = {
   label: string
   description?: string
+  pros?: string
+  cons?: string
 }
 
 export type AgentUserChoicePrompt = {
@@ -303,6 +307,10 @@ const boundedString = (value: unknown, max: number): string | undefined => {
   return text && value.length <= max ? text : undefined
 }
 
+// New trade-off annotations match the model schema's trim-before-limit ordering.
+const boundedTrimmedString = (value: unknown, max: number): string | undefined =>
+  typeof value === 'string' ? boundedString(value.trim(), max) : undefined
+
 // Model-facing contract repeated in rejection errors so a provider can self-correct instead of
 // retrying the same malformed call. Unique option labels stay unexpressible in JSON Schema.
 export const AGENT_USER_CHOICE_REQUEST_CONTRACT =
@@ -351,8 +359,29 @@ export const sanitizeAgentUserChoiceRequest = (
         option.description === undefined
           ? undefined
           : boundedString(option.description, MAX_ELICITATION_MESSAGE_CHARS)
-      if (!label || (option.description !== undefined && !description)) return []
-      return [{ label, ...(description ? { description } : {}) }]
+      const pros =
+        option.pros === undefined
+          ? undefined
+          : boundedTrimmedString(option.pros, MAX_ELICITATION_MESSAGE_CHARS)
+      const cons =
+        option.cons === undefined
+          ? undefined
+          : boundedTrimmedString(option.cons, MAX_ELICITATION_MESSAGE_CHARS)
+      if (
+        !label ||
+        (option.description !== undefined && !description) ||
+        (option.pros !== undefined && !pros) ||
+        (option.cons !== undefined && !cons)
+      )
+        return []
+      return [
+        {
+          label,
+          ...(description ? { description } : {}),
+          ...(pros ? { pros } : {}),
+          ...(cons ? { cons } : {})
+        }
+      ]
     })
     if (
       options.length !== candidate.options.length ||
@@ -404,7 +433,15 @@ const sanitizeOption = (value: unknown): ElicitationOption | undefined => {
   if (!optionValue || !label) return undefined
 
   const description = cappedString(value.description, MAX_ELICITATION_MESSAGE_CHARS)
-  return { value: optionValue, label, ...(description ? { description } : {}) }
+  const pros = cappedString(value.pros, MAX_ELICITATION_MESSAGE_CHARS)
+  const cons = cappedString(value.cons, MAX_ELICITATION_MESSAGE_CHARS)
+  return {
+    value: optionValue,
+    label,
+    ...(description ? { description } : {}),
+    ...(pros ? { pros } : {}),
+    ...(cons ? { cons } : {})
+  }
 }
 
 const withSanitizedDefault = (

@@ -193,6 +193,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "시스템 자격 증명에 접근하는 동안 시작이 중지되었습니다. 기존 자격 증명과 프로필 데이터는 보존되었습니다."
   },
   "renderer": {
+    "Pros": "장점",
+    "Cons": "제약",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "종료된 실행 기록은 최근 30개까지 보관합니다. 대화와 파일은 유지됩니다.",
     "Network protocol": "네트워크 프로토콜",
     "Delete address?": "주소를 삭제하시겠습니까?",

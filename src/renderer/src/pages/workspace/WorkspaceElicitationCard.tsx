@@ -38,6 +38,7 @@ import {
 import type { ElicitationEditDraft } from '@/stores/session-store-contract'
 import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
+import { ElicitationOptionDetails } from './ElicitationOptionDetails'
 import { ChoiceKindChip } from './ChoiceKindChip'
 import { QuestionSkipButton } from './QuestionSkipButton'
 
@@ -450,11 +451,7 @@ const WorkspaceElicitationCard = ({
                   <span className="block break-words text-[13px] font-medium leading-[18px]">
                     {option.label}
                   </span>
-                  {option.description ? (
-                    <span className="mt-px block whitespace-pre-wrap break-words text-xs leading-4 text-text-100">
-                      {option.description}
-                    </span>
-                  ) : null}
+                  <ElicitationOptionDetails option={option} />
                 </span>
               </div>
             )
@@ -872,9 +869,10 @@ const WorkspaceElicitationCard = ({
                 </p>
               </div>
               {field.options?.map((option) => (
-                <p key={option.value} className="text-text-300">
+                <div key={option.value} className="text-text-300">
                   {option.label}
-                </p>
+                  <ElicitationOptionDetails option={option} />
+                </div>
               ))}
             </div>
           ))}
@@ -945,15 +943,7 @@ const WorkspaceElicitationCard = ({
                     <span className="block break-words text-[13px] font-medium leading-[18px]">
                       {option.label}
                     </span>
-                    {option.description ? (
-                      <span
-                        data-testid="elicitation-option-description"
-                        className="mt-px whitespace-pre-wrap break-words text-xs leading-4 text-text-100"
-                        title={option.description}
-                      >
-                        {option.description}
-                      </span>
-                    ) : null}
+                    <ElicitationOptionDetails option={option} />
                   </span>
                 </button>
               )
@@ -1121,11 +1111,7 @@ const WorkspaceElicitationCard = ({
                               onChange={() => setValue(option.value)}
                             />
                             <span className="block text-sm font-medium">{option.label}</span>
-                            {option.description ? (
-                              <span className="mt-1 block text-sm leading-5 text-text-100">
-                                {option.description}
-                              </span>
-                            ) : null}
+                            <ElicitationOptionDetails option={option} />
                           </label>
                         )
                       })}
@@ -1168,11 +1154,7 @@ const WorkspaceElicitationCard = ({
                             }
                           />
                           <span className="block text-sm font-medium">{option.label}</span>
-                          {option.description ? (
-                            <span className="mt-1 block text-sm leading-5 text-text-100">
-                              {option.description}
-                            </span>
-                          ) : null}
+                          <ElicitationOptionDetails option={option} />
                         </label>
                       )
                     })}
