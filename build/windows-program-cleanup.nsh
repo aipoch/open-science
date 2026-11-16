@@ -359,7 +359,13 @@ FunctionEnd
   !insertmacro stageProgramEntry vulkan-1.dll
   !insertmacro stageProgramEntry uninstallerIcon.ico
   !insertmacro stageProgramEntry "${APP_EXECUTABLE_FILENAME}"
-  !insertmacro stageProgramEntry "${UNINSTALL_FILENAME}"
+  # A direct uninstaller cannot move its own executable while it is running. During an update the
+  # old uninstaller runs from $PLUGINSDIR, so the installed copy is safe to stage and replace.
+  !ifdef isUpdated
+    ${if} ${isUpdated}
+      !insertmacro stageProgramEntry "${UNINSTALL_FILENAME}"
+    ${endif}
+  !endif
   # Hold all deletion dispositions until the complete program payload can be removed. A late
   # access/sharing failure cancels earlier dispositions, leaving every byte available to restore.
   StrCpy $programCleanupArguments ""
