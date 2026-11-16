@@ -1,7 +1,54 @@
-import { describe, expect, it } from 'vitest'
-import { runVerificationProcess, VerificationProcessExitError } from './verification-process'
+import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+import * as processTree from '../process-tree'
+import {
+  runVerificationProcess,
+  VerificationProcessExitError,
+  VerificationProcessUnsettledError,
+  verificationDirectoryIsSettled
+} from './verification-process'
 
 describe('bounded verification subprocess', () => {
+  it('returns both output streams after successful verification with an input pipe', async () => {
+    await expect(
+      runVerificationProcess(
+        process.execPath,
+        ['-e', "process.stdout.write('verified'); process.stderr.write('diagnostic')"],
+        { stdin: 'pipe' }
+      )
+    ).resolves.toEqual({ stdout: 'verified', stderr: 'diagnostic' })
+  })
+
+  it('blocks cleanup of an unconfirmed working directory and its parents, but not siblings', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'verification-unsettled-'))
+    const directory = join(root, 'candidate')
+    const terminate = processTree.terminateProcessTree
+    const cleanup = vi
+      .spyOn(processTree, 'terminateProcessTree')
+      .mockImplementation(async (...args) => {
+        // Reap the real fixture before simulating an unconfirmed cleanup receipt.
+        await terminate(...args)
+        return { reaped: false }
+      })
+    try {
+      await mkdir(directory)
+      expect(verificationDirectoryIsSettled(directory)).toBe(true)
+      const pending = runVerificationProcess(process.execPath, ['-e', 'process.exit(0)'], {
+        cwd: directory
+      })
+      await expect(pending).rejects.toBeInstanceOf(VerificationProcessUnsettledError)
+      await expect(pending).rejects.toMatchObject({ directory })
+      expect(verificationDirectoryIsSettled(directory)).toBe(false)
+      expect(verificationDirectoryIsSettled(root)).toBe(false)
+      expect(verificationDirectoryIsSettled(`${directory}-sibling`)).toBe(true)
+    } finally {
+      cleanup.mockRestore()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it.each([
     { exitCode: 2, signal: null, terminate: 'process.exit(2)' },
     ...(process.platform === 'win32'
