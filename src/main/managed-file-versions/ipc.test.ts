@@ -63,6 +63,7 @@ const inspectRequest: ManagedFileVersionInspectRequest = {
 }
 const saveRequest: ManagedFileVersionSaveTextEditRequest = {
   ...inspectRequest,
+  projectId: 'project-1',
   basedOnVersionId: 'version-1',
   expectedHeadVersionId: 'version-1',
   operationId: 'operation-1',
@@ -70,6 +71,7 @@ const saveRequest: ManagedFileVersionSaveTextEditRequest = {
 }
 const diffRequest: ManagedFileVersionDiffRequest = {
   ...inspectRequest,
+  projectId: 'project-1',
   versionId: 'version-2',
   requestId: 'diff-request-1'
 }
@@ -95,6 +97,7 @@ const diffResult: ManagedFileVersionDiffResult = {
 }
 const inspectResult: ManagedFileVersionInspectResult = {
   ...inspectRequest,
+  projectId: 'project-1',
   sessionId: 'session-1',
   displayName: 'README.md',
   headVersionId: 'version-1',

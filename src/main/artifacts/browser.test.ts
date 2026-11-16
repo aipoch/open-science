@@ -17,12 +17,12 @@ describe('createArtifactBrowserOpener', () => {
       openExternal
     })
 
-    await opener({ artifactId: 'artifact-1', projectId: 'project-1', versionId: 'version-2' })
+    await opener({ artifactId: 'artifact-1', projectId: 'project-1', versionNumber: 2 })
 
     expect(buildUrl).toHaveBeenCalledWith('/isolated/config', 44123, {
       artifactId: 'artifact-1',
       projectId: 'project-1',
-      versionId: 'version-2'
+      versionNumber: 2
     })
     expect(openExternal).toHaveBeenCalledWith(
       'http://127.0.0.1:44123/api/v1/artifacts/artifact-1/content?disposition=inline&token=token'
@@ -38,7 +38,7 @@ describe('createArtifactBrowserOpener', () => {
     })
 
     await expect(
-      opener({ artifactId: 'artifact-1', projectId: 'project-1', versionId: 'version-2' })
+      opener({ artifactId: 'artifact-1', projectId: 'project-1', versionNumber: 2 })
     ).rejects.toThrow('local Web service is not running')
     expect(openExternal).not.toHaveBeenCalled()
   })

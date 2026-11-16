@@ -1174,14 +1174,15 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
         } else {
           // Use the same immutable selection as the rendered bytes, including default head previews.
           const artifactId = contentItem.artifactId ?? contentItem.managedFileId
-          const versionId = contentItem.selectedVersionId
           if (!artifactId || !contentItem.projectId) {
             throw new Error(t('Could not open this file.'))
           }
           await window.api.artifacts.openInBrowser({
             projectId: contentItem.projectId,
             artifactId,
-            ...(versionId ? { versionId } : {})
+            ...(typeof contentItem.versionNumber === 'number'
+              ? { versionNumber: contentItem.versionNumber }
+              : {})
           })
         }
       } catch (error) {

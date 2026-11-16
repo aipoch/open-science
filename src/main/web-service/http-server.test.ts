@@ -4786,7 +4786,7 @@ describe('startWebHttpServer', () => {
     })
     servers.push(server)
     const endpoint = `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-html/content`
-    const inlineEndpoint = `${endpoint}?disposition=inline&projectId=project-1&versionId=version-1`
+    const inlineEndpoint = `${endpoint}?disposition=inline&version=1`
     const headers = { authorization: 'Bearer test-token' }
 
     vi.mocked(net.fetch).mockResolvedValue(
@@ -4885,7 +4885,7 @@ describe('startWebHttpServer', () => {
     })
     servers.push(server)
     const response = await fetch(
-      `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-text/content?disposition=inline&projectId=project-1&versionId=version-1`,
+      `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-text/content?disposition=inline&version=1`,
       { headers: { authorization: 'Bearer test-token' } }
     )
     expect(response.status).toBe(400)

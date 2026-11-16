@@ -284,23 +284,19 @@ it.each(['historical', 'native'] as const)(
         await expect(resources.resolveProtocolResource(resourceId)).rejects.toThrow()
       }
       // The head is absent from the Task list, but browser previews resolve its exact managed identity.
-      const inlineUrl = (
-        versionId: string,
-        projectId = session.projectId,
-        fileId = version.artifactId
-      ): string =>
-        `${baseUrl}/api/v1/artifacts/${fileId}/content?disposition=inline&projectId=${projectId}&versionId=${versionId}&token=synthetic-download-token`
-      for (const [versionId, expected] of [
-        [version.versionId, content],
-        [newer.versionId, 'newer content']
-      ]) {
-        const inline = await fetch(inlineUrl(versionId))
+      const inlineUrl = (versionNumber?: number, fileId = version.artifactId): string =>
+        `${baseUrl}/api/v1/artifacts/${fileId}/content?disposition=inline${versionNumber === undefined ? '' : `&version=${versionNumber}`}&token=synthetic-download-token`
+      for (const [versionNumber, expected] of [
+        [version.versionNumber, content],
+        [newer.versionNumber, 'newer content']
+      ] as Array<[number, string]>) {
+        const inline = await fetch(inlineUrl(versionNumber))
         expect(inline.status).toBe(200)
         expect(await inline.text()).toBe(expected)
         expect(inline.headers.get('content-type')).toBe('text/html; charset=utf-8')
         expect(inline.headers.get('content-disposition')).toBe('inline')
         expect(inline.headers.get('referrer-policy')).toBe('no-referrer')
-        const head = await fetch(inlineUrl(versionId), { method: 'HEAD' })
+        const head = await fetch(inlineUrl(versionNumber), { method: 'HEAD' })
         expect(head.status).toBe(200)
         for (const header of [
           'content-type',
@@ -311,15 +307,10 @@ it.each(['historical', 'native'] as const)(
           expect(head.headers.get(header)).toBe(inline.headers.get(header))
         }
       }
-      const latestInline = await fetch(
-        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&projectId=${session.projectId}&token=synthetic-download-token`
-      )
+      const latestInline = await fetch(inlineUrl())
       expect(latestInline.status).toBe(200)
       expect(await latestInline.text()).toBe('newer content')
-      const latestHead = await fetch(
-        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&projectId=${session.projectId}&token=synthetic-download-token`,
-        { method: 'HEAD' }
-      )
+      const latestHead = await fetch(inlineUrl(), { method: 'HEAD' })
       expect(latestHead.status).toBe(200)
       for (const header of [
         'content-type',
@@ -329,20 +320,18 @@ it.each(['historical', 'native'] as const)(
       ]) {
         expect(latestHead.headers.get(header)).toBe(latestInline.headers.get(header))
       }
-      for (const url of [
-        inlineUrl(newer.versionId, 'missing-project'),
-        inlineUrl(newer.versionId, session.projectId, 'missing-file'),
-        inlineUrl('missing-version')
-      ]) {
+      for (const url of [inlineUrl(newer.versionNumber, 'missing-file'), inlineUrl(99)]) {
         expect((await fetch(url)).ok).toBe(false)
       }
       for (const method of ['GET', 'HEAD']) {
-        const malformed = new URL(inlineUrl(newer.versionId))
-        malformed.searchParams.delete('projectId')
-        expect((await fetch(malformed, { method })).status).toBe(400)
+        for (const value of ['0', 'not-a-number']) {
+          const malformed = new URL(inlineUrl())
+          malformed.searchParams.set('version', value)
+          expect((await fetch(malformed, { method })).status).toBe(400)
+        }
       }
       const downloadWithScope = await fetch(
-        inlineUrl(newer.versionId).replace('disposition=inline', 'disposition=attachment')
+        inlineUrl(newer.versionNumber).replace('disposition=inline', 'disposition=attachment')
       )
       expect(downloadWithScope.status).toBe(404)
       for (const resourceId of acquiredIds) {
@@ -355,7 +344,7 @@ it.each(['historical', 'native'] as const)(
         data: { managedVisibleAt: null }
       })
       await expect(client.downloadArtifact(listed[0].id)).rejects.toMatchObject({ status: 500 })
-      expect((await fetch(inlineUrl(version.versionId))).ok).toBe(false)
+      expect((await fetch(inlineUrl(version.versionNumber))).ok).toBe(false)
       expect(acquiredIds).toHaveLength(successfulAcquisitions)
       await fixture.client.artifactVersion.update({
         where: { id: version.versionId },
@@ -369,10 +358,10 @@ it.each(['historical', 'native'] as const)(
         where: { id: version.artifactId },
         data: { projectId: 'other-project' }
       })
-      // A listed id and a known path cannot grant access across the Session's Project boundary.
-      await expect(client.downloadArtifact(listed[0].id)).rejects.toMatchObject({ status: 500 })
-      expect((await fetch(inlineUrl(version.versionId))).ok).toBe(false)
-      expect(acquiredIds).toHaveLength(successfulAcquisitions)
+      // Browser URLs resolve the globally unique artifactId without exposing project identity.
+      const movedInline = await fetch(inlineUrl(version.versionNumber))
+      expect(movedInline.status).toBe(200)
+      expect(await movedInline.text()).toBe(content)
       // Download must not repair historical records by writing back to Session storage.
       expect((await sessions.loadSession(session.projectId, session.id))?.artifacts).toEqual(
         session.artifacts

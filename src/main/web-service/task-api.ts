@@ -7,8 +7,7 @@ import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import type {
   FinalizeRunArtifactsRequest,
-  FinalizeRunArtifactsResult,
-  OpenArtifactInBrowserRequest
+  FinalizeRunArtifactsResult
 } from '../../shared/artifacts'
 import type {
   ManagedFileVersionInspectResult,
@@ -88,6 +87,11 @@ type TaskApiDependencies = {
   subscribeEvents: (listener: (event: AcpRuntimeEvent) => void) => () => void
   runJournal: TaskRunJournal
   submissionRoot: string
+}
+
+type ArtifactBrowserSelection = {
+  projectId?: string
+  versionNumber?: number
 }
 
 class HeadlessTaskApi {
@@ -615,12 +619,17 @@ class HeadlessTaskApi {
 
   async acquireArtifact(
     artifactId: string,
-    selection?: Omit<OpenArtifactInBrowserRequest, 'artifactId'>
+    selection?: ArtifactBrowserSelection
   ): Promise<AcquiredTaskArtifact> {
     if (!selection) return this.runner.acquireArtifact(artifactId)
     // Browser previews can include Versions absent from the Task completion projection.
     // Resolve metadata and bytes through the same Project/File/Version authority as the preview.
-    const identity = { source: 'artifact' as const, fileId: artifactId, ...selection }
+    const identity = {
+      source: 'artifact' as const,
+      fileId: artifactId,
+      ...(selection.projectId ? { projectId: selection.projectId } : {}),
+      ...(selection.versionNumber !== undefined ? { versionNumber: selection.versionNumber } : {})
+    }
     const inspection = (await this.invoke(
       'managed-file-versions:inspect',
       identity
@@ -628,20 +637,19 @@ class HeadlessTaskApi {
     if (!inspection.ok) {
       throw new TaskRunnerError('artifact_not_found', inspection.error.message)
     }
-    const version =
-      inspection.value.selectedVersion ??
-      (selection.versionId
-        ? inspection.value.versions.find((candidate) => candidate.id === selection.versionId)
-        : undefined)
+    const version = inspection.value.selectedVersion
     if (
       !version ||
       version.fileId !== artifactId ||
-      (selection.versionId !== undefined && version.id !== selection.versionId)
+      (selection.versionNumber !== undefined && version.versionNumber !== selection.versionNumber)
     ) {
       throw new TaskRunnerError('artifact_not_found', 'Artifact Version not found.')
     }
     const resource = (await this.invoke('preview-resources:acquire', {
-      ...identity,
+      source: 'artifact',
+      projectId: inspection.value.projectId,
+      fileId: artifactId,
+      versionId: version.id,
       ...(version.contentType ? { mimeType: version.contentType } : {})
     })) as ManagedPreviewResource
     return {

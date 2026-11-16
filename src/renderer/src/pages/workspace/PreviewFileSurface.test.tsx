@@ -4759,6 +4759,7 @@ const managedHtmlItem: PreviewFileItem = {
   artifactId: undefined,
   managedFileId: 'artifact-html-1',
   projectId: 'project-1',
+  versionNumber: 1,
   title: 'immersive-showcase.html',
   name: 'immersive-showcase.html',
   path: 'artifact-version:project-1/session-1/artifact-html-1/version-1',
@@ -4955,7 +4956,7 @@ describe('PreviewFileSurface file header actions', () => {
     expect(window.api.artifacts.openInBrowser).toHaveBeenCalledWith({
       artifactId: 'artifact-html-1',
       projectId: 'project-1',
-      versionId: 'version-1'
+      versionNumber: 1
     })
 
     await act(async () => {
@@ -4971,7 +4972,7 @@ describe('PreviewFileSurface file header actions', () => {
     expect(window.api.artifacts.openInBrowser).toHaveBeenLastCalledWith({
       artifactId: 'artifact-html-1',
       projectId: 'project-1',
-      versionId: 'version-1'
+      versionNumber: 1
     })
   })
 
@@ -4987,7 +4988,7 @@ describe('PreviewFileSurface file header actions', () => {
     expect(window.api.artifacts.openInBrowser).toHaveBeenCalledWith({
       artifactId: 'artifact-html-1',
       projectId: 'project-1',
-      versionId: 'version-1'
+      versionNumber: 1
     })
   })
 
@@ -4995,7 +4996,11 @@ describe('PreviewFileSurface file header actions', () => {
     await act(async () => {
       root.render(
         <PreviewFileSurface
-          item={{ ...managedExtensionlessHtmlItem, selectedVersionId: undefined }}
+          item={{
+            ...managedExtensionlessHtmlItem,
+            selectedVersionId: undefined,
+            versionNumber: undefined
+          }}
           onClose={vi.fn()}
         />
       )
@@ -5046,7 +5051,7 @@ describe('PreviewFileSurface file header actions', () => {
       expect(window.api.artifacts.openInBrowser).toHaveBeenCalledWith({
         projectId: 'project-1',
         artifactId: 'artifact-html-1',
-        versionId: renderedVersion
+        versionNumber: selection ? 1 : 2
       })
     }
   )
@@ -5212,7 +5217,7 @@ describe('PreviewFileSurface file header actions', () => {
     expect(window.api.artifacts.openInBrowser).toHaveBeenLastCalledWith({
       projectId: 'project-1',
       artifactId: 'artifact-html-1',
-      versionId: 'version-1'
+      versionNumber: 1
     })
   })
 

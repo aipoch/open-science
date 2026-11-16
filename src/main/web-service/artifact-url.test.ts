@@ -8,19 +8,20 @@ import { loadOrCreateWebToken } from './auth'
 import { buildAuthenticatedArtifactContentUrl } from './artifact-url'
 
 describe('buildAuthenticatedArtifactContentUrl', () => {
-  it('uses the current local Web service, project scope, and existing token', async () => {
+  it('uses the current local Web service and existing token without project scope', async () => {
     const url = await buildAuthenticatedArtifactContentUrl('/config', 44123, {
       artifactId: 'artifact/html 1',
       projectId: 'project/1',
-      versionId: 'version 2'
+      versionNumber: 2
     })
     const parsed = new URL(url)
     expect(parsed.origin).toBe('http://127.0.0.1:44123')
     expect(parsed.pathname).toBe('/api/v1/artifacts/artifact%2Fhtml%201/content')
     expect(parsed.searchParams.get('disposition')).toBe('inline')
     expect(parsed.searchParams.get('token')).toBe('long-lived-token')
-    expect(parsed.searchParams.get('projectId')).toBe('project/1')
-    expect(parsed.searchParams.get('versionId')).toBe('version 2')
+    expect(parsed.searchParams.get('version')).toBe('2')
+    expect(parsed.searchParams.get('projectId')).toBeNull()
+    expect(parsed.searchParams.get('versionId')).toBeNull()
     expect(parsed.searchParams.get('binding')).toBeNull()
     expect(loadOrCreateWebToken).toHaveBeenCalledWith('/config')
   })
@@ -31,7 +32,8 @@ describe('buildAuthenticatedArtifactContentUrl', () => {
       projectId: 'project-latest'
     })
     const parsed = new URL(url)
-    expect(parsed.searchParams.get('projectId')).toBe('project-latest')
+    expect(parsed.searchParams.get('version')).toBeNull()
+    expect(parsed.searchParams.get('projectId')).toBeNull()
     expect(parsed.searchParams.get('versionId')).toBeNull()
     expect(parsed.searchParams.get('binding')).toBeNull()
   })

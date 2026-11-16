@@ -460,7 +460,9 @@ class ManagedFileVersionService {
       resolved.version.id === resolved.logicalFile.currentVersionId
         ? resolved
         : await this.resolveRecord({
-            ...request,
+            source: request.source,
+            projectId: resolved.logicalFile.projectId,
+            fileId: request.fileId,
             versionId: resolved.logicalFile.currentVersionId!
           })
     const [previous, next] = await Promise.all([
@@ -472,7 +474,7 @@ class ManagedFileVersionService {
 
     return {
       source: request.source,
-      projectId: request.projectId,
+      projectId: resolved.logicalFile.projectId,
       fileId: request.fileId,
       sessionId: resolved.logicalFile.sessionId,
       displayName: resolved.logicalFile.displayName,
@@ -680,14 +682,18 @@ class ManagedFileVersionService {
   }
 
   private async resolveRecord(
-    request: ManagedFileIdentity & { versionId?: string },
+    request: Omit<ManagedFileIdentity, 'projectId'> & {
+      projectId?: string
+      versionId?: string
+      versionNumber?: number
+    },
     options: { unpublished?: boolean } = {}
   ): Promise<ResolvedManagedFileVersion> {
     this.assertIdentity(request)
     const client = await this.options.getClient()
     let logicalFile = await this.loadLogicalFile(client, request)
     await this.assertReadable(client, logicalFile)
-    if (!options.unpublished && !request.versionId) {
+    if (!options.unpublished && !request.versionId && request.versionNumber === undefined) {
       logicalFile = await this.repairSuppressedMarkdownHead(client, logicalFile)
     }
     const headVersionId = logicalFile.currentVersionId
@@ -699,7 +705,11 @@ class ManagedFileVersionService {
         )
       }
     }
-    const versionId = request.versionId ?? headVersionId
+    const versionId =
+      request.versionId ??
+      (request.versionNumber !== undefined
+        ? (await this.loadVersionByNumber(client, logicalFile, request.versionNumber))?.id
+        : headVersionId)
     if (!versionId) {
       throw new ManagedFileVersionError('VERSION_NOT_FOUND', 'Managed file version was not found.')
     }
@@ -1055,13 +1065,31 @@ class ManagedFileVersionService {
     }
   }
 
-  private assertIdentity(request: ManagedFileIdentity & { versionId?: string }): void {
+  private assertIdentity(
+    request: Omit<ManagedFileIdentity, 'projectId'> & {
+      projectId?: string
+      versionId?: string
+      versionNumber?: number
+    }
+  ): void {
     if (!request || (request.source !== 'artifact' && request.source !== 'upload')) {
       operationError('INVALID_REQUEST', 'Managed file source is invalid.')
     }
-    assertSafeStorageSegment(request.projectId, 'project id')
+    if (request.source === 'upload' && !request.projectId) {
+      operationError('INVALID_REQUEST', 'Project id is required for uploads.')
+    }
+    if (request.projectId !== undefined) assertSafeStorageSegment(request.projectId, 'project id')
     assertSafeStorageSegment(request.fileId, 'file id')
     if (request.versionId !== undefined) assertSafeStorageSegment(request.versionId, 'version id')
+    if (
+      request.versionNumber !== undefined &&
+      (!Number.isSafeInteger(request.versionNumber) || request.versionNumber < 1)
+    ) {
+      operationError('INVALID_REQUEST', 'Version number must be a positive integer.')
+    }
+    if (request.versionId !== undefined && request.versionNumber !== undefined) {
+      operationError('INVALID_REQUEST', 'Specify either version id or version number, not both.')
+    }
   }
 
   private assertSaveRequest(request: ManagedFileVersionSaveTextEditRequest): void {
@@ -1378,11 +1406,14 @@ class ManagedFileVersionService {
 
   private async loadLogicalFile(
     client: PrismaClient | Prisma.TransactionClient,
-    request: { source: ManagedFileSource; projectId: string; fileId: string }
+    request: { source: ManagedFileSource; projectId?: string; fileId: string }
   ): Promise<ManagedLogicalFile> {
     if (request.source === 'artifact') {
       const file = await client.artifactLineage.findFirst({
-        where: { id: request.fileId, projectId: request.projectId },
+        where: {
+          id: request.fileId,
+          ...(request.projectId ? { projectId: request.projectId } : {})
+        },
         select: {
           id: true,
           projectId: true,
@@ -1395,6 +1426,9 @@ class ManagedFileVersionService {
         throw new ManagedFileVersionError('FILE_NOT_FOUND', 'Managed Artifact was not found.')
       }
       return { source: 'artifact', displayName: file.filename, ...file }
+    }
+    if (!request.projectId) {
+      throw new ManagedFileVersionError('INVALID_REQUEST', 'Project id is required for uploads.')
     }
     const file = await client.uploadFile.findFirst({
       where: { id: request.fileId, projectId: request.projectId },
@@ -1437,6 +1471,41 @@ class ManagedFileVersionService {
         : null
     }
     const version = await client.uploadVersion.findUnique({ where: { id: versionId } })
+    return version
+      ? {
+          ...version,
+          fileId: version.uploadFileId,
+          createdAt: version.createdAt ?? version.registeredAt
+        }
+      : null
+  }
+
+  private async loadVersionByNumber(
+    client: PrismaClient | Prisma.TransactionClient,
+    logicalFile: ManagedLogicalFile,
+    versionNumber: number
+  ): Promise<ManagedFileVersionRecord | null> {
+    if (logicalFile.source === 'artifact') {
+      const version = await client.artifactVersion.findFirst({
+        where: {
+          artifactId: logicalFile.id,
+          versionNumber,
+          state: 'finalized',
+          OR: [{ originKind: { not: 'agent_generated' } }, { managedVisibleAt: { not: null } }]
+        }
+      })
+      return version
+        ? {
+            ...version,
+            fileId: version.artifactId,
+            originalFilename: null,
+            createdAt: version.createdAt
+          }
+        : null
+    }
+    const version = await client.uploadVersion.findFirst({
+      where: { uploadFileId: logicalFile.id, versionNumber, state: 'ready' }
+    })
     return version
       ? {
           ...version,

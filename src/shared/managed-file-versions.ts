@@ -112,8 +112,10 @@ type ManagedFileVersionErrorShape = {
 type ManagedFileVersionIpcResult<Value> =
   { ok: true; value: Value } | { ok: false; error: ManagedFileVersionErrorShape }
 
-type ManagedFileVersionInspectRequest = ManagedFileIdentity & {
+type ManagedFileVersionInspectRequest = Omit<ManagedFileIdentity, 'projectId'> & {
+  projectId?: string
   versionId?: string
+  versionNumber?: number
   cursor?: string
 }
 type ManagedFileVersionDiffRequest = ManagedFileIdentity & { versionId: string; requestId: string }

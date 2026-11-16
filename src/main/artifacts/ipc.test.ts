@@ -916,14 +916,14 @@ describe('artifact IPC handlers', () => {
     await handlers.openInBrowser({
       artifactId: 'artifact-html-1',
       projectId: 'project-1',
-      versionId: 'version-1'
+      versionNumber: 1
     })
 
     expect(openInBrowser).toHaveBeenCalledOnce()
     expect(openInBrowser).toHaveBeenCalledWith({
       artifactId: 'artifact-html-1',
       projectId: 'project-1',
-      versionId: 'version-1'
+      versionNumber: 1
     })
   })
 
