@@ -36,6 +36,27 @@ const notebookRunEvidenceCommand = defineApplicationCommand<
   WorkflowResult<'runEvidence'>
 >('notebook:run-evidence')
 
+const inspectProjectFolderChangeCommand = defineApplicationCommand<
+  'notebook:inspect-project-folder-change',
+  WorkflowArgs<'inspectProjectFolderChange'>,
+  WorkflowResult<'inspectProjectFolderChange'>
+>('notebook:inspect-project-folder-change')
+const revertProjectFolderChangeCommand = defineApplicationCommand<
+  'notebook:revert-project-folder-change',
+  WorkflowArgs<'revertProjectFolderChange'>,
+  WorkflowResult<'revertProjectFolderChange'>
+>('notebook:revert-project-folder-change')
+const previewProjectFolderChangeCommand = defineApplicationCommand<
+  'notebook:preview-project-folder-change',
+  WorkflowArgs<'previewProjectFolderChange'>,
+  WorkflowResult<'previewProjectFolderChange'>
+>('notebook:preview-project-folder-change')
+const listProjectFolderChangesCommand = defineApplicationCommand<
+  'notebook:list-project-folder-changes',
+  WorkflowArgs<'listProjectFolderChanges'>,
+  WorkflowResult<'listProjectFolderChanges'>
+>('notebook:list-project-folder-changes')
+
 const notebookRunIndexCommand = defineApplicationCommand<
   'notebook:run-index',
   WorkflowArgs<'runIndex'>,
@@ -182,6 +203,10 @@ const notebookReadInputPreviewCommand = defineApplicationCommand<
 
 const notebookApplicationCommands = defineApplicationCommandGroup('notebook', [
   notebookRunEvidenceCommand,
+  inspectProjectFolderChangeCommand,
+  revertProjectFolderChangeCommand,
+  previewProjectFolderChangeCommand,
+  listProjectFolderChangesCommand,
   notebookRunIndexCommand,
   notebookBackgroundTasksCommand,
   notebookStateCommand,
@@ -245,6 +270,14 @@ const installNotebookApplicationCommands = (
         dependencies.workflows.backgroundTasks(invocation.args[0]),
       'notebook:run-evidence': (invocation) =>
         dependencies.workflows.runEvidence(invocation.args[0]),
+      'notebook:inspect-project-folder-change': (invocation) =>
+        dependencies.workflows.inspectProjectFolderChange(invocation.args[0]),
+      'notebook:revert-project-folder-change': (invocation) =>
+        dependencies.workflows.revertProjectFolderChange(invocation.args[0]),
+      'notebook:preview-project-folder-change': (invocation) =>
+        dependencies.workflows.previewProjectFolderChange(invocation.args[0]),
+      'notebook:list-project-folder-changes': (invocation) =>
+        dependencies.workflows.listProjectFolderChanges(invocation.args[0]),
       'notebook:run-index': (invocation) => dependencies.workflows.runIndex(invocation.args[0]),
       'notebook:state': (invocation) => dependencies.workflows.state(invocation.args[0]),
       'notebook:memory-policy-state': (invocation) =>

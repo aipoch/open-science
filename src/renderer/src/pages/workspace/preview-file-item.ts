@@ -1,7 +1,7 @@
 import { LITERATURE_PREVIEW_SESSION_ID } from '../../../../shared/literature-attachment-reference'
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-contract'
 import type { ChatSession } from '@/stores/session-store-contract'
-import type { ArtifactFile } from '../../../../shared/artifacts'
+import type { ArtifactFile, ProjectFolderFileReference } from '../../../../shared/artifacts'
 import type { ProjectFileItem, ResolveProjectFileRequest } from '../../../../shared/project-files'
 import type { MessagePart, SessionPdfBinding } from '../../../../shared/session-persistence'
 import { sessionPdfBindingToFileReference } from '../../../../shared/session-pdf-context'
@@ -29,7 +29,10 @@ export type MessageUploadAttachment = NonNullable<
   ChatSession['messages'][number]['uploads']
 >[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
-type ManagedArtifactMentionPart = Exclude<ArtifactMentionPart, { source: 'linked-folder' }>
+type ManagedArtifactMentionPart = Exclude<
+  ArtifactMentionPart,
+  { source: 'linked-folder' | 'project-folder' }
+>
 
 // Builds the common preview workbench file item for generated artifacts and user uploads.
 export const createPreviewFileItem = ({
@@ -71,7 +74,7 @@ export const createPreviewFileItem = ({
     type: 'file',
     path,
     name,
-    format: getPreviewFormatForFile({ name, mimeType })
+    format: getPreviewFormatForFile({ name, mimeType, source })
   }
 
   // Only uploads need an explicit source because artifacts are the historical default.
@@ -339,6 +342,27 @@ export const createPreviewFileItemFromPdfContext = (
 // keeps them out of removeSessionItems cleanup when a real session is deleted.
 export const LOCAL_PREVIEW_SESSION_ID = '__local_files__'
 export { LITERATURE_PREVIEW_SESSION_ID } from '../../../../shared/literature-attachment-reference'
+
+// Live Project files use the current binding each time they are read. Their workbench identity
+// belongs to the Project, so the same relative path can be reopened from any of its messages.
+export const createPreviewFileItemFromProjectFolder = ({
+  projectId,
+  path,
+  name,
+  size,
+  mtimeMs
+}: Pick<ProjectFolderFileReference, 'projectId' | 'path' | 'name'> &
+  Pick<PreviewFileItem, 'size' | 'mtimeMs'>): PreviewFileItem =>
+  createPreviewFileItem({
+    id: `project-folder:${projectId}:${path}`,
+    projectId,
+    sessionId: '__project_folder__',
+    path,
+    name,
+    size,
+    mtimeMs,
+    source: 'project-folder'
+  })
 
 // Builds a preview tab for a local ("This computer") file. The path is an absolute filesystem
 // path; the id is namespaced by path so re-opening the same file re-activates its tab. sessionId

@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { lstat, mkdir, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { readFileWithinLimit, writeDurableJsonFile } from '@aipoch/durable-files'
+import { getProjectRecordRoot } from '../storage/data-location-identity'
 import { observeFile, sameFileObservation, type FileObservation } from '../bounded-file-io'
 import {
   imageTaskIsActive,
@@ -21,7 +22,7 @@ async function taskDirectory(
   create = false
 ): Promise<string | undefined> {
   imageTaskScopeSchema.parse({ projectId: scope.projectId, sessionId: scope.sessionId })
-  let path = root
+  let path = getProjectRecordRoot(root, scope.projectId) ?? root
   for (const part of ['artifacts', scope.projectId, scope.sessionId, '.image-tasks']) {
     path = join(path, part)
     if (create)

@@ -43,6 +43,7 @@ import { createDefaultUploadRepository } from '../uploads/ipc'
 import { WslSetupSessionOwner } from '../wsl/wsl-setup-session-owner'
 
 export async function composeAgentRuntime({
+  projectRepository,
   schedules,
   wslSetupSessions,
   getAvailableShellRuntimeBinding,
@@ -87,6 +88,10 @@ export async function composeAgentRuntime({
   mainEntryPath,
   modules
 }: {
+  projectRepository: Pick<
+    import('../projects/repository').ProjectRepository,
+    'assertProjectFolderHealthy'
+  >
   wslSetupSessions: WslSetupSessionOwner
   getAvailableShellRuntimeBinding: () => Promise<
     Awaited<ReturnType<typeof resolveAvailableShellRuntimeBinding>>
@@ -157,6 +162,8 @@ export async function composeAgentRuntime({
   )
   const runtime = await modules.add(
     {
+      assertProjectFolderHealthy: (projectId: string) =>
+        projectRepository.assertProjectFolderHealthy(projectId),
       appVersion: runtimeMetadata().version,
       mcpEntryPath: mainEntryPath,
       repository: artifactRepository,

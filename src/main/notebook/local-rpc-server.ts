@@ -4,7 +4,7 @@ import type { ArtifactProducerInputScope } from '../managed-file-versions/read-p
 import type { ImageModelBinding } from '../../shared/image-model-settings'
 import type { AuthorizedDirectoriesSnapshot } from '../local-fs/authorized-directories'
 import { createHash, randomUUID } from 'node:crypto'
-import { isAbsolute } from 'node:path'
+import { dirname, isAbsolute } from 'node:path'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import {
   NotebookExecutionStopError,
@@ -851,6 +851,57 @@ class NotebookLocalRpcServer {
     string,
     Map<string, { fingerprint: string; submission: Promise<unknown>; completed: boolean }>
   >()
+
+  // Host-only bridges, deliberately absent from the RPC method catalog. The ACP runtime supplies
+  // identities from its live Session registry; no provider chooses a Project root or stage path.
+  resolveProjectFolderRoot(projectId: string): Promise<string | undefined> {
+    return this.service.resolveProjectFolderRoot?.(projectId) ?? Promise.resolve(undefined)
+  }
+
+  writeAcpProjectFolderFile(
+    input: {
+      projectId: string
+      sessionId: string
+      runId: string
+      cwd: string
+      path: string
+      content: string
+      permissionPrompts?: 'none'
+    },
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    return withDataRootWrite(async () => {
+      if (!this.service.prepareAcpProjectFolderChange || !this.service.applyProjectFolderChange)
+        return false
+      signal?.throwIfAborted()
+      const change = await this.service.prepareAcpProjectFolderChange({
+        ...input,
+        operation: 'write'
+      })
+      if (!change) {
+        // An unchanged proposal inside the bound root is already handled: falling back would
+        // truncate and rewrite the original without a saved candidate or approval.
+        const root = await this.service.resolveProjectFolderRoot?.(input.projectId)
+        for (let current = input.path; root; current = dirname(current)) {
+          if (current === root) return true
+          if (dirname(current) === current) break
+        }
+        return false
+      }
+      signal?.throwIfAborted()
+      const result = await this.service.applyProjectFolderChange(
+        input,
+        change.id,
+        signal,
+        input.permissionPrompts
+      )
+      if (result.state !== 'applied')
+        throw new Error(
+          'The prepared file change was not approved. The original file was not changed.'
+        )
+      return true
+    })
+  }
 
   constructor(
     private readonly service: NotebookLocalRpcCapability,
@@ -3527,6 +3578,10 @@ class NotebookLocalRpcServer {
       if (!this.artifactProvenance?.saveVersion) throw new Error('Artifact save is unavailable.')
       const request = artifactSaveRequestSchema.parse(params)
       const sourceScope = params.sourceScope as ArtifactWriteSourceScope
+      const projectFolderRoot =
+        request.source.kind === 'localPath' && request.agentFrameId === request.rootFrameId
+          ? await this.resolveProjectFolderRoot(request.projectId)
+          : undefined
       // Read current host-owned grants, never caller hints or a turn-start snapshot. Relative
       // sources keep their original authority and cannot traverse into granted external folders.
       const grantedImportRoots =
@@ -3535,7 +3590,15 @@ class NotebookLocalRpcServer {
           : []
       return this.artifactProvenance.saveVersion(
         request,
-        { ...sourceScope, grantedImportRoots },
+        {
+          ...sourceScope,
+          projectFolderRoot,
+          allowedImportRoots: [
+            ...(projectFolderRoot ? [projectFolderRoot] : []),
+            ...sourceScope.allowedImportRoots
+          ],
+          grantedImportRoots
+        },
         signal,
         onArtifactMetadataBytes
       )

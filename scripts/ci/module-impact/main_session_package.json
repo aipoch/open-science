@@ -82,7 +82,10 @@
     "src/main/session-package/lifecycle-export.integration.test.ts",
     "src/main/session-package/web-evidence.ts",
     "src/main/session-package/web-evidence.test.ts",
-    "src/main/session-package/web-evidence.integration.test.ts"
+    "src/main/session-package/web-evidence.integration.test.ts",
+    "src/main/session-package/project-folder-portability.integration.test.ts",
+    "src/main/session-package/project-folder-portability.test.ts",
+    "src/main/session-package/project-folder-portability.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -101,7 +104,8 @@
     "src/main/session-package/research-films.ts",
     "src/main/session-package/research-films-contract.ts",
     "src/main/session-package/web-evidence.ts",
-    "src/shared/session-package-web.ts"
+    "src/shared/session-package-web.ts",
+    "src/main/session-package/project-folder-portability.ts"
   ],
   "consumerModules": ["research_video"],
   "testFiles": {
@@ -141,7 +145,9 @@
       "src/main/session-package/research-films.test.ts",
       "src/main/session-package/lifecycle-export.integration.test.ts",
       "src/main/session-package/web-evidence.test.ts",
-      "src/main/session-package/web-evidence.integration.test.ts"
+      "src/main/session-package/web-evidence.integration.test.ts",
+      "src/main/session-package/project-folder-portability.integration.test.ts",
+      "src/main/session-package/project-folder-portability.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

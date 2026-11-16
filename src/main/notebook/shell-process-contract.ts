@@ -33,11 +33,13 @@ export type NotebookShellProcessRequest = {
   runtimeRoot: string
   notebookSessionRoot?: string
   inputRoot?: string
+  outputRoot?: string
   protectedDirs?: readonly string[]
   environment?: NodeJS.ProcessEnv
   executionReference?: string
   sessionId: string
   projectId: string
+  projectFolderRoot?: string
   timeoutMs?: number
   signal?: AbortSignal
   runtimeBinding?: ShellRuntimeBinding

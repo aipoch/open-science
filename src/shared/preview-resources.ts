@@ -1,7 +1,13 @@
 // 'local' streams a file from an arbitrary absolute filesystem path (the "This computer" browser).
 // Unlike artifact/upload it is not confined to a storage root; the resolver validates + realpaths it.
 export type ManagedPreviewSource =
-  'artifact' | 'upload' | 'compute-output' | 'notebook-input' | 'literature' | 'local'
+  | 'artifact'
+  | 'upload'
+  | 'compute-output'
+  | 'notebook-input'
+  | 'literature'
+  | 'local'
+  | 'project-folder'
 
 export const MANAGED_PREVIEW_LOAD_ERROR = 'open-science-preview-load-error'
 export const IMAGE_PREVIEW_BUSY_MESSAGE = 'Image preview capacity is busy.'
@@ -36,7 +42,9 @@ type AcquirePathPreviewRequest = ManagedPreviewPresentation & {
   )
 
 export type AcquireManagedPreviewRequest =
-  AcquireManagedVersionPreviewRequest | AcquirePathPreviewRequest
+  | AcquireManagedVersionPreviewRequest
+  | AcquirePathPreviewRequest
+  | (ManagedPreviewPresentation & { source: 'project-folder'; projectId: string; path: string })
 
 export type ManagedPreviewResource = {
   id: string

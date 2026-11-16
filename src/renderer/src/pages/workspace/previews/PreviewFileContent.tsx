@@ -41,7 +41,7 @@ export const PreviewFileContent = ({
     onImageEditorVersionChange,
     onImageEditActionChange,
     presentation,
-    readOnly: item.source === 'compute-output' || readOnly,
+    readOnly: item.source === 'compute-output' || item.source === 'project-folder' || readOnly,
     annotationVersionId,
     annotationBlockedByHistoricalVersion,
     annotationVersionPending,

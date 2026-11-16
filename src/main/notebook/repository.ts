@@ -24,6 +24,12 @@ import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rm, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import {
+  assertProjectRecordPath,
+  getProjectRecordRoot,
+  getProjectRecordRoute,
+  listProjectRecordIds
+} from '../storage/data-location-identity'
 
 import type {
   NotebookKernelMetadata,
@@ -441,6 +447,12 @@ type ReadSessionRunsOptions = ReadSessionDocumentsOptions
 
 type AppendOrGetNotebookRunResult = NotebookRunMutationResult & { admitted: boolean }
 type TransitionNotebookRunResult = NotebookRunMutationResult & { transitioned: boolean }
+
+type NotebookRecordStorageOptions = {
+  getProjectRecordRoot?: (projectId: string) => string | undefined
+  listProjectRecordIds?: () => readonly string[]
+  deletedSessionScopes?: () => Promise<ReadonlyMap<string, boolean>>
+}
 
 type RecoveredBackgroundRun = Readonly<{
   projectId: string
@@ -1234,6 +1246,24 @@ class NotebookRunRepository {
     return index
   }
 
+  async listProjectSessionIds(projectId: string): Promise<string[]> {
+    const root = join(
+      this.projectStorageRoot(projectId),
+      NOTEBOOKS_DIR,
+      assertSafeNotebookPathSegment(projectId)
+    )
+    this.assertRecordPath(projectId, root)
+    try {
+      return (await readdir(root, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory() && SAFE_SEGMENT_PATTERN.test(entry.name))
+        .map((entry) => entry.name)
+        .sort()
+    } catch (error) {
+      if (isMissingFileError(error)) return []
+      throw error
+    }
+  }
+
   private async cachedLaneSummary(filePath: string): Promise<LaneSummary | undefined> {
     const cached = this.laneSummaries.get(filePath)
     if (!cached) return undefined
@@ -1258,7 +1288,7 @@ class NotebookRunRepository {
     projectId: string,
     sessionId: string
   ): Promise<LaneSummary[] | undefined> {
-    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId)
+    const path = this.runJsonPath(projectId, sessionId)
     const root = await this.cachedLaneSummary(path)
     const summaries: LaneSummary[] = []
     if (root) summaries.push(root)
@@ -1266,9 +1296,7 @@ class NotebookRunRepository {
       return undefined
     for (const frameId of await this.frameIds(projectId, sessionId)) {
       const lane = createFrameNotebookLane(projectId, sessionId, frameId)
-      const summary = await this.cachedLaneSummary(
-        getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
-      )
+      const summary = await this.cachedLaneSummary(this.runJsonPath(projectId, sessionId, lane))
       if (!summary) return undefined
       summaries.push(summary)
     }
@@ -1288,13 +1316,17 @@ class NotebookRunRepository {
     if (
       !Array.from(this.laneSummaries.values()).some(
         ({ summary }) =>
-          (((evidenceOnly || missingOutput) &&
-            this.pendingViews.get(join(summary.notebookSessionRoot, NOTEBOOK_RUN_FILE))
-              ?.analysis) ||
-            summary.history ||
-            (detachedBodies && this.lifecycleViews.get(summary)?.detached.analysis)) &&
           (summary.notebookSessionRoot === root ||
-            dirname(summary.notebookSessionRoot) === framesRoot)
+            dirname(summary.notebookSessionRoot) === framesRoot) &&
+          (((evidenceOnly || missingOutput) &&
+            this.pendingViews.get(
+              join(
+                this.recordDirectoryForWorkspace(projectId, summary.notebookSessionRoot),
+                NOTEBOOK_RUN_FILE
+              )
+            )?.analysis) ||
+            summary.history ||
+            (detachedBodies && this.lifecycleViews.get(summary)?.detached.analysis))
       )
     )
       return undefined
@@ -1305,13 +1337,14 @@ class NotebookRunRepository {
     const validateSiblings = evidenceOnly || backgroundTaskMetadata || hasDetachedLane
     const documents = []
     for (const summary of summaries) {
-      const path = join(summary.notebookSessionRoot, NOTEBOOK_RUN_FILE)
+      const directory = this.recordDirectoryForWorkspace(projectId, summary.notebookSessionRoot)
+      const path = join(directory, NOTEBOOK_RUN_FILE)
       if (summary.history) {
         if (validateSiblings) {
           const refs = summary.history.runs.flatMap((run) => this.historyBodies.get(run)?.ref ?? [])
           if (
             (await this.hasRecoveryCandidate(path)) ||
-            !(await this.records.unchanged(summary.notebookSessionRoot, refs))
+            !(await this.records.unchanged(directory, refs))
           )
             return undefined
         }
@@ -1354,8 +1387,8 @@ class NotebookRunRepository {
       if (validateSiblings) {
         if (await this.hasRecoveryCandidate(path)) return undefined
         if (full.weight > full.size) {
-          const refs = this.records.referencesFor(summary.notebookSessionRoot, full.document.runs)
-          if (!(await this.records.unchanged(summary.notebookSessionRoot, refs))) return undefined
+          const refs = this.records.referencesFor(directory, full.document.runs)
+          if (!(await this.records.unchanged(directory, refs))) return undefined
         }
       }
       documents.push({
@@ -1400,9 +1433,13 @@ class NotebookRunRepository {
       missingOutput
     )
     if (!cached) return undefined
-    const path = lane && getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const path = lane && this.runJsonPath(projectId, sessionId, lane)
     const kernel = path
-      ? cached.documents.find((doc) => doc.notebookSessionRoot === dirname(path))?.kernel
+      ? cached.documents.find(
+          (doc) =>
+            doc.notebookSessionRoot ===
+            getNotebookSessionRoot(this.storageRoot, projectId, sessionId, lane)
+        )?.kernel
       : undefined
     if (path) {
       if (!kernel || (await this.hasRecoveryCandidate(path))) return undefined
@@ -1503,9 +1540,13 @@ class NotebookRunRepository {
     if (deferred.length) {
       const root = dirname(path)
       const hydrated = await this.hydrate(path, { ...document, runs: deferred })
-      const decoded = decodeRunDocumentDataPaths(hydrated, this.storageRoot)
+      const decoded = decodeRunDocumentDataPaths(
+        hydrated,
+        this.storageRoot,
+        this.projectDirectory(document.projectId)
+      )
       for (const [i, row] of decoded.runs.entries()) {
-        const run = normalizeRun(root, row)
+        const run = normalizeRun(document.notebookSessionRoot, row)
         const metadata = { ...run, text: emptyText(), outputs: [] }
         const { detailBytes, hasOutput } = indexReplayRun(run)
         this.analysisIndexDetails.set(metadata, { detailBytes, hasOutput })
@@ -1524,7 +1565,7 @@ class NotebookRunRepository {
     sessionId: string,
     lane?: NotebookLaneIdentity
   ): Promise<NotebookRunRecord[]> {
-    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const path = this.runJsonPath(projectId, sessionId, lane)
     const compact = await this.readCompactMetadata(path)
     if (compact) return this.historyRuns(compact, projectId, sessionId)
     const entry = this.laneSummaries.get(path)
@@ -1549,7 +1590,7 @@ class NotebookRunRepository {
     lane?: NotebookLaneIdentity,
     bodies?: Map<NotebookRunRecord, HistoryBody>
   ): Promise<LaneHistory | undefined> {
-    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const path = this.runJsonPath(projectId, sessionId, lane)
     const entry = this.laneSummaries.get(path)
     const view = entry && this.lifecycleViews.get(entry.summary)
     const analysis = view?.detached.analysis
@@ -1565,13 +1606,15 @@ class NotebookRunRepository {
     ) {
       // Newly published inline Runs still have their in-memory shape. Apply the same
       // portable-path and JSON normalization as reopening their bounded manifest.
-      const encoded = encodeRunDocumentDataPaths(view.remaining, this.storageRoot)
+      const projectDirectory = this.projectDirectory(projectId)
+      const encoded = encodeRunDocumentDataPaths(view.remaining, this.storageRoot, projectDirectory)
       const inline = normalizeDocument(
         this.storageRoot,
         { projectId, sessionId, lane },
         decodeRunDocumentDataPaths(
           JSON.parse(JSON.stringify(encoded)) as NotebookRunDocument,
-          this.storageRoot
+          this.storageRoot,
+          projectDirectory
         )
       )
       let nextInline = 0
@@ -1582,7 +1625,7 @@ class NotebookRunRepository {
       const history = this.historyRuns({ ...inline, runs }, projectId, sessionId)
       if (bodies) {
         for (const [index, ref] of view.detached.slots) {
-          bodies.set(history[index], { root: inline.notebookSessionRoot, ref })
+          bodies.set(history[index], { root: dirname(path), ref })
         }
       }
       return { ...inline, runs: history }
@@ -1600,8 +1643,15 @@ class NotebookRunRepository {
     const summaries = await this.cachedSessionSummaries(projectId, sessionId)
     if (!summaries?.length || summaries.some((summary) => summary.hasBackgroundRuns)) return false
     if (lane) {
-      const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
-      if (!summaries.some((summary) => summary.notebookSessionRoot === dirname(path))) return false
+      const path = this.runJsonPath(projectId, sessionId, lane)
+      if (
+        !summaries.some(
+          (summary) =>
+            summary.notebookSessionRoot ===
+            getNotebookSessionRoot(this.storageRoot, projectId, sessionId, lane)
+        )
+      )
+        return false
       // loadOrCreate normally checks for pending durable writes and repairs the input directory.
       if (await this.hasRecoveryCandidate(path)) return false
       await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
@@ -1611,7 +1661,7 @@ class NotebookRunRepository {
 
   async readSessionRunIndex(projectId: string, sessionId: string): Promise<ReplayRunIndex[]> {
     const lanes = await this.readSessionLaneValues(projectId, sessionId, async (lane) => {
-      const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+      const path = this.runJsonPath(projectId, sessionId, lane)
       const summary = await this.cachedLaneSummary(path)
       if (summary?.rows) return summary.rows.map(indexReplayRun)
       const compact = await this.readCompactMetadata(path)
@@ -1642,16 +1692,81 @@ class NotebookRunRepository {
 
   constructor(
     private readonly storageRoot: string,
-    private readonly deletedSessionScopes?: () => Promise<ReadonlyMap<string, boolean>>
+    private readonly recordStorage: NotebookRecordStorageOptions = {}
   ) {
     this.storageRoot = resolve(storageRoot)
   }
 
-  withinHistoryRead<T>(projectId: string, sessionId: string, read: () => Promise<T>): Promise<T> {
-    return this.records.withinHistoryRead(
-      getNotebookSessionRoot(this.storageRoot, projectId, sessionId),
-      read
+  // Durable records may travel with a custom project. Execution workspaces and runtimes always
+  // continue to use storageRoot; never pass this root to data/input/runtime path helpers.
+  projectStorageRoot(projectId: string): string {
+    assertSafeNotebookPathSegment(projectId)
+    try {
+      return (
+        (this.recordStorage.getProjectRecordRoot
+          ? this.recordStorage.getProjectRecordRoot(projectId)
+          : getProjectRecordRoot(this.storageRoot, projectId)) ?? this.storageRoot
+      )
+    } catch (cause) {
+      // ENOENT here means an unavailable registered Project, not a missing run.json. Do not let
+      // findExisting's absent-document adapter hide that distinction.
+      throw new Error('Notebook project records are unavailable.', { cause })
+    }
+  }
+
+  runJsonPath(projectId: string, sessionId: string, lane?: NotebookLaneIdentity): string {
+    return this.assertRecordPath(
+      projectId,
+      getNotebookRunJsonPath(this.projectStorageRoot(projectId), projectId, sessionId, lane)
     )
+  }
+
+  private assertRecordPath(projectId: string, path: string): string {
+    const root = this.projectStorageRoot(projectId)
+    return root === this.storageRoot ? path : assertProjectRecordPath(root, path)
+  }
+
+  fileEvidenceLocation(
+    projectId: string,
+    sessionId: string,
+    lane: NotebookLaneIdentity
+  ): {
+    storageRoot: string
+    root: string
+    storageKeyPrefix: string
+  } {
+    const storageRoot = this.projectStorageRoot(projectId)
+    const location = getNotebookFileEvidenceLocation(storageRoot, projectId, sessionId, lane)
+    this.assertRecordPath(projectId, location.root)
+    return {
+      storageRoot,
+      ...location
+    }
+  }
+
+  private projectDirectory(projectId: string): string | undefined {
+    const root = this.projectStorageRoot(projectId)
+    return root === this.storageRoot ? undefined : dirname(root)
+  }
+
+  private recordDirectory(
+    projectId: string,
+    sessionId: string,
+    lane?: NotebookLaneIdentity
+  ): string {
+    return dirname(this.runJsonPath(projectId, sessionId, lane))
+  }
+
+  private recordDirectoryForWorkspace(projectId: string, workspace: string): string {
+    // The normalized managed workspace identifies the physical lane independently of Frame ids.
+    return this.assertRecordPath(
+      projectId,
+      join(this.projectStorageRoot(projectId), relative(this.storageRoot, workspace))
+    )
+  }
+
+  withinHistoryRead<T>(projectId: string, sessionId: string, read: () => Promise<T>): Promise<T> {
+    return this.records.withinHistoryRead(this.recordDirectory(projectId, sessionId), read)
   }
 
   private async hydrate(
@@ -1680,7 +1795,7 @@ class NotebookRunRepository {
     >
   ): Promise<SessionInitialization> {
     const { projectId, sessionId, lane } = request
-    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const path = this.runJsonPath(projectId, sessionId, lane)
     if (await this.hasRecoveryCandidate(path)) return this.loadOrCreate(request)
     const entry = this.laneSummaries.get(path)
     const full = this.documentCache.get(path)
@@ -1703,7 +1818,7 @@ class NotebookRunRepository {
     request: LoadNotebookRunDocumentRequest
   ): Promise<NotebookKernelMetadata> {
     const { projectId, sessionId, lane } = request
-    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const path = this.runJsonPath(projectId, sessionId, lane)
     await this.saveQueue
     const compact = this.pendingViews.get(path)
     if (
@@ -1754,7 +1869,7 @@ class NotebookRunRepository {
     if (!request.lane) throw new Error('Notebook writes require an explicit Frame lane.')
     const projectId = assertSafeNotebookPathSegment(request.projectId)
     const sessionId = assertSafeNotebookPathSegment(request.sessionId)
-    const filePath = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, request.lane)
+    const filePath = this.runJsonPath(projectId, sessionId, request.lane)
 
     this.assertLaneWritable(filePath)
     const read = await readDurableJsonFile(filePath, (contents) => {
@@ -1776,7 +1891,11 @@ class NotebookRunRepository {
       if (pending.updatedAt)
         read.value.updatedAt = Math.max(pending.updatedAt, read.value.updatedAt)
       const hydrated = await this.hydrate(filePath, read.value)
-      const decoded = decodeRunDocumentDataPaths(hydrated, this.storageRoot)
+      const decoded = decodeRunDocumentDataPaths(
+        hydrated,
+        this.storageRoot,
+        this.projectDirectory(projectId)
+      )
       await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
       const normalized = normalizeDocument(this.storageRoot, request, decoded)
       this.coldCounts.set(normalized, pending.checkpointed ? -1 : coldCount)
@@ -1865,7 +1984,7 @@ class NotebookRunRepository {
     lane: NotebookLaneIdentity,
     lookup: Readonly<{ runId?: string; submissionIdentity?: string }>
   ): Promise<NotebookRunDocument> {
-    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const path = this.runJsonPath(projectId, sessionId, lane)
     const compact = this.pendingViews.get(path)
     if (
       compact &&
@@ -2040,23 +2159,26 @@ class NotebookRunRepository {
       throw new Error('Notebook terminal outcome must have a terminal status.')
     }
     const factPath = getNotebookTerminalFactPath(
-      this.storageRoot,
+      this.projectStorageRoot(request.projectId),
       request.projectId,
       request.sessionId,
       request.lane,
       request.run.runId
     )
+    this.assertRecordPath(request.projectId, factPath)
     const fact: NotebookRunTerminalFact = {
       version: 1,
       projectId: request.projectId,
       sessionId: request.sessionId,
       expectedStatus: 'running',
-      run: ownRun(request.lane, request.run)
+      run: encodeNotebookRunDataPaths(
+        ownRun(request.lane, request.run),
+        this.storageRoot,
+        this.projectDirectory(request.projectId)
+      )
     }
     await this.enqueueSave(async () => {
-      this.assertLaneWritable(
-        getNotebookRunJsonPath(this.storageRoot, request.projectId, request.sessionId, request.lane)
-      )
+      this.assertLaneWritable(this.runJsonPath(request.projectId, request.sessionId, request.lane))
       await mkdir(dirname(factPath), { recursive: true })
       await writeDurableJsonFile(factPath, `${JSON.stringify(fact, null, 2)}\n`)
     })
@@ -2079,7 +2201,7 @@ class NotebookRunRepository {
           (scope.projectId === lane.projectId || scope.sessionIds?.includes(lane.sessionId))
       )
       if (!lanes.length) return
-      const deleted = scope.sessionIds && (await this.deletedSessionScopes?.())
+      const deleted = scope.sessionIds && (await this.recordStorage.deletedSessionScopes?.())
       for (const [path, entry] of lanes) {
         const { projectId, sessionId } = entry
         // The ID-only notification can also cover another Project. Check durable scope and
@@ -2159,32 +2281,54 @@ class NotebookRunRepository {
   async recoverAllRunLifecycles(): Promise<RecoveredBackgroundRun[]> {
     const recovered: RecoveredBackgroundRun[] = []
     const notebooksRoot = join(this.storageRoot, NOTEBOOKS_DIR)
-    let projects
+    let projects: Dirent[]
     try {
       projects = await readdir(notebooksRoot, { withFileTypes: true })
     } catch (error) {
-      if (isMissingFileError(error)) return recovered
-      throw error
+      if (!isMissingFileError(error)) throw error
+      projects = []
     }
-    const deleted = await this.deletedSessionScopes?.()
+    const deleted = await this.recordStorage.deletedSessionScopes?.()
     for (const key of deleted?.keys() ?? []) this.observedDeleted.add(key)
-    for (const project of projects) {
-      if (!project.isDirectory() || !SAFE_SEGMENT_PATTERN.test(project.name)) continue
-      const projectRoot = join(notebooksRoot, project.name)
-      const sessions = await readdir(projectRoot, { withFileTypes: true })
+    const projectIds = new Set([
+      ...projects.filter((project) => project.isDirectory()).map((project) => project.name),
+      ...(this.recordStorage.listProjectRecordIds?.() ?? listProjectRecordIds(this.storageRoot))
+    ])
+    for (const projectId of projectIds) {
+      if (!SAFE_SEGMENT_PATTERN.test(projectId)) continue
+      if (getProjectRecordRoute(this.storageRoot, projectId)?.detached) continue
+      let projectRoot: string
+      try {
+        projectRoot = join(this.projectStorageRoot(projectId), NOTEBOOKS_DIR, projectId)
+      } catch (error) {
+        // An unavailable custom folder blocks only its own scoped reads/admission. Do not disable
+        // recovery for unrelated Projects or silently switch this Project to managed records.
+        log.warn('skipping unavailable Notebook project records', {
+          projectId,
+          error: String(error)
+        })
+        continue
+      }
+      let sessions
+      try {
+        sessions = await readdir(projectRoot, { withFileTypes: true })
+      } catch (error) {
+        if (isMissingFileError(error)) continue
+        throw error
+      }
       for (const session of sessions) {
         if (!session.isDirectory() || !SAFE_SEGMENT_PATTERN.test(session.name)) continue
         const sessionRoot = join(projectRoot, session.name)
-        const sessionDeleted = deleted?.get(project.name + ':' + session.name)
+        const sessionDeleted = deleted?.get(projectId + ':' + session.name)
         if (
           (await this.pathExists(join(sessionRoot, NOTEBOOK_RUN_FILE))) ||
           (await this.pathExists(join(sessionRoot, PENDING_RUN_DIRECTORY)))
         ) {
           recovered.push(
             ...(await this.recoverLaneIfReadable(
-              project.name,
+              projectId,
               session.name,
-              createRootNotebookLane(project.name, session.name, `root-frame-${session.name}`),
+              createRootNotebookLane(projectId, session.name, `root-frame-${session.name}`),
               sessionDeleted
             ))
           )
@@ -2206,9 +2350,9 @@ class NotebookRunRepository {
             continue
           recovered.push(
             ...(await this.recoverLaneIfReadable(
-              project.name,
+              projectId,
               session.name,
-              createFrameNotebookLane(project.name, session.name, frame.name),
+              createFrameNotebookLane(projectId, session.name, frame.name),
               sessionDeleted
             ))
           )
@@ -2385,9 +2529,8 @@ class NotebookRunRepository {
       projectId,
       sessionId,
       async (lane) =>
-        (await this.cachedLaneSummary(
-          getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
-        )) ?? this.findExisting(projectId, sessionId, lane)
+        (await this.cachedLaneSummary(this.runJsonPath(projectId, sessionId, lane))) ??
+        this.findExisting(projectId, sessionId, lane)
     )
   }
 
@@ -2407,10 +2550,8 @@ class NotebookRunRepository {
   }
 
   private async frameIds(projectId: string, sessionId: string): Promise<string[]> {
-    const framesRoot = join(
-      getNotebookSessionRoot(this.storageRoot, projectId, sessionId),
-      'frames'
-    )
+    const framesRoot = join(this.recordDirectory(projectId, sessionId), 'frames')
+    this.assertRecordPath(projectId, framesRoot)
     try {
       return (await readdir(framesRoot, { withFileTypes: true }))
         .filter((entry) => entry.isDirectory())
@@ -2591,7 +2732,7 @@ class NotebookRunRepository {
   ): Promise<NotebookRunDocument> {
     const safeProjectId = assertSafeNotebookPathSegment(projectId)
     const safeSessionId = assertSafeNotebookPathSegment(sessionId)
-    const filePath = getNotebookRunJsonPath(this.storageRoot, safeProjectId, safeSessionId, lane)
+    const filePath = this.runJsonPath(safeProjectId, safeSessionId, lane)
     for (let attempt = 0; attempt < MAX_DOCUMENT_READ_ATTEMPTS; attempt += 1) {
       let fileInfo
       try {
@@ -2691,9 +2832,11 @@ class NotebookRunRepository {
       ) {
         const storedTail = runs.slice(count)
         const hydrated = await this.hydrate(filePath, { ...base, runs: storedTail })
-        const tail = decodeRunDocumentDataPaths(hydrated, this.storageRoot).runs.map((row) =>
-          normalizeRun(base.notebookSessionRoot, row)
-        )
+        const tail = decodeRunDocumentDataPaths(
+          hydrated,
+          this.storageRoot,
+          this.projectDirectory(projectId)
+        ).runs.map((row) => normalizeRun(base.notebookSessionRoot, row))
         this.records.remember(tail, storedTail, dirname(filePath))
         const document = { ...base, updatedAt: pending.updatedAt, runs: [...cold, ...tail] }
         this.coldCounts.set(document, count)
@@ -2728,7 +2871,11 @@ class NotebookRunRepository {
     )
     if (pending.updatedAt) read.value.updatedAt = Math.max(pending.updatedAt, read.value.updatedAt)
     const hydrated = await this.hydrate(filePath, read.value)
-    const decoded = decodeRunDocumentDataPaths(hydrated, this.storageRoot)
+    const decoded = decodeRunDocumentDataPaths(
+      hydrated,
+      this.storageRoot,
+      this.projectDirectory(projectId)
+    )
 
     const normalized = normalizeDocument(
       this.storageRoot,
@@ -2785,7 +2932,7 @@ class NotebookRunRepository {
     sessionId: string,
     lane: NotebookLaneIdentity
   ): Promise<RecoveredBackgroundRun[]> {
-    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const path = this.runJsonPath(projectId, sessionId, lane)
     await recoverPendingRuns(
       path,
       this.pendingScope(path, projectId, sessionId),
@@ -2793,9 +2940,10 @@ class NotebookRunRepository {
     )
     const recovered = new Map<string, NotebookRunRecord>()
     const outboxRoot = join(
-      getNotebookSessionRoot(this.storageRoot, projectId, sessionId, lane),
+      this.recordDirectory(projectId, sessionId, lane),
       RUN_TERMINAL_OUTBOX_DIR
     )
+    this.assertRecordPath(projectId, outboxRoot)
     await recoverDurableJsonDirectory(outboxRoot, (_targetPath, contents) =>
       parseNotebookRunTerminalFact(contents)
     )
@@ -2820,7 +2968,14 @@ class NotebookRunRepository {
         sessionId,
         lane,
         expectedStatus: fact.expectedStatus,
-        run: fact.run
+        run: decodeRunDocumentDataPaths(
+          {
+            ...(await this.loadExisting(projectId, sessionId, lane)),
+            runs: [fact.run]
+          },
+          this.storageRoot,
+          this.projectDirectory(projectId)
+        ).runs[0]
       })
       if (!result.transitioned && result.run.status === 'running') {
         throw new Error(`Notebook terminal outcome recovery is blocked: ${fact.run.runId}`)
@@ -2860,16 +3015,12 @@ class NotebookRunRepository {
     // A clean directory needs no deletion. Reopen the authoritative manifest before any cleanup.
     const clean =
       before &&
-      (await this.records.containsOnlyReferencedFiles(
-        document.notebookSessionRoot,
-        document.runs
-      )) &&
+      (await this.records.containsOnlyReferencedFiles(dirname(path), document.runs)) &&
       !(await this.hasRecoveryCandidate(path)) &&
       sameDocumentFileIdentity(before, await statIfPresent(path))
     if (!clean) {
       const manifest = await readDurableJsonFile(path, decodeNotebookDocument)
-      if (manifest.status === 'found')
-        await this.records.prune(document.notebookSessionRoot, manifest.value.runs)
+      if (manifest.status === 'found') await this.records.prune(dirname(path), manifest.value.runs)
     }
     return [...recovered.values()].map((run) => ({ projectId, sessionId, run }))
   }
@@ -2880,7 +3031,7 @@ class NotebookRunRepository {
     lane: NotebookLaneIdentity,
     retainedAfterDeletion?: boolean
   ): Promise<RecoveredBackgroundRun[]> {
-    const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+    const path = this.runJsonPath(projectId, sessionId, lane)
     const previousFence = pendingLanes.get(path)
     try {
       if (retainedAfterDeletion === false) {
@@ -2947,7 +3098,7 @@ class NotebookRunRepository {
     transform: (document: NotebookRunDocument) => NotebookRunDocument
   ): Promise<NotebookRunDocument> {
     return this.enqueueSave(async () => {
-      this.assertLaneWritable(getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane))
+      this.assertLaneWritable(this.runJsonPath(projectId, sessionId, lane))
       const document = await this.loadExisting(projectId, sessionId, lane)
       const next = transform(document)
       if (next !== document) await this.persist(next)
@@ -2974,7 +3125,7 @@ class NotebookRunRepository {
       projectId,
       sessionId,
       frameId:
-        dirname(path) === getNotebookSessionRoot(this.storageRoot, projectId, sessionId)
+        dirname(path) === this.recordDirectory(projectId, sessionId)
           ? null
           : basename(dirname(path))
     }
@@ -3054,7 +3205,7 @@ class NotebookRunRepository {
         const { detailBytes, hasOutput } = this.analysisIndexDetails.get(run) ?? indexReplayRun(run)
         this.analysisIndexDetails.set(metadata, { detailBytes, hasOutput })
         if (isNotebookRunReference(ref)) {
-          this.historyBodies.set(metadata, { root: document.notebookSessionRoot, ref })
+          this.historyBodies.set(metadata, { root: dirname(path), ref })
         } else if (analysisBytes < MAX_ANALYSIS_METADATA_BYTES) {
           const { text, outputs } = document.runs[i]
           const output = { text, outputs }
@@ -3122,12 +3273,14 @@ class NotebookRunRepository {
       run.status !== 'running'
     )
       return false
-    await this.publishEnvironmentManifests({ ...next, runs: [run] })
-    const normalized = environmentManifestChecksumForRun(run)
-      ? withoutEnvironmentManifest(run)
-      : run
-    const encoded = encodeNotebookRunDataPaths(normalized, this.storageRoot)
     const { projectId, sessionId } = next
+    const projectDirectory = this.projectDirectory(projectId)
+    if (!projectDirectory) await this.publishEnvironmentManifests({ ...next, runs: [run] })
+    const normalized =
+      !projectDirectory && environmentManifestChecksumForRun(run)
+        ? withoutEnvironmentManifest(run)
+        : run
+    const encoded = encodeNotebookRunDataPaths(normalized, this.storageRoot, projectDirectory)
     const frame = this.pendingScope(path, projectId, sessionId).frameId
     if (!pendingLanes.has(path))
       pendingLanes.set(path, {
@@ -3243,9 +3396,11 @@ class NotebookRunRepository {
     if (merged.checkpointed || !merged.updatedAt) return false
     const tail = rows.slice(view.coldCount)
     const hydrated = await this.hydrate(path, { ...base, runs: tail })
-    const runs = decodeRunDocumentDataPaths(hydrated, this.storageRoot).runs.map((row) =>
-      normalizeRun(base.notebookSessionRoot, row)
-    )
+    const runs = decodeRunDocumentDataPaths(
+      hydrated,
+      this.storageRoot,
+      this.projectDirectory(base.projectId)
+    ).runs.map((row) => normalizeRun(base.notebookSessionRoot, row))
     this.records.remember(runs, tail, dirname(path))
     if (!sameDocumentFileIdentity(view.identity, await statIfPresent(path))) return false
     const document = {
@@ -3266,11 +3421,14 @@ class NotebookRunRepository {
     transform: (document: NotebookRunDocument) => NotebookRunDocument
   ): Promise<void> {
     await this.enqueueSave(async () => {
-      const path = getNotebookRunJsonPath(this.storageRoot, projectId, sessionId, lane)
+      const path = this.runJsonPath(projectId, sessionId, lane)
       this.assertLaneWritable(path)
       const key = projectId + ':' + sessionId
       if (lookup && 'submission' in lookup && this.observedDeleted.has(key)) {
-        if (!this.deletedSessionScopes || (await this.deletedSessionScopes()).has(key))
+        if (
+          !this.recordStorage.deletedSessionScopes ||
+          (await this.recordStorage.deletedSessionScopes()).has(key)
+        )
           throw new Error('Notebook Session was deleted.')
         this.observedDeleted.delete(key)
       }
@@ -3403,7 +3561,7 @@ class NotebookRunRepository {
           (isNotebookRunReference(ref) ? estimateReplayBytes(ref) + 256 : 0)
         if (bytes > MAX_LANE_SUMMARY_BYTES) break
         if (isNotebookRunReference(ref)) {
-          this.historyBodies.set(entry, { root: document.notebookSessionRoot, ref })
+          this.historyBodies.set(entry, { root: dirname(filePath), ref })
           if (summary.hasBackgroundRuns)
             this.backgroundOutputBytes.set(ref, omittedOutputBytes(run.text, run.outputs))
         }
@@ -3557,19 +3715,21 @@ class NotebookRunRepository {
     detached?: DetachedRuns,
     previousRows?: ReplayRunIndex[]
   ): Promise<void> {
-    const directory = document.notebookSessionRoot
+    const workspace = document.notebookSessionRoot
+    const directory = this.recordDirectoryForWorkspace(document.projectId, workspace)
     const filePath = join(directory, NOTEBOOK_RUN_FILE)
+    this.assertRecordPath(document.projectId, filePath)
 
     // Ensure the full notebook workspace exists before exposing run.json to readers.
-    await mkdir(join(directory, 'data', 'raw'), { recursive: true })
-    await mkdir(join(directory, 'data', 'processed'), { recursive: true })
-    await mkdir(join(directory, 'work'), { recursive: true })
-    await mkdir(join(directory, 'cache'), { recursive: true })
-    await mkdir(join(directory, 'scripts'), { recursive: true })
+    await mkdir(join(workspace, 'data', 'raw'), { recursive: true })
+    await mkdir(join(workspace, 'data', 'processed'), { recursive: true })
+    await mkdir(join(workspace, 'work'), { recursive: true })
+    await mkdir(join(workspace, 'cache'), { recursive: true })
+    await mkdir(join(workspace, 'scripts'), { recursive: true })
     // Cross-kernel handoff channel: the REPL fetches external data here and hands files to
     // python/r via disk; 'outputs' collects results kernels want to surface back out.
-    await mkdir(join(directory, 'handoff'), { recursive: true })
-    await mkdir(join(directory, 'outputs'), { recursive: true })
+    await mkdir(join(workspace, 'handoff'), { recursive: true })
+    await mkdir(join(workspace, 'outputs'), { recursive: true })
     // The sandbox receives this stable sibling as read-only at process launch. Main may then stage
     // exact, verified Versions into it without exposing the authoritative Upload/Artifact stores.
     await ensureNotebookInputRoot(this.storageRoot, document.projectId, document.sessionId)
@@ -3577,17 +3737,25 @@ class NotebookRunRepository {
     // Encode only the serialized copy: `directory` above must stay derived from the absolute in-memory
     // `document.notebookSessionRoot`, never from the $DATA-sentinel-encoded copy, so run.json stores
     // portable "$DATA/..." paths that survive a data-root relocation.
-    await this.publishEnvironmentManifests(document)
-    const header = encodeRunDocumentDataPaths({ ...document, runs: [] }, this.storageRoot)
+    const projectDirectory = this.projectDirectory(document.projectId)
+    // Custom project records must retain their execution evidence when reopened with a new data root.
+    if (!projectDirectory) await this.publishEnvironmentManifests(document)
+    const header = encodeRunDocumentDataPaths(
+      { ...document, runs: [] },
+      this.storageRoot,
+      projectDirectory
+    )
     // Keep the reference on the same sidecar-free Run object that subsequent mutations will use.
     const cachedDocument = {
       ...document,
       runs: document.runs.map((run) =>
-        environmentManifestChecksumForRun(run) ? withoutEnvironmentManifest(run) : run
+        !projectDirectory && environmentManifestChecksumForRun(run)
+          ? withoutEnvironmentManifest(run)
+          : run
       )
     }
     const remaining = await this.records.write(directory, cachedDocument.runs, (run) =>
-      encodeNotebookRunDataPaths(run, this.storageRoot)
+      encodeNotebookRunDataPaths(run, this.storageRoot, projectDirectory)
     )
     // Transitions retain positions and admission appends at the end. Reinsert untouched records
     // in their original slots before publishing the same complete manifest.
@@ -3603,6 +3771,7 @@ class NotebookRunRepository {
       version: runs.some(isNotebookRunReference) ? 2 : 1,
       runs
     }
+    await mkdir(directory, { recursive: true })
     const manifestJson = `${JSON.stringify(encoded, null, 2)}\n`
     await writeDurableJsonFile(filePath, manifestJson)
     await clearPendingRuns(filePath)
@@ -3614,7 +3783,7 @@ class NotebookRunRepository {
     const oversized = weight > MAX_DOCUMENT_CACHE_BYTES
     if (detached) {
       const summary: LaneSummary = {
-        notebookSessionRoot: directory,
+        notebookSessionRoot: workspace,
         workspaceCwd: document.workspaceCwd,
         hasBackgroundRuns:
           detached.hasBackgroundRuns ||
@@ -3694,7 +3863,7 @@ export {
   getNotebookSessionRoot,
   getRuntimeRoot
 }
-export type { RecoveredBackgroundRun }
+export type { RecoveredBackgroundRun, NotebookRecordStorageOptions }
 export type {
   AppendNotebookRunRequest,
   AppendOrGetNotebookRunResult,

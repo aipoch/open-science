@@ -94,7 +94,7 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
   const { t } = useTranslation()
   const sharingDescriptionId = useId()
   const htmlDownload = useManagedFileDownload({
-    source: item.source ?? 'artifact',
+    source: item.source === 'project-folder' ? undefined : (item.source ?? 'artifact'),
     path: item.path,
     projectId: item.projectId,
     fileId: item.managedFileId,

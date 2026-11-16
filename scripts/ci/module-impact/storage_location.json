@@ -11,7 +11,8 @@
     "src/main/storage/location-evidence.ts",
     "src/main/storage/managed-workspace-ownership-dir.ts",
     "src/main/storage/root-binding.ts",
-    "src/main/storage/root-binding.test.ts"
+    "src/main/storage/root-binding.test.ts",
+    "src/main/storage/workspace-location.ts"
   ],
   "interfacePaths": [
     "build/node-runtime.json",
@@ -77,7 +78,8 @@
     "test/runtime-metadata.ts",
     "src/main/websocket-frame-sender.ts",
     "src/main/managed-file-versions/version-file-operator.ts",
-    "src/main/session-plan/plan-context-file.ts"
+    "src/main/session-plan/plan-context-file.ts",
+    "src/main/storage/workspace-location.ts"
   ],
   "testFiles": {
     "owner": [

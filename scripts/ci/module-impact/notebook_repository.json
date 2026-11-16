@@ -11,6 +11,7 @@
     "src/main/notebook/run-document-data-path-codec.ts",
     "src/main/notebook/run-document-data-paths.test.ts",
     "src/main/notebook/run-document-data-paths.ts",
+    "src/main/notebook/project-record-storage.integration.test.ts",
     "src/main/notebook/run-record-reference.ts"
   ],
   "interfacePaths": [
@@ -61,7 +62,8 @@
       "src/main/notebook/inline-run-window.test.ts",
       "src/main/notebook/input-staging.test.ts",
       "src/main/notebook/repository.test.ts",
-      "src/main/notebook/run-document-data-paths.test.ts"
+      "src/main/notebook/run-document-data-paths.test.ts",
+      "src/main/notebook/project-record-storage.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

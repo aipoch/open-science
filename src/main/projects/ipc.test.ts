@@ -23,6 +23,45 @@ beforeEach(() => {
 })
 
 describe('createProjectHandlers', () => {
+  it('retries interrupted record Session recovery on later admission without recreating the Project', async () => {
+    let pending = true
+    const repository = {
+      list: vi.fn(async () => [project]),
+      get: vi.fn(async () => project),
+      create: vi.fn(async () => project),
+      update: vi.fn(),
+      recordRecoveryPending: () => pending,
+      completeRecordRecovery: vi.fn(async () => {
+        pending = false
+      })
+    }
+    const deletion = {
+      deleteProject: vi.fn(),
+      listDeletionCleanup: vi.fn(),
+      retryDeletionCleanup: vi.fn(),
+      waitForProjectOperations: vi.fn()
+    }
+    const restore = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('projection unavailable'))
+      .mockResolvedValue(undefined)
+    const handlers = createProjectHandlers(repository, deletion, {
+      updateArchive: vi.fn(),
+      afterProjectCreate: restore
+    })
+    await expect(handlers.create({ name: 'Research' })).rejects.toThrow('projection unavailable')
+    expect(pending).toBe(true)
+    // A fresh handler models restarting the app; the marker lives in the repository's durable route.
+    const restarted = createProjectHandlers(repository, deletion, {
+      updateArchive: vi.fn(),
+      afterProjectCreate: restore
+    })
+    await expect(restarted.get(project.id)).resolves.toEqual(project)
+    expect(pending).toBe(false)
+    await restarted.get(project.id)
+    expect(restore).toHaveBeenCalledTimes(2)
+    expect(repository.create).toHaveBeenCalledTimes(1)
+  })
   it('routes deletion through the project deletion coordinator', async () => {
     const repository = {
       list: vi.fn(),
@@ -364,3 +403,41 @@ const flushMicrotasks = async (): Promise<void> => {
 }
 
 await configureTestElectronHost(await import('electron'))
+
+it('requires the idle writer boundary for explicit layout enable and keeps ordinary edits unchanged', async () => {
+  const repository = {
+    list: vi.fn(),
+    get: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn().mockResolvedValue(project)
+  }
+  const deletion = {
+    deleteProject: vi.fn(),
+    listDeletionCleanup: vi.fn(),
+    retryDeletionCleanup: vi.fn(),
+    waitForProjectOperations: vi.fn()
+  }
+  const request = {
+    id: project.id,
+    expectedUpdatedAt: project.updatedAt,
+    enableSessionOutputs: true as const
+  }
+  await expect(createProjectHandlers(repository, deletion).update(request)).rejects.toThrow(
+    'unavailable'
+  )
+  expect(repository.update).not.toHaveBeenCalled()
+  const withOutputLayoutUpgrade = vi.fn()
+  const handlers = createProjectHandlers(repository, deletion, {
+    updateArchive: vi.fn(),
+    withOutputLayoutUpgrade: async <T>(id: string, operation: () => Promise<T>): Promise<T> => {
+      withOutputLayoutUpgrade(id, operation)
+      return operation()
+    }
+  })
+  await handlers.update(request)
+  expect(withOutputLayoutUpgrade).toHaveBeenCalledWith(project.id, expect.any(Function))
+  expect(repository.update).toHaveBeenCalledWith(request)
+  withOutputLayoutUpgrade.mockClear()
+  await handlers.update({ id: project.id, expectedUpdatedAt: project.updatedAt, name: 'Rename' })
+  expect(withOutputLayoutUpgrade).not.toHaveBeenCalled()
+})

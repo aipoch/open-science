@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { waitFor } from '@testing-library/react'
+import { fireEvent, waitFor } from '@testing-library/react'
 import { act, StrictMode, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import {
   createInitialGrantedFoldersState,
@@ -31,6 +32,8 @@ import {
   type UploadedAttachment
 } from '../../../../shared/uploads'
 import { createCachedImageFetchResponse } from './previews/cached-preview-image.test-support'
+
+beforeEach(() => useProjectStore.setState(createInitialProjectState()))
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
   id: 'message-1',
@@ -388,6 +391,78 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
   }
+
+  it('defaults bound projects to artifacts and adds a live folder source without replacing existing choices', async () => {
+    const listFolder = vi.fn().mockResolvedValue({
+      path: '/Research/cohort-study',
+      relativePath: '',
+      entries: [{ name: 'raw.csv', isDirectory: false, size: 20, mtimeMs: 100 }],
+      totalCount: 1
+    })
+    await renderView(createArtifactSessions(1), false, () => {
+      useProjectStore.setState({
+        projects: [
+          {
+            id: 'default',
+            name: 'Study',
+            description: '',
+            rootPath: '/Research/cohort-study',
+            isExample: false,
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+      window.api.projects = { listFolder } as unknown as Window['api']['projects']
+    })
+    expect(listFolder).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="project-folder-browser"]')).toBeNull()
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )!
+    await act(async () => clickDropdownTrigger(trigger))
+    const menu = document.body.querySelector('[role="menu"]')!
+    expect(menu.textContent).toContain('All artifacts')
+    expect(menu.textContent).toContain('Your uploads')
+    expect(menu.textContent).toContain('Project folder')
+    expect(menu.textContent).toContain('This computer')
+    expect(menu.textContent).toContain('Add folder…')
+    const folder = [...menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(
+      (item) => item.textContent?.trim() === 'Project folder cohort-study'
+    )!
+    await act(async () => fireEvent.click(folder))
+    expect(listFolder).toHaveBeenCalledWith({
+      projectId: 'default',
+      relativePath: '',
+      query: '',
+      limit: 100
+    })
+    expect(
+      container.querySelector('[data-testid="project-folder-browser"]')?.textContent
+    ).toContain('raw.csv')
+    expect(
+      container.querySelector('[data-testid="project-folder-browser"]')?.textContent
+    ).toContain('/Research/cohort-study')
+    expect(trigger.textContent).toContain('Project folder')
+    await act(async () => clickDropdownTrigger(trigger))
+    const all = [...document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(
+      (item) => item.textContent?.includes('All artifacts')
+    )!
+    await act(async () => fireEvent.click(all))
+    expect(container.querySelector('[data-testid="project-folder-browser"]')).toBeNull()
+    expect(useProjectStore.getState().projects[0].rootPath).toBe('/Research/cohort-study')
+  })
+
+  it('does not offer a project folder source for a managed project', async () => {
+    await renderView([])
+    await act(async () =>
+      clickDropdownTrigger(container.querySelector('[aria-label="Filter project files"]'))
+    )
+    expect(document.body.querySelector('[role="menu"]')?.textContent).not.toContain(
+      'Project folder'
+    )
+    expect(document.body.querySelector('[role="menu"]')?.textContent).toContain('Add folder…')
+  })
 
   it('renders an empty state when the project has no files', async () => {
     await renderView([])

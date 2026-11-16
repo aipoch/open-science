@@ -1,4 +1,5 @@
 import { PENDING_RUN_DIRECTORY } from '../notebook/pending-run-files'
+import { isProjectFolderWorkingProjection } from './project-folder-portability'
 import {
   packageResearchFilmsSchema,
   researchFilmStorageKeys,
@@ -363,7 +364,8 @@ export const nativeStorageKeys = (records: PackageRecords): string[] => [
 
 export const notebookStorageKeys = async (
   storageRoot: string,
-  request: SessionPackageRequest
+  request: SessionPackageRequest,
+  options: { excludeDataProjection?: boolean } = {}
 ): Promise<string[]> => {
   const keys: string[] = []
   let visited = 0
@@ -388,6 +390,9 @@ export const notebookStorageKeys = async (
       )
         continue
       const child = `${key}/${entry.name}`
+      // Working copies are a private projection, including failed preparations with no Run yet.
+      // Never descend into them merely to decide which files to exclude.
+      if (options.excludeDataProjection && isProjectFolderWorkingProjection(child)) continue
       if (entry.isDirectory()) await visit(child, depth + 1)
       else if (entry.isFile()) keys.push(child)
       else throw new Error('Session package source contains a link or special file.')
@@ -461,7 +466,11 @@ export const sessionFileVersionIds = (session: PersistedChatSession): string[] =
       ids.add(upload.versionId)
     }
     for (const part of message.parts ?? []) {
-      if (part.type === 'artifact' && part.source !== 'linked-folder') {
+      if (
+        part.type === 'artifact' &&
+        part.source !== 'linked-folder' &&
+        part.source !== 'project-folder'
+      ) {
         if (!part.versionId)
           throw new Error('Legacy file references must have immutable Versions before packaging.')
         ids.add(part.versionId)

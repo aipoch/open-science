@@ -721,6 +721,45 @@ describe('notebook run repository', () => {
     }
   })
 
+  it('keeps environment evidence with custom project records across data roots', async () => {
+    const root = await createStorageRoot()
+    const projectId = 'custom-project'
+    const sessionId = 'session-1'
+    const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+    const project = join(root, 'original-project')
+    const recordRoot = join(project, '.open-science')
+    const repository = new NotebookRunRepository(join(root, 'original-data'), {
+      getProjectRecordRoot: () => recordRoot
+    })
+    const { manifest, checksum } = completedEnvironmentManifest()
+    await repository.loadOrCreate({ projectId, sessionId, lane, workspaceCwd: project })
+    await repository.appendRun({
+      projectId,
+      sessionId,
+      lane,
+      run: admittedRun({
+        status: 'completed',
+        endedAt: 2,
+        environmentCapture: { state: 'available', manifestChecksum: checksum },
+        environmentManifest: manifest
+      })
+    })
+    await repository.appendRun({
+      projectId,
+      sessionId,
+      lane,
+      run: admittedRun({ runId: 'later-run', cellId: 'later-cell', startedAt: 3 })
+    })
+
+    const movedProject = join(root, 'moved-project')
+    await rename(project, movedProject)
+    const reopened = new NotebookRunRepository(join(root, 'new-data'), {
+      getProjectRecordRoot: () => join(movedProject, '.open-science')
+    })
+    const evidence = await reopened.readSessionRunWindow(projectId, sessionId, 0, ['run-1'])
+    expect(evidence.runs[0]?.environmentManifest).toEqual(manifest)
+  })
+
   it('preserves valid history with more than 32 loaded helper modules', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

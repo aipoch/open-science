@@ -5,6 +5,7 @@ import { act } from 'react'
 import { type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
+import { useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type {
   LiteratureCollectionView,
@@ -157,6 +158,7 @@ beforeEach(() => {
       search: vi.fn().mockResolvedValue({ entries: [] })
     }
   }
+  useProjectStore.setState({ projects: [] })
   useNavigationStore.setState({ activeProjectId: 'default' })
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -1013,5 +1015,79 @@ describe('ArtifactMentionPopup', () => {
     // "report.pdf" (prefix) ranks ahead of "final-report.pdf" (match after the dash).
     expect(rendered[0].textContent).not.toContain('final')
     expect(rendered[1].textContent).toContain('final-report.pdf')
+  })
+})
+
+describe('bound Project folder mentions', () => {
+  it('queries nested live files on demand and selects the relative identity without a Version lookup', async () => {
+    vi.useFakeTimers()
+    try {
+      useProjectStore.setState({
+        projects: [
+          {
+            id: 'default',
+            name: 'Research',
+            description: '',
+            isExample: false,
+            rootPath: '/research',
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+      const listFolder = vi.fn().mockResolvedValue({
+        path: '/research',
+        relativePath: '',
+        totalCount: 1,
+        truncated: false,
+        entries: [
+          {
+            name: 'sample.csv',
+            relativePath: 'nested/sample.csv',
+            isDirectory: false,
+            size: 12,
+            mtimeMs: 1
+          }
+        ]
+      })
+      window.api.projects = { listFolder } as unknown as typeof window.api.projects
+      const onSelect = vi.fn()
+      await renderPopup({ query: 'sample', onSelect })
+      expect(listFolder).not.toHaveBeenCalled()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120)
+      })
+      const option = options().find((row) => row.textContent?.includes('nested/sample.csv'))!
+      expect(option).toBeDefined()
+      act(() => option.click())
+      expect(onSelect).toHaveBeenCalledWith({
+        id: 'project-folder:default:nested/sample.csv',
+        name: 'sample.csv',
+        source: 'project-folder',
+        projectId: 'default',
+        path: 'nested/sample.csv'
+      })
+      expect(window.api.managedFileVersions.inspect).not.toHaveBeenCalled()
+      expect(listFolder).toHaveBeenCalledWith({
+        projectId: 'default',
+        relativePath: '',
+        query: 'sample',
+        limit: 50,
+        searchDescendants: true
+      })
+      await renderPopup({ query: 'nested/sample', onSelect })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120)
+      })
+      expect(listFolder).toHaveBeenLastCalledWith({
+        projectId: 'default',
+        relativePath: 'nested',
+        query: 'sample',
+        limit: 50,
+        searchDescendants: true
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

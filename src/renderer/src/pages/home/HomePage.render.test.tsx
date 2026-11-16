@@ -2379,12 +2379,18 @@ describe('HomePage package drop', () => {
       fireEvent.dragOver(home, { dataTransfer })
     })
     expect(dataTransfer.dropEffect).toBe('copy')
-    expect(within(container).getByText('Drop a .science file to import')).toBeTruthy()
+    expect(
+      within(container).getByText('Drop a folder to create a project, or a .science file to import')
+    ).toBeTruthy()
     await act(async () => {
       fireEvent.drop(home, { dataTransfer })
     })
     expect(importPackage).toHaveBeenCalledExactlyOnceWith({}, file)
-    expect(within(container).queryByText('Drop a .science file to import')).toBeNull()
+    expect(
+      within(container).queryByText(
+        'Drop a folder to create a project, or a .science file to import'
+      )
+    ).toBeNull()
   })
 
   it('rejects a mixed batch on Home without starting a partial import', async () => {

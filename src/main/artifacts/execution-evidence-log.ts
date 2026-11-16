@@ -14,7 +14,7 @@ import {
   type ViewRow
 } from './file-evidence-codec.mjs'
 import { sha256 } from './provenance-canonical'
-import { assertRegularStoragePath } from './provenance-storage'
+import { assertRegularStoragePath, resolveStorageKey } from './provenance-storage'
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/u)
 const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/u)
@@ -305,7 +305,10 @@ export async function collectLaneRecords(
     if (!diskLane.views[key]) {
       const path = prefix + '/views/' + key
       await assertRegularStoragePath(root, path)
-      const encoded = await readFileWithinLimit(join(root, path), Math.min(remainingViews, limit))
+      const encoded = await readFileWithinLimit(
+        resolveStorageKey(root, path),
+        Math.min(remainingViews, limit)
+      )
       remainingViews -= Buffer.byteLength(encoded)
       const body = JSON.parse(encoded)
       if (Array.isArray(body.rows)) diskLane.views[key] = rowsSchema.parse(body.rows)
@@ -318,7 +321,12 @@ export async function collectLaneRecords(
     return viewRows(diskLane, key, depth, maxBytes ?? expandedLimit)
   }
   let size = 0
-  for await (const json of verifiedLogRecords(join(root, log), activities, encodedBudget, signal)) {
+  for await (const json of verifiedLogRecords(
+    resolveStorageKey(root, log),
+    activities,
+    encodedBudget,
+    signal
+  )) {
     const { projection, ...record } = diskRecord.parse(JSON.parse(json))
     if (!activities.has(record.activityId)) continue
     const detail = inflateRawSync(Buffer.from(projection, 'base64'), {
@@ -413,7 +421,7 @@ export async function readNativeEvidence(
 ): Promise<Buffer> {
   try {
     await assertRegularStoragePath(root, key)
-    const bytes = Buffer.from(await readFileWithinLimit(join(root, key), maxBytes))
+    const bytes = Buffer.from(await readFileWithinLimit(resolveStorageKey(root, key), maxBytes))
     if (sha256(bytes) !== expectedChecksum)
       throw new Error('Execution file evidence checksum mismatch.')
     return bytes

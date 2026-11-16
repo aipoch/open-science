@@ -27,6 +27,8 @@ export const projectSchema = z
     // into every agent session's system prompt.
     agentContext: z.string().max(16000).optional(),
     optimizationPrompt: z.string().max(16000).optional(),
+    rootPath: z.string().nullable().optional(),
+    outputLayout: z.enum(['legacy', 'session-v1']).optional(),
     sessionDefaults: projectSessionDefaultsSchema.optional(),
     isExample: z.boolean(),
     // Optional on the wire for compatibility with older persisted payloads; absence means unpinned.
@@ -43,6 +45,7 @@ export const projectSchema = z
 
 export const createProjectRequestSchema = z
   .object({
+    rootPath: z.string().min(1).optional(),
     name: z.string().max(PROJECT_NAME_MAX_LENGTH),
     description: z.string().max(PROJECT_DESCRIPTION_MAX_LENGTH).optional(),
     agentContext: z.string().max(16000).optional(),
@@ -50,12 +53,41 @@ export const createProjectRequestSchema = z
   })
   .strict()
 
+export const validateProjectFolderRequestSchema = z.object({ path: z.string() }).strict()
+export const projectFolderValidationResultSchema = z.discriminatedUnion('ok', [
+  z
+    .object({
+      ok: z.literal(true),
+      path: z.string(),
+      warnings: z.array(z.enum(['cloud-synced', 'removable', 'network'])).optional()
+    })
+    .strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      kind: z.enum(['not-found', 'unavailable', 'conflict']),
+      path: z.string().optional(),
+      diagnostics: z.string()
+    })
+    .strict()
+])
+export type ProjectFolderValidationResult = z.infer<typeof projectFolderValidationResultSchema>
+export const locateProjectFolderRequestSchema = z
+  .object({
+    projectId: z.string(),
+    path: z.string(),
+    expectedRootPath: z.string()
+  })
+  .strict()
+export type LocateProjectFolderRequest = z.infer<typeof locateProjectFolderRequestSchema>
+
 export const updateProjectRequestSchema = z
   .object({
     id: z.string(),
     name: z.string().max(PROJECT_NAME_MAX_LENGTH).optional(),
     description: z.string().max(PROJECT_DESCRIPTION_MAX_LENGTH).optional(),
     expectedUpdatedAt: z.number().int().positive(),
+    enableSessionOutputs: z.literal(true).optional(),
     agentContext: z.string().max(16000).optional(),
     optimizationPrompt: z.string().max(16000).optional(),
     sessionDefaults: projectSessionDefaultsSchema.optional(),
@@ -100,6 +132,18 @@ export type ProjectDeletionCleanup = z.infer<typeof projectDeletionCleanupSchema
 export type UpdateProjectArchiveRequest = z.infer<typeof updateProjectArchiveRequestSchema>
 
 export const projectApplicationCommandContracts = Object.freeze({
+  checkFolder: defineApplicationCommandContract(
+    validationCodec(z.tuple([z.object({ projectId: z.string() }).strict()])),
+    validationCodec(projectFolderValidationResultSchema.nullable())
+  ),
+  locateFolder: defineApplicationCommandContract(
+    validationCodec(z.tuple([locateProjectFolderRequestSchema])),
+    validationCodec(projectSchema)
+  ),
+  validateFolder: defineApplicationCommandContract(
+    validationCodec(z.tuple([validateProjectFolderRequestSchema])),
+    validationCodec(projectFolderValidationResultSchema)
+  ),
   optimizePrompt: defineApplicationCommandContract(
     validationCodec(z.tuple([optimizePromptRequestSchema])),
     validationCodec(optimizePromptResultSchema)

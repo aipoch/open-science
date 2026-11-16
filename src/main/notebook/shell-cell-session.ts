@@ -374,6 +374,7 @@ export class ShellCellSession {
       request.runtimeRoot,
       request.notebookSessionRoot,
       request.inputRoot,
+      request.outputRoot,
       request.protectedDirs,
       request.environment,
       request.grantedRoots

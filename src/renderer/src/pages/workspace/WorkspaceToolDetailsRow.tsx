@@ -1,4 +1,6 @@
 import { WorkspaceImageToolCard, WorkspaceImageToolOutput } from './WorkspaceImageToolCard'
+import { ProjectFolderChangeReview } from './ProjectFolderChangeReview'
+import { readProjectFolderChange } from './project-folder-change-presentation'
 import type { ToolActivity } from '@/stores/session-store-contract'
 import { TriangleAlert } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -183,6 +185,7 @@ const WorkspaceToolDetailsRow = ({
 }: WorkspaceToolDetailsRowProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [setRowElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
+  const folderChange = activity.appOwned ? readProjectFolderChange(activity.rawInput) : undefined
   const notebookRunId = details.notebookRunId
   const isSchedule = details.sections.some(
     (section) => section.kind === 'summary' && section.schedule
@@ -369,7 +372,9 @@ const WorkspaceToolDetailsRow = ({
             pending={activity.status === 'in_progress'}
           />
         ) : null}
-        {details.codeReview ? (
+        {folderChange ? (
+          <ProjectFolderChangeReview key={activity.id} change={folderChange} receipt />
+        ) : details.codeReview ? (
           <NotebookCodeReviewReceipt key={activity.id} review={details.codeReview} />
         ) : (
           details.sections.map(renderSection)

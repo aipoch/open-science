@@ -1063,3 +1063,71 @@ const flushMicrotasks = async (): Promise<void> => {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+it('fences layout enable while checking idle writers and releases admission on success or rejection', async () => {
+  let busy = false
+  const checking = Promise.withResolvers<boolean>()
+  const runtimeBusy = vi.fn<() => boolean | Promise<boolean>>().mockImplementation(() => busy)
+  const sessions = {
+    assertProjectArchivable: vi.fn().mockResolvedValue([]),
+    assertSessionAvailable: vi.fn(),
+    sessionProjectId: vi.fn(),
+    updateArchive: vi.fn()
+  }
+  const owner = new ArchiveCoordinator(
+    { get: async () => project, updateArchive: vi.fn() },
+    sessions,
+    {
+      isSessionBusy: () => false,
+      isProjectBusy: runtimeBusy,
+      liveSessionProjectId: () => project.id
+    }
+  )
+  const apply = vi.fn(async () => 'enabled')
+  const release = owner.admitSessionWork(project.id, session.id)
+  await expect(owner.withIdleProjectMutation(project.id, apply)).rejects.toThrow('Finish or stop')
+  expect(apply).not.toHaveBeenCalled()
+  release()
+  busy = true
+  await expect(owner.withIdleProjectMutation(project.id, apply)).rejects.toThrow('Finish or stop')
+  busy = false
+  runtimeBusy.mockReturnValueOnce(checking.promise)
+  const enabling = owner.withIdleProjectMutation(project.id, apply)
+  await vi.waitFor(() => expect(runtimeBusy).toHaveBeenCalledTimes(2))
+  expect(() => owner.admitSessionWork(project.id, 'late-session')).toThrow('being enabled')
+  checking.resolve(false)
+  await expect(enabling).resolves.toBe('enabled')
+  expect(sessions.assertProjectArchivable).toHaveBeenCalledWith(project.id, expect.any(Function))
+  owner.admitSessionWork(project.id, session.id)()
+})
+
+it('tracks deletion-only file saves for layout upgrades without adding archived-session restrictions', async () => {
+  const pending = Promise.withResolvers<void>()
+  const assertSessionAvailable = vi.fn().mockRejectedValue(new Error('Session is archived'))
+  const owner = new ArchiveCoordinator(
+    { get: async () => project, updateArchive: vi.fn() },
+    {
+      assertProjectArchivable: vi.fn().mockResolvedValue([]),
+      assertSessionAvailable,
+      sessionProjectId: async () => project.id,
+      updateArchive: vi.fn()
+    },
+    {
+      isSessionBusy: () => false,
+      isProjectBusy: () => false,
+      liveSessionProjectId: () => project.id
+    }
+  )
+  const save = vi.fn(() => pending.promise)
+  const writing = owner.withSessionDeletionAdmissionById(session.id, save)
+  await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+  await expect(owner.withIdleProjectMutation(project.id, async () => undefined)).rejects.toThrow(
+    'Finish or stop'
+  )
+  expect(assertSessionAvailable).not.toHaveBeenCalled()
+  pending.resolve()
+  await writing
+  await expect(owner.withIdleProjectMutation(project.id, async () => 'enabled')).resolves.toBe(
+    'enabled'
+  )
+})

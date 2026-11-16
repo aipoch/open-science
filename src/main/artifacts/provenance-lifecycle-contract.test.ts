@@ -752,6 +752,11 @@ it('publishes a validated Host image above the tool inline byte limit', async ()
 
 it('publishes an image task without a prompt and recovers its result without advancing a newer head', async () => {
   const value = await fixture()
+  const onHeadActivated = vi.fn().mockResolvedValue(undefined)
+  const repository = new ArtifactProvenanceRepository({
+    ...value.repositoryOptions,
+    onHeadActivated
+  })
   await value.client.project.create({ data: { id: 'project-1', name: 'Image task owner' } })
   const authority = new ImmutableInputAuthority({
     storageRoot: value.storageRoot,
@@ -842,19 +847,20 @@ it('publishes an image task without a prompt and recovers its result without adv
   )
   const stagedBytes = await readFile(stagedPath)
   await writeFile(stagedPath, Buffer.alloc(stagedBytes.length))
-  await expect(value.repository.recoverImageTaskVersion(recovery)).rejects.toThrow(
+  await expect(repository.recoverImageTaskVersion(recovery)).rejects.toThrow(
     'staging content is corrupt'
   )
   await writeFile(stagedPath, stagedBytes)
   await expect(
-    value.repository.recoverImageTaskVersion({ ...recovery, sourceVersionId: 'other-version' })
+    repository.recoverImageTaskVersion({ ...recovery, sourceVersionId: 'other-version' })
   ).rejects.toMatchObject({ name: 'ImageTaskIntegrityError', taskIds: [taskId] })
   expect(
     await value.client.artifactLineage.findUniqueOrThrow({ where: { id: output.artifactId } })
   ).toMatchObject({ currentVersionId: null })
-  const published = (await value.repository.recoverImageTaskVersion(recovery))!
+  const published = (await repository.recoverImageTaskVersion(recovery))!
   expect(published.versionId).toBe(output.versionId)
   expect(published.isPublished).toBe(true)
+  expect(onHeadActivated).toHaveBeenCalledExactlyOnceWith([published])
   expect(await value.compatibilityRepository.listPendingRunFiles(pending)).toEqual([])
   expect(sha256(await readFile(published.path))).toBe(published.checksum)
   const task = {
@@ -868,7 +874,7 @@ it('publishes an image task without a prompt and recovers its result without adv
     edit: { source: { sourceVersionId } }
   }
   const query = vi.spyOn(value.client.artifactVersion, 'findMany')
-  await value.repository.verifyImageTaskResults([task, task])
+  await repository.verifyImageTaskResults([task, task])
   expect(query).toHaveBeenCalledTimes(1)
   for (const invalid of [
     { ...task, id: 'another-task' },
@@ -879,10 +885,10 @@ it('publishes an image task without a prompt and recovers its result without adv
     { ...task, result: { ...published, checksum: '0'.repeat(64) } },
     { ...task, result: { ...published, artifactId: 'another-artifact' } }
   ])
-    await expect(value.repository.verifyImageTaskResults([invalid])).rejects.toThrow('integrity')
+    await expect(repository.verifyImageTaskResults([invalid])).rejects.toThrow('integrity')
   query.mockRestore()
 
-  const core = await value.repository.getVersionCore({
+  const core = await repository.getVersionCore({
     projectId: 'project-1',
     appSessionId: 'session-1',
     artifactId: output.artifactId,
@@ -892,7 +898,7 @@ it('publishes an image task without a prompt and recovers its result without adv
   expect(core.evidence.conversation.prompt_message_id).toBeUndefined()
   expect(core.evidence.conversation.runtime_segment_id).toBeUndefined()
   expect(
-    await value.repository.recoverImageTaskVersion({
+    await repository.recoverImageTaskVersion({
       projectId: 'project-1',
       appSessionId: 'session-1',
       taskId,
@@ -907,7 +913,7 @@ it('publishes an image task without a prompt and recovers its result without adv
   })
   expect(input).toBeDefined()
   const laterId = crypto.randomUUID()
-  const later = await value.repository.writeAppGeneratedVersion({
+  const later = await repository.writeAppGeneratedVersion({
     ...request,
     lineageId: published.artifactId,
     artifactRunId: laterId,
@@ -920,14 +926,14 @@ it('publishes an image task without a prompt and recovers its result without adv
       inputFiles: [input!]
     }
   })
-  await value.repository.publishImageTaskVersion({
+  await repository.publishImageTaskVersion({
     projectId: 'project-1',
     appSessionId: 'session-1',
     taskId: laterId,
     versionId: later.versionId,
     sourceVersionId: output.versionId
   })
-  await value.repository.recoverImageTaskVersion({
+  await repository.recoverImageTaskVersion({
     projectId: 'project-1',
     appSessionId: 'session-1',
     taskId,
@@ -938,6 +944,10 @@ it('publishes an image task without a prompt and recovers its result without adv
       .currentVersionId
   ).toBe(later.versionId)
   expect(await value.client.artifactVersion.count()).toBe(2)
+  expect(onHeadActivated).toHaveBeenCalledTimes(2)
+  expect(onHeadActivated).toHaveBeenLastCalledWith([
+    expect.objectContaining({ versionId: later.versionId })
+  ])
 
   for (const filename of ['image.png', 'different-image.png']) {
     const conversationRequest = {
@@ -953,7 +963,7 @@ it('publishes an image task without a prompt and recovers its result without adv
         'simulated staging'
       )
     } else {
-      await value.repository.writeAppGeneratedVersion(conversationRequest)
+      await repository.writeAppGeneratedVersion(conversationRequest)
     }
     const row = await value.client.artifactVersion.findUniqueOrThrow({
       where: { writeOperationId: conversationRequest.writeOperationId },
@@ -967,9 +977,9 @@ it('publishes an image task without a prompt and recovers its result without adv
       promptMessageId: 'prompt-1'
     }
     await expect(
-      value.repository.readImageInvocationVersion({ ...recheck, messageBranchId: 'other-branch' })
+      repository.readImageInvocationVersion({ ...recheck, messageBranchId: 'other-branch' })
     ).resolves.toBeUndefined()
-    await expect(value.repository.readImageInvocationVersion(recheck)).resolves.toMatchObject({
+    await expect(repository.readImageInvocationVersion(recheck)).resolves.toMatchObject({
       descriptor: { versionId: row.id }
     })
     expect(row.inputs).toEqual([
@@ -978,7 +988,7 @@ it('publishes an image task without a prompt and recovers its result without adv
   }
 
   const crossFileTaskId = crypto.randomUUID()
-  const crossFile = await value.repository.writeAppGeneratedVersion({
+  const crossFile = await repository.writeAppGeneratedVersion({
     ...request,
     filename: 'cross-file.png',
     artifactRunId: crossFileTaskId,
@@ -990,7 +1000,7 @@ it('publishes an image task without a prompt and recovers its result without adv
       inputFiles: [input!]
     }
   })
-  await value.repository.publishImageTaskVersion({
+  await repository.publishImageTaskVersion({
     projectId: request.projectId,
     appSessionId: request.appSessionId,
     taskId: crossFileTaskId,
@@ -998,7 +1008,7 @@ it('publishes an image task without a prompt and recovers its result without adv
     sourceVersionId: published.versionId
   })
   for (const anchor of [published, crossFile]) {
-    const lineage = await value.repository.getLineage({
+    const lineage = await repository.getLineage({
       projectId: request.projectId,
       appSessionId: request.appSessionId,
       artifactId: anchor.artifactId,
@@ -1025,7 +1035,7 @@ it('publishes an image task without a prompt and recovers its result without adv
   const outputs = new Set([published.versionId, later.versionId, crossFile.versionId])
   for (let i = 0; i < 32; i++) {
     const id = crypto.randomUUID()
-    const result = await value.repository.writeAppGeneratedVersion({
+    const result = await repository.writeAppGeneratedVersion({
       ...request,
       filename: 'cross-file.png',
       artifactRunId: id,
@@ -1037,7 +1047,7 @@ it('publishes an image task without a prompt and recovers its result without adv
         inputFiles: [input!]
       }
     })
-    await value.repository.publishImageTaskVersion({
+    await repository.publishImageTaskVersion({
       projectId: request.projectId,
       appSessionId: request.appSessionId,
       taskId: id,
@@ -1046,10 +1056,10 @@ it('publishes an image task without a prompt and recovers its result without adv
     })
     outputs.add(result.versionId)
   }
-  const first = (await value.repository.getLineage(historyRequest))!
+  const first = (await repository.getLineage(historyRequest))!
   expect(first.nextImageCursor).toBeDefined()
   expect(first.imageDependencies).toHaveLength(32)
-  const second = (await value.repository.getLineage({
+  const second = (await repository.getLineage({
     ...historyRequest,
     imageCursor: first.nextImageCursor
   }))!
@@ -1062,20 +1072,21 @@ it('publishes an image task without a prompt and recovers its result without adv
       )
     )
   ).toEqual(outputs)
-  await expect(
-    value.repository.getLineage({ ...historyRequest, cursor: '1' })
-  ).resolves.toMatchObject({ versions: [], imageDependencies: [] })
+  await expect(repository.getLineage({ ...historyRequest, cursor: '1' })).resolves.toMatchObject({
+    versions: [],
+    imageDependencies: []
+  })
   const comparison = {
     ...historyRequest,
     versionId: crossFile.versionId,
     imageInputOnly: true
   }
-  await expect(value.repository.getLineage(comparison)).resolves.toMatchObject({
+  await expect(repository.getLineage(comparison)).resolves.toMatchObject({
     versions: [],
     imageDependencies: []
   })
   await expect(
-    value.repository.getLineage({ ...comparison, artifactId: crossFile.artifactId })
+    repository.getLineage({ ...comparison, artifactId: crossFile.artifactId })
   ).resolves.toMatchObject({
     versions: [],
     imageDependencies: [
@@ -1090,7 +1101,7 @@ it('publishes an image task without a prompt and recovers its result without adv
   const branches = []
   for (const label of ['older branch', 'newest branch']) {
     const id = crypto.randomUUID()
-    const result = await value.repository.writeAppGeneratedVersion({
+    const result = await repository.writeAppGeneratedVersion({
       ...request,
       artifactRunId: id,
       imageTaskId: id,
@@ -1107,7 +1118,7 @@ it('publishes an image task without a prompt and recovers its result without adv
   const newest = branches[1]!.result
   // A late completion/retry of the older branch must not roll Files back.
   for (const branch of [...branches].reverse()) {
-    await value.repository.publishImageTaskVersion({
+    await repository.publishImageTaskVersion({
       ...recovery,
       taskId: branch.id,
       versionId: branch.result.versionId,
@@ -1191,7 +1202,7 @@ it('publishes an image task without a prompt and recovers its result without adv
   expect(sha256(await readFile(published.path))).toBe(published.checksum)
   await unlink(later.path)
   await expect(
-    value.repository.recoverImageTaskVersion({
+    repository.recoverImageTaskVersion({
       projectId: 'project-1',
       appSessionId: 'session-1',
       taskId: laterId,

@@ -1,6 +1,7 @@
 import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { sessionPackageRequestSchema } from '../../shared/session-package'
+import { assertProjectRecordPath, getProjectRecordRoot } from './data-location-identity'
 
 export const isImportedResearchSession = async (
   dataRoot: string,
@@ -8,8 +9,12 @@ export const isImportedResearchSession = async (
   sessionId: string
 ): Promise<boolean> => {
   sessionPackageRequestSchema.parse({ projectId, sessionId })
+  // Resolve an unavailable Project before checking whether the marker is missing.
+  const recordRoot = getProjectRecordRoot(dataRoot, projectId)
+  const marker = join(recordRoot ?? dataRoot, 'artifacts', projectId, sessionId, '.session-package')
+  if (recordRoot) assertProjectRecordPath(recordRoot, marker)
   try {
-    await lstat(join(dataRoot, 'artifacts', projectId, sessionId, '.session-package'))
+    await lstat(marker)
     return true
   } catch (error) {
     if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')

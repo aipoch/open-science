@@ -89,6 +89,8 @@ export type ArtifactWriteSourceScope = {
   // Current user grants, refreshed by the host for each save; absolute sources only.
   grantedImportRoots?: string[]
   workspaceCwd?: string
+  // Healthy current Project binding, refreshed by the host for each save.
+  projectFolderRoot?: string
   notebookDataDir?: string
   notebookSessionRoot?: string
 }
@@ -537,6 +539,7 @@ export type ProvenanceNotebookRun = {
     sourceKind: NotebookRunInputFile['sourceKind']
     inputFileVersionId: string
   }>
+  projectFolderInputs?: import('./project-folder-changes').ProjectFolderRunInput[]
   hasOmittedFiles?: true
   hasOmittedInputs?: true
   omittedOutputCount?: number

@@ -139,3 +139,37 @@ it('uses the capture checksum fallback and reports an unavailable sidecar', asyn
   )
   expect(loadRun).toHaveBeenCalledWith('legacy-run')
 })
+
+it('explains unfrozen Project inputs and opens the existing scoped upload flow', () => {
+  const scope = { projectId: 'project-a', sessionId: 'session-a' }
+  const requested = vi.fn()
+  window.addEventListener('open-science:open-input-upload', requested)
+  try {
+    const run: NotebookRunRecord = {
+      runId: 'project-run',
+      cellId: 'cell',
+      source: 'agent',
+      kernelKind: 'python',
+      script: '',
+      status: 'completed',
+      startedAt: 0,
+      outputs: [],
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      workingFiles: [],
+      projectFolderInputs: [{ relativePath: 'raw.csv', sizeBytes: 8, frozen: false }]
+    }
+    const { rerender } = render(<NotebookRunEvidence run={run} uploadScope={scope} />)
+    expect(screen.getByTestId('project-folder-input-evidence').textContent).toContain(
+      'Inputs from the project folder are not frozen'
+    )
+    fireEvent.click(screen.getByText('Add key inputs as uploads'))
+    expect(requested).toHaveBeenCalledOnce()
+    expect((requested.mock.calls[0][0] as CustomEvent).detail).toEqual(scope)
+    rerender(
+      <NotebookRunEvidence run={{ ...run, projectFolderInputs: undefined }} uploadScope={scope} />
+    )
+    expect(screen.queryByTestId('project-folder-input-evidence')).toBeNull()
+  } finally {
+    window.removeEventListener('open-science:open-input-upload', requested)
+  }
+})

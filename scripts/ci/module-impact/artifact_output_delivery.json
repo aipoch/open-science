@@ -1,0 +1,20 @@
+{
+  "ownerPaths": [
+    "src/main/artifacts/output-delivery.ts",
+    "src/main/artifacts/output-delivery.test.ts",
+    "src/main/artifacts/project-folder-publication.integration.test.ts"
+  ],
+  "interfacePaths": ["src/main/artifacts/output-delivery.ts"],
+  "testFiles": {
+    "owner": [
+      "src/main/artifacts/output-delivery.test.ts",
+      "src/main/artifacts/project-folder-publication.integration.test.ts"
+    ],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
+    "consumer": []
+  },
+  "consumerModules": [],
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions"],
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Project-folder output delivery publishes through durable storage and native platform operations; retain full CI for delivery and recovery consumers."
+}

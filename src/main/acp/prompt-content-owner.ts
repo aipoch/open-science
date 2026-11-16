@@ -250,6 +250,7 @@ class AcpPromptContentOwner {
       currentImages.push(await prepareModelImageData(Buffer.from(image.data, 'base64')))
     }
     let promptUploads: UploadedAttachment[] = []
+    const turnInputUploads: UploadedAttachment[] = []
     const resolvedReferences: FileReference[] = []
     let historyImageCount = 0
     const imageSources: Array<VisionEvidenceSource | undefined> = []
@@ -362,14 +363,17 @@ class AcpPromptContentOwner {
 
       const appendUploads = async (start: number, end: number): Promise<void> => {
         for (let index = start; index < end; index += 1) {
+          const isHistoryUpload = index < input.historyUploads.length
           const resolved = await this.createAttachmentContentBlocks(
             input,
             promptUploads[index],
-            index < input.historyUploads.length,
+            isHistoryUpload,
             fileTextBudget,
             snapshots
           )
-          promptUploads[index] = resolved.attachment
+          if (!resolved) continue
+          if (!isHistoryUpload || resolved.attachment.versionId)
+            turnInputUploads.push(resolved.attachment)
           for (const block of resolved.blocks) {
             const previousImageCount = imageSources.length
             appendBlock(
@@ -383,7 +387,7 @@ class AcpPromptContentOwner {
                 ? { kind: 'upload-version', uploadVersionId: resolved.attachment.versionId }
                 : undefined
             )
-            if (index < input.historyUploads.length) {
+            if (isHistoryUpload) {
               historyImageCount += imageSources.length - previousImageCount
             }
           }
@@ -424,9 +428,6 @@ class AcpPromptContentOwner {
     }
 
     const preparedContent = this.attachCodexSkillInputs(content, input.codexSkillInputs)
-    const turnInputUploads = promptUploads.filter(
-      (upload, index) => index >= input.historyUploads.length || upload.versionId
-    )
     const hasTurnInputs = turnInputUploads.length > 0 || resolvedReferences.length > 0
 
     return {
@@ -516,15 +517,21 @@ class AcpPromptContentOwner {
     isHistoryUpload: boolean,
     fileTextBudget: PromptFileTextBudget,
     snapshots: TurnResourceSnapshotStore
-  ): Promise<{ attachment: UploadedAttachment; blocks: ContentBlock[] }> {
+  ): Promise<{ attachment: UploadedAttachment; blocks: ContentBlock[] } | undefined> {
     if (!this.options.uploadRepository) throw new Error('Upload storage is not configured.')
 
     if (this.options.managedFileVersions) {
-      const lease = await this.options.managedFileVersions.openLatest({
-        source: 'upload',
+      const request = {
+        source: 'upload' as const,
         projectId: input.projectId,
         fileId: attachment.id
-      })
+      }
+      const lease = isHistoryUpload
+        ? await this.options.managedFileVersions.openLatest(request, {
+            replaySessionId: input.appSessionId
+          })
+        : await this.options.managedFileVersions.openLatest(request)
+      if (!lease) return undefined
 
       let prepared: { attachment: UploadedAttachment; blocks: ContentBlock[] }
       try {
@@ -691,6 +698,7 @@ class AcpPromptContentOwner {
           }
       const exactReference: FileReference =
         reference.source !== 'linked-folder' &&
+        reference.source !== 'project-folder' &&
         resolvedReference.sourceFileId &&
         resolvedReference.versionId
           ? {

@@ -501,17 +501,21 @@ const toRestoredSlice = (
       item.source === 'upload' ? upload?.managedFileId : hasArtifactSource ? artifactId : undefined
     const managedFileId = item.managedFileId ?? hydratedManagedFileId
     const mimeType = upload?.mimeType ?? item.mimeType
-    const currentFormat = getPreviewFormatForFile({ name: item.name, mimeType })
+    const source = item.source as PreviewFileSource | undefined
+    const currentFormat = getPreviewFormatForFile({ name: item.name, mimeType, source })
 
     return {
       id: item.id,
       sessionId: upload?.sessionId ?? item.sessionId,
       title: item.title,
       type: 'file' as const,
-      source: item.source as PreviewFileSource | undefined,
+      source,
       path: upload?.path ?? item.path,
       // Re-evaluate the format from current name/MIME metadata, falling back to the stored result.
-      format: currentFormat === 'unknown' ? (item.format as PreviewFileFormat) : currentFormat,
+      format:
+        currentFormat === 'unknown' && source !== 'project-folder'
+          ? (item.format as PreviewFileFormat)
+          : currentFormat,
       name: item.name,
       ...(mimeType ? { mimeType } : {}),
       ...(upload?.size !== undefined || item.size !== undefined

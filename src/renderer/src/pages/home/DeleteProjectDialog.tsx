@@ -1,4 +1,4 @@
-import { X } from 'lucide-react'
+import { FolderLock, X } from 'lucide-react'
 import * as AlertDialog from '@/components/ui/alert-dialog'
 import { useTranslation } from 'react-i18next'
 
@@ -107,6 +107,19 @@ const DeleteProjectDialog = ({
                   )}{' '}
               {t('Deleting this project will stop its running tasks and notebooks.')}
             </AlertDialog.Description>
+            {dialogProject?.rootPath ? (
+              <div className="mt-4 flex items-start gap-2 rounded-lg border border-border bg-muted/50 p-3 text-sm">
+                <FolderLock className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+                <div className="min-w-0">
+                  <p className="font-medium">
+                    {t('Your project folder and its files will not be deleted.')}
+                  </p>
+                  <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+                    {dialogProject.rootPath}
+                  </p>
+                </div>
+              </div>
+            ) : null}
             {error ? (
               <p className="mt-4 text-sm text-danger-000" role="alert">
                 {error}

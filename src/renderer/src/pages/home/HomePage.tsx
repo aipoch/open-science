@@ -31,6 +31,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { isComputeJobTrackingStopped } from '@aipoch/compute'
 
+import { isDesktopRenderer } from '@/lib/interface-scale'
 import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { cn } from '@/lib/utils'
@@ -238,6 +239,7 @@ const HomePage = ({
 
   const {
     openCreateDialog,
+    openCreateDialogForFolder,
     openEditDialog,
     dialogProps: projectFormDialogProps
   } = useProjectFormDialog({
@@ -659,7 +661,11 @@ const HomePage = ({
 
   return (
     <TooltipProvider>
-      <ProjectPackageDropZone canImport className="relative h-svh">
+      <ProjectPackageDropZone
+        canImport
+        onFolder={isDesktopRenderer() ? openCreateDialogForFolder : undefined}
+        className="relative h-svh"
+      >
         <main className="flex h-svh flex-col overflow-hidden bg-bg-10 text-text-000">
           {/* Keep only the title and toolbar fixed; status cards scroll with projects and cases. */}
           <div className="max-h-[50%] shrink-0 overflow-y-auto">

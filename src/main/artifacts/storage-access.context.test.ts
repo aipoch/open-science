@@ -75,3 +75,23 @@ it('confines external absolute imports to unchanged granted folders without broa
     await rm(temporary, { recursive: true, force: true })
   }
 })
+
+it('keeps app-owned Project records outside ordinary Artifact and Literature sources', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'artifact-project-source-')))
+  try {
+    const records = join(root, '.open-science')
+    await mkdir(records)
+    await writeFile(join(records, 'record.txt'), 'application records')
+    await writeFile(join(root, 'data.txt'), 'project input')
+    await symlink(records, join(root, 'alias'), process.platform === 'win32' ? 'junction' : 'dir')
+    for (const purpose of ['artifact', 'literature'] as const) {
+      const locate = (path: string): Promise<string> =>
+        resolveAllowedImportFilePath(path, [root], [root], purpose, [], root)
+      await expect(locate('data.txt')).resolves.toBe(join(root, 'data.txt'))
+      await expect(locate('.open-science/record.txt')).rejects.toThrow()
+      await expect(locate('alias/record.txt')).rejects.toThrow()
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

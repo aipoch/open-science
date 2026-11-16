@@ -89,6 +89,7 @@ import {
   starterHistorySessionSelector
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
+import { ProjectFolderRecovery } from './ProjectFolderRecovery'
 import { DISCUSSION_DRAFT_CONFLICT } from './workspace-session-actions'
 import { useWorkspaceSessionDiscussion } from './workspace-session-discussion'
 import { useConversationSubmissions } from './use-conversation-submissions'
@@ -1986,6 +1987,13 @@ const WorkspacePage = ({
                   key={JSON.stringify([scopedProjectId, panelIdentity.generation])}
                   submissions={conversationSubmissions}
                   view={{
+                    projectFolderRecovery: (
+                      <ProjectFolderRecovery
+                        projectId={scopedProjectId}
+                        sessionId={storedActiveSession?.id}
+                        rootPath={activeProject?.rootPath ?? undefined}
+                      />
+                    ),
                     activeSession,
                     sessionLoadError: activeSessionLoadError
                       ? t(activeSessionLoadError)

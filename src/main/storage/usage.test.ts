@@ -185,10 +185,25 @@ describe('computeStorageUsage', () => {
     expect(usage.totalBytes).toBe(100)
   })
 
+  it('accounts for retained Project file backups once in the existing execution evidence bucket', async () => {
+    await writeSized(join(dataRoot, 'execution-file-evidence', 'run.json'), 10)
+    await writeSized(join(dataRoot, 'notebook-file-evidence', 'legacy.json'), 5)
+    await writeSized(join(dataRoot, 'project-folder-history', 'changes', 'backup'), 20)
+    const usage = await computeStorageUsage(dataRoot)
+    expect(
+      usage.categories.find((category) => category.key === 'execution-file-evidence')?.bytes
+    ).toBe(35)
+    expect(usage.totalBytes).toBe(35)
+  })
+
   it('accounts for every relocatable data directory', () => {
-    expect(STORAGE_USAGE_CATEGORY_KEYS.filter((key) => key !== 'runtime').sort()).toEqual(
-      [...RELOCATABLE_DATA_DIRS].sort()
-    )
+    expect(
+      [
+        ...STORAGE_USAGE_CATEGORY_KEYS.filter((key) => key !== 'runtime'),
+        'project-folder-history',
+        'project-record-routes'
+      ].sort()
+    ).toEqual([...RELOCATABLE_DATA_DIRS].sort())
   })
 
   it('labels default-python/-r as python/r and the shared pkgs cache as conda', async () => {

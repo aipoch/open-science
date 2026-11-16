@@ -5,6 +5,7 @@ import {
   sessionPackageManifestSchema,
   sessionPackageReceiptSchema
 } from '../../shared/session-package'
+import { resolveStorageKey } from '../artifacts/provenance-storage'
 import type { ResolvedLiteratureAttachmentVersion } from '../literature/attachment-authority'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { ContentReadLease } from '../storage/content-repository'
@@ -35,12 +36,12 @@ export class PackageLiteratureReader {
     if (!row) return undefined
     const { projectId, sessionId } = row.uploadFile
     const base = `artifacts/${projectId}/${sessionId}`
-    const forkReceipt = await lstat(join(this.options.storageRoot, base, '.session-fork')).catch(
-      (error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT') return undefined
-        throw error
-      }
-    )
+    const forkReceipt = await lstat(
+      resolveStorageKey(this.options.storageRoot, `${base}/.session-fork`)
+    ).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined
+      throw error
+    })
     const directory = `${base}/${forkReceipt ? '.session-fork' : '.session-package'}`
     try {
       await assertPackageSourcePath(this.options.storageRoot, `${directory}/receipt.json`)
@@ -48,7 +49,7 @@ export class PackageLiteratureReader {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
       throw error
     }
-    const root = join(this.options.storageRoot, directory)
+    const root = resolveStorageKey(this.options.storageRoot, directory)
     const receipt = sessionPackageReceiptSchema.parse(
       await readPackageJson(join(root, 'receipt.json'))
     )

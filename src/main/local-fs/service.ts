@@ -43,7 +43,8 @@ export type GrantedLocalRootsStore = {
 export type PreflightGrantedLocalRoot = (
   path: string,
   access: GrantedLocalRootAccess,
-  requestedPath?: string
+  requestedPath?: string,
+  scope?: 'tree' | 'target'
 ) => Promise<void>
 
 type PolicyChangeShutdownResult = { reaped: boolean }

@@ -131,6 +131,38 @@ describe('ArchivedPanel', () => {
     expect(deleteSession).not.toHaveBeenCalled()
   })
 
+  it('keeps a conflicting project archived and exposes only a stable restore summary', async () => {
+    const archived = { ...project, rootPath: '/Research/shared-study', archivedAt: 2 }
+    const restore = vi.fn().mockRejectedValue({
+      code: 'project-folder-conflict',
+      message: 'Project: Cohort follow-up\nFolder: /Research/shared-study'
+    })
+    const navigate = vi.fn()
+    const originalRestore = useProjectStore.getState().updateProjectArchive
+    useProjectStore.setState({ projects: [archived], updateProjectArchive: restore })
+    try {
+      await act(async () =>
+        root.render(
+          <ArchivedPanel view={{ kind: 'project', projectId: project.id }} onNavigate={navigate} />
+        )
+      )
+      const button = [...container.querySelectorAll('button')].find(
+        (item) => item.textContent?.trim() === 'Restore project'
+      )!
+      await act(async () => button.click())
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+        'Project folder is already in use'
+      )
+      expect(container.querySelector('details')?.open).toBe(false)
+      expect(container.querySelector('details')?.textContent).toContain('Cohort follow-up')
+      expect(useProjectStore.getState().projects[0]).toEqual(archived)
+      expect(navigate).not.toHaveBeenCalled()
+      expect(button.disabled).toBe(false)
+    } finally {
+      useProjectStore.setState({ updateProjectArchive: originalRestore })
+    }
+  })
+
   it('restores an individually archived session from Settings', async () => {
     await act(async () =>
       root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)

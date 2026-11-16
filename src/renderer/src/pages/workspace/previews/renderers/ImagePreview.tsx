@@ -214,7 +214,7 @@ export const ImagePreviewRenderer = ({
   <ImageEditorBoundary
     item={item}
     presentation={imageEditPresentation}
-    readOnly={readOnly}
+    readOnly={readOnly || item.source === 'project-folder'}
     onPinSource={onPinImageSource}
     onVersionChange={onImageEditorVersionChange}
     onEditActionChange={onImageEditActionChange}
@@ -235,7 +235,10 @@ export const ImagePreviewRenderer = ({
         size={previewItem.size}
         mtimeMs={previewItem.mtimeMs}
         annotationItem={
-          previewItem.selectedVersionId === item.selectedVersionId ? previewItem : undefined
+          previewItem.source !== 'project-folder' &&
+          previewItem.selectedVersionId === item.selectedVersionId
+            ? previewItem
+            : undefined
         }
         activeAnnotations={
           previewItem.selectedVersionId === item.selectedVersionId ? activeAnnotations : []

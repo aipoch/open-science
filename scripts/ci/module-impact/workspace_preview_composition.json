@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/renderer/src/pages/workspace/ArtifactOutputDeliveryNotice.test.tsx",
+    "src/renderer/src/pages/workspace/ArtifactOutputDeliveryNotice.tsx",
     "src/renderer/src/pages/workspace/FilePreviewDialog.escape.test.tsx",
     "src/renderer/src/pages/workspace/FilePreviewDialog.focus.test.tsx",
     "src/renderer/src/pages/workspace/FilePreviewDialog.lifecycle.test.tsx",
@@ -28,6 +30,7 @@
   ],
   "testFiles": {
     "owner": [
+      "src/renderer/src/pages/workspace/ArtifactOutputDeliveryNotice.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.escape.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.focus.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.lifecycle.test.tsx",
@@ -158,5 +161,6 @@
   },
   "consumerModules": [],
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Artifact output delivery adds a preview recovery surface and retry contract beyond the reviewed source boundary; retain full CI validation until the expanded boundary is reviewed."
 }

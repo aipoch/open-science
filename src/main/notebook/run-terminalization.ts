@@ -45,6 +45,8 @@ type NotebookRunTerminalResult = {
   recovery?: NotebookRunRecord['recovery']
   workingFiles?: NotebookWorkingFile[]
   fileEvidence?: ExecutionFileEvidenceSummary
+  projectFolderChanges?: import('../../shared/project-folder-changes').ProjectFolderChange[]
+  projectFolderInputs?: import('../../shared/project-folder-changes').ProjectFolderRunInput[]
   confirmedReadPaths?: string[]
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
@@ -480,6 +482,12 @@ class NotebookRunTerminalizationOwner {
       outputs: limitedResult.outputs,
       workingFiles: limitedResult.workingFiles ?? [],
       fileEvidence: limitedResult.fileEvidence ?? unavailableFileEvidence(runningRun.runId),
+      ...(limitedResult.projectFolderInputs?.length
+        ? { projectFolderInputs: limitedResult.projectFolderInputs }
+        : {}),
+      ...(limitedResult.projectFolderChanges?.length
+        ? { projectFolderChanges: limitedResult.projectFolderChanges }
+        : {}),
       inputFiles: inputsWithConfirmedAccess(runningRun, limitedResult),
       ...(limitedResult.truncated ? { truncated: true } : {}),
       ...(limitedResult.exitCode !== undefined ? { exitCode: limitedResult.exitCode } : {}),

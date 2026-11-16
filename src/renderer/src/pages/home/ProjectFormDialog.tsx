@@ -1,3 +1,5 @@
+import type { ProjectFolderForm } from '@/lib/project-folder'
+import { ProjectFolderField } from './ProjectFolderField'
 import { DEFAULT_OPTIMIZATION_PROMPT } from '../../../../shared/prompt-optimization'
 import type { Project } from '../../../../shared/projects'
 import { ChevronDown, LoaderCircle, X } from 'lucide-react'
@@ -32,6 +34,7 @@ import {
 
 type ProjectFormDialogProps = {
   open: boolean
+  folder?: ProjectFolderForm
   title: string
   description: string
   submitLabel: string
@@ -62,6 +65,7 @@ type ProjectFormDialogProps = {
 // stored in the project DB.
 const ProjectFormDialog = ({
   open,
+  folder,
   title,
   description,
   submitLabel,
@@ -96,6 +100,8 @@ const ProjectFormDialog = ({
       document.activeElement instanceof HTMLElement ? document.activeElement : null
     onCancel()
   }
+  const dialogFolder = useRetainedDialogValue(open ? folder : undefined)
+  const isCreate = dialogFolder?.mode === 'create'
   const dialogTitle = useRetainedDialogValue(open ? title : undefined) ?? title
   const dialogDescription = useRetainedDialogValue(open ? description : undefined) ?? description
   const dialogSubmitLabel = useRetainedDialogValue(open ? submitLabel : undefined) ?? submitLabel
@@ -160,7 +166,9 @@ const ProjectFormDialog = ({
                   aria-required={true}
                   value={nameDraft}
                   onChange={(event) => onNameChange(event.target.value)}
-                  placeholder={t('e.g. Reproduction of published research')}
+                  placeholder={
+                    isCreate ? t('Project name') : t('e.g. Reproduction of published research')
+                  }
                   maxLength={PROJECT_NAME_MAX_LENGTH}
                   className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
                 />
@@ -170,9 +178,11 @@ const ProjectFormDialog = ({
                   {t('Description')}
                 </label>
                 <p id="project-form-description-help" className={dialogFormHelpClassName}>
-                  {t(
-                    "Shown in the project list for your reference — not included in the agent's prompt."
-                  )}
+                  {isCreate
+                    ? t('Shown in the project list for your reference.')
+                    : t(
+                        "Shown in the project list for your reference — not included in the agent's prompt."
+                      )}
                 </p>
                 <textarea
                   id="project-form-description"
@@ -181,11 +191,14 @@ const ProjectFormDialog = ({
                   value={descriptionDraft}
                   onChange={(event) => onDescriptionChange(event.target.value)}
                   placeholder={t('Describe what this project is about…')}
-                  rows={3}
+                  rows={isCreate ? 2 : 3}
                   maxLength={PROJECT_DESCRIPTION_MAX_LENGTH}
                   className={dialogFormTextareaClassName}
                 />
               </div>
+              {dialogFolder ? (
+                <ProjectFolderField folder={dialogFolder} disabled={isSubmitting} />
+              ) : null}
               {/* Keep advanced instructions mounted so collapsing preserves the draft. */}
               <details className="group/agent-options border-t border-border pt-3">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-sm py-1 text-sm font-medium text-foreground hover:text-foreground/80 focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
@@ -335,7 +348,16 @@ const ProjectFormDialog = ({
               </Button>
               <Button
                 type="submit"
-                disabled={nameDraft.trim().length === 0 || isSubmitting || Boolean(conflictProject)}
+                disabled={
+                  nameDraft.trim().length === 0 ||
+                  isSubmitting ||
+                  Boolean(conflictProject) ||
+                  Boolean(
+                    folder?.mode === 'create' &&
+                    folder.storage === 'folder' &&
+                    (folder.isBusy || !folder.validation?.ok)
+                  )
+                }
                 aria-busy={Boolean(isSubmitting)}
               >
                 <span key={String(isSubmitting)} className="button-feedback">

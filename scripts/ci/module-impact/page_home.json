@@ -29,13 +29,17 @@
     "src/renderer/src/pages/marketplace/SharingMarketplacePage.tsx",
     "src/renderer/src/pages/marketplace/UseCaseDetailsPage.tsx",
     "src/renderer/src/pages/marketplace/UseCaseGalleryList.tsx",
-    "src/renderer/src/pages/marketplace/SharingMarketplacePage.render.test.tsx"
+    "src/renderer/src/pages/marketplace/SharingMarketplacePage.render.test.tsx",
+    "src/renderer/src/pages/home/HomeProjectFolderDrop.behavior.test.tsx",
+    "src/renderer/src/pages/home/ProjectFolderField.tsx",
+    "src/renderer/src/pages/home/ProjectFolderForm.behavior.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/home/DeleteProjectDialog.tsx",
     "src/renderer/src/pages/home/HomePage.tsx",
     "src/renderer/src/pages/home/ProjectFormDialog.tsx",
-    "src/renderer/src/pages/marketplace/SharingMarketplacePage.tsx"
+    "src/renderer/src/pages/marketplace/SharingMarketplacePage.tsx",
+    "src/renderer/src/pages/home/ProjectFolderField.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -48,7 +52,9 @@
       "src/renderer/src/pages/home/use-home-gallery-navigation.test.tsx",
       "src/renderer/src/pages/home/OrgCaseCarousel.test.tsx",
       "src/renderer/src/pages/home/use-case-introduction-loader.test.ts",
-      "src/renderer/src/pages/marketplace/SharingMarketplacePage.render.test.tsx"
+      "src/renderer/src/pages/marketplace/SharingMarketplacePage.render.test.tsx",
+      "src/renderer/src/pages/home/HomeProjectFolderDrop.behavior.test.tsx",
+      "src/renderer/src/pages/home/ProjectFolderForm.behavior.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

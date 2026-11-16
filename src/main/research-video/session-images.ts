@@ -2,9 +2,16 @@ import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, extname, join, relative, sep } from 'node:path'
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
+import { errorChainHasCode } from '../managed-file-versions/version-file-operator'
 import { SAFE_SEGMENT_PATTERN } from '../artifacts/storage-layout'
 import { readVideoSourceFile } from '@aipoch/research-film'
+import { assertProjectRecordPath, getProjectRecordRoot } from '../storage/data-location-identity'
 import type { ResearchVideoSessionSource } from './session-source'
+
+export type ResolveFilmArtifactPath = (
+  projectId: string,
+  artifact: PersistedArtifact
+) => Promise<string>
 
 /** Validate branch-owned images; supplying a destination also stages their referenced Versions. */
 export async function stageResearchVideoSessionImages(
@@ -13,16 +20,30 @@ export async function stageResearchVideoSessionImages(
   dataRoot: string,
   destination: string | undefined,
   signal: AbortSignal,
-  checksums?: string[]
+  checksums?: string[],
+  resolveArtifactPath?: ResolveFilmArtifactPath
 ): Promise<ResearchVideoSessionSource> {
   if (!SAFE_SEGMENT_PATTERN.test(session.projectId)) throw new Error('Invalid research Project')
-  const root = join(dataRoot, 'artifacts', session.projectId)
+  const recordRoot = getProjectRecordRoot(dataRoot, session.projectId)
+  const root = join(recordRoot ?? dataRoot, 'artifacts', session.projectId)
+  const readArtifact = async (artifact: PersistedArtifact): Promise<Buffer> => {
+    const path = resolveArtifactPath
+      ? await resolveArtifactPath(session.projectId, artifact)
+      : artifact.path
+    if (recordRoot) assertProjectRecordPath(recordRoot, path)
+    return readVideoSourceFile(root, relative(root, path).split(sep).join('/'))
+  }
   const artifacts = new Map((session.artifacts ?? []).map((artifact) => [artifact.id, artifact]))
   const visible = new Map<string, PersistedArtifact>()
   const copied = new Map<string, string>()
   const result = structuredClone(source)
   let total = 0
   if (result.replay) {
+    const readReplayArtifact = (artifact: PersistedArtifact): Promise<Buffer | undefined> =>
+      readArtifact(artifact).catch((error: unknown) => {
+        if (errorChainHasCode(error, 'ENOENT')) return undefined
+        throw error
+      })
     for (const event of result.replay.events) {
       const artifact = event.artifactId ? artifacts.get(event.artifactId) : undefined
       if (
@@ -34,13 +55,7 @@ export async function stageResearchVideoSessionImages(
         continue
       if (!/\.(png|jpe?g|webp|svg)$/i.test(artifact.name)) {
         signal.throwIfAborted()
-        const bytes = await readVideoSourceFile(
-          root,
-          relative(root, artifact.path).split(sep).join('/')
-        ).catch((error: NodeJS.ErrnoException) => {
-          if (error.code !== 'ENOENT') throw error
-          return undefined
-        })
+        const bytes = await readReplayArtifact(artifact)
         if (!bytes) {
           result.replay.omissions.push(`File unavailable: ${artifact.name}`)
           continue
@@ -59,13 +74,7 @@ export async function stageResearchVideoSessionImages(
       let staged = copied.get(artifact.id)
       if (!staged) {
         signal.throwIfAborted()
-        const bytes = await readVideoSourceFile(
-          root,
-          relative(root, artifact.path).split(sep).join('/')
-        ).catch((error: NodeJS.ErrnoException) => {
-          if (error.code !== 'ENOENT') throw error
-          return undefined
-        })
+        const bytes = await readReplayArtifact(artifact)
         if (!bytes) {
           result.replay.omissions.push(`Image unavailable: ${artifact.name}`)
           continue
@@ -105,10 +114,7 @@ export async function stageResearchVideoSessionImages(
         throw new Error(`Research image is not an available managed Artifact: ${name}`)
       let staged = copied.get(artifact.id)
       if (!staged) {
-        const bytes = await readVideoSourceFile(
-          root,
-          relative(root, artifact.path).split(sep).join('/')
-        )
+        const bytes = await readArtifact(artifact)
         const checksum = createHash('sha256').update(bytes).digest('hex')
         checksums?.push(checksum)
         if (artifact.sha256 && artifact.sha256 !== checksum)

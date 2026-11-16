@@ -46,7 +46,7 @@ import type { SessionConversationCommand } from '../../../../shared/session-conv
 import { HistoricalTurnOutcome, type TurnOutcomeActions } from './TurnOutcomeNotice'
 import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useConversationSubmissions } from './use-conversation-submissions'
-import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
+import { FOCUS_COMPOSER_EVENT, requestInputUpload } from './composer-focus-events'
 import { subscribeAnnotationReveal } from './annotations/annotation-reveal'
 import { docFromText, emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
@@ -8073,6 +8073,33 @@ describe('ConversationPanel + menu', () => {
     const attachItem = container.querySelector('[data-testid="menu-attach-files"]')
     expect(attachItem).not.toBeNull()
     expect((attachItem as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('reuses the attachment picker only for an input request in the active Project and Session', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'input-session',
+          projectId: 'input-project',
+          title: 'Research',
+          cwd: '/managed',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      }
+    })
+    const picker = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    const open = vi.spyOn(picker, 'click').mockImplementation(() => undefined)
+    act(() => requestInputUpload({ projectId: 'other-project', sessionId: 'input-session' }))
+    expect(open).not.toHaveBeenCalled()
+    act(() => requestInputUpload({ projectId: 'input-project', sessionId: 'input-session' }))
+    expect(open).toHaveBeenCalledOnce()
+    const file = new File(['a,b\n1,2\n'], 'raw.csv', { type: 'text/csv' })
+    Object.defineProperty(picker, 'files', { configurable: true, value: [file] })
+    act(() => picker.dispatchEvent(new Event('change', { bubbles: true })))
+    expect(onStageAttachmentFiles).toHaveBeenCalledWith([file])
   })
 
   it('Request review calls onRequestReview when enabled', () => {

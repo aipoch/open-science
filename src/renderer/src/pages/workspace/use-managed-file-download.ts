@@ -14,7 +14,7 @@ type DownloadState = Readonly<{
 }>
 
 export type ManagedFileDownloadInput = Readonly<{
-  source: SaveManagedFileRequest['source']
+  source: SaveManagedFileRequest['source'] | undefined
   path: string
   projectId?: string
   fileId?: string
@@ -97,6 +97,7 @@ export const useManagedFileDownload = ({
   }, [])
 
   const execute = (requestedVersionId?: string | null): Promise<void> => {
+    if (!source) return Promise.resolve()
     const activeSave = activeSaveRef.current
     if (activeSave?.identity === identity) return activeSave.promise
 

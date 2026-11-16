@@ -79,6 +79,7 @@ import {
 import type * as PreviewResources from '../shared/preview-resources'
 import type * as PreviewState from '../shared/preview-state'
 import * as Projects from '../shared/projects'
+import { projectFolderFileCommandContracts } from '../shared/project-folder-files'
 import * as SessionPersistence from '../shared/session-persistence'
 import * as Uploads from '../shared/uploads'
 
@@ -464,6 +465,10 @@ const dataContentApplicationCommands = Object.freeze({
     'artifacts:resolve-version-descriptors',
     'resolveVersionDescriptors'
   ),
+  managedFileRetryOutputDelivery: managedFileCommand(
+    'managed-file-versions:retry-output-delivery',
+    'retryOutputDelivery'
+  ),
   managedFileInspect: managedFileCommand('managed-file-versions:inspect', 'inspect'),
   managedFileSaveTextEdit: managedFileCommand(
     'managed-file-versions:save-text-edit',
@@ -589,6 +594,36 @@ const dataContentApplicationCommands = Object.freeze({
     'projects:record-optimization-event',
     'recordOptimizationEvent',
     Projects.projectApplicationCommandContracts.recordOptimizationEvent
+  ),
+  projectListFolder: projectCommand(
+    'projects:list-folder',
+    'listFolder',
+    projectFolderFileCommandContracts.listFolder
+  ),
+  projectReadFolderPreview: projectCommand(
+    'projects:read-folder-preview',
+    'readFolderPreview',
+    projectFolderFileCommandContracts.readFolderPreview
+  ),
+  projectCheckFolder: projectCommand(
+    'projects:check-folder',
+    'checkFolder',
+    Projects.projectApplicationCommandContracts.checkFolder
+  ),
+  projectLocateFolder: projectCommand(
+    'projects:locate-folder',
+    'locateFolder',
+    Projects.projectApplicationCommandContracts.locateFolder
+  ),
+  projectInspectDroppedFolder: projectCommand(
+    'projects:inspect-dropped-folder',
+    'validateFolder',
+    Projects.projectApplicationCommandContracts.validateFolder
+  ),
+  projectValidateFolder: projectCommand(
+    'projects:validate-folder',
+    'validateFolder',
+    Projects.projectApplicationCommandContracts.validateFolder
   ),
   projectCreate: projectCommand(
     'projects:create',
@@ -862,6 +897,12 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.projectFilesSearchArtifacts
   ] as const),
   defineApplicationCommandGroup('projects', [
+    dataContentApplicationCommands.projectListFolder,
+    dataContentApplicationCommands.projectReadFolderPreview,
+    dataContentApplicationCommands.projectCheckFolder,
+    dataContentApplicationCommands.projectLocateFolder,
+    dataContentApplicationCommands.projectInspectDroppedFolder,
+    dataContentApplicationCommands.projectValidateFolder,
     dataContentApplicationCommands.projectOptimizePrompt,
     dataContentApplicationCommands.projectCancelPromptOptimization,
     dataContentApplicationCommands.projectRecordOptimizationEvent,
@@ -933,6 +974,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.uploadTransferStatus
   ] as const),
   defineApplicationCommandGroup('managed-file-versions', [
+    dataContentApplicationCommands.managedFileRetryOutputDelivery,
     dataContentApplicationCommands.managedFileInspect,
     dataContentApplicationCommands.managedFileSaveTextEdit,
     dataContentApplicationCommands.managedFileSaveBinaryEdit,
@@ -1046,6 +1088,21 @@ const publishLifecycle = <Channel extends keyof ApplicationEventMap>(
 
 // Production composition registers all bounded command groups atomically; this group must not be
 // exposed through a live transport in isolation.
+const assertLocalFolderCaller = (invocation: ApplicationInvocation<readonly unknown[]>): void => {
+  const caller = invocation.callerContext
+  if (
+    caller.surface !== 'electron' ||
+    caller.location !== 'local' ||
+    caller.principalKind !== 'human' ||
+    caller.actionOrigin !== 'human'
+  ) {
+    throw new ApplicationCommandError(
+      'command-unavailable',
+      'Project folders can only be selected on this computer.'
+    )
+  }
+}
+
 const registerDataContentApplicationCommands = (
   registrar: ApplicationCommandRegistrar,
   dependencies: DataContentApplicationCommandDependencies
@@ -1219,9 +1276,36 @@ const registerDataContentApplicationCommands = (
         dependencies.projects.cancelPromptOptimization(args[0]),
       'projects:record-optimization-event': ({ args }) =>
         dependencies.projects.recordOptimizationEvent(args[0]),
-      'projects:create': ({ args }) =>
+      'projects:list-folder': ({ args }) =>
+        dependencies.withDataRootWrite(() => dependencies.projects.listFolder(args[0])),
+      'projects:read-folder-preview': ({ args }) =>
+        dependencies.withDataRootWrite(() => dependencies.projects.readFolderPreview(args[0])),
+      'projects:check-folder': ({ args }) =>
+        dependencies.withDataRootWrite(() => dependencies.projects.checkFolder(args[0])),
+      'projects:locate-folder': (invocation) => {
+        assertLocalFolderCaller(invocation)
+        return dependencies.withDataRootWrite(async () => {
+          const project = await dependencies.projects.locateFolder(invocation.args[0])
+          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectUpdated, project)
+          return project
+        })
+      },
+      'projects:inspect-dropped-folder': (invocation) => {
+        assertLocalFolderCaller(invocation)
+        return dependencies.withDataRootWrite(() =>
+          dependencies.projects.validateFolder(invocation.args[0])
+        )
+      },
+      'projects:validate-folder': (invocation) => {
+        assertLocalFolderCaller(invocation)
+        return dependencies.withDataRootWrite(() =>
+          dependencies.projects.validateFolder(invocation.args[0])
+        )
+      },
+      'projects:create': (invocation) =>
         dependencies.withDataRootWrite(async () => {
-          const project = await dependencies.projects.create(args[0])
+          if (invocation.args[0].rootPath !== undefined) assertLocalFolderCaller(invocation)
+          const project = await dependencies.projects.create(invocation.args[0])
           publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectCreated, project)
           return project
         }),
@@ -1711,6 +1795,8 @@ const registerDataContentApplicationCommands = (
       'uploads:transfer-status': (invocation) => dependencies.uploads.transferStatus(invocation)
     })
     scope.registerGroup(dataContentApplicationCommandGroups[8], {
+      'managed-file-versions:retry-output-delivery': ({ args }) =>
+        dependencies.managedFileVersions.retryOutputDelivery(args[0]),
       'managed-file-versions:inspect': async (invocation) => {
         const [request] = invocation.args
         const result = await dependencies.managedFileVersions.inspect(request)

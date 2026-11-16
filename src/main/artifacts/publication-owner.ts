@@ -373,7 +373,28 @@ class ArtifactPublicationOwner {
     }
     await mkdir(messageDir, { recursive: true })
     for (const entry of entries) {
-      await rename(join(pendingDir, entry.name), join(messageDir, entry.name))
+      const sourcePath = join(pendingDir, entry.name)
+      const targetPath = join(messageDir, entry.name)
+      try {
+        await rename(sourcePath, targetPath)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
+        const temporaryPath = join(messageDir, `.${randomUUID()}.tmp`)
+        try {
+          await copyFileWithinBudget(
+            sourcePath,
+            temporaryPath,
+            LOCAL_RESOURCE_BUDGETS.artifactFileBytes
+          )
+          await this.storage.durability.syncFile(temporaryPath)
+          await rename(temporaryPath, targetPath)
+          await this.storage.durability.syncDirectory(messageDir)
+          await rm(sourcePath)
+          await this.storage.durability.syncDirectory(pendingDir)
+        } finally {
+          await rm(temporaryPath, { force: true })
+        }
+      }
       await this.storage.moveArtifactMetadata(pendingDir, messageDir, entry.name)
     }
     await this.storage.recoverMovedArtifactMetadata(pendingDir, messageDir)

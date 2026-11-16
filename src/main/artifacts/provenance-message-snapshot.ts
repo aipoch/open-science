@@ -1,3 +1,5 @@
+import { resolveStorageKey } from './provenance-storage'
+import { getProjectRecordRoots } from '../storage/data-location-identity'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -90,22 +92,6 @@ const readOptionalText = async (path: string): Promise<string | undefined> =>
     if (isMissingPathError(error)) return undefined
     throw error
   })
-const resolveStorageKey = (root: string, key: string): string => {
-  if (!key || isAbsolute(key) || key.includes('\\')) {
-    throw new Error('Invalid Provenance Message storage key.')
-  }
-  const segments = key.split('/')
-  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
-    throw new Error('Invalid Provenance Message storage key.')
-  }
-  const candidate = resolve(root, ...segments)
-  const fromRoot = relative(resolve(root), candidate)
-  if (!fromRoot || fromRoot === '..' || fromRoot.startsWith(`..${sep}`)) {
-    throw new Error('Invalid Provenance Message storage key.')
-  }
-  return candidate
-}
-
 const projectParts = (node: PersistedMessageNode): ProvenanceMessagePart[] | undefined => {
   const parts = node.parts?.flatMap((part): ProvenanceMessagePart[] => {
     if (part.type === 'text') return [{ type: 'text', text: part.text }]
@@ -179,10 +165,18 @@ class ProvenanceMessageSnapshotRepository {
   }
 
   private async syncDirectoryTrees(leaves: string[]): Promise<void> {
-    const root = resolve(this.options.storageRoot)
+    const roots = [
+      this.options.storageRoot,
+      ...getProjectRecordRoots(this.options.storageRoot)
+    ].map((root) => resolve(root))
     const resolvedLeaves = leaves.map((leaf) => resolve(leaf))
     const ancestors = new Set<string>()
     for (const leaf of resolvedLeaves) {
+      const root = roots.find((root) => {
+        const path = relative(root, leaf)
+        return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path)
+      })
+      if (!root) throw new Error('Artifact Message snapshot directory is outside the storage root.')
       const fromRoot = relative(root, leaf)
       if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`)) {
         throw new Error('Artifact Message snapshot directory is outside the storage root.')
@@ -201,7 +195,7 @@ class ProvenanceMessageSnapshotRepository {
     // Publish destination entries before source deletions, then persist newly created ancestors
     // from deepest to shallowest so every child directory is reachable after a crash.
     for (const leaf of resolvedLeaves) await syncExisting(leaf)
-    const depth = (path: string): number => relative(root, path).split(sep).filter(Boolean).length
+    const depth = (path: string): number => path.split(sep).filter(Boolean).length
     for (const directory of [...ancestors].sort((left, right) => depth(right) - depth(left))) {
       await syncExisting(directory)
     }
@@ -1142,7 +1136,7 @@ class ProvenanceMessageSnapshotRepository {
       'messages',
       `${snapshotId}.json`
     )
-    const finalPath = join(this.options.storageRoot, ...finalStorageKey.split('/'))
+    const finalPath = resolveStorageKey(this.options.storageRoot, finalStorageKey)
     await mkdir(dirname(stagingPath), { recursive: true })
     await mkdir(dirname(finalPath), { recursive: true })
     await writeFile(stagingPath, serialized, 'utf8')

@@ -5,6 +5,14 @@ import { readResearchFilmCard } from '../research-video/stored-presentation'
 import { ReviewRepository } from '../reviewer/repository'
 import { ComputeJobRepository } from '../compute/job-repository'
 import type { ReplayRecords } from '@aipoch/research-film'
+import { NotebookRunRepository } from '../notebook/repository'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import {
+  portableProjectSession,
+  portableProjectNotebook,
+  projectFolderInputOmissions
+} from './project-folder-portability'
+import { indexPortableEvidence } from '../artifacts/execution-evidence-log'
 import {
   captureResearchFilms,
   appendResearchFilms,
@@ -87,7 +95,7 @@ import {
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-workspace'
 import { sha256 } from '../artifacts/provenance-canonical'
-import { resolveStorageKey } from '../artifacts/provenance-storage'
+import { provenanceStorageRoot, resolveStorageKey } from '../artifacts/provenance-storage'
 import { copySessionBookmarks, readSessionBookmarkTargets } from '../bookmarks/repository'
 import {
   copyFileWithinBudget,
@@ -253,6 +261,8 @@ type PackageOptions = {
       activity: WebPackageActivity
     ) => Promise<WebSnapshotInput | undefined>
   }
+  getProjectRootPath?: (projectId: string) => Promise<string | undefined>
+  assertProjectFolderHealthy?: (projectId: string) => Promise<string | undefined>
   literatureSource?: PackageLiteratureSource
   storageRoot: string
   configRoot?: string
@@ -742,13 +752,9 @@ export class SessionPackageService {
       origin = await this.readOrigin({ projectId: session.projectId, sessionId: session.id })
       receipt = sessionPackageReceiptSchema.parse(
         await readPackageJson(
-          join(
+          resolveStorageKey(
             this.options.storageRoot,
-            'artifacts',
-            session.projectId,
-            session.id,
-            session.forkOrigin ? '.session-fork' : '.session-package',
-            'receipt.json'
+            `artifacts/${session.projectId}/${session.id}/${session.forkOrigin ? '.session-fork' : '.session-package'}/receipt.json`
           )
         )
       )
@@ -904,7 +910,7 @@ export class SessionPackageService {
     diagnostic.phase('wait-for-evidence')
     try {
       const result = await withWorkingFileEvidenceRead(
-        this.options.storageRoot,
+        new NotebookRunRepository(this.options.storageRoot).projectStorageRoot(request.projectId),
         request.projectId,
         () => withImageTaskSnapshot(() => this.exportSnapshot(request, path, options, diagnostic))
       )
@@ -990,13 +996,9 @@ export class SessionPackageService {
         throw new Error('The Session is still active.')
       // Forward the retained source package, never relabel locally derived hashes as original.
       const origin = filmOrigin!
-      const source = join(
+      const source = resolveStorageKey(
         this.options.storageRoot,
-        'artifacts',
-        request.projectId,
-        request.sessionId,
-        '.session-package',
-        'source'
+        `artifacts/${request.projectId}/${request.sessionId}/.session-package/source`
       )
       const manifest = await validatePackageDirectory(
         source,
@@ -1011,7 +1013,8 @@ export class SessionPackageService {
         await assertShareable(manifest, this.signal, 'manifest.json')
       const sourceSessionEnvelope = await readPackageJson(join(source, 'session.json'))
       const sourceSession = await readSession(source)
-      let forwardedSession = withoutPrivateAuthority(
+      const boundProjectFolder = await this.options.getProjectRootPath?.(request.projectId)
+      const rawForwardedSession = withoutPrivateAuthority(
         options.consumeSnapshot
           ? (mapPackageReferences(
               encodeSessionDataPaths(session, this.options.storageRoot),
@@ -1021,6 +1024,9 @@ export class SessionPackageService {
             ) as PersistedChatSession)
           : sourceSession
       )
+      let forwardedSession = boundProjectFolder
+        ? portableProjectSession(rawForwardedSession, this.options.storageRoot)
+        : rawForwardedSession
       const sourceRecords = parseNativeRecords(await readPackageJson(join(source, 'records.json')))
       const forwardedWeb = await this.prepareWebProjection(
         forwardedSession,
@@ -1034,6 +1040,7 @@ export class SessionPackageService {
       // Inspect the raw envelope so malformed legacy Side Chat data dropped by the Session
       // sanitizer cannot bypass the rewrite and be copied into the forwarded package.
       const forwardedSessionJson =
+        boundProjectFolder ||
         options.consumeSnapshot ||
         forwardedWeb ||
         requiresPrivateAuthorityRemoval(sourceSessionEnvelope)
@@ -1062,6 +1069,29 @@ export class SessionPackageService {
               (await readPackageJson(join(source, entry.path))) as NotebookRunDocument
           )
       )
+      const forwardedNotebookContents = new Map<string, string>()
+      const forwardedNotebookEntries = new Map<
+        string,
+        { path: string; sizeBytes: number; checksum: string }
+      >()
+      if (boundProjectFolder) {
+        for (const entry of manifest.inventory) {
+          if (!entry.storageKey || !notebookDocumentIdentity(entry.storageKey)) continue
+          const original = (await readPackageJson(join(source, entry.path))) as NotebookRunDocument
+          const document = portableProjectNotebook(original, this.options.storageRoot)
+          if (!options.consumeSnapshot && !options.allowSensitiveContent)
+            await assertShareable(document, this.signal, entry.storageKey)
+          const contents = JSON.stringify(document)
+          // Do not overwrite a deduplicated source object that may also be a user file.
+          const path = `objects/${sha256('portable-project-metadata:' + entry.storageKey)}`
+          forwardedNotebookContents.set(path, contents)
+          forwardedNotebookEntries.set(entry.storageKey, {
+            path,
+            sizeBytes: Buffer.byteLength(contents),
+            checksum: sha256(contents)
+          })
+        }
+      }
       const inheritedExclusions = packageReproducibilityExclusions(records)
       diagnostic.phase('select-files')
       const selectable = selectablePackageFiles(records, notebooks).filter(
@@ -1153,21 +1183,32 @@ export class SessionPackageService {
               (!entry.storageKey || !excluded.has(entry.storageKey))
           )
           .map((entry) =>
-            entry.path === 'records.json'
-              ? {
-                  ...entry,
-                  sizeBytes: Buffer.byteLength(forwardedRecordsJson),
-                  checksum: sha256(forwardedRecordsJson)
-                }
-              : entry.path === 'session.json' && forwardedSessionJson
+            entry.storageKey && forwardedNotebookEntries.has(entry.storageKey)
+              ? { ...entry, ...forwardedNotebookEntries.get(entry.storageKey)! }
+              : entry.path === 'records.json'
                 ? {
                     ...entry,
-                    sizeBytes: Buffer.byteLength(forwardedSessionJson),
-                    checksum: sha256(forwardedSessionJson)
+                    sizeBytes: Buffer.byteLength(forwardedRecordsJson),
+                    checksum: sha256(forwardedRecordsJson)
                   }
-                : entry
+                : entry.path === 'session.json' && forwardedSessionJson
+                  ? {
+                      ...entry,
+                      sizeBytes: Buffer.byteLength(forwardedSessionJson),
+                      checksum: sha256(forwardedSessionJson)
+                    }
+                  : entry
           ),
-        excludedFiles: [...manifest.excludedFiles, ...additional]
+        excludedFiles: [...manifest.excludedFiles, ...additional],
+        omissions: boundProjectFolder
+          ? [
+              ...new Map(
+                [...manifest.omissions, ...projectFolderInputOmissions(notebooks)].map(
+                  (omission) => [JSON.stringify(omission), omission]
+                )
+              ).values()
+            ]
+          : manifest.omissions
       }
       assertNoExcludedContentCopies(records, forwarded.excludedFiles, forwarded.inventory)
       // Fork transfers this snapshot into its publication journal with rename. Keep both
@@ -1190,6 +1231,11 @@ export class SessionPackageService {
             this.signal.throwIfAborted()
             if (copiedPaths.has(entry.path)) continue
             copiedPaths.add(entry.path)
+            const notebookContents = forwardedNotebookContents.get(entry.path)
+            if (notebookContents !== undefined) {
+              await writeFile(join(staging, entry.path), notebookContents)
+              continue
+            }
             if (entry.path === 'records.json') {
               await writeFile(join(staging, entry.path), forwardedRecordsJson)
               continue
@@ -1270,7 +1316,9 @@ export class SessionPackageService {
     const client = await this.options.getClient()
     const project = await client.project.findUniqueOrThrow({ where: { id: request.projectId } })
     const readNotebookKeys = async (): Promise<string[]> => {
-      const keys = await notebookStorageKeys(this.options.storageRoot, request)
+      const keys = await notebookStorageKeys(this.options.storageRoot, request, {
+        excludeDataProjection: Boolean(project.rootPath)
+      })
       // Published forks own this recovery marker. It is not Notebook evidence and must
       // never replace the fresh destination's marker on refork or export/import.
       const ownerKey = `notebooks/${request.projectId}/${request.sessionId}/.session-package-owner`
@@ -1300,6 +1348,7 @@ export class SessionPackageService {
       const document = notebooks[notebookIndex++]
       const stored = await readPackageJson(resolveStorageKey(this.options.storageRoot, key))
       if (
+        project.rootPath ||
         (stored as { version?: number }).version === 2 ||
         (await pendingDirectoryIdentity(resolveStorageKey(this.options.storageRoot, key)))
       )
@@ -1396,10 +1445,16 @@ export class SessionPackageService {
       notebooks,
       this.signal
     )
-    const sharedSession = encodeSessionDataPaths(
-      withoutPrivateAuthority(webProjection ? projectWebSessionCopies(webProjection) : session),
-      this.options.storageRoot
+    const sanitizedSession = withoutPrivateAuthority(
+      webProjection ? projectWebSessionCopies(webProjection) : session
     )
+    const sharedSession = project.rootPath
+      ? portableProjectSession(sanitizedSession, this.options.storageRoot)
+      : encodeSessionDataPaths(sanitizedSession, this.options.storageRoot)
+    const portableNotebook = (document: NotebookRunDocument): NotebookRunDocument =>
+      project.rootPath
+        ? portableProjectNotebook(document, this.options.storageRoot)
+        : encodeRunDocumentDataPaths(document, this.options.storageRoot)
     const optionalKeys = new Set(
       [...selectable, ...inheritedExclusions].map((file) => file.storageKey)
     )
@@ -1427,12 +1482,15 @@ export class SessionPackageService {
       ...packageReproducibilityKeys(records)
     ])) {
       if (optionalKeys.has(key)) continue
+      assertPortablePackageStorageKey(key)
       this.signal.throwIfAborted()
       await assertPackageSourcePath(this.options.storageRoot, sourceKey(key))
       const portableNotebook = portableNotebooks.get(key)
       if (portableNotebook) {
         const contents = JSON.stringify(
-          encodeRunDocumentDataPaths(portableNotebook, this.options.storageRoot)
+          project.rootPath
+            ? portableProjectNotebook(portableNotebook, this.options.storageRoot)
+            : encodeRunDocumentDataPaths(portableNotebook, this.options.storageRoot)
         )
         retainedFiles.push({
           storageKey: key,
@@ -1534,9 +1592,7 @@ export class SessionPackageService {
         for (const [key, document] of portableNotebooks) {
           notebookStaging ??= await mkdtemp(join(tmpdir(), 'open-science-notebook-export-'))
           const snapshot = join(notebookStaging, `${notebookSources.size}.json`)
-          const contents = JSON.stringify(
-            encodeRunDocumentDataPaths(document, this.options.storageRoot)
-          )
+          const contents = JSON.stringify(portableNotebook(document))
           const bytes = Buffer.byteLength(contents)
           if (bytes > PACKAGE_MAX_FILE_BYTES)
             throw new Error('Invalid or oversized package source file.')
@@ -1547,8 +1603,13 @@ export class SessionPackageService {
         const sourcePath = (key: string): string =>
           notebookSources.get(key) ?? resolveStorageKey(this.options.storageRoot, sourceKey(key))
         diagnostic.phase('copy-content')
-        if (!options.consumeSnapshot && !options.allowSensitiveContent)
+        if (!options.consumeSnapshot && !options.allowSensitiveContent) {
           await assertShareable(publicRecords, this.signal, 'records.json')
+          if (publicRecords.logEvidence) {
+            for (const [key, record] of indexPortableEvidence(publicRecords.logEvidence))
+              await assertShareable(JSON.parse(record.bytes.toString()), this.signal, key)
+          }
+        }
         const totalBytes = metadataBytes
         const storageKeys = [
           ...new Set([
@@ -1746,6 +1807,7 @@ export class SessionPackageService {
           inventory,
           excludedFiles,
           omissions: [
+            ...(project.rootPath ? projectFolderInputOmissions(notebooks) : []),
             ...(records.reproducibility?.versions.some((version) =>
               version.environmentLocks.some((lock) => lock.serialized === undefined)
             )
@@ -2103,20 +2165,24 @@ export class SessionPackageService {
         if (!lease.path) claim(key)
         return { path: key, operationId, previous }
       }
-      return await withWorkingFileEvidenceRead(this.options.storageRoot, projectId, () =>
-        this.importSnapshot(
-          path,
-          onProgress,
-          confirm,
-          target,
-          {
-            operationId,
-            projectId,
-            sessionId: previous?.sessionId ?? (forkSource ? randomUUID() : 'import-' + randomUUID())
-          },
-          allocate,
-          forkSource
-        )
+      return await withWorkingFileEvidenceRead(
+        new NotebookRunRepository(this.options.storageRoot).projectStorageRoot(projectId),
+        projectId,
+        () =>
+          this.importSnapshot(
+            path,
+            onProgress,
+            confirm,
+            target,
+            {
+              operationId,
+              projectId,
+              sessionId:
+                previous?.sessionId ?? (forkSource ? randomUUID() : 'import-' + randomUUID())
+            },
+            allocate,
+            forkSource
+          )
       )
     } finally {
       if (lease.path) activeLogImports.delete(lease.path)
@@ -2536,7 +2602,7 @@ export class SessionPackageService {
       await defaultFileDurability.syncDirectory(join(this.configRoot, 'session-package-imports'))
       for (const entry of journal.directories) {
         this.signal.throwIfAborted()
-        const root = this.options.storageRoot
+        const root = provenanceStorageRoot(this.options.storageRoot, `${entry.scope}/${projectId}`)
         const parent = join(root, entry.scope, projectId)
         if (entry.scope === 'execution-file-evidence')
           await ensureWorkingFileEvidenceProject(
@@ -2558,10 +2624,31 @@ export class SessionPackageService {
         await defaultFileDurability.syncDirectory(directory)
         await defaultFileDurability.syncDirectory(parent)
         const staged = join(destinationRoot, entry.scope, projectId, entry.sessionId)
-        for (const child of await readdir(staged)) {
-          if (child === '.session-package-owner')
-            throw new Error('Session package contains a reserved ownership filename.')
-          await rename(join(staged, child), join(directory, child))
+        if (root !== this.options.storageRoot) {
+          if (entry.scope === 'notebooks') {
+            const managedDirectory = join(
+              this.options.storageRoot,
+              entry.scope,
+              projectId,
+              entry.sessionId
+            )
+            await mkdir(managedDirectory, { recursive: true })
+            await writeFile(join(managedDirectory, '.session-package-owner'), operationId, {
+              flag: 'wx',
+              mode: 0o600
+            })
+          }
+          await this.publishRoutedTree(staged, `${entry.scope}/${projectId}/${entry.sessionId}`)
+          if (entry.scope === 'notebooks')
+            await this.syncTree(
+              join(this.options.storageRoot, entry.scope, projectId, entry.sessionId)
+            )
+        } else {
+          for (const child of await readdir(staged)) {
+            if (child === '.session-package-owner')
+              throw new Error('Session package contains a reserved ownership filename.')
+            await rename(join(staged, child), join(directory, child))
+          }
         }
         await this.syncTree(directory)
         await defaultFileDurability.syncDirectory(join(root, entry.scope))
@@ -2577,18 +2664,21 @@ export class SessionPackageService {
       ) {
         await updateImportedEvidencePool(
           'publish-imported-pool',
-          this.options.storageRoot,
+          new NotebookRunRepository(this.options.storageRoot).projectStorageRoot(projectId),
           projectId,
           stagedPool,
-          this.signal
+          this.signal,
+          this.options.storageRoot
         )
       }
       const client = await this.options.getClient()
       const publishRecords = prepareNativePublication(native.records)
       this.signal.throwIfAborted()
       published = undefined
+      const checkedTargetRoot = target.projectId ? await this.assertImportProject(projectId) : null
       await client.$transaction(async (transaction) => {
-        if (target.projectId) await this.assertImportProject(projectId, transaction)
+        if (target.projectId)
+          await this.assertImportProject(projectId, transaction, checkedTargetRoot)
         else
           await transaction.project.create({
             data: {
@@ -2741,7 +2831,9 @@ export class SessionPackageService {
         if (identity) {
           const journal = identity
           await withWorkingFileEvidenceRead(
-            this.options.storageRoot,
+            new NotebookRunRepository(this.options.storageRoot).projectStorageRoot(
+              journal.projectId
+            ),
             journal.projectId,
             async () => {
               const client = await this.options.getClient()
@@ -2860,8 +2952,13 @@ export class SessionPackageService {
         (film.mode ?? 'research-explanation') === (request.mode ?? 'research-explanation')
     )
     if (!film) return undefined
+    const playerPath = resolveStorageKey(this.options.storageRoot, film.playerStorageKey)
+    const sourcePath = resolveStorageKey(this.options.storageRoot, film.sourceStorageKey)
     if (!options.includeUnavailable) {
-      for (const key of [film.playerStorageKey, film.sourceStorageKey]) {
+      for (const [key, path] of [
+        [film.playerStorageKey, playerPath],
+        [film.sourceStorageKey, sourcePath]
+      ]) {
         const exists = await assertPackageSourcePath(this.options.storageRoot, key).then(
           () => true,
           (error: NodeJS.ErrnoException) => {
@@ -2870,18 +2967,16 @@ export class SessionPackageService {
           }
         )
         if (!exists) return undefined
-        if (!(await lstat(join(this.options.storageRoot, key))).isFile())
-          throw new Error('Research presentation is unavailable.')
+        if (!(await lstat(path)).isFile()) throw new Error('Research presentation is unavailable.')
       }
     }
-    const playerPath = join(this.options.storageRoot, film.playerStorageKey)
     return {
       ...(!options.includeUnavailable && (await readResearchFilmCard(playerPath))),
       id: film.id,
       title: film.title,
       duration: film.duration,
       playerPath,
-      sourcePath: join(this.options.storageRoot, film.sourceStorageKey)
+      sourcePath
     }
   }
 
@@ -2949,7 +3044,33 @@ export class SessionPackageService {
     }
   }
 
-  async readOrigin(request: SessionPackageRequest): Promise<{
+  async isForkContentExcluded(
+    request: SessionPackageRequest,
+    storageKey: string
+  ): Promise<boolean> {
+    const scope = sessionPackageRequestSchema.parse(request)
+    const loaded = await loadSessionMutationAuthority(
+      new SessionRepository(this.configRoot),
+      scope.projectId,
+      scope.sessionId
+    )
+    const forkOrigin = loaded.status === 'found' ? loaded.session.forkOrigin : undefined
+    if (!forkOrigin?.excludedFiles?.length) return false
+
+    const origin = await this.readOrigin(scope, forkOrigin)
+    if (origin.files.some((file) => file.localStorageKey === storageKey)) return false
+    return origin.sourceManifest.excludedFiles.some(
+      (file) => remapStorageKey(file.storageKey, origin.identities) === storageKey
+    )
+  }
+
+  async readOrigin(
+    request: SessionPackageRequest,
+    expectedFork?: Pick<
+      NonNullable<PersistedChatSession['forkOrigin']>,
+      'importId' | 'manifestChecksum'
+    >
+  ): Promise<{
     nativeLogOrigin?: true
     sourceManifest: SessionPackageManifest
     identities: Record<string, string>
@@ -2963,21 +3084,40 @@ export class SessionPackageService {
     logSessionIds: string[]
   }> {
     const safe = sessionPackageRequestSchema.parse(request)
-    const root = join(this.options.storageRoot, 'artifacts', safe.projectId, safe.sessionId)
+    const rootKey = `artifacts/${safe.projectId}/${safe.sessionId}`
+    const root = resolveStorageKey(this.options.storageRoot, rootKey)
     const forkReceipt = await lstat(join(root, '.session-fork')).catch(
       (error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT') return undefined
         throw error
       }
     )
-    const directory = join(root, forkReceipt ? '.session-fork' : '.session-package')
+    const originFolder = forkReceipt ? '.session-fork' : '.session-package'
+    if (expectedFork) {
+      if (!forkReceipt?.isDirectory()) throw new Error('Fork receipt directory is missing.')
+      await assertPackageSourcePath(
+        this.options.storageRoot,
+        `${rootKey}/${originFolder}/receipt.json`
+      )
+    }
+    const directory = join(root, originFolder)
     const receipt = sessionPackageReceiptSchema.parse(
       await readPackageJson(join(directory, 'receipt.json'))
     )
     const metadataDirectory = receipt.nativeLogOrigin ? 'origin-metadata' : 'source'
+    if (expectedFork) {
+      const metadataKey = `${rootKey}/${originFolder}/${metadataDirectory}`
+      await Promise.all([
+        assertPackageSourcePath(this.options.storageRoot, `${metadataKey}/manifest.json`),
+        assertPackageSourcePath(this.options.storageRoot, `${metadataKey}/records.json`)
+      ])
+    }
     if (
       receipt.projectId !== safe.projectId ||
       receipt.sessionId !== safe.sessionId ||
+      (expectedFork &&
+        (receipt.importId !== expectedFork.importId ||
+          receipt.manifestChecksum !== expectedFork.manifestChecksum)) ||
       receipt.manifestChecksum !==
         (await fileChecksum(join(directory, metadataDirectory, 'manifest.json')))
     )
@@ -3022,13 +3162,34 @@ export class SessionPackageService {
 
   private async assertImportProject(
     projectId: string,
-    client?: import('@prisma/client').Prisma.TransactionClient | PrismaClient
-  ): Promise<void> {
+    client?: import('@prisma/client').Prisma.TransactionClient | PrismaClient,
+    checkedRootPath?: string | null
+  ): Promise<string | null> {
     const database = client ?? (await this.options.getClient())
     const project = await database.project.findUnique({ where: { id: projectId } })
     const deleting = await database.projectDeletionIntent.findUnique({ where: { projectId } })
     if (!project || project.deletedAt || project.archivedAt || deleting)
       throw new Error('The import destination project is no longer available.')
+    if (client) {
+      if (project.rootPath !== checkedRootPath)
+        throw new ApplicationCommandError(
+          'project-folder-unavailable',
+          'The import destination project folder changed. Retry the import.'
+        )
+    } else if (project.rootPath) {
+      if (!this.options.assertProjectFolderHealthy)
+        throw new ApplicationCommandError(
+          'project-folder-unavailable',
+          'Project folder access is unavailable for this import.'
+        )
+      const validated = await this.options.assertProjectFolderHealthy(projectId)
+      if (validated !== project.rootPath)
+        throw new ApplicationCommandError(
+          'project-folder-unavailable',
+          'The import destination project folder changed. Retry the import.'
+        )
+    }
+    return project.rootPath
   }
 
   private async ownsDirectory(directory: string, operation: string): Promise<boolean> {
@@ -3047,36 +3208,70 @@ export class SessionPackageService {
   }
 
   private async removeUnpublished(journal: ImportJournal, operation: string): Promise<void> {
-    return withWorkingFileEvidenceRead(this.options.storageRoot, journal.projectId, async () => {
-      for (const entry of journal.directories) {
-        const parent = join(this.options.storageRoot, entry.scope, journal.projectId)
-        const directory = join(parent, entry.sessionId)
-        if (!(await this.ownsDirectory(directory, operation))) continue
-        await assertPackageSourcePath(
-          this.options.storageRoot,
-          `${entry.scope}/${journal.projectId}/${entry.sessionId}`
-        )
-        await rm(directory, { recursive: true, force: true })
-        await defaultFileDurability.syncDirectory(parent)
-      }
-      const root = this.options.storageRoot
-      const stage = join(root, 'session-package-imports', operation)
-      const pool = join(stage, 'destination', 'execution-file-evidence', journal.projectId, 'blobs')
-      if (await this.ownsDirectory(stage, operation)) {
-        const receipt = await lstat(join(pool, '.import-pool-receipt.json')).catch(
-          (error: NodeJS.ErrnoException) => {
-            if (error.code !== 'ENOENT') throw error
+    return withWorkingFileEvidenceRead(
+      new NotebookRunRepository(this.options.storageRoot).projectStorageRoot(journal.projectId),
+      journal.projectId,
+      async () => {
+        for (const entry of journal.directories) {
+          const parent = resolveStorageKey(
+            this.options.storageRoot,
+            `${entry.scope}/${journal.projectId}`
+          )
+          const directory = join(parent, entry.sessionId)
+          if (!(await this.ownsDirectory(directory, operation))) continue
+          await assertPackageSourcePath(
+            this.options.storageRoot,
+            `${entry.scope}/${journal.projectId}/${entry.sessionId}`
+          )
+          await rm(directory, { recursive: true, force: true })
+          if (entry.scope === 'notebooks') {
+            const managed = join(
+              this.options.storageRoot,
+              entry.scope,
+              journal.projectId,
+              entry.sessionId
+            )
+            if (managed !== directory && (await this.ownsDirectory(managed, operation)))
+              await rm(managed, { recursive: true, force: true })
           }
+          await defaultFileDurability.syncDirectory(parent)
+        }
+        const root = this.options.storageRoot
+        const stage = join(root, 'session-package-imports', operation)
+        const pool = join(
+          stage,
+          'destination',
+          'execution-file-evidence',
+          journal.projectId,
+          'blobs'
         )
-        if (receipt)
-          await updateImportedEvidencePool('rollback-imported-pool', root, journal.projectId, pool)
-        if (
-          journal.retryPlanName &&
-          journal.directories.some((entry) => entry.scope === 'execution-file-evidence')
-        )
-          await releaseImportedEvidenceProject(root, journal.projectId, operation)
+        if (await this.ownsDirectory(stage, operation)) {
+          const receipt = await lstat(join(pool, '.import-pool-receipt.json')).catch(
+            (error: NodeJS.ErrnoException) => {
+              if (error.code !== 'ENOENT') throw error
+            }
+          )
+          if (receipt)
+            await updateImportedEvidencePool(
+              'rollback-imported-pool',
+              new NotebookRunRepository(root).projectStorageRoot(journal.projectId),
+              journal.projectId,
+              pool,
+              undefined,
+              this.options.storageRoot
+            )
+          if (
+            journal.retryPlanName &&
+            journal.directories.some((entry) => entry.scope === 'execution-file-evidence')
+          )
+            await releaseImportedEvidenceProject(
+              new NotebookRunRepository(root).projectStorageRoot(journal.projectId),
+              journal.projectId,
+              operation
+            )
+        }
       }
-    })
+    )
   }
 
   private async finishPublishedImport(
@@ -3199,6 +3394,29 @@ export class SessionPackageService {
     // same repository publication; it never republishes records or replaces another Session.
     return repository.saveSession(session)
   }
+  private async publishRoutedTree(staged: string, key: string): Promise<void> {
+    const entries = await readdir(staged, { withFileTypes: true })
+    // Referenced upstream Sessions have a read-only marker even without a package receipt.
+    if (entries.length === 0 && key.startsWith('artifacts/') && key.endsWith('/.session-package'))
+      await mkdir(resolveStorageKey(this.options.storageRoot, key), { recursive: true })
+    for (const entry of entries) {
+      if (entry.name === '.session-package-owner')
+        throw new Error('Session package contains a reserved ownership filename.')
+      const childKey = `${key}/${entry.name}`
+      const source = join(staged, entry.name)
+      if (entry.isDirectory()) await this.publishRoutedTree(source, childKey)
+      else if (entry.isFile()) {
+        const target = resolveStorageKey(this.options.storageRoot, childKey)
+        await mkdir(dirname(target), { recursive: true })
+        await rename(source, target).catch(async (error: NodeJS.ErrnoException) => {
+          if (error.code !== 'EXDEV') throw error
+          await copyFileWithinBudget(source, target, PACKAGE_MAX_FILE_BYTES, this.signal)
+          await rm(source)
+        })
+      } else throw new Error('Session package source contains a link or special file.')
+    }
+  }
+
   private async syncTree(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name)

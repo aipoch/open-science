@@ -4,6 +4,8 @@ import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io
 import { notebookPromptInputPath } from '../notebook/prompt-input-materialization'
 import { resolveStorageKey, storageKey } from './provenance-storage'
 
+export { notebookHelperEvidenceKey } from '@aipoch/reproducibility'
+
 // Host storage layout and file IO policy never cross into the package implementation.
 export const reproductionEvidence = (storageRoot: string): ReproductionEvidence => ({
   resolveFile: (key) => resolveStorageKey(storageRoot, key),

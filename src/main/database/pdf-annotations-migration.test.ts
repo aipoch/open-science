@@ -54,7 +54,9 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
         '0057_project_optimization_prompt',
         '0058_session_schedules',
         '0059_session_history',
-        '0060_image_models'
+        '0060_image_models',
+        '0061_project_folder',
+        '0062_artifact_output_delivery'
       ]
     })
     expect(await client.$queryRaw`SELECT * FROM "Bookmark"`).toEqual(before)
@@ -190,7 +192,9 @@ it.each(['upload-version', 'artifact-version'] as const)(
           '0057_project_optimization_prompt',
           '0058_session_schedules',
           '0059_session_history',
-          '0060_image_models'
+          '0060_image_models',
+          '0061_project_folder',
+          '0062_artifact_output_delivery'
         ]
       })
       const rows = await client.pdfAnnotation.findMany({ orderBy: { id: 'asc' } })

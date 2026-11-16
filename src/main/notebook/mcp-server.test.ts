@@ -269,8 +269,10 @@ describe('notebook MCP server config', () => {
     )
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('OPEN_SCIENCE_RUNTIME_DIR')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('~/.open-science/runtime/')
-    // The prompt guides relative writes to the working directory rather than a guessed absolute path.
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('writable session workspace')
+    // Original inputs retain cwd resolution; generated writes and subsequent reads use the explicit root.
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Notebook working directory')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('bound Project folder')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('for absolute writes and later reads')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('plain relative paths')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain(
       '~/.open-science/notebooks/default-project/<sessionId>/'
@@ -295,12 +297,11 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain(
       'for binary final outputs, read base64 content'
     )
-    // write_artifact_file now resolves a relative name against the notebook data dir, so the guidance
-    // must steer the model to the saved relative filename — not to a rebuilt absolute path. Guard the
-    // old "use an ABSOLUTE path" / "will not resolve a bare relative name" wording from regressing.
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Reuse saved relative filename and runId')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Use saved path and runId')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Call `notebook_state` before generating files')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Keep cwd unchanged')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
-      '`write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })`'
+      '`write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "<exact saved path>" }, "producerRunId": "<runId>" })`'
     )
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('use an ABSOLUTE path')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
@@ -340,9 +341,7 @@ describe('notebook MCP server config', () => {
     ].join('\n')
 
     expect(agentGuidance).not.toMatch(/\b4,?000\b/)
-    expect(REPL_EXECUTE_DOC).toContain(
-      'Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR'
-    )
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR')
     expect(REPL_EXECUTE_DOC).toContain('shared with Python/R')
     expect(REPL_EXECUTE_DOC).not.toContain('Do not echo large data')
   })
@@ -2311,10 +2310,9 @@ describe('bash_execute tool', () => {
       expect(windowsDoc).toContain('unhandled cmdlet failure')
       expect(windowsDoc).toContain('native programs must emit UTF-8')
       expect(windowsDoc).toContain('write_artifact_file')
-      expect(windowsDoc).toContain('Do NOT copy a generated notebook output into the workspace')
-      // Aligned with the relative-path artifact flow: point at the saved relative filename, not the
-      // old "generated file's absolute local path" wording.
-      expect(windowsDoc).toContain('same relative filename you saved with')
+      expect(windowsDoc).toContain('Keep outputs out of the provider workspace.')
+      // Publish from the exact saved output path.
+      expect(windowsDoc).toContain('exact saved absolute path when outputRoot is present')
       expect(windowsDoc).not.toContain("generated file's absolute local path")
     }
   )
@@ -3678,6 +3676,21 @@ describe('compactNotebookExecutionResult', () => {
 })
 
 describe('compactNotebookStateResult', () => {
+  it('preserves the explicit outputRoot while keeping cwd and internal dataRoot distinguishable', () => {
+    expect(
+      compactNotebookStateResult({
+        sessionId: 's',
+        cwd: '/project/subdir',
+        dataRoot: '/managed/data',
+        outputRoot: '/project/notebooks/p/s/data'
+      })
+    ).toMatchObject({
+      cwd: '/project/subdir',
+      dataRoot: '/managed/data',
+      outputRoot: '/project/notebooks/p/s/data'
+    })
+  })
+
   it('keeps recovery on the latest attempt without repeating historical guidance', () => {
     const recovery = { execution: 'not-started', retryAfter: 'cleanup-verified' }
     const state = {

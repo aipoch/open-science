@@ -9,7 +9,14 @@ import { lstat, mkdir, open, realpath, type FileHandle } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import { isPathInsideWorkspace } from './workspace-path'
+// Both operands are canonical physical paths. Exact ancestor comparison preserves case-sensitive
+// directories on Windows instead of inheriting win32.relative's unconditional case folding.
+const isPhysicalDescendant = (root: string, target: string): boolean => {
+  for (let current = target; ; current = dirname(current)) {
+    if (current === root) return true
+    if (dirname(current) === current) return false
+  }
+}
 
 type GrantedRoot = Pick<GrantedLocalRoot, 'path' | 'access'>
 
@@ -42,13 +49,18 @@ const assertAuthorizedPath = async (
   workspaceRoot: string,
   candidatePath: string,
   grantedRoots: readonly GrantedRoot[],
-  requiredAccess: GrantedLocalRoot['access']
+  requiredAccess: GrantedLocalRoot['access'],
+  canonicalRoot = false
 ): Promise<{ path: string; physicalPath: string }> => {
-  const path = resolve(candidatePath)
+  if (candidatePath.split(/[\\/]/).includes('..'))
+    throw new Error('Parent path traversal is not allowed for ACP file access.')
+  const path = resolve(workspaceRoot, candidatePath)
   const physicalPath = await resolvePhysicalPath(path)
   const physicalWorkspaceRoot = await resolvePhysicalPath(resolve(workspaceRoot))
+  if (canonicalRoot && physicalWorkspaceRoot !== resolve(workspaceRoot))
+    throw new Error('The bound project folder changed before ACP file access.')
 
-  if (isPathInsideWorkspace(physicalWorkspaceRoot, physicalPath)) {
+  if (isPhysicalDescendant(physicalWorkspaceRoot, physicalPath)) {
     return { path, physicalPath }
   }
 
@@ -65,12 +77,12 @@ const assertAuthorizedPath = async (
     // later replaced by a symlink or junction, fail closed instead of rebinding the grant to the
     // replacement target.
     if (
-      !isPathInsideWorkspace(configuredRoot, physicalRoot) ||
-      !isPathInsideWorkspace(physicalRoot, configuredRoot)
+      !isPhysicalDescendant(configuredRoot, physicalRoot) ||
+      !isPhysicalDescendant(physicalRoot, configuredRoot)
     ) {
       continue
     }
-    if (isPathInsideWorkspace(physicalRoot, physicalPath)) {
+    if (isPhysicalDescendant(physicalRoot, physicalPath)) {
       return { path, physicalPath }
     }
   }
@@ -137,7 +149,7 @@ const assertNotProtected = async (filePath: string, protectedRoots: string[]): P
       // must not become readable merely because canonicalization was unavailable at this moment.
       physicalRoot = resolve(root)
     }
-    if (isPathInsideWorkspace(physicalRoot, filePath)) {
+    if (isPhysicalDescendant(physicalRoot, filePath)) {
       throw new Error('This file belongs to a protected application directory and cannot be read.')
     }
   }
@@ -193,14 +205,16 @@ const readWorkspaceTextFile = async (
   workspaceRoot: string,
   params: ReadTextFileRequest,
   protectedRoots: string[] = [],
-  grantedRoots: readonly GrantedRoot[] = []
+  grantedRoots: readonly GrantedRoot[] = [],
+  canonicalRoot = false
 ): Promise<ReadTextFileResponse> => {
-  // ACP paths are absolute, but resolve again here so path traversal is checked in one place.
+  // Resolve relative filenames against the host-authorized Session file root.
   const { path: filePath, physicalPath } = await assertAuthorizedPath(
     workspaceRoot,
     params.path,
     grantedRoots,
-    'ro'
+    'ro',
+    canonicalRoot
   )
   await assertNotProtected(physicalPath, protectedRoots)
   const file = await openAuthorizedFile(physicalPath, constants.O_RDONLY)
@@ -220,12 +234,29 @@ const readWorkspaceTextFile = async (
 const writeWorkspaceTextFile = async (
   workspaceRoot: string,
   params: WriteTextFileRequest,
-  grantedRoots: readonly GrantedRoot[] = []
+  grantedRoots: readonly GrantedRoot[] = [],
+  onAuthorizedWrite?: (path: string, content: string) => Promise<boolean>,
+  canonicalRoot = false
 ): Promise<WriteTextFileResponse> => {
-  const authorized = await assertAuthorizedPath(workspaceRoot, params.path, grantedRoots, 'rw')
+  const authorized = await assertAuthorizedPath(
+    workspaceRoot,
+    params.path,
+    grantedRoots,
+    'rw',
+    canonicalRoot
+  )
+  // The trusted project service owns candidate preparation, exact approval, backup and commit.
+  // Intercept only after the existing transport path/grant check, before any filesystem mutation.
+  if (await onAuthorizedWrite?.(authorized.physicalPath, params.content)) return {}
 
   await mkdir(dirname(authorized.physicalPath), { recursive: true })
-  const reopened = await assertAuthorizedPath(workspaceRoot, params.path, grantedRoots, 'rw')
+  const reopened = await assertAuthorizedPath(
+    workspaceRoot,
+    params.path,
+    grantedRoots,
+    'rw',
+    canonicalRoot
+  )
   const existing = await lstat(reopened.physicalPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return undefined
     throw error

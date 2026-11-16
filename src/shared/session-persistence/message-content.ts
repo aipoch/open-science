@@ -189,6 +189,26 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
       if (!id || !name) return undefined
 
       const mimeType = asString(part.mimeType)
+      if (source === 'project-folder') {
+        const projectId = asString(part.projectId)
+        const path = asString(part.path)
+        if (
+          !projectId ||
+          !path ||
+          /^(?:[A-Za-z]:)?[\\/]/.test(path) ||
+          path.split(/[\\/]/).includes('..')
+        )
+          return undefined
+        return {
+          type: 'artifact',
+          id,
+          name,
+          source,
+          projectId,
+          path,
+          ...(mimeType ? { mimeType } : {})
+        }
+      }
       if (source === 'linked-folder') {
         const rootId = asString(part.rootId)
         const relativePath = asString(part.relativePath)

@@ -10,6 +10,11 @@ describe('workspace path guard', () => {
     expect(isPathInsideWorkspace(workspaceRoot, '/tmp/open-science/src/main/index.ts')).toBe(true)
   })
 
+  it('allows names beginning with two dots', () => {
+    expect(isPathInsideWorkspace('/tmp/open-science', '/tmp/open-science/..foo')).toBe(true)
+    expect(isPathInsideWorkspace('/tmp/open-science', '/tmp/open-science/..data/file')).toBe(true)
+  })
+
   it('rejects sibling paths that only share the same prefix', () => {
     expect(isPathInsideWorkspace('/tmp/open-science', '/tmp/open-science-backup/notes.txt')).toBe(
       false

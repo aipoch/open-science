@@ -83,8 +83,9 @@ export const renderPreviewFile = ({
     onAnnotationError
   }
   if (
-    getFileExtension(item.name) === 'ipynb' ||
-    item.mimeType?.split(';')[0] === 'application/x-ipynb+json'
+    item.source !== 'project-folder' &&
+    (getFileExtension(item.name) === 'ipynb' ||
+      item.mimeType?.split(';')[0] === 'application/x-ipynb+json')
   )
     return <NotebookFilePreview {...props} />
   switch (item.format) {

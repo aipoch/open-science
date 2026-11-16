@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { notebookHelperEvidenceKey } from '@aipoch/reproducibility/helper-identity'
 
 import type { NotebookHelperModuleEvidence } from '../../shared/notebook'
 
@@ -52,4 +51,4 @@ const decodeNotebookHelperEvidence = (
   }
 }
 
-export { decodeNotebookHelperEvidence, digestNotebookHelperSource, notebookHelperEvidenceKey }
+export { decodeNotebookHelperEvidence, digestNotebookHelperSource }

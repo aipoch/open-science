@@ -69,6 +69,7 @@ export type ApplicationEventMap = {
   'notebook:changed': NotebookChangedEvent
   'notebook:memory-rejected': import('../shared/notebook-memory').NotebookMemoryRejectedEvent
   'notebook:memory-policy-changed': import('../shared/notebook-memory').NotebookMemoryPolicyChangedEvent
+  'notebook:project-folder-changes-changed': import('../shared/project-folder-changes').ProjectFolderChangeScope
   'notebook-env:progress': ProvisionProgress
   'runtime:policy-changed': undefined
   'notifications:changed': NotificationInboxChanged

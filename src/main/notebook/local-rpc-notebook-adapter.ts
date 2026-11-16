@@ -1,3 +1,7 @@
+import type {
+  ProjectFolderChange,
+  ProjectFolderChangeScope
+} from '../../shared/project-folder-changes'
 import { z } from 'zod'
 
 import {
@@ -248,6 +252,23 @@ type NotebookLocalRpcCapability = {
     projectId: string,
     sessionId: string
   ) => import('../../shared/notebook-process-monitor').ManualKernelTermination[]
+  resolveProjectFolderRoot?(projectId: string): Promise<string | undefined>
+  prepareAcpProjectFolderChange?(
+    input: ProjectFolderChangeScope & {
+      runId: string
+      cwd: string
+      path: string
+      operation: 'write' | 'delete'
+      content?: string
+      permissionPrompts?: 'none'
+    }
+  ): Promise<ProjectFolderChange | undefined>
+  applyProjectFolderChange?(
+    scope: ProjectFolderChangeScope,
+    id: string,
+    signal?: AbortSignal,
+    permissionPrompts?: 'none'
+  ): Promise<ProjectFolderChange>
   beginCodeCell(request: BeginNotebookCodeCellRequest, signal?: AbortSignal): Promise<unknown>
   appendCodeCell(request: AppendNotebookCodeCellRequest): Promise<unknown>
   abortCodeCell(request: AbortNotebookCodeCellRequest): Promise<unknown>

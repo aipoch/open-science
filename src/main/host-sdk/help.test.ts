@@ -183,7 +183,7 @@ describe('Host SDK help', () => {
     const request = JSON.stringify(help.request)
     expect(request).toMatch(/Artifact or Upload Version in the current Project/u)
     expect(request).toMatch(/path relative to the current execution workspace/u)
-    expect(request).toMatch(/same relative path used to save it/u)
+    expect(request).toMatch(/exact saved path/u)
     expect(request).not.toMatch(/Notebook/u)
     expect(named(fields(help.options), 'crop').description).toMatch(/top-left-origin/iu)
     const constraints = help.constraints.join('\n')

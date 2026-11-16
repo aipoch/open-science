@@ -144,6 +144,7 @@ const fileSourceMatchesItem = (
   annotation: Annotation | BookmarkRevealTarget,
   item: PreviewFileItem
 ): boolean => {
+  if (item.source === 'project-folder') return false
   const source = fileAnnotationSource(annotation)
   if (!source) return false
   if (item.projectId !== source.projectId) return false

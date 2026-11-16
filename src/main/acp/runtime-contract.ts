@@ -84,6 +84,22 @@ export type AcpRuntimeCallbacks = {
 }
 
 export type AcpRuntimeOptions = {
+  // Host-only ACP file bridge. Its Project identity comes from the live Session registry.
+  projectFolderFiles?: {
+    resolveRoot(projectId: string): Promise<string | undefined>
+    write(
+      input: {
+        projectId: string
+        sessionId: string
+        runId: string
+        cwd: string
+        path: string
+        content: string
+        permissionPrompts?: 'none'
+      },
+      signal?: AbortSignal
+    ): Promise<boolean>
+  }
   schedules?: import('../schedules/mcp').ScheduleMcp
   prepareSessionReading?: PrepareSessionReading
   classifySkills?: import('../../shared/classification').ClassifySkills
@@ -127,6 +143,7 @@ export type AcpRuntimeOptions = {
   // table), enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references
   // stay unavailable.
   authorizedDirectories?: Pick<AuthorizedDirectoryNotices, 'initialize' | 'prepareNotice'>
+  projectFolders?: { resolveFile: (projectId: string, relativePath: string) => Promise<string> }
   grantedRoots?: {
     list?: () => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>

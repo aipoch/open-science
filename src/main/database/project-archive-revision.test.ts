@@ -69,7 +69,9 @@ describe('Project archive revision', () => {
         '0057_project_optimization_prompt',
         '0058_session_schedules',
         '0059_session_history',
-        '0060_image_models'
+        '0060_image_models',
+        '0061_project_folder',
+        '0062_artifact_output_delivery'
       ]
     })
     expect(

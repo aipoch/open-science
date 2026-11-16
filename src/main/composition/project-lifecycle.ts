@@ -1,3 +1,4 @@
+import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-workspace'
 import { reserveAcpSessionStorageCleanup } from '../acp/session-registry'
 import type { ImageTaskOwner } from '../image-model/tasks'
 import type { PromptOptimizationService } from '../projects/prompt-optimization'
@@ -50,6 +51,9 @@ import { createSideChatCommandOwner, type SideChatCommandOwner } from '../side-c
 import { createMainPromptSideChatRelay } from '../side-chat/main-prompt-relay'
 import { SideChatRuntimeOwner } from '../side-chat/runtime-owner'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
+import { NotebookRunRepository } from '../notebook/repository'
+import { restoreProjectRecordSessions } from '../projects/restore-record-sessions'
+import { markProjectRecordDetached } from '../projects/record-storage'
 import { detectActiveSessions } from '../storage/detect-active'
 import { withDataRootWrite } from '../storage/migration-state'
 import { createUploadCommandOwner } from '../uploads/command-owner'
@@ -81,12 +85,14 @@ export function composeProjectLifecycle({
   getActiveDelegatedSessions,
   getActiveSideChatSessions,
   sessionPersistenceCoordinator,
+  sessionRepository,
   researchFilmLifecycle,
   clearSessionCredentials,
   getNotebookService
 }: {
   imageTasks?: Pick<ImageTaskOwner, 'isBusy' | 'cancelSessions' | 'cancelProject'>
   promptOptimization?: PromptOptimizationService
+  sessionRepository?: ReturnType<typeof createDefaultSessionRepository>
   applicationEvents: ApplicationEvents
   notificationInbox: ReturnType<typeof createNotificationInboxController>
   researchFilmLifecycle: ResearchFilmLifecycle
@@ -205,6 +211,7 @@ export function composeProjectLifecycle({
     permissionGrantRegistry,
     {
       beforeProjectDelete: async (projectId) => {
+        await markProjectRecordDetached(resolveDataRoot(), projectId)
         const owner = projectRuntimeQuiescenceRef.current
         if (!owner) throw new Error('Project runtime cleanup is not initialized.')
         await archiveCoordinator.withProjectDeletion(projectId, async () => {
@@ -409,6 +416,32 @@ export function composeProjectLifecycle({
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
     promptOptimization,
+    afterProjectCreate: async (project) => {
+      if (!project.rootPath) return
+      await restoreProjectRecordSessions({
+        storageRoot: resolveDataRoot(),
+        projectId: project.id,
+        sessions: sessionRepository ?? createDefaultSessionRepository(),
+        notebooks: new NotebookRunRepository(resolveDataRoot()),
+        workspaces: createManagedSessionWorkspaceCapability()
+      })
+    },
+    recoverFolderRuntime: (projectId) =>
+      getNotebookService().recoverProjectFolderRelocation(projectId),
+    withFolderRelocation: (projectId, operation) =>
+      archiveCoordinator.withProjectAvailable(projectId, () =>
+        getNotebookService().withProjectFolderRelocation(projectId, operation)
+      ),
+    withOutputLayoutUpgrade: (projectId, operation) =>
+      archiveCoordinator.withIdleProjectMutation(projectId, () =>
+        getNotebookService().withProjectFolderRelocation(projectId, async () => {
+          await runtimeRef.current?.requestProjectAgentContextReload(projectId)
+          return operation()
+        })
+      ),
+    beforeFolderRelocation: async (projectId) => {
+      await runtimeRef.current?.requestProjectAgentContextReload(projectId)
+    },
     updateArchive: (request) => archiveCoordinator.updateProjectArchive(request),
     onAgentContextChanged: (projectId) => {
       // Runtime generations capture Project Agent Context during Session setup. Retiring them marks
@@ -429,6 +462,9 @@ export function composeProjectLifecycle({
         },
         file.sourceVersionId
       )
+  )
+  managedFileVersionService.setWriteAdmission?.((_scope, operation) =>
+    archiveCoordinator.withSessionDeletionAdmissionById(_scope.sessionId, operation)
   )
   const managedFileVersionHandlers = createManagedFileVersionCommandOwner(
     createManagedFileVersionHandlers(managedFileVersionService, {

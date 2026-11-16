@@ -54,6 +54,28 @@ it('carries the inspected target and intent across the Electron storage boundary
 })
 
 describe('electron renderer contract adapter', () => {
+  it('extracts a dropped folder native path before passing it to Main validation', async () => {
+    const port = createPort()
+    const file = { name: 'cohort-study' }
+    const result = { ok: true, path: '/Research/cohort-study' }
+    port.getPathForFile.mockReturnValue(result.path)
+    port.invoke.mockResolvedValue({ ok: true, result })
+    await expect(
+      createElectronRendererContractAdapter(port).invoke('projects.inspectDroppedFolder', file)
+    ).resolves.toEqual(result)
+    expect(port.getPathForFile).toHaveBeenCalledExactlyOnceWith(file)
+    expect(port.invoke).toHaveBeenCalledExactlyOnceWith('projects:inspect-dropped-folder', {
+      path: result.path
+    })
+  })
+  it('rejects a dropped folder without a native path before calling Main', async () => {
+    const port = createPort()
+    port.getPathForFile.mockReturnValue('')
+    await expect(
+      createElectronRendererContractAdapter(port).invoke('projects.inspectDroppedFolder', {})
+    ).rejects.toThrow('no native path')
+    expect(port.invoke).not.toHaveBeenCalled()
+  })
   it('delivers a committed private bookmark without leaking the command envelope', async () => {
     const port = createPort()
     const result = { id: 'bookmark-1', note: 'Keep this result' }
