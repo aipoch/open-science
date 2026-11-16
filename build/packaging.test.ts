@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { once } from 'node:events'
 import {
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -108,6 +109,83 @@ function findNsisCompiler(): string | undefined {
 }
 
 const nsisCompiler = findNsisCompiler()
+const windowsPowerShell =
+  process.platform === 'win32'
+    ? join(
+        process.env.SystemRoot ?? 'C:\\Windows',
+        'System32/WindowsPowerShell/v1.0/powershell.exe'
+      )
+    : undefined
+it.skipIf(!windowsPowerShell)(
+  'finds and stops one installation process without touching a sibling',
+  async () => {
+    // Each command reads the directory from the variable set just before nsExec runs it.
+    const commands = [
+      readFileSync(
+        join(appBuilderLibRoot, 'templates/nsis/include/allowOnlyOneInstallerInstance.nsh'),
+        'utf8'
+      ),
+      readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8')
+    ].flatMap((source) =>
+      [
+        ...source.matchAll(
+          /SetEnvironmentVariable\(t "OPEN_SCIENCE_PROCESS_ROOT", t "[^"]+"\)'\s+nsExec::Exec `"[^"]+" ([^`]+)`/g
+        )
+      ].map((match) => match[1])
+    )
+    expect(commands).toHaveLength(3)
+    // nsExec passes the command line verbatim; substitute only the NSIS escapes and $0 switch.
+    const [find, kill, sweep] = commands.map((command) =>
+      command.replace(' $0 }', ' -Force }').replaceAll('$$', '$')
+    )
+    const root = mkdtempSync(join(tmpdir(), 'nsis-process-root-'))
+    const install = join(root, "O'Brien Lab", 'Open-Science')
+    const sibling = `${install}-dev`
+    const children: ReturnType<typeof spawn>[] = []
+    const exits: Promise<unknown>[] = []
+    try {
+      const start = async (
+        directory: string
+      ): Promise<{ child: ReturnType<typeof spawn>; exit: Promise<unknown> }> => {
+        mkdirSync(directory, { recursive: true })
+        const executable = join(directory, 'probe.exe')
+        if (!existsSync(executable))
+          copyFileSync(join(dirname(windowsPowerShell!), '../../PING.EXE'), executable)
+        const child = spawn(executable, ['-n', '60', '127.0.0.1'], {
+          stdio: 'ignore',
+          windowsHide: true
+        })
+        children.push(child)
+        const exit = once(child, 'exit')
+        exits.push(exit)
+        await once(child, 'spawn')
+        return { child, exit }
+      }
+      const run = (command: string): number | null =>
+        spawnSync(windowsPowerShell!, [command], {
+          env: { ...process.env, OPEN_SCIENCE_PROCESS_ROOT: install },
+          windowsVerbatimArguments: true,
+          windowsHide: true,
+          timeout: 30_000
+        }).status
+      const other = await start(sibling)
+      const target = await start(install)
+      expect(run(find!)).toBe(0)
+      run(kill!)
+      await target.exit
+      expect(run(find!)).toBe(1)
+      const leftover = await start(install)
+      run(sweep!)
+      await leftover.exit
+      expect(other.child.exitCode).toBeNull()
+    } finally {
+      for (const child of children) if (child.exitCode === null) child.kill()
+      await Promise.all(exits)
+      rmSync(root, { recursive: true, force: true })
+    }
+  },
+  90_000
+)
 
 describe.skipIf(!nsisCompiler)('NSIS manual uninstall coordination', () => {
   it.each(['installer-first', 'uninstaller-first', 'nested-update', 'lock-unavailable'])(
@@ -1356,11 +1434,13 @@ SectionEnd
     expect(normalizeUserAt).toBeLessThan(firstSharedPathCheckAt)
   })
 
-  it('passes the install dir to PowerShell as an argument, with a directory-boundary match', () => {
-    // Custom install dirs may contain apostrophes: interpolating the path into the script source
-    // would break the command (or worse, inject into it). The dir goes in as $args[0] and the
-    // prefix match is anchored with a trailing backslash so sibling directories never match.
-    expect(include).toContain('$$args[0].TrimEnd')
+  it('passes the install dir to PowerShell out of band, with a directory-boundary match', () => {
+    // powershell.exe joins everything after -Command into the script source, so neither an
+    // interpolated path nor a quoted argument survives a custom install dir with an apostrophe or
+    // a space. The dir travels in an inherited environment variable instead, and the prefix match
+    // is anchored with a trailing backslash so sibling directories never match.
+    expect(include).toContain('OPEN_SCIENCE_PROCESS_ROOT')
+    expect(include).toContain('$$env:OPEN_SCIENCE_PROCESS_ROOT.TrimEnd')
     expect(include).toContain('$$_.ExecutablePath.StartsWith($$root')
     expect(include).not.toContain(`StartsWith('$INSTDIR'`)
   })

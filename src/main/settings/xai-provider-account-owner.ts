@@ -1,5 +1,5 @@
 import type { XaiOAuthDeviceAuthorization } from '../../shared/settings'
-import { isXaiSubscriptionProvider } from '../../shared/settings'
+import { isXaiSubscriptionProvider } from '../../shared/settings-runtime'
 import { encryptKey, tryDecryptKey } from './crypto'
 import type { SettingsRepository } from './repository'
 import type { StoredProvider } from './types'

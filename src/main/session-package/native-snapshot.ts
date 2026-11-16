@@ -364,6 +364,8 @@ export const notebookStorageKeys = async (
         throw error
       })
     for (const entry of entries) {
+      // The package carries hydrated v1 documents, not local immutable record storage.
+      if (entry.name === '.run-records' && notebookDocumentIdentity(`${key}/run.json`)) continue
       const child = `${key}/${entry.name}`
       if (entry.isDirectory()) await visit(child, depth + 1)
       else if (entry.isFile()) keys.push(child)

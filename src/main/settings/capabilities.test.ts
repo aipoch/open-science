@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import { SETTINGS_FILE_VERSION } from '../../shared/settings-runtime'
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
 import { SettingsPreferencesModule } from './preferences'
 import { SettingsRepository } from './repository'

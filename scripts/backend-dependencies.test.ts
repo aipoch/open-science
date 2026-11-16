@@ -344,7 +344,9 @@ describe('desktop-only dependency contents', () => {
         'scripts/backend-dependencies.mjs',
         'scripts/build-notebook-host.mjs',
         'scripts/desktop-pdf-lib.mjs',
-        'scripts/desktop-dependency-chains.mjs'
+        'scripts/desktop-dependency-chains.mjs',
+        'scripts/sync-file-evidence-codec.mjs',
+        'src/main/artifacts/file-evidence-codec.mjs'
       ])
         await put(file, await readFile(join(process.cwd(), file), 'utf8'))
       await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))

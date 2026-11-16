@@ -357,7 +357,8 @@ jobs:
           Write-Host "MSVC tools $toolsVersion"
 
       - name: Test Windows sandbox native source
-        run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml
+        # Native ACL tests can lease the same ancestors of separate temporary directories.
+        run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml -- --test-threads=1
 
       - name: Build Windows sandbox native host
         id: build_native

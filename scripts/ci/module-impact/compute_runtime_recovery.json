@@ -1,0 +1,22 @@
+{
+  "ownerPaths": [
+    "src/main/compute/compute-runtime-backoff.ts",
+    "src/main/compute/compute-runtime-loop.ts",
+    "src/main/compute/compute-runtime-backoff.test.ts",
+    "src/main/compute/compute-runtime-loop.test.ts",
+    "src/main/compute/external-runtime-fallback.test.ts"
+  ],
+  "interfacePaths": ["src/main/compute/compute-runtime-loop.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/main/compute/compute-runtime-backoff.test.ts",
+      "src/main/compute/compute-runtime-loop.test.ts",
+      "src/main/compute/external-runtime-fallback.test.ts"
+    ],
+    "contract": [],
+    "consumer": []
+  },
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "fallbackCapability": "main_runtime"
+}

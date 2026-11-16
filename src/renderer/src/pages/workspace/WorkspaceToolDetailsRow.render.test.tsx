@@ -68,6 +68,54 @@ describe('WorkspaceToolDetailsRow', () => {
     vi.clearAllMocks()
   })
 
+  it.each(['create_schedule', 'manage_current_schedule'])(
+    'keeps %s history free of duplicate or empty summary headings',
+    async (tool) => {
+      const activity = createActivity({
+        title: `mcp__open_science_schedule__${tool}`,
+        rawInput:
+          tool === 'create_schedule'
+            ? {
+                draft: {
+                  name: 'Weekly review',
+                  rule: { kind: 'daily', time: '09:00', timeZone: 'UTC' },
+                  action: {
+                    kind: 'send_session_message',
+                    message: 'Read the latest results.\nReport changes.'
+                  }
+                }
+              }
+            : { change: { kind: 'close' } }
+      })
+      const details = buildToolActivityDetails(activity)!
+      root = createRoot(container)
+      await act(async () =>
+        root.render(
+          <WorkspaceToolDetailsRow
+            activity={activity}
+            details={details}
+            isExpanded
+            onToggle={() => undefined}
+          />
+        )
+      )
+      const panel = container.querySelector('[data-testid="tool-details"]')!
+      expect(panel.querySelector('h4')).toBeNull()
+      expect(container.querySelector('[data-testid="tool-chip"]')?.textContent).not.toContain('·')
+      if (tool === 'create_schedule') {
+        expect(container.querySelector('[data-testid="tool-chip"]')?.textContent).toContain(
+          'Weekly review'
+        )
+        expect(panel.querySelector('[data-testid="tool-summary-card"]')?.textContent).not.toContain(
+          'Weekly review'
+        )
+        expect(panel.textContent).toContain('Read the latest results.')
+      } else {
+        expect(panel.querySelector('[data-testid="tool-summary-card"]')).toBeNull()
+      }
+    }
+  )
+
   it.each([
     ['declined', 'completed', 'declined', 'declined by you'],
     ['closed', 'in_progress', 'permission-closed', 'request ended'],

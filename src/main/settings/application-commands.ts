@@ -7,7 +7,7 @@ import type {
 } from '../../shared/skill-sources'
 import { z } from 'zod'
 import { defineApplicationCommandContract } from '../../shared/application-command-contract'
-import { parseSettingsSnapshot } from '../../shared/settings'
+import { parseSettingsSnapshot } from '../../shared/settings-runtime'
 import { requireDesktopCaller } from '../caller-context'
 import type { PrivateDestinationRequest } from '../../shared/notebook-network-settings'
 import type {

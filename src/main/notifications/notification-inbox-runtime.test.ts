@@ -82,6 +82,6 @@ describe('notification inbox deletion runtime', () => {
 
     await handlers?.reconcile(['session-1'], [])
 
-    expect(onSessionsReconciled).toHaveBeenCalledWith(['session-1'])
+    expect(onSessionsReconciled).toHaveBeenCalledWith(['session-1'], [])
   })
 })

@@ -172,6 +172,7 @@ AIPOCH evaluó AIPOCH Open-Science en tareas que abarcan encontrar un artículo,
 | Responder a partir de la literatura  | LitQA2-FullText        | En una ejecución independiente de LitQA2-FullText, Open-Science respondió correctamente **70 de 75 preguntas** (**93.33% de exactitud**, deepseek-flash con razonamiento Max).                             |
 | Elaborar una síntesis con citas      | ScholarQA-CS2          | En 100 preguntas de validación de ScholarQA-CS2, Open-Science obtuvo una **puntuación compuesta de calidad de 0.9289/1** con deepseek-v4-flash. Las referencias de la prueba oficial usan otras preguntas. |
 | Ejecutar flujos de investigación     | ASI-Bench              | En ejecuciones locales de ASI-Bench con el mismo modelo, Open-Science obtuvo **59.46** en B4 y Codex **55.45**. En B2 las puntuaciones fueron casi idénticas (**56.11** y **56.09**).                      |
+| Ejecutar tareas científicas          | TB-Science 0.1         | En 70 tareas, **145 de 210** ejecuciones locales superadas (**69.05%**) con GPT-6 Astra/max. No es una posición oficial; no hay registros individuales públicos.                                           |
 | Analizar datos biomédicos            | BiomniBench-DA         | En BiomniBench-DA Public 50, dos modelos jueces puntuaron los resultados con **81.04** y **77.06**. Su media con igual ponderación fue **79.05**.                                                          |
 | Reproducir resultados publicados     | CORE-Bench-Hard        | CORE-Bench-Hard — 36 de 37 tareas de prueba correctas (97,30 %) en la evaluación local. El recuento incluye repeticiones.                                                                                  |
 | Formular hipótesis a partir de datos | DiscoveryBench         | DiscoveryBench — En un subconjunto de 25 tareas de validación, la puntuación media del modelo evaluador local fue de 0,7467/1.                                                                             |
@@ -181,7 +182,7 @@ AIPOCH evaluó AIPOCH Open-Science en tareas que abarcan encontrar un artículo,
 
 **Alcance de la evaluación:** estos informes cubren ejecuciones locales o internas de agosto a noviembre de 2026 con los modelos y particiones indicados; no se repitieron para la versión actual. Las referencias son instantáneas históricas, no clasificaciones en tiempo real. Las puntuaciones de distintas familias de benchmarks no son directamente comparables y las diferencias numéricas no establecen significación estadística.
 
-Consulte el [informe de AstaBench y ASI-Bench](https://aipoch.com/benchmark/open-science) y el [informe de BiomniBench-DA](https://aipoch.com/blog/open-science-biomnibench-da) para conocer los detalles.
+Consulte el [informe de AstaBench y ASI-Bench](https://aipoch.com/benchmark/open-science) y el [informe de BiomniBench-DA](https://aipoch.com/blog/open-science-biomnibench-da) para conocer los detalles. Véase también el [resultado local de TB-Science 0.1](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result).
 
 [CORE-Bench-Hard · Informe de reproducibilidad](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

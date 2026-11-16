@@ -149,7 +149,7 @@ export const sessionsDeleteSessionContracts = {
   ),
   'sessions.fork': callable<
     (request: SessionPackageRequest) => Promise<SessionPackageRequest | null>
-  >()('sessions', ['sessions:fork', MAPPED_ELECTRON, undefined, undefined, RUNTIME_VALIDATED]),
+  >()('sessions', ['sessions:fork', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.exportPackage': callable<
     (
       request: SessionPackageRequest,

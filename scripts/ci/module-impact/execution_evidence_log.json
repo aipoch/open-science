@@ -1,6 +1,16 @@
 {
-  "ownerPaths": ["src/main/artifacts/execution-evidence-log.ts"],
-  "interfacePaths": ["src/main/artifacts/execution-evidence-log.ts"],
+  "ownerPaths": [
+    "src/main/artifacts/execution-evidence-log.ts",
+    "src/main/artifacts/file-evidence-codec.d.mts",
+    "src/main/artifacts/file-evidence-codec.mjs",
+    "scripts/sync-file-evidence-codec.mjs"
+  ],
+  "interfacePaths": [
+    "src/main/artifacts/execution-evidence-log.ts",
+    "src/main/artifacts/file-evidence-codec.d.mts",
+    "src/main/artifacts/file-evidence-codec.mjs",
+    "scripts/sync-file-evidence-codec.mjs"
+  ],
   "consumerModules": [
     "main_session_package",
     "notebook_application",

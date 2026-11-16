@@ -4356,6 +4356,43 @@ describe('notebook runtime service', () => {
       expect(state.runs[0].text.stdout).toContain('hi')
     })
 
+    it('keeps unattended Shell code review non-interactive through lifecycle signals', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn<NotebookShellProcess['execute']>(async () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: 0
+      }))
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute },
+        platform: 'linux',
+        backgroundExecutionEnabled: true
+      })
+      liveShellServices.push(service)
+      const approval = vi.fn(async (request) => request.permissionPrompts !== 'none')
+      service.setExecutionApproval(approval)
+      const request = markTrustedNotebookBindingPermissionPrompts(
+        {
+          sessionId: 'unattended-shell',
+          workspaceCwd: root,
+          command: 'rm -rf sentinel',
+          executionInvocationId: 'scheduled-shell'
+        },
+        'none'
+      )
+      const receipt = await service.executeShellBackground(request)
+      await expect(service.waitForBackgroundRun(receipt.runId)).rejects.toThrow('one-time approval')
+      expect(approval).toHaveBeenCalledWith(expect.objectContaining({ permissionPrompts: 'none' }))
+      expect(execute).not.toHaveBeenCalled()
+      expect(
+        (await service.getBackgroundRun({ ...request, runId: receipt.runId })).receipt.status
+      ).toBe('interrupted')
+    })
+
     it('returns a durable background Shell receipt before execution completes and exposes its result', async () => {
       const root = await createStorageRoot()
       const executionStarted = createDeferred<void>()
@@ -13255,7 +13292,11 @@ describe('v4 runtime bindings & agent tools', () => {
         h.external.envId
       )
       expect(legacyApproval).toHaveBeenCalledWith(
-        expect.objectContaining({ permissionPrompts: 'none' })
+        expect.objectContaining({
+          projectId: h.request.projectId,
+          sessionId: h.request.sessionId,
+          permissionPrompts: 'none'
+        })
       )
       const switchRequest = markTrustedNotebookBindingPermissionPrompts({ ...h.request }, 'none')
       expect(await h.service.switchRuntime(switchRequest)).toHaveProperty(
@@ -13275,10 +13316,56 @@ describe('v4 runtime bindings & agent tools', () => {
       )
       await h.service.execute(request)
       expect(approval).toHaveBeenCalledWith(
-        expect.objectContaining({ permissionPrompts: 'none', defaultManagedFirstBinding: true })
+        expect.objectContaining({
+          projectId: h.request.projectId,
+          sessionId: h.request.sessionId,
+          permissionPrompts: 'none',
+          defaultManagedFirstBinding: true
+        })
       )
       expect(h.executions).toHaveLength(1)
     })
+
+    it.each([false, true])(
+      'preserves unattended code review through request snapshots (background=%s)',
+      async (background) => {
+        const h = await makeApprovalHarness()
+        h.service.setRuntimeBindingApproval(async () => true)
+        const approval = vi.fn(async (request) => request.permissionPrompts !== 'none')
+        h.service.setExecutionApproval(approval)
+        const request = markTrustedNotebookBindingPermissionPrompts(
+          {
+            ...h.request,
+            background,
+            executionInvocationId: 'schedule:code-approval',
+            code:
+              language === 'r' ? 'unlink("sentinel.txt")' : 'import os\nos.unlink("sentinel.txt")'
+          },
+          'none'
+        )
+        if (background) {
+          const receipt = await h.service.executeBackground(request)
+          await expect(h.service.waitForBackgroundRun(receipt.runId)).rejects.toThrow(
+            'one-time approval'
+          )
+          const result = await h.service.getBackgroundRun({ ...h.request, runId: receipt.runId })
+          expect(result.receipt.status).toBe('interrupted')
+        } else {
+          await expect(h.service.execute(request)).rejects.toThrow('one-time approval')
+        }
+        expect(approval).toHaveBeenCalledWith(
+          expect.objectContaining({
+            projectId: h.request.projectId,
+            sessionId: h.request.sessionId,
+            permissionPrompts: 'none'
+          })
+        )
+        expect(h.executions).toEqual([])
+        await h.service.execute({ ...h.request, code: request.code })
+        expect(approval.mock.calls.at(-1)?.[0].permissionPrompts).toBeUndefined()
+        expect(h.executions).toHaveLength(1)
+      }
+    )
 
     it('reads Auto to Ask at the final decision and keeps the displayed Ask pending after Auto', async () => {
       const h = await makeApprovalHarness()

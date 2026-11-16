@@ -480,133 +480,155 @@ describe('createWebServiceController', () => {
     expect(restartedTasks.getRun(run.id)).toMatchObject({ id: run.id, sessionId: run.sessionId })
   })
 
-  it('recovers a terminal Task run after the Web service controller is reconstructed', async () => {
-    const configRoot = await mkdtemp(join(tmpdir(), 'open-science-task-runs-'))
-    const project = {
-      id: 'project-restart',
-      name: 'Project',
-      description: '',
-      isExample: false,
-      createdAt: 1,
-      updatedAt: 1
-    }
-    const sessions: PersistedChatSession[] = []
-    const applicationCommands = {
-      localWeb: { commandNames: () => [], invoke: vi.fn() },
-      remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() },
-      task: {
-        commandNames: () => [],
-        invoke: vi.fn(async (name, invocation) => {
-          if (name === 'projects:list') return [project]
-          if (name === 'settings:get-settings') return taskSettings
-          if (name === 'sessions:load-all') return { sessions, manifest: { version: 1 } }
-          if (name === 'sessions:save-session') {
-            const durable = invocation.args[0] as PersistedChatSession
-            sessions.splice(0, sessions.length, durable)
-            return durable
-          }
-          if (name === 'sessions:stage-task-completion') {
-            const request = invocation.args[0] as StageTaskSessionCompletionRequest
-            const current = sessions[0]
-            const durable = {
-              ...current,
-              messages: request.message ? [...current.messages, request.message] : current.messages,
-              activities: [...(current.activities ?? []), ...request.activities],
-              updatedAt: request.updatedAt
-            }
-            sessions.splice(0, sessions.length, durable)
-            return durable
-          }
-          if (name === 'sessions:settle-task-completion') {
-            const request = invocation.args[0] as SettleTaskSessionCompletionRequest
-            const durable = {
-              ...sessions[0],
-              status: 'idle' as const,
-              activeRun: undefined,
-              taskRunCommitId: request.taskRunCommitId,
-              updatedAt: request.updatedAt
-            }
-            sessions.splice(0, sessions.length, durable)
-            return durable
-          }
-          if (name === 'sessions:fail-task-run') {
-            const request = invocation.args[0] as FailTaskSessionRunRequest
-            const durable = {
-              ...sessions[0],
-              status: 'error' as const,
-              activeRun: undefined,
-              taskRunCommitId: request.taskRunCommitId,
-              error: request.error,
-              updatedAt: request.updatedAt
-            }
-            sessions.splice(0, sessions.length, durable)
-            return durable
-          }
-          throw new Error(`Unexpected Task command: ${name}`)
-        })
+  it.each([false, true])(
+    'recovers a terminal Task after controller reconstruction (receipt=%s)',
+    async (durable) => {
+      const configRoot = await mkdtemp(join(tmpdir(), 'open-science-task-runs-'))
+      const project = {
+        id: 'project-restart',
+        name: 'Project',
+        description: '',
+        isExample: false,
+        createdAt: 1,
+        updatedAt: 1
       }
-    } satisfies Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
-    const taskAgent: TaskAgentPort = {
-      withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
-      listAttachedSessionIds: vi.fn(async () => []),
-      createSession: vi.fn(async () => ({ sessionId: 'session-restart' })),
-      resumeSession: vi.fn(async (request) => ({ sessionId: request.sessionId })),
-      setPermissionProfile: vi.fn(async () => undefined),
-      setMemoryEnabled: vi.fn(async () => undefined),
-      cancelPrompt: vi.fn(async () => undefined),
-      prompt: vi.fn(async () => undefined)
+      const sessions: PersistedChatSession[] = []
+      const applicationCommands = {
+        localWeb: { commandNames: () => [], invoke: vi.fn() },
+        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() },
+        task: {
+          commandNames: () => [],
+          invoke: vi.fn(async (name, invocation) => {
+            if (name === 'projects:list') return [project]
+            if (name === 'settings:get-settings') return taskSettings
+            if (name === 'sessions:load-all') return { sessions, manifest: { version: 1 } }
+            if (name === 'sessions:save-session') {
+              const durable = invocation.args[0] as PersistedChatSession
+              sessions.splice(0, sessions.length, durable)
+              return durable
+            }
+            if (name === 'sessions:stage-task-completion') {
+              const request = invocation.args[0] as StageTaskSessionCompletionRequest
+              const current = sessions[0]
+              const durable = {
+                ...current,
+                messages: request.message
+                  ? [...current.messages, request.message]
+                  : current.messages,
+                activities: [...(current.activities ?? []), ...request.activities],
+                updatedAt: request.updatedAt
+              }
+              sessions.splice(0, sessions.length, durable)
+              return durable
+            }
+            if (name === 'sessions:settle-task-completion') {
+              const request = invocation.args[0] as SettleTaskSessionCompletionRequest
+              const durable = {
+                ...sessions[0],
+                status: 'idle' as const,
+                activeRun: undefined,
+                taskRunCommitId: request.taskRunCommitId,
+                updatedAt: request.updatedAt
+              }
+              sessions.splice(0, sessions.length, durable)
+              return durable
+            }
+            if (name === 'sessions:fail-task-run') {
+              const request = invocation.args[0] as FailTaskSessionRunRequest
+              const durable = {
+                ...sessions[0],
+                status: 'error' as const,
+                activeRun: undefined,
+                taskRunCommitId: request.taskRunCommitId,
+                error: request.error,
+                updatedAt: request.updatedAt
+              }
+              sessions.splice(0, sessions.length, durable)
+              return durable
+            }
+            throw new Error(`Unexpected Task command: ${name}`)
+          })
+        }
+      } satisfies Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
+      const taskAgent: TaskAgentPort = {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: vi.fn(async () => []),
+        createSession: vi.fn(async () => ({ sessionId: 'session-restart' })),
+        resumeSession: vi.fn(async (request) => ({ sessionId: request.sessionId })),
+        setPermissionProfile: vi.fn(async () => undefined),
+        setMemoryEnabled: vi.fn(async () => undefined),
+        cancelPrompt: vi.fn(async () => undefined),
+        prompt: vi.fn(async () => undefined)
+      }
+      const controllers: ReturnType<typeof makeController>[] = []
+
+      try {
+        const first = makeController(
+          {
+            resolveConfigRoot: () => configRoot,
+            createTaskRunJournal: (root) => new FileTaskRunJournal(root)
+          },
+          vi.fn(),
+          applicationCommands,
+          { taskAgent }
+        )
+        controllers.push(first)
+        await first.controller.ensureStarted(44100, { attached: false })
+        const request = { project: project.id, prompt: 'Research across a restart.' }
+        if (durable) await first.lastOptions().tasks!.submitRun!('request-restart', request)
+        if (durable)
+          await vi.waitFor(async () => {
+            expect(
+              await first.lastOptions().tasks!.getSubmission!('request-restart')
+            ).toMatchObject({ status: 'accepted' })
+          })
+        const started = durable
+          ? first
+              .lastOptions()
+              .tasks!.getRun(
+                (await first.lastOptions().tasks!.getSubmission!('request-restart')).runId!
+              )
+          : await first.lastOptions().tasks!.startRun(request)
+        await vi.waitFor(() => {
+          expect(first.lastOptions().tasks!.getRun(started.id).status).toBe('completed')
+        })
+        const terminal = first.lastOptions().tasks!.getRun(started.id)
+        expect(terminal.status).toBe('completed')
+        await first.controller.dispose()
+
+        const second = makeController(
+          {
+            resolveConfigRoot: () => configRoot,
+            createTaskRunJournal: (root) => new FileTaskRunJournal(root)
+          },
+          vi.fn(),
+          applicationCommands,
+          { taskAgent }
+        )
+        controllers.push(second)
+        await second.controller.ensureStarted(44101, { attached: false })
+        await second.lastOptions().waitUntilTasksReady?.()
+
+        if (durable) {
+          expect(
+            await second.lastOptions().tasks!.submitRun!('request-restart', request)
+          ).toMatchObject({ status: 'accepted', runId: started.id })
+          expect(taskAgent.prompt).toHaveBeenCalledOnce()
+        }
+        expect(second.lastOptions().tasks!.getRun(started.id)).toMatchObject({
+          id: started.id,
+          sessionId: started.sessionId,
+          projectId: project.id,
+          status: 'completed'
+        })
+      } finally {
+        await Promise.all(
+          controllers.map(({ controller }) => controller.dispose().catch(() => undefined))
+        )
+        await rm(configRoot, { recursive: true, force: true })
+      }
     }
-    const controllers: ReturnType<typeof makeController>[] = []
-
-    try {
-      const first = makeController(
-        {
-          resolveConfigRoot: () => configRoot,
-          createTaskRunJournal: (root) => new FileTaskRunJournal(root)
-        },
-        vi.fn(),
-        applicationCommands,
-        { taskAgent }
-      )
-      controllers.push(first)
-      await first.controller.ensureStarted(44100, { attached: false })
-      const started = await first.lastOptions().tasks!.startRun({
-        project: project.id,
-        prompt: 'Research across a restart.'
-      })
-      await vi.waitFor(() => {
-        expect(first.lastOptions().tasks!.getRun(started.id).status).toBe('completed')
-      })
-      const terminal = first.lastOptions().tasks!.getRun(started.id)
-      expect(terminal.status).toBe('completed')
-      await first.controller.dispose()
-
-      const second = makeController(
-        {
-          resolveConfigRoot: () => configRoot,
-          createTaskRunJournal: (root) => new FileTaskRunJournal(root)
-        },
-        vi.fn(),
-        applicationCommands,
-        { taskAgent }
-      )
-      controllers.push(second)
-      await second.controller.ensureStarted(44101, { attached: false })
-      await second.lastOptions().waitUntilTasksReady?.()
-
-      expect(second.lastOptions().tasks!.getRun(started.id)).toMatchObject({
-        id: started.id,
-        sessionId: started.sessionId,
-        projectId: project.id,
-        status: 'completed'
-      })
-    } finally {
-      await Promise.all(
-        controllers.map(({ controller }) => controller.dispose().catch(() => undefined))
-      )
-      await rm(configRoot, { recursive: true, force: true })
-    }
-  })
+  )
 
   it('marks a recorded running Task as failed when the process restarts', async () => {
     const configRoot = await mkdtemp(join(tmpdir(), 'open-science-task-runs-'))

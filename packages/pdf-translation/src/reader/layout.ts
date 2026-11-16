@@ -134,6 +134,7 @@ type LayoutPage = {
   blocks: LayoutBlock[]
 }
 type LayoutUnit = {
+  figure?: true
   id: string
   kind: 'prose-candidate' | 'heading-candidate' | 'other'
   referenceBoundary?: true
@@ -11418,6 +11419,94 @@ const formulaExtractionArtifact = (text: string): boolean =>
 // control code. Keep this damaged metadata native rather than aborting the PDF.
 const metadataExtractionArtifact = (text: string): boolean =>
   text.includes('☯') || /(?:©c|c©)\s*\d{4}\b/u.test(text)
+// Small, independently owned labels above their native figure caption cannot
+// open a document-wide bibliography. Unknown typography keeps the old policy.
+function nativeFigureReferenceLabel(
+  unit: LayoutUnit,
+  units: LayoutUnit[],
+  pages: PdfLayoutPage[],
+  bodyFont: number
+): boolean {
+  if (
+    !/^(?:references|bibliography|literature cited|works cited|参考文献|參考文獻)$/iu.test(
+      unit.source
+    ) ||
+    unit.kind !== 'other' ||
+    unit.fragments.length !== 1 ||
+    unit.items.length !== 1 ||
+    unit.risks.length
+  )
+    return false
+  const part = unit.fragments[0],
+    page = pages.find((p) => p.page === part.page)
+  if (!page || page.rotation !== 0 || part.rect.font >= bodyFont * 0.6) return false
+  const native = (owner: LayoutUnit): PdfLayoutTextItem | undefined => {
+    if (
+      owner.fragments.length !== 1 ||
+      owner.fragments[0].page !== page.page ||
+      owner.items.length !== 1 ||
+      owner.risks.length
+    )
+      return
+    const key = owner.items[0],
+      index = Number(key.split(':')[1]),
+      item = page.items[index]
+    if (
+      key !== page.page + ':' + index ||
+      !nativeHorizontalSourceItem(item) ||
+      !item.fontName ||
+      owner.source !== item.str ||
+      owner.originalStrings[0] !== item.str ||
+      units.filter((u) => u.items.includes(key)).length !== 1
+    )
+      return
+    return item
+  }
+  const label = native(unit)
+  if (!label) return false
+  return units.some((caption) => {
+    if (
+      caption.fragments.length !== 1 ||
+      caption.fragments[0].page !== page.page ||
+      !/^(?:Fig\.?|Figure)\s+\d+[.:]\s+\p{Lu}/iu.test(caption.source) ||
+      caption.risks.length ||
+      caption.items.length !== caption.originalStrings.length ||
+      caption.items.some((key, n) => {
+        const item = page.items[Number(key.split(':')[1])]
+        return (
+          !nativeHorizontalSourceItem(item) ||
+          item.str !== caption.originalStrings[n] ||
+          units.filter((owner) => owner.items.includes(key)).length !== 1
+        )
+      })
+    )
+      return false
+    const bounds = caption.fragments[0].rect
+    if (
+      part.rect.bottom > bounds.y ||
+      bounds.y - part.rect.y > page.height * 0.35 ||
+      part.rect.x < bounds.x ||
+      part.rect.right > bounds.right ||
+      part.rect.font >= bounds.font * 0.75
+    )
+      return false
+    const peers = units.filter((owner) => {
+      const item = native(owner),
+        box = owner.fragments[0]?.rect
+      return (
+        item &&
+        item.fontName === label.fontName &&
+        Math.abs(item.height - label.height) < label.height * 0.02 &&
+        box.x >= bounds.x &&
+        box.right <= bounds.right &&
+        box.y >= bounds.y - page.height * 0.35 &&
+        box.bottom < bounds.y
+      )
+    })
+    return peers.length >= 3
+  })
+}
+
 // A References column is not a bibliography boundary. Prove only its native
 // table-header ownership, without interpreting mathematical cells or claiming ink bounds.
 function nativeTableColumnReference(
@@ -15717,6 +15806,11 @@ export function groupPdfTranslationPages(raw: {
   const legendProse = nativeLegendProseOwners(units, raw.pages)
   for (const [index, unit] of units.entries()) {
     const wasReferences = references
+    const figureReference = nativeFigureReferenceLabel(unit, units, raw.pages, bodyFont)
+    if (figureReference) {
+      unit.figure = true
+      unit.sourceOnly = true
+    }
     if (pairedFigureNotes.has(unit.items.join('|'))) unit.referenceBoundary = true
     if (nativeCaptionPanel(unit, index)) delete unit.sourceOnly
     const heading = unit.source
@@ -15730,7 +15824,8 @@ export function groupPdfTranslationPages(raw: {
         nativeSingularReference(unit, units, raw.pages, raw.pageCount) ||
         nativeSupplementaryReferences(unit, units, raw.pages, raw.pageCount)) &&
       !isContentsEntry(unit) &&
-      !nativeTableColumnReference(unit, units, raw)
+      !nativeTableColumnReference(unit, units, raw) &&
+      !figureReference
     ) {
       references = true
       referenceHeading = unit

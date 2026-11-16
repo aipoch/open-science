@@ -98,6 +98,87 @@ it('recovers two grouped parents above the predicted child header without changi
   expect(f).toEqual(before)
 })
 
+it('conserves three anonymized metric-group sources across a multi-level header', () => {
+  const columns = 7,
+    table = {
+      id: 'metric-group-header',
+      cropRect: [0, 0, columns * 100, 100],
+      structure: {
+        objects: [
+          ...Array.from({ length: columns }, (_, column) => ({
+            label: 'table column',
+            rect: [column * 100, 25, (column + 1) * 100, 100]
+          })),
+          ...[25, 50, 75].map((y) => ({
+            label: 'table row',
+            rect: [0, y, columns * 100, y + 25]
+          })),
+          { label: 'table column header', rect: [0, 25, columns * 100, 50] }
+        ]
+      }
+    },
+    source = [] as HeaderToken[]
+  let index = 0
+  const token = (text: string, left: number, top: number, width: number): HeaderToken => ({
+    text,
+    rect: [left, top, left + width, top + 10],
+    baseline: top + 10,
+    height: 10,
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index: index++, text }
+  })
+  source.push(
+    token('Method', 15, 18, 45),
+    token('Fidelity', 140, 5, 100),
+    token('Perceptual', 340, 5, 100),
+    token('Text Restoration', 540, 5, 140),
+    ...['Reference', 'No Reference', 'Reference', 'No Reference', 'Reference', 'No Reference'].map(
+      (text, column) => token(text, column * 100 + 110, 30, text.length > 8 ? 75 : 65)
+    ),
+    ...[0, 1].flatMap((row) => [
+      token(row ? 'B' : 'A', 15, 55 + row * 25, 15),
+      ...Array.from({ length: 6 }, (_, column) =>
+        token(`score-${row + column + 1}`, column * 100 + 120, 55 + row * 25, 55)
+      )
+    ])
+  )
+  const result = refineTable(
+    table,
+    source,
+    [{ page: 1, lines: ['Table 1: Metrics'], rect: [0, -20, columns * 100, -5] }],
+    [],
+    [0, 50, 75, 100]
+      .map((y) => [0, y, columns * 100, y])
+      .concat([100, 300, 500].map((x) => [x, 0, x, 50]))
+  )
+  expect(result.grid[0]).toEqual([
+    'Method',
+    'Fidelity',
+    '',
+    'Perceptual',
+    '',
+    'Text Restoration',
+    ''
+  ])
+  expect(
+    result.cells.filter((cell: { text: string }) =>
+      /Fidelity|Perceptual|Text Restoration/u.test(cell.text)
+    )
+  ).toEqual([
+    expect.objectContaining({ text: 'Fidelity', rowSpan: 1, colSpan: 2 }),
+    expect.objectContaining({ text: 'Perceptual', rowSpan: 1, colSpan: 2 }),
+    expect.objectContaining({ text: 'Text Restoration', rowSpan: 1, colSpan: 2 })
+  ])
+  expect(result.unassigned).toEqual([])
+  expect(
+    result.cells
+      .flatMap((cell: { sourceItems?: Array<{ index: number }> }) =>
+        (cell.sourceItems ?? []).map((item) => item.index)
+      )
+      .sort((a: number, b: number) => a - b)
+  ).toEqual(source.map((item) => item.sourceItem.index))
+})
+
 const threeTierHeader = (): HeaderFixture & { runs: HeaderRun[] } => {
   const table = {
     id: 'measured-grouped-header',

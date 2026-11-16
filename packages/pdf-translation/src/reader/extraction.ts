@@ -677,6 +677,7 @@ async function readPdfTranslationSource({
         source: unit.source,
         ...(sourceOnly ? { sourceOnly: true as const } : {}),
         ...(unit.preserve ? { preserve: unit.preserve } : {}),
+        ...(unit.figure ? { figure: true as const } : {}),
         ...(unit.referenceBoundary ? { referenceBoundary: true as const } : {}),
         fragments
       })

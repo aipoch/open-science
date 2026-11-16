@@ -1,3 +1,4 @@
+import { sessionSchedulesMigration } from './migrations/0058-session-schedules'
 import { computeKubernetesWorkspaceMigration } from './migrations/0056-compute-kubernetes-workspace'
 import { sessionDiscussionParentMigration } from './migrations/0055-session-discussion-parent'
 import { projectOptimizationPromptMigration } from './migrations/0057-project-optimization-prompt'
@@ -1027,6 +1028,16 @@ const MIGRATION_MANIFEST = [
       projectOptimizationPromptMigration.id,
       projectOptimizationPromptMigration.statements,
       projectOptimizationPromptMigration.verifiers
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionSchedulesMigration,
+    checksum: checksumMigrationPayload(
+      sessionSchedulesMigration.id,
+      sessionSchedulesMigration.statements,
+      sessionSchedulesMigration.verifiers
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

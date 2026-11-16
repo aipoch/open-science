@@ -31,7 +31,10 @@ import {
   type SessionSetupContext
 } from './types'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
-import { CODEX_SUBSCRIPTION_PROVIDER_ID, isCodexSubscriptionProvider } from '../../shared/settings'
+import {
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
+  isCodexSubscriptionProvider
+} from '../../shared/settings-runtime'
 import { prepareCodexRuntimeHomeAuthentication } from '../settings/codex-auth'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../settings/codex-paths'
 import { CODEX_VERSION, spawnCodexWithInstallAdmission } from '../settings/managed-codex'
@@ -124,7 +127,11 @@ const CODEX_CHAT_BRIDGE_FEATURES = Object.freeze({
   // Plan namespace in each request when that MCP capability is actually registered; the bridge
   // still exposes no Plan tools for Sessions whose request does not contain this namespace.
   code_mode: {
-    direct_only_tool_namespaces: ['mcp__skills', CODEX_PLAN_BRIDGE_NAMESPACE]
+    direct_only_tool_namespaces: [
+      'mcp__skills',
+      CODEX_PLAN_BRIDGE_NAMESPACE,
+      'mcp__open_science_schedule'
+    ]
   }
 })
 const CODEX_DISABLED_NATIVE_MEMORY = Object.freeze({

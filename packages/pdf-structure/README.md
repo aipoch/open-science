@@ -40,8 +40,8 @@ its own job directory**. The supervisor can remove that snapshot when its parent
 Never pass an original document or a directory shared with other jobs. The caller owns authorization,
 snapshot acquisition, model leases, cache publication, scheduling and lease release.
 
-The default runtime owns a single ordinary Node child with Worker threads. An application can
-inject `runtime.spawn(entry)` and `runtime.stop(child)` to use its process-tree supervisor. `stop`
+The default runtime owns a Node supervisor with Worker threads and one IPC-attached ORT child.
+An application can inject `runtime.spawn(entry)` and `runtime.stop(child)` to use its process-tree supervisor. `stop`
 must confirm termination before resolving. Engine stop waits for conversion before deleting scratch;
 a rejection requires retry and retention of the caller's file/model leases. Each start needs a unique
 job directory. This package adds no persistent queue, database, or application states.

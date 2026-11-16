@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseUseCases, USE_CASE_MANIFEST_URL } from '../../shared/use-cases'
+import { assertPackageCapacity } from './capacity'
 
 // Resolve the slug independently of renderer metadata and verify bytes before archive inspection.
 export const downloadUseCase = async (
@@ -14,7 +15,10 @@ export const downloadUseCase = async (
     signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
     redirect: 'error'
   })
-  if (!manifest.ok) throw new Error('Could not load use cases.')
+  if (!manifest.ok) {
+    await manifest.body?.cancel().catch(() => undefined)
+    throw new Error('Could not load use cases.')
+  }
   const item = parseUseCases(await manifest.json()).find((item) => item.slug === slug)
   if (!item) throw new Error('Use case is unavailable.')
   const directory = await mkdtemp(join(tmpdir(), 'open-science-use-case-'))
@@ -22,6 +26,7 @@ export const downloadUseCase = async (
   // A slug is a portable filename, including on Windows where published titles can contain colons.
   const path = join(directory, `case-${slug}.science`)
   try {
+    await assertPackageCapacity(directory, item.sizeBytes)
     await resilientDownload(item.packageUrl, path, {
       signal,
       expectedSize: item.sizeBytes,

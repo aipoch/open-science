@@ -34,13 +34,13 @@ const source: ResearchVideoSessionSource = {
 }
 const count = (text: string): number => text.length
 
-it('uses configured input and output limits rather than a fixed conversation byte cap', () => {
+it('honors the input limit and leaves headroom without reserving the entire output ceiling', () => {
   expect(
     researchFilmInputBudget({ ...provider, contextWindow: 200_000, maxInputTokens: 100_000 })
   ).toBe(82_952)
   expect(
-    researchFilmInputBudget({ ...provider, contextWindow: 100_000, maxOutputTokens: 32_000 })
-  ).toBe(55_752)
+    researchFilmInputBudget({ ...provider, contextWindow: 100_000, maxOutputTokens: 100_000 })
+  ).toBe(61_702)
   expect(researchFilmInputBudget({ ...provider, contextWindow: 1_000_000 })).toBeGreaterThan(
     800_000
   )

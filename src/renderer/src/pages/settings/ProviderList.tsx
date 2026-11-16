@@ -41,7 +41,7 @@ import {
   requiresChatCompletionsBridge,
   resolveCodexSubscriptionType,
   selectClaudeSubscriptionProvider
-} from '../../../../shared/settings'
+} from '../../../../shared/settings-runtime'
 import { incompatibilityReason } from '../workspace/composer-model-picker-utils'
 import { providerKindKey } from './provider-form-value'
 import { ProviderKindIcon } from './provider-icons'
