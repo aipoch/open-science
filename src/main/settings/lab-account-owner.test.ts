@@ -342,6 +342,62 @@ describe('Lab account owner', () => {
     expect(owner.getView().state).not.toBe('expired')
   })
 
+  it('clears a session saved by a fast callback before beginLogin returns', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const credentials = new LabCredentialStore(dir)
+    await credentials.saveServerUrl(SERVER)
+    let resolveBegin:
+      ((challenge: { authorizationUrl: string; expiresAt: number }) => void) | undefined
+    const oauth = {
+      beginLogin: vi.fn(
+        () =>
+          new Promise<{ authorizationUrl: string; expiresAt: number }>((resolve) => {
+            resolveBegin = resolve
+          })
+      ),
+      waitForLogin: vi.fn(),
+      cancelLogin: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined)
+    }
+    const api = createApi()
+    const repository = new SettingsRepository(dir)
+    const owner = new LabAccountOwner({
+      configRoot: dir,
+      repository,
+      credentials,
+      api: api as unknown as LabApi,
+      oauth: oauth as unknown as never
+    })
+    const starting = owner.beginLogin().catch((error: unknown) => error)
+    await vi.waitFor(() => expect(oauth.beginLogin).toHaveBeenCalledTimes(1))
+    // Simulate the browser callback completing while openExternal is still pending.
+    await credentials.saveSession({
+      accessToken: 'at_fast_callback',
+      refreshToken: 'rt_fast_callback',
+      tokenExpiresAt: Date.now() + 900_000
+    })
+    await owner.cancelLogin()
+    resolveBegin?.({
+      authorizationUrl: 'https://lab.example.com/sign-in',
+      expiresAt: Date.now() + 60_000
+    })
+    const error = await starting
+    expect(error).toBeInstanceOf(LabApiError)
+    expect((error as LabApiError).code).toBe('cancelled')
+    expect(await credentials.readSession()).toBeUndefined()
+
+    const restarted = new LabAccountOwner({
+      configRoot: dir,
+      repository,
+      credentials,
+      api: api as unknown as LabApi,
+      oauth: oauth as unknown as never
+    })
+    await restarted.initialize()
+    expect(restarted.getView().state).toBe('signedOut')
+  })
+
   it('cancels a login that is still loading its catalog after browser authorization', async () => {
     const dir = await createRoot()
     await seedSettings(dir)
@@ -386,6 +442,56 @@ describe('Lab account owner', () => {
     expect(view).toMatchObject({ state: 'signedOut', error: { code: 'cancelled' } })
     expect(await credentials.readSession()).toBeUndefined()
     expect(owner.getView().state).toBe('signedOut')
+  })
+
+  it('rolls back a catalog written after cancellation invalidates the connection', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const api = createApi()
+    const { owner, repository } = await createOwner(dir, api)
+    const credentials = new LabCredentialStore(dir)
+    await seedSession(credentials)
+    await owner.check()
+
+    let releaseUpsert: (() => void) | undefined
+    const upsertGate = new Promise<void>((resolve) => {
+      releaseUpsert = resolve
+    })
+    const originalUpsert = repository.upsertProvider.bind(repository)
+    let paused = false
+    const spy = vi.spyOn(repository, 'upsertProvider').mockImplementation(async (...args) => {
+      const result = await originalUpsert(...args)
+      if (!paused) {
+        paused = true
+        await upsertGate
+      }
+      return result
+    })
+    let resolveBootstrap: ((value: LabBootstrap) => void) | undefined
+    api.bootstrap.mockImplementationOnce(
+      () =>
+        new Promise<LabBootstrap>((resolve) => {
+          resolveBootstrap = resolve
+        })
+    )
+    const refreshing = owner.refreshCatalog()
+    await vi.waitFor(() => expect(api.bootstrap).toHaveBeenCalledTimes(2))
+    resolveBootstrap?.(BOOTSTRAP)
+    await vi.waitFor(() => expect(paused).toBe(true))
+
+    // Simulate the UI canceling while the catalog write is paused after landing on disk.
+    ;(owner as unknown as { view: { state: 'signingIn'; serverUrl: string } }).view = {
+      state: 'signingIn',
+      serverUrl: SERVER
+    }
+    await owner.cancelLogin()
+    releaseUpsert?.()
+    await refreshing
+    spy.mockRestore()
+
+    expect(
+      (await repository.getSettings()).providers.some((provider) => provider.id === LAB_PROVIDER_ID)
+    ).toBe(false)
   })
 
   it('does not let a stale startup restore clear a newer login', async () => {
@@ -557,6 +663,22 @@ describe('Lab account owner', () => {
     const settings = await repository.getSettings()
     expect(settings.activeProviderId).toBe('p1')
     expect(settings.activeModel).toBe('m2')
+  })
+
+  it('does not fall back to the saved address for an explicitly empty draft', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const api = createApi()
+    const { owner } = await createOwner(dir, api)
+    const credentials = new LabCredentialStore(dir)
+    await seedSession(credentials)
+    await owner.check()
+    api.clientBootstrap.mockClear()
+
+    const view = await owner.check({ serverUrl: '   ' })
+    expect(view.error?.code).toBe('server-url-missing')
+    expect(api.clientBootstrap).not.toHaveBeenCalled()
+    expect((await credentials.readSession())?.accessToken).toBeTruthy()
   })
 
   it('probes an unsaved draft address without clearing the current login', async () => {

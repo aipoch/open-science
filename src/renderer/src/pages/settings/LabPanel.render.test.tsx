@@ -28,6 +28,14 @@ const renderPanel = async (lab: LabView | undefined): Promise<void> => {
 const buttonWithText = (label: string): HTMLButtonElement | undefined =>
   [...container.querySelectorAll('button')].find((button) => button.textContent === label)
 
+const changeInput = (value: string): void => {
+  const input = container.querySelector('input[aria-label="Lab server address"]')
+  expect(input).toBeInstanceOf(HTMLInputElement)
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  setter?.call(input, value)
+  input!.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
 const click = async (label: string): Promise<void> => {
   const button = buttonWithText(label)
   expect(button, label).toBeDefined()
@@ -144,14 +152,41 @@ describe('Lab settings panel', () => {
     await renderPanel({ state: 'signedOut', serverUrl: 'https://lab.example.com' })
     const input = container.querySelector('input[aria-label="Lab server address"]')
     expect(input).toBeInstanceOf(HTMLInputElement)
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-    setter?.call(input, 'https://draft.example.com')
-    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    changeInput('https://draft.example.com')
 
     await click('Test connection')
     expect(settingsApi.labCheck).toHaveBeenCalledWith({ serverUrl: 'https://draft.example.com' })
     expect(settingsApi.labSetServer).not.toHaveBeenCalled()
     expect(container.textContent).toContain('Lab server address is reachable.')
+  })
+
+  it('does not show a success result for an empty draft address', async () => {
+    await renderPanel({ state: 'signedOut', serverUrl: 'https://lab.example.com' })
+    settingsApi.labCheck.mockResolvedValueOnce({
+      state: 'signedOut',
+      error: { code: 'server-url-missing' }
+    })
+    changeInput('')
+
+    await click('Test connection')
+    expect(settingsApi.labCheck).toHaveBeenCalledWith({ serverUrl: '' })
+    expect(container.textContent).not.toContain('Lab server address is reachable.')
+  })
+
+  it('drops a probe result when the input changes while it is in flight', async () => {
+    await renderPanel({ state: 'signedOut', serverUrl: 'https://lab.example.com' })
+    let resolveCheck: ((view: LabView) => void) | undefined
+    settingsApi.labCheck.mockImplementation(
+      () =>
+        new Promise<LabView>((resolve) => {
+          resolveCheck = resolve
+        })
+    )
+    const button = buttonWithText('Test connection')
+    await act(async () => button!.click())
+    changeInput('https://other.example.com')
+    await act(async () => resolveCheck?.({ state: 'signedOut' }))
+    expect(container.textContent).not.toContain('Lab server address is reachable.')
   })
 
   it('shows the browser wait state and cancels the attempt', async () => {

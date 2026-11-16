@@ -66,6 +66,8 @@ export class LabAccountOwner {
   private access: { token: string; expiresAt: number; serverUrl: string } | undefined
   private refreshPromise: Promise<string> | undefined
   private refreshGeneration = 0
+  private loginAttempt = 0
+  private activeLoginAttempt: number | undefined
 
   constructor(options: LabAccountOwnerOptions) {
     this.repository = options.repository
@@ -163,6 +165,8 @@ export class LabAccountOwner {
       // commit, then atomically swap the address and drop the old token pair.
       this.refreshGeneration += 1
       this.access = undefined
+      this.loginAttempt += 1
+      this.activeLoginAttempt = undefined
       await this.oauth.cancelLogin().catch(() => undefined)
       await this.credentials.replaceServer(serverUrl)
       await this.removeProviderRecord()
@@ -175,8 +179,12 @@ export class LabAccountOwner {
   }
 
   async check(request?: LabCheckRequest): Promise<LabView> {
+    const hasDraft = request !== undefined && Object.hasOwn(request, 'serverUrl')
     const draftServerUrl = request?.serverUrl?.trim()
-    if (draftServerUrl) {
+    if (hasDraft) {
+      if (!draftServerUrl) {
+        return { ...this.view, error: { code: 'server-url-missing' } }
+      }
       const errorCode = getLabServerUrlError(draftServerUrl)
       if (errorCode) {
         return { ...this.view, serverUrl: draftServerUrl, error: { code: errorCode } }
@@ -221,16 +229,26 @@ export class LabAccountOwner {
     if (!document.serverUrl) {
       throw new LabApiError('server-url-missing', 'Configure the Lab server address first.')
     }
+    const attempt = ++this.loginAttempt
+    this.activeLoginAttempt = attempt
     try {
       const challenge = await this.oauth.beginLogin(document.serverUrl)
+      // Cancel covers the whole attempt, including the window where a fast browser callback has
+      // already saved a session but openExternal has not returned yet.
+      if (this.activeLoginAttempt !== attempt) {
+        throw new LabApiError('cancelled', 'Lab sign-in was cancelled.')
+      }
       this.publish({ state: 'signingIn', serverUrl: document.serverUrl })
       return challenge
     } catch (error) {
-      this.publish({
-        state: 'signedOut',
-        serverUrl: document.serverUrl,
-        error: toViewError(error)
-      })
+      if (this.activeLoginAttempt === attempt) {
+        this.activeLoginAttempt = undefined
+        this.publish({
+          state: 'signedOut',
+          serverUrl: document.serverUrl,
+          error: toViewError(error)
+        })
+      }
       throw error
     }
   }
@@ -238,9 +256,13 @@ export class LabAccountOwner {
   async waitLogin(): Promise<LabView> {
     const document = await this.credentials.readDocument()
     const serverUrl = document.serverUrl
+    const attempt = this.activeLoginAttempt
     let generation = this.refreshGeneration
     try {
       const session = await this.oauth.waitForLogin()
+      if (attempt !== undefined && this.activeLoginAttempt !== attempt) {
+        throw new LabApiError('cancelled', 'Lab sign-in was cancelled.')
+      }
       this.access = {
         token: session.accessToken,
         expiresAt: session.tokenExpiresAt,
@@ -250,23 +272,32 @@ export class LabAccountOwner {
       generation = this.refreshGeneration
       await this.credentials.clearPreviousSelection().catch(() => undefined)
       const bootstrap = await this.bootstrapWithAuth()
+      if (attempt !== undefined && this.activeLoginAttempt !== attempt) {
+        throw new LabApiError('cancelled', 'Lab sign-in was cancelled.')
+      }
       return await this.applyBootstrap(serverUrl!, bootstrap, generation)
     } catch (error) {
       return this.handleRequestFailure(error, serverUrl, generation)
+    } finally {
+      if (attempt !== undefined && this.activeLoginAttempt === attempt) {
+        this.activeLoginAttempt = undefined
+      }
     }
   }
 
   async cancelLogin(): Promise<LabView> {
-    const wasSigningIn = this.view.state === 'signingIn'
-    if (wasSigningIn) {
-      // Cancel covers the whole sign-in flow, including the catalog load that runs after the
-      // browser callback. Advancing the generation makes any in-flight waitLogin/applyBootstrap
-      // result stale, and the session saved by the OAuth exchange must not become a silent login.
+    const wasLoginActive = this.activeLoginAttempt !== undefined || this.view.state === 'signingIn'
+    if (wasLoginActive) {
+      // Cancel covers the whole sign-in flow, including the window before beginLogin publishes
+      // signingIn and the catalog load after the browser callback. Advance the attempt and
+      // generation so old results cannot publish, and remove any session the callback saved.
+      this.loginAttempt += 1
+      this.activeLoginAttempt = undefined
       this.refreshGeneration += 1
       this.access = undefined
     }
     await this.oauth.cancelLogin()
-    if (wasSigningIn) await this.credentials.clearSession().catch(() => undefined)
+    if (wasLoginActive) await this.credentials.clearSession().catch(() => undefined)
     const document = await this.credentials.readDocument()
     return this.publish({
       state: document.serverUrl ? 'signedOut' : 'unconfigured',
@@ -302,6 +333,8 @@ export class LabAccountOwner {
     await this.credentials.clearSession().catch(() => undefined)
     this.access = undefined
     this.refreshGeneration += 1
+    this.loginAttempt += 1
+    this.activeLoginAttempt = undefined
     await this.removeProviderRecord()
     return this.publish({
       state: serverUrl ? 'signedOut' : 'unconfigured',
@@ -496,9 +529,11 @@ export class LabAccountOwner {
       // Only the exact catalog write we performed may be removed. A newer login at the same address
       // has a different token and must never be deleted by this stale cleanup.
       if (current?.labCatalogToken && current.labCatalogToken === record.labCatalogToken) {
+        // This branch is only reachable after the connection became stale, so an isCurrent guard
+        // here would always reject the rollback. The unique catalog token is the exact write
+        // identity and protects any newer login's record.
         await this.repository.deleteProvider(LAB_PROVIDER_ID, 'inherit', {
-          expectedLabCatalogToken: record.labCatalogToken,
-          isCurrent: () => this.isCurrentConnection(generation, serverUrl)
+          expectedLabCatalogToken: record.labCatalogToken
         })
       }
       return this.view

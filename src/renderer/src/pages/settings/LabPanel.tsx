@@ -69,6 +69,7 @@ export function LabPanel(): React.JSX.Element {
   const { t } = useTranslation()
   const lab = useSettingsStore((state) => state.lab)
   const [serverUrl, setServerUrl] = useState(() => lab?.serverUrl ?? '')
+  const serverUrlRef = useRef(serverUrl)
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [actionErrorKey, setActionErrorKey] = useState<string>()
   const [actionSuccessKey, setActionSuccessKey] = useState<string>()
@@ -114,9 +115,12 @@ export function LabPanel(): React.JSX.Element {
     setBusyAction('check')
     setActionErrorKey(undefined)
     setActionSuccessKey(undefined)
+    const testedServerUrl = serverUrl
     try {
       // Probe the address in the field without changing the saved deployment or clearing a login.
-      const view = await window.api.settings.labCheck({ serverUrl })
+      const view = await window.api.settings.labCheck({ serverUrl: testedServerUrl })
+      // Ignore a result if the user edited the address while the probe was in flight.
+      if (serverUrlRef.current.trim() !== testedServerUrl.trim()) return
       if (view.error?.code) setActionErrorKey(labErrorCopyKey(view.error.code))
       else setActionSuccessKey('Lab server address is reachable.')
     } catch (error) {
@@ -222,7 +226,13 @@ export function LabPanel(): React.JSX.Element {
                     placeholder={t('https://lab.example.com')}
                     value={serverUrl}
                     disabled={busyAction === 'save'}
-                    onChange={(event) => setServerUrl(event.target.value)}
+                    onChange={(event) => {
+                      const next = event.target.value
+                      serverUrlRef.current = next
+                      setServerUrl(next)
+                      setActionErrorKey(undefined)
+                      setActionSuccessKey(undefined)
+                    }}
                   />
                 </SettingsField>
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
