@@ -279,6 +279,11 @@ describe('Literature Library MCP server', () => {
       })
       const client = await connect(server)
       try {
+        const fullTextTool = (await client.listTools()).tools.find(
+          ({ name }) => name === 'search_library_full_text'
+        )
+        expect(fullTextTool?.description).toContain('limit must be 1–8')
+        expect(fullTextTool?.description).toContain('offset and nextOffset')
         const result = await client.callTool({
           name: 'read_library_abstract',
           arguments: { itemId: 'item-1', query }
@@ -2691,6 +2696,30 @@ describe('Literature Library MCP server', () => {
       }
     }
   )
+
+  it('rejects the metadata page limit when passed to full-text discovery', async () => {
+    const searchLibraryFullText = vi.fn()
+    const server = createLiteratureLibraryMcpServer({
+      searchLibrary: vi.fn(),
+      searchLibraryFullText,
+      readAbstract: vi.fn(),
+      readPdf: vi.fn(),
+      saveToInbox: vi.fn()
+    })
+    const client = await connect(server)
+    try {
+      const result = await client.callTool({
+        name: 'search_library_full_text',
+        arguments: { query: 'body-only term', limit: 20 }
+      })
+      expect(result.isError).toBe(true)
+      expect(JSON.stringify(result.content)).toContain('expected number to be <=8')
+      expect(searchLibraryFullText).not.toHaveBeenCalled()
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
 })
 
 it('returns a tool error when a search result cannot be retained as review evidence', async () => {

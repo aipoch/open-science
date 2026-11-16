@@ -96,7 +96,7 @@ const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
   tool(
     LITERATURE_LIBRARY_MCP_SERVER_NAME,
     LITERATURE_LIBRARY_SEARCH_FULL_TEXT_TOOL_NAME,
-    'Discover Library records by matching body text in existing PDF indexes within the selected scope. Unindexed PDFs are skipped; this never extracts, OCRs or builds indexes. Use search_library for metadata and abstract discovery, or read_library_pdf when the target record is already known. Inspect coverage, incomplete and limitations; fullTextCoverage stays unverified. Each call scans up to 20 records: pass nextOffset as offset to scan the next records; limit caps passages from the current page, so refine the query on result-limit. Empty or truncated results do not prove absent evidence or complete full-text coverage. Passages are discovery evidence; call read_library_pdf before citing.',
+    'Discover Library records by matching body text in existing PDF indexes within the selected scope. Unindexed PDFs are skipped; this never extracts, OCRs or builds indexes. Use search_library for metadata and abstract discovery, or read_library_pdf when the target record is already known. Each call scans up to 20 records: pass nextOffset as offset to scan the next records; limit must be 1–8 and caps passages from the current page, so refine the query on result-limit. Do not pass limit 20. Inspect coverage, incomplete and limitations; fullTextCoverage stays unverified. Empty or truncated results do not prove absent evidence or complete full-text coverage. Passages are discovery evidence; call read_library_pdf before citing.',
     z.object({
       query: z.string().trim().min(1).max(2_000),
       scope: libraryScope.optional(),

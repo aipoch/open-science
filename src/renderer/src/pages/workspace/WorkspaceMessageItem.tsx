@@ -1248,8 +1248,8 @@ const MessagePartsContent = ({
                 'bg-mention-chip text-mention-chip-foreground'
               )}
               onClick={() => onOpenLiteratureMention(part)}
-              aria-label={t('Open {{name}}', { name: part.item.title })}
-              title={part.item.title}
+              aria-label={t('Open reference literature {{name}}', { name: part.item.title })}
+              title={t('Reference literature: {{name}}', { name: part.item.title })}
             >
               <span className="min-w-0 truncate">@{part.item.title}</span>
             </button>
