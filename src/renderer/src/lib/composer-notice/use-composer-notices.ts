@@ -26,9 +26,18 @@ export const useComposerNotices = (input: {
 }): {
   notices: ComposerNotice[]
   authenticationRequired: boolean
+  dismissedNotices: ComposerNotice[]
+  restore: (notice: ComposerNotice) => void
+  recoveryFailed: (notice: ComposerNotice) => void
   dismiss: (notice: ComposerNotice) => void
 } => {
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set())
+  const [failedRetries, setFailedRetries] = useState<ReadonlySet<string>>(new Set())
+  const [authResolution, setAuthResolution] = useState<{
+    prefix: string
+    resolved: boolean
+    ids: ReadonlySet<string>
+  }>()
   const prefix = input.sessionId ?? 'draft'
   const notices: ComposerNotice[] = []
   const { turn, recovery, legacy } = input
@@ -96,24 +105,50 @@ export const useComposerNotices = (input: {
       }
     })
   }
-  const visible = notices.filter(
-    ({ failure }) =>
-      !(input.authenticationResolved && failure.reason === 'configuration/auth-failed') &&
-      !(input.compacting && failure.category === 'input')
-  )
+  // Only an authoritative prerequisite transition can describe a historical auth failure as ready.
+  // Capture its identity so a later, fresh authentication failure is not hidden by old verification.
+  const resolved = input.authenticationResolved === true
+  let resolution = authResolution
+  if (resolution?.prefix !== prefix || resolution.resolved !== resolved) {
+    resolution = {
+      prefix,
+      resolved,
+      ids: new Set(
+        resolved
+          ? notices
+              .filter(({ failure }) => failure.reason === 'configuration/auth-failed')
+              .map(({ id }) => id)
+          : []
+      )
+    }
+    setAuthResolution(resolution)
+  }
+  const visible = notices
+    .filter(({ failure }) => !(input.compacting && failure.category === 'input'))
+    .map((notice): ComposerNotice =>
+      resolution.ids.has(notice.id)
+        ? {
+            ...notice,
+            recoveryState: failedRetries.has(notice.id) ? 'retry-failed' : 'ready',
+            blocksSend: false
+          }
+        : notice
+    )
   // Reconcile during render so a resolved failure can reappear without an extra effect render.
   const present = new Set(visible.map(({ id }) => id))
   const retained = [...dismissed].filter((id) => !id.startsWith(`${prefix}:`) || present.has(id))
   if (retained.length !== dismissed.size) setDismissed(new Set(retained))
   return {
-    authenticationRequired: notices.some(
-      (notice) => notice.failure.reason === 'configuration/auth-failed'
-    ),
+    authenticationRequired:
+      !resolved && notices.some((notice) => notice.failure.reason === 'configuration/auth-failed'),
+    recoveryFailed: (notice) => setFailedRetries((ids) => new Set([...ids, notice.id])),
+    dismissedNotices: visible.filter((notice) => dismissed.has(notice.id)),
+    restore: (notice) =>
+      setDismissed((current) => new Set([...current].filter((id) => id !== notice.id))),
     notices: visible
       .filter((notice) => !dismissed.has(notice.id))
       .sort((a, b) => noticePriority(a) - noticePriority(b) || b.occurredAt - a.occurredAt),
     dismiss: (notice) => {
-      if (notice.failure.category === 'session') return
       setDismissed((current) => new Set([...current, notice.id]))
     }
   }

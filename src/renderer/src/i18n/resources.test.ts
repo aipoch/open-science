@@ -3580,7 +3580,6 @@ describe('Korean binding terminology', () => {
     ['made a call', '호출 실행'],
     ['Plan call record', '계획 호출 기록'],
     ['Resume', '재개'],
-    ['Resume session', '세션 재개'],
     ['Running', '실행 중'],
     ['running', '실행 중'],
     ['Reveal in folder', '폴더에 표시'],

@@ -1277,7 +1277,8 @@ describe('WorkspaceMessageScroller loading render', () => {
 
     expect(html).toContain('data-slot="historical-turn-outcome"')
     expect(html).toContain('data-prompt-message-id="prompt-failed"')
-    expect(html).toContain('Retry Artifact publication')
+    expect(html).toContain('data-notice-action="retry"')
+    expect(html).toContain('>Retry</button>')
     expect(html).toContain('Report error')
     expect(html).not.toContain('Resume session')
   })

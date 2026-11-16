@@ -1339,11 +1339,17 @@ const ConversationPanel = ({
       disabled: () => !canResumeSession || isResuming || isStopping || rootTurnBusy
     },
     retry: {
+      busy: (notice) =>
+        notice.recovery === 'retry-artifact-publication' &&
+        notice.promptMessageId === artifactRetryingPromptMessageId,
+      // Uncertain tools require a verifying/defer recovery owner before Retry is offered.
       available: (notice) =>
-        notice.operation === 'reconfigure' ||
-        notice.recovery === 'retry-artifact-publication' ||
-        Boolean(notice.promptMessageId) ||
-        (notice.operation === 'action' && operationDiagnostic?.operation === 'resume'),
+        (notice.failure.reason !== 'session/tool-outcome-unknown' ||
+          ('retry' in conversation.actions && typeof conversation.actions.retry === 'function')) &&
+        (notice.operation === 'reconfigure' ||
+          notice.recovery === 'retry-artifact-publication' ||
+          Boolean(notice.promptMessageId) ||
+          (notice.operation === 'action' && operationDiagnostic?.operation === 'resume')),
       run: async (notice) => {
         if (notice.operation === 'reconfigure') return onReconfigureRetry()
         if (notice.recovery === 'retry-artifact-publication' && notice.promptMessageId)
@@ -1942,6 +1948,9 @@ const ConversationPanel = ({
                       : undefined
                   }
                   notices={composerNotices.notices}
+                  dismissedNotices={composerNotices.dismissedNotices}
+                  onRestore={composerNotices.restore}
+                  onRecoveryFailure={composerNotices.recoveryFailed}
                   handlers={noticeHandlers}
                   onDismiss={composerNotices.dismiss}
                   persistence={

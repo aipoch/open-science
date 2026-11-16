@@ -76,6 +76,7 @@ export function Fixture(): React.JSX.Element {
       'compact',
       'remove-attachments',
       'new-session',
+      'export-diagnostics',
       'report'
     ].map((id) => [
       id,
@@ -91,6 +92,9 @@ export function Fixture(): React.JSX.Element {
       <main className="mx-auto w-full max-w-3xl p-4 text-foreground">
         <ComposerNoticeSlot
           notices={notices.notices}
+          dismissedNotices={notices.dismissedNotices}
+          onRestore={notices.restore}
+          onRecoveryFailure={notices.recoveryFailed}
           handlers={handlers}
           onDismiss={notices.dismiss}
         />
