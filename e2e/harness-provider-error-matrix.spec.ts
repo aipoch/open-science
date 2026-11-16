@@ -227,6 +227,12 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
               .soft(await notice.getByRole('button', { name: '关闭错误提示', exact: true }).count())
               .toBe(0)
           await notice.screenshot({ path: join(directory, `${protocol}-${item.id}-details.png`) })
+          await notice.locator('pre').evaluate((element) => {
+            element.scrollTop = element.scrollHeight
+          })
+          await notice.screenshot({
+            path: join(directory, `${protocol}-${item.id}-details-end.png`)
+          })
           await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
           await expect(page.locator('html')).toHaveAttribute('lang', 'en')
           const result = {

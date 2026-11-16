@@ -382,7 +382,7 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
           })
         }
         const diagnostics = await normalizeUpstreamError(response, signal)
-        throw new ChatCompletionsError('protocol', undefined, {
+        throw new ChatCompletionsError('protocol', response.status, {
           httpStatus: response.status,
           phase: 'response',
           eventCount: 0,

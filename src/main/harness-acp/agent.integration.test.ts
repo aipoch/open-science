@@ -1615,7 +1615,12 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
       const classified = classifyFailure(collectPromptFailureFacts(failure))
       expect(classified).toMatchObject({
         reason,
-        diagnostics: { protocol, phase, requestId: 'sse-request' }
+        diagnostics: {
+          protocol,
+          phase,
+          requestId: 'sse-request',
+          ...(phase === 'response' ? { status } : {})
+        }
       })
       expect(JSON.stringify(classified)).not.toContain('PRIVATE_GATEWAY_PAGE')
     }
