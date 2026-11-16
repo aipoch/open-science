@@ -348,6 +348,23 @@ export class ProtocolForwardingBridge {
       requestId: upstreamRequestId,
       durationMs: Date.now() - startedAt
     }
+    const readErrorBody = async (
+      options: { maxBytes?: number; timeoutMs?: number } = {}
+    ): Promise<{ body: Buffer; complete: boolean }> => {
+      try {
+        return await readBoundedProviderErrorBody(upstream, { signal: request.signal, ...options })
+      } catch (error) {
+        request.signal.throwIfAborted()
+        // Capture is secondary evidence: a broken body cannot replace a known upstream status.
+        if (!connection)
+          log.warn('provider error body read failed', {
+            ...diagnosticContext,
+            bodyComplete: false,
+            transportCode: networkCode(error)
+          })
+        return { body: Buffer.alloc(0), complete: false }
+      }
+    }
     const recordError = (body: string, complete: boolean): void => {
       if (!connection)
         log.warn('provider HTTP failure', {
@@ -360,7 +377,7 @@ export class ProtocolForwardingBridge {
     if (!upstream.ok) response.setHeader(sourceHeader, 'provider-http')
     if (upstreamRequestId) response.setHeader('x-open-science-request-id', upstreamRequestId)
     if (connection && !upstream.ok) {
-      const upstreamBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })
+      const upstreamBody = await readErrorBody()
       let code = 'provider_error'
       if (upstreamBody.complete) {
         try {
@@ -397,9 +414,7 @@ export class ProtocolForwardingBridge {
     ])
       delete headers[name]
     if (isDeterministicProviderErrorStatus(upstream.status)) {
-      const upstreamBody = await readBoundedProviderErrorBody(upstream, {
-        signal: request.signal
-      })
+      const upstreamBody = await readErrorBody()
       recordError(upstreamBody.body.toString('utf8'), upstreamBody.complete)
       await observeProviderFailure(
         target.onProviderFailure,
@@ -428,7 +443,10 @@ export class ProtocolForwardingBridge {
         headers: {
           ...headers,
           'content-length': String(bodyToReplay.byteLength),
-          'x-open-science-upstream-status': String(upstream.status)
+          'x-open-science-upstream-status': String(upstream.status),
+          [sourceHeader]: 'provider-http',
+          [responseSourceHeader]: 'provider',
+          ...(upstreamRequestId ? { 'x-open-science-request-id': upstreamRequestId } : {})
         },
         status: providerErrorClientStatus(upstream.status)
       }
@@ -438,8 +456,7 @@ export class ProtocolForwardingBridge {
       return
     }
     if (!upstream.ok) {
-      const errorBody = await readBoundedProviderErrorBody(upstream, {
-        signal: request.signal,
+      const errorBody = await readErrorBody({
         maxBytes: 16 * 1024,
         timeoutMs: 1000
       })

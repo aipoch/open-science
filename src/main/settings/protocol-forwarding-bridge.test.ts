@@ -871,3 +871,93 @@ it('bounds an unterminated upstream error body while retaining its HTTP provenan
     await bridge.close()
   }
 })
+
+it('retains upstream provenance and request identity on deterministic error replay', async () => {
+  const upstream = vi.fn<typeof fetch>(
+    async () =>
+      new Response('{"error":{"message":"Unauthorized"}}', {
+        status: 401,
+        headers: { 'x-request-id': 'auth-request-123' }
+      })
+  )
+  const bridge = new ProtocolForwardingBridge(
+    [
+      {
+        id: 'fixture',
+        wire: 'responses',
+        endpoint: 'https://provider.example/v1/responses',
+        model: 'fixture'
+      }
+    ],
+    'fixture',
+    upstream
+  )
+  const connection = await bridge.start()
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await fetch(connection.baseUrl + '/v1/responses', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ stream: true, input: [] })
+      })
+      expect(response.status).toBe(400)
+      expect(response.headers.get('x-open-science-error-source')).toBe('provider-http')
+      expect(response.headers.get('x-open-science-response-source')).toBe('provider')
+      expect(response.headers.get('x-open-science-upstream-status')).toBe('401')
+      expect(response.headers.get('x-open-science-request-id')).toBe('auth-request-123')
+      await response.text()
+    }
+    expect(upstream).toHaveBeenCalledTimes(1)
+  } finally {
+    await bridge.close()
+  }
+})
+
+it.each([401, 502])(
+  'retains upstream HTTP %s when the error body fails during capture',
+  async (status) => {
+    let pulls = 0
+    const bridge = new ProtocolForwardingBridge(
+      [
+        {
+          id: 'fixture',
+          wire: 'responses',
+          endpoint: 'https://provider.example/v1/responses',
+          model: 'fixture'
+        }
+      ],
+      'fixture',
+      async () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              if (pulls++ === 0) controller.enqueue(new TextEncoder().encode('{'))
+              else controller.error(new Error('upstream body connection reset'))
+            }
+          }),
+          { status, headers: { 'x-request-id': 'body-failure-123' } }
+        )
+    )
+    const connection = await bridge.start()
+    try {
+      const response = await fetch(connection.baseUrl + '/v1/responses', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: '{}'
+      })
+      expect(response.status).toBe(status === 401 ? 400 : 502)
+      expect(response.headers.get('x-open-science-error-source')).toBe('provider-http')
+      expect(response.headers.get('x-open-science-request-id')).toBe('body-failure-123')
+      if (status === 401) expect(response.headers.get('x-open-science-upstream-status')).toBe('401')
+      await response.text()
+    } finally {
+      await bridge.close()
+    }
+  }
+)
