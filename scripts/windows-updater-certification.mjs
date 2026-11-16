@@ -40,6 +40,7 @@ import {
 
 const UPDATE_TIMEOUT_MS = 180_000
 const SMOKE_ROOT_PREFIX = 'open-science-installer-smoke-updater-'
+const WINDOWS_SIGNING_PUBLISHER_DN = 'CN=AIPOCH PTE. LTD., O=AIPOCH PTE. LTD., L=Singapore, C=SG'
 
 const sha512Base64 = async (path) =>
   createHash('sha512')
@@ -54,6 +55,12 @@ const verifyCachedInstaller = async (source, cached) => {
     )
   }
   return sourceHash
+}
+
+const normalizeLegacyPublisherName = (value) => {
+  const names = Array.isArray(value) ? value : [value]
+  if (!names.some((name) => name === 'AIPOCH PTE. LTD.')) return undefined
+  return names.map((name) => (name === 'AIPOCH PTE. LTD.' ? WINDOWS_SIGNING_PUBLISHER_DN : name))
 }
 
 const singleFile = async (directory, pattern, description) => {
@@ -102,12 +109,14 @@ const buildLocalUpdaterConfig = (source, url) => {
   ) {
     throw new Error('Installed app-update.yml has an unsafe updaterCacheDirName.')
   }
+  const publisherName = normalizeLegacyPublisherName(parsed.publisherName)
   const config = {
     ...parsed,
     provider: 'generic',
     url,
     channel: 'latest',
-    useMultipleRangeRequest: false
+    useMultipleRangeRequest: false,
+    ...(publisherName ? { publisherName } : {})
   }
   return { source: dump(config, { lineWidth: -1 }), updaterCacheDirName }
 }
@@ -965,7 +974,7 @@ const main = async () => {
         ['update-handoff', '--install-path', installDirectory],
         { env }
       )
-      await uninstallAndVerify(installDirectory, env)
+      await uninstallAndVerify(installDirectory, env, { processRoot: root })
     })
   // NSIS can leave its Un_A helper in this fixture's Temp after the installation and uninstall
   // have finished. Reap only executables inside our owned root before removing their files.

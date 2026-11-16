@@ -336,6 +336,17 @@ describe('Windows updater certification', () => {
     expect(load(result.source)).toHaveProperty('publisherName', 'Old Signer')
   })
 
+  it('upgrades the legacy Windows publisher name to the full certificate DN', () => {
+    const result = buildLocalUpdaterConfig(
+      'provider: generic\nurl: https://example.test\nupdaterCacheDirName: app-updater\npublisherName: AIPOCH PTE. LTD.\n',
+      'http://127.0.0.1:4321'
+    )
+
+    expect(load(result.source)).toHaveProperty('publisherName', [
+      'CN=AIPOCH PTE. LTD., O=AIPOCH PTE. LTD., L=Singapore, C=SG'
+    ])
+  })
+
   it('accepts one bounded HTTP range and rejects multipart ranges', () => {
     expect(parseSingleRange('bytes=10-19', 100)).toEqual({ start: 10, end: 19 })
     expect(parseSingleRange('bytes=90-', 100)).toEqual({ start: 90, end: 99 })

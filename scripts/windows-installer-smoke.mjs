@@ -1503,15 +1503,23 @@ const terminateDirectoryProcesses = async (directory, run = runProcess) => {
   )
 }
 
-const uninstallAndVerify = async (installDirectory, env) => {
+const uninstallAndVerify = async (
+  installDirectory,
+  env,
+  { processRoot = installDirectory, terminate = terminateDirectoryProcesses, run = runProcess } = {}
+) => {
   const uninstaller = await findUninstaller(installDirectory)
   const installedPaths = [...packagedResourcePaths(installDirectory), uninstaller]
-  await terminateDirectoryProcesses(installDirectory)
-  const result = await runProcess(uninstaller, ['/S', '/KEEP_APP_DATA'], {
+  await terminate(installDirectory)
+  const result = await run(uninstaller, ['/S', '/KEEP_APP_DATA'], {
     allowNonZero: true,
     env
   })
-  await terminateDirectoryProcesses(installDirectory)
+  // NSIS starts its detached Un_A cleanup helper below the smoke root. Reap it before checking
+  // the install tree, otherwise the helper can still hold the uninstaller or resources while the
+  // uninstaller process has already returned.
+  if (processRoot !== installDirectory) await terminate(processRoot)
+  await terminate(installDirectory)
   await waitFor('the installed application files to be removed', async () => {
     const pathsRemain = (await Promise.all(installedPaths.map(pathExists))).some(Boolean)
     if (pathsRemain) return undefined

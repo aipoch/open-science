@@ -41,6 +41,7 @@ import {
   runProcess,
   terminateDirectoryProcesses,
   terminateProcessTree,
+  uninstallAndVerify,
   waitForShutdownExit,
   windowsProfileEnvironment,
   writeUpgradeSentinel
@@ -114,6 +115,29 @@ describe('Windows installer smoke plan', () => {
       expect(run).not.toHaveBeenCalled()
     }
   )
+
+  it('reaps detached uninstaller helpers before waiting for install files', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-uninstall-root-'))
+    const installDirectory = join(root, 'installed app')
+    const uninstaller = join(installDirectory, 'Uninstall open-science.exe')
+    const terminated: string[] = []
+    const terminate = vi.fn(async (directory: string) => {
+      terminated.push(directory)
+    })
+    const run = vi.fn(async (executable: string) => {
+      expect(executable).toBe(uninstaller)
+      await rm(installDirectory, { recursive: true, force: true })
+      return { code: 0, stdout: '', stderr: '' }
+    })
+    try {
+      await mkdir(installDirectory, { recursive: true })
+      await writeFile(uninstaller, '')
+      await uninstallAndVerify(installDirectory, {}, { processRoot: root, terminate, run })
+      expect(terminated).toEqual([installDirectory, root, installDirectory])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 
   it.skipIf(process.platform !== 'win32')(
     'passes the exact cleanup directory through actual PowerShell parsing',
