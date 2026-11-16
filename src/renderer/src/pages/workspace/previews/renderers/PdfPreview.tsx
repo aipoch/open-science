@@ -631,9 +631,9 @@ const PdfInteractionControls = ({
         data-pdf-controls="interaction"
         role="group"
         aria-label={t('PDF interaction tools')}
-        className="pdf-annotation-toolbar min-w-0 p-1.5 text-popover-foreground"
+        className="pdf-annotation-toolbar min-w-0 p-0.5 text-popover-foreground"
       >
-        <div className="flex flex-wrap items-center justify-center gap-0.5">
+        <div className="flex flex-wrap items-center justify-center">
           {navigationAvailable ? (
             <>
               <Tooltip>
@@ -647,7 +647,7 @@ const PdfInteractionControls = ({
                     type="button"
                     variant={navigationOpen ? 'secondary' : 'ghost'}
                     size="icon-sm"
-                    className="size-8 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
+                    className="size-7 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
                     aria-label={navigationOpen ? t('Hide navigation') : t('Show navigation')}
                     aria-controls="pdf-navigation-sidebar"
                     aria-expanded={navigationOpen}
@@ -661,7 +661,7 @@ const PdfInteractionControls = ({
                   label={navigationOpen ? t('Hide navigation') : t('Show navigation')}
                 />
               </Tooltip>
-              <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+              <span className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
             </>
           ) : null}
           {actions.map(({ mode: actionMode, label, icon: Icon }) => (
@@ -671,7 +671,7 @@ const PdfInteractionControls = ({
                   type="button"
                   variant={mode === actionMode ? 'secondary' : 'ghost'}
                   size="icon-sm"
-                  className="size-8 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
+                  className="size-7 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
                   aria-label={label}
                   aria-pressed={mode === actionMode}
                   onClick={() => onModeChange(actionMode)}
@@ -682,7 +682,7 @@ const PdfInteractionControls = ({
               <PdfToolbarTooltip side="top" label={label} />
             </Tooltip>
           ))}
-          <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+          <span className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
           <SplitButton
             kind="popover"
             open={styleOpen}
@@ -692,14 +692,14 @@ const PdfInteractionControls = ({
             }}
           >
             <SplitButtonGroup className="annotation-style-split">
-              <Tooltip open={openOptions ? false : undefined}>
+              <Tooltip disableHoverableContent>
                 <TooltipTrigger asChild>
                   <SplitButtonPrimary
                     type="button"
                     variant={mode === 'text-annotation' ? 'secondary' : 'ghost'}
                     size="icon-sm"
                     className={cn(
-                      'annotation-style-apply size-8 p-0',
+                      'annotation-style-apply size-7 p-0',
                       !canAnnotateText && 'opacity-50 cursor-not-allowed'
                     )}
                     aria-disabled={!canAnnotateText}
@@ -722,18 +722,20 @@ const PdfInteractionControls = ({
                     </span>
                   </SplitButtonPrimary>
                 </TooltipTrigger>
-                <PdfToolbarTooltip
-                  side="top"
-                  label={t('Annotate')}
-                  plain={!canAnnotateText}
-                  description={
-                    canAnnotateText
-                      ? t('Select text to annotate. Press Esc to exit.')
-                      : annotationUnavailableReason
-                  }
-                />
+                {!openOptions && (
+                  <PdfToolbarTooltip
+                    side="top"
+                    label={t('Annotate')}
+                    plain={!canAnnotateText}
+                    description={
+                      canAnnotateText
+                        ? t('Select text to annotate. Press Esc to exit.')
+                        : annotationUnavailableReason
+                    }
+                  />
+                )}
               </Tooltip>
-              <Tooltip open={openOptions ? false : undefined}>
+              <Tooltip disableHoverableContent>
                 <TooltipTrigger
                   asChild
                   onFocus={(event) => {
@@ -745,7 +747,7 @@ const PdfInteractionControls = ({
                     variant="ghost"
                     size="icon-sm"
                     className={cn(
-                      'annotation-style-trigger h-8 w-4 text-muted-foreground',
+                      'annotation-style-trigger h-7 w-6 text-muted-foreground',
                       !canAnnotateText && 'opacity-50 cursor-not-allowed'
                     )}
                     aria-disabled={!canAnnotateText}
@@ -773,12 +775,14 @@ const PdfInteractionControls = ({
                     <ChevronDown className="size-3" aria-hidden="true" />
                   </SplitButtonTrigger>
                 </TooltipTrigger>
-                <PdfToolbarTooltip
-                  side="top"
-                  label={t('Mark style')}
-                  plain={!canAnnotateText}
-                  description={canAnnotateText ? undefined : annotationUnavailableReason}
-                />
+                {!openOptions && (
+                  <PdfToolbarTooltip
+                    side="top"
+                    label={t('Mark style')}
+                    plain={!canAnnotateText}
+                    description={canAnnotateText ? undefined : annotationUnavailableReason}
+                  />
+                )}
               </Tooltip>
             </SplitButtonGroup>
             <SplitButtonContent
@@ -818,7 +822,7 @@ const PdfInteractionControls = ({
               }}
             >
               <SplitButtonGroup className="pdf-area-split annotation-style-split">
-                <Tooltip open={openOptions ? false : undefined}>
+                <Tooltip disableHoverableContent>
                   <TooltipTrigger asChild>
                     <SplitButtonPrimary
                       type="button"
@@ -826,7 +830,7 @@ const PdfInteractionControls = ({
                         mode === 'area' || mode === 'area-annotation' ? 'secondary' : 'ghost'
                       }
                       size="icon-sm"
-                      className="pdf-area-action annotation-style-apply size-8 p-0"
+                      className="pdf-area-action annotation-style-apply size-7 p-0"
                       disabled={!canAnnotateArea && !canSelectArea}
                       aria-pressed={mode === 'area' || mode === 'area-annotation'}
                       aria-label={
@@ -849,22 +853,24 @@ const PdfInteractionControls = ({
                       )}
                     </SplitButtonPrimary>
                   </TooltipTrigger>
-                  <PdfToolbarTooltip
-                    side="top"
-                    label={
-                      mode === 'area-annotation' || !canSelectArea
-                        ? t('Select area to annotate')
-                        : t('Select area for Agent')
-                    }
-                    plain={usesAreaAnnotation ? !canAnnotateArea : !canSelectArea}
-                    description={
-                      mode === 'area-annotation' || !canSelectArea
-                        ? t('Drag to annotate an area · Esc to cancel')
-                        : t('Drag to send an area to Agent · Esc to cancel')
-                    }
-                  />
+                  {!openOptions && (
+                    <PdfToolbarTooltip
+                      side="top"
+                      label={
+                        mode === 'area-annotation' || !canSelectArea
+                          ? t('Select area to annotate')
+                          : t('Select area for Agent')
+                      }
+                      plain={usesAreaAnnotation ? !canAnnotateArea : !canSelectArea}
+                      description={
+                        mode === 'area-annotation' || !canSelectArea
+                          ? t('Drag to annotate an area · Esc to cancel')
+                          : t('Drag to send an area to Agent · Esc to cancel')
+                      }
+                    />
+                  )}
                 </Tooltip>
-                <Tooltip open={openOptions ? false : undefined}>
+                <Tooltip disableHoverableContent>
                   <TooltipTrigger
                     asChild
                     onFocus={(event) => {
@@ -880,7 +886,7 @@ const PdfInteractionControls = ({
                       type="button"
                       variant="ghost"
                       size="icon-sm"
-                      className="pdf-area-menu-trigger annotation-style-trigger h-8 w-4 text-muted-foreground"
+                      className="pdf-area-menu-trigger annotation-style-trigger h-7 w-6 text-muted-foreground"
                       aria-label={t('Area selection actions')}
                       onPointerEnter={(event) => {
                         cancelOptionsHover()
@@ -895,7 +901,9 @@ const PdfInteractionControls = ({
                       <ChevronDown className="size-3" aria-hidden="true" />
                     </SplitButtonTrigger>
                   </TooltipTrigger>
-                  <PdfToolbarTooltip side="top" label={t('Area selection actions')} />
+                  {!openOptions && (
+                    <PdfToolbarTooltip side="top" label={t('Area selection actions')} />
+                  )}
                 </Tooltip>
               </SplitButtonGroup>
               <SplitButtonContent
@@ -964,14 +972,14 @@ const PdfInteractionControls = ({
               </SplitButtonContent>
             </SplitButton>
           ) : null}
-          <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+          <span className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 type="button"
                 variant={searchOpen ? 'secondary' : 'ghost'}
                 size="icon-sm"
-                className="size-8 text-text-100 hover:text-text-000"
+                className="size-7 text-text-100 hover:text-text-000"
                 aria-label={t('Search')}
                 aria-pressed={searchOpen}
                 onClick={onSearchToggle}
@@ -1188,7 +1196,7 @@ const PdfZoomControls = ({
         data-pdf-controls="view"
         role="group"
         aria-label={t('PDF view controls')}
-        className="flex min-h-9 min-w-0 flex-wrap items-center justify-center gap-1 rounded-lg bg-muted/60 p-1"
+        className="flex min-h-9 min-w-0 flex-wrap items-center justify-center gap-0.5 rounded-lg bg-muted/60 p-0.5"
       >
         <div
           data-pdf-page-control
