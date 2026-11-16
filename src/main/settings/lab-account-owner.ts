@@ -182,7 +182,9 @@ export class LabAccountOwner {
       this.activeLoginAttempt = undefined
       await this.oauth.cancelLogin().catch(() => undefined)
       await this.credentials.replaceServer(serverUrl)
-      await this.removeProviderRecord()
+      // Switching institutions must not silently reuse a same-named model from the previous
+      // institution. Reset only fixed Lab task bindings to inherit; personal bindings stay put.
+      await this.removeProviderRecord('inherit')
       this.publish({ state: 'signedOut', serverUrl })
     } else {
       await this.credentials.saveServerUrl(serverUrl)
@@ -681,18 +683,28 @@ export class LabAccountOwner {
     await this.credentials.clearSession().catch(() => undefined)
   }
 
-  private async removeProviderRecord(): Promise<void> {
+  private async removeProviderRecord(
+    scenarioModelHandling: 'preserve' | 'inherit' = 'preserve'
+  ): Promise<void> {
     const settings = await this.repository.getSettings()
     const existing = settings.providers.find((provider) => provider.id === LAB_PROVIDER_ID)
-    const wasActive = settings.activeProviderId === LAB_PROVIDER_ID
     const previous = await this.credentials.readPreviousSelection().catch(() => undefined)
-    await this.repository.deleteProvider(LAB_PROVIDER_ID, 'inherit')
-    if (wasActive) {
-      const fallback = this.pickFallback(settings.providers, previous)
-      if (fallback) {
-        await this.repository.setActiveProvider(fallback.provider.id, fallback.model)
-      }
-    }
+    const fallback =
+      settings.activeProviderId === LAB_PROVIDER_ID
+        ? this.pickFallback(settings.providers, previous)
+        : undefined
+    // Restore the active pointer in the same mutation that deletes the Lab record. Reading the
+    // settings here and calling setActiveProvider afterwards would race a user's newer selection.
+    await this.repository.deleteProvider(LAB_PROVIDER_ID, scenarioModelHandling, {
+      ...(fallback
+        ? {
+            restoreActive: {
+              providerId: fallback.provider.id,
+              ...(fallback.model ? { model: fallback.model } : {})
+            }
+          }
+        : {})
+    })
     if (existing) await this.credentials.clearPreviousSelection().catch(() => undefined)
   }
 

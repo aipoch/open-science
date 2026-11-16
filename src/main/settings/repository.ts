@@ -630,7 +630,13 @@ class SettingsRepository {
   async deleteProvider(
     id: string,
     scenarioModelHandling: ProviderDeletionScenarioModelHandling = 'preserve',
-    guard?: { expectedLabCatalogToken?: string; isCurrent?: () => boolean }
+    guard?: {
+      expectedLabCatalogToken?: string
+      isCurrent?: () => boolean
+      // Restore the active pointer atomically only when this mutation is the one that removed the
+      // still-selected provider. A user selection written before/after this transaction wins.
+      restoreActive?: { providerId: string; model?: string }
+    }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
       if (guard?.isCurrent && !guard.isCurrent()) return settings
@@ -658,6 +664,11 @@ class SettingsRepository {
         activeProviderId,
         activeModel,
         ...(deletingClaudeSubscription ? { claudeSubscriptionProviderId: undefined } : {})
+      }
+
+      if (clearedActive && guard?.restoreActive) {
+        next.activeProviderId = guard.restoreActive.providerId
+        next.activeModel = guard.restoreActive.model
       }
 
       if (scenarioModelHandling === 'inherit') {

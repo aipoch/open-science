@@ -361,9 +361,34 @@ describe('Lab account owner', () => {
     expect(settings.providers.some((provider) => provider.id === LAB_PROVIDER_ID)).toBe(false)
     expect(settings.activeProviderId).toBe('p1')
     expect(settings.activeModel).toBe('personal-model')
-    expect(settings.subagentModel).toEqual({ mode: 'inherit' })
+    expect(settings.subagentModel).toEqual({
+      mode: 'fixed',
+      providerId: LAB_PROVIDER_ID,
+      model: 'lab:research-default',
+      reasoningEffort: 'default'
+    })
     expect(await credentials.readSession()).toBeUndefined()
     expect((await credentials.readDocument()).installationId).toEqual(expect.any(String))
+  })
+
+  it('does not carry a same-named Lab task binding into another institution', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const { owner, repository } = await createOwner(dir, createApi())
+    await seedSession(new LabCredentialStore(dir))
+    await owner.check()
+    await repository.setSubagentModel({
+      mode: 'fixed',
+      providerId: LAB_PROVIDER_ID,
+      model: 'lab:research-default',
+      reasoningEffort: 'default'
+    })
+
+    await owner.setServerUrl('https://another-lab.example.com')
+
+    const settings = await repository.getSettings()
+    expect(settings.subagentModel).toEqual({ mode: 'inherit' })
+    expect(settings.providers.some((provider) => provider.id === LAB_PROVIDER_ID)).toBe(false)
   })
 
   it('restores nothing and resolves when there is no stored configuration', async () => {
