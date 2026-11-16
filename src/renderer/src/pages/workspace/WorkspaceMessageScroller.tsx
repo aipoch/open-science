@@ -642,16 +642,6 @@ const WorkspaceMessageScrollerImpl = ({
   const previousMessageScrollerScrollTopRef = useRef(0)
   const scrollToFirstMessageHideTimeoutRef = useRef<number | undefined>(undefined)
   const [scrollThresholdAllowsFirstMessage, setScrollThresholdAllowsFirstMessage] = useState(false)
-  const handleScrollToFirstMessageButtonRef = useCallback(
-    (node: HTMLButtonElement | null): void => {
-      scrollToFirstMessageButtonRef.current = node
-      if (node) return
-      scrollToFirstMessageHoveredRef.current = false
-      scrollToFirstMessageFocusedRef.current = false
-      setScrollToFirstMessageFocused(false)
-    },
-    [setScrollToFirstMessageFocused]
-  )
   const handleMessageScrollerViewportRef = useCallback((node: HTMLDivElement | null): void => {
     messageScrollerViewportRef.current = node
     setMessageScrollerViewport(node)
@@ -1241,6 +1231,13 @@ const WorkspaceMessageScrollerImpl = ({
   useLayoutEffect(() => {
     updateScrollToFirstMessageEligibility()
   }, [currentSessionId, updateScrollToFirstMessageEligibility, visibleMessageIdsKey])
+  useEffect(() => {
+    if (statusAllowsScrollToFirstMessage) return
+    scrollToFirstMessageHoveredRef.current = false
+    scrollToFirstMessageFocusedRef.current = false
+    const frame = window.requestAnimationFrame(() => setScrollToFirstMessageFocused(false))
+    return () => window.cancelAnimationFrame(frame)
+  }, [statusAllowsScrollToFirstMessage])
   useLayoutEffect(() => {
     previousMessageScrollerScrollTopRef.current = messageScrollerViewportRef.current?.scrollTop ?? 0
     hideScrollToFirstMessage()
@@ -2366,7 +2363,7 @@ const WorkspaceMessageScrollerImpl = ({
 
           {showScrollToFirstMessage ? (
             <MessageScrollerButton
-              ref={handleScrollToFirstMessageButtonRef}
+              ref={scrollToFirstMessageButtonRef}
               direction="start"
               behavior="instant"
               onClick={() => {

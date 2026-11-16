@@ -35,6 +35,8 @@ test('run marks land on the selected prompt in a real variable-height transcript
     })
   }, cwd)
   page = await app.restart()
+  const rendererErrors: string[] = []
+  page.on('pageerror', (error) => rendererErrors.push(error.message))
   await openProjectSession(page, 'Run navigation', 'Variable history')
   const viewport = page.getByRole('region', { name: 'Conversation' })
   const rail = page.getByRole('navigation', { name: 'Run marks' }).locator('ol')
@@ -62,4 +64,5 @@ test('run marks land on the selected prompt in a real variable-height transcript
   }
   const storage = await page.evaluate(() => window.api.storage.getInfo())
   expect((await realpath(storage.dataRoot)).startsWith((await realpath(tmpdir())) + sep)).toBe(true)
+  expect(rendererErrors).toEqual([])
 })
