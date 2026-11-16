@@ -1,4 +1,9 @@
 import { mediaCapabilities, nativeMedia, requestBody, type InputCapabilities } from './media'
+import {
+  normalizeProviderError,
+  normalizeUpstreamError,
+  responseErrorDiagnostics
+} from './errors/normalize-upstream-error'
 import { frozen, json } from './session-state'
 import type { AgentModel, Json, ModelRequest, ModelUsage, ToolCall } from './session-types'
 
@@ -19,7 +24,7 @@ export type ChatCompletionsOptions = {
   inputCapabilities?: InputCapabilities
 }
 
-/** Bounded parser state only; never contains provider text, arguments, URLs or headers. */
+/** 有界解析状态及白名单错误字段；不保存正文、工具参数或请求信息。 */
 export type ChatCompletionsDiagnostics = Readonly<{
   httpStatus: number
   phase:
@@ -39,9 +44,13 @@ export type ChatCompletionsDiagnostics = Readonly<{
   finishReason?: 'stop' | 'tool_calls' | 'length'
   /** Observed usage before failure, not proof that the response or task completed. */
   usage?: Readonly<ModelUsage>
+  /** Allowlisted provider diagnostics for HTTP/SSE failures. */
+  upstreamCode?: string
+  safeMessage?: string
+  requestId?: string
 }>
 
-/** Does not retain upstream response bodies, credentials or raw network errors. */
+/** 只保留规范化诊断，不保留原始响应或网络异常。 */
 export class ChatCompletionsError extends Error {
   readonly diagnostics?: ChatCompletionsDiagnostics
   constructor(
@@ -140,7 +149,18 @@ export async function* dataEvents(
   try {
     while (true) {
       signal.throwIfAborted()
-      const chunk = await reader.read()
+      let chunk: Awaited<ReturnType<typeof reader.read>>
+      try {
+        chunk = await reader.read()
+      } catch {
+        signal.throwIfAborted()
+        throw new ChatCompletionsError('network', undefined, {
+          httpStatus: response.status,
+          phase: 'stream',
+          eventCount: 0,
+          receivedDone: false
+        })
+      }
       signal.throwIfAborted()
       size += chunk.value?.byteLength ?? 0
       if (size > limit) throw new ChatCompletionsError('limit')
@@ -351,13 +371,23 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
         !response.ok ||
         !response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')
       ) {
-        await response.body?.cancel().catch(() => undefined)
-        if (!response.ok) throw new ChatCompletionsError('http', response.status)
+        if (!response.ok) {
+          const diagnostics = await normalizeUpstreamError(response, signal)
+          throw new ChatCompletionsError('http', response.status, {
+            httpStatus: response.status,
+            phase: 'response',
+            eventCount: 0,
+            receivedDone: false,
+            ...diagnostics
+          })
+        }
+        const diagnostics = await normalizeUpstreamError(response, signal)
         throw new ChatCompletionsError('protocol', undefined, {
           httpStatus: response.status,
           phase: 'response',
           eventCount: 0,
-          receivedDone: false
+          receivedDone: false,
+          ...diagnostics
         })
       }
       let content = '',
@@ -380,8 +410,16 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
           phase = 'event-json'
           const event = object(JSON.parse(data))
           phase = 'provider'
-          if (event.error || (event.base_resp && object(event.base_resp).status_code !== 0))
-            return protocol()
+          if (event.error || (event.base_resp && object(event.base_resp).status_code !== 0)) {
+            const detail = event.error ?? event.base_resp ?? event
+            throw new ChatCompletionsError('protocol', undefined, {
+              httpStatus: response.status,
+              phase: 'provider',
+              eventCount,
+              receivedDone: ended,
+              ...normalizeProviderError(event.error ? event : detail)
+            })
+          }
           phase = 'usage'
           if (event.usage != null) usage = normalizeUsage(event.usage)
           phase = 'choice'
@@ -531,6 +569,14 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
             phase,
             eventCount,
             receivedDone: ended,
+            ...(error instanceof ChatCompletionsError
+              ? {
+                  upstreamCode: error.diagnostics?.upstreamCode,
+                  safeMessage: error.diagnostics?.safeMessage,
+                  requestId: error.diagnostics?.requestId
+                }
+              : {}),
+            ...responseErrorDiagnostics(response),
             ...(finish ? { finishReason: finish } : {}),
             ...(usage ? { usage } : {})
           }

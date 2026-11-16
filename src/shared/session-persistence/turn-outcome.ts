@@ -40,8 +40,24 @@ export const readPersistedFailure = (value: Record<string, unknown>): Classified
       source.status <= 599
     )
       diagnostics.status = source.status
-    for (const key of ['code', 'provider', 'model', 'requestId', 'raw'] as const)
+    for (const key of [
+      'code',
+      'provider',
+      'model',
+      'requestId',
+      'raw',
+      'adapterCode',
+      'upstreamCode',
+      'safeMessage',
+      'phase'
+    ] as const)
       if (typeof source[key] === 'string') diagnostics[key] = source[key]
+    if (
+      source.protocol === 'chat-completions' ||
+      source.protocol === 'responses' ||
+      source.protocol === 'messages'
+    )
+      diagnostics.protocol = source.protocol
     return {
       category,
       ...((category === 'service' || category === 'configuration') &&

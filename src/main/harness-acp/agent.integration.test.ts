@@ -1,3 +1,4 @@
+import { readPersistedFailure } from '../../shared/session-persistence/turn-outcome'
 import { ScheduleMcp } from '../schedules/mcp'
 import type { ScheduleManagement } from '../schedules/management'
 import { SCHEDULE_TURN_META, type ScheduleCreateRequest } from '../../shared/session-schedules'
@@ -1328,12 +1329,16 @@ it.each([
   ['response.failed', 'model_unavailable', 'configuration/model-unavailable'],
   ['error', 'authentication_error', 'configuration/auth-failed']
 ] as const)(
-  'classifies Responses %s/%s without leaking prose or executing partial tools',
+  'preserves Responses %s/%s diagnostics without executing partial tools',
   async (type, code, reason) => {
     const managed = await mcpServer()
     const model = await modelServer((body, response) => {
       const tool = (body.tools as unknown as { name: string }[])[0].name
-      const error = { code, message: 'private account and token must not escape' }
+      const error = {
+        code,
+        message: 'Provider rejected the request',
+        private_payload: 'private account'
+      }
       response.end(
         [
           {
@@ -1365,19 +1370,25 @@ it.each([
     expect(failure).toMatchObject({ data: { errorName: 'APIError' } })
     expect(classifyFailure(collectPromptFailureFacts(failure)).reason).toBe(reason)
     expect(JSON.stringify(failure)).not.toContain('private account')
+    expect(failure).toMatchObject({
+      data: { upstreamCode: code, safeMessage: 'Provider rejected the request' }
+    })
     expect((failure as Error).message).not.toContain('private account')
     expect(managed.calls).toEqual([])
     expect(f.approvals).toEqual([])
   }
 )
 
-it('preserves the baseline generic HTTP failure instead of newly labeling quota as temporary throttling', async () => {
+it('classifies HTTP quota rejection as billing while retaining bounded diagnostics', async () => {
   const server = createServer(async (request, response) => {
     request.resume()
     await once(request, 'end')
     response.writeHead(429, { 'content-type': 'application/json' })
     response.end(
-      JSON.stringify({ error: { code: 'insufficient_quota', message: 'private account' } })
+      JSON.stringify({
+        error: { code: 'insufficient_quota', message: 'Quota exhausted' },
+        private_payload: 'private account'
+      })
     )
   })
   server.listen(0, '127.0.0.1')
@@ -1393,10 +1404,8 @@ it('preserves the baseline generic HTTP failure instead of newly labeling quota 
   })
   const failure = await prompt(f.connection, sessionId).catch((error: unknown) => error)
   expect(failure).toBeInstanceOf(Error)
-  expect(failure).not.toHaveProperty('data.errorName', 'APIError')
-  expect(classifyFailure(collectPromptFailureFacts(failure)).reason).not.toBe(
-    'service/rate-limited'
-  )
+  expect(failure).toHaveProperty('data.errorName', 'APIError')
+  expect(classifyFailure(collectPromptFailureFacts(failure)).reason).toBe('configuration/billing')
   expect(JSON.stringify(failure)).not.toContain('private account')
 })
 
@@ -1481,3 +1490,187 @@ it('injects Schedule identity outside model arguments and fences a cancelled per
   expect(f.approvals).toHaveLength(approvals)
   expect(create).toHaveBeenCalledTimes(1)
 })
+
+for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
+  it.each([
+    [400, 'model_unavailable', 'Model is unavailable', 'configuration/model-unavailable'],
+    [401, 'authentication_error', 'Invalid API key', 'configuration/auth-failed'],
+    [403, 'permission_denied', 'Access denied', 'configuration/auth-failed'],
+    [429, 'rate_limit_exceeded', 'Too many requests', 'service/rate-limited'],
+    [503, 'server_error', 'Model service unavailable', 'service/unavailable']
+  ] as const)(
+    `${protocol} transports HTTP %i through ACP and the persisted failure`,
+    async (status, code, message, reason) => {
+      const server = createServer(async (request, response) => {
+        request.resume()
+        await once(request, 'end')
+        response.writeHead(status, {
+          'content-type': 'application/json',
+          'x-request-id': 'provider-request-123'
+        })
+        response.end(
+          JSON.stringify({ error: { code, message }, credentials: 'PRIVATE_REQUEST_DATA' })
+        )
+      })
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+      cleanup.push(async () => {
+        server.closeAllConnections()
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+      })
+      const path = protocol === 'chat-completions' ? 'chat/completions' : protocol
+      const f = await fixture(
+        `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/${path}`
+      )
+      const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+        cwd: f.directory,
+        mcpServers: []
+      })
+      const failure = await prompt(f.connection, sessionId).catch((error: unknown) => error)
+      expect(failure).toMatchObject({
+        data: {
+          errorKind: 'provider-error',
+          protocol,
+          model: 'test',
+          status,
+          upstreamCode: code,
+          safeMessage: message,
+          requestId: 'provider-request-123',
+          phase: 'response'
+        }
+      })
+      const classified = classifyFailure(
+        collectPromptFailureFacts(failure, { providerName: 'Fixture Provider' })
+      )
+      expect(classified).toMatchObject({
+        reason,
+        responseMessage: message,
+        diagnostics: {
+          protocol,
+          model: 'test',
+          provider: 'Fixture Provider',
+          status,
+          requestId: 'provider-request-123',
+          safeMessage: message
+        }
+      })
+      expect(readPersistedFailure({ failure: JSON.parse(JSON.stringify(classified)) })).toEqual(
+        classified
+      )
+      expect(JSON.stringify(failure)).not.toMatch(/PRIVATE_REQUEST_DATA|local-test-token/)
+      const checkpoint = await createJournalAgentStore({
+        directory: join(f.directory, 'checkpoints')
+      }).load(sessionId)
+      expect(checkpoint?.requests.at(-1)?.status).toBe('failed')
+    }
+  )
+
+  it.each([
+    [400, 'text/plain', 'Model is unavailable', 'configuration/model-unavailable', 'response'],
+    [
+      503,
+      'text/html',
+      '<!doctype html><html><body>PRIVATE_GATEWAY_PAGE</body></html>',
+      'service/unavailable',
+      'response'
+    ],
+    [
+      200,
+      'application/json',
+      '{"error":{"code":"model_unavailable","message":"Model is unavailable"}}',
+      'configuration/model-unavailable',
+      'response'
+    ],
+    [200, 'text/event-stream', 'data: invalid-json\n\n', 'service/response-invalid', 'event-json'],
+    [
+      200,
+      'text/event-stream',
+      'data: {"type":"error","error":{"code":"new_provider_failure","message":"Request rejected"}}\n\n',
+      'service/provider-error',
+      'provider'
+    ]
+  ] as const)(
+    `${protocol} handles HTTP %i/%s without falling back to internal`,
+    async (status, contentType, body, reason, phase) => {
+      const server = createServer((request, response) => {
+        request.resume()
+        response.writeHead(status, { 'content-type': contentType, 'x-request-id': 'sse-request' })
+        response.end(body)
+      })
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+      cleanup.push(async () => {
+        server.closeAllConnections()
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+      })
+      const path = protocol === 'chat-completions' ? 'chat/completions' : protocol
+      const f = await fixture(
+        `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/${path}`
+      )
+      const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+        cwd: f.directory,
+        mcpServers: []
+      })
+      const failure = await prompt(f.connection, sessionId).catch((error: unknown) => error)
+      const classified = classifyFailure(collectPromptFailureFacts(failure))
+      expect(classified).toMatchObject({
+        reason,
+        diagnostics: { protocol, phase, requestId: 'sse-request' }
+      })
+      expect(JSON.stringify(classified)).not.toContain('PRIVATE_GATEWAY_PAGE')
+    }
+  )
+}
+
+it.each([401, 403, 404, 413])(
+  'restores upstream HTTP %i through the actual forwarding bridge',
+  async (status) => {
+    const server = createServer((request, response) => {
+      request.resume()
+      response.writeHead(status, {
+        'content-type': 'application/json',
+        'request-id': 'bridge-request-123'
+      })
+      response.end(
+        JSON.stringify({
+          error: { message: status === 404 ? 'Model test does not exist' : 'Request rejected' }
+        })
+      )
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    cleanup.push(async () => {
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    })
+    const bridge = new ProtocolForwardingBridge(
+      [
+        {
+          id: 'fixture',
+          wire: 'chat-completions',
+          endpoint: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`,
+          model: 'test',
+          key: 'UPSTREAM_SECRET'
+        }
+      ],
+      'fixture'
+    )
+    const connection = await bridge.start()
+    cleanup.push(() => bridge.close())
+    const f = await fixture(
+      `${connection.baseUrl}/v1/chat/completions`,
+      undefined,
+      true,
+      32768,
+      undefined,
+      connection.token
+    )
+    const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: []
+    })
+    const failure = await prompt(f.connection, sessionId).catch((error: unknown) => error)
+    expect(failure).toMatchObject({ data: { status, requestId: 'bridge-request-123' } })
+    expect(JSON.stringify(failure)).not.toContain('UPSTREAM_SECRET')
+  }
+)

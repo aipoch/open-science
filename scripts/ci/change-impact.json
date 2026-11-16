@@ -562,6 +562,7 @@
         "e2e/notebook-network-modes.spec.ts",
         "e2e/pi-harness.spec.ts",
         "e2e/builtin-harness.spec.ts",
+        "e2e/harness-provider-errors.spec.ts",
         "e2e/session-wait-status.spec.ts",
         "e2e/settings-error-transport.spec.ts",
         "e2e/desktop-runtime-startup.spec.ts",

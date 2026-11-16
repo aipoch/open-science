@@ -94,20 +94,20 @@ const ComposerFailureNoticeSlot = ({
       : undefined) ?? notices[0]
   if (!current) return null
   const presentation = noticePresentation(current.failure)
-  const title = current.failure.responseMessage
-    ? t('Model provider error')
-    : t(presentation.titleKey)
-  const description = current.failure.responseMessage
-    ? current.failure.responseMessage.startsWith('{') ||
-      current.failure.responseMessage.startsWith('[')
+  const providerMessage = current.failure.diagnostics.protocol
+    ? undefined
+    : current.failure.responseMessage
+  const title = providerMessage ? t('Model provider error') : t(presentation.titleKey)
+  const description = providerMessage
+    ? providerMessage.startsWith('{') || providerMessage.startsWith('[')
       ? ''
-      : current.failure.responseMessage
+      : providerMessage
     : t(presentation.descriptionKey)
   const diagnosticText = formatNoticeDiagnostics(current, title, description)
   const diagnosticFields = Object.entries(current.failure.diagnostics).filter(
     ([key, value]) =>
       value !== undefined &&
-      (current.failure.responseMessage
+      (providerMessage || current.failure.diagnostics.protocol
         ? ['status', 'provider', 'model'].includes(key)
         : key !== 'raw')
   )
@@ -289,7 +289,7 @@ const ComposerFailureNoticeSlot = ({
                     >
                       <TruncatedText
                         text={
-                          notice.failure.responseMessage
+                          notice.failure.responseMessage && !notice.failure.diagnostics.protocol
                             ? t('Model provider error')
                             : t(item.titleKey)
                         }

@@ -268,7 +268,7 @@ describe('independent Chat Completions wire adapter', () => {
         cancel
           ? { name: 'AbortError' }
           : {
-              code: 'protocol',
+              code: 'network',
               diagnostics: { phase: 'stream', finishReason: 'stop', eventCount: 2 }
             }
       )
@@ -400,23 +400,28 @@ describe('independent Chat Completions wire adapter', () => {
       ]),
       'usage'
     ]
-  ])('rejects %s without yielding a finish or leaking upstream text', async (_, wire, phase) => {
-    const events: ModelEvent[] = []
-    const fetch = vi.fn(async () => response(wire))
-    const run = async (): Promise<void> => {
-      for await (const event of adapter(fetch).stream(request(), new AbortController().signal))
-        events.push(event)
+  ])(
+    'rejects %s without yielding a finish or retaining non-error payloads',
+    async (scenario, wire, phase) => {
+      const events: ModelEvent[] = []
+      const fetch = vi.fn(async () => response(wire))
+      const run = async (): Promise<void> => {
+        for await (const event of adapter(fetch).stream(request(), new AbortController().signal))
+          events.push(event)
+      }
+      const error = await run().catch((error: unknown) => error)
+      expect(error).toMatchObject({
+        code: 'protocol',
+        message: 'Chat Completions protocol error',
+        diagnostics: { phase }
+      })
+      if (scenario === 'upstream error')
+        expect(error).toMatchObject({ diagnostics: { safeMessage: 'secret-upstream' } })
+      else expect(JSON.stringify(error)).not.toMatch(/secret|private|late/)
+      expect(events.some((event) => event.type === 'finish')).toBe(false)
+      expect(fetch).toHaveBeenCalledOnce()
     }
-    const error = await run().catch((error: unknown) => error)
-    expect(error).toMatchObject({
-      code: 'protocol',
-      message: 'Chat Completions protocol error',
-      diagnostics: { phase }
-    })
-    expect(JSON.stringify(error)).not.toMatch(/secret|private|late/)
-    expect(events.some((event) => event.type === 'finish')).toBe(false)
-    expect(fetch).toHaveBeenCalledOnce()
-  })
+  )
 
   it('keeps observed usage separate from completion on failure without retaining raw values', async () => {
     const model = adapter(async () =>

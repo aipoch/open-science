@@ -28,10 +28,19 @@ export const classifyFailure = (facts: FailureFacts): ClassifiedFailure => {
     (category === 'service' || category === 'configuration')
       ? { responseMessage: facts.responseMessage }
       : {}),
-    ...(recognized?.reason ? { reason: recognized.reason } : {}),
+    ...(recognized?.reason
+      ? { reason: recognized.reason }
+      : facts.origin === 'provider'
+        ? { reason: 'service/provider-error' as const }
+        : {}),
     diagnostics: {
       ...(facts.status === undefined ? {} : { status: facts.status }),
       ...(facts.code === undefined ? {} : { code: String(facts.code) }),
+      ...(facts.protocol && facts.responseMessage ? { safeMessage: facts.responseMessage } : {}),
+      ...(facts.adapterCode === undefined ? {} : { adapterCode: facts.adapterCode }),
+      ...(facts.upstreamCode === undefined ? {} : { upstreamCode: facts.upstreamCode }),
+      ...(facts.protocol === undefined ? {} : { protocol: facts.protocol }),
+      ...(facts.phase === undefined ? {} : { phase: facts.phase }),
       ...(facts.provider === undefined ? {} : { provider: facts.provider }),
       ...(facts.model === undefined ? {} : { model: facts.model }),
       ...(facts.requestId === undefined ? {} : { requestId: facts.requestId }),

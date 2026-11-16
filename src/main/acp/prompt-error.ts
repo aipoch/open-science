@@ -325,6 +325,43 @@ export const collectPromptFailureFacts = (
   const data = record(top.data)
   const codex = record(data.codexErrorInfo)
   const detail = record(Object.values(codex)[0])
+  const protocol = data.protocol
+  if (
+    isProviderErrorKind(error) &&
+    (protocol === 'chat-completions' || protocol === 'responses' || protocol === 'messages')
+  ) {
+    const field = (value: unknown, max = 300): string | undefined => {
+      if (typeof value !== 'string') return undefined
+      const text = value.replace(/\s+/g, ' ').trim()
+      return !text || text.startsWith('<') ? undefined : text.slice(0, max)
+    }
+    const responseMessage = field(data.safeMessage)
+    const upstreamCode = field(data.upstreamCode, 120)
+    const adapterCode = field(data.adapterCode, 120)
+    const phase = field(data.phase, 120)
+    const requestId = field(data.requestId, 200)
+    const model = context.model ?? field(data.model)
+    const provider = context.providerName ?? field(data.provider)
+    const status =
+      typeof data.status === 'number' &&
+      Number.isInteger(data.status) &&
+      data.status >= 100 &&
+      data.status <= 599
+        ? data.status
+        : undefined
+    return {
+      origin: 'provider',
+      protocol,
+      ...(status === undefined ? {} : { status }),
+      ...(responseMessage ? { responseMessage, text: responseMessage } : {}),
+      ...(upstreamCode ? { code: upstreamCode, upstreamCode } : {}),
+      ...(adapterCode ? { adapterCode } : {}),
+      ...(phase ? { phase } : {}),
+      ...(requestId ? { requestId } : {}),
+      ...(model ? { model } : {}),
+      ...(provider ? { provider } : {})
+    }
+  }
   const text = rawErrorMessage(error)
   const upstream = extractUpstreamDetail(text)
   const explicitStatus = [
