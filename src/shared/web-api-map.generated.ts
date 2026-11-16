@@ -30,6 +30,7 @@ export const WEB_INVOKE_CHANNELS = {
   'artifacts.getVersionProvenance': 'artifacts:get-version-provenance',
   'artifacts.getVersionReview': 'artifacts:get-version-review',
   'artifacts.openFile': 'artifacts:open-file',
+  'artifacts.openInBrowser': 'artifacts:open-in-browser',
   'artifacts.readPreview': 'artifacts:read-preview',
   'artifacts.reconcilePendingArtifacts': 'artifacts:reconcile-pending',
   'artifacts.resolveVersionDescriptors': 'artifacts:resolve-version-descriptors',

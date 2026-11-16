@@ -182,7 +182,13 @@ describe('renderer contract catalog', () => {
   it('separates actual Web installation from the generated compatibility projection', () => {
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb === 'browser-native')
-    ).toEqual(['getRuntimeVersions', 'saveBlobFile', 'saveManagedFile', 'window.close'])
+    ).toEqual([
+      'artifacts.openInBrowser',
+      'getRuntimeVersions',
+      'saveBlobFile',
+      'saveManagedFile',
+      'window.close'
+    ])
     expect(
       RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
         ['saveBlobFile', 'window.close'].includes(publicPath)

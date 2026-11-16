@@ -1123,7 +1123,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const isLocalHtmlFile = resolvedPreviewItem.source === 'local' && isHtmlFile
     const isManagedArtifactHtmlFile =
       (resolvedPreviewItem.source ?? 'artifact') === 'artifact' && isHtmlFile
-    // Web does not install this Electron-only action; gate the shared header/menu binding.
+    // Only register the shared header/menu action when the current surface provides it.
     const canOpenManagedHtmlInBrowser =
       isManagedArtifactHtmlFile && typeof window.api.artifacts?.openInBrowser === 'function'
 

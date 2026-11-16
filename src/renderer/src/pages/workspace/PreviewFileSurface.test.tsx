@@ -4980,7 +4980,7 @@ describe('PreviewFileSurface file header actions', () => {
   it.each(['local', 'remote'] as const)(
     'hides unavailable browser actions on %s Web while keeping downloads usable',
     async (location) => {
-      // Install the actual Web contract surface; Electron-only actions must stay absent.
+      // Older or partial Web adapters must not expose an action they cannot execute.
       const webApi: Record<string, unknown> = {}
       const saveManagedFile = vi.fn().mockResolvedValue({ saved: true })
       installWebRendererContracts(webApi, {
@@ -5042,6 +5042,38 @@ describe('PreviewFileSurface file header actions', () => {
       expect(
         document.body.querySelector('[data-testid="local-file-action-error-toast"]')
       ).toBeNull()
+    }
+  )
+
+  it.each(['local', 'remote'] as const)(
+    'opens managed HTML from the %s Web header and menu',
+    async (location) => {
+      const webApi: Record<string, unknown> = {}
+      const openInBrowser = vi.fn().mockResolvedValue(undefined)
+      installWebRendererContracts(webApi, {
+        availableRpcChannels: new Set(location === 'local' ? ['artifacts:open-file'] : []),
+        restrictedRpcChannels: new Set(location === 'remote' ? ['artifacts:open-file'] : []),
+        invoke: vi.fn(),
+        subscribe: () => () => undefined,
+        nativeAdapters: { 'artifacts.openInBrowser': openInBrowser }
+      })
+      window.api.artifacts = webApi.artifacts as typeof window.api.artifacts
+      await act(async () => {
+        root.render(<PreviewFileSurface item={managedHtmlItem} onClose={vi.fn()} />)
+      })
+      await click(container.querySelector('[aria-label="Open in browser"]'))
+      await act(async () => {
+        container
+          .querySelector('[data-testid="preview-content"]')
+          ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      })
+      await clickMenuItem('Open in browser')
+      expect(openInBrowser).toHaveBeenCalledTimes(2)
+      expect(openInBrowser).toHaveBeenLastCalledWith({
+        projectId: 'project-1',
+        artifactId: 'artifact-html-1',
+        versionNumber: 1
+      })
     }
   )
 

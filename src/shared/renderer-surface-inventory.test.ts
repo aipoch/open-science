@@ -73,7 +73,6 @@ const GENERATED_SOURCE_OMISSIONS = [
   'artifacts.importEnvironmentLock',
   'artifacts.listReproducibilityReceipts',
   'artifacts.onReproducibilityCheckChanged',
-  'artifacts.openInBrowser',
   'artifacts.startReproducibilityCheck',
   'artifacts.sessionReproducibility',
   'packagePresentation.getState',
@@ -204,6 +203,7 @@ const GENERATED_SOURCE_OMISSIONS = [
 ] as const
 
 const BROWSER_NATIVE_CALLABLE_PATHS = [
+  'artifacts.openInBrowser',
   'getRuntimeVersions',
   'saveBlobFile',
   'saveManagedFile',
@@ -211,6 +211,7 @@ const BROWSER_NATIVE_CALLABLE_PATHS = [
 ] as const
 
 const WEB_UNAVAILABLE_CHANNELS = [
+  'artifacts:open-in-browser',
   'file:artifact-save-progress',
   'file:cancel-artifact-save',
   'file:save-blob',

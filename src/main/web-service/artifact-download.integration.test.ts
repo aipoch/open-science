@@ -351,6 +351,26 @@ it.each(['historical', 'native'] as const)(
       ]) {
         expect(latestHead.headers.get(header)).toBe(latestInline.headers.get(header))
       }
+      // Web tabs use the existing login cookie, without copying credentials into the new URL.
+      const login = await fetch(`${baseUrl}/?token=synthetic-download-token`, {
+        redirect: 'manual'
+      })
+      expect(login.status).toBe(302)
+      const cookie = login.headers.get('set-cookie')!.split(';')[0]
+      for (const [versionNumber, expected] of [
+        [undefined, 'newer content'],
+        [version.versionNumber, content]
+      ] as const) {
+        const webUrl = new URL(inlineUrl(versionNumber))
+        webUrl.searchParams.delete('token')
+        for (const method of ['HEAD', 'GET']) {
+          const webPreview = await fetch(webUrl, { method, headers: { cookie } })
+          expect(webPreview.status).toBe(200)
+          expect(webPreview.headers.get('content-type')).toBe('text/html; charset=utf-8')
+          expect(webPreview.headers.get('content-disposition')).toBe('inline')
+          expect(await webPreview.text()).toBe(method === 'GET' ? expected : '')
+        }
+      }
       for (const url of [inlineUrl(newer.versionNumber, 'missing-file'), inlineUrl(99)]) {
         expect((await fetch(url)).ok).toBe(false)
       }
