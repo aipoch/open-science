@@ -532,6 +532,7 @@
         "e2e/highlight-style-isolation.spec.ts",
         "e2e/message-queue-presentation-gate.spec.ts",
         "e2e/mobile-message-handoff.spec.ts",
+        "e2e/run-marks-navigation.spec.ts",
         "e2e/message-scroll-anchor.spec.ts",
         "e2e/message-scroll-reanchor.spec.ts",
         "e2e/message-scroll-release.spec.ts",
