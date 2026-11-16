@@ -1,7 +1,7 @@
 import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
 import * as acp from '@agentclientprotocol/sdk'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
+import { mkdir, readFile, readdir, writeFile, rename } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import {
   createJournalAgentStore,
@@ -13,7 +13,8 @@ import {
   type ContentBlock,
   type ModelRequest,
   type ModelUsage,
-  type Json
+  type Json,
+  type PendingTool
 } from '@aipoch/agent-harness'
 import { createChatCompletionsModel } from '@aipoch/agent-harness/chat-completions'
 import { createResponsesModel, ResponsesError } from '@aipoch/agent-harness/responses'
@@ -372,6 +373,65 @@ export function createHarnessAcpAgent(directory: string): {
           await rename(temporary, bindingFile)
         }
       } else await writeFile(bindingFile, JSON.stringify(binding), { flag: 'wx', mode: 0o600 })
+      const deferredTools = new Map<string, PendingTool>()
+      const ownerIndex = binding.owner
+        ? join(
+            directory,
+            'owners',
+            `${createHash('sha256')
+              .update(JSON.stringify([binding.owner.projectId, binding.owner.sessionId]))
+              .digest('hex')}.json`
+          )
+        : undefined
+      let previousContextIds: string[] = []
+      if (ownerIndex) {
+        let indexed: unknown
+        try {
+          indexed = JSON.parse(await readFile(ownerIndex, 'utf8'))
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        }
+        if (indexed !== undefined) {
+          if (
+            !Array.isArray(indexed) ||
+            indexed.some((value) => typeof value !== 'string' || !/^[a-f0-9-]{36}$/.test(value))
+          )
+            throw new Error('Agent context ownership index is invalid.')
+          previousContextIds = indexed
+        } else {
+          // Legacy migration reads binding metadata once. New contexts use the scoped index;
+          // unreadable indexed predecessors are integrity failures, never empty history.
+          for (const name of await readdir(directory)) {
+            if (!/^[a-f0-9-]{36}\.json$/.test(name) || name === `${id}.json`) continue
+            let previous: { owner?: { projectId?: string; sessionId?: string } }
+            try {
+              previous = JSON.parse(await readFile(join(directory, name), 'utf8'))
+            } catch {
+              continue
+            }
+            if (
+              previous?.owner?.projectId === binding.owner!.projectId &&
+              previous?.owner?.sessionId === binding.owner!.sessionId &&
+              (await store.load(name.slice(0, -5)))
+            )
+              previousContextIds.push(name.slice(0, -5))
+          }
+        }
+        for (const previousId of previousContextIds) {
+          if (previousId === id) continue
+          const previous = JSON.parse(await readFile(join(directory, `${previousId}.json`), 'utf8'))
+          if (
+            previous?.owner?.projectId !== binding.owner!.projectId ||
+            previous?.owner?.sessionId !== binding.owner!.sessionId
+          )
+            throw new Error('Previous Agent context ownership is invalid.')
+          const checkpoint = await store.load(previousId)
+          if (!checkpoint) throw new Error('Previous Agent context history is unavailable.')
+          for (const tool of [...(checkpoint.deferred ?? []), ...checkpoint.pending])
+            if (tool.status === 'unknown' || tool.status === 'started')
+              deferredTools.set(tool.invocationId, { ...tool, status: 'unknown' })
+        }
+      }
       const instructions = params._meta?.[HARNESS_INSTRUCTIONS] ?? ''
       if (typeof instructions !== 'string') throw new Error('Invalid host instructions')
       const toolLess = params._meta?.[HARNESS_TOOL_LESS] === true
@@ -534,6 +594,7 @@ export function createHarnessAcpAgent(directory: string): {
       session = await openAgentSession({
         sessionId: id,
         store,
+        deferredTools: [...deferredTools.values()],
         model: {
           ...model,
           stream(request, signal) {
@@ -582,6 +643,15 @@ export function createHarnessAcpAgent(directory: string): {
         if (checkpoint.run?.status === 'running') await session.recover(checkpoint.run.id)
       }
       signal.throwIfAborted()
+      if (ownerIndex) {
+        await mkdir(join(directory, 'owners'), { recursive: true, mode: 0o700 })
+        const temporary = `${ownerIndex}.${randomUUID()}.tmp`
+        await writeFile(temporary, JSON.stringify([...new Set([...previousContextIds, id])]), {
+          flag: 'wx',
+          mode: 0o600
+        })
+        await rename(temporary, ownerIndex)
+      }
       entries.set(id, {
         session,
         setScheduleTurn: mcp.setScheduleTurn,
@@ -719,7 +789,10 @@ export function createHarnessAcpAgent(directory: string): {
                 )
             }
             const before = await entry.session.inspect()
-            assertKnown(before)
+            // Receipt reconciliation above is authoritative when available. Otherwise defer only
+            // the uncertain effects, retaining a durable replay guard while allowing other work.
+            for (const pending of before.pending)
+              if (pending.status === 'unknown') await entry.session.defer(pending.invocationId)
             entry.takeOverflow()
             entry.takeOutputTruncation()
             // A provider context overflow already lowered the meter's estimate. Continue the same turn

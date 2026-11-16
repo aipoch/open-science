@@ -4,7 +4,7 @@ import { SCHEDULE_TURN_META, type ScheduleCreateRequest } from '../../shared/ses
 import * as acp from '@agentclientprotocol/sdk'
 import { createServer, type ServerResponse } from 'node:http'
 import { once } from 'node:events'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
@@ -678,7 +678,9 @@ it('acknowledges cancellation during an MCP effect without replaying its uncerta
     })
   )
   const model = await modelServer((body, response) =>
-    finish(response, '', body.tools![0].function.name)
+    JSON.stringify(body.messages).includes('unverified')
+      ? finish(response, 'Independent analysis continues')
+      : finish(response, '', body.tools![0].function.name)
   )
   const f = await fixture(model.endpoint)
   const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
@@ -695,9 +697,9 @@ it('acknowledges cancellation during an MCP effect without replaying its uncerta
     }).load(sessionId)
     expect(checkpoint?.run?.status).toBe('blocked')
     expect(checkpoint?.pending.some((entry) => entry.status === 'unknown')).toBe(true)
-    await expect(prompt(f.connection, sessionId)).rejects.toThrow()
+    expect((await prompt(f.connection, sessionId)).stopReason).toBe('end_turn')
     expect(managed.calls).toHaveLength(1)
-    expect(model.requests).toHaveLength(1)
+    expect(model.requests).toHaveLength(2)
   } finally {
     release()
   }
@@ -853,30 +855,67 @@ it('classifies a rejected response from a bounded prefix without waiting for its
   await expect(prompt(f.connection, sessionId)).rejects.toThrow()
 })
 
-it('does not retry an MCP side effect after its response connection is lost', async () => {
-  const managed = await mcpServer(true)
-  const model = await modelServer((body, response) =>
-    finish(response, '', body.tools![0].function.name)
-  )
-  const f = await fixture(model.endpoint)
-  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
-    cwd: f.directory,
-    mcpServers: [managed.config]
-  })
-  await expect(prompt(f.connection, sessionId)).rejects.toThrow(
-    'Built-in Agent tool outcome is unknown:'
-  )
-  const checkpoint = await createJournalAgentStore({
-    directory: join(f.directory, 'checkpoints')
-  }).load(sessionId)
-  expect(checkpoint!.pending).toHaveLength(1)
-  expect(checkpoint!.pending[0].status).toBe('unknown')
-  await expect(prompt(f.connection, sessionId, 'try again')).rejects.toThrow(
-    'Built-in Agent tool outcome is unknown:'
-  )
-  expect(managed.calls).toEqual(['append'])
-  expect(model.requests).toHaveLength(1)
-})
+it.each(['resume', 'replacement-started'] as const)(
+  'sets aside an uncertain MCP effect and continues independent work after %s',
+  async (mode) => {
+    const managed = await mcpServer(true)
+    let attempts = 0
+    const model = await modelServer((body, response) => {
+      attempts += 1
+      if (attempts <= 2) finish(response, '', body.tools![0].function.name)
+      else finish(response, 'Independent analysis can continue.')
+    })
+    const f = await fixture(model.endpoint)
+    const identity = { projectId: 'project', sessionId: 'app-session' }
+    const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: [managed.config],
+      _meta: { [HARNESS_OWNER]: identity }
+    })
+    await expect(prompt(f.connection, sessionId)).rejects.toThrow(
+      'Built-in Agent tool outcome is unknown:'
+    )
+    const store = createJournalAgentStore({ directory: join(f.directory, 'checkpoints') })
+    const unknown = (await store.load(sessionId))!.pending[0]
+    expect(unknown.status).toBe('unknown')
+    await f.connection.agent.request(acp.methods.agent.session.close, { sessionId })
+    const reopened = await fixture(model.endpoint, f.directory)
+    let target = sessionId
+    if (mode === 'resume') {
+      await reopened.connection.agent.request(acp.methods.agent.session.resume, {
+        sessionId,
+        cwd: f.directory,
+        mcpServers: [managed.config],
+        _meta: { [HARNESS_OWNER]: identity }
+      })
+    } else {
+      // A crashed checkpoint may retain started rather than unknown. New contexts must fence both.
+      const previous = (await store.load(sessionId))!
+      const started = structuredClone(previous)
+      started.pending[0].status = 'started'
+      started.revision += 1
+      expect(await store.commit(sessionId, previous.revision, started)).toBe(true)
+      target = (
+        await reopened.connection.agent.request(acp.methods.agent.session.new, {
+          cwd: f.directory,
+          mcpServers: [managed.config],
+          _meta: { [HARNESS_OWNER]: identity }
+        })
+      ).sessionId
+    }
+    expect(
+      (await prompt(reopened.connection, target, 'continue independent analysis')).stopReason
+    ).toBe('end_turn')
+    expect(managed.calls).toEqual(['append'])
+    expect(model.requests).toHaveLength(3)
+    const recovered = (await store.load(target))!
+    expect(recovered.pending).toEqual([])
+    expect(recovered.deferred).toMatchObject([
+      { invocationId: unknown.invocationId, status: 'unknown', call: unknown.call }
+    ])
+    expect(JSON.stringify(model.requests.at(-1))).toContain('unverified')
+  }
+)
 
 it('closes an active session before acknowledging release and rejects further prompts', async () => {
   let response: ServerResponse | undefined
@@ -1005,6 +1044,8 @@ it.each(['notebook', 'plan'] as const)(
     const model = await modelServer((body, response) => {
       if (JSON.stringify(body.messages).includes('RECOVERED_EFFECT'))
         finish(response, 'Recovered without replay')
+      else if (JSON.stringify(body.messages).includes('unverified'))
+        finish(response, 'Continue independent analysis')
       else
         finish(
           response,
@@ -1033,20 +1074,21 @@ it.each(['notebook', 'plan'] as const)(
       mcpServers: [mcp]
     })
     host.registerReceiptScope(route, 'other-session', kind)
-    await expect(
-      prompt(b.connection, sessionId, 'Continue without matching evidence')
-    ).rejects.toThrow()
+    expect(
+      (await prompt(b.connection, sessionId, 'Continue without matching evidence')).stopReason
+    ).toBe('end_turn')
     expect(executions).toBe(1)
-    expect(model.requests).toHaveLength(1)
-    expect((await store.load(sessionId))?.pending[0].status).toBe('unknown')
+    expect(model.requests).toHaveLength(2)
+    expect((await store.load(sessionId))?.deferred?.[0].status).toBe('unknown')
     host.registerReceiptScope(route, 'app-session', kind)
     expect(
       (await prompt(b.connection, sessionId, 'Continue the interrupted task')).stopReason
     ).toBe('end_turn')
     expect(executions).toBe(1)
     expect((await store.load(sessionId))?.pending).toEqual([])
-    expect(model.requests).toHaveLength(2)
-    expect(JSON.stringify(model.requests[1].messages)).toContain('RECOVERED_EFFECT')
+    expect(model.requests).toHaveLength(3)
+    expect((await store.load(sessionId))?.deferred?.[0].status).toBe('unknown')
+    expect(JSON.stringify(model.requests[2].messages)).toContain('unverified')
     const client = new Client({ name: 'receipt-check', version: '1' })
     await client.connect(
       new StreamableHTTPClientTransport(new URL(host.urlFor(kind, route)), {
@@ -1481,3 +1523,30 @@ it('injects Schedule identity outside model arguments and fences a cancelled per
   expect(f.approvals).toHaveLength(approvals)
   expect(create).toHaveBeenCalledTimes(1)
 })
+
+it.each(['own', 'unrelated'] as const)(
+  'keeps indexed uncertainty safe when an %s context binding is corrupted',
+  async (which) => {
+    const model = await modelServer()
+    const f = await fixture(model.endpoint)
+    const identity = { projectId: 'project', sessionId: 'app-session' }
+    const created = await f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: [],
+      _meta: { [HARNESS_OWNER]: identity }
+    })
+    await f.connection.agent.request(acp.methods.agent.session.close, {
+      sessionId: created.sessionId
+    })
+    const corruptedId = which === 'own' ? created.sessionId : '00000000-0000-0000-0000-000000000000'
+    await writeFile(join(f.directory, `${corruptedId}.json`), '{damaged')
+    const opening = f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: [],
+      _meta: { [HARNESS_OWNER]: identity }
+    })
+    if (which === 'own') await expect(opening).rejects.toThrow()
+    else expect((await opening).sessionId).toBeTruthy()
+    expect(model.requests).toHaveLength(0)
+  }
+)

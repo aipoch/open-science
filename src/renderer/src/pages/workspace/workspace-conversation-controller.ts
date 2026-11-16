@@ -48,6 +48,7 @@ type WorkspaceConversationRuntime = Pick<
   | 'resendEditedMessage'
   | 'cancelRun'
   | 'resumeInterruptedSession'
+  | 'retryMessage'
   | 'ensureSessionReady'
 >
 
@@ -163,6 +164,7 @@ type WorkspaceConversationController = {
     branch: (messageId: string) => void
     sideChat: { start: (onAccepted?: () => void) => void }
     reportSessionSizeLimit: (sessionId: string) => void
+    retry?: (promptMessageId: string) => Promise<void>
     resume: () => Promise<void>
     cancel: () => Promise<void>
     delete: () => void
@@ -839,6 +841,12 @@ const useWorkspaceConversationController = (
         }
       },
       reportSessionSizeLimit: (sessionId): void => optionsRef.current.onSessionSizeLimit(sessionId),
+      retry: async (promptMessageId: string): Promise<void> => {
+        const current = optionsRef.current
+        if (!canResume(current) || !current.activeSession)
+          throw new Error('Conversation is not ready for recovery.')
+        await current.runtime.retryMessage(current.activeSession.id, promptMessageId)
+      },
       resume: async (): Promise<void> => {
         const current = optionsRef.current
         if (!canResume(current) || !current.activeSession) return

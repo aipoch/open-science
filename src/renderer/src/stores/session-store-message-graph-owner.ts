@@ -1,3 +1,8 @@
+import {
+  resolveTurnOutcome,
+  setTurnOutcome
+} from '../../../shared/session-persistence/turn-outcome'
+import { recoverableConversationPrompt } from '../../../shared/conversation-recovery'
 import { discussionParentForFirstMessage } from '../../../shared/replay-reference'
 import type { StoreApi } from 'zustand'
 import {
@@ -85,12 +90,18 @@ export const createSessionMessageGraphOwner = <
         if (
           session.id !== sessionId ||
           prompt?.role !== 'user' ||
-          session.resumeRecovery?.promptMessageId !== promptMessageId ||
+          !recoverableConversationPrompt(session, promptMessageId) ||
           (session.activeRun && session.activeRun.promptMessageId !== promptMessageId)
         ) {
           return session
         }
 
+        // Freeze legacy error evidence before the optimistic running state hides its fallback.
+        const previousOutcome = resolveTurnOutcome(session, promptMessageId)
+        const recovered =
+          previousOutcome && !prompt.turnOutcome
+            ? setTurnOutcome(session, promptMessageId, previousOutcome)
+            : session
         const previousSegment = session.conversationGraph?.runtimeSegments
           .filter((segment) => segment.agentFrameId === session.conversationGraph?.activeFrameId)
           .at(-1)
@@ -101,6 +112,8 @@ export const createSessionMessageGraphOwner = <
         )
         const withProvider = {
           ...session,
+          messages: recovered.messages,
+          conversationGraph: recovered.conversationGraph,
           agentFrameworkId: update?.agentFrameworkId ?? session.agentFrameworkId,
           agentBackendId: update?.agentBackendId ?? session.agentBackendId,
           providerSessionId: update?.providerSessionId ?? session.providerSessionId,

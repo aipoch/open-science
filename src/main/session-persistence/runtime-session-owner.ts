@@ -1,3 +1,4 @@
+import { recoverableConversationPrompt } from '../../shared/conversation-recovery'
 import { classifyFailure } from '../../shared/failure/classify'
 import { hasPendingSandboxNetworkApproval } from '../../shared/sandbox-network-approval'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
@@ -343,9 +344,7 @@ const resolvePromptRuntimeSegmentId = (
     .filter(({ agentFrameId }) => agentFrameId === scope.agentFrameId)
     .at(-1)
   const originalSegment = graph?.runtimeSegments.find(({ id }) => id === prompt.runtimeSegmentId)
-  const hasRecovery =
-    session.resumeRecovery?.kind === 'resume-required' &&
-    session.resumeRecovery.promptMessageId === scope.promptMessageId
+  const hasRecovery = recoverableConversationPrompt(session, scope.promptMessageId) !== undefined
   const hasAdmission =
     graph &&
     hasDurableRuntimeSessionAdmission(

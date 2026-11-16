@@ -1,3 +1,5 @@
+import { resolveTurnOutcome } from './session-persistence/turn-outcome'
+import { recoverableConversationPrompt } from './conversation-recovery'
 import { discussionParentForFirstMessage } from './replay-reference'
 import { z } from 'zod'
 import { AGENT_FRAMEWORK_ID_VALUES } from './agent-framework-id'
@@ -326,8 +328,7 @@ export const applySessionConversationCommands = (
         if (prompt?.role !== 'user') throw new Error('Run prompt is not on the selected Branch.')
         if (
           command.kind === 'resume-run' &&
-          (result.resumeRecovery?.kind !== 'resume-required' ||
-            result.resumeRecovery.promptMessageId !== command.run.promptMessageId)
+          !recoverableConversationPrompt(result, command.run.promptMessageId)
         ) {
           throw new Error('Resume no longer matches the interrupted turn.')
         }
@@ -355,6 +356,9 @@ export const applySessionConversationCommands = (
         if ((result.runtimeTranscriptLastRun?.startedAt ?? -1) >= command.run.startedAt) {
           throw new Error('The requested conversation run has already settled.')
         }
+        const previousOutcome = resolveTurnOutcome(result, prompt.id)
+        if (command.kind === 'resume-run' && previousOutcome && !prompt.turnOutcome)
+          prompt.turnOutcome = previousOutcome
         result = {
           ...result,
           activeRun: command.run,

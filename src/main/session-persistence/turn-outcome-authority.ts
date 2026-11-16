@@ -5,6 +5,7 @@ import {
   isPreparedSessionRun,
   latestOutcomePrompt,
   setTurnOutcome,
+  resolveTurnOutcome,
   type PersistedChatMessage,
   type PersistedChatSession,
   type TurnOutcome
@@ -14,16 +15,31 @@ import {
 export const preserveMainTurnOutcomes = (
   submitted: PersistedChatSession,
   authority: PersistedChatSession | undefined,
-  preservePreparation = true
+  preservePreparation = true,
+  materializeLegacyRecovery = false
 ): PersistedChatSession => {
   const outcomes = new Map(
     [...(authority?.messages ?? []), ...(authority?.conversationGraph?.messages ?? [])]
       .filter(({ role }) => role === 'user')
-      .map((message) => [message.id, message.turnOutcome])
+      .map((message) => [
+        message.id,
+        message.turnOutcome ??
+          (materializeLegacyRecovery && authority
+            ? resolveTurnOutcome(authority, message.id)
+            : undefined)
+      ])
+  )
+  const histories = new Map(
+    [...(authority?.messages ?? []), ...(authority?.conversationGraph?.messages ?? [])]
+      .filter(({ role }) => role === 'user')
+      .map((message) => [message.id, message.failureHistory])
   )
   const restore = <T extends PersistedChatMessage>(message: T): T => {
     const result = { ...message }
     const outcome = message.role === 'user' ? outcomes.get(message.id) : undefined
+    const history = message.role === 'user' ? histories.get(message.id) : undefined
+    if (history) result.failureHistory = structuredClone(history)
+    else delete result.failureHistory
     if (outcome) result.turnOutcome = structuredClone(outcome)
     else delete result.turnOutcome
     return result

@@ -173,7 +173,6 @@ import { ComposerEditor } from './composer/ComposerEditor'
 import {
   appendArtifactMention,
   docFromText,
-  docFromMessageParts,
   docToSkillIds,
   docToText,
   pastedTextAttachmentDomId,
@@ -887,12 +886,6 @@ const ConversationPanel = ({
   const saveAsSkillDisabledReason = hasRunningSubagents
     ? t('Wait for all subagents to finish.')
     : saveAsSkillDisabledReasonFromParent
-  const effectiveCanSend =
-    canSendMessage &&
-    !specialistSwitchInFlight &&
-    !pendingInteractionFacts?.rootPermissionPending &&
-    !isStopping &&
-    !isResuming
   const activePendingPlan = activeBranchPlan?.approval === 'pending' ? activeBranchPlan : undefined
   // Keep the mounted editor stable across receipts and run completion. Only a
   // different Plan or an explicit review request owns a fresh draft/collapse state.
@@ -1024,6 +1017,12 @@ const ConversationPanel = ({
     sessionId: activeSession?.id,
     authenticationResolved: view.authenticationRecovery?.required === false,
     compacting: activeSession?.compacting,
+    publicationFailures: activeSession?.messages.flatMap((message) =>
+      message.turnOutcome?.kind === 'failed' &&
+      message.turnOutcome.recovery === 'retry-artifact-publication'
+        ? [{ promptMessageId: message.id, outcome: message.turnOutcome }]
+        : []
+    ),
     turn: isImported ? undefined : currentTurnOutcome,
     recovery: showSessionRecovery ? (sessionRecovery ?? {}) : undefined,
     legacy:
@@ -1092,6 +1091,13 @@ const ConversationPanel = ({
   })
   const authenticationRequired =
     view.authenticationRecovery?.required ?? composerNotices.authenticationRequired
+  const effectiveCanSend =
+    canSendMessage &&
+    !authenticationRequired &&
+    !specialistSwitchInFlight &&
+    !pendingInteractionFacts?.rootPermissionPending &&
+    !isStopping &&
+    !isResuming
   const activeSpecialist = specialistId
     ? specialistItems.find((item) => item.kind === 'custom' && item.id === specialistId)
     : undefined
@@ -1217,9 +1223,7 @@ const ConversationPanel = ({
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
   const packageOperation = usePackageOperationStore((state) => state.operation)
   const packageLocked = sessionExportLocked(packageOperation, activeSession)
-  const ordinaryComposerBlocked = Boolean(
-    blockingInteraction || packageLocked || authenticationRequired
-  )
+  const ordinaryComposerBlocked = Boolean(blockingInteraction || packageLocked)
   const pendingChoiceQuestions = resolveAgentUserChoiceQuestions(
     pendingElicitationRequest?.fields ?? pendingElicitation?.fields ?? []
   )
@@ -1342,25 +1346,21 @@ const ConversationPanel = ({
       available: (notice) =>
         notice.operation === 'reconfigure' ||
         notice.recovery === 'retry-artifact-publication' ||
-        Boolean(notice.promptMessageId) ||
+        (Boolean(notice.promptMessageId) && typeof conversation.actions.retry === 'function') ||
+        (notice.source === 'turn' &&
+          !notice.promptMessageId &&
+          !isImported &&
+          canResumeSession &&
+          activeSession?.messages.some(({ role }) => role === 'user')) ||
         (notice.operation === 'action' && operationDiagnostic?.operation === 'resume'),
       run: async (notice) => {
         if (notice.operation === 'reconfigure') return onReconfigureRetry()
         if (notice.recovery === 'retry-artifact-publication' && notice.promptMessageId)
           return turnOutcomeHandlers.retryArtifact(notice.promptMessageId)
         if (notice.promptMessageId) {
-          const prompt = activeSession?.messages.find(({ id }) => id === notice.promptMessageId)
-          if (!prompt) return
-          const result = await conversation.actions.revise(
-            prompt.id,
-            prompt.parts?.length ? docFromMessageParts(prompt.parts) : docFromText(prompt.content),
-            prompt.annotations ?? []
-          )
-          if (!result.ok)
-            throw new Error(
-              result.displayMessage ??
-                t('The action could not be completed. See details and try again.')
-            )
+          if (!conversation.actions.retry)
+            throw new Error(t('The action could not be completed. See details and try again.'))
+          await conversation.actions.retry(notice.promptMessageId)
           return
         }
         return handleResume()
@@ -1371,7 +1371,7 @@ const ConversationPanel = ({
           : notice.recovery === 'retry-artifact-publication'
             ? artifactRetryDisabled
             : notice.promptMessageId
-              ? isImported || !conversation.availability.revise || rootTurnBusy
+              ? isImported || !conversation.actions.retry || !canResumeSession || rootTurnBusy
               : !canResumeSession || isResuming || isStopping || rootTurnBusy
     },
     'open-provider-settings': {
@@ -2142,8 +2142,7 @@ const ConversationPanel = ({
                     data-testid="composer-card-backdrop"
                     className={cn(
                       'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
-                      (authenticationRequired ||
-                        packageLocked ||
+                      (packageLocked ||
                         hasPendingPermission ||
                         pendingElicitation ||
                         pendingPlan ||

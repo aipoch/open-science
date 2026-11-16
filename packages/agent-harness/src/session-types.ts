@@ -124,6 +124,8 @@ export type AgentCheckpoint = {
     purpose?: 'compaction'
   }[]
   pending: PendingTool[]
+  /** Unverified effects set aside by the host. Retained independently of model history compaction. */
+  deferred?: PendingTool[]
   /** Follow-up messages submitted while a turn is active. */
   inbox?: { id: string; content: ContentBlock[] }[]
   run?: { id: string; kind: 'turn' | 'compaction' | 'recovery'; status: RunStatus }
@@ -131,7 +133,7 @@ export type AgentCheckpoint = {
 /** A store-backed operational read without messages, compactions or queued prompt content. */
 export type AgentSessionInspection = Pick<
   AgentCheckpoint,
-  'sessionId' | 'revision' | 'run' | 'pending'
+  'sessionId' | 'revision' | 'run' | 'pending' | 'deferred'
 > & {
   requestCount: number
   /** Empty unless requestsFrom was supplied; includes pending and terminal request receipts. */
@@ -196,6 +198,8 @@ export type AgentSessionOptions = AgentConfiguration & {
   /** Defaults to a private in-memory store. Supply a durable store for process recovery. */
   store?: AgentStore
   compaction?: AutomaticCompactionOptions
+  /** Host-validated unverified effects inherited when replacing an internal context. */
+  deferredTools?: readonly PendingTool[]
   /** Enable bounded tool previews and the session-local read_tool_result capability. Requires compaction measurement. */
   toolResults?: { authorize: AgentTool['authorize'] }
   maxSteps: number

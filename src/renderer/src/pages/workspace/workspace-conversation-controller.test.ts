@@ -187,6 +187,7 @@ const options = (
       sendMessage: vi.fn(() => Promise.resolve({ sessionId: 'session-a', messageId: 'message-a' })),
       resendEditedMessage: vi.fn(() => Promise.resolve(true)),
       cancelRun: vi.fn(() => Promise.resolve()),
+      retryMessage: vi.fn(async () => {}),
       resumeInterruptedSession: vi.fn(() => Promise.resolve()),
       ensureSessionReady: vi.fn(() => Promise.resolve())
     },

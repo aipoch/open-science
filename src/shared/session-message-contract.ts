@@ -152,6 +152,8 @@ export type PersistedChatMessage = {
   pdfContext?: MessagePdfContextSnapshot
   // Settled result of the turn this user Message anchors; absent until Main settles it.
   turnOutcome?: TurnOutcome
+  // Failed attempts survive recovery and terminal outcome replacement.
+  failureHistory?: Exclude<TurnOutcome, { kind: 'completed' }>[]
   // Closed turn identity needed to reconstruct an interrupted turn after an app restart. Ordinary
   // messages omit it; unknown values are discarded by the persistence sanitizer.
   turnIntent?: 'plan-first' | 'save-as-skill'

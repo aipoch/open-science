@@ -1206,7 +1206,7 @@ describe('AcpPromptTurnWorkflow', () => {
 
     expect(harness.finalizer).toHaveBeenCalledOnce()
     const [handles, outcome] = harness.finalizer.mock.calls[0]
-    expect(outcome).toEqual({ kind: 'failed', error: failure })
+    expect(outcome).toEqual({ kind: 'failed', error: failure, execution: 'not-started' })
     handles.emitUserMessage()
     handles.failPendingSkillActivities()
     handles.failPendingSkillActivities()
@@ -1639,3 +1639,40 @@ describe('authorization change notices at user prompt admission', () => {
     expect(commit).not.toHaveBeenCalled()
   })
 })
+
+it.each([false, true])(
+  'records definitive no-dispatch evidence only before the adapter boundary (adapter throws=%s)',
+  async (atAdapter) => {
+    const executor = new AcpProviderPromptExecutor({
+      backendGeneration: { current: backend, openCodeUsageApi: () => undefined }
+    })
+    const failure = new Error('request failure')
+    const providerPrompt = vi.fn(() => {
+      throw failure
+    })
+    const harness = createHarness({
+      ...(atAdapter
+        ? {}
+        : {
+            prepare: async () => {
+              throw failure
+            }
+          }),
+      execute: (input) => executor.execute(input)
+    })
+    harness.setSession({
+      sessionId: 'provider-1',
+      prompt: providerPrompt,
+      nextUpdate: async () => ({ kind: 'stop', response: { stopReason: 'end_turn' } })
+    } as unknown as ActiveSession)
+    await expect(harness.workflow.run(request(), { kind: 'user' })).rejects.toThrow(
+      'request failure'
+    )
+    const outcome = harness.finalizer.mock.calls[0][1]
+    expect(outcome).toMatchObject({ kind: 'failed' })
+    expect('execution' in outcome ? outcome.execution : undefined).toBe(
+      atAdapter ? undefined : 'not-started'
+    )
+    expect(providerPrompt).toHaveBeenCalledTimes(atAdapter ? 1 : 0)
+  }
+)

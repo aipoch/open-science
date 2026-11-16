@@ -1,3 +1,5 @@
+import { resolveTurnOutcome, setTurnOutcome } from '../../shared/session-persistence/turn-outcome'
+import { recoverableConversationPrompt } from '../../shared/conversation-recovery'
 import { isDeepStrictEqual } from 'node:util'
 import type { SessionConversationCommand } from '../../shared/conversation-command-contract'
 import {
@@ -224,9 +226,13 @@ export class SessionPromptPreparationOwner {
             throw changedBranch()
           if (
             command.mode === 'resume' &&
-            result.resumeRecovery?.promptMessageId !== command.promptMessageId
+            !recoverableConversationPrompt(result, command.promptMessageId)
           )
             throw new Error('Resume no longer matches the interrupted turn.')
+          if (command.mode === 'resume' && prompt && !prompt.turnOutcome) {
+            const outcome = resolveTurnOutcome(result, command.promptMessageId)
+            if (outcome) result = setTurnOutcome(result, command.promptMessageId, outcome)
+          }
           for (const [id, receipt] of this.preparations) {
             if (
               receipt.sessionId === result.id &&

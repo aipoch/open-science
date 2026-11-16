@@ -99,6 +99,7 @@ export const sanitizeTurnOutcome = (value: unknown): TurnOutcome | undefined => 
       settledAt,
       ...error,
       failure: readPersistedFailure(value),
+      ...(value.execution === 'not-started' ? { execution: 'not-started' as const } : {}),
       ...(value.recovery === 'retry-artifact-publication' ? { recovery: value.recovery } : {})
     }
   }
@@ -241,6 +242,19 @@ export const setTurnOutcome = (
   const update = <T extends PersistedChatMessage>(message: T): T => {
     if (message.id !== promptMessageId || message.role !== 'user') return message
     const next = { ...message }
+    if (
+      message.turnOutcome &&
+      message.turnOutcome.kind !== 'completed' &&
+      message.turnOutcome !== outcome &&
+      !message.failureHistory?.some(
+        (attempt) => attempt.settledAt === message.turnOutcome!.settledAt
+      )
+    ) {
+      next.failureHistory = [
+        ...(message.failureHistory ?? []),
+        structuredClone(message.turnOutcome)
+      ]
+    }
     if (outcome) next.turnOutcome = structuredClone(outcome)
     else delete next.turnOutcome
     if (outcome?.kind === 'cancelled' || outcome?.kind === 'interrupted') next.interrupted = true

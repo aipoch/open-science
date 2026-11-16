@@ -177,6 +177,7 @@ type WorkspaceAgentRuntime = {
       expectedFrameworkId?: AgentFrameworkId
     }
   ) => Promise<AcpSteerFollowUpResult>
+  retryMessage: (sessionId: string, promptMessageId: string) => Promise<void>
   resumeInterruptedSession: (sessionId: string) => Promise<void>
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
@@ -472,6 +473,27 @@ const useOwnedWorkspaceAgentRuntime = (
     (sessionId: string): Promise<void> => {
       const selected = getSessionRuntimeSelection(sessionId)
       return lifecycleOwner.resume(runtime, sessionId, drainRuntimeEvents, {
+        rejectOnFailure: true,
+        historyReplayDescriptor: getSessionHistoryReplayDescriptor(sessionId),
+        supportsImageInput: selected.supportsImageInput || visionRelayAvailable,
+        agentTarget: selected.agentTarget
+      })
+    },
+    [
+      drainRuntimeEvents,
+      getSessionHistoryReplayDescriptor,
+      getSessionRuntimeSelection,
+      lifecycleOwner,
+      runtime,
+      visionRelayAvailable
+    ]
+  )
+  const retryMessage = useCallback(
+    (sessionId: string, promptMessageId: string): Promise<void> => {
+      const selected = getSessionRuntimeSelection(sessionId)
+      return lifecycleOwner.resume(runtime, sessionId, drainRuntimeEvents, {
+        promptMessageId,
+        rejectOnFailure: true,
         historyReplayDescriptor: getSessionHistoryReplayDescriptor(sessionId),
         supportsImageInput: selected.supportsImageInput || visionRelayAvailable,
         agentTarget: selected.agentTarget
@@ -648,6 +670,7 @@ const useOwnedWorkspaceAgentRuntime = (
     retrySessionCleanup: retryWorkspaceSessionCleanup,
     steerFollowUp,
     resumeInterruptedSession,
+    retryMessage,
     respondToPermission,
     setPermissionProfile,
     revokePermissionGrant,

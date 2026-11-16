@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { openAgentSession } from './session'
 import { createMemoryAgentStore } from './memory-store'
 import { createJsonFileAgentStore } from './file-store'
+import { createJournalAgentStore } from './journal-store'
 import type {
   AgentCheckpoint,
   AgentEvent,
@@ -2144,4 +2145,93 @@ describe('standalone session capability journeys', () => {
     store.rows.get('session')!.version = 2 as 1
     await expect(openAgentSession(options({ store }))).rejects.toThrow('checkpoint')
   })
+})
+
+it.each([createJsonFileAgentStore, createJournalAgentStore])(
+  'defers an unknown effect durably, blocks equivalent calls with fresh IDs, and permits independent work (%s)',
+  async (createStore) => {
+    const directory = await mkdtemp(join(tmpdir(), 'harness-deferred-'))
+    const execute = vi.fn(async () => {
+      throw new Error('acknowledgement lost after append')
+    })
+    const independent = vi.fn(async () => ({ content: text('independent result') }))
+    try {
+      const first = await openAgentSession(
+        options({
+          store: createStore({ directory }),
+          tools: [tool({ execute })],
+          model: model(() => [call('work', { path: 'result.csv', value: 1 })])
+        })
+      )
+      await expect(first.prompt(text('append once'))).rejects.toThrow('acknowledgement lost')
+      const unknown = (await first.snapshot()).pending[0]
+      expect(unknown.status).toBe('unknown')
+      await first.defer(unknown.invocationId)
+      await first.defer(unknown.invocationId)
+      expect((await first.snapshot()).deferred).toEqual([unknown])
+      expect((await first.snapshot()).messages.at(-1)).toMatchObject({
+        role: 'tool',
+        isError: true
+      })
+      await expect(first.fork('fork')).rejects.toThrow('Cannot fork unresolved history')
+      await first.dispose()
+      const reopened = await openAgentSession(
+        options({
+          store: createStore({ directory }),
+          tools: [tool({ execute }), tool({ name: 'independent', execute: independent })],
+          model: model((_request, index) =>
+            index === 0
+              ? [
+                  {
+                    type: 'finish',
+                    reason: 'tools',
+                    content: [],
+                    calls: [
+                      {
+                        id: 'fresh-call',
+                        name: 'work',
+                        arguments: { value: 1, path: 'result.csv' }
+                      }
+                    ]
+                  }
+                ]
+              : index === 1
+                ? [call('independent')]
+                : [done('finished independent work')]
+          )
+        })
+      )
+      expect(await reopened.prompt(text('continue other work'))).toBe('complete')
+      expect(execute).toHaveBeenCalledTimes(1)
+      expect(independent).toHaveBeenCalledOnce()
+      expect((await reopened.snapshot()).deferred).toEqual([unknown])
+      await reopened.dispose()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
+
+it('retains multiple independent unverified effects without mutating earlier witnesses', async () => {
+  const execute = vi.fn(async () => {
+    throw new Error('lost acknowledgement')
+  })
+  const session = await openAgentSession(
+    options({
+      tools: [tool({ execute })],
+      model: model((_request, index) => [call('work', { operation: index })])
+    })
+  )
+  for (const operation of [0, 1]) {
+    await expect(session.prompt(text(`request ${operation}`))).rejects.toThrow(
+      'lost acknowledgement'
+    )
+    await session.defer((await session.snapshot()).pending[0].invocationId)
+  }
+  expect((await session.snapshot()).deferred?.map((entry) => entry.call.arguments)).toEqual([
+    { operation: 0 },
+    { operation: 1 }
+  ])
+  expect(execute).toHaveBeenCalledTimes(2)
+  await session.dispose()
 })

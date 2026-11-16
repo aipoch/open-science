@@ -330,6 +330,7 @@ describe('workspace Agent Runtime hook contract', () => {
         'saveAsSkill',
         'sendMessage',
         'resendEditedMessage',
+        'retryMessage',
         'cancelRun',
         'deleteSession',
         'retrySessionCleanup',

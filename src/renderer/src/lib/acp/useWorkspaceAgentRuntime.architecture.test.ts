@@ -501,6 +501,7 @@ const hookKeys = [
   'saveAsSkill',
   'sendMessage',
   'resendEditedMessage',
+  'retryMessage',
   'cancelRun',
   'deleteSession',
   'retrySessionCleanup',
@@ -627,7 +628,7 @@ describe('workspace runtime architecture', () => {
       compact: 1,
       ensureReady: 1,
       reconfigureMemory: 1,
-      resume: 1,
+      resume: 2,
       cancel: 1
     })
     expect(Object.fromEntries(propertyCallCounts(facadeFile, 'runtime'))).toEqual({

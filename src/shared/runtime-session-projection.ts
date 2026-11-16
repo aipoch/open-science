@@ -276,6 +276,7 @@ const terminalize = (
         : failed
           ? {
               kind: 'failed',
+              ...(event.execution ? { execution: event.execution } : {}),
               settledAt: event.timestamp,
               error: event.text || event.title,
               failure: event.failure,
@@ -293,6 +294,17 @@ const terminalize = (
             }
           : { kind: 'completed', settledAt: event.timestamp }
     if (prompt && !blocked) {
+      if (
+        prompt.turnOutcome &&
+        prompt.turnOutcome.kind !== 'completed' &&
+        !prompt.failureHistory?.some(
+          (attempt) => attempt.settledAt === prompt.turnOutcome!.settledAt
+        )
+      )
+        prompt.failureHistory = [
+          ...(prompt.failureHistory ?? []),
+          structuredClone(prompt.turnOutcome)
+        ]
       prompt.turnOutcome = outcome
       if (outcome.kind === 'completed' || outcome.kind === 'failed') delete prompt.interrupted
     }

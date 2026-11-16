@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readdir, readFile, rm, lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createJournalAgentStore } from '@aipoch/agent-harness'
@@ -192,6 +193,14 @@ export class HarnessStorageCleanup {
           await receipts.deleteScope(JSON.stringify([projectId, sessionId, service]))
       }
       for (const { providerId } of owned) await store.delete(providerId)
+      // Remove the owner index only after every effect/receipt store was cleaned. Keep the
+      // binding retry ledger until this scoped metadata deletion also succeeds.
+      for (const projectId of new Set(owned.map((binding) => binding.projectId))) {
+        const key = createHash('sha256')
+          .update(JSON.stringify([projectId, sessionId]))
+          .digest('hex')
+        await rm(join(this.options.sessionDirectory, 'owners', `${key}.json`), { force: true })
+      }
       for (const { providerId } of owned)
         await rm(join(this.options.sessionDirectory, `${providerId}.json`), { force: true })
       this.pending.delete(sessionId)

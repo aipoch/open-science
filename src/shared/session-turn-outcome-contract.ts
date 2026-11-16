@@ -6,6 +6,8 @@ export type TurnOutcome =
       settledAt: number
       error?: string
       failure?: ClassifiedFailure
+      // Definitive Main boundary evidence; omitted means execution must be reconciled.
+      execution?: 'not-started'
       recovery?: 'retry-artifact-publication'
     }>
   | Readonly<{ kind: 'cancelled'; settledAt: number; recovery: 'resume' }>

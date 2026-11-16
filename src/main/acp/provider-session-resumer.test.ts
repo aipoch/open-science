@@ -1593,7 +1593,7 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.adopt).toHaveBeenCalledOnce()
   })
 
-  it('fresh-adopts a legacy Codex Responses Session after its adapter returns Unknown error', async () => {
+  it('preserves a legacy Codex Responses Session after its adapter returns Unknown error', async () => {
     const harness = createHarness({
       initialBackend: codexResponsesBackend,
       resumeError: { code: -32603, message: 'Unknown error' }
@@ -1605,14 +1605,14 @@ describe('AcpProviderSessionResumer', () => {
         previousFrameworkId: 'codex',
         previousBackendId: codexResponsesBackend.backendId
       })
-    ).resolves.toMatchObject({ contextReset: true })
+    ).rejects.toMatchObject({ code: -32603 })
 
     expect(harness.request).toHaveBeenCalledOnce()
     expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
-    expect(harness.adopt).toHaveBeenCalledOnce()
+    expect(harness.adopt).not.toHaveBeenCalled()
   })
 
-  it('fresh-adopts a persisted Codex Responses Session after its adapter returns Unknown error', async () => {
+  it('preserves a persisted Codex Responses Session after its adapter returns Unknown error', async () => {
     const providerSessionId = '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
     const harness = createHarness({
       initialBackend: codexResponsesBackend,
@@ -1625,7 +1625,7 @@ describe('AcpProviderSessionResumer', () => {
         previousFrameworkId: 'codex',
         previousBackendId: codexResponsesBackend.backendId
       })
-    ).resolves.toMatchObject({ contextReset: true })
+    ).rejects.toMatchObject({ code: -32603 })
 
     expect(harness.request).toHaveBeenCalledWith(
       expect.anything(),
@@ -1633,10 +1633,10 @@ describe('AcpProviderSessionResumer', () => {
       expect.objectContaining({ cancellationSignal: expect.any(AbortSignal) })
     )
     expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
-    expect(harness.adopt).toHaveBeenCalledOnce()
+    expect(harness.adopt).not.toHaveBeenCalled()
   })
 
-  it('fresh-adopts a persisted Codex Responses Compatibility Session after an opaque internal resume failure', async () => {
+  it('preserves a persisted Codex Responses Compatibility Session after an opaque internal resume failure', async () => {
     const providerSessionId = '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
     const harness = createHarness({
       initialBackend: codexResponsesCompatibilityBackend,
@@ -1649,7 +1649,7 @@ describe('AcpProviderSessionResumer', () => {
         previousFrameworkId: 'codex',
         previousBackendId: codexResponsesCompatibilityBackend.backendId
       })
-    ).resolves.toMatchObject({ contextReset: true })
+    ).rejects.toMatchObject({ code: -32603 })
 
     expect(harness.request).toHaveBeenCalledWith(
       expect.anything(),
@@ -1657,7 +1657,7 @@ describe('AcpProviderSessionResumer', () => {
       expect.objectContaining({ cancellationSignal: expect.any(AbortSignal) })
     )
     expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
-    expect(harness.adopt).toHaveBeenCalledOnce()
+    expect(harness.adopt).not.toHaveBeenCalled()
   })
 
   it('fresh-adopts a forked Codex Session when its adapter reports missing rollout details', async () => {
@@ -1707,7 +1707,7 @@ describe('AcpProviderSessionResumer', () => {
     ['Responses', codexResponsesBackend],
     ['Responses Compatibility', codexResponsesCompatibilityBackend]
   ] as const)(
-    'fresh-adopts a persisted Codex %s Session after the ACP router returns empty error data',
+    'preserves a persisted Codex %s Session after the ACP router returns empty error data',
     async (_route, initialBackend) => {
       const providerSessionId = '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
       const harness = createHarness({
@@ -1721,7 +1721,7 @@ describe('AcpProviderSessionResumer', () => {
           previousFrameworkId: 'codex',
           previousBackendId: initialBackend.backendId
         })
-      ).resolves.toMatchObject({ contextReset: true })
+      ).rejects.toMatchObject({ code: -32603 })
 
       expect(harness.request).toHaveBeenCalledWith(
         expect.anything(),
@@ -1729,11 +1729,11 @@ describe('AcpProviderSessionResumer', () => {
         expect.objectContaining({ cancellationSignal: expect.any(AbortSignal) })
       )
       expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
-      expect(harness.adopt).toHaveBeenCalledOnce()
+      expect(harness.adopt).not.toHaveBeenCalled()
     }
   )
 
-  it('fresh-adopts a legacy OpenCode Session after its adapter returns Unknown error', async () => {
+  it('preserves a legacy OpenCode Session after its adapter returns Unknown error', async () => {
     const harness = createHarness({
       initialBackend: opencodeBackend,
       resumeError: { code: -32603, message: 'Unknown error' }
@@ -1745,11 +1745,11 @@ describe('AcpProviderSessionResumer', () => {
         previousFrameworkId: 'opencode',
         previousBackendId: opencodeBackend.backendId
       })
-    ).resolves.toMatchObject({ contextReset: true })
+    ).rejects.toMatchObject({ code: -32603 })
 
     expect(harness.request).toHaveBeenCalledOnce()
     expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
-    expect(harness.adopt).toHaveBeenCalledOnce()
+    expect(harness.adopt).not.toHaveBeenCalled()
   })
 
   it('releases the provision when the SDK cannot attach the resumed Session', async () => {
