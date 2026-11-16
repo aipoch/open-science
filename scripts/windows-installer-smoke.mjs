@@ -1521,7 +1521,7 @@ const uninstallAndVerify = async (
   if (processRoot !== installDirectory) await terminate(processRoot)
   await terminate(installDirectory)
   let lastProcessReapAt = Date.now()
-  await waitFor('the installed application files to be removed', async () => {
+  const cleanupCheck = async () => {
     // NSIS can start its detached cleanup helper after the uninstaller process exits. Reap
     // helpers that appear during the wait without broadening the process path boundary.
     if (Date.now() - lastProcessReapAt >= 1000) {
@@ -1529,12 +1529,32 @@ const uninstallAndVerify = async (
       if (processRoot !== installDirectory) await terminate(processRoot)
       await terminate(installDirectory)
     }
-    const pathsRemain = (await Promise.all(installedPaths.map(pathExists))).some(Boolean)
-    if (pathsRemain) return undefined
+    const remainingPaths = (
+      await Promise.all(
+        installedPaths.map(async (path) => ((await pathExists(path)) ? path : undefined))
+      )
+    ).filter(Boolean)
+    if (remainingPaths.length > 0) return undefined
     if (!(await pathExists(installDirectory))) return true
     const remainingEntries = await readdir(installDirectory)
     return remainingEntries.every((entry) => entry === basename(uninstaller)) || undefined
-  })
+  }
+  try {
+    await waitFor('the installed application files to be removed', cleanupCheck)
+  } catch (error) {
+    const remainingPaths = (
+      await Promise.all(
+        installedPaths.map(async (path) => ((await pathExists(path)) ? path : undefined))
+      )
+    ).filter(Boolean)
+    const remainingEntries = (await pathExists(installDirectory))
+      ? await readdir(installDirectory)
+      : []
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)} Remaining packaged paths: ${remainingPaths.join(', ') || 'none'}. Install directory entries: ${remainingEntries.join(', ') || 'none'}.`,
+      { cause: error }
+    )
+  }
   if (result.code !== 0) {
     console.warn(`Uninstaller reported ${result.code} after removing the application files.`)
   }
