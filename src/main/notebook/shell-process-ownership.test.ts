@@ -7,7 +7,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import { trackOwnedPosixProcessTree, terminateProcessTree } from '../process-tree'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import { windowsProcessCommandLine } from '../windows-process-query'
 import type { ChildProcess } from 'node:child_process'
@@ -22,10 +22,12 @@ vi.mock('../windows-process-query', async (importOriginal) => {
 })
 
 const roots: string[] = []
+const trackedChildren: ChildProcess[] = []
 const BOOT_A = '11111111-1111-4111-8111-111111111111'
 const BOOT_B = '22222222-2222-4222-8222-222222222222'
 
 afterEach(async () => {
+  await Promise.all(trackedChildren.splice(0).map((child) => terminateProcessTree(child)))
   vi.unstubAllEnvs()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -35,7 +37,8 @@ describe.runIf(process.platform === 'linux')('Shell process ownership recovery',
     const root = await mkdtemp(join(tmpdir(), 'shell-process-recovery-'))
     roots.push(root)
     const child = spawn('/bin/sh', ['-c', 'sleep 30'], { detached: true })
-    registerOwnedPosixProcessGroup(child)
+    trackOwnedPosixProcessTree(child)
+    trackedChildren.push(child)
     const firstInstance = new ShellProcessOwnershipRegistry(root)
     const release = firstInstance.claim(child, {
       runId: 'notebook-run-recovery-1',
@@ -61,7 +64,8 @@ describe('Shell process ownership receipt lifecycle', () => {
         detached: true,
         stdio: 'ignore'
       })
-      registerOwnedPosixProcessGroup(child)
+      trackOwnedPosixProcessTree(child)
+      trackedChildren.push(child)
       const original = new ShellProcessOwnershipRegistry(root)
       const release = original.claim(child, {
         runId: 'legacy-posix',

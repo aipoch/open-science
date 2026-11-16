@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,7 +12,7 @@ import {
 import { readProcessStartToken } from '@aipoch/environment'
 import {
   capturePosixProcessTreeIdentity,
-  registerOwnedPosixProcessGroup,
+  trackOwnedPosixProcessTree,
   terminateProcessTree
 } from '../process-tree'
 
@@ -42,8 +42,10 @@ describe('KernelProcessLifecycleOwner', () => {
   const bootA = '11111111-1111-4111-8111-111111111111'
   const bootB = '22222222-2222-4222-8222-222222222222'
   let root: string | undefined
+  const trackedChildren: ChildProcess[] = []
 
   afterEach(async () => {
+    await Promise.all(trackedChildren.splice(0).map((child) => terminateProcessTree(child)))
     vi.restoreAllMocks()
     reapWindowsOwnedJob.mockReset()
     if (root) await rm(root, { recursive: true, force: true })
@@ -892,7 +894,8 @@ describe('KernelProcessLifecycleOwner', () => {
         )
         const pid = host.pid!
         if (order === 'parent-first') {
-          registerOwnedPosixProcessGroup(host)
+          trackOwnedPosixProcessTree(host)
+          trackedChildren.push(host)
           first.recordSpawned(intent, {
             pid,
             posixBirthToken: capturePosixProcessTreeIdentity(host)?.birthToken
@@ -948,7 +951,8 @@ describe('KernelProcessLifecycleOwner', () => {
           stdio: 'ignore',
           env: { ...process.env, ...first.environment(ownerToken) }
         })
-        registerOwnedPosixProcessGroup(child)
+        trackOwnedPosixProcessTree(child)
+        trackedChildren.push(child)
         await new Promise<void>((resolve, reject) => {
           child.once('spawn', resolve)
           child.once('error', reject)

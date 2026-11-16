@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   createPosixProcessTreeOwnership,
-  registerOwnedPosixProcessGroup,
+  capturePosixProcessTreeIdentity,
+  terminateOwnedPosixProcessGroupById,
   terminateProcessTree,
   trackOwnedPosixProcessTree
 } from './process-tree'
@@ -100,8 +101,8 @@ afterEach(async () => {
 })
 
 describeMacOS('terminateProcessTree (real macOS processes)', () => {
-  it('retains the fence for escaped descendants after a bare owned group disappears', async () => {
-    const child = spawn(
+  it('retains the cold recovery fence for escaped descendants after the group disappears', async () => {
+    const child = spawnTracked(
       process.execPath,
       [
         '-e',
@@ -117,15 +118,22 @@ describeMacOS('terminateProcessTree (real macOS processes)', () => {
       { detached: true, stdio: ['pipe', 'pipe', 'ignore'] }
     )
     liveProbePids.add(child.pid!)
-    registerOwnedPosixProcessGroup(child)
+    const birthToken = capturePosixProcessTreeIdentity(child)?.birthToken
+    expect(birthToken).toBeDefined()
     child.stdin!.end('start')
     const descendantPid = await readPid(child)
     await waitForExit(child)
     expect(() => process.kill(-child.pid!, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
     expect(isAlive(descendantPid)).toBe(true)
 
-    await expect(terminateProcessTree(child)).resolves.toEqual({ reaped: false })
-    expect(isAlive(descendantPid)).toBe(true)
+    try {
+      await expect(
+        terminateOwnedPosixProcessGroupById(child.pid!, undefined, undefined, birthToken)
+      ).resolves.toEqual({ reaped: false })
+      expect(isAlive(descendantPid)).toBe(true)
+    } finally {
+      await terminateProcessTree(child)
+    }
   })
 
   it(

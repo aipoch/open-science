@@ -25,7 +25,6 @@ const {
   createPosixProcessTreeOwnership,
   onProcessTreeReaped,
   proveRecordedPosixLeaderGone,
-  registerOwnedPosixProcessGroup,
   terminateOwnedPosixProcessGroupById,
   trackOwnedPosixProcessTree,
   terminateProcessTree
@@ -587,16 +586,17 @@ describe('terminateProcessTree (posix)', () => {
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
   })
 
-  it('retains the cleanup fence without signaling an unproven group after its leader exits', async () => {
+  it('retains the cold recovery fence when the recorded leader has exited', async () => {
     setPlatform('linux')
+    readFileSyncMock.mockImplementation(() => {
+      throw esrch()
+    })
     const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true)
-    const child = new FakeChild(1000)
-    child.exitCode = 0
-    registerOwnedPosixProcessGroup(child as never)
 
-    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: false })
-    expect(killSpy).toHaveBeenCalledWith(-1000, 0)
-    expect(killSpy).not.toHaveBeenCalledWith(-1000, 'SIGTERM')
+    await expect(
+      terminateOwnedPosixProcessGroupById(1000, undefined, undefined, 'linux-proc-starttime:100')
+    ).resolves.toEqual({ reaped: false })
+    expect(killSpy).not.toHaveBeenCalled()
   })
 
   it('rechecks the original birth receipt before escalating an owned process group', async () => {
@@ -608,10 +608,12 @@ describe('terminateProcessTree (posix)', () => {
     readdirMock.mockResolvedValue(['1000'])
     readFileMock.mockImplementation(async () => current)
     const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true)
-    const child = new FakeChild(1000)
-    registerOwnedPosixProcessGroup(child as never)
-
-    const pending = terminateProcessTree(child as never)
+    const pending = terminateOwnedPosixProcessGroupById(
+      1000,
+      undefined,
+      undefined,
+      'linux-proc-starttime:100'
+    )
     await vi.advanceTimersByTimeAsync(0)
     expect(killSpy).toHaveBeenCalledWith(-1000, 'SIGTERM')
     current = linuxStat(1000, process.pid, 1000, 1000, 200)
@@ -622,18 +624,22 @@ describe('terminateProcessTree (posix)', () => {
     expect(killSpy).not.toHaveBeenCalledWith(1000, 'SIGKILL')
   })
 
-  it('does not adopt a new birth after the first group registration failed', async () => {
+  it('does not adopt a new birth after the first tracking registration failed', async () => {
     setPlatform('linux')
     readFileSyncMock.mockImplementationOnce(() => {
       throw esrch()
     })
     const child = new FakeChild(1000)
-    registerOwnedPosixProcessGroup(child as never)
-    readFileSyncMock.mockReturnValue(linuxStat(1000, process.pid, 1000, 1000, 200))
-    registerOwnedPosixProcessGroup(child as never)
+    trackOwnedPosixProcessTree(child as never)
+    const replacement = linuxStat(1000, process.pid, 1000, 1000, 200)
+    readFileSyncMock.mockReturnValue(replacement)
+    readdirMock.mockResolvedValue(['1000'])
+    readFileMock.mockResolvedValue(replacement)
+    trackOwnedPosixProcessTree(child as never)
+    child.exitCode = 0
     const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
 
-    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: false })
+    await expect(terminateProcessTree(child as never)).resolves.toMatchObject({ reaped: false })
     expect(kill).not.toHaveBeenCalledWith(-1000, 'SIGTERM')
   })
 

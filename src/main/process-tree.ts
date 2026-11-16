@@ -29,12 +29,6 @@ export type ProcessTreeKillResult = {
   }
 }
 
-type OwnedPosixProcessGroup = Readonly<{
-  kind: 'owned-posix-process-group'
-  id: number
-  leaderIdentity?: PosixProcessIdentity | null
-}>
-
 type PosixProcessIdentity = Readonly<{
   pid: number
   ppid: number
@@ -53,9 +47,8 @@ type PosixProcessTable = Readonly<{
 
 type PosixProcessTracker = {
   leaderPid: number
-  // undefined until the first complete sample, null once that sample proves the leader was already
-  // absent. Null is permanent: a later process with the same pid is an unowned replacement.
-  leaderIdentity: PosixProcessIdentity | null | undefined
+  // Null permanently records missing spawn-time proof; later samples cannot adopt a reused pid.
+  leaderIdentity: PosixProcessIdentity | null
   identities: Map<number, PosixProcessIdentity>
   // A failed environment read is an unresolved observation about this exact birth identity, not
   // evidence of ownership and not a permanent failure of every later snapshot. Retain vanished
@@ -82,35 +75,12 @@ export const createPosixProcessTreeOwnership = (
   return { env: { ...(env ?? process.env), [PROCESS_TREE_OWNERSHIP_ENV]: token }, token }
 }
 
-// A detached POSIX child starts a private group, but its numeric id can be reused after exit.
-// Pin the original birth receipt on its handle; group signals require that same leader to remain
-// current. Callers needing cleanup after leader exit use the descendant identity tracker below.
-const ownedPosixProcessGroups = new WeakMap<ChildProcess, OwnedPosixProcessGroup>()
 const trackedPosixProcessTrees = new WeakMap<ChildProcess, PosixProcessTracker>()
 const activePosixProcessTrackers = new Set<PosixProcessTracker>()
 let ownershipSampleTimer: NodeJS.Timeout | undefined
 let ownershipSampling: Promise<PosixProcessTable> | undefined
 let ownershipResampleRequested = false
 let ownershipSampleBurstDeadline = 0
-
-export const registerOwnedPosixProcessGroup = (child: ChildProcess): void => {
-  const groupId = child.pid
-  if (groupId === undefined || !Number.isSafeInteger(groupId) || groupId <= 0) return
-  if (ownedPosixProcessGroups.has(child)) return
-  const leaderIdentity =
-    child.exitCode !== null || child.signalCode !== null
-      ? null
-      : process.platform === 'linux'
-        ? captureSpawnedLinuxLeader(groupId)
-        : process.platform === 'darwin'
-          ? captureSpawnedDarwinLeader(groupId)
-          : null
-  ownedPosixProcessGroups.set(child, {
-    kind: 'owned-posix-process-group',
-    id: groupId,
-    leaderIdentity
-  })
-}
 
 // File replacement must wait for confirmed tree teardown, not the adapter's close event.
 const processTreeReapCallbacks = new WeakMap<ChildProcess, () => void>()
@@ -141,9 +111,7 @@ export const registerProcessTreeOwnership = (
 export const capturePosixProcessTreeIdentity = (
   child: ChildProcess
 ): PosixProcessIdentity | undefined =>
-  trackedPosixProcessTrees.get(child)?.leaderIdentity ??
-  ownedPosixProcessGroups.get(child)?.leaderIdentity ??
-  undefined
+  trackedPosixProcessTrees.get(child)?.leaderIdentity ?? undefined
 
 // Upper bound for awaiting a direct child's real exit (POSIX) or taskkill's own completion (Windows).
 // Bounded so a wedged process can never hang app teardown; the caller (before-quit) also time-bounds
@@ -587,15 +555,6 @@ const captureTrackedDescendants = (
     }
   }
   const observedLeader = table.processes.get(tracker.leaderPid)
-  if (tracker.leaderIdentity === undefined) {
-    if (observedLeader === undefined) {
-      tracker.complete = false
-      tracker.leaderIdentity = null
-      return
-    }
-    tracker.leaderIdentity = observedLeader
-    tracker.identities.set(tracker.leaderPid, observedLeader)
-  }
   const roots = new Set<number>()
   if (samePosixIdentity(tracker.leaderIdentity, observedLeader)) roots.add(tracker.leaderPid)
   for (const identity of tracker.identities.values()) {
@@ -800,18 +759,10 @@ export const trackOwnedPosixProcessTree = (child: ChildProcess, ownershipToken?:
   if (process.platform !== 'linux' && process.platform !== 'darwin') return
   const leaderPid = child.pid
   if (leaderPid === undefined || !Number.isSafeInteger(leaderPid) || leaderPid <= 0) return
-  const priorGroup = ownedPosixProcessGroups.get(child)
-  const leaderIdentity = priorGroup
-    ? (priorGroup.leaderIdentity ?? null)
-    : process.platform === 'linux'
+  const leaderIdentity =
+    process.platform === 'linux'
       ? captureSpawnedLinuxLeader(leaderPid)
       : captureSpawnedDarwinLeader(leaderPid)
-  if (!ownedPosixProcessGroups.has(child))
-    ownedPosixProcessGroups.set(child, {
-      kind: 'owned-posix-process-group',
-      id: leaderPid,
-      leaderIdentity
-    })
   const tracker: PosixProcessTracker = {
     leaderPid,
     // Pin the direct child's kernel birth identity in the same synchronous turn as spawn. If this
@@ -1048,22 +999,6 @@ const terminatePosixTree = async (
   }
 }
 
-// A numeric group id can be reused after the leader exits. Only the spawn-time birth receipt
-// authorizes signaling; an unknown live group retains its owner's cleanup fence.
-const terminateOwnedPosixProcessGroup = async (
-  group: OwnedPosixProcessGroup,
-  signal: NodeJS.Signals | undefined,
-  log: ProcessTreeLogger | undefined
-): Promise<ProcessTreeKillResult> => {
-  // A vanished group says nothing about descendants that created a new session.
-  // Without tracked ancestry/markers, retain the fence instead of certifying the whole tree.
-  if (!isProcessGroupAlive(group.id)) return { reaped: false }
-  if (!group.leaderIdentity) return { reaped: false }
-  const snapshot = await collectPosixProcessTable()
-  if (!snapshot.complete) return { reaped: false }
-  return terminateRecordedPosixTree(group.leaderIdentity, snapshot, signal, log)
-}
-
 // Ordinary recovery requires historical birth. Legacy receipts may instead prove ownership with
 // an exact, randomly generated environment entry; pin birth BEFORE querying that entry so a PID
 // replacement between observations cannot inherit the authorization.
@@ -1096,12 +1031,12 @@ export const terminateOwnedPosixProcessGroupById = async (
       return { reaped: false }
     }
   }
-  // terminateOwnedPosixProcessGroup and its signal helpers recheck this same birth on every signal.
-  return terminateOwnedPosixProcessGroup(
-    { kind: 'owned-posix-process-group', id: groupId, leaderIdentity: leader },
-    signal,
-    log
-  )
+  // A vanished group cannot prove that escaped descendants are gone.
+  if (!isProcessGroupAlive(groupId)) return { reaped: false }
+  const snapshot = await collectPosixProcessTable()
+  if (!snapshot.complete) return { reaped: false }
+  // The recorded-tree signal helpers recheck this same birth on every signal.
+  return terminateRecordedPosixTree(leader, snapshot, signal, log)
 }
 
 // Scan the process table for any process carrying the given ownership marker in its environment.
@@ -1637,7 +1572,6 @@ const terminateProcessTreeOnce = async (
   log?: ProcessTreeLogger
 ): Promise<ProcessTreeKillResult> => {
   const trackedTree = trackedPosixProcessTrees.get(child)
-  const ownedGroup = ownedPosixProcessGroups.get(child)
   const ownership = processTreeOwnership.get(child)
   let result: ProcessTreeKillResult
   try {
@@ -1647,9 +1581,7 @@ const terminateProcessTreeOnce = async (
         ? terminateWindowsTree(child, signal, log)
         : trackedTree
           ? terminateTrackedPosixProcessTree(child, trackedTree, signal, log)
-          : ownedGroup
-            ? terminateOwnedPosixProcessGroup(ownedGroup, signal, log)
-            : terminatePosixTree(child, signal, log))
+          : terminatePosixTree(child, signal, log))
   } catch (error) {
     log?.error('Process tree teardown failed', error)
     result = { reaped: false }

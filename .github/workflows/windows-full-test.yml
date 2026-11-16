@@ -97,7 +97,6 @@ jobs:
           SOURCE_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
-          # Bash 3.2 does not reliably apply errexit to failed [[ ... ]] conditions.
           [[ "$SOURCE_MODE" == portable ]] || exit 1
           [[ "$SOURCE_BASE" =~ ^[0-9a-f]{40}$ ]] || exit 1
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
