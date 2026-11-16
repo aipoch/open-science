@@ -279,11 +279,6 @@ describe('Literature Library MCP server', () => {
       })
       const client = await connect(server)
       try {
-        const fullTextTool = (await client.listTools()).tools.find(
-          ({ name }) => name === 'search_library_full_text'
-        )
-        expect(fullTextTool?.description).toContain('limit must be 1–8')
-        expect(fullTextTool?.description).toContain('offset and nextOffset')
         const result = await client.callTool({
           name: 'read_library_abstract',
           arguments: { itemId: 'item-1', query }
@@ -2708,6 +2703,11 @@ describe('Literature Library MCP server', () => {
     })
     const client = await connect(server)
     try {
+      const fullTextTool = (await client.listTools()).tools.find(
+        ({ name }) => name === 'search_library_full_text'
+      )
+      expect(fullTextTool?.description).toContain('limit must be 1–8')
+      expect(fullTextTool?.description).toContain('offset and nextOffset')
       const result = await client.callTool({
         name: 'search_library_full_text',
         arguments: { query: 'body-only term', limit: 20 }

@@ -181,8 +181,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Tool guidance clarifies existing scopes. Cached coverage in the presentation comes from
         // the same authorized search result. Argument validation and allow-once are unchanged.
         // Full-text guidance names the record-page and passage-limit axes; behavior is unchanged.
+        // Passage guidance explicitly bounds limit to 1–8 and rejects the metadata limit of 20;
+        // schemas, handlers and allow-once authorization remain unchanged.
         'literature/library-mcp-server.ts':
-          '2342e501027f0aff338b06963e0211f0980798609ddf2d1d0f255288145b018f',
+          '41233b13196f66698a1d9ba986a305fe4270e155b93b43c158a0c99029b0a188',
         // Reviewed: errors keep specific codes with a next step and annotation cursors are opaque
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':

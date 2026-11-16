@@ -135,6 +135,12 @@ describe('Codex bridge MCP catalogs', () => {
       const fullText = tools.find(
         (entry) => identity(entry) === 'mcp__open_science_library/search_library_full_text'
       )!
+      expect(fullText.description).toContain('Each call scans up to 20 records')
+      expect(fullText.description).toContain('pass nextOffset as offset')
+      expect(fullText.description).toContain(
+        'limit must be 1–8 and caps passages from the current page'
+      )
+      expect(fullText.description).toContain('Do not pass limit 20')
       expect(fullText.parameters.properties.offset).toMatchObject({
         type: 'integer',
         minimum: 0
