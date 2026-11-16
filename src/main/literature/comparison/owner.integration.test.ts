@@ -175,6 +175,7 @@ it('drains the whole admitted cell and blocks later cells even when run inherits
   })
   const owner = new LiteratureComparisons({
     path: () => path,
+    comparisonConcurrency: 1,
     extractor: {
       member: async (itemId) => ({ itemId, title: itemId, abstract: 'text', sourceKey: 'source' })
     },
@@ -240,6 +241,7 @@ async function disposalFixture(): Promise<{
   })
   const owner = new LiteratureComparisons({
     path: () => path,
+    comparisonConcurrency: 1,
     extractor: {
       member: async (itemId) => ({ itemId, title: itemId, abstract: 'text', sourceKey: 'source' })
     },
@@ -327,6 +329,7 @@ it('checkpoints an already admitted cell during closure with missing storage and
   await reconcileDataRootWriteAvailability(false)
   const restored = new LiteratureComparisons({
     path: () => path,
+    comparisonConcurrency: 1,
     extractor: {
       member: async (itemId) => ({ itemId, title: itemId, abstract: 'text', sourceKey: 'source' })
     },

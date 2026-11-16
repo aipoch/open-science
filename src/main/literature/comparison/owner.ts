@@ -32,10 +32,15 @@ const envelope = z
   .strict()
 const MAX_BYTES = 24_000_000
 const MAX_EXPORT_SNAPSHOTS = 8
+// Keep model work bounded while allowing independent cells/tables to make progress together.
+// The queue below remains the single writer for in-memory state and durable checkpoints.
+const MAX_COMPARISON_CONCURRENCY = 4
 const now = (): string => new Date().toISOString()
 type Options = {
   sourceRevision?: () => number
   path: () => string
+  /** Maximum number of admitted extractions in one worker batch. */
+  comparisonConcurrency?: number
   extractor: Pick<ComparisonExtractor, 'member'> & Partial<Pick<ComparisonExtractor, 'checkSource'>>
   capture(): Promise<{
     extract(
@@ -99,7 +104,7 @@ export class LiteratureComparisons {
 
   private serial: Promise<unknown> = Promise.resolve()
   private worker: Promise<void> | undefined
-  private inFlightTableId?: string
+  private readonly inFlightAdmissions = new Map<string, Set<string>>()
   private lastSourceScan?: { revision: number; at: number }
   private readonly serializedTables = new WeakMap<
     ComparisonTable,
@@ -300,7 +305,7 @@ export class LiteratureComparisons {
       if (!table) throw new Error('comparison-not-found')
       if (request.action === 'delete') {
         // Pausing does not cancel an admitted cell: let its checkpoint finish first.
-        if (table.state === 'running' || this.inFlightTableId === table.id)
+        if (table.state === 'running' || this.inFlightAdmissions.has(table.id))
           throw new Error('comparison-busy')
         await this.mutate(undefined, async () => {
           this.tables = this.tables.filter((entry) => entry.id !== table.id)
@@ -731,15 +736,37 @@ export class LiteratureComparisons {
   private async work(): Promise<void> {
     while (!this.closed && !isMigrationPending()) {
       try {
-        const done = await withDataRootWrite(async () => {
-          if (this.closed || this.lifetime.signal.aborted) return true
-          try {
-            return await this.workCell()
-          } finally {
-            this.inFlightTableId = undefined
-          }
-        }, this.lifetime.signal)
-        if (done) return
+        const configuredConcurrency =
+          this.options.comparisonConcurrency ?? MAX_COMPARISON_CONCURRENCY
+        const concurrency = Math.min(
+          MAX_COMPARISON_CONCURRENCY,
+          Math.max(
+            1,
+            Number.isFinite(configuredConcurrency) ? Math.trunc(configuredConcurrency) : 1
+          )
+        )
+        const batch = Array.from({ length: concurrency }, () =>
+          withDataRootWrite(() => {
+            if (this.closed || this.lifetime.signal.aborted) return Promise.resolve(true)
+            return this.workCell()
+          }, this.lifetime.signal)
+        )
+        // Drain every admitted cell before entering the shared failure handler. A rejected
+        // checkpoint must not leave sibling extractions running outside the worker's lifecycle.
+        const settled = await Promise.allSettled(batch)
+        const rejected = settled.find(
+          (result): result is PromiseRejectedResult => result.status === 'rejected'
+        )
+        if (rejected) throw rejected.reason
+        const results = settled
+          .filter(
+            (result): result is PromiseFulfilledResult<boolean> => result.status === 'fulfilled'
+          )
+          .map((result) => result.value)
+        // Every `true` result means that worker found no more admitted cells. Once the
+        // batch has drained, another batch can only make progress if at least one worker
+        // actually processed a cell.
+        if (results.every(Boolean)) return
       } catch (error) {
         // A migration can close admission between the loop check and lease acquisition.
         if (this.closed || this.lifetime.signal.aborted || isMigrationPending()) return
@@ -752,7 +779,9 @@ export class LiteratureComparisons {
       if (this.closed || this.lifetime.signal.aborted) return undefined
       const table = this.tables.find((t) => t.state === 'running')
       if (!table) return undefined
-      const cell = table.cells.find((c) => table.remainingCellIds.includes(c.id))
+      const cell = table.cells.find(
+        (c) => table.remainingCellIds.includes(c.id) && c.status === 'pending'
+      )
       if (cell && cell.history.length >= 30) {
         await this.mutate(table, async () => {
           cell.status = 'failed'
@@ -763,6 +792,12 @@ export class LiteratureComparisons {
         return null
       }
       if (!cell) {
+        // A concurrent batch can have admitted every remaining cell already. Leave the
+        // table running until those checkpoints drain; the next batch will finalize it.
+        if (
+          table.cells.some((c) => table.remainingCellIds.includes(c.id) && c.status === 'running')
+        )
+          return undefined
         await this.mutate(table, async () => {
           table.state = 'completed'
           table.revision++
@@ -778,17 +813,21 @@ export class LiteratureComparisons {
       const expected = table.taskSources?.find((t) => t.cellId === cell.id)
       if (expected)
         snapshot.members.find((m) => m.itemId === cell.itemId)!.sourceKey = expected.sourceKey
-      this.inFlightTableId = table.id
+      const admissionId = randomUUID()
+      const admissions = this.inFlightAdmissions.get(table.id) ?? new Set<string>()
+      admissions.add(admissionId)
+      this.inFlightAdmissions.set(table.id, admissions)
       return {
         extractor: this.extractors.get(table.id),
         table: snapshot,
         cell: structuredClone(cell),
-        field: structuredClone(table.fields.find((f) => f.id === cell.fieldId)!)
+        field: structuredClone(table.fields.find((f) => f.id === cell.fieldId)!),
+        admissionId
       }
     })
     if (selected === undefined) return true
     if (!selected) return false
-    const { table, cell, field, extractor } = selected
+    const { table, cell, field, extractor, admissionId } = selected
     let extraction: ComparisonExtraction
     let global = false
     try {
@@ -822,70 +861,76 @@ export class LiteratureComparisons {
         issue
       }
     }
-    await this.queue(() => {
-      const current = this.tables.find((t) => t.id === table.id)!
-      return this.mutate(current, async () => {
-        const target = current.cells.find((c) => c.id === cell.id)
-        if (!target) return
-        current.revision++
-        if (extraction.status === 'succeeded' && !this.closed) {
-          // The source may change after extraction or while its checkpoint waits in the queue.
-          // Keep the admitted identity; a live refresh must never rebind this result.
-          let issue: string | undefined
-          try {
-            const member = await this.options.extractor.member(cell.itemId)
-            const admitted = table.members.find((m) => m.itemId === cell.itemId)!.sourceKey
-            if (member.sourceKey !== admitted || extraction.sourceKey !== admitted)
-              issue = 'source-changed'
-          } catch {
-            issue = 'source-unavailable'
-          }
-          if (issue)
-            extraction = {
-              status: 'failed',
-              sourceKey: table.members.find((m) => m.itemId === cell.itemId)!.sourceKey,
-              value: null,
-              evidence: [],
-              issue
+    try {
+      await this.queue(() => {
+        const current = this.tables.find((t) => t.id === table.id)!
+        return this.mutate(current, async () => {
+          const target = current.cells.find((c) => c.id === cell.id)
+          if (!target) return
+          current.revision++
+          if (extraction.status === 'succeeded' && !this.closed) {
+            // The source may change after extraction or while its checkpoint waits in the queue.
+            // Keep the admitted identity; a live refresh must never rebind this result.
+            let issue: string | undefined
+            try {
+              const member = await this.options.extractor.member(cell.itemId)
+              const admitted = table.members.find((m) => m.itemId === cell.itemId)!.sourceKey
+              if (member.sourceKey !== admitted || extraction.sourceKey !== admitted)
+                issue = 'source-changed'
+            } catch {
+              issue = 'source-unavailable'
             }
-        }
-        if (this.closed) {
-          target.status = 'pending'
-          current.state = 'interrupted'
-          return
-        }
-        target.history.push({
-          ...extraction,
-          id: randomUUID(),
-          at: now(),
-          fieldVersion: field.version,
-          fieldSnapshot: { ...field },
-          sourcePolicy: table.sourcePolicy,
-          ...(extraction.status === 'succeeded' && extraction.value === null
-            ? { issue: 'insufficient-evidence' }
-            : {})
+            if (issue)
+              extraction = {
+                status: 'failed',
+                sourceKey: table.members.find((m) => m.itemId === cell.itemId)!.sourceKey,
+                value: null,
+                evidence: [],
+                issue
+              }
+          }
+          if (this.closed) {
+            target.status = 'pending'
+            current.state = 'interrupted'
+            return
+          }
+          target.history.push({
+            ...extraction,
+            id: randomUUID(),
+            at: now(),
+            fieldVersion: field.version,
+            fieldSnapshot: { ...field },
+            sourcePolicy: table.sourcePolicy,
+            ...(extraction.status === 'succeeded' && extraction.value === null
+              ? { issue: 'insufficient-evidence' }
+              : {})
+          })
+          if (current.taskId !== table.taskId) return
+          const freshField = current.fields.find((f) => f.id === field.id)
+          if (freshField?.version === field.version)
+            target.status =
+              extraction.status === 'succeeded'
+                ? 'succeeded'
+                : extraction.issue?.includes('unavailable') ||
+                    extraction.issue === 'full-text-insufficient' ||
+                    extraction.issue === 'source-changed'
+                  ? 'unavailable'
+                  : 'failed'
+          if (!global)
+            current.remainingCellIds = current.remainingCellIds.filter((id) => id !== cell.id)
+          if (global) {
+            target.status = 'pending'
+            current.state = 'paused'
+            current.issue = 'model-unavailable'
+          }
+          if (!current.remainingCellIds.length) current.state = 'completed'
         })
-        if (current.taskId !== table.taskId) return
-        const freshField = current.fields.find((f) => f.id === field.id)
-        if (freshField?.version === field.version)
-          target.status =
-            extraction.status === 'succeeded'
-              ? 'succeeded'
-              : extraction.issue?.includes('unavailable') ||
-                  extraction.issue === 'full-text-insufficient' ||
-                  extraction.issue === 'source-changed'
-                ? 'unavailable'
-                : 'failed'
-        if (!global)
-          current.remainingCellIds = current.remainingCellIds.filter((id) => id !== cell.id)
-        if (global) {
-          target.status = 'pending'
-          current.state = 'paused'
-          current.issue = 'model-unavailable'
-        }
-        if (!current.remainingCellIds.length) current.state = 'completed'
       })
-    })
+    } finally {
+      const admissions = this.inFlightAdmissions.get(table.id)
+      admissions?.delete(admissionId)
+      if (admissions?.size === 0) this.inFlightAdmissions.delete(table.id)
+    }
     return false
   }
   private readonly extractors = new Map<string, Awaited<ReturnType<Options['capture']>>>()

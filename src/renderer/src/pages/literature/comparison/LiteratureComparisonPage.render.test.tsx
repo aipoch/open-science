@@ -291,9 +291,9 @@ describe('comparison workflow', () => {
       field: 'Population'
     })
     expect(translate).toHaveBeenCalledWith('Task: {{id}}', { id: 'CMP-003' })
-    expect(translate).toHaveBeenCalledWith('Continue {{count}} cells', {
+    expect(translate).toHaveBeenCalledWith('Continue extraction ({{count}} cells)', {
       count: 1,
-      defaultValue_one: 'Continue {{count}} cell'
+      defaultValue_one: 'Continue extraction ({{count}} cell)'
     })
     expect(command).not.toHaveBeenCalled()
   })
@@ -330,7 +330,7 @@ describe('comparison workflow', () => {
           )
         }))
       )
-      fireEvent.click(screen.getByRole('button', { name: 'Continue {{count}} cells' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' }))
       await waitFor(() =>
         expect(command).toHaveBeenCalledWith({
           action: 'check-sources',
@@ -384,7 +384,7 @@ describe('comparison workflow', () => {
           }
         })
       )
-      fireEvent.click(screen.getByRole('button', { name: 'Continue {{count}} cells' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' }))
       expect(await screen.findByRole('dialog')).toBeTruthy()
       await waitFor(() =>
         expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(
@@ -394,7 +394,7 @@ describe('comparison workflow', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
       expect(screen.getByText('Previous extraction was interrupted')).toBeTruthy()
       expect(
-        (screen.getByRole('button', { name: 'Continue {{count}} cells' }) as HTMLButtonElement)
+        (screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' }) as HTMLButtonElement)
           .disabled
       ).toBe(false)
       expect(command).toHaveBeenCalledTimes(failure === 'check' ? 1 : 2)
@@ -421,7 +421,7 @@ describe('comparison workflow', () => {
       onOpenComparison: vi.fn()
     }
     const { rerender } = render(<LiteratureComparisonPage table={table} {...props} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Continue {{count}} cells' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' }))
     rerender(<LiteratureComparisonPage table={{ ...table, revision: 2 }} {...props} />)
     await act(async () =>
       resolve({
@@ -563,14 +563,14 @@ describe('comparison workflow', () => {
     rerender(<LiteratureComparisonPage table={saving} {...props} />)
     expect(screen.getByText('Saving the current cell before pausing…')).toBeTruthy()
     expect(screen.queryByText('Paused')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Continue {{count}} cells' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Continue extraction ({{count}} cells)' })).toBeNull()
     expect(screen.getByText('Extraction continues when you leave this page.')).toBeTruthy()
     const paused = { ...saving, remainingCellIds: [], cells: fixture().cells }
     rerender(<LiteratureComparisonPage table={paused} {...props} />)
     expect(screen.getByText('Paused')).toBeTruthy()
     expect(screen.queryByText('Saving the current cell before pausing…')).toBeNull()
     expect(
-      (screen.getByRole('button', { name: 'Continue {{count}} cells' }) as HTMLButtonElement)
+      (screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' }) as HTMLButtonElement)
         .disabled
     ).toBe(true)
     expect(translate).toHaveBeenCalledWith('Current task progress: {{done}} / {{total}}', {
@@ -1966,7 +1966,7 @@ describe('comparison workflow', () => {
       expect(screen.queryByRole('button', { name: 'Extract sample' })).toBeNull()
       expect(columnMenuItem('Rerun column').getAttribute('aria-disabled')).toBe('true')
       fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
-      fireEvent.click(screen.getByRole('button', { name: 'Continue {{count}} cells' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' }))
       const confirm = (await screen.findByRole('button', {
         name: 'Confirm and start'
       })) as HTMLButtonElement
@@ -3677,6 +3677,67 @@ describe('pending comparison candidates', () => {
     fireEvent.click(bulk)
     expect(command).not.toHaveBeenCalled()
   })
+  it('allows continuing pending cells when a saved sample result is awaiting review', () => {
+    const table = fixture()
+    table.cells[0].manual = {
+      value: '42 adults',
+      confirmed: false,
+      fieldVersion: 1,
+      sourceKey: 'source',
+      attemptId: 'attempt',
+      updatedAt: '2026-11-10'
+    }
+    table.members.push({
+      itemId: 'second-paper',
+      title: 'Second paper',
+      abstract: '18 adults',
+      sourceKey: 'second-source'
+    })
+    table.itemIds.push('second-paper')
+    table.cells.push({
+      ...structuredClone(table.cells[0]),
+      id: 'second-result',
+      itemId: 'second-paper',
+      history: [
+        {
+          ...structuredClone(table.cells[0].history[0]),
+          id: 'second-attempt',
+          sourceKey: 'second-source',
+          value: '18 adults'
+        }
+      ],
+      manual: undefined
+    })
+    table.members.push({
+      itemId: 'third-paper',
+      title: 'Third paper',
+      abstract: '9 adults',
+      sourceKey: 'third-source'
+    })
+    table.itemIds.push('third-paper')
+    table.cells.push({
+      id: 'third-cell',
+      itemId: 'third-paper',
+      fieldId: 'field',
+      status: 'pending',
+      history: []
+    })
+    const command = page(
+      table,
+      vi.fn().mockResolvedValue({
+        tables: [],
+        sourceChecks: [{ itemId: 'third-paper', sourceKey: 'third-source', status: 'available' }]
+      })
+    )
+    const continueButton = screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' })
+    expect((continueButton as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(continueButton)
+    expect(command).toHaveBeenCalledWith({
+      action: 'check-sources',
+      tableId: 'table',
+      itemIds: ['third-paper']
+    })
+  })
   it('keeps candidates visible but preserves resume while a prior queue is paused', () => {
     const table = fixture()
     table.state = 'paused'
@@ -3691,7 +3752,7 @@ describe('pending comparison candidates', () => {
         .disabled
     ).toBe(true)
     expect(
-      (screen.getByRole('button', { name: 'Continue {{count}} cells' }) as HTMLButtonElement)
+      (screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' }) as HTMLButtonElement)
         .disabled
     ).toBe(false)
   })

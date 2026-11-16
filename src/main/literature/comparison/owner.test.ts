@@ -53,6 +53,9 @@ async function fixture(extract: Mock<Extract> = vi.fn(async () => ready())): Pro
   const capture = vi.fn(async () => ({ extract }))
   const options = {
     path: () => path,
+    // Keep the long-running lifecycle tests deterministic; dedicated concurrency coverage
+    // opts into the production batch width explicitly below.
+    comparisonConcurrency: 1,
     capture,
     extractor: {
       member: async (itemId: string) => ({
@@ -581,6 +584,68 @@ it('pauses admission while an in-flight cell becomes durable and resumes only re
   await vi.waitFor(async () => expect((await f.read()).state).toBe('completed'))
   expect(extract).toHaveBeenCalledTimes(2)
   await f.owner.dispose()
+})
+it('bounds parallel extraction and does not admit a second batch while paused', async () => {
+  const pending: Array<(value: ComparisonExtraction) => void> = []
+  let active = 0
+  let peak = 0
+  const extract = vi.fn<Extract>(async () => {
+    active++
+    peak = Math.max(peak, active)
+    return new Promise<ComparisonExtraction>((resolve) =>
+      pending.push((value) => {
+        active--
+        resolve(value)
+      })
+    )
+  })
+  const f = await fixture(extract)
+  const releaseAll = (): void => {
+    for (const resolve of pending.splice(0)) resolve(ready())
+  }
+  try {
+    await f.owner.run({
+      action: 'add-members',
+      tableId: f.table.id,
+      itemIds: Array.from({ length: 6 }, (_, index) => `extra-${index}`)
+    })
+    f.options.comparisonConcurrency = 4
+    await f.owner.run({ action: 'run', tableId: f.table.id })
+    await vi.waitFor(() => expect(extract).toHaveBeenCalledTimes(4))
+    expect(peak).toBe(4)
+    expect(new Set(extract.mock.calls.map(([, , itemId]) => itemId)).size).toBe(4)
+
+    await f.owner.run({ action: 'pause', tableId: f.table.id })
+    await expect(f.owner.run({ action: 'delete', tableId: f.table.id })).rejects.toThrow(
+      'comparison-busy'
+    )
+    pending.shift()!(ready())
+    await vi.waitFor(async () =>
+      expect((await f.read()).cells.filter((cell) => cell.status === 'succeeded')).toHaveLength(1)
+    )
+    // One checkpoint draining must not release deletion while sibling admissions remain active.
+    await expect(f.owner.run({ action: 'delete', tableId: f.table.id })).rejects.toThrow(
+      'comparison-busy'
+    )
+    releaseAll()
+    await vi.waitFor(async () => {
+      const table = await f.read()
+      expect(table.state).toBe('paused')
+      expect(table.cells.some((cell) => cell.status === 'running')).toBe(false)
+    })
+    expect(extract).toHaveBeenCalledTimes(4)
+    expect((await f.read()).remainingCellIds).toHaveLength(4)
+
+    await f.owner.run({ action: 'resume', tableId: f.table.id })
+    await vi.waitFor(() => expect(extract).toHaveBeenCalledTimes(8))
+    expect(peak).toBe(4)
+    releaseAll()
+    await vi.waitFor(async () => expect((await f.read()).state).toBe('completed'))
+    expect(new Set(extract.mock.calls.map(([, , itemId]) => itemId)).size).toBe(8)
+  } finally {
+    releaseAll()
+    await f.owner.dispose()
+  }
 })
 it('completes a paused task when its last in-flight result is saved', async () => {
   const pending = deferred<ComparisonExtraction>()

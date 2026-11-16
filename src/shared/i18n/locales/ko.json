@@ -8178,7 +8178,7 @@
     "Selected references: {{selected}}": "선택한 문헌: {{selected}}개",
     "Open reference: {{title}}": "참고 문헌 열기: {{title}}",
     "Current values, machine values and manual edits are kept in separate columns.": "현재 채택한 값, 모델 추출 결과, 수동 수정 내용은 별도 열에 보관됩니다.",
-    "Continue {{count}} cells_other": "셀 {{count}}개 계속하기",
+    "Continue extraction ({{count}} cells)_other": "{{count}}개 셀 추출 계속하기",
     "Current rule: v{{version}}": "현재 규칙: v{{version}}",
     "Saved results and manual edits are retained. {{count}} cells remain in this task._other": "저장된 결과와 수동 수정 사항이 유지됩니다. 이 작업에 셀 {{count}}개가 남아 있습니다.",
     "Full text required, no abstract fallback": "전문 필수, 초록으로 대체하지 않음",

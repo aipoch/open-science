@@ -961,6 +961,27 @@ export function LiteratureComparisonPage({
       </div>
     </div>
   )
+  const continuePending =
+    sampleStep && currentResults.length > 0 && pendingCells.length > 0 ? (
+      <Button
+        variant="outline"
+        disabled={
+          busy || taskActive || editing || reviewStatus.pending || reviewStatus.failed
+        }
+        onClick={() =>
+          void prepare({
+            action: 'run',
+            tableId: table.id,
+            itemIds: [...new Set(pendingCells.map((cell) => cell.itemId))]
+          })
+        }
+      >
+        {t('Continue extraction ({{count}} cells)', {
+          count: pendingCells.length,
+          defaultValue_one: 'Continue extraction ({{count}} cell)'
+        })}
+      </Button>
+    ) : null
   return (
     <div
       className="relative flex h-full min-h-0 min-w-0 flex-1"
@@ -1048,6 +1069,7 @@ export function LiteratureComparisonPage({
               {sampleStep && (
                 <>
                   {sampleReviewTarget ? reviewSample : extractSample}
+                  {continuePending}
                   <Popover open={sampleOpen} onOpenChange={setSampleOpen}>
                     <PopoverTrigger asChild>
                       <Button
@@ -1152,9 +1174,9 @@ export function LiteratureComparisonPage({
                   >
                     {busy
                       ? t('Checking sources…')
-                      : t('Continue {{count}} cells', {
+                      : t('Continue extraction ({{count}} cells)', {
                           count: table.remainingCellIds.length,
-                          defaultValue_one: 'Continue {{count}} cell'
+                          defaultValue_one: 'Continue extraction ({{count}} cell)'
                         })}
                   </Button>
                 )

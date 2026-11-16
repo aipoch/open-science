@@ -8180,7 +8180,7 @@
     "Selected references: {{selected}}": "已选文献：{{selected}} 篇",
     "Open reference: {{title}}": "打开文献：{{title}}",
     "Current values, machine values and manual edits are kept in separate columns.": "当前采用值、机器结果和人工修订分别保存在不同列中。",
-    "Continue {{count}} cells_other": "继续执行 {{count}} 格",
+    "Continue extraction ({{count}} cells)_other": "继续提取 {{count}} 格",
     "Current rule: v{{version}}": "当前规则：r{{version}}",
     "Saved results and manual edits are retained. {{count}} cells remain in this task._other": "已保存的结果和人工修订均已保留。本轮剩余 {{count}} 格。",
     "Full text required, no abstract fallback": "需要全文，不降级为摘要",
