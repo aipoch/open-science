@@ -1665,15 +1665,18 @@ test('restores Notebook and its code scrollbar after returning from a generated 
 }, info) => {
   await page.goto(`${url}?panel=1&artifacts=1&longName=1&previewRegressions=1`)
   await stageApp.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows()[0].setSize(1500, 900)
+    BrowserWindow.getAllWindows()[0].setContentSize(1500, 900)
   })
   await expect
     .poll(() =>
       stageApp.evaluate(({ BrowserWindow }) => {
-        const bounds = BrowserWindow.getAllWindows()[0].getBounds()
+        const bounds = BrowserWindow.getAllWindows()[0].getContentBounds()
         return { width: bounds.width, height: bounds.height }
       })
     )
+    .toEqual({ width: 1500, height: 900 })
+  await expect
+    .poll(() => page.evaluate(() => ({ width: innerWidth, height: innerHeight })))
     .toEqual({ width: 1500, height: 900 })
   const panel = page.getByTestId('replay-panel')
   await panel.getByRole('button', { name: 'Enter full screen' }).click()
