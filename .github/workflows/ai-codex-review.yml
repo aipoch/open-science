@@ -69,7 +69,8 @@ on:
 jobs:
   review:
     name: Run Codex
-    runs-on: ubuntu-latest
+    # Ubuntu 26.04 breaks the action's socket ACL checks: openai/codex-action#188.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     concurrency:
       group: ${{ format('codex-review-{0}', inputs.pull_request_number) }}
