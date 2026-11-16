@@ -4077,7 +4077,7 @@ describe('ConversationPanel composer intake', () => {
       // pending question; the event consumer must deliver it to that surface.
       renderPanel({ view: { ...view, actionError: failure }, elicitation: { requests: [] } })
       expect(container.textContent).toContain(
-        authenticationRequired ? 'Model configuration needs attention' : failure
+        authenticationRequired ? 'Model provider credentials need attention' : failure
       )
       renderPanel({
         view: {
@@ -4097,7 +4097,7 @@ describe('ConversationPanel composer intake', () => {
             .querySelector('[data-testid="ordinary-composer-form"]')
             ?.hasAttribute('inert') ?? true
         ).toBe(true)
-        expect(container.textContent).toContain('Model configuration needs attention')
+        expect(container.textContent).toContain('Model provider credentials need attention')
         expect(
           [...container.querySelectorAll('button')].some(
             (button) => button.textContent === 'Model settings'
@@ -9917,6 +9917,51 @@ describe('ConversationPanel unified failure notices', () => {
     expect(slot()?.textContent).toContain('Resume preparation could not be saved.')
     dismiss()
     expect(slot()?.dataset.noticeCategory).toBe('session')
+  })
+
+  it('preserves provider interruption details while resuming the existing session', async () => {
+    const resume = vi.fn().mockResolvedValue(undefined)
+    const revise = vi.fn()
+    const failure = {
+      category: 'service' as const,
+      reason: 'service/response-interrupted' as const,
+      diagnostics: {
+        protocol: 'chat-completions' as const,
+        phase: 'stream',
+        requestId: 'cut-stream'
+      }
+    }
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          status: 'idle',
+          failure,
+          resumeRecovery: { kind: 'resume-required', cause: 'connection-lost' },
+          messages: [
+            {
+              ...planOriginMessages()[0],
+              turnOutcome: {
+                kind: 'interrupted',
+                settledAt: 2,
+                cause: 'connection-lost',
+                recovery: 'resume',
+                failure
+              }
+            }
+          ]
+        }
+      },
+      conversation: { actions: { resume, revise } }
+    })
+    expect(slot()?.textContent).toContain('The model response was interrupted')
+    expect(slot()?.textContent).toContain('This turn was interrupted. Resume to continue.')
+    expect(slot()?.querySelector('pre')?.textContent).toContain('cut-stream')
+    expect(slot()?.querySelector('[aria-label="Dismiss error"]')).toBeNull()
+    expect(action('retry')).toBeNull()
+    await act(async () => action('resume')?.click())
+    expect(resume).toHaveBeenCalledOnce()
+    expect(revise).not.toHaveBeenCalled()
   })
 
   it.each([false, true])(

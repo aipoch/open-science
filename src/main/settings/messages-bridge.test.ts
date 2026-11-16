@@ -75,7 +75,10 @@ describe('MessagesBridge', () => {
       const upstream = createServer((request, response) => {
         request.resume()
         request.on('end', () => {
-          if (disconnected) return response.destroy()
+          if (disconnected) {
+            response.destroy()
+            return
+          }
           response.writeHead(502, {
             'content-type': 'application/json',
             'x-open-science-provider-failure': 'connection'
