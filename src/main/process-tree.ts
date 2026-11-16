@@ -32,6 +32,7 @@ export type ProcessTreeKillResult = {
 type OwnedPosixProcessGroup = Readonly<{
   kind: 'owned-posix-process-group'
   id: number
+  leaderIdentity?: PosixProcessIdentity | null
 }>
 
 type PosixProcessIdentity = Readonly<{
@@ -81,9 +82,9 @@ export const createPosixProcessTreeOwnership = (
   return { env: { ...(env ?? process.env), [PROCESS_TREE_OWNERSHIP_ENV]: token }, token }
 }
 
-// A detached POSIX child is the leader of a private process group whose stable id is its spawn pid.
-// Keep that ownership receipt on the child handle so teardown can still address the group after the
-// leader exits and its descendants are reparented. Unregistered children retain PPID-tree teardown.
+// A detached POSIX child starts a private group, but its numeric id can be reused after exit.
+// Pin the original birth receipt on its handle; group signals require that same leader to remain
+// current. Callers needing cleanup after leader exit use the descendant identity tracker below.
 const ownedPosixProcessGroups = new WeakMap<ChildProcess, OwnedPosixProcessGroup>()
 const trackedPosixProcessTrees = new WeakMap<ChildProcess, PosixProcessTracker>()
 const activePosixProcessTrackers = new Set<PosixProcessTracker>()
@@ -95,7 +96,20 @@ let ownershipSampleBurstDeadline = 0
 export const registerOwnedPosixProcessGroup = (child: ChildProcess): void => {
   const groupId = child.pid
   if (groupId === undefined || !Number.isSafeInteger(groupId) || groupId <= 0) return
-  ownedPosixProcessGroups.set(child, { kind: 'owned-posix-process-group', id: groupId })
+  if (ownedPosixProcessGroups.has(child)) return
+  const leaderIdentity =
+    child.exitCode !== null || child.signalCode !== null
+      ? null
+      : process.platform === 'linux'
+        ? captureSpawnedLinuxLeader(groupId)
+        : process.platform === 'darwin'
+          ? captureSpawnedDarwinLeader(groupId)
+          : null
+  ownedPosixProcessGroups.set(child, {
+    kind: 'owned-posix-process-group',
+    id: groupId,
+    leaderIdentity
+  })
 }
 
 // File replacement must wait for confirmed tree teardown, not the adapter's close event.
@@ -127,7 +141,9 @@ export const registerProcessTreeOwnership = (
 export const capturePosixProcessTreeIdentity = (
   child: ChildProcess
 ): PosixProcessIdentity | undefined =>
-  trackedPosixProcessTrees.get(child)?.leaderIdentity ?? undefined
+  trackedPosixProcessTrees.get(child)?.leaderIdentity ??
+  ownedPosixProcessGroups.get(child)?.leaderIdentity ??
+  undefined
 
 // Upper bound for awaiting a direct child's real exit (POSIX) or taskkill's own completion (Windows).
 // Bounded so a wedged process can never hang app teardown; the caller (before-quit) also time-bounds
@@ -228,8 +244,8 @@ const waitUntil = (condition: () => boolean, ms: number): Promise<boolean> =>
         resolve(false)
         return
       }
-      const timer = setTimeout(poll, Math.min(PROCESS_GROUP_POLL_MS, remaining))
-      timer.unref?.()
+      // Awaited teardown retains its bounded poll after the direct child handle closes.
+      setTimeout(poll, Math.min(PROCESS_GROUP_POLL_MS, remaining))
     }
     poll()
   })
@@ -551,22 +567,6 @@ const samePosixIdentity = (
   actual.pid === expected.pid &&
   actual.birthToken === expected.birthToken
 
-const ownsRecordedLinuxLeaderGroup = (
-  tracker: PosixProcessTracker,
-  table: PosixProcessTable
-): boolean => {
-  if (process.platform !== 'linux') return false
-  const leader = tracker.leaderIdentity
-  if (!leader || !table.complete) return false
-  const currentLeader = table.processes.get(tracker.leaderPid)
-  if (currentLeader) return samePosixIdentity(leader, currentLeader)
-  // Preserve the established Linux group-receipt behavior. Darwin does not use this numeric-only
-  // fallback because a later session can reuse the dead leader's pid/group id.
-  return [...table.processes.values()].some(
-    ({ pgid, sid }) => pgid === tracker.leaderPid && sid === tracker.leaderPid
-  )
-}
-
 const captureTrackedDescendants = (
   tracker: PosixProcessTracker,
   table: PosixProcessTable
@@ -797,14 +797,21 @@ const scheduleTrackedProcessSample = (): void => {
 
 export const trackOwnedPosixProcessTree = (child: ChildProcess, ownershipToken?: string): void => {
   if (trackedPosixProcessTrees.has(child)) return
-  registerOwnedPosixProcessGroup(child)
   if (process.platform !== 'linux' && process.platform !== 'darwin') return
   const leaderPid = child.pid
   if (leaderPid === undefined || !Number.isSafeInteger(leaderPid) || leaderPid <= 0) return
-  const leaderIdentity =
-    process.platform === 'linux'
+  const priorGroup = ownedPosixProcessGroups.get(child)
+  const leaderIdentity = priorGroup
+    ? (priorGroup.leaderIdentity ?? null)
+    : process.platform === 'linux'
       ? captureSpawnedLinuxLeader(leaderPid)
       : captureSpawnedDarwinLeader(leaderPid)
+  if (!ownedPosixProcessGroups.has(child))
+    ownedPosixProcessGroups.set(child, {
+      kind: 'owned-posix-process-group',
+      id: leaderPid,
+      leaderIdentity
+    })
   const tracker: PosixProcessTracker = {
     leaderPid,
     // Pin the direct child's kernel birth identity in the same synchronous turn as spawn. If this
@@ -1041,59 +1048,38 @@ const terminatePosixTree = async (
   }
 }
 
-// An explicitly owned detached group is stronger identity than a live PPID relationship: it remains
-// addressable after the leader exits and descendants are reparented. Signal only the recorded private
-// group, never infer a group from an arbitrary child or from the application's own process state.
+// A numeric group id can be reused after the leader exits. Only the spawn-time birth receipt
+// authorizes signaling; an unknown live group retains its owner's cleanup fence.
 const terminateOwnedPosixProcessGroup = async (
   group: OwnedPosixProcessGroup,
   signal: NodeJS.Signals | undefined,
   log: ProcessTreeLogger | undefined
 ): Promise<ProcessTreeKillResult> => {
-  const gracefulSignal = signal ?? 'SIGTERM'
-  // Snapshot before signaling the leader so descendants that created their own process group/session
-  // remain addressable even if the leader exits immediately. The owned group independently covers
-  // same-group descendants after reparenting, when PPID discovery can no longer find them.
-  const snapshot = await collectDescendantPids(group.id)
-  signalProcessGroup(group.id, gracefulSignal)
-  signalPids(snapshot.pids, gracefulSignal)
-  const gracefulExit = await Promise.all([
-    waitForProcessGroupExit(group.id, TERMINATE_GRACE_MS),
-    waitForPidsExit(snapshot.pids, TERMINATE_GRACE_MS)
-  ])
-  if (gracefulExit.every(Boolean)) return { reaped: snapshot.complete }
-
-  const survivors = snapshot.pids.filter(isProcessAlive)
-  if (isProcessGroupAlive(group.id)) {
-    log?.error(
-      `owned process group ${group.id} did not exit after ${gracefulSignal}; escalating to SIGKILL`
-    )
-  }
-  if (survivors.length > 0) {
-    log?.error(
-      `owned process tree left ${survivors.length} detached descendant(s) alive after ${gracefulSignal}; escalating to SIGKILL`
-    )
-  }
-  signalProcessGroup(group.id, 'SIGKILL')
-  signalPids(survivors, 'SIGKILL')
-  const forcedExit = await Promise.all([
-    waitForProcessGroupExit(group.id, SIGKILL_GRACE_MS),
-    waitForPidsExit(snapshot.pids, SIGKILL_GRACE_MS)
-  ])
-  return { reaped: snapshot.complete && forcedExit.every(Boolean) }
+  if (!isProcessGroupAlive(group.id)) return { reaped: true }
+  if (!group.leaderIdentity) return { reaped: false }
+  const snapshot = await collectPosixProcessTable()
+  if (!snapshot.complete) return { reaped: false }
+  return terminateRecordedPosixTree(group.leaderIdentity, snapshot, signal, log)
 }
 
+// Persisted recovery must supply the birth token captured by the original live owner.
+// Never turn a fresh observation of a numeric id into a replacement ownership receipt.
 export const terminateOwnedPosixProcessGroupById = (
   groupId: number,
   signal?: NodeJS.Signals,
-  log?: ProcessTreeLogger
-): Promise<ProcessTreeKillResult> =>
-  Number.isSafeInteger(groupId) && groupId > 0
-    ? terminateOwnedPosixProcessGroup(
-        { kind: 'owned-posix-process-group', id: groupId },
-        signal,
-        log
-      )
-    : Promise.resolve({ reaped: false })
+  log?: ProcessTreeLogger,
+  birthToken?: string
+): Promise<ProcessTreeKillResult> => {
+  if (!Number.isSafeInteger(groupId) || groupId <= 0 || !birthToken)
+    return Promise.resolve({ reaped: false })
+  const leader = currentRecordedPosixIdentity(groupId)
+  if (!leader || leader.birthToken !== birthToken) return Promise.resolve({ reaped: false })
+  return terminateOwnedPosixProcessGroup(
+    { kind: 'owned-posix-process-group', id: groupId, leaderIdentity: leader },
+    signal,
+    log
+  )
+}
 
 // Scan the process table for any process carrying the given ownership marker in its environment.
 // Returns the list of pids found. An incomplete scan (permission denied, /proc unreadable) returns
@@ -1551,21 +1537,16 @@ const terminateTrackedPosixProcessTree = async (
     }
   }
   if (unsupportedPlatform || unusableLinuxSnapshot || tracker.leaderIdentity === null) {
-    // A missing Darwin receipt still retains the explicit group as a best-effort cleanup path, but
-    // it cannot prove that a descendant did not escape the group.
-    if (process.platform === 'darwin') {
-      const ownedGroup = ownedPosixProcessGroups.get(child)
-      if (ownedGroup) {
-        await terminateOwnedPosixProcessGroup(ownedGroup, signal, log)
-        return outcome(false)
-      }
-    }
     killDirectChild(child, gracefulSignal)
     if (!(await waitForExit(child, TERMINATE_GRACE_MS))) {
       log?.error(
         `process ${child.pid ?? '(no pid)'} did not exit after ${gracefulSignal}; escalating to SIGKILL`
       )
-      forceKillChild(child)
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        // Only the original live ChildProcess handle may be signaled without a birth receipt.
+      }
       await waitForExit(child, SIGKILL_GRACE_MS)
     }
     return outcome(false)
@@ -1573,58 +1554,52 @@ const terminateTrackedPosixProcessTree = async (
   const live = [...tracker.identities.values()].filter((identity) =>
     samePosixIdentity(identity, finalSample.processes.get(identity.pid))
   )
-  const ownedGroups = (identities: readonly PosixProcessIdentity[]): Set<number> =>
-    new Set([
-      ...identities
-        .filter(({ pid, pgid, sid }) => pgid === tracker.leaderPid || (pid === pgid && pid === sid))
-        .map(({ pgid }) => pgid)
-    ])
-  const gracefulGroups = ownedGroups(live)
-  if (ownsRecordedLinuxLeaderGroup(tracker, finalSample)) {
-    gracefulGroups.add(tracker.leaderPid)
-  }
-  for (const pgid of gracefulGroups) {
-    signalProcessGroup(pgid, gracefulSignal)
-  }
-  signalPids(
-    live.map(({ pid }) => pid),
-    gracefulSignal
-  )
+  const signalGroups = (
+    identities: readonly PosixProcessIdentity[],
+    stopSignal: NodeJS.Signals
+  ): number[] =>
+    identities
+      .filter(({ pid, pgid, sid }) => pid === pgid && pid === sid)
+      .filter((identity) => signalRecordedPosixGroup(identity, stopSignal))
+      .map(({ pid }) => pid)
+  const gracefulGroups = signalGroups(live, gracefulSignal)
+  signalRecordedPosixProcesses(live, gracefulSignal)
   const gracefulExit = await Promise.all([
     waitForPidsExit(
       live.map(({ pid }) => pid),
       TERMINATE_GRACE_MS
     ),
-    ...[...gracefulGroups].map((pgid) => waitForProcessGroupExit(pgid, TERMINATE_GRACE_MS))
+    ...[...new Set([tracker.leaderPid, ...gracefulGroups])].map((pgid) =>
+      waitForProcessGroupExit(pgid, TERMINATE_GRACE_MS)
+    )
   ])
-  if (gracefulExit.every(Boolean)) return outcome(true, finalSample.complete)
+  if (gracefulExit.every(Boolean))
+    return outcome(!isProcessGroupAlive(tracker.leaderPid), finalSample.complete)
 
   const beforeForce = await collectPosixProcessTable()
   const survivors = live.filter((identity) =>
     samePosixIdentity(identity, beforeForce.processes.get(identity.pid))
   )
-  const forcedGroups = ownedGroups(survivors)
-  if (ownsRecordedLinuxLeaderGroup(tracker, beforeForce)) {
-    forcedGroups.add(tracker.leaderPid)
-  }
   if (survivors.length > 0) {
     log?.error(
       `owned process tree left ${survivors.length} exact descendant(s) alive after ${gracefulSignal}; escalating to SIGKILL`
     )
-    signalPids(
-      survivors.map(({ pid }) => pid),
-      'SIGKILL'
-    )
   }
-  for (const pgid of forcedGroups) signalProcessGroup(pgid, 'SIGKILL')
+  const forcedGroups = signalGroups(survivors, 'SIGKILL')
+  signalRecordedPosixProcesses(survivors, 'SIGKILL')
   const forcedExit = await Promise.all([
     waitForPidsExit(
       survivors.map(({ pid }) => pid),
       SIGKILL_GRACE_MS
     ),
-    ...[...forcedGroups].map((pgid) => waitForProcessGroupExit(pgid, SIGKILL_GRACE_MS))
+    ...[...new Set([tracker.leaderPid, ...forcedGroups])].map((pgid) =>
+      waitForProcessGroupExit(pgid, SIGKILL_GRACE_MS)
+    )
   ])
-  return outcome(forcedExit.every(Boolean), finalSample.complete && beforeForce.complete)
+  return outcome(
+    forcedExit.every(Boolean) && !isProcessGroupAlive(tracker.leaderPid),
+    finalSample.complete && beforeForce.complete
+  )
 }
 
 // Terminates a child process and every descendant it spawned, then waits for the direct child to actually

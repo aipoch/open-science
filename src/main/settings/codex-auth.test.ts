@@ -1344,7 +1344,9 @@ describe('Codex authentication install admission', () => {
         expect(output, scenario.name).toBeDefined()
         const result = JSON.parse(output!.slice('AUTH_LAUNCH_RESULT '.length))
         expect(result.status, scenario.name).toMatchObject(scenario.expected)
-        expect(result.installError, scenario.name).toBe('no registries configured')
+        expect(result.installError, `${scenario.name}: ${child.stderr}`).toBe(
+          'no registries configured'
+        )
       }
     } finally {
       await rm(root, { recursive: true, force: true })

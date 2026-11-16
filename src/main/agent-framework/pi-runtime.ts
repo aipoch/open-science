@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
-  registerOwnedPosixProcessGroup,
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
   registerProcessTreeOwnership,
   terminateProcessTree
 } from '../process-tree'
@@ -73,17 +74,18 @@ export const resolvePiExecutable = async (options: PiRuntimeLocation = {}): Prom
         '--no-delegation',
         '--quiet-startup'
       ]
+      const ownership = createPosixProcessTreeOwnership({
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        HOME: temporary,
+        PI_CODING_AGENT_DIR: join(temporary, 'agent'),
+        PI_ACP_SESSION_DIR: join(temporary, 'sessions'),
+        PI_OFFLINE: '1',
+        ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {})
+      })
       const spawnOptions = {
         stdio: 'pipe' as const,
         detached: process.platform !== 'win32',
-        env: {
-          PATH: process.env.PATH ?? '/usr/bin:/bin',
-          HOME: temporary,
-          PI_CODING_AGENT_DIR: join(temporary, 'agent'),
-          PI_ACP_SESSION_DIR: join(temporary, 'sessions'),
-          PI_OFFLINE: '1',
-          ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {})
-        }
+        env: ownership.env
       }
       const child =
         process.platform === 'win32'
@@ -94,7 +96,7 @@ export const resolvePiExecutable = async (options: PiRuntimeLocation = {}): Prom
           terminate: async () => ({ reaped: await reapWindowsOwnedJob(jobName) }),
           settled: () => undefined
         })
-      else registerOwnedPosixProcessGroup(child)
+      else trackOwnedPosixProcessTree(child, ownership.token)
       let buffer = ''
       let initialized = false
       let settled = false

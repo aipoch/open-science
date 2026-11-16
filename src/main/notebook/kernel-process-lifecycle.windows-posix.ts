@@ -52,6 +52,7 @@ type KernelProcessRecord = KernelProcessSpawnScope & {
   spawnedAt: number
   pid?: number
   processStartToken?: string
+  posixBirthToken?: string
   commandIdentityMarker?: string
   bootToken?: string
   windowsProcessTreeProof?: WindowsProcessTreeProof
@@ -151,6 +152,7 @@ const decodeRecord = (contents: string): KernelProcessRecord | undefined => {
       !Number.isFinite(value.spawnedAt) ||
       (value.pid !== undefined && !isPositivePid(value.pid)) ||
       (value.processStartToken !== undefined && typeof value.processStartToken !== 'string') ||
+      (value.posixBirthToken !== undefined && typeof value.posixBirthToken !== 'string') ||
       (value.commandIdentityMarker !== undefined &&
         typeof value.commandIdentityMarker !== 'string') ||
       (value.windowsProcessTreeProof !== undefined &&
@@ -338,7 +340,12 @@ const defaultController = (
     if (!record.pid) return Promise.resolve({ reaped: false })
     return platform === 'win32'
       ? terminateWindowsPid(record.pid, record.windowsProcessTreeProof)
-      : terminateOwnedPosixProcessGroupById(record.pid)
+      : terminateOwnedPosixProcessGroupById(
+          record.pid,
+          undefined,
+          undefined,
+          record.posixBirthToken
+        )
   }
 })
 
@@ -455,21 +462,36 @@ class KernelProcessLifecycleOwner {
     child: Readonly<{
       pid: number
       processStartToken?: string
+      posixBirthToken?: string
       commandIdentityMarker?: string
     }>
   ): KernelProcessReceipt {
     if (!isPositivePid(child.pid)) throw new Error('Kernel process did not expose a valid pid.')
-    const record = {
-      ...intent.record,
-      pid: child.pid,
-      ...(child.processStartToken ? { processStartToken: child.processStartToken } : {}),
-      ...(child.commandIdentityMarker ? { commandIdentityMarker: child.commandIdentityMarker } : {})
-    }
     const activePath = intent.activePath(child.pid)
     try {
       renameSync(intent.path, activePath)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || !existsSync(activePath)) throw error
+    }
+    const published = decodeRecord(readFileSync(activePath, 'utf8'))
+    if (
+      !published ||
+      published.receiptId !== intent.record.receiptId ||
+      (published.pid !== undefined && published.pid !== child.pid) ||
+      (published.posixBirthToken !== undefined &&
+        child.posixBirthToken !== undefined &&
+        published.posixBirthToken !== child.posixBirthToken)
+    )
+      throw new Error('Kernel process ownership receipt identity changed.')
+    const birthToken = child.posixBirthToken ?? published.posixBirthToken
+    if (['linux', 'darwin'].includes(intent.record.platform) && !birthToken)
+      throw new Error('Kernel process birth identity could not be confirmed.')
+    const record = {
+      ...intent.record,
+      pid: child.pid,
+      ...(child.processStartToken ? { processStartToken: child.processStartToken } : {}),
+      ...(birthToken ? { posixBirthToken: birthToken } : {}),
+      ...(child.commandIdentityMarker ? { commandIdentityMarker: child.commandIdentityMarker } : {})
     }
     writeRecordSync(activePath, record)
     this.pendingReceiptIds.delete(record.receiptId)

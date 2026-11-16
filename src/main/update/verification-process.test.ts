@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +13,57 @@ import {
 } from './verification-process'
 
 describe('bounded verification subprocess', () => {
+  it.skipIf(process.platform === 'win32')(
+    'does not signal an unrelated group that reuses an exited verifier group ID',
+    async () => {
+      const victim = spawn(
+        process.execPath,
+        ['-e', "process.stdout.write('ready'); setInterval(() => {}, 1000)"],
+        { detached: true, stdio: ['ignore', 'pipe', 'ignore'] }
+      )
+      const victimExit = once(victim, 'close')
+      const originalKill = process.kill.bind(process)
+      const terminate = processTree.terminateProcessTree
+      let exitedGroup: number | undefined
+      const delivered: NodeJS.Signals[] = []
+      const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        // Model only kernel PGID reuse; all delivered signals reach our real fixture group.
+        if (exitedGroup !== undefined && pid === -exitedGroup) {
+          if (signal !== 0) delivered.push(signal as NodeJS.Signals)
+          return originalKill(-victim.pid!, signal)
+        }
+        return originalKill(pid, signal)
+      })
+      const cleanup = vi
+        .spyOn(processTree, 'terminateProcessTree')
+        .mockImplementation(async (child, ...args) => {
+          expect(child.exitCode).toBe(0)
+          expect(() => originalKill(-child.pid!, 0)).toThrow()
+          exitedGroup = child.pid
+          return terminate(child, ...args)
+        })
+      try {
+        await once(victim.stdout!, 'data')
+        const outcome = await runVerificationProcess(process.execPath, [
+          '-e',
+          'process.exit(0)'
+        ]).catch((error: unknown) => error)
+        expect(() => originalKill(victim.pid!, 0)).not.toThrow()
+        expect(outcome).toBeInstanceOf(VerificationProcessUnsettledError)
+        expect(delivered).toEqual([])
+      } finally {
+        cleanup.mockRestore()
+        kill.mockRestore()
+        try {
+          originalKill(-victim.pid!, 'SIGKILL')
+        } catch {
+          // The pre-fix regression kills only this fixture group.
+        }
+        await victimExit
+      }
+    }
+  )
+
   it('returns both output streams after successful verification with an input pipe', async () => {
     await expect(
       runVerificationProcess(

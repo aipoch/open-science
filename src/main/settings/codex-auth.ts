@@ -8,7 +8,11 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 
 import type { CodexSubscriptionTransport } from '../../shared/settings'
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import {
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
+  terminateProcessTree
+} from '../process-tree'
 import { spawnCodexWithInstallAdmission } from './managed-codex'
 import { codexSubscriptionStorageDir } from './codex-paths'
 import { augmentedPathEnv } from './shell-path'
@@ -1147,19 +1151,20 @@ export const openCodexAuthSession = async ({
     else delete env.ELECTRON_RUN_AS_NODE
   }
   if (nativePath) env.CODEX_PATH = nativePath
+  const ownership = createPosixProcessTreeOwnership(env)
 
   const child = spawnCodexWithInstallAdmission(
     [adapterPath, ...(nativePath ? [nativePath] : [])],
     () =>
       spawn(command, args, {
-        env,
+        env: ownership.env,
         shell: needsShell,
         stdio: 'pipe',
         detached: process.platform !== 'win32',
         windowsHide: true
       })
   )
-  if (process.platform !== 'win32') registerOwnedPosixProcessGroup(child)
+  if (process.platform !== 'win32') trackOwnedPosixProcessTree(child, ownership.token)
   // Diagnostics are not ACP messages; drain them so adapter writes cannot block authentication.
   child.stderr.resume()
   try {

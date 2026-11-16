@@ -584,11 +584,25 @@ process.emitWarning('keep this diagnostic', { code: 'OTHER_WARNING' })`
   }
 )
 
+// These adapter tests launch the real protocol host on POSIX; Windows Job containment is covered
+// by the native Windows integration suite. Keep the receipt platform consistent with the executor
+// without requesting a Windows-only native Job from this test host.
+const windowsAdapterLifecycle = (storageRoot: string): KernelProcessLifecycleOwner => {
+  const owner = new KernelProcessLifecycleOwner({ storageRoot, platform: 'win32' })
+  if (process.platform !== 'win32') {
+    const beginSpawn = owner.beginSpawn.bind(owner)
+    vi.spyOn(owner, 'beginSpawn').mockImplementation((scope, token, proof) =>
+      beginSpawn(scope, token, proof, false)
+    )
+  }
+  return owner
+}
+
 it.each([false, true])(
   'hides Windows kernel consoles with durable ownership %s while preserving execution and cleanup',
   async (owned) => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-hidden-console-'))
-    const lifecycle = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
+    const lifecycle = windowsAdapterLifecycle(cwdDir)
     await lifecycle.ensureReady()
     const spawn = vi.mocked(childProcess.spawn)
     spawn.mockClear()
@@ -4988,7 +5002,7 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
 
   it('retains Windows ownership until the native supervisor host has exited', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-supervisor-exit-'))
-    const lifecycle = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
+    const lifecycle = windowsAdapterLifecycle(cwdDir)
     await lifecycle.ensureReady()
     const complete = vi.spyOn(lifecycle, 'complete')
     const confirm = vi.fn(async () => true)

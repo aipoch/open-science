@@ -48,7 +48,8 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import { stripCodexCredentialEnv } from './process-tree'
 import {
   onProcessTreeReaped,
-  registerOwnedPosixProcessGroup,
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
   terminateProcessTree
 } from '../process-tree'
 import { toErrorMessage } from '../error-message'
@@ -1372,20 +1373,21 @@ export const verifyManagedCodexPair: PairVerifier = async (
       clientInfo: { name: 'open-science-installer', version: '0.0.0' }
     }
   })
+  const ownership = createPosixProcessTreeOwnership({
+    ...stripCodexCredentialEnv(process.env),
+    ...nodeRuntimeEnvironment(),
+    CODEX_HOME: codexHome,
+    CODEX_PATH: codexPath,
+    NO_BROWSER: '1'
+  })
   const child = spawn(process.execPath, [adapterPath], {
     windowsHide: true,
     detached: process.platform !== 'win32',
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: {
-      ...stripCodexCredentialEnv(process.env),
-      ...nodeRuntimeEnvironment(),
-      CODEX_HOME: codexHome,
-      CODEX_PATH: codexPath,
-      NO_BROWSER: '1'
-    }
+    env: ownership.env
   })
   // Retain group ownership even if the adapter exits before the first ACP response.
-  if (process.platform !== 'win32') registerOwnedPosixProcessGroup(child)
+  if (process.platform !== 'win32') trackOwnedPosixProcessTree(child, ownership.token)
 
   let initialized = false
   let stdoutLineCount = 0

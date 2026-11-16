@@ -17,7 +17,12 @@ import { readdir, readFile, rename, rm, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import {
+  capturePosixProcessTreeIdentity,
+  registerProcessTreeOwnership,
+  terminateOwnedPosixProcessGroupById,
+  terminateProcessTree
+} from '../process-tree'
 import { windowsProcessCommandLine, windowsProcessStartTicks } from '../windows-process-query'
 import { bootTokenProvesReboot, isValidBootToken, readBootToken } from '@aipoch/environment'
 
@@ -31,6 +36,7 @@ type ShellProcessOwnershipRecord = Readonly<{
   ownerInstanceId: string
   launchedAt: number
   processStartIdentity: string
+  posixBirthToken?: string
   bootToken?: string
 }>
 
@@ -120,7 +126,7 @@ const processStartIdentity = (pid: number, platform: NodeJS.Platform): string | 
 }
 
 const recoveryHandle = (
-  record: Pick<ShellProcessOwnershipRecord, 'pid' | 'platform'>
+  record: Pick<ShellProcessOwnershipRecord, 'pid' | 'platform' | 'posixBirthToken'>
 ): ChildProcess => {
   const handle = Object.assign(new EventEmitter(), {
     pid: record.pid,
@@ -136,7 +142,17 @@ const recoveryHandle = (
       }
     }
   }) as unknown as ChildProcess
-  if (record.platform !== 'win32') registerOwnedPosixProcessGroup(handle)
+  if (record.platform !== 'win32')
+    registerProcessTreeOwnership(handle, {
+      terminate: () =>
+        terminateOwnedPosixProcessGroupById(
+          record.pid,
+          undefined,
+          undefined,
+          record.posixBirthToken
+        ),
+      settled: () => undefined
+    })
   return handle
 }
 
@@ -283,6 +299,7 @@ class ShellProcessOwnershipRegistry {
           ownerInstanceId: this.ownerInstanceId,
           launchedAt: intent.launchedAt,
           ...(bootToken ? { bootToken } : {}),
+          posixBirthToken: capturePosixProcessTreeIdentity(child)?.birthToken,
           processStartIdentity:
             (this.options.processStartIdentity ?? processStartIdentity)(pid, platform) ??
             (() => {
@@ -497,6 +514,7 @@ class ShellProcessOwnershipRegistry {
         typeof parsed.ownerInstanceId !== 'string' ||
         typeof parsed.launchedAt !== 'number' ||
         typeof parsed.processStartIdentity !== 'string' ||
+        (parsed.posixBirthToken !== undefined && typeof parsed.posixBirthToken !== 'string') ||
         (parsed.bootToken !== undefined && !isValidBootToken(parsed.bootToken))
       ) {
         throw new Error(`Corrupt Shell process ownership record: ${entry}`)
