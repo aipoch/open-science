@@ -1190,7 +1190,7 @@ const registerDataContentApplicationCommands = (
         return dependencies.electron.cancelSessionDiagnostics(invocation)
       },
       'sessions:fork': (invocation) => {
-        assertElectronCaller(invocation, dataContentApplicationCommands.sessionFork.name)
+        assertElectronOrLocalWebCaller(invocation, dataContentApplicationCommands.sessionFork.name)
         return dependencies.electron.forkSession(invocation)
       },
       'sessions:export-package': (invocation) => {

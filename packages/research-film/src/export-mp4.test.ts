@@ -1,8 +1,9 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { ChildProcess } from 'node:child_process'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { exportResearchVideoMp4 } from './export-mp4.js'
+import { describe, expect, it, vi } from 'vitest'
+import { assertVideoEncoderReady, exportResearchVideoMp4 } from './export-mp4.js'
 
 describe('research video export', () => {
   it('rejects invalid media before launching a renderer or encoder', async () => {
@@ -46,4 +47,196 @@ describe('research video export', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it.skipIf(process.platform === 'win32').each(['encoder', 'probe'] as const)(
+    'fences retries and retains scratch until a delayed %s exit',
+    async (stage) => {
+      const root = await mkdtemp(join(tmpdir(), 'film-encoder-late-exit-'))
+      const encoderPath = join(root, 'encoder')
+      const probePath = join(root, 'probe')
+      const stuckPath = join(root, stage)
+      const ready = join(root, 'ready')
+      const controller = new AbortController()
+      const kill = ChildProcess.prototype.kill
+      const observed = new Set<ChildProcess>()
+      // Simulate an accepted force kill with no corresponding exit event.
+      const spy = vi.spyOn(ChildProcess.prototype, 'kill').mockImplementation(function (
+        this: ChildProcess,
+        signal
+      ) {
+        if (this.spawnfile !== stuckPath) return kill.call(this, signal)
+        observed.add(this)
+        return signal === 'SIGKILL'
+      })
+      let task: Promise<unknown> | undefined
+      const settled = vi.fn()
+      try {
+        if (stage === 'probe') {
+          await writeFile(
+            encoderPath,
+            `#!${process.execPath}
+process.stdin.resume();
+process.stdin.on('end', () => require('node:fs').writeFileSync(process.argv.at(-1), 'video'));`,
+            { mode: 0o700 }
+          )
+        }
+        await writeFile(
+          stuckPath,
+          `#!${process.execPath}
+require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready');
+setTimeout(() => {}, 4000);`,
+          { mode: 0o700 }
+        )
+        const options = {
+          renderer: { capture: async () => Buffer.from('frame') },
+          audioPath: 'unused',
+          outputPath: join(root, 'output.mp4'),
+          encoderPath,
+          probePath,
+          width: 2,
+          height: 2,
+          duration: 1 / 30
+        }
+        task = exportResearchVideoMp4({ ...options, signal: controller.signal }).then(
+          settled,
+          settled
+        )
+        await vi.waitFor(() => readFile(ready))
+        vi.useFakeTimers()
+        controller.abort()
+        await vi.advanceTimersByTimeAsync(5000)
+        expect(settled).toHaveBeenCalledWith(
+          expect.objectContaining({ message: expect.stringMatching(/did not confirm shutdown/i) })
+        )
+        expect((await readdir(root)).some((name) => name.startsWith('.research-video-'))).toBe(true)
+        await expect(
+          exportResearchVideoMp4({ ...options, signal: new AbortController().signal })
+        ).rejects.toThrow(/did not confirm shutdown/i)
+        expect(observed.size).toBe(1)
+        const child = observed.values().next().value
+        if (child) kill.call(child, 'SIGKILL')
+        vi.useRealTimers()
+        await vi.waitFor(async () =>
+          expect(await readdir(root)).toEqual(
+            stage === 'probe' ? ['encoder', 'probe', 'ready'] : ['encoder', 'ready']
+          )
+        )
+        expect(() => assertVideoEncoderReady()).not.toThrow()
+      } finally {
+        vi.useRealTimers()
+        spy.mockRestore()
+        controller.abort()
+        const child = observed.values().next().value
+        if (child && child.exitCode === null && child.signalCode === null) {
+          kill.call(child, 'SIGKILL')
+        }
+        await task
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'cancels a backpressured encode and joins the encoder before returning',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'video-export-backpressure-'))
+      const controller = new AbortController()
+      const encoderPath = join(root, 'encoder')
+      const pidPath = join(root, 'encoder.pid')
+      const fallbackPath = join(root, 'encoder-fallback')
+      const captured = Promise.withResolvers<void>()
+      const outputPath = join(root, 'output.mp4')
+      try {
+        await writeFile(
+          encoderPath,
+          `#!${process.execPath}\nconst fs = require('node:fs');\nprocess.on('SIGTERM', () => {});\nfs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));\nsetTimeout(() => fs.writeFileSync(${JSON.stringify(fallbackPath)}, 'timed out'), 2000);`,
+          { mode: 0o700 }
+        )
+        const result = exportResearchVideoMp4({
+          renderer: {
+            capture: async () => {
+              captured.resolve()
+              return Buffer.alloc(8 * 1024 * 1024)
+            }
+          },
+          audioPath: 'unused',
+          outputPath,
+          encoderPath,
+          probePath: 'unused',
+          width: 2,
+          height: 2,
+          duration: 1 / 30,
+          signal: controller.signal
+        }).catch((error: unknown) => error)
+        const pid = await vi.waitFor(async () => Number(await readFile(pidPath, 'utf8')))
+        await captured.promise
+        controller.abort()
+        expect(await result).toMatchObject({ code: 'ABORT_ERR' })
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+        expect(await readdir(root)).not.toContain('encoder-fallback')
+        expect(await readdir(root)).not.toContain('output.mp4')
+      } finally {
+        controller.abort()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32').each(['cancel', 'timeout'] as const)(
+    'joins a stuck verifier on %s',
+    async (reason) => {
+      const root = await mkdtemp(join(tmpdir(), 'video-export-probe-'))
+      const controller = new AbortController()
+      const encoderPath = join(root, 'encoder')
+      const probePath = join(root, 'probe')
+      const pidPath = join(root, 'probe.pid')
+      const outputPath = join(root, 'output.mp4')
+      try {
+        await writeFile(
+          encoderPath,
+          `#!${process.execPath}\nprocess.stdin.resume();\nprocess.stdin.on('end', () => require('node:fs').writeFileSync(process.argv.at(-1), 'video'));`,
+          { mode: 0o700 }
+        )
+        await writeFile(
+          probePath,
+          `#!${process.execPath}\nprocess.on('SIGTERM', () => {});\nrequire('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));\nsetTimeout(() => process.exit(0), 1500);`,
+          { mode: 0o700 }
+        )
+        const result = exportResearchVideoMp4({
+          renderer: { capture: async () => Buffer.from('frame') },
+          audioPath: 'unused',
+          outputPath,
+          encoderPath,
+          probePath,
+          width: 2,
+          height: 2,
+          duration: 1 / 30,
+          signal: controller.signal,
+          onPhase: (phase) => {
+            if (phase === 'verifying' && reason === 'timeout') vi.useFakeTimers()
+          }
+        }).catch((error: unknown) => error)
+        const pid = await vi.waitFor(async () => {
+          const pid = Number(await readFile(pidPath, 'utf8'))
+          expect(pid).toBeGreaterThan(0)
+          return pid
+        })
+        if (reason === 'cancel') {
+          controller.abort()
+          expect(await result).toMatchObject({ code: 'ABORT_ERR' })
+        } else {
+          await vi.advanceTimersByTimeAsync(120_000)
+          expect(await result).toMatchObject({
+            message: expect.stringMatching(/verification timed out/i)
+          })
+        }
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+        expect(await readdir(root)).not.toContain('output.mp4')
+      } finally {
+        vi.useRealTimers()
+        controller.abort()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 })

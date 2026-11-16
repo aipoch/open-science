@@ -2,7 +2,7 @@ import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from '@aipoch/research-film/co
 import { createHash } from 'node:crypto'
 import { lstat, readdir, rm, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { readFileWithinLimit } from '@aipoch/durable-files'
+import { DurableJsonReadLimitError, readFileWithinLimit } from '@aipoch/durable-files'
 import { z } from 'zod'
 import type {
   ResearchVideoPresentation,
@@ -22,53 +22,76 @@ export const researchFilmReceiptSchema = z
   })
   .strict()
 
+export class CorruptResearchFilmReceiptError extends Error {
+  constructor() {
+    super('The saved research film receipt is damaged.')
+  }
+}
+
+const missing = (error: NodeJS.ErrnoException): undefined => {
+  if (error.code !== 'ENOENT') throw error
+}
+
+export async function hasResearchFilmOutputs(directory: string): Promise<boolean> {
+  const output = join(directory, 'output')
+  for (const path of [directory, output]) {
+    const stat = await lstat(path).catch(missing)
+    if (!stat) return false
+    if (!stat.isDirectory()) throw new Error('Unsafe research presentation directory.')
+  }
+  let complete = true
+  for (const name of ['player.html', 'sources.zip']) {
+    const stat = await lstat(join(output, name)).catch(missing)
+    if (stat && !stat.isFile()) throw new Error('Research presentation is unavailable.')
+    if (!stat?.size) complete = false
+  }
+  return complete
+}
+
+export async function readResearchFilmReceipt(
+  base: string
+): Promise<z.infer<typeof researchFilmReceiptSchema> | undefined> {
+  const path = join(base, 'latest.json')
+  const stat = await lstat(path).catch(missing)
+  if (!stat) return undefined
+  if (!stat.isFile()) throw new Error('Unsafe research presentation receipt.')
+  try {
+    return researchFilmReceiptSchema.parse(JSON.parse(await readFileWithinLimit(path, 4096)))
+  } catch (error) {
+    if (
+      error instanceof SyntaxError ||
+      error instanceof z.ZodError ||
+      error instanceof DurableJsonReadLimitError
+    )
+      throw new CorruptResearchFilmReceiptError()
+    throw error
+  }
+}
+
 export async function readStoredResearchFilm(
   root: string,
-  request: ResearchVideoPresentationRequest
+  request: ResearchVideoPresentationRequest,
+  known?: ResearchVideoPresentation
 ): Promise<ResearchVideoPresentation | undefined> {
-  const base = join(root, 'research-video-presentations', researchFilmScopeKey(request))
-  for (const path of [join(root, 'research-video-presentations'), base]) {
-    const stat = await lstat(path).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return undefined
+  const base = await researchFilmDirectory(root, request)
+  if (!base) return undefined
+  const receipt = await readResearchFilmReceipt(base).catch(async (error: unknown) => {
+    if (!(error instanceof CorruptResearchFilmReceiptError) || !known) throw error
+    const directory = join(base, known.id)
+    if (
+      known.playerPath !== join(directory, 'output', 'player.html') ||
+      !(await hasResearchFilmOutputs(directory))
+    )
       throw error
-    })
-    if (!stat) return undefined
-    if (!stat.isDirectory() || stat.isSymbolicLink())
-      throw new Error('Unsafe research presentation directory.')
-  }
-  const path = join(base, 'latest.json')
-  const stat = await lstat(path).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return undefined
-    throw error
+    return { id: known.id, title: known.title, duration: known.duration }
   })
-  if (!stat) return undefined
-  if (!stat.isFile() || stat.isSymbolicLink())
-    throw new Error('Unsafe research presentation receipt.')
-  const receipt = researchFilmReceiptSchema.parse(JSON.parse(await readFileWithinLimit(path, 4096)))
-  const directory = join(base, receipt.id),
-    output = join(directory, 'output')
-  for (const path of [directory, output]) {
-    const stat = await lstat(path).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return undefined
-      throw error
-    })
-    if (!stat) return undefined
-    if (!stat.isDirectory() || stat.isSymbolicLink())
-      throw new Error('Unsafe research presentation directory.')
-  }
-  for (const name of ['player.html', 'sources.zip']) {
-    const stat = await lstat(join(output, name)).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return undefined
-      throw error
-    })
-    if (!stat) return undefined
-    if (!stat.isFile() || stat.isSymbolicLink())
-      throw new Error('Research presentation is unavailable.')
-  }
+  if (!receipt) return undefined
+  const directory = join(base, receipt.id)
+  if (!(await hasResearchFilmOutputs(directory))) return undefined
   return {
     ...receipt,
-    playerPath: join(output, 'player.html'),
-    sourcePath: join(output, 'sources.zip')
+    playerPath: join(directory, 'output', 'player.html'),
+    sourcePath: join(directory, 'output', 'sources.zip')
   }
 }
 

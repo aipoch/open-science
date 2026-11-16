@@ -1,5 +1,10 @@
 import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import sharp from 'sharp'
+import { readWorkerResult } from '../src/worker-result.js'
 import { resolve } from './paths'
 
 const { recoverNativeScalarRecordPlan } = await import(
@@ -265,7 +270,7 @@ it.each(['detached exponent', 'zero advance exponent', 'ordinary prose', 'missin
 const { nativeTableLayoutConflicts } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-layout-conflicts.mjs')).href
 )
-const { reviewFinalNativeTableSources } = await import(
+const { reviewFinalNativeTableSources, retainNativeCenteredRecordGraphic } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-source-integrity.mjs')).href
 )
 
@@ -909,5 +914,308 @@ it.each([
     expect(nativeTableLayoutConflicts(f.table, f.items, f.rules, [], f.context)).not.toContain(
       'native-ruled-header-value-lanes-collapsed'
     )
+  }
+)
+
+const fusedTupleWall = (): Fixture => {
+  const f = topologyFixture()
+  for (let c = 0; c < 3; c++) topologyOwner(f, 0, c, [['Field', 10 + c * 100, 22]])
+  topologyOwner(f, 1, 0, [['1', 10, 50, 10, 6]])
+  topologyOwner(f, 1, 1, [['(−2,0,1', 110, 50, 10, 42]])
+  topologyOwner(f, 1, 2, [
+    [') (', 152, 50, 10, 16],
+    ['−1,0,2)', 168, 50, 10, 44]
+  ])
+  f.rules = [[160, 40, 160, 53]]
+  return f
+}
+it('withdraws a whole native punctuation run claimed across a real tuple-cell wall', () => {
+  const f = fusedTupleWall(),
+    before = structuredClone(f)
+  expect(nativeTableLayoutConflicts(f.table, f.items, f.rules, [], topologyContext(f))).toContain(
+    'native-fused-tuple-crosses-cell-wall'
+  )
+  const checked = reviewFinalNativeTableSources(f.table, f.items, f.rules, [], topologyContext(f))
+  expect(checked.issues).toContain('native-table-structure-ambiguous')
+  expect({ ...checked, issues: [], reviewCandidate: true }).toEqual(f.table)
+  expect(f).toEqual(before)
+})
+it('checks the tuple source packet despite an adjacent record font envelope', () => {
+  const f = fusedTupleWall(),
+    context = topologyContext(f)
+  context.sourceContent.items.push({
+    ...context.sourceContent.items.at(-1),
+    str: 'Adjacent',
+    transform: [10, 0, 0, 10, 130, 361.5]
+  })
+  expect(nativeTableLayoutConflicts(f.table, f.items, f.rules, [], context)).toContain(
+    'native-fused-tuple-crosses-cell-wall'
+  )
+})
+it.each([
+  'no wall',
+  'outside baseline',
+  'ordinary statistic',
+  'missing source',
+  'stale native content',
+  'stale owner bounds',
+  'duplicate claim',
+  'unclaimed native item'
+])('does not infer a tuple-wall contradiction from %s', (mode) => {
+  const f = fusedTupleWall()
+  if (mode === 'no wall') f.rules = []
+  if (mode === 'outside baseline') f.rules = [[160, 5, 160, 20]]
+  if (mode === 'ordinary statistic') {
+    const atom = f.items.find((i: Fixture) => i.text === ') (')
+    atom.text = atom.sourceItem.text = '(2.5)'
+    f.table.cells.at(-1).sourceItems[0].text = '(2.5)'
+    f.table.cells.at(-1).text = '(2.5) −1,0,2)'
+  }
+  if (mode === 'missing source') f.items.pop()
+  if (mode === 'stale owner bounds') {
+    const cell = f.table.cells.at(-1)
+    cell.sourceRects[0] = [...cell.sourceRects[0]]
+    cell.sourceRects[0][0]++
+  }
+  if (mode === 'duplicate claim') f.table.cells[1].sourceItems.push(f.items.at(-1).sourceItem)
+  const context = topologyContext(f)
+  if (mode === 'stale native content') context.sourceContent.items.at(-1).str = 'Changed'
+  if (mode === 'unclaimed native item') {
+    // Deliberately absent from the supplied inventory: closure must inspect
+    // the original native content, not trust the cell claims as complete.
+    context.sourceContent.items.push({
+      ...context.sourceContent.items.at(-1),
+      str: 'Foreign',
+      transform: [10, 0, 0, 10, 140, 350]
+    })
+  }
+  expect(nativeTableLayoutConflicts(f.table, f.items, f.rules, [], context)).not.toContain(
+    'native-fused-tuple-crosses-cell-wall'
+  )
+})
+
+const sectionedPairRows = (cellMajor = false, rightAligned = false): Fixture => {
+  const f = topologyFixture()
+  for (let c = 0; c < 3; c++) topologyOwner(f, 0, c, [['Heading', 10 + c * 100, 22]])
+  topologyOwner(f, 1, 0, [['Controls', 10, 40]])
+  f.table.cells.at(-1).colSpan = 3
+  f.table.grid[1] = ['Controls', '', '']
+  const parts: Fixture[][] = [[], []]
+  const add = (c: number, n: number): void => {
+    const width = rightAligned && c === 1 && n === 1 ? 24 : 35
+    topologyOwner(f, 2, c + 1, [
+      [
+        c ? ['ModeA', '0.02'][n] : ['Procedure', 'Step size'][n],
+        145 + c * 100 - width,
+        55 + n * 12,
+        10,
+        width
+      ]
+    ])
+    parts[c].push(f.table.cells.pop())
+  }
+  if (cellMajor) for (let c = 0; c < 2; c++) for (let n = 0; n < 2; n++) add(c, n)
+  else for (let n = 0; n < 2; n++) for (let c = 0; c < 2; c++) add(c, n)
+  topologyOwner(f, 2, 0, [])
+  for (let c = 0; c < 2; c++) {
+    const text = parts[c].map((p) => p.text).join(' ')
+    f.table.grid[2][c + 1] = text
+    f.table.cells.push({
+      row: 2,
+      column: c + 1,
+      rowSpan: 1,
+      colSpan: 1,
+      text,
+      sourceItems: parts[c].flatMap((p) => p.sourceItems),
+      sourceRects: parts[c].flatMap((p) => p.sourceRects)
+    })
+  }
+  for (let row = 3; row < 5; row++) {
+    topologyOwner(f, row, 0, [])
+    topologyOwner(f, row, 1, [['Parameter ' + row, 110, 80 + 12 * (row - 3)]])
+    topologyOwner(f, row, 2, [['0.' + row, 210, 80 + 12 * (row - 3)]])
+  }
+  return f
+}
+it.each([false, true])(
+  'declines two complete row-major label/value records hidden in one category row (right aligned: %s)',
+  (rightAligned) => {
+    const f = sectionedPairRows(false, rightAligned)
+    expect(nativeTableLayoutConflicts(f.table, f.items, [], [], topologyContext(f))).toContain(
+      'native-section-label-value-records-merged'
+    )
+  }
+)
+it('preserves ordinary cell-major wrapped fields under a category heading', () => {
+  const f = sectionedPairRows(true)
+  expect(nativeTableLayoutConflicts(f.table, f.items, [], [], topologyContext(f))).not.toContain(
+    'native-section-label-value-records-merged'
+  )
+})
+it.each(['missing category span', 'one peer', 'stale native content', 'crossed baseline'])(
+  'declines no paired-record claim without its complete native witnesses: %s',
+  (mode) => {
+    const f = sectionedPairRows()
+    if (mode === 'missing category span')
+      f.table.cells.find((c: Fixture) => c.row === 1).colSpan = 1
+    if (mode === 'one peer') f.table.cells = f.table.cells.filter((c: Fixture) => c.row !== 4)
+    const context = topologyContext(f),
+      owner = f.table.cells.find((c: Fixture) => c.row === 2 && c.column === 2),
+      index = owner.sourceItems[0].index
+    if (mode === 'stale native content') context.sourceContent.items[index].str = 'Changed'
+    if (mode === 'crossed baseline') context.sourceContent.items[index].transform[5]++
+    expect(nativeTableLayoutConflicts(f.table, f.items, [], [], context)).not.toContain(
+      'native-section-label-value-records-merged'
+    )
+  }
+)
+
+const mergedGroupHeading = (): Fixture => {
+  const f = topologyFixture()
+  for (let c = 0; c < 4; c++) topologyOwner(f, 0, c, [['Heading', 10 + c * 80, 22]])
+  topologyOwner(f, 1, 0, [['First group', 10, 40]])
+  for (let c = 1; c < 4; c++) topologyOwner(f, 1, c, [])
+  for (let c = 0; c < 4; c++) topologyOwner(f, 2, c, [['Field ' + c, 10 + c * 80, 55]])
+  topologyOwner(f, 3, 0, [
+    ['Second group', 10, 70],
+    ['Next field', 10, 82]
+  ])
+  for (let c = 1; c < 4; c++) topologyOwner(f, 3, c, [['Value ' + c, 10 + c * 80, 82]])
+  return f
+}
+const groupHeadingContext = (f: Fixture): Fixture => {
+  const context = topologyContext(f)
+  context.sourceContent.styles.bold = { ascent: 0.8, descent: -0.2, vertical: false }
+  for (const i of f.items.filter((i: Fixture) => /group$/.test(i.text)))
+    context.sourceContent.items[i.sourceItem.index].fontName = 'bold'
+  return context
+}
+it('withdraws a group-heading baseline merged into its first data field', () => {
+  const f = mergedGroupHeading(),
+    context = groupHeadingContext(f)
+  expect(nativeTableLayoutConflicts(f.table, f.items, [], [], context)).toContain(
+    'native-group-heading-merged-with-record'
+  )
+})
+it('checks a complete group-heading packet despite a distant zero-advance native mark', () => {
+  const f = mergedGroupHeading(),
+    context = groupHeadingContext(f)
+  context.sourceContent.items.push({
+    ...context.sourceContent.items.at(-1),
+    str: '̸',
+    width: 0,
+    transform: [10, 0, 0, 10, 300, 200]
+  })
+  expect(nativeTableLayoutConflicts(f.table, f.items, [], [], context)).toContain(
+    'native-group-heading-merged-with-record'
+  )
+})
+it.each([
+  'populated heading peer',
+  'one active peer',
+  'stale native content',
+  'foreign native item'
+])('requires the independent native group-heading packet: %s', (mode) => {
+  const f = mergedGroupHeading()
+  if (mode === 'populated heading peer') topologyOwner(f, 1, 1, [['Value', 90, 40]])
+  if (mode === 'one active peer')
+    f.table.cells = f.table.cells.filter((c: Fixture) => c.row !== 3 || c.column < 2)
+  const context = groupHeadingContext(f)
+  if (mode === 'stale native content') {
+    const index = f.items.find((i: Fixture) => i.text === 'Second group').sourceItem.index
+    context.sourceContent.items[index].str = 'Changed'
+  }
+  if (mode === 'foreign native item')
+    context.sourceContent.items.push({
+      ...context.sourceContent.items.at(-1),
+      str: 'Foreign',
+      transform: [10, 0, 0, 10, 90, 330]
+    })
+  expect(nativeTableLayoutConflicts(f.table, f.items, [], [], context)).not.toContain(
+    'native-group-heading-merged-with-record'
+  )
+})
+it('does not split an ordinary two-line first field without a matching independent heading face', () => {
+  const f = mergedGroupHeading()
+  expect(nativeTableLayoutConflicts(f.table, f.items, [], [], topologyContext(f))).not.toContain(
+    'native-group-heading-merged-with-record'
+  )
+})
+
+it.each([
+  ['tuple wall', fusedTupleWall, topologyContext],
+  ['paired records', sectionedPairRows, topologyContext],
+  ['group heading', mergedGroupHeading, groupHeadingContext]
+] as const)(
+  'publishes only the original graphic for contradictory %s',
+  async (_name, make, context) => {
+    const f = make(),
+      directory = await mkdtemp(join(tmpdir(), 'native-record-graphic-')),
+      sourceChecksum = 'a'.repeat(64),
+      png = await sharp({
+        create: { width: 35, height: 40, channels: 3, background: '#ffffff' }
+      })
+        .png()
+        .toBuffer()
+    try {
+      Object.assign(f.table, {
+        id: 'native-records',
+        region: [0, 5 / 400, 1, 150 / 400],
+        sourceViewport: { width: 350, height: 400 },
+        caption: { text: 'Table 1. Grouped values.', rect: [0, 0, 200, 4] },
+        thumbnail: 'thumbnails/native-records.png',
+        nativeBody: { kind: 'stale body' },
+        sourceItems: [{ text: 'stale owner' }]
+      })
+      const before = structuredClone(f.table),
+        native = context(f),
+        reviewed = reviewFinalNativeTableSources(f.table, f.items, f.rules, [], native),
+        out = retainNativeCenteredRecordGraphic(reviewed, f.items, f.rules, [], native)
+      expect(out.grid).toEqual([])
+      expect(out.cells).toEqual([])
+      expect(out.thumbnail).toBe(f.table.thumbnail)
+      expect(out.region).toBe(f.table.region)
+      expect(out.caption).toBe(f.table.caption)
+      expect(f.table).toEqual(before)
+      await mkdir(join(directory, 'thumbnails'))
+      await writeFile(join(directory, out.thumbnail), png)
+      await writeFile(
+        join(directory, 'structure.json'),
+        JSON.stringify({
+          sourceSha256: sourceChecksum,
+          pageCount: 1,
+          requestedPages: [1],
+          processedPages: [1],
+          pages: [{ page: 1, width: 350, height: 400, rotation: 0 }],
+          figures: [],
+          tables: [out],
+          navigation: { entries: [] }
+        })
+      )
+      const thumbnails = new Map<string, Uint8Array>(),
+        result = await readWorkerResult(
+          directory,
+          {
+            extractionId: '00000000-0000-4000-8000-000000000001',
+            engineFingerprint: 'b'.repeat(64),
+            sourceChecksum,
+            sourceSizeBytes: 100,
+            requestedPages: [1]
+          },
+          thumbnails
+        ),
+        element = result.elements[0]
+      expect(result.elements).toHaveLength(1)
+      expect(element.table).toBeUndefined()
+      expect(element.tableParts).toBeUndefined()
+      expect(element.sourceItems).toBeUndefined()
+      expect(element.nativeBody).toBeUndefined()
+      expect(element.issues.map((issue) => issue.code)).toContain('no-source-cell-grid')
+      expect(element.caption?.text).toBe(f.table.caption.text)
+      expect(element.regions).toEqual([{ page: 1, x: 0, y: 5 / 400, width: 1, height: 145 / 400 }])
+      expect(thumbnails.get(element.thumbnailId)).toEqual(png)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   }
 )

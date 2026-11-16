@@ -280,7 +280,8 @@ it.each(['none', 'auxiliary', 'requested'])(
         captureNativeFigureRenderContext: () => ({ glyphBounds: ['retained'] }),
         sealNativeMesh4RenderContext: () => false,
         nativeLigatureDualApiCaptureRequired: () => false,
-        attachNativeCompositingResources: (snapshot: unknown) => snapshot
+        attachNativeCompositingResources: (snapshot: unknown) => snapshot,
+        installPdfCanvasReset: () => undefined
       }
     )
     if (failure === 'requested') {

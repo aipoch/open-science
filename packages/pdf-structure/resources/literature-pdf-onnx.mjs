@@ -17,6 +17,7 @@ import { repairPdfSymbolText } from './literature-pdf-symbol-text.mjs'
 import { readingRotation, isUprightText } from './literature-pdf-orientation.mjs'
 import { deduplicateTableDetections } from './literature-pdf-onnx-postprocess.mjs'
 import { createOnnxSessionLifecycle } from './literature-pdf-onnx-sessions.mjs'
+import { installPdfCanvasReset } from './literature-pdf-canvas-reset.mjs'
 
 const [pdfPath, assetDirectory, runtimeDirectory, pageList, outputDirectory, mode] =
   process.argv.slice(2)
@@ -167,6 +168,72 @@ function inside(rect, x, y) {
   return x >= rect[0] && x <= rect[2] && y >= rect[1] && y <= rect[3]
 }
 
+let destroyingPdf
+const destroyPdf = () =>
+  (destroyingPdf ??= (async () => {
+    await task.destroy()
+    phase('pdf', 'released')
+  })())
+
+// Return detached raster/scalar inputs and release PDF owners before any model allocation.
+async function preparePage(document, pageNumber) {
+  assert(pageNumber <= document.numPages)
+  const page = await document.getPage(pageNumber)
+  let canvas
+  let prepared = false
+  try {
+    const content = await repairPdfSymbolText(page, await page.getTextContent())
+    const rotation = readingRotation(page, content)
+    const viewport = page.getViewport({ scale: 1.5, rotation })
+    assert(viewport.width * viewport.height <= 4_000_000)
+    canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+    const context = canvas.getContext('2d')
+    await page.render({ canvas, canvasContext: context, viewport }).promise
+    const png = await canvas.encode('png')
+    const textItems = content.items
+      .filter((item) => 'str' in item && item.str.trim())
+      .map((item) => {
+        const [x, baseline] = viewport.convertToViewportPoint(item.transform[4], item.transform[5])
+        return {
+          text: item.str,
+          x,
+          baseline,
+          width: item.width * 1.5,
+          height: item.height * 1.5,
+          horizontal: isUprightText(item, rotation)
+        }
+      })
+    const rules = collectTableRules(await page.getOperatorList(), viewport).map((rect) =>
+      rect.slice()
+    )
+    const value = {
+      png,
+      width: canvas.width,
+      height: canvas.height,
+      rotation,
+      rules,
+      textItems,
+      ...(mode !== 'production' ? { canvas } : {})
+    }
+    prepared = true
+    return value
+  } finally {
+    if (canvas && (mode === 'production' || !prepared)) canvas.width = canvas.height = 1
+    let cleanupComplete = false
+    try {
+      try {
+        page.cleanup()
+        await document.cleanup()
+      } finally {
+        if (pages.length === 1) await destroyPdf()
+      }
+      cleanupComplete = true
+    } finally {
+      if (canvas && !cleanupComplete) canvas.width = canvas.height = 1
+    }
+  }
+}
+
 try {
   await mkdir(outputDirectory, { recursive: true })
   for (const [name, model] of Object.entries(models)) {
@@ -186,41 +253,18 @@ try {
     }
   }
   const document = await task.promise
+  installPdfCanvasReset(document.canvasFactory)
   const results = []
   for (const pageNumber of pages) {
-    assert(pageNumber <= document.numPages)
-    const page = await document.getPage(pageNumber)
-    let canvas
+    const { png, width, height, rotation, rules, textItems, canvas } = await preparePage(
+      document,
+      pageNumber
+    )
     try {
-      const content = await repairPdfSymbolText(page, await page.getTextContent())
-      const rotation = readingRotation(page, content)
-      const viewport = page.getViewport({ scale: 1.5, rotation })
-      assert(viewport.width * viewport.height <= 4_000_000)
-      canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
-      const context = canvas.getContext('2d')
-      await page.render({ canvas, canvasContext: context, viewport }).promise
-      const png = await canvas.encode('png')
-      const detection = await infer('detection', png, canvas.width, canvas.height)
+      const detection = await infer('detection', png, width, height)
       await sessions.afterDetection()
       if (pages.length === 1) phase('detection', 'released')
       detection.objects = deduplicateTableDetections(detection.objects)
-      const textItems = content.items
-        .filter((item) => 'str' in item && item.str.trim())
-        .map((item) => {
-          const [x, baseline] = viewport.convertToViewportPoint(
-            item.transform[4],
-            item.transform[5]
-          )
-          return {
-            text: item.str,
-            x,
-            baseline,
-            width: item.width * 1.5,
-            height: item.height * 1.5,
-            horizontal: isUprightText(item, rotation)
-          }
-        })
-      const rules = collectTableRules(await page.getOperatorList(), viewport)
       for (const rect of findCaptionedNumericTableRegions(
         textItems,
         rules,
@@ -228,14 +272,15 @@ try {
       )) {
         detection.objects.push({ label: 'table', rect, origin: 'captioned-numeric-region' })
       }
+      const context = canvas?.getContext('2d')
       const tables = []
       for (const [index, object] of detection.objects.entries()) {
         if (object.label !== 'table') continue
         const id = `page-${pageNumber}-table-${index + 1}`
         const left = Math.max(0, Math.floor(object.rect[0]) - 10)
         const top = Math.max(0, Math.floor(object.rect[1]) - 10)
-        const right = Math.min(canvas.width, Math.ceil(object.rect[2]) + 10)
-        const bottom = Math.min(canvas.height, Math.ceil(object.rect[3]) + 10)
+        const right = Math.min(width, Math.ceil(object.rect[2]) + 10)
+        const bottom = Math.min(height, Math.ceil(object.rect[3]) + 10)
         assert(right > left && bottom > top)
         const crop = await sharp(png)
           .extract({ left, top, width: right - left, height: bottom - top })
@@ -347,8 +392,6 @@ try {
         )
     } finally {
       if (canvas) canvas.width = canvas.height = 1
-      page.cleanup()
-      await document.cleanup()
     }
   }
   const report = {
@@ -372,7 +415,7 @@ try {
   await writeFile(join(outputDirectory, 'onnx-probe.json'), JSON.stringify(report, null, 2) + '\n')
 } finally {
   try {
-    await task.destroy()
+    await destroyPdf()
   } finally {
     await sessions.close()
   }

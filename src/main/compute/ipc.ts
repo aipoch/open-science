@@ -205,6 +205,7 @@ const createComputeHandlers = (
                 service.wakeExternalJobs(mode)
                 return
               }
+              service.wakeJobPoller()
             }
             await dispatchJob(queuedJobId, {
               connectionBroker,

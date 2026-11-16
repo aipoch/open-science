@@ -148,7 +148,7 @@ import type {
   ValidateProviderResult,
   VisionModelConfiguration as VisionModel
 } from '../../shared/settings'
-import { isCodexSubscriptionProvider } from '../../shared/settings'
+import { isCodexSubscriptionProvider } from '../../shared/settings-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type {
   InstallMissingWslDependenciesRequest,
@@ -1564,8 +1564,8 @@ class SettingsService {
     return this.skills.importAgentHomeSkills(request)
   }
   // Computes the startup gates from a fresh or immediate startup-chain runtime probe.
-  async getPreflight(): Promise<ReadinessPreflight> {
-    return this.runtimeManager.getPreflight(this.providers)
+  async getPreflight(signal?: AbortSignal): Promise<ReadinessPreflight> {
+    return this.runtimeManager.getPreflight(this.providers, signal)
   }
 
   async bootstrap(

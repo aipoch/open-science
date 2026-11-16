@@ -24,7 +24,8 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { CODEX_SUBSCRIPTION_PROVIDER_ID, type AgentFrameworkId } from '../../shared/settings'
+import type { AgentFrameworkId } from '../../shared/settings'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings-runtime'
 import {
   claudeCodeFramework,
   codeBuddyFramework,

@@ -1,3 +1,8 @@
+import {
+  registerScheduleCommands,
+  scheduleCommandGroup,
+  type ScheduleCommands
+} from './schedules/application-commands'
 import { allowedDuringServiceStop } from './service-command-admission'
 import { ApplicationCommandError } from '../shared/application-command-contract'
 import {
@@ -160,6 +165,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   memory: MemoryCommandOwner
   specialist: SpecialistApplicationOwner
   literature: LiteratureCommandOwner
+  schedules: ScheduleCommands
   bookmarks: BookmarkCommandOwner
   sessionReplay: SessionReplayCommandOwner
   pdfAnnotations: PdfAnnotationCommandOwner
@@ -250,7 +256,6 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'remote-access:set-pinggy-token',
   'remote-access:set-pinggy-region',
   'sessions:export-conversation',
-  'sessions:fork',
   'sessions:inspect-diagnostics',
   'sessions:export-diagnostics',
   'sessions:cancel-diagnostics',
@@ -394,6 +399,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([literatureApplicationCommandGroup], (registrar) =>
       registerLiteratureApplicationCommands(registrar, dependencies.literature)
+    ),
+    defineApplicationCommandModule([scheduleCommandGroup], (registrar) =>
+      registerScheduleCommands(registrar, dependencies.schedules)
     ),
     defineApplicationCommandModule([bookmarkApplicationCommandGroup], (registrar) =>
       registerBookmarkApplicationCommands(registrar, dependencies.bookmarks)

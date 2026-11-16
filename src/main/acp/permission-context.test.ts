@@ -84,6 +84,94 @@ const observe = (
 }
 
 describe('ACP permission context', () => {
+  const scheduleTools = [
+    'list_schedules',
+    'create_schedule',
+    'manage_current_schedule',
+    'update_schedule',
+    'close_schedule'
+  ]
+  it.each(scheduleTools)(
+    'correlates a CodeBuddy %s request title with observed tool metadata',
+    async (tool) => {
+      const context = new AcpPermissionContext({
+        emitPermissionRequest: vi.fn(),
+        routing: permissionRouting()
+      })
+      const scope = {
+        sessionId: 's',
+        framework: 'codebuddy' as const,
+        mcpServerNames: ['open-science-schedule'],
+        isCancelled: () => false
+      }
+      const request = permissionRequest('s', 'call', {
+        title: 'call',
+        _meta: { 'codebuddy.ai/toolName': `mcp__open_science_schedule__${tool}` },
+        rawInput: { turnRef: 'current-turn' }
+      })
+      try {
+        expect(
+          trustedMcpToolIdentity((await context.restoreToolCall(request, scope))!)
+        ).toBeUndefined()
+        context.observeToolCall(
+          {
+            sessionId: 's',
+            update: {
+              toolCallId: request.toolCall.toolCallId,
+              rawInput: request.toolCall.rawInput,
+              _meta: request.toolCall._meta,
+              title: `mcp__open_science_schedule__${tool}`,
+              sessionUpdate: 'tool_call',
+              status: 'pending'
+            }
+          },
+          scope
+        )
+        const restored = await context.restoreToolCall(request, scope)
+        expect(trustedMcpToolIdentity(restored!)).toBe(`open-science-schedule/${tool}`)
+      } finally {
+        context.dispose()
+      }
+    }
+  )
+  it('does not reuse CodeBuddy Schedule display text as authority for a different tool', async () => {
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting()
+    })
+    const scope = {
+      sessionId: 's',
+      framework: 'codebuddy' as const,
+      mcpServerNames: ['open-science-schedule'],
+      isCancelled: () => false
+    }
+    const request = permissionRequest('s', 'call', {
+      title: 'call',
+      _meta: { 'codebuddy.ai/toolName': 'mcp__open_science_schedule__create_schedule' }
+    })
+    try {
+      context.observeToolCall(
+        {
+          sessionId: 's',
+          update: {
+            toolCallId: request.toolCall.toolCallId,
+            rawInput: request.toolCall.rawInput,
+            title: 'mcp__open_science_schedule__list_schedules',
+            sessionUpdate: 'tool_call',
+            status: 'pending',
+            _meta: { 'codebuddy.ai/toolName': 'mcp__open_science_schedule__list_schedules' }
+          }
+        },
+        scope
+      )
+      expect(
+        trustedMcpToolIdentity((await context.restoreToolCall(request, scope))!)
+      ).toBeUndefined()
+    } finally {
+      context.dispose()
+    }
+  })
+
   it('binds built-in harness MCP approval to the observed call and releases host admission', async () => {
     const emit = vi.fn()
     const authorized = vi.fn()

@@ -12,7 +12,10 @@ import {
   type ProtocolForwardingBridgeTarget
 } from './protocol-forwarding-bridge'
 import { MessagesBridge, type MessagesBridgeTarget } from './messages-bridge'
-import type { ChatCompletionsCompatibilityTarget } from './chat-completions-compatibility'
+import {
+  ChatCompletionsCompatibilityBridge,
+  type ChatCompletionsCompatibilityTarget
+} from './chat-completions-compatibility'
 
 type ResponsesToChatCompletionsBridgeStub = ReturnType<
   NonNullable<ProviderTransportOwnerOptions['createResponsesToChatCompletionsBridge']>
@@ -948,6 +951,73 @@ describe('ProviderTransportOwner generations', () => {
     await generation.release()
     expect(bridge.close).toHaveBeenCalledOnce()
     expect(selector.close).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { name: 'user configuration', configured: 12_000, expected: 12_000 },
+    { name: 'catalog model', official: true, expected: 64_000 },
+    { name: 'smaller user configuration', official: true, configured: 12_000, expected: 12_000 },
+    { name: 'smaller request', configured: 12_000, request: { max_tokens: 1000 }, expected: 1000 },
+    {
+      name: 'model ceiling',
+      official: true,
+      configured: 100_000,
+      request: { max_completion_tokens: 90_000 },
+      expected: 64_000
+    },
+    { name: 'unknown model', expected: 4096 }
+  ])('uses the $name for the CodeBuddy Messages output budget', async (scenario) => {
+    const upstream = vi.fn<typeof fetch>(async () =>
+      Response.json({ content: [{ type: 'text', text: 'result' }], stop_reason: 'end_turn' })
+    )
+    const owner = new ProviderTransportOwner({
+      createResponsesToChatCompletionsBridge: () => makeResponsesToChatCompletionsBridge(0),
+      createChatCompletionsCompatibilityBridge: (target) =>
+        new ChatCompletionsCompatibilityBridge(target, upstream)
+    })
+    const model = scenario.official ? 'claude-haiku-4-5-20251001' : 'custom-model'
+    const activeTarget: ProviderRuntimeTarget = {
+      ...makeTarget(),
+      providerType: scenario.official ? 'official' : 'custom',
+      effectiveModel: model,
+      apiEndpoints: ['messages'],
+      provider: {
+        ...makeTarget().provider,
+        ...(scenario.official ? { vendorId: 'anthropic' as const } : {}),
+        model,
+        apiEndpoints: ['messages'],
+        maxOutputTokens: scenario.configured
+      }
+    }
+    const generation = await owner.acquire({
+      activeTarget,
+      plan: {
+        ...makePlan({ kind: 'codebuddy-provider-compatibility', wire: 'messages' }),
+        modelRoute: 'codebuddy-openai'
+      }
+    })
+    try {
+      const response = await fetch(`${generation.provider?.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${generation.provider?.key}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: 'Write the Film screenplay.' }],
+          ...scenario.request
+        })
+      })
+      expect(response.status).toBe(200)
+      await response.json()
+      expect(JSON.parse(String(upstream.mock.calls[0]?.[1]?.body))).toMatchObject({
+        model,
+        max_tokens: scenario.expected,
+        stream: false
+      })
+    } finally {
+      await generation.release()
+    }
   })
 
   it('creates independent Responses generations and releases each idempotently', async () => {

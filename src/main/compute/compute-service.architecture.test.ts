@@ -394,6 +394,8 @@ describe('Compute service architecture', () => {
         'appendDetails',
         'bindJobHarvestRetry',
         'bindExternalJobRuntime',
+        'bindCancellationReaper',
+        'bindJobPoller',
         'cleanStagedJob',
         'callCommand',
         'cancelJob',
@@ -412,6 +414,7 @@ describe('Compute service architecture', () => {
         'listRayTargets',
         'listModalTargets',
         'wakeExternalJobs',
+        'wakeJobPoller',
         'reconcileExternalJobs',
         'probe',
         'replaceDetails',
@@ -465,8 +468,10 @@ describe('Compute service architecture', () => {
     }
 
     expect(referencedMembersOn(computePaths.jobRuntime, ['deps', 'computeService'])).toEqual([
+      'bindCancellationReaper',
       'bindExternalJobRuntime',
       'bindJobHarvestRetry',
+      'bindJobPoller',
       'execution',
       'handleJobCancellationConfirmed',
       'handleJobUpdated',

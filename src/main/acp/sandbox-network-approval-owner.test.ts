@@ -15,7 +15,7 @@ import { AcpPermissionWaitOwner, type PermissionWaitSessions } from './permissio
 import { SandboxNetworkApprovalOwner } from './sandbox-network-approval-owner'
 import { NotebookNetworkSettingsOwner } from '../settings/notebook-network-settings-owner'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import { SETTINGS_FILE_VERSION } from '../../shared/settings-runtime'
 
 const fixture = (): {
   sessions: PermissionWaitSessions

@@ -2601,13 +2601,14 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(onDeleteSession).toHaveBeenCalledWith(sessions[0])
   })
 
-  it('renders Customize, Files, Compute, Literature, and Marketplace after New and wires their entries', async () => {
+  it('renders Customize, Files, Compute, Schedule, Literature, and Marketplace after New and wires their entries', async () => {
     const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const onOpenFiles = vi.fn()
     const onOpenLiterature = vi.fn()
     const onOpenMarketplace = vi.fn()
     const onOpenSettings = vi.fn()
     const onOpenCompute = vi.fn()
+    const onOpenSchedule = vi.fn()
     const tree = WorkspaceSidebarView({
       now: Date.now(),
       projectName: 'Example project',
@@ -2626,6 +2627,7 @@ describe('WorkspaceSidebar accessible render', () => {
       isLibraryOpen: true,
       isComputeOpen: false,
       onOpenCompute,
+      onOpenSchedule,
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
       canDownloadArtifacts: true,
@@ -2647,10 +2649,11 @@ describe('WorkspaceSidebar accessible render', () => {
     const literatureButton = buttons.find((button) => getTextContent(button).trim() === 'Library')
     const computeButton = buttons.find((button) => getTextContent(button).trim() === 'Compute')
 
+    const scheduleButton = buttons.find((button) => getTextContent(button).trim() === 'Schedule')
     const marketplaceButton = buttons.find(
       (button) => getTextContent(button).trim() === 'Resource center'
     )
-    expect(buttons[newButtonIndex + 5]).toBe(marketplaceButton)
+    expect(buttons[newButtonIndex + 6]).toBe(marketplaceButton)
     expect(marketplaceButton?.props['aria-controls']).toBe('right-panel')
     expect(marketplaceButton?.props['aria-pressed']).toBe(true)
     expect(marketplaceButton?.props.title).toBe('Resource center')
@@ -2664,7 +2667,10 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(buttons[newButtonIndex + 1]).toBe(customizeButton)
     expect(buttons[newButtonIndex + 2]).toBe(filesButton)
     expect(buttons[newButtonIndex + 3]).toBe(computeButton)
-    expect(buttons[newButtonIndex + 4]).toBe(literatureButton)
+    expect(buttons[newButtonIndex + 4]).toBe(scheduleButton)
+    expect(buttons[newButtonIndex + 5]).toBe(literatureButton)
+    ;(scheduleButton?.props.onClick as () => void)()
+    expect(onOpenSchedule).toHaveBeenCalledOnce()
     expect(collectElements(customizeButton).some((element) => element.type === Toolbox)).toBe(true)
     expect(filesButton?.props['aria-controls']).toBe('right-panel')
     expect(filesButton?.props['aria-pressed']).toBe(true)

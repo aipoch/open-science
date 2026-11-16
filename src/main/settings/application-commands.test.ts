@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { parseSettingsSnapshot } from '../../shared/settings'
+import { parseSettingsSnapshot } from '../../shared/settings-runtime'
 import { RENDERER_CONTRACT_GROUPS } from '../../shared/renderer-contract-catalog'
 import {
   createApplicationCommandRouter,

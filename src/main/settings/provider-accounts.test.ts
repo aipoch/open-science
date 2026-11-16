@@ -1,5 +1,5 @@
 import { listAgentFrameworks } from '../agent-framework/registry'
-import { providerValidationRoute, providerValidationSucceeded } from '../../shared/settings'
+import { providerValidationRoute, providerValidationSucceeded } from '../../shared/settings-runtime'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'

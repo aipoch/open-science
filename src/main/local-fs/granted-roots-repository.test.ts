@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import { SETTINGS_FILE_VERSION } from '../../shared/settings-runtime'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { SettingsRepository } from '../settings/repository'

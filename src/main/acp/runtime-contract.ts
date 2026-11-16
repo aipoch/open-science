@@ -79,6 +79,7 @@ export type AcpRuntimeCallbacks = {
 }
 
 export type AcpRuntimeOptions = {
+  schedules?: import('../schedules/mcp').ScheduleMcp
   prepareSessionReading?: PrepareSessionReading
   classifySkills?: import('../../shared/classification').ClassifySkills
   classifyReadingRoute?: import('../../shared/classification').ClassifyReadingRoute
@@ -90,6 +91,8 @@ export type AcpRuntimeOptions = {
   callbacks?: AcpRuntimeCallbacks
   // Restricted inference classifies operational notices; ordinary chat keeps its presentation.
   separateProviderNotices?: boolean
+  // Restricted inference can recover a provider's truncated response from its turn observations.
+  recoverOutputTruncation?: boolean
   auxiliaryUsage?: Readonly<{
     projectIdForSession: (sessionId: string) => Promise<string | undefined>
     record: (

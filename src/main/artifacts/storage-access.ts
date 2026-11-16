@@ -1,4 +1,5 @@
 import {
+  lstat,
   mkdir,
   open,
   readFile,
@@ -23,6 +24,7 @@ import type {
 } from './publication-types'
 import {
   ARTIFACTS_DIR,
+  normalizeArtifactFilename,
   CURRENT_RUN_FILE,
   METADATA_DIR,
   PENDING_DIR,
@@ -80,8 +82,17 @@ const assertSafeFilename = (filename: string): string => {
   return filename
 }
 
-const getArtifactMetadataPath = (directory: string, filename: string): string =>
-  join(directory, METADATA_DIR, `${encodeURIComponent(filename)}.json`)
+const getArtifactMetadataPath = (directory: string, filename: string): string => {
+  const encodedName = `${encodeURIComponent(filename)}.json`
+  // Keep existing sidecars addressable. Percent encoding can make a valid Unicode filename
+  // exceed the filesystem's 255-byte component limit. %sha256- cannot be produced by
+  // encodeURIComponent, so hashed keys cannot alias legacy encoded filenames.
+  const metadataName =
+    encodedName.length <= 255
+      ? encodedName
+      : `%sha256-${createHash('sha256').update(filename).digest('hex')}.json`
+  return join(directory, METADATA_DIR, metadataName)
+}
 
 const getProjectArtifactDir = (storageRoot: string, projectId: string): string =>
   join(storageRoot, ARTIFACTS_DIR, assertSafePathSegment(projectId))
@@ -232,6 +243,40 @@ class ArtifactStorageAccess {
     return join(this.getProjectArtifactDir(projectId), sessionId, messageId)
   }
 
+  async resolveArtifactFilename(directory: string, filename: string): Promise<string> {
+    try {
+      const entries = await readdir(directory)
+      if (entries.includes(filename)) {
+        const exact = await lstat(join(directory, filename), { bigint: true })
+        if (!exact.isFile()) throw new Error('Artifact filename alias is unsupported.')
+        return filename
+      }
+      const requested = await lstat(join(directory, filename), { bigint: true })
+      // Do not retarget a symlink entry to the name of the file it references.
+      if (!requested.isFile()) return filename
+      const identity = normalizeArtifactFilename(filename)
+      const matches: string[] = []
+      for (const entry of entries) {
+        if (normalizeArtifactFilename(entry) !== identity) continue
+        const candidate = await lstat(join(directory, entry), { bigint: true })
+        // Folding only selects candidates; the filesystem decides whether they are aliases.
+        if (
+          candidate.isFile() &&
+          candidate.dev === requested.dev &&
+          candidate.ino === requested.ino
+        )
+          matches.push(entry)
+      }
+      if (matches.length > 1) throw new Error('Artifact filename alias is ambiguous.')
+      // An existing native alias (for example an 8.3 name) must not create a second sidecar.
+      if (matches.length === 0) throw new Error('Artifact filename alias is unsupported.')
+      return matches[0]
+    } catch (error) {
+      if (isMissingFileError(error)) return filename
+      throw error
+    }
+  }
+
   async renameIfPresent(sourcePath: string, targetPath: string): Promise<boolean> {
     try {
       await rename(sourcePath, targetPath)
@@ -313,7 +358,7 @@ class ArtifactStorageAccess {
     await mkdir(metadataDirectory, { recursive: true })
     await this.durability.syncDirectory(directory)
     const path = getArtifactMetadataPath(directory, filename)
-    const temporaryPath = `${path}.${randomUUID()}.tmp`
+    const temporaryPath = join(metadataDirectory, `.${randomUUID()}.tmp`)
     try {
       await writeFile(temporaryPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
       await this.durability.syncFile(temporaryPath)
@@ -448,6 +493,8 @@ const createArtifactPublicationStorage = (
   getMessageDir: (projectId, sessionId, messageId) =>
     access.getMessageDir(projectId, sessionId, messageId),
   getArtifactMetadataPath,
+  resolveArtifactFilename: (directory, filename) =>
+    access.resolveArtifactFilename(directory, filename),
   resolveAllowedImportFilePath,
   readFilePrefix,
   renameIfPresent: (sourcePath, targetPath) => access.renameIfPresent(sourcePath, targetPath),

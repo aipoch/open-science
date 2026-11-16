@@ -647,9 +647,13 @@ describe('AgentRuntimeManager', () => {
     expect(detectionOutcome).toBe('AbortError')
   })
 
-  it.each(['getPreflight', 'checkEnvironment'] as const)(
-    'aborts and drains all %s runtime probes before disposal completes',
-    async (operation) => {
+  it.each([
+    ['getPreflight', 'shutdown'],
+    ['getPreflight', 'caller'],
+    ['checkEnvironment', 'shutdown']
+  ] as const)(
+    'aborts and drains all %s runtime probes after %s cancellation',
+    async (operation, cancellation) => {
       const claudePath = join(storageRoot, 'claude')
       const opencodePath = join(storageRoot, 'opencode')
       await repository.setClaudeInfo({ resolvedPath: claudePath, version: 'old' })
@@ -683,13 +687,20 @@ describe('AgentRuntimeManager', () => {
         resolveActiveModel: () => undefined,
         isProviderKeyUsable: async () => false
       }
+      const controller = new AbortController()
       const pending =
-        operation === 'getPreflight' ? manager.getPreflight(providers) : manager.checkEnvironment()
+        operation === 'getPreflight'
+          ? manager.getPreflight(providers, controller.signal)
+          : manager.checkEnvironment()
       const outcome = pending.then(
         () => 'resolved',
         (error: Error) => error.name
       )
       const signals = await Promise.all([claudeEntered.promise, opencodeEntered.promise])
+      if (cancellation === 'caller') {
+        controller.abort()
+        expect(signals.map((signal) => signal?.aborted)).toEqual([true, true])
+      }
       let disposed = false
       const disposal = manager.dispose().then(() => {
         disposed = true

@@ -9,7 +9,7 @@ import { SideChatRuntimeOwner } from '../side-chat/runtime-owner'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
 import type { ResolvedAgentBackend } from '../agent-framework'
 
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import { SETTINGS_FILE_VERSION } from '../../shared/settings-runtime'
 import type { AgentConfigFile, AgentFrameworkId } from '../agent-framework'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
@@ -1125,6 +1125,25 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     await backend.messagesBridgeLease?.release()
     await backend.responsesTransportLease?.release()
     await backend.providerTransportLease?.release()
+  })
+
+  it('sets the Claude output budget only for a restricted target with a known limit', async () => {
+    const harness = makeHarness({
+      targetOverride: () => ({ provider: { maxOutputTokens: 64_000 } })
+    })
+    const target = await harness.resolver.captureExplicitTarget()
+    const restricted = await harness.resolver.resolveExplicitTarget(target, {
+      includeSkillAndConnectorContext: false,
+      useResolvedModelOutputLimit: true
+    })
+    const main = await harness.resolver.resolveActiveBackend()
+    try {
+      expect(restricted.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('64000')
+      expect(main.env).not.toHaveProperty('CLAUDE_CODE_MAX_OUTPUT_TOKENS')
+    } finally {
+      await restricted.messagesBridgeLease?.release()
+      await main.messagesBridgeLease?.release()
+    }
   })
 
   it('keeps a single Claude target behind loopback and projects its model target', async () => {

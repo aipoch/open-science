@@ -36,7 +36,9 @@ type ComputeJobRuntimeDeps = {
     | 'startQueueReconciliation'
     | 'stopQueueReconciliation'
   > &
-    Partial<Pick<ComputeService, 'bindExternalJobRuntime'>>
+    Partial<
+      Pick<ComputeService, 'bindExternalJobRuntime' | 'bindCancellationReaper' | 'bindJobPoller'>
+    >
   jobDeletionOwner?: Pick<ComputeJobDeletionOwner, 'bindRuntime'>
   hostRepository: ComputeHostRepository
   jobRepository: ComputeJobRepository
@@ -55,10 +57,13 @@ type ComputeJobRuntimeAdapters = {
   ) => Promise<void>
   broadcast?: typeof broadcastJobUpdated
   harvest?: typeof harvestJob
-  createPoller?: (deps: JobPollerDeps) => ComputeJobRuntime & Pick<JobPoller, 'pause' | 'resume'>
+  createPoller?: (
+    deps: JobPollerDeps
+  ) => ComputeJobRuntime & Pick<JobPoller, 'pause' | 'resume'> & { wake?: () => Promise<void> }
   createCancellationReaper?: (
     repository: ComputeJobOperationRepository
-  ) => ComputeJobRuntime & Pick<ComputeJobCancellationReaper, 'pause' | 'resume'>
+  ) => ComputeJobRuntime &
+    Pick<ComputeJobCancellationReaper, 'pause' | 'resume'> & { wake?: () => void }
 }
 
 // Owns the production poller's complete job-update contract. Main-process startup supplies only the
@@ -167,7 +172,7 @@ export const createComputeJobRuntime = (
     const cleanup = runtime.manualCleanup
     return deps.computeService.bindExternalJobRuntime!(
       mode,
-      () => runtime.tick(),
+      () => runtime.wake(),
       cleanup &&
         ((job) => {
           if (stopRequested || harvestAbortController.signal.aborted)
@@ -198,6 +203,19 @@ export const createComputeJobRuntime = (
     )
   })
   const runtimes = Array.from(external.values())
+  let externalFallbackTimer: ReturnType<typeof setInterval> | undefined
+  const startExternalFallback = (): void => {
+    if (runtimes.length === 0 || externalFallbackTimer) return
+    externalFallbackTimer = setInterval(() => {
+      for (const runtime of runtimes) void runtime.tick()
+    }, 60_000)
+    externalFallbackTimer.unref?.()
+  }
+  const stopExternalFallback = (): void => {
+    if (!externalFallbackTimer) return
+    clearInterval(externalFallbackTimer)
+    externalFallbackTimer = undefined
+  }
   const harvestScheduler = createHarvestScheduler(pollerDeps.harvestFn!)
   pollerDeps.harvestScheduler = harvestScheduler
 
@@ -235,7 +253,8 @@ export const createComputeJobRuntime = (
     await harvestScheduler.retry(job, signal)
   })
 
-  const poller =
+  const poller: ComputeJobRuntime &
+    Pick<JobPoller, 'pause' | 'resume'> & { wake?: () => Promise<void> } =
     adapters.createPoller?.(pollerDeps) ??
     createNotifyingJobPoller({
       ...pollerDeps,
@@ -278,9 +297,17 @@ export const createComputeJobRuntime = (
       ))
     : undefined
   let stopRequested = false
+  const unbindCancellationReaper = deps.computeService.bindCancellationReaper?.(() => {
+    const reaper = cancellationReaper as { wake?: () => void } | undefined
+    reaper?.wake?.()
+  })
+  const unbindJobPoller = deps.computeService.bindJobPoller?.(() => {
+    void poller.wake?.()
+  })
   const deletionRuntime = {
     pause: async (): Promise<void> => {
       harvestAbortController.abort()
+      stopExternalFallback()
       await Promise.all([
         poller.pause(),
         cancellationReaper?.pause(),
@@ -295,6 +322,7 @@ export const createComputeJobRuntime = (
       for (const r of runtimes) r.resume()
       poller.resume()
       cancellationReaper?.resume()
+      startExternalFallback()
     }
   }
   const unbindDeletionRuntime = deps.jobDeletionOwner?.bindRuntime(deletionRuntime)
@@ -310,6 +338,7 @@ export const createComputeJobRuntime = (
           ...runtimes.map((r) => r.start())
         ])
         if (stopRequested) return
+        startExternalFallback()
         try {
           await deps.computeService.startQueueReconciliation()
         } catch (error) {
@@ -333,7 +362,10 @@ export const createComputeJobRuntime = (
           }
         }
         for (const unbind of unbindExternal) await attempt(unbind)
+        stopExternalFallback()
         await attempt(() => unbindHarvestRetry())
+        await attempt(() => unbindCancellationReaper?.())
+        await attempt(() => unbindJobPoller?.())
         await attempt(() => unbindDeletionRuntime?.())
         await attempt(() => deps.computeService.stopQueueReconciliation())
         await attempt(() => startTask)

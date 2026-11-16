@@ -5,12 +5,8 @@ import {
   type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
 import type { ModelProtocol } from '@aipoch/providers'
-import {
-  ENDPOINT_PATHS,
-  providerEndpoints,
-  type ProviderType,
-  type ProviderView
-} from '../../../../shared/settings'
+import type { ProviderType, ProviderView } from '../../../../shared/settings'
+import { ENDPOINT_PATHS, providerEndpoints } from '../../../../shared/settings-runtime'
 
 // Human-readable route for an endpoint, so a reason reads as a route rather than a vendor name. The
 // routes are literal API paths, identical in every locale; only the joining word is translated.

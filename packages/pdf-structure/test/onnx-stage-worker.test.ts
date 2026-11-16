@@ -11,8 +11,10 @@ const extract = await readFile(
     new URL('../resources/literature-pdf-extract.mjs', import.meta.url),
     'utf8'
   ),
-  declaration = extract
-    .slice(extract.indexOf('const runOnnxWorker ='), extract.indexOf('\nawait runOnnxWorker('))
+  runner = await readFile(new URL('../resources/onnx-process.mjs', import.meta.url), 'utf8'),
+  declaration = runner
+    .slice(runner.indexOf('export const runOnnxWorker ='), runner.indexOf('\n// Only host owns'))
+    .replace('export const', 'const')
     .replaceAll(
       'import.meta.url',
       JSON.stringify(new URL('../resources/literature-pdf-extract.mjs', import.meta.url).href)
@@ -176,5 +178,6 @@ it('finishes ONNX before importing geometry and retains its original same-thread
     extract.indexOf("const structurePhase = await run('./literature-pdf-structure.mjs'")
   )
   expect(extract).toContain('structurePhase.nativeFigureRenderContexts.clear()')
+  expect(extract).toContain('const runOnnxWorker = () => requestOnnxProcess(parentPort)')
   expect(extract).not.toContain("await run('./literature-pdf-onnx.mjs'")
 })

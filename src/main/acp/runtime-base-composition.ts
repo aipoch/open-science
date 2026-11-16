@@ -215,6 +215,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     }
   }
   const sessionCapabilities = new AcpSessionCapabilityOwner({
+    schedules: options.schedules,
     registerBridgeMcpSession: (sessionId, tools, namespaces) =>
       connectionResources.registerBridgeMcpSession(sessionId, tools, namespaces),
     unregisterBridgeMcpSession: (sessionId) =>
@@ -573,7 +574,8 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     backendGeneration,
     providerPromptExecutor: new AcpProviderPromptExecutor({
       backendGeneration,
-      opencodeUsageFetch: options.opencodeUsageFetch
+      opencodeUsageFetch: options.opencodeUsageFetch,
+      recoverOutputTruncation: options.recoverOutputTruncation
     }),
     providerPromptSerialization: new AcpProviderPromptSerializationOwner(),
     contextUsageTracker,

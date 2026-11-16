@@ -93,6 +93,8 @@ const normalizeNotebookRunFiles = async (dataRoot: string): Promise<void> => {
       }
 
       const document = JSON.parse(raw) as NotebookRunDocument
+      // Version 2 is written only with portable paths, including its immutable record files.
+      if ((document as { version: number }).version === 2) continue
       const encoded = encodeRunDocumentDataPaths(document, dataRoot)
       const temporaryPath = `${filePath}.normalize.tmp`
 

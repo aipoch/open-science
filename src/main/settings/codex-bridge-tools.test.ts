@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv'
 import { LiteratureIndex, LiteratureReader } from '@aipoch/literature-reading'
 
 import { codexBridgeStaticMcpTools, createCodexBridgeMcpTools } from './codex-bridge-tools'
@@ -51,6 +52,41 @@ describe('Codex bridge MCP catalogs', () => {
     }
   )
 
+  it('publishes the schedule tools only for enabled sessions', () => {
+    const names = (enabled: boolean): string[] =>
+      createCodexBridgeMcpTools({ schedules: enabled })
+        .filter((t) => t.namespace === 'mcp__open_science_schedule')
+        .map((t) => t.name)
+        .sort()
+    for (const tool of createCodexBridgeMcpTools({ schedules: true }).filter(
+      (tool) =>
+        tool.namespace === 'mcp__open_science_schedule' &&
+        ['create_schedule', 'update_schedule'].includes(tool.name)
+    )) {
+      expect(JSON.stringify(tool.parameters)).not.toContain('permissionProfile')
+      expect(JSON.stringify(tool.parameters)).toContain('Omit for once')
+      if (tool.name === 'create_schedule') {
+        const validate = new AjvJsonSchemaValidator().getValidator(tool.parameters)
+        expect(
+          validate({
+            turnRef: 'current-turn',
+            requestId: 'review',
+            name: 'Review',
+            rule: { kind: 'daily', time: '09:00' },
+            message: 'Review progress.'
+          }).valid
+        ).toBe(true)
+      }
+    }
+    expect(names(false)).toEqual([])
+    expect(names(true)).toEqual([
+      'close_schedule',
+      'create_schedule',
+      'list_schedules',
+      'manage_current_schedule',
+      'update_schedule'
+    ])
+  })
   it('declares every static Literature and Library tool', () => {
     const names = new Set(codexBridgeStaticMcpTools().map(identity))
     expect([...names]).toEqual(

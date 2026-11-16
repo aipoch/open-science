@@ -1,3 +1,4 @@
+import { freshSessionAttachment } from './session-agent-target'
 import { PreviousAgentContextUnavailableError } from './main-agent-process-ownership'
 import * as acp from '@agentclientprotocol/sdk'
 import type { ActiveSession, ClientConnection, McpServer } from '@agentclientprotocol/sdk'
@@ -523,7 +524,8 @@ describe('AcpProviderSessionResumer', () => {
 
   it.each([
     { previousFrameworkId: 'opencode' as const },
-    { specialistBindingPending: true as const }
+    { specialistBindingPending: true as const },
+    { sessionId: 'stable-app-session', [freshSessionAttachment]: true }
   ])('does not gate fresh provider adoption on unrelated cleanup evidence: %j', async (request) => {
     const assertResumeAllowed = vi.fn().mockRejectedValue(new Error('cleanup incomplete'))
     const harness = createHarness({ assertResumeAllowed })

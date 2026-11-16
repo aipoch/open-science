@@ -128,8 +128,9 @@ it('never accepts App B after stop publication even when old authorization compl
     await vi.waitFor(async () =>
       expect(await readServiceLifetime(configRoot)).toMatchObject({ stopping: false })
     )
+    // Rename makes the old record readable before the compensating write has settled.
+    await vi.waitFor(() => expect(() => lifetime.connect('b', 'socket-b')).toThrow('stopping'))
     await expect(attach()).rejects.toThrow()
-    expect(() => lifetime.connect('b', 'socket-b')).toThrow('stopping')
     await expect(lifetime.start()).rejects.toThrow('stopping')
     release.resolve()
     await denied

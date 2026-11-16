@@ -1,0 +1,16 @@
+{
+  "ownerPaths": [
+    "src/shared/schedule-time.ts",
+    "src/shared/schedule-time.test.ts",
+    "src/shared/session-schedules.ts"
+  ],
+  "interfacePaths": ["src/shared/schedule-time.ts", "src/shared/session-schedules.ts"],
+  "consumerModules": ["main_session_schedules", "workspace_schedules"],
+  "testFiles": {
+    "owner": ["src/shared/schedule-time.test.ts"],
+    "contract": [],
+    "consumer": ["src/main/schedules/dispatcher.test.ts"]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

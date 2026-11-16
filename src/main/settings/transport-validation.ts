@@ -1,17 +1,16 @@
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
 import { isAgentFrameworkId } from '../../shared/agent-framework-id'
 import { isPermissionProfileId, type PermissionProfileId } from '../../shared/permission-profiles'
-import {
-  isAppIconVariant,
-  isReasoningEffort,
-  type AppIconVariant,
-  type ProjectFilesFilterPreference,
-  type ReviewerModelConfiguration,
-  type SessionDetailsModelConfiguration,
-  type SetAgentRoutingRequest,
-  type SubagentModelConfiguration,
-  type VisionModelConfiguration
+import type {
+  AppIconVariant,
+  ProjectFilesFilterPreference,
+  ReviewerModelConfiguration,
+  SessionDetailsModelConfiguration,
+  SetAgentRoutingRequest,
+  SubagentModelConfiguration,
+  VisionModelConfiguration
 } from '../../shared/settings'
+import { isAppIconVariant, isReasoningEffort } from '../../shared/settings-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 

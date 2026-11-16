@@ -5,14 +5,16 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type {
+  AgentFrameworkView,
+  ProviderView,
+  SessionAgentConfiguration
+} from '../../../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
-  CODEX_SHARED_PROVIDER_ID,
-  type AgentFrameworkView,
-  type ProviderView,
-  type SessionAgentConfiguration
-} from '../../../../shared/settings'
+  CODEX_SHARED_PROVIDER_ID
+} from '../../../../shared/settings-runtime'
 import {
   reasoningEffortProfile,
   resolveReasoningEffortControl
