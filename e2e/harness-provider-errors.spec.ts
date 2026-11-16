@@ -1,4 +1,5 @@
 import { createServer } from 'node:http'
+import { readFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
@@ -99,6 +100,31 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
       await notice().locator('summary').click()
       await expect(notice().locator('pre')).toContainText('Model is unavailable')
       await expect(notice().locator('pre')).toContainText('desktop-provider-request')
+      await expect
+        .poll(async () => {
+          const log = await readFile(
+            await app.captureMainLog(`provider-error-${protocol}.log`),
+            'utf8'
+          )
+          return log
+            .split('\n')
+            .flatMap((line) => {
+              try {
+                return [JSON.parse(line)]
+              } catch {
+                return []
+              }
+            })
+            .find((record) => record.msg === 'model request failed')
+        })
+        .toMatchObject({
+          protocol,
+          model: 'provider-error-fixture',
+          status: 400,
+          phase: 'response',
+          safeMessage: 'Model is unavailable',
+          requestId: 'desktop-provider-request'
+        })
       await page.screenshot({ path: testInfo.outputPath('provider-error.png'), fullPage: true })
       await notice().getByRole('button', { name: 'Model settings', exact: true }).click()
       const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
