@@ -13,7 +13,11 @@ import {
 } from '@aipoch/diagnostics/node'
 import { augmentedPathEnv, npmBinDirsForCheck, withNpmBinFallback } from './shell-path'
 import { stripCodexCredentialEnv } from './process-tree'
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import {
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
+  terminateProcessTree
+} from '../process-tree'
 import { spawnCodexWithInstallAdmission, MAX_ACP_INITIALIZE_RESPONSE_CHARS } from './managed-codex'
 import { runVerificationProcess } from '../update/verification-process'
 
@@ -309,6 +313,13 @@ const runAcpInitializeSmoke =
         let processError: Error | undefined
         let initializeError:
           { code?: number; message?: ReturnType<typeof boundedRuntimeDiagnostic> } | undefined
+        const ownership = createPosixProcessTreeOwnership({
+          ...stripCodexCredentialEnv(augmentedPathEnv(process.env)),
+          ...(isJavaScript ? { ...nodeRuntimeEnvironment() } : {}),
+          NO_BROWSER: '1',
+          CODEX_HOME: codexHome,
+          ...(opts.codexPath ? { CODEX_PATH: opts.codexPath } : {})
+        })
         const child = spawnCodexWithInstallAdmission(
           [adapterPath, ...(opts.codexPath ? [opts.codexPath] : [])],
           () =>
@@ -317,16 +328,10 @@ const runAcpInitializeSmoke =
               windowsHide: true,
               shell: useShell,
               stdio: ['pipe', 'pipe', 'pipe'],
-              env: {
-                ...stripCodexCredentialEnv(augmentedPathEnv(process.env)),
-                ...(isJavaScript ? { ...nodeRuntimeEnvironment() } : {}),
-                NO_BROWSER: '1',
-                CODEX_HOME: codexHome,
-                ...(opts.codexPath ? { CODEX_PATH: opts.codexPath } : {})
-              }
+              env: ownership.env
             })
         )
-        if (platform !== 'win32') registerOwnedPosixProcessGroup(child)
+        if (platform !== 'win32') trackOwnedPosixProcessTree(child, ownership.token)
 
         const finish = (ok: boolean): void => {
           if (settled) return

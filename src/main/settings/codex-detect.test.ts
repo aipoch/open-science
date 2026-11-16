@@ -460,12 +460,70 @@ describe('codex-detect: real ACP initialize smoke', () => {
   })
 
   afterEach(async () => {
+    // Outcome-injection tests still own real adapters: retire their actual POSIX trackers only
+    // after the assertions, including cases that intentionally keep installation admission fenced.
+    const actual = await vi.importActual<typeof import('../process-tree')>('../process-tree')
+    for (const child of new Set(
+      terminateProcessTreeSpy.mock.calls.map(([child]) => child as ChildProcess)
+    ))
+      await actual.terminateProcessTree(child)
     await rm(tempRoot, { recursive: true, force: true }).catch(() => undefined)
     warnLogSpy.mockClear()
     errorLogSpy.mockClear()
     terminateProcessTreeSpy.mockClear()
     terminateProcessTreeSpy.mockImplementation(() => Promise.resolve({ reaped: true }))
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'reaps escaped ACP descendants after the adapter leader exits',
+    async () => {
+      const adapterPath = join(tempRoot, 'escaped-adapter.js')
+      const pidFile = join(tempRoot, 'escaped.pid')
+      let descendant: number | undefined
+      const actual = await vi.importActual<typeof import('../process-tree')>('../process-tree')
+      terminateProcessTreeSpy.mockImplementation(async (...args) => {
+        const child = args[0] as ChildProcess
+        // Exercise teardown after the adapter really exited and its original group disappeared.
+        if (child.exitCode === null && child.signalCode === null) await once(child, 'close')
+        return actual.terminateProcessTree(
+          ...(args as Parameters<typeof actual.terminateProcessTree>)
+        )
+      })
+      await writeFile(
+        adapterPath,
+        `
+        require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+          const request = JSON.parse(line);
+          if (request.id !== 1) return;
+          const worker = require('node:child_process').spawn(process.execPath,
+            ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+          worker.unref();
+          require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(worker.pid));
+          process.stdout.write(JSON.stringify({ id: 1, result: { protocolVersion: 1 } }) + '\\n',
+            () => process.exit(0));
+        });
+      `
+      )
+      try {
+        await expect(runAcpInitializeSmoke(process.platform)(adapterPath, {})).resolves.toBe(true)
+        descendant = Number(await readFile(pidFile, 'utf8'))
+        expect(() => process.kill(descendant!, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+        expect(warnLogSpy).not.toHaveBeenCalled()
+      } finally {
+        // Preserve fixture cleanup even when detection or the leak assertion fails.
+        descendant ??= await readFile(pidFile, 'utf8').then(Number, () => undefined)
+        if (descendant) {
+          try {
+            process.kill(descendant, 'SIGKILL')
+          } catch {
+            /* Already reaped by production. */
+          }
+        }
+      }
+    }
+  )
 
   it('reports an adapter whose real initialize handshake returns protocolVersion 1 as ready', async () => {
     const adapterPath = await writeFakeAdapter('ready-adapter.js', {

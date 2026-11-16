@@ -1055,7 +1055,9 @@ const terminateOwnedPosixProcessGroup = async (
   signal: NodeJS.Signals | undefined,
   log: ProcessTreeLogger | undefined
 ): Promise<ProcessTreeKillResult> => {
-  if (!isProcessGroupAlive(group.id)) return { reaped: true }
+  // A vanished group says nothing about descendants that created a new session.
+  // Without tracked ancestry/markers, retain the fence instead of certifying the whole tree.
+  if (!isProcessGroupAlive(group.id)) return { reaped: false }
   if (!group.leaderIdentity) return { reaped: false }
   const snapshot = await collectPosixProcessTable()
   if (!snapshot.complete) return { reaped: false }
