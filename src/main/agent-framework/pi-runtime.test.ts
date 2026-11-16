@@ -1,4 +1,5 @@
 import * as processTree from '../process-tree'
+import * as windowsOwnedProcess from '../process-tree-windows'
 import * as childProcess from 'node:child_process'
 import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
@@ -19,6 +20,11 @@ import { getAgentFramework } from './registry'
 
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>())
+}))
+vi.mock('../process-tree-windows', async (original) => ({
+  ...(await original<typeof import('../process-tree-windows')>()),
+  spawnWindowsOwnedProcess: vi.fn(),
+  reapWindowsOwnedJob: vi.fn(async () => true)
 }))
 vi.mock('node:crypto', async (original) => ({
   ...(await original<typeof import('node:crypto')>())
@@ -112,13 +118,21 @@ it.each(['compatible', 'wrong-version', 'invalid-json', 'timeout', 'cleanup-fail
       stdout: new PassThrough(),
       stderr: new PassThrough()
     })
-    const spawn = vi.spyOn(childProcess, 'spawn').mockReturnValue(child)
+    const spawn =
+      process.platform === 'win32'
+        ? vi.mocked(windowsOwnedProcess.spawnWindowsOwnedProcess).mockReturnValue(child)
+        : vi.spyOn(childProcess, 'spawn').mockReturnValue(child)
+    spawn.mockClear()
     const options = { configRoot: join(tmpdir(), 'pi-probe-fixture') }
     expect(isPiAdapterAvailable(options)).toBe(true)
     vi.useFakeTimers()
     const result = resolvePiExecutable(options).catch((error: Error) => error.message)
     await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
-    const [, args, spawnOptions] = spawn.mock.calls[0]
+    const call = spawn.mock.calls[0] as readonly unknown[]
+    const args = (process.platform === 'win32' ? call[2] : call[1]) as string[]
+    const spawnOptions = (process.platform === 'win32' ? call[3] : call[2]) as {
+      env?: NodeJS.ProcessEnv
+    }
     const temporary = spawnOptions?.env?.HOME
     expect(spawnOptions?.env).toMatchObject({ PI_OFFLINE: '1', HOME: temporary })
     expect(args).toContain('--no-delegation')

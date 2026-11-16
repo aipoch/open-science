@@ -20,6 +20,14 @@ const binding = (): Binding => {
   return native
 }
 
+const normalizeWindowsSpawnError = (error: unknown): unknown => {
+  if (!(error instanceof Error)) return error
+  const match = /^Create owned process failed \((\d+)\)$/.exec(error.message)
+  if (!match || ![2, 3, 267].includes(Number(match[1]))) return error
+  Object.assign(error, { code: 'ENOENT' })
+  return error
+}
+
 export const reapWindowsOwnedJob = async (jobName: string): Promise<boolean> => {
   const native = binding()
   const deadline = Date.now() + 4_000
@@ -224,14 +232,19 @@ export const spawnWindowsOwnedProcess = (
     keys.add(key.toUpperCase())
     environment.push(`${key}=${value}`)
   }
-  const launched = native.spawnWindowsOwnedProcess(
-    jobName,
-    executable,
-    argv,
-    environment,
-    cwd,
-    verbatim
-  )
+  let launched: ReturnType<Binding['spawnWindowsOwnedProcess']>
+  try {
+    launched = native.spawnWindowsOwnedProcess(
+      jobName,
+      executable,
+      argv,
+      environment,
+      cwd,
+      verbatim
+    )
+  } catch (error) {
+    throw normalizeWindowsSpawnError(error)
+  }
   const child = new ChildProcess() as ChildProcessWithoutNullStreams
   nativeProcesses.set(child, launched.handle)
   activeJobs.set(jobName, new WeakRef(launched.handle))
