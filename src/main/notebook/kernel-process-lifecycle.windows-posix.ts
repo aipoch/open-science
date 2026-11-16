@@ -344,7 +344,8 @@ const defaultController = (
           record.pid,
           undefined,
           undefined,
-          record.posixBirthToken
+          record.posixBirthToken,
+          { name: OWNER_TOKEN_ENV, value: record.ownerToken }
         )
   }
 })

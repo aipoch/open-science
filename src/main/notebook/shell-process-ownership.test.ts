@@ -52,6 +52,52 @@ describe.runIf(process.platform === 'linux')('Shell process ownership recovery',
 })
 
 describe('Shell process ownership receipt lifecycle', () => {
+  it.runIf(process.platform !== 'win32')(
+    'offers explicit archival of a real legacy POSIX receipt without signaling its process',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-legacy-posix-'))
+      roots.push(root)
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true,
+        stdio: 'ignore'
+      })
+      registerOwnedPosixProcessGroup(child)
+      const original = new ShellProcessOwnershipRegistry(root)
+      const release = original.claim(child, {
+        runId: 'legacy-posix',
+        projectId: 'project',
+        sessionId: 'session',
+        platform: process.platform
+      })
+      const path = join(root, 'shell-process-ownership', 'legacy-posix.json')
+      const record = JSON.parse(await readFile(path, 'utf8'))
+      delete record.posixBirthToken
+      const bytes = JSON.stringify(record)
+      fs.writeFileSync(path, bytes)
+      const restarted = new ShellProcessOwnershipRegistry(root)
+      try {
+        expect(original.getLegacyRecovery()).toBeUndefined()
+        await expect(restarted.recover()).rejects.toMatchObject({
+          code: 'SHELL_PROCESS_RECOVERY_BLOCKED'
+        })
+        expect(() => process.kill(child.pid!, 0)).not.toThrow()
+        const offer = restarted.getLegacyRecovery()
+        expect(offer).toMatchObject({ count: 1, token: expect.any(String) })
+        expect(() => restarted.archiveLegacyLaunches('unreviewed')).toThrow('records changed')
+        restarted.archiveLegacyLaunches(offer!.token)
+        expect(restarted.hasReceipts()).toBe(false)
+        expect(() => process.kill(child.pid!, 0)).not.toThrow()
+        const backups = join(root, 'shell-process-ownership-backups')
+        expect(
+          await readFile(join(backups, fs.readdirSync(backups)[0], 'legacy-posix.json'), 'utf8')
+        ).toBe(bytes)
+      } finally {
+        await terminateProcessTree(child)
+        release()
+      }
+    }
+  )
+
   it.each([
     {
       name: 'access failure',
@@ -371,6 +417,25 @@ describe('Shell process ownership receipt lifecycle', () => {
     })
     return { root, release }
   }
+
+  it.each([
+    { platform: 'win32' },
+    { platform: 'freebsd' },
+    { posixBirthToken: 'linux-proc-starttime:100' },
+    { posixBirthToken: null },
+    { pid: 0 },
+    { state: 'unknown' },
+    { processStartIdentity: '' }
+  ])('keeps ineligible claimed receipts outside explicit legacy recovery: %j', async (change) => {
+    const { root } = await claimedReceipt()
+    const path = join(root, 'shell-process-ownership', 'notebook-run-receipt-1.json')
+    const record = JSON.parse(await readFile(path, 'utf8'))
+    fs.writeFileSync(path, JSON.stringify({ ...record, ...change }))
+    const registry = new ShellProcessOwnershipRegistry(root)
+    expect(registry.getLegacyRecovery()).toBeUndefined()
+    expect(() => registry.archiveLegacyLaunches('unreviewed')).toThrow('records changed')
+    expect(registry.hasReceipts()).toBe(true)
+  })
 
   it('retains an un-reaped receipt and retries cleanup idempotently', async () => {
     const { root } = await claimedReceipt()

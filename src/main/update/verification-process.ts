@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import {
-  registerOwnedPosixProcessGroup,
+  capturePosixProcessTreeIdentity,
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
   terminateProcessTree,
   registerProcessTreeOwnership
 } from '../process-tree'
@@ -53,6 +55,10 @@ export async function runVerificationProcess(
   options.signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
     const jobName = `Local\\OpenScience.Delegation.${randomUUID()}`
+    const ownership = createPosixProcessTreeOwnership(options.env)
+    // Darwin commands such as ps can exit before kernel identity capture. Hold the same process
+    // behind fd3 until tracking is installed; stdin stays dedicated to the target command.
+    const gateLaunch = process.platform === 'darwin'
     const child =
       process.platform === 'win32'
         ? spawnWindowsOwnedProcess(jobName, command, args, {
@@ -61,20 +67,36 @@ export async function runVerificationProcess(
             shell: options.shell,
             stdio: 'pipe'
           })
-        : spawn(command, args, {
-            cwd: options.cwd,
-            detached: true,
-            env: options.env,
-            shell: options.shell,
-            windowsHide: true,
-            stdio: [options.stdin ?? 'ignore', 'pipe', 'pipe']
-          })
+        : spawn(
+            gateLaunch ? '/bin/sh' : command,
+            gateLaunch
+              ? [
+                  '-c',
+                  'IFS= read -r start <&3 && [ "$start" = start ] || exit 125; exec 3<&-; exec "$@"',
+                  'open-science-verification-start',
+                  ...(options.shell
+                    ? ['/bin/sh', '-c', [command, ...args].join(' ')]
+                    : [command, ...args])
+                ]
+              : args,
+            {
+              cwd: options.cwd,
+              detached: true,
+              env: ownership.env,
+              shell: gateLaunch ? false : options.shell,
+              windowsHide: true,
+              stdio: gateLaunch
+                ? [options.stdin ?? 'ignore', 'pipe', 'pipe', 'pipe']
+                : [options.stdin ?? 'ignore', 'pipe', 'pipe']
+            }
+          )
+    const launchGate = gateLaunch ? child.stdio[3] : undefined
     if (process.platform === 'win32')
       registerProcessTreeOwnership(child, {
         terminate: async () => ({ reaped: await reapWindowsOwnedJob(jobName) }),
         settled: () => undefined
       })
-    else registerOwnedPosixProcessGroup(child)
+    else trackOwnedPosixProcessTree(child, ownership.token)
     const stdout: Buffer[] = [],
       stderr: Buffer[] = []
     let size = 0
@@ -93,6 +115,7 @@ export async function runVerificationProcess(
         if (deadline) clearTimeout(deadline)
         child.stdin?.destroy()
         completed = true
+        launchGate?.destroy()
         clearTimeout(timer)
         options.signal?.removeEventListener('abort', abort)
         if (!result.reaped) {
@@ -130,6 +153,7 @@ export async function runVerificationProcess(
     }
     const stop = (error: unknown): void => {
       if (completed) return
+      launchGate?.destroy()
       failure ??= error
       void settle(null)
     }
@@ -168,6 +192,20 @@ export async function runVerificationProcess(
     child.on('close', (code, signal) => {
       void settle(code, signal)
     })
+    launchGate?.on('error', stop)
     if (options.signal?.aborted) abort()
+    else if (gateLaunch && child.pid !== undefined) {
+      if (launchGate && 'end' in launchGate && capturePosixProcessTreeIdentity(child))
+        launchGate.end('start\n')
+      else {
+        if (launchGate && 'end' in launchGate) launchGate.end()
+        stop(
+          new UpdateLifecycleError(
+            'install-failed',
+            'Verification process ownership could not be registered.'
+          )
+        )
+      }
+    }
   })
 }

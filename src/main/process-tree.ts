@@ -1062,18 +1062,39 @@ const terminateOwnedPosixProcessGroup = async (
   return terminateRecordedPosixTree(group.leaderIdentity, snapshot, signal, log)
 }
 
-// Persisted recovery must supply the birth token captured by the original live owner.
-// Never turn a fresh observation of a numeric id into a replacement ownership receipt.
-export const terminateOwnedPosixProcessGroupById = (
+// Ordinary recovery requires historical birth. Legacy receipts may instead prove ownership with
+// an exact, randomly generated environment entry; pin birth BEFORE querying that entry so a PID
+// replacement between observations cannot inherit the authorization.
+export const terminateOwnedPosixProcessGroupById = async (
   groupId: number,
   signal?: NodeJS.Signals,
   log?: ProcessTreeLogger,
-  birthToken?: string
+  birthToken?: string,
+  legacyEnvironment?: Readonly<{ name: string; value: string }>
 ): Promise<ProcessTreeKillResult> => {
-  if (!Number.isSafeInteger(groupId) || groupId <= 0 || !birthToken)
-    return Promise.resolve({ reaped: false })
+  if (!Number.isSafeInteger(groupId) || groupId <= 0) return { reaped: false }
   const leader = currentRecordedPosixIdentity(groupId)
-  if (!leader || leader.birthToken !== birthToken) return Promise.resolve({ reaped: false })
+  if (!leader || leader.pgid !== groupId || leader.sid !== groupId) return { reaped: false }
+  if (birthToken !== undefined) {
+    if (leader.birthToken !== birthToken) return { reaped: false }
+  } else {
+    if (!legacyEnvironment?.name || !legacyEnvironment.value) return { reaped: false }
+    const { name, value } = legacyEnvironment
+    if (name.includes('=') || name.includes('\0') || value.includes('\0')) return { reaped: false }
+    try {
+      const matches =
+        process.platform === 'linux'
+          ? readFileSync(`/proc/${groupId}/environ`, 'utf8')
+              .split('\0')
+              .includes(`${name}=${value}`)
+          : process.platform === 'darwin' &&
+            loadDarwinProcessBinding()?.getDarwinEnvironmentValue(groupId, name) === value
+      if (!matches) return { reaped: false }
+    } catch {
+      return { reaped: false }
+    }
+  }
+  // terminateOwnedPosixProcessGroup and its signal helpers recheck this same birth on every signal.
   return terminateOwnedPosixProcessGroup(
     { kind: 'owned-posix-process-group', id: groupId, leaderIdentity: leader },
     signal,

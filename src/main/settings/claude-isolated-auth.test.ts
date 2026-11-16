@@ -1,5 +1,6 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ClaudeIsolatedAuthController, type ClaudeIsolatedTokenStore } from './claude-isolated-auth'
@@ -22,6 +23,17 @@ vi.mock('node:child_process', async (original) => ({
     args: string[],
     options?: { env?: NodeJS.ProcessEnv; windowsHide?: boolean }
   ) => {
+    // Assert the logical CLI invocation; real admission-pipe behavior lives in verification tests.
+    if (process.platform === 'darwin') {
+      expect(command).toBe('/bin/sh')
+      expect(args.slice(0, 3)).toEqual([
+        '-c',
+        'IFS= read -r start <&3 && [ "$start" = start ] || exit 125; exec 3<&-; exec "$@"',
+        'open-science-verification-start'
+      ])
+      command = args[3]
+      args = args.slice(4)
+    }
     spawnCalls.push({ command, args, env: options?.env, windowsHide: options?.windowsHide })
     return (nextSpawn ?? (() => new FakeChild()))()
   }
@@ -31,6 +43,7 @@ vi.mock('node:child_process', async (original) => ({
 class FakeChild extends EventEmitter {
   stdout = new EventEmitter()
   stderr = new EventEmitter()
+  stdio = [null, this.stdout, this.stderr, new PassThrough()]
 }
 
 // Returns a child that emits the given stdout/stderr then closes with `code` on the next tick, so the

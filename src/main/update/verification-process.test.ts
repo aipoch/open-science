@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -63,6 +63,182 @@ describe('bounded verification subprocess', () => {
       }
     }
   )
+
+  it.skipIf(process.platform === 'win32')(
+    'reaps a descendant after its verification leader exits',
+    async () => {
+      let descendant: number | undefined
+      const root = await mkdtemp(join(tmpdir(), 'verification-leaderless-'))
+      const pidPath = join(root, 'descendant.pid')
+      const terminate = processTree.terminateProcessTree
+      const cleanup = vi
+        .spyOn(processTree, 'terminateProcessTree')
+        .mockImplementation(async (child, ...args) => {
+          expect(child.exitCode).toBe(0)
+          descendant = Number(await readFile(pidPath, 'utf8'))
+          return terminate(child, ...args)
+        })
+      try {
+        const output = await runVerificationProcess(process.execPath, [
+          '-e',
+          `
+          const child = require('node:child_process').spawn(process.execPath,
+            ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+          require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));
+          process.stdout.write(String(child.pid), () => process.exit(0));
+        `
+        ]).then((value) => {
+          descendant = Number(value.stdout)
+          return value
+        })
+        expect(Number(output.stdout)).toBeGreaterThan(0)
+        expect(() => process.kill(descendant!, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+      } finally {
+        cleanup.mockRestore()
+        // Retain the real descendant PID even when the production result rejects.
+        if (descendant) {
+          try {
+            process.kill(descendant, 'SIGKILL')
+          } catch {
+            // Successful production teardown already reaped this fixture.
+          }
+        }
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'darwin')(
+    'captures ownership before fast POSIX commands execute',
+    async () => {
+      for (let attempt = 0; attempt < 5; attempt += 1)
+        await expect(
+          runVerificationProcess('/bin/ps', ['-p', String(process.pid), '-o', 'pid='])
+        ).resolves.toMatchObject({
+          stdout: expect.stringContaining(String(process.pid)),
+          stderr: ''
+        })
+      await expect(
+        runVerificationProcess('/usr/bin/printf', ['%s', 'literal $(echo not-expanded); "quoted"'])
+      ).resolves.toEqual({ stdout: 'literal $(echo not-expanded); "quoted"', stderr: '' })
+      await expect(
+        runVerificationProcess('printf', ['shell-gate'], { shell: true })
+      ).resolves.toEqual({ stdout: 'shell-gate', stderr: '' })
+    }
+  )
+
+  it.runIf(process.platform === 'darwin')(
+    'keeps command input separate from the launch ownership pipe',
+    async () => {
+      const track = processTree.trackOwnedPosixProcessTree
+      const registration = vi
+        .spyOn(processTree, 'trackOwnedPosixProcessTree')
+        .mockImplementation((child, token) => {
+          track(child, token)
+          child.stdin!.end('command-input')
+        })
+      try {
+        await expect(
+          runVerificationProcess(
+            process.execPath,
+            [
+              '-e',
+              `process.stdin.on('data', chunk => process.stdout.write(chunk)); process.stdin.resume()`
+            ],
+            { stdin: 'pipe' }
+          )
+        ).resolves.toEqual({ stdout: 'command-input', stderr: '' })
+      } finally {
+        registration.mockRestore()
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'darwin')(
+    'closes an unreleased launch pipe after unconfirmed cancellation',
+    async () => {
+      const controller = new AbortController()
+      const track = processTree.trackOwnedPosixProcessTree
+      const terminate = processTree.terminateProcessTree
+      let child: import('node:child_process').ChildProcess | undefined
+      const registration = vi
+        .spyOn(processTree, 'trackOwnedPosixProcessTree')
+        .mockImplementation((ownedChild, token) => {
+          child = ownedChild
+          track(ownedChild, token)
+          controller.abort(new Error('cancel before launch'))
+        })
+      const cleanup = vi
+        .spyOn(processTree, 'terminateProcessTree')
+        .mockResolvedValue({ reaped: false })
+      try {
+        await expect(
+          runVerificationProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+            signal: controller.signal
+          })
+        ).rejects.toBeInstanceOf(VerificationProcessUnsettledError)
+        await vi.waitFor(() => expect(child!.exitCode).not.toBeNull(), { timeout: 1000 })
+        expect(child!.exitCode).toBe(125)
+        expect(() => process.kill(child!.pid!, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+      } finally {
+        cleanup.mockRestore()
+        registration.mockRestore()
+        if (child) await terminate(child)
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'darwin')(
+    'never starts a target without registered launch identity',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'verification-no-identity-'))
+      const marker = join(root, 'must-not-run')
+      const identity = vi
+        .spyOn(processTree, 'capturePosixProcessTreeIdentity')
+        .mockReturnValue(undefined)
+      try {
+        await expect(
+          runVerificationProcess(process.execPath, [
+            '-e',
+            `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`
+          ])
+        ).rejects.toThrow('ownership could not be registered')
+        await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        identity.mockRestore()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('preserves spawn failure evidence when the working directory is missing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'verification-missing-cwd-'))
+    try {
+      await expect(
+        runVerificationProcess(process.execPath, ['-e', 'process.exit(0)'], {
+          cwd: join(root, 'missing')
+        })
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a missing target promptly and settles its working directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'verification-missing-'))
+    try {
+      await expect(
+        runVerificationProcess(join(root, 'missing-command'), [], { cwd: root, timeoutMs: 1000 })
+      ).rejects.toThrow()
+      expect(verificationDirectoryIsSettled(root)).toBe(true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 
   it('returns both output streams after successful verification with an input pipe', async () => {
     await expect(

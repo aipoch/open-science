@@ -160,8 +160,8 @@ class ShellProcessOwnershipRegistry {
   private readonly ownerInstanceId = randomUUID()
   private readonly directory: string
 
-  // Only old, structurally complete launch intents qualify for explicit abandonment. A current
-  // launch, a claimed process, a malformed file or an unknown format must retain its normal gate.
+  // Old launch intents and POSIX receipts without birth proof may require explicit abandonment.
+  // Keep originals and bind consent to exact bytes; archival never proves a process was reaped.
   private legacyLaunchSnapshot(): { token: string; entries: string[] } | undefined {
     try {
       const entries = readdirSync(this.directory)
@@ -176,7 +176,6 @@ class ShellProcessOwnershipRegistry {
         const record = JSON.parse(contents.toString('utf8'))
         if (
           record?.version !== 1 ||
-          record.state !== 'launching' ||
           typeof record.runId !== 'string' ||
           !SAFE_RUN_ID.test(record.runId) ||
           entry !== `${record.runId}.json` ||
@@ -185,11 +184,22 @@ class ShellProcessOwnershipRegistry {
           typeof record.ownerInstanceId !== 'string' ||
           record.ownerInstanceId === this.ownerInstanceId ||
           !Number.isFinite(record.launchedAt) ||
-          record.pid !== undefined ||
-          record.processStartIdentity !== undefined ||
           (record.bootToken !== undefined && !isValidBootToken(record.bootToken))
         )
           return undefined
+        const legacyLaunch =
+          record.state === 'launching' &&
+          record.pid === undefined &&
+          record.processStartIdentity === undefined
+        const legacyPosix =
+          record.state === undefined &&
+          ['linux', 'darwin'].includes(record.platform) &&
+          Number.isSafeInteger(record.pid) &&
+          record.pid > 0 &&
+          record.posixBirthToken === undefined &&
+          typeof record.processStartIdentity === 'string' &&
+          record.processStartIdentity.trim().length > 0
+        if (!legacyLaunch && !legacyPosix) return undefined
         hash.update(JSON.stringify([entry, contents.toString('base64')]))
       }
       return { token: hash.digest('hex'), entries }

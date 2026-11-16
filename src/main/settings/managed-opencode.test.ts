@@ -1242,10 +1242,15 @@ describe('defaultVerifyBinary', () => {
     await expect(defaultVerifyBinary(process.execPath)).resolves.toEqual({ ok: true })
   })
 
-  it('reports a spawn error (unrunnable) when the binary path does not exist', async () => {
+  it('reports an unrunnable target when the binary path does not exist', async () => {
     const result = await defaultVerifyBinary(join(tmpdir(), 'no-such-opencode-binary-xyz'))
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.reason).toMatch(/spawn error/)
+    if (!result.ok) {
+      // Darwin admits the target through an owned shell, so exec failure is an exit diagnostic.
+      expect(result.reason).toMatch(
+        process.platform === 'darwin' ? /exited with code (126|127)/ : /spawn error/
+      )
+    }
   })
 
   // A non-zero `--version` exit classifies as unrunnable. Uses a chmod'd shell script, so it is skipped

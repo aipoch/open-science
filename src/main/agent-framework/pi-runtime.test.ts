@@ -97,7 +97,12 @@ it.each(['compatible', 'wrong-version', 'invalid-json', 'timeout', 'cleanup-fail
       vi.spyOn(hash, 'digest').mockReturnValue(digest)
       return hash
     })
-    vi.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('validated fixture'))
+    const readFileSync = fs.readFileSync
+    vi.spyOn(fs, 'readFileSync').mockImplementation((...args) => {
+      // Only replace adapter integrity bytes; Linux ownership reads must see real procfs identity.
+      if (String(args[0]).startsWith('/proc/')) return readFileSync(...args)
+      return Buffer.from('validated fixture')
+    })
     let hashIndex = 0
     vi.spyOn(crypto, 'createHash').mockImplementation(() => hashes[hashIndex++ % hashes.length])
     if (scenario === 'cleanup-failed')
@@ -215,7 +220,12 @@ it
       return hash
     })
     let index = 0
-    vi.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('validated fixture'))
+    const readFileSync = fs.readFileSync
+    vi.spyOn(fs, 'readFileSync').mockImplementation((...args) => {
+      // Only replace adapter integrity bytes; Linux ownership reads must see real procfs identity.
+      if (String(args[0]).startsWith('/proc/')) return readFileSync(...args)
+      return Buffer.from('validated fixture')
+    })
     vi.spyOn(crypto, 'createHash').mockImplementation(() => hashes[index++ % hashes.length])
     let pids: number[] = []
     try {

@@ -650,6 +650,66 @@ describe('terminateProcessTree (posix)', () => {
     }
   )
 
+  it('does not substitute legacy proof for a present but invalid birth token', async () => {
+    setPlatform('linux')
+    readFileSyncMock.mockImplementation((path: string) =>
+      path.endsWith('/environ') ? 'OWNER=token\0' : linuxStat(1000, 1, 1000, 1000, 200)
+    )
+    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
+    await expect(
+      terminateOwnedPosixProcessGroupById(1000, undefined, undefined, '', {
+        name: 'OWNER',
+        value: 'token'
+      })
+    ).resolves.toEqual({ reaped: false })
+    expect(readFileSyncMock).not.toHaveBeenCalledWith('/proc/1000/environ', 'utf8')
+    expect(kill).not.toHaveBeenCalled()
+  })
+
+  it.each(['matching', 'different-value', 'prefix-match', 'unreadable', 'reused-during-proof'])(
+    'requires exact historical environment proof before migrating a cold group: %s',
+    async (mode) => {
+      setPlatform('linux')
+      let birth = 100
+      let gone = false
+      const stat = (): string => linuxStat(1000, 1, 1000, 1000, birth)
+      readFileSyncMock.mockImplementation((path: string) => {
+        if (path.endsWith('/environ')) {
+          if (mode === 'unreadable') throw new Error('EACCES')
+          if (mode === 'reused-during-proof') birth = 200
+          return mode === 'different-value'
+            ? 'OWNER=token-extra\0'
+            : mode === 'prefix-match'
+              ? 'OTHER_OWNER=token\0'
+              : 'OWNER=token\0'
+        }
+        if (gone) throw esrch()
+        return stat()
+      })
+      readdirMock.mockResolvedValue(['1000'])
+      readFileMock.mockImplementation(async () => stat())
+      const delivered: Array<[number, string | number | undefined]> = []
+      const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (signal === 0) {
+          if (gone) throw esrch()
+          return true
+        }
+        delivered.push([pid, signal])
+        gone = true
+        return true
+      })
+      await expect(
+        terminateOwnedPosixProcessGroupById(1000, undefined, undefined, undefined, {
+          name: 'OWNER',
+          value: 'token'
+        })
+      ).resolves.toEqual({ reaped: mode === 'matching' })
+      if (mode === 'matching') expect(delivered).toContainEqual([-1000, 'SIGTERM'])
+      else expect(delivered).toEqual([])
+      kill.mockRestore()
+    }
+  )
+
   it('signals descendants and the child, and returns without escalating when everything exits', async () => {
     setPlatform('linux')
     const ps = new FakePs()

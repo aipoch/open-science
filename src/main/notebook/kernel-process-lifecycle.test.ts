@@ -10,7 +10,11 @@ import {
   KernelProcessLifecycleOwner
 } from './kernel-process-lifecycle.windows-posix'
 import { readProcessStartToken } from '@aipoch/environment'
-import { capturePosixProcessTreeIdentity, registerOwnedPosixProcessGroup } from '../process-tree'
+import {
+  capturePosixProcessTreeIdentity,
+  registerOwnedPosixProcessGroup,
+  terminateProcessTree
+} from '../process-tree'
 
 const windowsProcessIsAlive = vi.hoisted(() => vi.fn<(pid: number) => boolean>(() => true))
 const reapWindowsOwnedJob = vi.hoisted(() => vi.fn<(name: string) => Promise<boolean>>())
@@ -920,50 +924,63 @@ describe('KernelProcessLifecycleOwner', () => {
       15_000
     )
 
-    it('verifies and reaps a real orphaned process group before admission', async () => {
-      root = await mkdtemp(join(tmpdir(), 'kernel-process-posix-recovery-'))
-      const first = new KernelProcessLifecycleOwner({
-        storageRoot: root,
-        ownerInstanceId: 'owner-a',
-        readBootToken: () => BOOT_TOKEN
-      })
-      await first.ensureReady()
-      const ownerToken = first.createOwnerToken()
-      const intent = first.beginSpawn(
-        {
-          laneKey: '["project-1","session-1","root",null,null]',
-          processKey: 'python:default-python',
-          kernelEpochId: 'epoch-posix'
-        },
-        ownerToken
-      )
-      const child = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1_000)'], {
-        detached: true,
-        stdio: 'ignore',
-        env: { ...process.env, ...first.environment(ownerToken) }
-      })
-      registerOwnedPosixProcessGroup(child)
-      await new Promise<void>((resolve, reject) => {
-        child.once('spawn', resolve)
-        child.once('error', reject)
-      })
-      const pid = child.pid!
-      first.recordSpawned(intent, {
-        pid,
-        processStartToken: readProcessStartToken(pid),
-        posixBirthToken: capturePosixProcessTreeIdentity(child)?.birthToken
-      })
+    it.each(['current', 'legacy'])(
+      'verifies and reaps a real orphaned process group before admission (%s)',
+      async (format) => {
+        root = await mkdtemp(join(tmpdir(), 'kernel-process-posix-recovery-'))
+        const first = new KernelProcessLifecycleOwner({
+          storageRoot: root,
+          ownerInstanceId: 'owner-a',
+          readBootToken: () => BOOT_TOKEN
+        })
+        await first.ensureReady()
+        const ownerToken = first.createOwnerToken()
+        const intent = first.beginSpawn(
+          {
+            laneKey: '["project-1","session-1","root",null,null]',
+            processKey: 'python:default-python',
+            kernelEpochId: 'epoch-posix'
+          },
+          ownerToken
+        )
+        const child = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1_000)'], {
+          detached: true,
+          stdio: 'ignore',
+          env: { ...process.env, ...first.environment(ownerToken) }
+        })
+        registerOwnedPosixProcessGroup(child)
+        await new Promise<void>((resolve, reject) => {
+          child.once('spawn', resolve)
+          child.once('error', reject)
+        })
+        const pid = child.pid!
+        first.recordSpawned(intent, {
+          pid,
+          processStartToken: readProcessStartToken(pid),
+          posixBirthToken: capturePosixProcessTreeIdentity(child)?.birthToken
+        })
 
-      const restarted = new KernelProcessLifecycleOwner({
-        storageRoot: root,
-        ownerInstanceId: 'owner-b',
-        readBootToken: () => BOOT_TOKEN
-      })
-      await restarted.ensureReady()
-
-      await vi.waitFor(() => expect(processIsAlive(pid)).toBe(false), { timeout: 5_000 })
-      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
-    }, 15_000)
+        if (format === 'legacy') {
+          const path = intent.activePath(pid)
+          const record = JSON.parse(await readFile(path, 'utf8'))
+          delete record.posixBirthToken
+          await writeFile(path, JSON.stringify(record))
+        }
+        const restarted = new KernelProcessLifecycleOwner({
+          storageRoot: root,
+          ownerInstanceId: 'owner-b',
+          readBootToken: () => BOOT_TOKEN
+        })
+        try {
+          await restarted.ensureReady()
+          await vi.waitFor(() => expect(processIsAlive(pid)).toBe(false), { timeout: 5_000 })
+          expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+        } finally {
+          await terminateProcessTree(child)
+        }
+      },
+      15_000
+    )
   })
 
   describe.skipIf(process.platform !== 'win32')('Windows startup recovery', () => {

@@ -17,7 +17,8 @@ import type {
 } from '../../shared/settings'
 import {
   terminateProcessTree,
-  registerOwnedPosixProcessGroup,
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
   registerProcessTreeOwnership
 } from '../process-tree'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
@@ -332,25 +333,26 @@ const defaultInstallSpawn = (
   options?: { shell?: boolean }
 ): ChildProcessWithoutNullStreams => {
   const jobName = `Local\\OpenScience.Delegation.${randomUUID()}`
+  const ownership = createPosixProcessTreeOwnership(augmentedPathEnv())
   const child =
     process.platform === 'win32'
       ? spawnWindowsOwnedProcess(jobName, command, args, {
           stdio: 'pipe',
           shell: options?.shell,
-          env: augmentedPathEnv()
+          env: ownership.env
         })
       : (spawn(command, args, {
           stdio: 'pipe',
           detached: true,
           shell: options?.shell,
-          env: augmentedPathEnv()
+          env: ownership.env
         }) as ChildProcessWithoutNullStreams)
   if (process.platform === 'win32')
     registerProcessTreeOwnership(child, {
       terminate: async () => ({ reaped: await reapWindowsOwnedJob(jobName) }),
       settled: () => undefined
     })
-  else registerOwnedPosixProcessGroup(child)
+  else trackOwnedPosixProcessTree(child, ownership.token)
   return child
 }
 
