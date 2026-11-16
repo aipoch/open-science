@@ -263,6 +263,9 @@ class SettingsRepository {
           existing.vendorId === provider.vendorId &&
           existing.region === provider.region &&
           existing.keyRef === provider.keyRef &&
+          // Lab's catalog is authoritative for its server-derived record (including model
+          // protocols/capabilities); preserving the old list would hide freshly refreshed models.
+          provider.type !== 'lab' &&
           existing.fetchedModels
         )
           provider = { ...provider, fetchedModels: existing.fetchedModels }

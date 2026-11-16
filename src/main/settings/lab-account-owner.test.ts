@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('./crypto', () => ({
   encryptKey: (value: string) => `enc:${Buffer.from(value, 'utf8').toString('base64')}`,
   tryDecryptKey: (ref?: string) =>
-    ref?.startsWith('enc:') ? Buffer.from(ref.slice(4), 'base64').toString('utf8') : undefined
+    ref?.startsWith('enc:') ? Buffer.from(ref.slice(4), 'base64').toString('utf8') : undefined,
+  hardenKeyMask: (value?: string) => value,
+  maskKey: (value: string) => value
 }))
 
 import type { LabBootstrap } from '../../shared/lab'
@@ -15,7 +17,9 @@ import { LabAccountOwner } from './lab-account-owner'
 import { buildLabProviderRecord } from './lab-provider'
 import { LabApi, LabApiError } from './lab-api'
 import { LabCredentialStore } from './lab-credential-store'
+import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
 import { defaultVendorModel } from '../../shared/provider-model-policy'
+import { ProviderRuntimeProjectionOwner } from './provider-runtime-projection'
 import { SettingsRepository } from './repository'
 
 const SERVER = 'https://lab.example.com'
@@ -801,6 +805,38 @@ describe('Lab account owner', () => {
     api.clientBootstrap.mockResolvedValue(undefined)
     const reachable = await owner.check()
     expect(reachable.state).toBe('signedOut')
+  })
+
+  it('projects a refreshed catalog into the provider record used by the composer', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const api = createApi()
+    const { owner, repository } = await createOwner(dir, api)
+    const credentials = new LabCredentialStore(dir)
+    await seedSession(credentials)
+    await owner.check()
+    api.bootstrap.mockResolvedValue({
+      ...BOOTSTRAP,
+      models: [
+        ...BOOTSTRAP.models,
+        { id: 'research-fast', name: 'Research Fast', protocol: 'openai' }
+      ]
+    })
+
+    await owner.refreshCatalog()
+    const record = (await repository.getSettings()).providers.find(
+      (provider) => provider.id === LAB_PROVIDER_ID
+    )
+    expect(record?.fetchedModels).toContain('lab:research-fast')
+    expect(record?.fetchedModels).toEqual(['lab:research-default', 'lab:research-fast'])
+    const view = new ProviderRuntimeProjectionOwner().toProviderView(record!)
+    expect(
+      buildConfiguredModelCatalog({
+        providers: [view],
+        frameworkId: 'open-science-agent',
+        frameworkEndpoints: ['responses', 'chat-completions', 'messages']
+      }).map((entry) => entry.model)
+    ).toContain('lab:research-fast')
   })
 
   it('drops the previous server model catalog when the address changes', async () => {
