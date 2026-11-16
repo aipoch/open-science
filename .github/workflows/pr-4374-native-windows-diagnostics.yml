@@ -1,0 +1,68 @@
+name: PR 4374 Windows native diagnostics
+on:
+  push:
+    branches: [test/pr-4374-native-windows-diagnostics]
+    paths: [".github/workflows/pr-4374-native-windows-diagnostics.yml", ".github/native-win-diagnostics/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: diag
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fd003755abb08fc58c335caa13c2ec0e588128f0
+          path: b
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: f73d295b5a14f7408324383c25014c9991b4167c
+          path: c
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22.23.3'
+          cache: npm
+          cache-dependency-path: |
+            b/package-lock.json
+            c/package-lock.json
+      - name: Record Windows environment
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path evidence -Force | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $revision = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR
+          [ordered]@{
+            computer = $env:COMPUTERNAME
+            runner = $env:RUNNER_NAME
+            image = $env:ImageOS
+            imageVersion = $env:ImageVersion
+            windows = $os.Caption
+            version = "$($os.Version).$revision"
+            architecture = $os.OSArchitecture
+            node = (node -v)
+            nodeTarget = (node -p "process.platform + '-' + process.arch")
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+          } | ConvertTo-Json | Tee-Object -FilePath evidence/environment.json
+          wevtutil gp Microsoft-Windows-Kernel-Process /ge:true /gm:true > evidence/kernel-process-provider.txt
+      - name: Compare both commits on this runner
+        shell: bash
+        run: bash diag/.github/native-win-diagnostics/compare.sh
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr-4374-native-windows-diagnostics
+          path: evidence
+          retention-days: 30
+          if-no-files-found: error
