@@ -5,6 +5,7 @@ import {
   isVendorModelMultimodal,
   resolveVendorModelApiEndpoints
 } from '@aipoch/providers'
+import { frameworkRequiresStreaming } from './agent-framework-id'
 import { isModelBridgeSupported } from './provider-bridge-policy'
 import { labModelLabel, readLabModelCapabilities } from './lab'
 
@@ -187,7 +188,7 @@ export const buildConfiguredModelCatalog = (
       return []
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)
     const streamingSupported = !(
-      input.frameworkId === 'open-science-agent' && entry.streaming === false
+      frameworkRequiresStreaming(input.frameworkId) && entry.streaming === false
     )
     return [
       Object.freeze({

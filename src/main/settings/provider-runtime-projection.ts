@@ -35,6 +35,7 @@ import {
   requiresChatCompletionsBridge
 } from '../../shared/settings'
 import type { AgentFrameworkId } from '../agent-framework'
+import { frameworkRequiresStreaming } from '../../shared/agent-framework-id'
 import { isOfficialOpenAiResponsesBase } from '../agent-framework/codex'
 import { hardenKeyMask, tryDecryptKey } from './crypto'
 import type { ResolvedProvider } from './provider-env'
@@ -170,7 +171,7 @@ class ProviderRuntimeProjectionOwner {
         : selection
     const target = this.resolveProviderTarget(storedProvider, modelSelection)
     if (
-      framework.id === 'open-science-agent' &&
+      frameworkRequiresStreaming(framework.id) &&
       storedProvider.type === 'lab' &&
       target.effectiveModel &&
       storedProvider.modelStreaming?.[target.effectiveModel] === false
@@ -279,7 +280,7 @@ class ProviderRuntimeProjectionOwner {
       .filter(
         (model) =>
           !(
-            framework.id === 'open-science-agent' &&
+            frameworkRequiresStreaming(framework.id) &&
             storedProvider.type === 'lab' &&
             storedProvider.modelStreaming?.[model] === false
           )
@@ -339,7 +340,8 @@ class ProviderRuntimeProjectionOwner {
           ? { maxOutputTokens: capabilities.maxOutputTokens }
           : {}),
         apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
-        supportsImageInput: capabilities?.inputModalities.includes('image') ?? false
+        supportsImageInput: capabilities?.inputModalities.includes('image') ?? false,
+        ...(provider.modelStreaming?.[model ?? ''] === false ? { streaming: false } : {})
       }
     }
     if (provider.type === 'official' && provider.vendorId) {

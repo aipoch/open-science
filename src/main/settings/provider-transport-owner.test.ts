@@ -1185,6 +1185,51 @@ describe('ProviderTransportOwner generations', () => {
     await generation.release()
   })
 
+  it('prepares Lab credentials and wire model for the native Responses path', async () => {
+    const proxy = makeNativeProxy()
+    let captured:
+      { baseUrl?: string; model?: string; resolveKey?: () => Promise<string> } | undefined
+    const getLabAccessToken = vi.fn(async () => 'lab-access-token')
+    const owner = new ProviderTransportOwner({
+      createNativeResponsesProxy: (target) => {
+        captured = target
+        return proxy
+      },
+      getLabAccessToken
+    })
+    const activeTarget: ProviderRuntimeTarget = {
+      ...makeTarget(),
+      providerId: 'builtin-lab',
+      providerType: 'lab',
+      effectiveModel: 'lab:research-default',
+      apiEndpoints: ['responses'],
+      needsChatResponsesToChatCompletionsBridge: false,
+      needsNativeResponsesCompatibility: true,
+      provider: {
+        type: 'lab',
+        baseUrl: 'https://lab.example.com/v1',
+        chatCompletionsBaseUrl: 'https://lab.example.com/v1',
+        labServerUrl: 'https://lab.example.com',
+        model: 'lab:research-default',
+        apiEndpoints: ['responses']
+      }
+    }
+
+    const generation = await owner.acquire({
+      activeTarget,
+      plan: makePlan({ kind: 'codex-responses-compatibility', targets: [] })
+    })
+
+    expect(captured).toMatchObject({
+      baseUrl: 'https://lab.example.com/v1',
+      model: 'research-default'
+    })
+    if (!captured?.resolveKey) throw new Error('expected a prepared Lab target')
+    await expect(captured.resolveKey()).resolves.toBe('lab-access-token')
+    expect(getLabAccessToken).toHaveBeenCalledWith(undefined, 'https://lab.example.com')
+    await generation.release()
+  })
+
   it('closes a half-started native compatibility generation and preserves its start error', async () => {
     const startError = new Error('native compatibility start failed')
     const closeError = new Error('native compatibility close failed')

@@ -7,6 +7,8 @@ import {
   getCustomProviderBaseUrlError
 } from '../../shared/provider-url-policy'
 import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
+import { frameworkRequiresStreaming } from '../../shared/agent-framework-id'
+import { labModelId } from '../../shared/lab'
 
 import type {
   ProviderDeletionScenarioModelHandling,
@@ -716,6 +718,22 @@ class ProviderAccountsModule {
     const storedValidationTarget = resolved.storedId
       ? settings.providers.find((provider) => provider.id === resolved.storedId)
       : undefined
+    if (storedValidationTarget?.type === 'lab') {
+      const requestedModel = request.model ?? resolved.provider.model
+      const storedModel = requestedModel ? labModelId(requestedModel) : undefined
+      if (
+        storedModel &&
+        storedValidationTarget.fetchedModels !== undefined &&
+        !storedValidationTarget.fetchedModels.includes(storedModel)
+      ) {
+        return {
+          ok: false,
+          category: 'model-not-found',
+          message: `The Lab model "${storedModel}" is no longer available from this organization. Pick another model in Settings → Model.`,
+          applied: false
+        }
+      }
+    }
     const validationGeneration = resolved.storedId
       ? this.advanceProviderValidationGeneration(resolved.storedId)
       : undefined
@@ -988,6 +1006,13 @@ class ProviderAccountsModule {
     provider: ResolvedProvider,
     framework: ReturnType<typeof getAgentFramework>
   ): string | undefined {
+    if (
+      provider.type === 'lab' &&
+      provider.streaming === false &&
+      frameworkRequiresStreaming(framework.id)
+    ) {
+      return `Not compatible with ${framework.displayName}: this Lab model does not support streaming. Pick another model or switch the agent framework.`
+    }
     if (
       isProviderUsableByFramework(
         { apiEndpoints: provider.apiEndpoints, type: provider.type },

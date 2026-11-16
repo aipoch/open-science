@@ -973,6 +973,29 @@ class ProviderTransportOwner {
     }
   }
 
+  // The one place that binds a Lab request to its institution: validate the deployment boundary,
+  // translate the namespaced model id, and resolve a fresh host-owned credential per request.
+  private prepareLabRequest(
+    model: string,
+    endpoint: string,
+    labServerUrl: string | undefined
+  ): Readonly<{
+    endpoint: string
+    model: string
+    resolveCredential: (forceRefresh?: boolean) => Promise<string>
+  }> {
+    if (labServerUrl && !isLabDeploymentUrl(labServerUrl, endpoint)) {
+      throw new Error('The Lab gateway endpoint left the configured deployment.')
+    }
+    const expectedServerUrl = labServerUrl ?? new URL(endpoint).origin
+    return Object.freeze({
+      endpoint,
+      model: labModelWireId(model),
+      resolveCredential: (forceRefresh?: boolean) =>
+        this.requireLabAccessToken(forceRefresh, expectedServerUrl)
+    })
+  }
+
   private labForwardingTarget(
     id: string,
     wire: ModelProtocol,
@@ -982,19 +1005,15 @@ class ProviderTransportOwner {
     extra: Partial<ProtocolForwardingBridgeTarget> = {}
   ): ProtocolForwardingBridgeTarget {
     if (wire === 'messages') throw new Error('Lab models do not expose the Messages API.')
-    if (labServerUrl && !isLabDeploymentUrl(labServerUrl, endpoint)) {
-      throw new Error('The Lab gateway endpoint left the configured deployment.')
-    }
-    const expectedServerUrl = labServerUrl ?? new URL(endpoint).origin
+    const prepared = this.prepareLabRequest(model, endpoint, labServerUrl)
     return Object.freeze({
       id,
       wire,
-      endpoint,
-      // Local model ids keep the `lab:` namespace; the gateway only accepts the public id.
-      model: labModelWireId(model),
+      endpoint: prepared.endpoint,
+      model: prepared.model,
       resolveConnection: async (_signal, forceRefresh) => ({
-        endpoint,
-        key: await this.requireLabAccessToken(forceRefresh, expectedServerUrl)
+        endpoint: prepared.endpoint,
+        key: await prepared.resolveCredential(forceRefresh)
       }),
       refreshOnUnauthorized: true,
       mapUpstreamError: mapLabGatewayError,
@@ -1077,16 +1096,14 @@ class ProviderTransportOwner {
     const createTarget = (candidate: ProviderRuntimeTarget): NativeResponsesProxyTarget => {
       const targetBaseUrl = resolveResponsesBaseUrl(candidate.provider)
       if (!targetBaseUrl) throw new Error('The native Responses provider has no base URL.')
-      if (
-        isLabProvider(candidate.provider.type) &&
-        candidate.provider.labServerUrl &&
-        !isLabDeploymentUrl(candidate.provider.labServerUrl, targetBaseUrl)
-      ) {
-        throw new Error('The Lab gateway endpoint left the configured deployment.')
-      }
+      const targetModel = candidate.effectiveModel ?? candidate.provider.model
+      const lab =
+        isLabProvider(candidate.provider.type) && targetModel
+          ? this.prepareLabRequest(targetModel, targetBaseUrl, candidate.provider.labServerUrl)
+          : undefined
       return {
         ...this.healthObservation(candidate),
-        baseUrl: targetBaseUrl,
+        baseUrl: lab?.endpoint ?? targetBaseUrl,
         vendorId: candidate.provider.vendorId,
         key: candidate.provider.key,
         ...(candidate.provider.type === 'xai-subscription'
@@ -1095,21 +1112,7 @@ class ProviderTransportOwner {
               sanitizeRequest: sanitizeXaiResponsesRequest
             }
           : {}),
-        ...(isLabProvider(candidate.provider.type)
-          ? {
-              resolveKey: (forceRefresh?: boolean) =>
-                this.requireLabAccessToken(
-                  forceRefresh,
-                  candidate.provider.labServerUrl ?? new URL(targetBaseUrl).origin
-                )
-            }
-          : {}),
-        model: (() => {
-          const targetModel = candidate.effectiveModel ?? candidate.provider.model
-          return isLabProvider(candidate.provider.type) && targetModel
-            ? labModelWireId(targetModel)
-            : targetModel
-        })(),
+        ...(lab ? { resolveKey: lab.resolveCredential, model: lab.model } : { model: targetModel }),
         reviewerScope: { namespacedTools: [...(input.plan.reviewerBridgeTools ?? [])] }
       }
     }
