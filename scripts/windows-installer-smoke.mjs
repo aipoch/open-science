@@ -1509,7 +1509,7 @@ const uninstallAndVerify = async (
   { processRoot = installDirectory, terminate = terminateDirectoryProcesses, run = runProcess } = {}
 ) => {
   const uninstaller = await findUninstaller(installDirectory)
-  const installedPaths = [...packagedResourcePaths(installDirectory), uninstaller]
+  const installedPaths = packagedResourcePaths(installDirectory)
   await terminate(installDirectory)
   const result = await run(uninstaller, ['/S', '/KEEP_APP_DATA'], {
     allowNonZero: true,
@@ -1524,7 +1524,8 @@ const uninstallAndVerify = async (
     const pathsRemain = (await Promise.all(installedPaths.map(pathExists))).some(Boolean)
     if (pathsRemain) return undefined
     if (!(await pathExists(installDirectory))) return true
-    return (await readdir(installDirectory)).length === 0 || undefined
+    const remainingEntries = await readdir(installDirectory)
+    return remainingEntries.every((entry) => entry === basename(uninstaller)) || undefined
   })
   if (result.code !== 0) {
     console.warn(`Uninstaller reported ${result.code} after removing the application files.`)

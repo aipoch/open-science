@@ -126,7 +126,6 @@ describe('Windows installer smoke plan', () => {
     })
     const run = vi.fn(async (executable: string) => {
       expect(executable).toBe(uninstaller)
-      await rm(installDirectory, { recursive: true, force: true })
       return { code: 0, stdout: '', stderr: '' }
     })
     try {
