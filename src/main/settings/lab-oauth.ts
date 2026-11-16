@@ -115,6 +115,7 @@ type PendingLogin = {
   verifier: string
   expiresAt: number
   host: LabLoopbackCallbackHost
+  redirectUri?: string
   abort: AbortController
   completion?: Promise<LabStoredSession>
 }
@@ -148,11 +149,10 @@ export class LabOAuthController {
     this.assertOpen()
     await this.cancelLogin()
     const host = this.createCallbackHost()
-    const redirectUri = await host.start()
     const state = base64Url(24)
     const verifier = base64Url(32)
-    // Register the attempt before any network work so Cancel or leaving Settings can abort the
-    // in-flight registration instead of letting an old attempt open a browser later.
+    // Register the attempt before starting the callback host as well as before any network work:
+    // Cancel must be able to find and abort the attempt while the listener is starting.
     const pending: PendingLogin = {
       serverUrl,
       state,
@@ -163,6 +163,9 @@ export class LabOAuthController {
     }
     this.pending = pending
     try {
+      const redirectUri = await host.start()
+      this.assertPending(pending)
+      pending.redirectUri = redirectUri
       const installationId = await this.credentials.ensureInstallationId()
       this.assertPending(pending)
       let appVersion: string | undefined

@@ -342,6 +342,49 @@ describe('Lab account owner', () => {
     expect(owner.getView().state).not.toBe('expired')
   })
 
+  it('cancels a login while the saved address is still being read', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const credentials = new LabCredentialStore(dir)
+    await credentials.saveServerUrl(SERVER)
+    const api = createApi()
+    const oauth = {
+      beginLogin: vi.fn(async () => ({
+        authorizationUrl: 'https://lab.example.com/sign-in',
+        expiresAt: Date.now() + 60_000
+      })),
+      waitForLogin: vi.fn(),
+      cancelLogin: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined)
+    }
+    const repository = new SettingsRepository(dir)
+    const owner = new LabAccountOwner({
+      configRoot: dir,
+      repository,
+      credentials,
+      api: api as unknown as LabApi,
+      oauth: oauth as unknown as never
+    })
+    const originalRead = credentials.readDocument.bind(credentials)
+    let releaseRead: (() => void) | undefined
+    let readPaused = false
+    vi.spyOn(credentials, 'readDocument').mockImplementationOnce(async () => {
+      readPaused = true
+      await new Promise<void>((resolve) => {
+        releaseRead = resolve
+      })
+      return originalRead()
+    })
+    const starting = owner.beginLogin().catch((error: unknown) => error)
+    await vi.waitFor(() => expect(readPaused).toBe(true))
+    await owner.cancelLogin()
+    releaseRead?.()
+    const error = await starting
+    expect(error).toBeInstanceOf(LabApiError)
+    expect((error as LabApiError).code).toBe('cancelled')
+    expect(oauth.beginLogin).not.toHaveBeenCalled()
+  })
+
   it('clears a session saved by a fast callback before beginLogin returns', async () => {
     const dir = await createRoot()
     await seedSettings(dir)
@@ -442,6 +485,21 @@ describe('Lab account owner', () => {
     expect(view).toMatchObject({ state: 'signedOut', error: { code: 'cancelled' } })
     expect(await credentials.readSession()).toBeUndefined()
     expect(owner.getView().state).toBe('signedOut')
+  })
+
+  it('ignores a late cancel after the login has completed', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const api = createApi()
+    const { owner } = await createOwner(dir, api)
+    const credentials = new LabCredentialStore(dir)
+    await seedSession(credentials)
+    await owner.check()
+    expect(owner.getView().state).toBe('authenticated')
+
+    const view = await owner.cancelLogin()
+    expect(view.state).toBe('authenticated')
+    expect((await credentials.readSession())?.accessToken).toBe('at_1')
   })
 
   it('rolls back a catalog written after cancellation invalidates the connection', async () => {
@@ -679,6 +737,34 @@ describe('Lab account owner', () => {
     expect(view.error?.code).toBe('server-url-missing')
     expect(api.clientBootstrap).not.toHaveBeenCalled()
     expect((await credentials.readSession())?.accessToken).toBeTruthy()
+  })
+
+  it('does not let a stale connection probe republish an old signed-out state', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const credentials = new LabCredentialStore(dir)
+    await credentials.saveServerUrl(SERVER)
+    const api = createApi()
+    let resolveProbe: (() => void) | undefined
+    api.clientBootstrap.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveProbe = resolve
+        })
+    )
+    const repository = new SettingsRepository(dir)
+    const owner = new LabAccountOwner({
+      configRoot: dir,
+      repository,
+      credentials,
+      api: api as unknown as LabApi
+    })
+    const checking = owner.check()
+    await vi.waitFor(() => expect(api.clientBootstrap).toHaveBeenCalledTimes(1))
+    await owner.setServerUrl('https://another-lab.example.com')
+    resolveProbe?.()
+    await checking
+    expect(owner.getView().serverUrl).toBe('https://another-lab.example.com')
   })
 
   it('probes an unsaved draft address without clearing the current login', async () => {

@@ -160,6 +160,19 @@ describe('Lab settings panel', () => {
     expect(container.textContent).toContain('Lab server address is reachable.')
   })
 
+  it('fills the saved address when it arrives after the panel mounted', async () => {
+    await renderPanel({ state: 'unconfigured' })
+    expect(container.querySelector('input[aria-label="Lab server address"]')).toHaveProperty(
+      'value',
+      ''
+    )
+    await renderPanel({ state: 'signedOut', serverUrl: 'https://late.example.com' })
+    expect(container.querySelector('input[aria-label="Lab server address"]')).toHaveProperty(
+      'value',
+      'https://late.example.com'
+    )
+  })
+
   it('does not show a success result for an empty draft address', async () => {
     await renderPanel({ state: 'signedOut', serverUrl: 'https://lab.example.com' })
     settingsApi.labCheck.mockResolvedValueOnce({
@@ -171,6 +184,22 @@ describe('Lab settings panel', () => {
     await click('Test connection')
     expect(settingsApi.labCheck).toHaveBeenCalledWith({ serverUrl: '' })
     expect(container.textContent).not.toContain('Lab server address is reachable.')
+  })
+
+  it('drops a probe error when the input changes while it is in flight', async () => {
+    await renderPanel({ state: 'signedOut', serverUrl: 'https://lab.example.com' })
+    let rejectCheck: ((error: unknown) => void) | undefined
+    settingsApi.labCheck.mockImplementation(
+      () =>
+        new Promise<LabView>((_resolve, reject) => {
+          rejectCheck = reject
+        })
+    )
+    const button = buttonWithText('Test connection')
+    await act(async () => button!.click())
+    changeInput('https://other.example.com')
+    await act(async () => rejectCheck?.(new Error('local config read failed')))
+    expect(container.textContent).not.toContain('The Lab server rejected the request.')
   })
 
   it('drops a probe result when the input changes while it is in flight', async () => {

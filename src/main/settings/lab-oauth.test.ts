@@ -155,6 +155,38 @@ describe('Lab OAuth controller', () => {
     expect(credentials.saveSession).not.toHaveBeenCalled()
   })
 
+  it('cancels before the callback listener finishes starting', async () => {
+    const { api } = createApi()
+    const credentials = createCredentials()
+    const openExternal = vi.fn(async () => undefined)
+    let resolveStart: ((redirectUri: string) => void) | undefined
+    const host = {
+      start: vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveStart = resolve
+          })
+      ),
+      close: vi.fn(async () => undefined),
+      waitFor: vi.fn()
+    }
+    const controller = new LabOAuthController({
+      api: api as unknown as LabApi,
+      credentials: credentials as unknown as LabCredentialStore,
+      openExternal,
+      createCallbackHost: () => host as unknown as LabLoopbackCallbackHost
+    })
+    const starting = controller.beginLogin(SERVER).catch((error: unknown) => error)
+    await vi.waitFor(() => expect(host.start).toHaveBeenCalledTimes(1))
+    await controller.cancelLogin()
+    resolveStart?.('http://127.0.0.1:54321/oauth/callback')
+    const error = await starting
+    expect(error).toBeInstanceOf(LabApiError)
+    expect((error as LabApiError).code).toBe('cancelled')
+    expect(api.registerLoginAttempt).not.toHaveBeenCalled()
+    expect(openExternal).not.toHaveBeenCalled()
+  })
+
   it('cancels the registration request before the browser is opened', async () => {
     const { api } = createApi()
     api.registerLoginAttempt.mockImplementation(

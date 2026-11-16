@@ -211,6 +211,9 @@ export class LabAccountOwner {
       // bootstrap endpoint so "Test connection" can distinguish a typo from an offline server.
       try {
         await this.api.clientBootstrap(document.serverUrl)
+        // The probe may finish after a switch or a new login. Its success must not republish the
+        // old institution as the current signedOut connection.
+        if (!this.isCurrentConnection(generation, document.serverUrl)) return this.view
         return this.publish({ state: 'signedOut', serverUrl: document.serverUrl })
       } catch (error) {
         return this.handleRequestFailure(error, document.serverUrl, generation)
@@ -225,27 +228,34 @@ export class LabAccountOwner {
   }
 
   async beginLogin(): Promise<LabSignInChallenge> {
-    const document = await this.credentials.readDocument()
-    if (!document.serverUrl) {
-      throw new LabApiError('server-url-missing', 'Configure the Lab server address first.')
-    }
+    // Register the attempt before reading the saved address: Cancel/leaving the panel may arrive
+    // while that read is still pending, and it must invalidate this flow before OAuth starts.
     const attempt = ++this.loginAttempt
     this.activeLoginAttempt = attempt
+    let serverUrl: string | undefined
     try {
-      const challenge = await this.oauth.beginLogin(document.serverUrl)
+      const document = await this.credentials.readDocument()
+      if (this.activeLoginAttempt !== attempt) {
+        throw new LabApiError('cancelled', 'Lab sign-in was cancelled.')
+      }
+      serverUrl = document.serverUrl
+      if (!serverUrl) {
+        throw new LabApiError('server-url-missing', 'Configure the Lab server address first.')
+      }
+      const challenge = await this.oauth.beginLogin(serverUrl)
       // Cancel covers the whole attempt, including the window where a fast browser callback has
       // already saved a session but openExternal has not returned yet.
       if (this.activeLoginAttempt !== attempt) {
         throw new LabApiError('cancelled', 'Lab sign-in was cancelled.')
       }
-      this.publish({ state: 'signingIn', serverUrl: document.serverUrl })
+      this.publish({ state: 'signingIn', serverUrl })
       return challenge
     } catch (error) {
       if (this.activeLoginAttempt === attempt) {
         this.activeLoginAttempt = undefined
         this.publish({
           state: 'signedOut',
-          serverUrl: document.serverUrl,
+          ...(serverUrl ? { serverUrl } : {}),
           error: toViewError(error)
         })
       }
@@ -287,6 +297,12 @@ export class LabAccountOwner {
 
   async cancelLogin(): Promise<LabView> {
     const wasLoginActive = this.activeLoginAttempt !== undefined || this.view.state === 'signingIn'
+    if (!wasLoginActive) {
+      // A late cancel (e.g. panel unmount after the login already completed) must not turn a
+      // healthy authenticated session into signedOut.
+      await this.oauth.cancelLogin().catch(() => undefined)
+      return this.view
+    }
     if (wasLoginActive) {
       // Cancel covers the whole sign-in flow, including the window before beginLogin publishes
       // signingIn and the catalog load after the browser callback. Advance the attempt and

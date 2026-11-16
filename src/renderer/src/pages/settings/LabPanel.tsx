@@ -70,6 +70,7 @@ export function LabPanel(): React.JSX.Element {
   const lab = useSettingsStore((state) => state.lab)
   const [serverUrl, setServerUrl] = useState(() => lab?.serverUrl ?? '')
   const serverUrlRef = useRef(serverUrl)
+  const editedRef = useRef(false)
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [actionErrorKey, setActionErrorKey] = useState<string>()
   const [actionSuccessKey, setActionSuccessKey] = useState<string>()
@@ -80,6 +81,15 @@ export function LabPanel(): React.JSX.Element {
   useEffect(() => {
     signingInRef.current = lab?.state === 'signingIn'
   }, [lab?.state])
+
+  // Background restore may publish the saved address after this panel mounted. Sync it while the
+  // user has not edited the draft; never overwrite a draft the user is typing.
+  useEffect(() => {
+    if (editedRef.current) return
+    const next = lab?.serverUrl ?? ''
+    serverUrlRef.current = next
+    setServerUrl(next)
+  }, [lab?.serverUrl])
 
   // Leaving Settings while the loopback callback is still pending must release the main-process
   // attempt; the cancellation itself is fire-and-forget because the component is going away.
@@ -124,7 +134,9 @@ export function LabPanel(): React.JSX.Element {
       if (view.error?.code) setActionErrorKey(labErrorCopyKey(view.error.code))
       else setActionSuccessKey('Lab server address is reachable.')
     } catch (error) {
-      setActionErrorKey(errorCopyKey(error))
+      if (serverUrlRef.current.trim() === testedServerUrl.trim()) {
+        setActionErrorKey(errorCopyKey(error))
+      }
     } finally {
       setBusyAction(null)
     }
@@ -228,6 +240,7 @@ export function LabPanel(): React.JSX.Element {
                     disabled={busyAction === 'save'}
                     onChange={(event) => {
                       const next = event.target.value
+                      editedRef.current = true
                       serverUrlRef.current = next
                       setServerUrl(next)
                       setActionErrorKey(undefined)
