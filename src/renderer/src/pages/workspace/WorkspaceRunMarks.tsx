@@ -79,6 +79,9 @@ const WorkspaceRunMarks = ({
   const pointerPositionRef = useRef(0)
   const pointerFocusRef = useRef(false)
   const pendingRevealRef = useRef<{ id: string } | undefined>(undefined)
+  const pendingRevealRetryFrameRef = useRef<number | undefined>(undefined)
+  const pendingRevealRetryCountRef = useRef(0)
+  const [pendingRevealRetry, setPendingRevealRetry] = useState(0)
   const cancelPointerFrame = (): void => {
     if (pointerFrameRef.current !== undefined) {
       window.cancelAnimationFrame(pointerFrameRef.current)
@@ -308,12 +311,13 @@ const WorkspaceRunMarks = ({
       onRevealMessage?.(mark.id)
     })
     const targetMounted = viewport ? findMessageTarget(viewport, mark.id) !== undefined : false
+    pendingRevealRef.current = { id: mark.id }
+    pendingRevealRetryCountRef.current = 0
     if (targetMounted) {
-      pendingRevealRef.current = undefined
-      scrollToMountedRun(mark, index)
+      if (scrollToMountedRun(mark, index)) pendingRevealRef.current = undefined
+      else setPendingRevealRetry((revision) => revision + 1)
       return
     }
-    if (onRevealMessage) pendingRevealRef.current = { id: mark.id }
     setCurrentIndex(index)
   }
 
@@ -332,8 +336,24 @@ const WorkspaceRunMarks = ({
     const pendingMark = marks[pendingIndex]!
     if (scrollToMountedRun(pendingMark, pendingIndex)) {
       pendingRevealRef.current = undefined
+      pendingRevealRetryCountRef.current = 0
+    } else if (
+      pendingRevealRetryCountRef.current < 3 &&
+      pendingRevealRetryFrameRef.current === undefined
+    ) {
+      pendingRevealRetryCountRef.current += 1
+      pendingRevealRetryFrameRef.current = window.requestAnimationFrame(() => {
+        pendingRevealRetryFrameRef.current = undefined
+        setPendingRevealRetry((revision) => revision + 1)
+      })
     }
-  }, [items, marks, onRevealMessage, scrollToMountedRun, visibleIndices])
+    return () => {
+      if (pendingRevealRetryFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(pendingRevealRetryFrameRef.current)
+        pendingRevealRetryFrameRef.current = undefined
+      }
+    }
+  }, [items, marks, onRevealMessage, pendingRevealRetry, scrollToMountedRun, visibleIndices])
 
   if (marks.length < 4 || !railPosition || typeof document === 'undefined') return null
 

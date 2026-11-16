@@ -1,5 +1,39 @@
 import { expect, test } from '@playwright/test'
 
+const waitForStableOffset = async (
+  readOffset: () => Promise<number | null>,
+  waitFrame: () => Promise<void>,
+  expected: number
+): Promise<void> => {
+  await expect
+    .poll(async () => {
+      const samples: number[] = []
+      for (let frame = 0; frame < 4; frame += 1) {
+        await waitFrame()
+        const value = await readOffset()
+        if (value !== null) samples.push(value)
+      }
+      return samples.length === 4 && samples.every((value) => Math.abs(value - expected) < 0.5)
+    })
+    .toBe(true)
+}
+
+const waitForStableLayout = async (
+  readHeight: () => Promise<number>,
+  waitFrame: () => Promise<void>
+): Promise<void> => {
+  await expect
+    .poll(async () => {
+      const samples: number[] = []
+      for (let frame = 0; frame < 4; frame += 1) {
+        await waitFrame()
+        samples.push(await readHeight())
+      }
+      return samples.every((value) => value > 0 && value === samples[0])
+    })
+    .toBe(true)
+}
+
 for (const noContainment of [false, true]) {
   for (const index of [70, 10]) {
     test(`settles on history row ${index + 1}, containment=${!noContainment}`, async ({ page }) => {
@@ -8,7 +42,12 @@ for (const noContainment of [false, true]) {
       const rail = page.getByRole('navigation', { name: 'Run marks' }).locator('ol')
       // Wait for the initial tail and its deferred layout to settle before navigation.
       await expect(viewport.locator('[data-message-id="user-119"]')).toBeAttached()
-      await page.waitForTimeout(1000)
+      const waitFrame = (): Promise<void> =>
+        page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+      await waitForStableLayout(
+        () => viewport.evaluate((element) => element.scrollHeight),
+        waitFrame
+      )
       const mark = rail.locator(`[data-run-index="${index}"]`)
       // Keyboard focus reveals marks outside the rail's currently visible range.
       if (index === 10) {
@@ -24,8 +63,7 @@ for (const noContainment of [false, true]) {
         }, index)
       await expect.poll(offset).toBeCloseTo(8, 0)
       // A transient correct frame is insufficient: late layout/anchoring must not undo the jump.
-      await page.waitForTimeout(1200)
-      expect(await offset()).toBeCloseTo(8, 0)
+      await waitForStableOffset(offset, waitFrame, 8)
     })
   }
 }
@@ -37,7 +75,9 @@ test('keeps the last requested target, both endpoints, and resumed following sta
   const viewport = page.getByRole('region', { name: 'Conversation' })
   const rail = page.getByRole('navigation', { name: 'Run marks' }).locator('ol')
   await expect(viewport.locator('[data-message-id="user-239"]')).toBeAttached()
-  await page.waitForTimeout(1000)
+  const waitFrame = (): Promise<void> =>
+    page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+  await waitForStableLayout(() => viewport.evaluate((element) => element.scrollHeight), waitFrame)
   const offset = (index: number): Promise<number | null> =>
     viewport.evaluate((el, index) => {
       const target = el.querySelector(`[data-message-id="user-${index}"]`)
@@ -55,16 +95,14 @@ test('keeps the last requested target, both endpoints, and resumed following sta
   const newer = rail.locator('[data-run-index="35"]')
   await newer.click()
   await expect.poll(() => offset(35)).toBeCloseTo(8, 0)
-  await page.waitForTimeout(1200)
-  expect(await offset(35)).toBeCloseTo(8, 0)
+  await waitForStableOffset(() => offset(35), waitFrame, 8)
   await viewport.hover()
   await page.mouse.wheel(0, -1000)
   await expect.poll(() => offset(35)).toBeGreaterThan(100)
   await newer.hover()
   await page.locator('button[data-slot="run-mark-preview"][data-open]').click()
   await expect.poll(() => offset(35)).toBeCloseTo(8, 0)
-  await page.waitForTimeout(1200)
-  expect(await offset(35)).toBeCloseTo(8, 0)
+  await waitForStableOffset(() => offset(35), waitFrame, 8)
   await page.getByRole('button', { name: 'Scroll to end', exact: true }).click()
   await expect
     .poll(() => viewport.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight))
@@ -77,7 +115,6 @@ test('keeps the last requested target, both endpoints, and resumed following sta
   await last.focus()
   await last.click()
   await expect.poll(() => offset(239)).toBeCloseTo(8, 0)
-  await page.waitForTimeout(1200)
-  expect(await offset(239)).toBeCloseTo(8, 0)
+  await waitForStableOffset(() => offset(239), waitFrame, 8)
   await expect.poll(() => viewport.locator('[data-message-id]').count()).toBeLessThanOrEqual(160)
 })

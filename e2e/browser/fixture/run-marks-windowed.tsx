@@ -17,25 +17,61 @@ import {
   MessageScrollerButton
 } from '@/components/ui/message-scroller'
 import type { WorkspaceConversationTimelineItem } from '@/pages/workspace/workspace-conversation-timeline'
+import type { ToolActivity } from '@/stores/session-store-contract'
 
 initI18n('en')
 const params = new URLSearchParams(location.search)
 const count = Number(params.get('count') ?? 120)
-const items: WorkspaceConversationTimelineItem[] = Array.from({ length: count }, (_, index) => ({
-  id: `user-${index}`,
-  type: 'message',
-  sortIndex: index,
-  createdAt: index,
-  message: {
+const items: WorkspaceConversationTimelineItem[] = Array.from({ length: count }, (_, index) => {
+  const userMessage: WorkspaceConversationTimelineItem = {
     id: `user-${index}`,
-    role: 'user',
-    content: `Message ${index + 1}`,
-    status: 'complete',
-    eventIds: [],
-    createdAt: index,
-    updatedAt: index
+    type: 'message',
+    sortIndex: index * 3,
+    createdAt: index * 3,
+    message: {
+      id: `user-${index}`,
+      role: 'user',
+      content: `Message ${index + 1}`,
+      status: 'complete',
+      eventIds: [],
+      createdAt: index * 3,
+      updatedAt: index * 3
+    }
   }
-}))
+  const toolActivity: ToolActivity = {
+    id: `tool-${index}`,
+    kind: 'tool',
+    title: `Inspect history ${index + 1}`,
+    status: 'completed',
+    eventIds: [],
+    sortIndex: index * 3 + 1,
+    createdAt: index * 3 + 1,
+    updatedAt: index * 3 + 1
+  }
+  const activityGroup: WorkspaceConversationTimelineItem = {
+    id: `activity-group-tool-${index}`,
+    type: 'activity-group',
+    sortIndex: index * 3 + 1,
+    createdAt: index * 3 + 1,
+    activities: [toolActivity]
+  }
+  const agentMessage: WorkspaceConversationTimelineItem = {
+    id: `agent-${index}`,
+    type: 'message',
+    sortIndex: index * 3 + 2,
+    createdAt: index * 3 + 2,
+    message: {
+      id: `agent-${index}`,
+      role: 'agent',
+      content: `Reply ${index + 1}`,
+      status: 'complete',
+      eventIds: [],
+      createdAt: index * 3 + 2,
+      updatedAt: index * 3 + 2
+    }
+  }
+  return [userMessage, activityGroup, agentMessage]
+}).flat()
 export const App = (): JSX.Element => {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null)

@@ -759,6 +759,28 @@ describe('WorkspaceRunMarks interaction', () => {
     })
   })
 
+  it('retries when the mounted target is not registered by the scroller yet', async () => {
+    const items = Array.from({ length: 4 }, (_, index) =>
+      createMessageItem({ id: `prompt-${index}` }, index)
+    )
+    appendMessageTarget(viewport, 'prompt-1', 600)
+    scrollToMessage.mockReturnValueOnce(false).mockReturnValue(true)
+    render(<WorkspaceRunMarks items={items} viewport={viewport} onRevealMessage={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Go to run 2/u }))
+    await act(async () => {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    })
+
+    expect(scrollToMessage.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(scrollToMessage).toHaveBeenLastCalledWith('prompt-1', {
+      align: 'start',
+      scrollMargin: 8,
+      behavior: 'instant'
+    })
+  })
+
   it('tracks the last mark above the viewport reading boundary', () => {
     appendMessageTarget(viewport, 'prompt-1', 80)
     appendMessageTarget(viewport, 'prompt-2', 125)

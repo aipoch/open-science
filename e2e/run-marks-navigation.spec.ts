@@ -7,6 +7,24 @@ import { openProjectSession } from './certification/helpers'
 
 test.use({ windowMode: 'normal' })
 
+const waitForStableOffset = async (
+  readOffset: () => Promise<number | null>,
+  waitFrame: () => Promise<void>,
+  expected: number
+): Promise<void> => {
+  await expect
+    .poll(async () => {
+      const samples: number[] = []
+      for (let frame = 0; frame < 4; frame += 1) {
+        await waitFrame()
+        const value = await readOffset()
+        if (value !== null) samples.push(value)
+      }
+      return samples.length === 4 && samples.every((value) => Math.abs(value - expected) < 0.5)
+    })
+    .toBe(true)
+}
+
 test('run marks land on the selected prompt in a real variable-height transcript', async ({
   app
 }, testInfo) => {
@@ -23,14 +41,30 @@ test('run marks land on the selected prompt in a real variable-height transcript
       status: 'idle',
       createdAt: now,
       updatedAt: now + 240,
-      messages: Array.from({ length: 240 }, (_, index) => ({
-        id: `navigation-${index}`,
-        role: 'user' as const,
-        content: `PROMPT ${index + 1}\n\n${'Historical message with variable height.\n'.repeat(1 + (index % 13))}`,
-        status: 'complete' as const,
+      messages: Array.from({ length: 240 }, (_, index) => {
+        const turn = Math.floor(index / 2)
+        const user = index % 2 === 0
+        return {
+          id: `navigation-${user ? 'user' : 'agent'}-${turn}`,
+          role: user ? ('user' as const) : ('agent' as const),
+          responseToMessageId: user ? undefined : `navigation-user-${turn}`,
+          content: `${user ? 'PROMPT' : 'REPLY'} ${turn + 1}\n\n${'Historical message with variable height.\n'.repeat(1 + ((turn + (user ? 0 : 5)) % 13))}`,
+          status: 'complete' as const,
+          eventIds: [],
+          createdAt: now + index,
+          updatedAt: now + index
+        }
+      }),
+      activities: Array.from({ length: 120 }, (_, turn) => ({
+        id: `navigation-tool-${turn}`,
+        kind: 'tool' as const,
+        title: `Inspect history ${turn + 1}`,
+        promptMessageId: `navigation-user-${turn}`,
+        status: 'completed' as const,
         eventIds: [],
-        createdAt: now + index,
-        updatedAt: now + index
+        sortIndex: turn * 2 + 1,
+        createdAt: now + turn * 2 + 1,
+        updatedAt: now + turn * 2 + 1
       }))
     })
   }, cwd)
@@ -40,23 +74,23 @@ test('run marks land on the selected prompt in a real variable-height transcript
   await openProjectSession(page, 'Run navigation', 'Variable history')
   const viewport = page.getByRole('region', { name: 'Conversation' })
   const rail = page.getByRole('navigation', { name: 'Run marks' }).locator('ol')
-  await expect(viewport.locator('[data-message-id="navigation-239"]')).toBeAttached()
-  await page.waitForTimeout(1000)
+  await expect(viewport.locator('[data-message-id="navigation-user-119"]')).toBeAttached()
+  const waitFrame = (): Promise<void> =>
+    page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+  await waitFrame()
   // Keyboard focus exposes each rail window; clicking still uses real pointer hit testing.
-  for (const index of [210, 0, 30, 239]) {
-    if (index === 0 || index === 239) await rail.locator(`[data-run-index="${index}"]`).focus()
+  for (const index of [110, 0, 30, 119]) {
+    if (index === 0 || index === 119) await rail.locator(`[data-run-index="${index}"]`).focus()
     const mark = rail.locator(`[data-run-index="${index}"]`)
     await mark.hover()
     await page.screenshot({ path: testInfo.outputPath(`before-${index}.png`) })
     await mark.click()
     const offset = (): Promise<number | null> =>
       viewport.evaluate((el, index) => {
-        const target = el.querySelector(`[data-message-id="navigation-${index}"]`)
+        const target = el.querySelector(`[data-message-id="navigation-user-${index}"]`)
         return target ? target.getBoundingClientRect().top - el.getBoundingClientRect().top : null
       }, index)
-    await expect.poll(offset).toBeCloseTo(index === 0 ? 0 : 8, 0)
-    await page.waitForTimeout(1200)
-    expect(await offset()).toBeCloseTo(index === 0 ? 0 : 8, 0)
+    await waitForStableOffset(offset, waitFrame, index === 0 ? 0 : 8)
     await page.screenshot({ path: testInfo.outputPath(`after-${index}.png`) })
     expect(await viewport.locator('[data-message-id^="navigation-"]').count()).toBeLessThanOrEqual(
       160
