@@ -2,6 +2,7 @@
 
 // Read-only feasibility probe, not a production layout parser.
 // Usage: node resources/pdf-structure/literature-pdf-structure.mjs input.pdf output-directory [render-pages]
+import { installPdfCanvasReset } from './literature-pdf-canvas-reset.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises'
@@ -62,6 +63,7 @@ const task = getDocument({
 bytes = undefined
 const started = performance.now()
 const document = await task.promise
+installPdfCanvasReset(document.canvasFactory)
 const pages = []
 let rendered = 0
 try {

@@ -50,12 +50,12 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  resolveCodexSubscriptionType,
-  type ValidateProviderResult,
-  type ProviderView,
-  type UpsertProviderRequest
+import type {
+  ValidateProviderResult,
+  ProviderView,
+  UpsertProviderRequest
 } from '../../../../shared/settings'
+import { resolveCodexSubscriptionType } from '../../../../shared/settings-runtime'
 import { APP } from '../../../../shared/app-config'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'

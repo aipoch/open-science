@@ -227,7 +227,8 @@
     "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-function-display-retention.test.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/pdf-target-occlusion-roundtrip.test.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-coordinated-panel-links.test.tsx",
-    "src/renderer/src/pages/workspace/previews/renderers/pdf-typed-reference-links.test.tsx"
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-typed-reference-links.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-closed-citation-native.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/previews/PreviewFallback.tsx",
@@ -337,7 +338,8 @@
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-function-display-retention.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-target-occlusion-roundtrip.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-coordinated-panel-links.test.tsx",
-      "src/renderer/src/pages/workspace/previews/renderers/pdf-typed-reference-links.test.tsx"
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-typed-reference-links.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-closed-citation-native.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

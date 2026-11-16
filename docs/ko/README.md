@@ -172,6 +172,7 @@ AIPOCH는 논문 찾기부터 논문 내용에 대한 답변, 연구 계획 실�
 | 문헌을 바탕으로 답변하기    | LitQA2-FullText        | 별도의 LitQA2-FullText 평가에서 Open-Science는 **75문항 중 70문항에 정답**을 제시했습니다(**정확도 93.33%**, deepseek-flash, Max 추론).                |
 | 인용을 포함한 답변 종합하기 | ScholarQA-CS2          | ScholarQA-CS2 검증 100문항에서 deepseek-v4-flash로 **종합 품질 점수 0.9289/1**을 기록했습니다. 공식 테스트 참고 결과는 다른 문항을 사용합니다.         |
 | 연구 워크플로 실행하기      | ASI-Bench              | 동일 모델을 사용한 로컬 ASI-Bench 평가에서 B4 점수는 Open-Science **59.46**, Codex **55.45**였습니다. B2 점수는 거의 같았습니다(**56.11**, **56.09**). |
+| 과학 연구 과제 수행         | TB-Science 0.1         | 70개 과제에서 GPT-6 Astra/max: 로컬 실행 210회 중 **145회 통과**(**69.05%**). 공식 순위가 아니며 개별 실행 기록은 공개되지 않았습니다.                 |
 | 생의학 데이터 분석하기      | BiomniBench-DA         | BiomniBench-DA Public 50에서 두 평가 모델의 점수는 **81.04**, **77.06**이었으며 동일 가중치 평균은 **79.05**였습니다.                                  |
 | 발표된 결과 재현            | CORE-Bench-Hard        | CORE-Bench-Hard — 로컬 평가에서 테스트 과제 37개 중 36개 정답(97.30%). 최종 집계에는 재시험이 포함됩니다.                                              |
 | 데이터에서 가설 발견        | DiscoveryBench         | DiscoveryBench — 검증 세트에서 선택한 25개 과제의 로컬 모델 평가 평균은 0.7467/1입니다.                                                                |
@@ -181,7 +182,7 @@ AIPOCH는 논문 찾기부터 논문 내용에 대한 답변, 연구 계획 실�
 
 **평가 범위:** 보고서는 명시된 모델과 데이터 분할을 사용한 2026년 8월부터 11월까지의 로컬·내부 실행을 다루며, 현재 릴리스를 위해 다시 실행한 결과가 아닙니다. 참고 점수는 과거 스냅샷으로 실시간 셜위가 아닙니다. 서로 다른 벤치마크 계열의 점수는 직접 비교할 수 없으며 수치 차이가 통계적 유의성을 입증하지 않습니다.
 
-자세한 평가 내용은 [AstaBench 및 ASI-Bench 보고서](https://aipoch.com/benchmark/open-science)와 [BiomniBench-DA 보고서](https://aipoch.com/blog/open-science-biomnibench-da)를 참고하세요.
+자세한 평가 내용은 [AstaBench 및 ASI-Bench 보고서](https://aipoch.com/benchmark/open-science), [BiomniBench-DA 보고서](https://aipoch.com/blog/open-science-biomnibench-da), [TB-Science 0.1 로컬 결과](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)를 참고하세요.
 
 [CORE-Bench-Hard · 재현성 평가 보고서](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

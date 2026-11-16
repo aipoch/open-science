@@ -43,6 +43,7 @@ import { createDefaultUploadRepository } from '../uploads/ipc'
 import { WslSetupSessionOwner } from '../wsl/wsl-setup-session-owner'
 
 export async function composeAgentRuntime({
+  schedules,
   wslSetupSessions,
   getAvailableShellRuntimeBinding,
   settingsService,
@@ -116,6 +117,7 @@ export async function composeAgentRuntime({
   literatureDocumentReader: LiteratureDocumentReader
   mainPromptSideChatRelay: ReturnType<typeof createMainPromptSideChatRelay>
   backendTeardownOwnedByCoordinator: { current: boolean }
+  schedules?: import('../schedules/mcp').ScheduleMcp
   notebookService: NotebookRuntimeService
   specialistService: SpecialistService
   memoryService: MemoryService
@@ -206,6 +208,7 @@ export async function composeAgentRuntime({
       afterSessionDelete: (sessionId, retained) =>
         computeIpcModule.handlers.approvalFinishSessionDeletion(sessionId, retained),
       initializationBarrier: initialConnectorSkillsReady,
+      schedules,
       specialistService,
       sessionPersistenceCoordinator,
       sandboxNetworkApprovalOwner,

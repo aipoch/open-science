@@ -34,6 +34,7 @@ import {
   createResearchVideoPresentationOwner,
   currentFilmAttempt
 } from '../research-video/presentation'
+import { waitForFilmStep } from '../research-video/wait'
 import { runtimeMetadata } from '../runtime-metadata'
 import type { SessionPackageService } from '../session-package/service'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
@@ -102,13 +103,17 @@ export async function composeResearchFilm({
     resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
   })
   // One frozen source belongs to one job. Corrections and parallel scene calls share its target.
-  const capture = async (): Promise<{
+  const capture = async (
+    signal: AbortSignal
+  ): Promise<{
     target: Awaited<ReturnType<SettingsService['captureActiveExplicitAgentBackendTarget']>>
     budget: number
     count: (text: string) => number
   }> => {
     const target = await settingsService.captureActiveExplicitAgentBackendTarget()
+    signal.throwIfAborted()
     const snapshot = await settingsService.getSettingsView()
+    signal.throwIfAborted()
     const provider = snapshot.providers.find((entry) => entry.id === target.providerId)
     if (!provider) throw new Error('The selected research film provider is unavailable.')
     const model = target.model.kind === 'required' ? target.model.id : provider.model
@@ -123,6 +128,29 @@ export async function composeResearchFilm({
   }
   const filmLog = createLogger('research-video')
   const targets = new WeakMap<ResearchVideoSessionSource, ReturnType<typeof capture>>()
+  const recordUsage = async (
+    record: SessionAuxiliaryTurnUsageRecord,
+    signal: AbortSignal
+  ): Promise<void> => {
+    // Once observed, Usage belongs to the recorder, including when Film stops waiting.
+    const deadline = AbortSignal.timeout(5_000)
+    // Keep the rejection observed even if the Film was already cancelled.
+    const pending = Promise.resolve()
+      .then(() => recordAuxiliaryUsage(record))
+      .catch((error) => {
+        filmLog.info('film model usage failed', {
+          requestId: record.eventId,
+          ...diagnosticErrorFields(error)
+        })
+      })
+    try {
+      await waitForFilmStep(AbortSignal.any([signal, deadline]), () => pending)
+    } catch (error) {
+      signal.throwIfAborted()
+      if (!deadline.aborted || error !== deadline.reason) throw error
+      filmLog.info('film model usage still pending', { requestId: record.eventId })
+    }
+  }
   const inferResearchVideo = async (
     source: ResearchVideoSessionSource,
     systemPrompt: string,
@@ -130,29 +158,37 @@ export async function composeResearchFilm({
     signal: AbortSignal
   ): Promise<string> => {
     signal.throwIfAborted()
-    if (!targets.has(source)) targets.set(source, capture())
-    const { target, budget, count } = await targets.get(source)!.catch((error) => {
+    const targetDeadline = AbortSignal.timeout(30_000)
+    const setupSignal = AbortSignal.any([signal, targetDeadline])
+    const { target, budget, count } = await waitForFilmStep(setupSignal, () => {
+      if (!targets.has(source)) targets.set(source, capture(setupSignal))
+      return targets.get(source)!
+    }).catch((error) => {
+      signal.throwIfAborted()
+      const failure =
+        targetDeadline.aborted && error === targetDeadline.reason
+          ? new Error('Research film model setup timed out. Try again.')
+          : error
       filmLog.info('film model target failed', {
         ...currentFilmAttempt(),
         sessionId: source.provenance.sessionId,
         activeBranchId: source.provenance.branchId,
-        ...diagnosticErrorFields(error)
+        ...diagnosticErrorFields(failure)
       })
-      throw error
+      throw failure
     })
     signal.throwIfAborted()
     const requestId = randomUUID()
     const started = performance.now()
+    const correction =
+      payload && typeof payload === 'object' && 'correction' in payload ? payload.correction : null
     const fields = {
       ...currentFilmAttempt(),
       requestId,
       sessionId: source.provenance.sessionId,
       activeBranchId: source.provenance.branchId,
       phase: systemPrompt === RESEARCH_VIDEO_SCREENPLAY_PROMPT ? 'screenplay' : 'animation',
-      purpose:
-        payload && typeof payload === 'object' && 'correction' in payload && payload.correction
-          ? 'correction'
-          : undefined,
+      purpose: correction ? 'correction' : undefined,
       frameworkId: target.frameworkId,
       providerId: target.providerId
     }
@@ -165,7 +201,6 @@ export async function composeResearchFilm({
           systemPrompt,
           agentName: 'Research explanation',
           description: 'Generate a research explanation from a frozen session',
-          outputLimitBytes: 64 * 1024,
           signal: AbortSignal.any([signal, AbortSignal.timeout(300_000)])
         })
       )
@@ -178,20 +213,21 @@ export async function composeResearchFilm({
           outputTokens: usage?.outputTokens
         })
         if (usage)
-          await recordAuxiliaryUsage({
-            projectId: source.provenance.projectId,
-            sessionId: source.provenance.sessionId,
-            eventId: requestId,
-            source: 'host-llm',
-            frameworkId: target.frameworkId,
-            providerId: target.providerId,
-            model: target.model.kind === 'required' ? target.model.id : undefined,
-            completedAtMs: Date.now(),
-            usage
-          })
+          await recordUsage(
+            {
+              projectId: source.provenance.projectId,
+              sessionId: source.provenance.sessionId,
+              eventId: requestId,
+              source: 'host-llm',
+              frameworkId: target.frameworkId,
+              providerId: target.providerId,
+              model: target.model.kind === 'required' ? target.model.id : undefined,
+              completedAtMs: Date.now(),
+              usage
+            },
+            signal
+          )
         signal.throwIfAborted()
-        if (error instanceof RestrictedInferenceError && error.code === 'output-limit')
-          throw new ResearchFilmOutputLimitError(error.message)
         throw error
       })
     filmLog.info('film model response', {
@@ -204,17 +240,20 @@ export async function composeResearchFilm({
       durationMs: Math.round(performance.now() - started)
     })
     if (response.usage)
-      await recordAuxiliaryUsage({
-        projectId: source.provenance.projectId,
-        sessionId: source.provenance.sessionId,
-        eventId: requestId,
-        source: 'host-llm',
-        frameworkId: response.frameworkId,
-        providerId: target.providerId,
-        model: response.model,
-        completedAtMs: Date.now(),
-        usage: response.usage
-      })
+      await recordUsage(
+        {
+          projectId: source.provenance.projectId,
+          sessionId: source.provenance.sessionId,
+          eventId: requestId,
+          source: 'host-llm',
+          frameworkId: response.frameworkId,
+          providerId: target.providerId,
+          model: response.model,
+          completedAtMs: Date.now(),
+          usage: response.usage
+        },
+        signal
+      )
     signal.throwIfAborted()
     if (response.stopReason === 'max_tokens')
       throw new ResearchFilmOutputLimitError(
@@ -242,8 +281,9 @@ export async function composeResearchFilm({
       sessionPackageService.readResearchFilm(request, options),
     dataRoot: resolveDataRoot,
     models: researchNarrationModels,
-    checkReadiness: async () => {
-      const readiness = await settingsService.getPreflight()
+    checkReadiness: async (signal) => {
+      const readiness = await settingsService.getPreflight(signal)
+      signal?.throwIfAborted()
       if (!readiness.agentReady)
         throw new Error(
           'Set up the selected agent runtime in Settings before generating a research film.'
@@ -267,6 +307,7 @@ export async function composeResearchFilm({
         )
       }
       const snapshot = await settingsService.getSettingsView()
+      signal?.throwIfAborted()
       const provider = snapshot.providers.find((entry) => entry.id === snapshot.activeProviderId)
       if (!provider) throw new Error('The selected research film provider is unavailable.')
       const model = snapshot.activeModel ?? provider.model
@@ -291,15 +332,22 @@ export async function composeResearchFilm({
       return result.status === 'found' ? result.session : undefined
     },
     generate: researchVideoGenerate,
+    checkGenerationAdmission: researchVideoGenerate.assertReady,
     engineDirectory: researchVideoEngineDirectory,
     ...createResearchFilmAuthor(inferResearchVideo)
   })
   await modules.add({ researchVideoPresentation }, ({ researchVideoPresentation: owner }) => ({
     name: 'research-video-presentation',
     capability: undefined,
+    start: () => {
+      void researchVideoInference
+        .sweepStaleProfiles()
+        .catch((error) =>
+          filmLog.info('film inference profile cleanup failed', diagnosticErrorFields(error))
+        )
+    },
     dispose: async () => {
-      await owner.close()
-      await researchVideoInference.shutdown()
+      await Promise.all([owner.close(), researchVideoInference.shutdown()])
     }
   }))
   return { researchNarrationModels, videoExportModels, videoExportTools, researchVideoPresentation }

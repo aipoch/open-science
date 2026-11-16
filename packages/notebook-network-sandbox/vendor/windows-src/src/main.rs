@@ -562,6 +562,7 @@ mod windows_host {
         paths_equal, plan_writable_acl_grants, strip_utf8_bom, valid_lease_id, wfp,
     };
 
+    const ACL_RESTORE_VERIFY_TIMEOUT: Duration = Duration::from_secs(2);
     const PROFILE_PREFIX: &str = "Aipoch.OpenScience.Notebook";
     const PROCESS_SYNCHRONIZE: PROCESS_ACCESS_RIGHTS = PROCESS_ACCESS_RIGHTS(0x0010_0000);
     const RECEIPT_SCHEMA: u32 = 5;
@@ -3199,10 +3200,21 @@ mod windows_host {
         let current = capture_acl_snapshot(&snapshot.path)?;
         restore_acl_snapshot_if_needed(snapshot, &current, || {
             restore_acl_snapshot_unchecked(snapshot)?;
-            if capture_acl_snapshot(&snapshot.path)? != *snapshot {
-                bail!("WINDOWS_ACL_OPERATION_FAILED: exact ACL restoration could not be verified");
+            let deadline = Instant::now() + ACL_RESTORE_VERIFY_TIMEOUT;
+            loop {
+                if capture_acl_snapshot(&snapshot.path)? == *snapshot {
+                    return Ok(());
+                }
+                if Instant::now() >= deadline {
+                    bail!(
+                        "WINDOWS_ACL_OPERATION_FAILED: exact ACL restoration could not be verified"
+                    );
+                }
+                // Windows may finish propagating inherited ACEs after SetFileSecurityW returns.
+                // Keep the existing fail-closed behavior, but allow that bounded propagation
+                // window to settle before treating the restoration as incomplete.
+                std::thread::sleep(Duration::from_millis(50));
             }
-            Ok(())
         })
     }
 

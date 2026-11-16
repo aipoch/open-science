@@ -354,6 +354,7 @@ class SessionRepository {
     Readonly<{ projectId: string; sessionId: string }>
   >()
   private suspendedProjectionCatalogMutation = false
+  private readyIdentityCatalog: SessionIdentityCatalog | undefined
   private projectionInitialization:
     | Promise<{
         result?: LoadAllSessionsResult
@@ -686,7 +687,53 @@ class SessionRepository {
       recoveredSessions?: PersistedChatSession[]
     }> => {
       const summaries = await this.listProjectionSummaries()
-      // A ready catalog is navigation authority, not a request to inspect historical bodies.
+      // A ready catalog is navigation authority, not a request to inspect historical bodies. A
+      // lightweight identity scan still detects an unindexed historical file without parsing every
+      // transcript; only complete identity drift triggers the guarded body scan and repair.
+      if (
+        !this.readyIdentityCatalog ||
+        this.readyIdentityCatalog.generation !== this.catalogGeneration
+      ) {
+        const identityCatalog = await this.scanSessionIdentities()
+        if (!identityCatalog.isComplete) {
+          this.readyIdentityCatalog = undefined
+        } else {
+          this.readyIdentityCatalog = identityCatalog
+          const projectedIds = new Set(summaries.map(({ projectId, id }) => `${projectId}\0${id}`))
+          const identityDrift =
+            identityCatalog.sessions.length !== projectedIds.size ||
+            identityCatalog.sessions.some(
+              ({ projectId, id }) => !projectedIds.has(`${projectId}\0${id}`)
+            )
+          if (identityDrift) {
+            this.readyIdentityCatalog = undefined
+            const result = await this.loadAuthorityWithSuspendedProjection(loadAuthority)
+            return this.operationScheduler.runGlobal(async () => {
+              const freshResult = await this.refreshProjectionBuildAuthority(result)
+              const assignments = await this.projection!.numberAssignments()
+              if (freshResult.diagnostics?.isComplete === false) {
+                return {
+                  result: freshResult,
+                  sessions: projectIncompleteSummaries(
+                    freshResult,
+                    new Map(assignments.map(({ id, number }) => [id, number]))
+                  )
+                }
+              }
+              const numbered = await this.repairAuthorityNumbers(
+                freshResult.sessions,
+                new Map(assignments.map(({ id, number }) => [id, number]))
+              )
+              await this.projection!.replaceAll(numbered)
+              this.readyIdentityCatalog = undefined
+              return {
+                result: { ...freshResult, sessions: numbered },
+                sessions: await this.projection!.list()
+              }
+            })
+          }
+        }
+      }
       // Oversized/corrupt files and temporary evidence are isolated by targeted recovery/open.
       if (!recoverSession) return { sessions: summaries }
       const recoveredSessions: PersistedChatSession[] = []
@@ -727,7 +774,6 @@ class SessionRepository {
       const assignments = await this.projection!.numberAssignments()
       const existingNumberById = new Map(assignments.map(({ id, number }) => [id, number]))
       const existingIdByNumber = new Map(assignments.map(({ id, number }) => [number, id]))
-      await this.projection!.clearForRebuild()
       const ordered = [...freshResult.sessions].sort(
         (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
       )
@@ -755,21 +801,115 @@ class SessionRepository {
           (!owner || owner === session.id) &&
           numberCounts.get(number) === 1
         ) {
-          const numbered =
-            session.number === number ? session : await this.saveSessionNow({ ...session, number })
-          rebuiltById.set(session.id, numbered)
+          try {
+            const numbered =
+              session.number === number
+                ? session
+                : await this.saveSessionNow({ ...session, number })
+            rebuiltById.set(session.id, numbered)
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              error.message !== 'Cannot save a Session for a deleted Project.'
+            )
+              throw error
+          }
           continue
         }
-        const persisted = await this.saveSessionNow({ ...session, number: undefined })
-        rebuiltById.set(session.id, persisted)
+        try {
+          const persisted = await this.saveSessionNow({ ...session, number: undefined })
+          rebuiltById.set(session.id, persisted)
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            error.message !== 'Cannot save a Session for a deleted Project.'
+          )
+            throw error
+        }
       }
       const rebuilt = freshResult.sessions.map((session) => rebuiltById.get(session.id) ?? session)
       await this.projection!.replaceAll(rebuilt)
+      this.readyIdentityCatalog = undefined
       return {
         result: { ...freshResult, sessions: rebuilt },
         sessions: await this.projection!.list()
       }
     })
+  }
+
+  private async repairAuthorityNumbers(
+    sessions: readonly PersistedChatSession[],
+    existingNumbers: ReadonlyMap<string, number>
+  ): Promise<PersistedChatSession[]> {
+    const ordered = [...sessions].sort(
+      (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+    )
+    const existingIdByNumber = new Map(
+      [...existingNumbers].map(([id, number]) => [number, id] as const)
+    )
+    const candidateNumber = (session: PersistedChatSession): number | undefined =>
+      existingNumbers.get(session.id) ?? session.number
+    const candidateCounts = new Map<number, number>()
+    for (const session of ordered) {
+      const number = candidateNumber(session)
+      const owner = number === undefined ? undefined : existingIdByNumber.get(number)
+      if (
+        number === undefined ||
+        !Number.isSafeInteger(number) ||
+        number < 1 ||
+        (owner && owner !== session.id)
+      )
+        continue
+      candidateCounts.set(number, (candidateCounts.get(number) ?? 0) + 1)
+    }
+    const used = new Set(existingNumbers.values())
+    for (const [number, count] of candidateCounts) if (count === 1) used.add(number)
+    let nextNumber = 1
+    for (const number of used) nextNumber = Math.max(nextNumber, number + 1)
+
+    const repairedById = new Map<string, PersistedChatSession>()
+    const numberSession = async (
+      session: PersistedChatSession,
+      number: number
+    ): Promise<PersistedChatSession> => {
+      const numbered = { ...session, number }
+      try {
+        assertSessionProjectionStorageShape(numbered)
+      } catch {
+        // Keep an invalid historical row in the rebuild input with its allocated number. The
+        // projection repository will skip it and preserve an already indexed row, while a new
+        // invalid row remains isolated from the rest of the catalog.
+        return numbered
+      }
+      return this.saveSessionNow(numbered)
+    }
+    for (const session of ordered) {
+      const existing = existingNumbers.get(session.id)
+      const number = candidateNumber(session)
+      const owner = number === undefined ? undefined : existingIdByNumber.get(number)
+      const valid =
+        number !== undefined &&
+        Number.isSafeInteger(number) &&
+        number > 0 &&
+        (!owner || owner === session.id) &&
+        candidateCounts.get(number) === 1
+      if (valid && (existing === undefined || session.number === existing)) {
+        repairedById.set(session.id, session)
+        continue
+      }
+
+      if (valid && existing !== undefined) {
+        repairedById.set(session.id, await numberSession(session, existing))
+        continue
+      }
+
+      while (used.has(nextNumber)) nextNumber += 1
+      const persisted = await numberSession(session, nextNumber)
+      repairedById.set(session.id, persisted)
+      used.add(nextNumber)
+      nextNumber += 1
+    }
+    return sessions.map((session) => repairedById.get(session.id) ?? session)
   }
 
   private async loadAuthorityWithSuspendedProjection(

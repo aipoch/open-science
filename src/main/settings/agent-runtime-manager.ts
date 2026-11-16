@@ -1,4 +1,4 @@
-import { providerValidationRoute } from '../../shared/settings'
+import { providerValidationRoute } from '../../shared/settings-runtime'
 import { installManagedPi, uninstallManagedPi } from './managed-pi'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
@@ -32,7 +32,7 @@ import {
   DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
   requiresChatCompletionsBridge
-} from '../../shared/settings'
+} from '../../shared/settings-runtime'
 import {
   buildUnsupportedCodexAcpVersionMessage,
   CODEX_CLI_INCOMPATIBLE_MESSAGE,
@@ -471,7 +471,10 @@ export class AgentRuntimeManager {
       options.resolveCodexProxyEnvironment ?? resolveSystemProxyEnvironment
   }
 
-  async getPreflight(providers: ProviderPreflightAccess): Promise<ReadinessPreflight> {
+  async getPreflight(
+    providers: ProviderPreflightAccess,
+    callerSignal?: AbortSignal
+  ): Promise<ReadinessPreflight> {
     return this.trackDetection(async (signal) => {
       const settings = await this.repository.getSettings()
       signal.throwIfAborted()
@@ -490,6 +493,7 @@ export class AgentRuntimeManager {
         agentFrameworkId === 'pi'
           ? await isPiRuntimeReady({ configRoot: this.configRoot })
           : isPiAdapterAvailable({ configRoot: this.configRoot })
+      signal.throwIfAborted()
       const framework = getAgentFramework(agentFrameworkId)
       const activeProvider = settings.activeProviderId
         ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
@@ -549,7 +553,7 @@ export class AgentRuntimeManager {
         activeProviderModelAvailable: configuredModelAvailable,
         activeValidationTarget
       })
-    })
+    }, callerSignal)
   }
 
   async resolvePiExecutable(): Promise<string> {

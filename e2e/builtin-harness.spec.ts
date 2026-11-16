@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFile, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { AddressInfo } from 'node:net'
-import { expect } from '@playwright/test'
+import { expect, type Locator } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProject, openProjectSession } from './certification/helpers'
 import { submitPromptViaUi } from './fixtures/conversation'
@@ -18,7 +18,7 @@ test('built-in harness executes approved host MCP and restores its session after
   test.setTimeout(240_000)
   const requests: {
     messages: { role: string; content?: unknown }[]
-    tools?: { function: { name: string } }[]
+    tools?: { function: { name: string; parameters?: unknown } }[]
   }[] = []
   const gateway = createServer(async (request, response) => {
     const chunks: Buffer[] = []
@@ -172,9 +172,10 @@ test('built-in harness executes approved host MCP and restores its session after
 type HarnessRequest = {
   model?: string
   messages: { role: string; content?: unknown; tool_calls?: unknown[] }[]
-  tools?: { function: { name: string } }[]
+  tools?: { function: { name: string; parameters?: unknown } }[]
 }
-type HarnessReply = string | { tool: string; args: Record<string, unknown> } | null
+type HarnessReply =
+  string | { tool: string; args: Record<string, unknown>; preamble?: string } | null
 
 async function capabilityHost(
   app: import('./fixtures/electron-app').ElectronApp,
@@ -214,6 +215,10 @@ async function capabilityHost(
         }
       : { content: result.slice(Math.ceil(result.length / 2)) }
     // Real providers fragment replies; one-chunk fixtures hide missing ACP message identities.
+    if (typeof result !== 'string' && result.preamble)
+      response.write(
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: result.preamble }, finish_reason: null }] })}\n\n`
+      )
     if (typeof result === 'string')
       response.write(
         `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: result.slice(0, Math.ceil(result.length / 2)) }, finish_reason: null }] })}\n\n`
@@ -263,6 +268,330 @@ async function capabilityHost(
 
 const lastUser = (body: HarnessRequest): string =>
   JSON.stringify(body.messages.findLast((m) => m.role === 'user')?.content)
+
+test('independent schedules start new conversations in an empty project and recover after restart', async ({
+  app
+}, testInfo) => {
+  test.setTimeout(150_000)
+  const name = 'Summarize training runs'
+  const turns = new Set<string>()
+  const host = await capabilityHost(app, (body) => {
+    const prompt = lastUser(body) ?? ''
+    const scheduleId = prompt.match(/This wake belongs to schedule ([a-f0-9-]+)\./)?.[1]
+    if (!scheduleId || body.messages.at(-1)?.role !== 'user') return 'Training report complete'
+    turns.add(String(turns.size))
+    return {
+      tool: 'manage_current_schedule',
+      args: {
+        change: turns.size === 2 ? { kind: 'close' } : { kind: 'reschedule', at: Date.now() + 4000 }
+      }
+    }
+  })
+  try {
+    await host.page.evaluate(() =>
+      window.api.settings.setDefaultPermissionProfile({ profile: 'ask' })
+    )
+    const projectId = await createProject(host.page, 'Scheduled reports')
+    const sidebar = (): Locator =>
+      host.page.getByRole('complementary', { name: 'Workspace navigation' })
+    await sidebar().getByRole('button', { name: 'Schedule', exact: true }).click()
+    const sidebarWidth = (await sidebar().boundingBox())!.width
+    const editor = host.page.getByRole('dialog')
+    await host.page.getByRole('button', { name: /Summarize experiment progress/ }).click()
+    await expect(editor.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(
+      'Summarize experiment progress'
+    )
+    await expect(editor.getByRole('textbox', { name: 'Instructions' })).toHaveValue(/last 24 hours/)
+    await expect(editor.getByRole('combobox', { name: 'Repeat' })).toHaveText('Daily')
+    await expect(editor.getByLabel('Time', { exact: true })).toHaveValue('09:00')
+    await editor.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(
+      host.page.getByRole('heading', { name: 'Create your first scheduled task' })
+    ).toBeVisible()
+    await host.page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
+    await expect(host.page.getByRole('button', { name: /整理本周文献/ })).toBeVisible()
+    await host.page.screenshot({ path: testInfo.outputPath('schedule-examples.png') })
+    expect(
+      await host.page.evaluate((projectId) => window.api.schedules.list({ projectId }), projectId)
+    ).toEqual([])
+    await host.page.getByRole('button', { name: /整理本周文献/ }).click()
+    await expect(editor.getByRole('textbox', { name: '名称', exact: true })).toHaveValue(
+      '整理本周文献'
+    )
+    await expect(editor.getByRole('textbox', { name: '说明' })).toHaveValue(/过去七天/)
+    await expect(editor.getByRole('combobox', { name: '重复' })).toHaveText('每周')
+    await expect(editor.getByRole('checkbox', { name: '周五' })).toBeChecked()
+    await expect(editor.getByLabel('时间', { exact: true })).toHaveValue('16:00')
+    await host.page.screenshot({ path: testInfo.outputPath('schedule-example-prefill.png') })
+    await editor.getByRole('textbox', { name: '名称', exact: true }).fill(name)
+    await expect(editor.getByRole('combobox', { name: '执行方式', exact: true })).toHaveText(
+      '每次新建对话'
+    )
+    await editor.getByRole('textbox', { name: '说明' }).fill(name)
+    await editor.getByRole('combobox', { name: '执行权限', exact: true }).click()
+    await host.page.getByRole('option', { name: '自动', exact: true }).click()
+    await editor.getByRole('button', { name: '创建', exact: true }).click()
+    await expect(host.page.getByText('暂无运行记录')).toBeVisible()
+    await host.page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+    await expect(host.page.getByText('No runs yet')).toBeVisible()
+    await expect
+      .poll(async () => Math.abs((await sidebar().boundingBox())!.width - sidebarWidth))
+      .toBeLessThan(4)
+    await host.page.screenshot({ path: testInfo.outputPath('independent-before.png') })
+    const scope = await host.page.evaluate(
+      async ({ projectId, name }) => {
+        const [summary] = await window.api.schedules.list({ projectId })
+        const job = (await window.api.schedules.get({
+          projectId,
+          sessionId: summary.target.sessionId,
+          scheduleId: summary.id
+        }))!
+        const rule = job.draft.rule
+        if (
+          rule.kind !== 'weekly' ||
+          rule.time !== '16:00' ||
+          rule.weekdays.join() !== '5' ||
+          rule.timeZone !== Intl.DateTimeFormat().resolvedOptions().timeZone ||
+          job.draft.permissionProfile !== 'auto' ||
+          job.draft.name !== name ||
+          job.draft.action.kind !== 'send_session_message' ||
+          job.draft.action.message !== name
+        )
+          throw new Error('Saved schedule did not retain the edited example')
+
+        if (job.target.sessionId !== null) throw new Error('Unexpected session binding')
+        const { sessions } = await window.api.sessions.loadAll()
+        if (sessions.some((s) => s.projectId === projectId))
+          throw new Error('Created a Session before scheduling the first run')
+        const scope = { projectId, scheduleId: job.id, sessionId: null }
+        await window.api.schedules.edit({
+          ...scope,
+          expectedRevision: job.revision,
+          change: {
+            kind: 'edit',
+            draft: {
+              ...job.draft,
+              name,
+              rule: { kind: 'once', at: Date.now() + 16000, timeZone: 'UTC' }
+            }
+          }
+        })
+        return scope
+      },
+      { projectId, name }
+    )
+    host.page = await app.restart()
+    await expect
+      .poll(
+        () =>
+          host.page.evaluate(
+            async (scope) => (await window.api.schedules.history(scope)).map((r) => r.status),
+            scope
+          ),
+        { timeout: 95000, intervals: [500, 1500] }
+      )
+      .toEqual(['succeeded', 'succeeded'])
+    const sessions = await host.page.evaluate(
+      async (scope) =>
+        Promise.all(
+          (await window.api.schedules.history(scope)).map(
+            async (r) =>
+              r.runSessionId &&
+              window.api.sessions.loadOne({ projectId: scope.projectId, sessionId: r.runSessionId })
+          )
+        ),
+      scope
+    )
+    expect(new Set(sessions.map((s) => s && s.id)).size).toBe(2)
+    expect(sessions.map((s) => s && s.permissionProfile)).toEqual(['auto', 'auto'])
+    for (const session of sessions)
+      expect(
+        session && session.messages.filter((m) => m.attribution?.feature === 'schedule')
+      ).toHaveLength(1)
+    await host.page
+      .getByRole('region', { name: 'Projects' })
+      .getByRole('button', { name: 'Scheduled reports', exact: true })
+      .click()
+    await sidebar().getByRole('button', { name: 'Schedule', exact: true }).click()
+    await sidebar()
+      .getByRole('button', { name: new RegExp(name) })
+      .click()
+    await expect(host.page.getByRole('button', { name: 'Open session', exact: true })).toHaveCount(
+      2
+    )
+    await expect(host.page.getByText('Training report complete', { exact: true })).toBeVisible()
+    await host.page.screenshot({ path: testInfo.outputPath('independent-results.png') })
+    await host.page.getByRole('button', { name: 'Open session', exact: true }).first().click()
+    await expect(host.page.getByText('Sent by scheduled task')).toBeVisible()
+    await expect(host.page.getByText('Training report complete', { exact: true })).toBeVisible()
+  } finally {
+    await host.close()
+  }
+})
+
+test('Open-Science Agent creates a schedule and wakes its original conversation to rearm and close it', async ({
+  app
+}, testInfo) => {
+  test.setTimeout(150_000)
+  const title = 'Training check'
+  const request = 'Schedule a training check in this conversation. Renew it once and then close it.'
+  const turns = new Map<string, Set<string>>()
+  const catalog = [
+    'list_schedules',
+    'create_schedule',
+    'update_schedule',
+    'close_schedule',
+    'manage_current_schedule'
+  ]
+  let advertised = true
+  const host = await capabilityHost(app, (body) => {
+    const prompt = lastUser(body) ?? ''
+    const ref = String(body.messages.filter((m) => m.role === 'user').length) + ':' + prompt
+    if (!ref || !body.tools?.length) return 'Ready'
+    expect(prompt).not.toContain('schedule-turn-')
+    for (const entry of body.tools.filter((t) => t.function.name.includes('schedule'))) {
+      expect(JSON.stringify(entry.function.parameters)).not.toContain('turnRef')
+      expect(JSON.stringify(entry.function.parameters)).not.toContain('requestId')
+    }
+    advertised &&= catalog.every((tool) =>
+      body.tools?.some((entry) => entry.function.name.endsWith('__' + tool))
+    )
+    const calls = turns.get(ref) ?? new Set<string>()
+    turns.set(ref, calls)
+    const scheduleId = prompt.match(/This wake belongs to schedule ([a-f0-9-]+)\./)?.[1]
+    const next = !calls.has('list_schedules')
+      ? 'list_schedules'
+      : !scheduleId
+        ? 'create_schedule'
+        : !calls.has('update_schedule')
+          ? 'update_schedule'
+          : 'manage_current_schedule'
+    if (calls.has(next)) return 'Schedule check complete'
+    calls.add(next)
+    if (next === 'list_schedules') return { tool: next, args: {} }
+    const draft = {
+      name: title,
+      rule: { kind: 'once', timeZone: 'UTC', at: Date.now() + (scheduleId ? 4000 : 25000) },
+      message: 'Check the training job. Renew once, then close this task.'
+    }
+    if (next === 'create_schedule')
+      return {
+        tool: next,
+        preamble: 'I will create the scheduled task.',
+        args: draft
+      }
+    // Changing instructions still requires authority; a timed turn must reject without parking.
+    if (next === 'update_schedule')
+      return {
+        tool: next,
+        args: {
+          scheduleId,
+          expectedRevision: 1,
+          ...draft,
+          name: 'Unexpected edit'
+        }
+      }
+    return {
+      tool: next,
+      args: {
+        change: turns.size === 2 ? { kind: 'reschedule', at: Date.now() + 4000 } : { kind: 'close' }
+      }
+    }
+  })
+  try {
+    await host.page.evaluate(() =>
+      window.api.settings.setDefaultPermissionProfile({ profile: 'ask' })
+    )
+    const projectId = await createProject(host.page, 'Scheduled training')
+    await submitPromptViaUi(host.page, request)
+    const approval = host.page.getByRole('group', { name: 'Permission request: Schedule a task' })
+    await expect(approval).toBeVisible()
+    await host.page.screenshot({ path: testInfo.outputPath('builtin-schedule-approval.png') })
+    await approval.getByTestId('allow-primary').click()
+    await expect(host.page.getByText('Schedule check complete', { exact: true })).toBeVisible({
+      timeout: 35000
+    })
+    await expect(host.page.getByTestId('permission-card')).toHaveCount(0)
+    const [job] = await host.page.evaluate(
+      (projectId) => window.api.schedules.list({ projectId }),
+      projectId
+    )
+    expect(job?.draft.name).toBe(title)
+    expect(job.originPromptId).toBeTruthy()
+    await host.page.getByRole('button', { name: /previous message/i }).click()
+    await expect(
+      host.page.getByText('I will create the scheduled task.', { exact: true })
+    ).toBeVisible()
+    await expect(host.page.locator('[data-slot="card"]').filter({ hasText: title })).toHaveCount(1)
+    await host.page.screenshot({ path: testInfo.outputPath('builtin-schedule-created.png') })
+    const sidebar = (): Locator =>
+      host.page.getByRole('complementary', { name: 'Workspace navigation' })
+    await sidebar().getByRole('button', { name: 'Schedule', exact: true }).click()
+    const activeRow = sidebar().getByRole('button', { name: new RegExp(title) })
+    await activeRow.click()
+    await expect(activeRow).toHaveAttribute('aria-current', 'true')
+    await expect(host.page.getByText(request, { exact: true })).toBeVisible()
+    await host.page.screenshot({ path: testInfo.outputPath('schedule-active-conversation.png') })
+    await sidebar().getByRole('button', { name: 'More actions' }).click()
+    await host.page.getByRole('menuitem', { name: 'Edit task' }).click()
+    const form = host.page.getByRole('dialog')
+    await expect(form.getByRole('button', { name: 'Pause' })).toBeVisible()
+    await host.page.screenshot({ path: testInfo.outputPath('schedule-active-editor.png') })
+    await form.getByRole('button', { name: 'Close', exact: true }).click()
+    if (!job.target.sessionId) throw new Error('Missing bound session')
+    const scope = { projectId, sessionId: job.target.sessionId, scheduleId: job.id }
+    host.page = await app.restart()
+    await expect
+      .poll(
+        () =>
+          host.page.evaluate(
+            async (scope) => (await window.api.schedules.history(scope)).map((run) => run.status),
+            scope
+          ),
+        { timeout: 85_000, intervals: [500, 1500] }
+      )
+      .toEqual(['succeeded', 'succeeded'])
+    const [closed] = await host.page.evaluate(
+      (projectId) => window.api.schedules.list({ projectId }),
+      projectId
+    )
+    expect(closed).toMatchObject({ id: job.id, finishedAt: expect.any(Number), nextDueAt: null })
+    expect(closed.draft.name).toBe(title)
+    await expect(host.page.getByTestId('permission-card')).toHaveCount(0)
+    const session = await host.page.evaluate(
+      ({ projectId, sessionId }) => window.api.sessions.loadOne({ projectId, sessionId }),
+      scope
+    )
+    expect(session?.agentFrameworkId).toBe('open-science-agent')
+    const wakes = session?.conversationGraph?.messages.filter(
+      (message) => message.attribution?.feature === 'schedule'
+    )
+    expect(wakes?.map((message) => message.introducedOnBranchId)).toEqual([
+      job.target.messageBranchId,
+      job.target.messageBranchId
+    ])
+    await openProjectSession(host.page, 'Scheduled training', request)
+    const card = host.page.locator('[data-slot="card"]').filter({ hasText: title })
+    await card.getByRole('button', { name: 'Open', exact: true }).click()
+    const editor = host.page.getByRole('dialog')
+    await expect(editor.getByRole('button', { name: 'Save' })).toHaveCount(0)
+    await editor.locator('footer').getByRole('button', { name: 'Close' }).click()
+    await sidebar().getByRole('button', { name: 'Schedule', exact: true }).click()
+    await sidebar()
+      .getByRole('button', { name: new RegExp(title) })
+      .click()
+    await expect(host.page.getByText('Sent by scheduled task').last()).toBeInViewport()
+    await host.page.screenshot({ path: testInfo.outputPath('schedule-wake-conversation.png') })
+    expect(advertised).toBe(true)
+    expect([...turns.values()].map((calls) => [...calls])).toEqual([
+      ['list_schedules', 'create_schedule'],
+      ['list_schedules', 'update_schedule', 'manage_current_schedule'],
+      ['list_schedules', 'update_schedule', 'manage_current_schedule']
+    ])
+  } finally {
+    await host.close()
+  }
+})
 
 const isChildRequest = (body: HarnessRequest): boolean =>
   body.messages.some(

@@ -18,12 +18,12 @@ import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { defaultVendorModel } from '../../shared/provider-model-policy'
+import type { ClaudeDetectResult } from '../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
-  CODEX_SUBSCRIPTION_PROVIDER_ID,
-  type ClaudeDetectResult
-} from '../../shared/settings'
+  CODEX_SUBSCRIPTION_PROVIDER_ID
+} from '../../shared/settings-runtime'
 import type { CodexAuthControllerPort, CodexAuthStatus } from './codex-auth'
 import type {
   ClaudeIsolatedAuthControllerPort,
@@ -3819,8 +3819,9 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(content.provider[agentProviderId].models['kimi-k3.1-pro']).toEqual({
       attachment: true,
       modalities: { input: ['text', 'image'] },
-      limit: { context: 1_048_576, output: 32_000 }
+      limit: { context: 1_048_576, input: 1_048_576, output: 1_048_576 }
     })
+    expect(backend.env?.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX).toBe('1048576')
     expect(backend.args).toEqual(['--port', '42424', '--hostname', '127.0.0.1'])
     expect(backend.opencodeUsageApi).toEqual({
       baseUrl: 'http://127.0.0.1:42424',

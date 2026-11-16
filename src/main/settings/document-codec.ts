@@ -11,6 +11,11 @@ import { normalizeNotebookNetworkSettings } from '../../shared/notebook-network'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import { isPermissionProfileId } from '../../shared/permission-profiles'
 import type { ProjectFilesFilterPreference } from '../../shared/settings'
+import type {
+  SessionDetailsModelConfiguration,
+  SubagentModelConfiguration,
+  VisionModelConfiguration
+} from '../../shared/settings'
 import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   codexSubscriptionProviderIdentity,
@@ -21,11 +26,8 @@ import {
   isCodexSubscriptionProvider,
   isCodexSubscriptionProviderId,
   isReasoningEffort,
-  SETTINGS_FILE_VERSION,
-  type SessionDetailsModelConfiguration,
-  type SubagentModelConfiguration,
-  type VisionModelConfiguration
-} from '../../shared/settings'
+  SETTINGS_FILE_VERSION
+} from '../../shared/settings-runtime'
 import { isRecord } from '../value-guards'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import {

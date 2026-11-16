@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AgentFrameworkCard } from './AgentFrameworkCard'
-import { getClaudeInstallSources } from '../../../../shared/settings'
+import { getClaudeInstallSources } from '../../../../shared/settings-runtime'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true

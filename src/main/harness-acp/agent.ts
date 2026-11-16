@@ -1,3 +1,4 @@
+import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
 import * as acp from '@agentclientprotocol/sdk'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
@@ -51,6 +52,19 @@ const DELTA_SAFETY = 0.8
 const ENVELOPE_TOKENS = 64
 
 const hash = (text: string): string => createHash('sha256').update(text).digest('base64')
+
+// ACP requires every Agent to accept resource links in prompts. Keep the reference visible to the
+// model without fetching it: the host may send private file URIs, and the harness deliberately does
+// not grant arbitrary filesystem or network access to model adapters.
+const formatResourceLink = (name: string | undefined, uri: string): string => {
+  const displayName =
+    name && name.length > 0
+      ? name
+      : uri.startsWith('file://')
+        ? (uri.replace('file://', '').split('/').pop() ?? uri)
+        : undefined
+  return displayName ? `[@${displayName}](${uri})` : uri
+}
 
 const snapshot = (request: Pick<ModelRequest, 'instructions' | 'tools' | 'messages'>): Snapshot => {
   const texts = request.messages.map((message) => JSON.stringify(message))
@@ -210,9 +224,11 @@ export function createToolResultClearing(
 }
 
 type Entry = {
+  setScheduleTurn(ref: string | undefined): void
   session: AgentSession
   /** True once per provider context-overflow rejection observed since the last call. */
   takeOverflow(): boolean
+  takeOutputTruncation(): boolean
   close(): Promise<void>
   flush(): Promise<void>
   reconcile(): Promise<void>
@@ -386,6 +402,7 @@ export function createHarnessAcpAgent(directory: string): {
       const inputBudget = Math.floor(config.contextWindow * 0.9) - outputReserve
       const clearing = createToolResultClearing(inputBudget, meter)
       let overflow = false
+      let outputTruncated = false
       const onEvent = (event: AgentEvent): void => {
         if (event.type === 'compaction') {
           const started = event.status === 'started'
@@ -410,6 +427,7 @@ export function createHarnessAcpAgent(directory: string): {
           })
         } else if (event.type === 'model') {
           if (event.purpose === 'compaction') return
+          if (event.event.type === 'finish') outputTruncated = event.event.reason === 'length'
           if (event.event.type === 'finish' && event.event.usage)
             meter.reported(event.requestId, event.event.usage)
           if (event.event.type === 'finish' && event.event.usage)
@@ -566,9 +584,15 @@ export function createHarnessAcpAgent(directory: string): {
       signal.throwIfAborted()
       entries.set(id, {
         session,
+        setScheduleTurn: mcp.setScheduleTurn,
         takeOverflow: () => {
           const observed = overflow
           overflow = false
+          return observed
+        },
+        takeOutputTruncation: () => {
+          const observed = outputTruncated
+          outputTruncated = false
           return observed
         },
         close,
@@ -672,8 +696,16 @@ export function createHarnessAcpAgent(directory: string): {
             }
             if (block.type === 'resource' && 'text' in block.resource)
               return { type: 'text', text: block.resource.text }
+            if (block.type === 'resource_link')
+              return { type: 'text', text: formatResourceLink(block.name, block.uri) }
             throw new Error('Unsupported prompt content; host must resolve references')
           })
+          const references = context.params.prompt.flatMap((block) => {
+            const ref = block._meta?.[SCHEDULE_TURN_META]
+            return typeof ref === 'string' && ref.length <= 100 ? [ref] : []
+          })
+          if (references.length > 1) throw new Error('Ambiguous Schedule turn context')
+          entry.setScheduleTurn(references[0])
           entry.active = true
           entry.cancelled = false
           try {
@@ -689,6 +721,7 @@ export function createHarnessAcpAgent(directory: string): {
             const before = await entry.session.inspect()
             assertKnown(before)
             entry.takeOverflow()
+            entry.takeOutputTruncation()
             // A provider context overflow already lowered the meter's estimate. Continue the same turn
             // once so the next request compacts first; the rejected request executed no tool.
             const status = await entry.session
@@ -733,7 +766,9 @@ export function createHarnessAcpAgent(directory: string): {
                   ? 'end_turn'
                   : status === 'cancelled'
                     ? 'cancelled'
-                    : 'max_turn_requests',
+                    : entry.takeOutputTruncation()
+                      ? 'max_tokens'
+                      : 'max_turn_requests',
               _meta: {
                 'open-science-agent/requests': requests.map(({ id, status, usage }) => ({
                   id,
@@ -743,6 +778,7 @@ export function createHarnessAcpAgent(directory: string): {
               }
             }
           } finally {
+            entry.setScheduleTurn(undefined)
             entry.active = false
           }
         })()

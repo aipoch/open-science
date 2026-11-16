@@ -746,34 +746,50 @@ describe('WorkspaceMessageItem user message actions', () => {
   it('keeps short user message content fully visible without an expand control', async () => {
     await renderItem(createMessage({ content: 'Short prompt' }))
 
-    const content = container.querySelector<HTMLElement>('[data-slot="user-message-content"]')
+    const content = container.querySelector<HTMLElement>('[data-slot="user-message-content"]')!
     const measurement = container.querySelector<HTMLElement>(
       '[data-slot="user-message-measurement"]'
-    )
-    if (!content || !measurement) throw new Error('user message content not found')
+    )!
     measurement.style.lineHeight = '20px'
     Object.defineProperty(measurement, 'scrollHeight', { configurable: true, value: 240 })
     act(() => notifyResize?.())
 
     expect(container.querySelector('[aria-label="Show more"]')).toBeNull()
     expect(content.classList.contains('max-h-[12.5lh]')).toBe(false)
+    expect(content.classList.contains('overflow-hidden')).toBe(false)
   })
 
-  it('defers skipped row measurements and preserves expansion until rendering resumes', async () => {
-    await renderItem(createMessage({ content: 'Long prompt line\n'.repeat(13) }))
+  it('caps the initial height and preserves expansion while row measurements are deferred', async () => {
+    const checkVisibility = vi.fn(() => false)
+    const prototype = HTMLElement.prototype
+    const original = Object.getOwnPropertyDescriptor(prototype, 'checkVisibility')
+    Object.defineProperty(prototype, 'checkVisibility', {
+      configurable: true,
+      value: checkVisibility
+    })
+    try {
+      await renderItem(createMessage({ content: 'Long prompt line\n'.repeat(13) }))
+    } finally {
+      if (original) Object.defineProperty(prototype, 'checkVisibility', original)
+      else Reflect.deleteProperty(prototype, 'checkVisibility')
+    }
+    const content = container.querySelector<HTMLElement>('[data-slot="user-message-content"]')!
+    expect(content.classList.contains('max-h-[12.5lh]')).toBe(true)
+    expect(content.classList.contains('overflow-hidden')).toBe(true)
+
     const measurement = container.querySelector<HTMLElement>(
       '[data-slot="user-message-measurement"]'
     )!
     measurement.style.lineHeight = '20px'
     const readHeight = vi.fn(() => 260)
     Object.defineProperty(measurement, 'scrollHeight', { get: readHeight })
-    const checkVisibility = vi.fn(() => false)
     measurement.checkVisibility = checkVisibility
 
     act(() => notifyResize?.())
     expect(checkVisibility).toHaveBeenCalledWith({ contentVisibilityAuto: true })
     expect(readHeight).not.toHaveBeenCalled()
     expect(container.querySelector('[aria-label="Show more"]')).toBeNull()
+    expect(content.classList.contains('max-h-[12.5lh]')).toBe(true)
 
     checkVisibility.mockReturnValue(true)
     act(() => notifyResize?.())

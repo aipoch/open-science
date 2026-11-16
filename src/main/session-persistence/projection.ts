@@ -932,6 +932,22 @@ export class SessionProjectionRepository {
 
   async replaceAll(sessions: readonly PersistedChatSession[]): Promise<void> {
     const client = await this.client()
+    const liveProjectIds = new Set(
+      (
+        await client.project.findMany({
+          where: { deletedAt: null },
+          select: { id: true }
+        })
+      ).map(({ id }) => id)
+    )
+    const existingLiveIds = new Set(
+      (
+        await client.session.findMany({
+          where: { deletedAtMs: null },
+          select: { id: true }
+        })
+      ).map(({ id }) => id)
+    )
     const deletedIds = new Set(
       (
         await client.session.findMany({
@@ -940,14 +956,25 @@ export class SessionProjectionRepository {
         })
       ).map(({ id }) => id)
     )
+    const preservedInvalidIds = new Set<string>()
     const projected = sessions
-      .filter(({ id }) => !deletedIds.has(id))
-      .map((session) => {
+      .filter(({ id, projectId }) => !deletedIds.has(id) && liveProjectIds.has(projectId))
+      .flatMap((session) => {
         const number = session.number
         if (number === undefined) throw new Error('Backfilled Session is missing its number.')
-        const projection = buildSessionProjection(session)
-        assertProjectionStorageShape(projection)
-        return { session: { ...session, number }, projection }
+        try {
+          const projection = buildSessionProjection(session)
+          assertProjectionStorageShape(projection)
+          return [{ session: { ...session, number }, projection }]
+        } catch (error) {
+          if (existingLiveIds.has(session.id)) preservedInvalidIds.add(session.id)
+          createLogger('session-persistence').warn('Skipping invalid Session projection row', {
+            ...diagnosticErrorFields(error),
+            sessionId: session.id,
+            projectId: session.projectId
+          })
+          return []
+        }
       })
     const turnUsage = projected.flatMap(({ session, projection }) =>
       projection.turnUsage.map((usage) => ({ sessionId: session.id, ...usage }))
@@ -974,6 +1001,7 @@ export class SessionProjectionRepository {
       client.session.deleteMany({
         where: {
           deletedAtMs: null,
+          id: { notIn: [...preservedInvalidIds] },
           OR: [
             { project: { deletedAt: null } },
             ...(liveSessionIds.length > 0 ? [{ id: { in: liveSessionIds } }] : [])

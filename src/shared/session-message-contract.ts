@@ -23,6 +23,14 @@ export type PersistedMessageStatus = 'complete' | 'streaming' | 'error'
 export type MessageAttribution =
   | Readonly<{
       kind: 'application'
+      feature: 'schedule'
+      purpose: 'scheduled-wake'
+      scheduleId: string
+      occurrenceId: string
+      scheduledAt: number
+    }>
+  | Readonly<{
+      kind: 'application'
       feature: 'reviewer'
       purpose: 'correction'
       causeReviewId: string
