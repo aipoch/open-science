@@ -19,7 +19,7 @@ test('new Markdown publications replace the head while edits, restoration and dr
   let page = await app.configureFakeAgent()
   // This journey needs the editor and Provenance visible together before its narrow-layout check.
   const wideViewport = { width: 1440, height: 900 }
-  await page.setViewportSize(wideViewport)
+  await app.setMainWindowSize(wideViewport.width, wideViewport.height)
   // Register the actual local interpreter in the isolated app, without authorizing installation.
   const python = process.env.OPEN_SCIENCE_TASK_PYTHON
     ? realpathSync(process.env.OPEN_SCIENCE_TASK_PYTHON)
@@ -287,7 +287,7 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await preview.getByRole('button', { name: `Close preview of ${name}` }).click()
   await verifyTaskRead('restored', second.selectedVersionId)
   page = await app.restart()
-  await page.setViewportSize(wideViewport)
+  await app.setMainWindowSize(wideViewport.width, wideViewport.height)
   provenance = page.getByTestId('artifact-provenance')
   warning = provenance.locator('[data-notice-level="warning"]')
   await openRecentSession(page, 'Create a provenance artifact.')

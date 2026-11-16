@@ -168,6 +168,7 @@ export {
   RayJobCreationRejectedError,
   RayJobCreationNotSentError,
   stopRayJob,
+  deleteRayJob,
   readRayJobLogs,
   type RayJobClaim,
   type RayJobStatus,

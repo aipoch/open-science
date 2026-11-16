@@ -21,6 +21,7 @@ export type UpdateJobRequest = {
   status?: ComputeJobStatus
   remoteHandle?: string
   remoteWorkdir?: string
+  remoteCleanupDisposition?: ComputeJobRemoteCleanupDisposition
   exitCode?: number | null
   stdoutTail?: string | null
   stderrTail?: string | null

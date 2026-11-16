@@ -195,6 +195,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés."
   },
   "renderer": {
+    "Pros": "Avantages",
+    "Cons": "Limites",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "Jusqu’à 30 enregistrements d’exécutions terminées sont conservés. Les conversations et les fichiers sont préservés.",
     "Network protocol": "Protocole",
     "Delete address?": "Supprimer cette adresse ?",
