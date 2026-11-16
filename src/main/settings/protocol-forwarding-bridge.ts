@@ -1,3 +1,5 @@
+import { createLogger } from '@aipoch/diagnostics/node'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 import {
   observeProviderFailure,
   type ProviderFailureObserver
@@ -22,6 +24,7 @@ import {
 } from './provider-error-replay'
 import {
   fetchProviderRequest,
+  PROVIDER_TRANSPORT_ERROR,
   readSseRecords,
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES
 } from '@aipoch/providers/transport'
@@ -105,6 +108,57 @@ const responseHeaders = (source: Headers): Record<string, string> => {
   return headers
 }
 
+const log = createLogger('provider-response')
+class ProviderTransportError extends Error {
+  constructor() {
+    super('Could not connect to the model provider')
+  }
+}
+const sourceHeader = 'x-open-science-error-source'
+const responseSourceHeader = 'x-open-science-response-source'
+const requestIdOf = (headers: Headers, key?: string): string | undefined => {
+  for (const name of ['x-request-id', 'request-id', 'x-minimax-request-id']) {
+    const value = headers.get(name)
+    if (value && (!key || !value.includes(key)) && /^[a-zA-Z0-9._:-]{1,128}$/.test(value))
+      return value
+  }
+  return undefined
+}
+const networkCode = (error: unknown): string | undefined => {
+  const object = (value: unknown): Record<string, unknown> =>
+    value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+  const candidate = object(object(error).cause).code ?? object(error).code
+  return typeof candidate === 'string' &&
+    /^(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR_[A-Z_]+|ERR_CERT_[A-Z_]+|CERT_[A-Z_]+)$/.test(
+      candidate
+    )
+    ? candidate.slice(0, 80)
+    : undefined
+}
+// Retain only error fields, never successful text/tool payloads or arbitrary response properties.
+const errorDetail = (body: string, key?: string): Record<string, unknown> => {
+  try {
+    const parsed = JSON.parse(body)
+    const error = parsed?.error ?? parsed
+    const clean = (value: unknown): string | undefined =>
+      typeof value === 'string'
+        ? redactSensitiveText(
+            (key ? value.split(key).join('[redacted]') : value).slice(0, 4096)
+          ).slice(0, 1024)
+        : undefined
+    return {
+      code:
+        typeof error?.code === 'number' && Number.isFinite(error.code)
+          ? error.code
+          : clean(error?.code),
+      type: clean(error?.type),
+      message: clean(error?.message)
+    }
+  } catch {
+    return { format: body.trim().startsWith('<') ? 'html' : 'unstructured' }
+  }
+}
+
 export class ProtocolForwardingBridge {
   private readonly targets: ReadonlyMap<string, ProtocolForwardingBridgeTarget>
   private readonly wire: ProtocolForwardingBridgeTarget['wire']
@@ -142,11 +196,16 @@ export class ProtocolForwardingBridge {
           return
         }
         const requestError = error instanceof ProviderLoopbackRequestError
+        response.setHeader(
+          sourceHeader,
+          error instanceof ProviderTransportError ? 'provider-transport' : 'application'
+        )
         json(response, requestError ? 400 : 502, {
           error: {
             type: requestError ? 'invalid_request_error' : 'api_error',
             message:
-              error instanceof Error
+              error instanceof ProviderTransportError ||
+              (error instanceof Error && error.message === PROVIDER_TRANSPORT_ERROR)
                 ? error.message
                 : 'protocol forwarding provider request failed.'
           }
@@ -249,12 +308,57 @@ export class ProtocolForwardingBridge {
     const transport: typeof fetch = connection
       ? (url, init) => this.fetchImpl(url, { ...init, redirect: 'error', credentials: 'omit' })
       : this.fetchImpl
-    const upstream = await fetchProviderRequest(transport, endpoint, {
+    const observedTransport: typeof fetch = async (url, init) => {
+      try {
+        return await transport(url, init)
+      } catch (error) {
+        request.signal.throwIfAborted()
+        // The exception came from the fetch boundary, not application request preparation.
+        log.warn('provider transport failed', {
+          source: 'provider-transport',
+          model: target.model,
+          endpoint: target.wire,
+          origin: endpoint.origin,
+          durationMs: Date.now() - startedAt,
+          transportCode: networkCode(error),
+          ...errorDetail(
+            JSON.stringify({
+              error: { message: error instanceof Error ? error.message : 'Network request failed' }
+            }),
+            connection?.key ?? target.key
+          )
+        })
+        throw new ProviderTransportError()
+      }
+    }
+    const upstream = await fetchProviderRequest(observedTransport, endpoint, {
       method: 'POST',
       headers: headersToForward,
       body,
       signal: request.signal
     })
+    // Upstream headers cannot impersonate locally generated transport/application failures.
+    const upstreamRequestId = requestIdOf(upstream.headers, connection?.key ?? target.key)
+    const diagnosticContext = {
+      source: 'provider-http',
+      model: target.model,
+      endpoint: target.wire,
+      origin: endpoint.origin,
+      status: upstream.status,
+      requestId: upstreamRequestId,
+      durationMs: Date.now() - startedAt
+    }
+    const recordError = (body: string, complete: boolean): void => {
+      if (!connection)
+        log.warn('provider HTTP failure', {
+          ...diagnosticContext,
+          bodyComplete: complete,
+          ...errorDetail(body, target.key)
+        })
+    }
+    response.setHeader(responseSourceHeader, 'provider')
+    if (!upstream.ok) response.setHeader(sourceHeader, 'provider-http')
+    if (upstreamRequestId) response.setHeader('x-open-science-request-id', upstreamRequestId)
     if (connection && !upstream.ok) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })
       let code = 'provider_error'
@@ -285,10 +389,18 @@ export class ProtocolForwardingBridge {
     const headers = connection
       ? { 'content-type': upstream.headers.get('content-type') ?? 'text/event-stream' }
       : responseHeaders(upstream.headers)
+    for (const name of [
+      sourceHeader,
+      responseSourceHeader,
+      'x-open-science-request-id',
+      'x-open-science-upstream-status'
+    ])
+      delete headers[name]
     if (isDeterministicProviderErrorStatus(upstream.status)) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, {
         signal: request.signal
       })
+      recordError(upstreamBody.body.toString('utf8'), upstreamBody.complete)
       await observeProviderFailure(
         target.onProviderFailure,
         {
@@ -325,6 +437,27 @@ export class ProtocolForwardingBridge {
       response.end(snapshot.body)
       return
     }
+    if (!upstream.ok) {
+      const errorBody = await readBoundedProviderErrorBody(upstream, {
+        signal: request.signal,
+        maxBytes: 16 * 1024,
+        timeoutMs: 1000
+      })
+      recordError(errorBody.body.toString('utf8'), errorBody.complete)
+      const body = errorBody.complete
+        ? errorBody.body
+        : Buffer.from(
+            JSON.stringify({
+              error: {
+                message: 'Provider error response could not be read within the diagnostic limit.'
+              }
+            })
+          )
+      delete headers['content-length']
+      response.writeHead(upstream.status, headers)
+      response.end(body)
+      return
+    }
     response.statusCode = upstream.status
     response.statusMessage = upstream.statusText
     for (const [name, value] of Object.entries(headers)) response.setHeader(name, value)
@@ -342,6 +475,49 @@ export class ProtocolForwardingBridge {
             readSseRecords(upstream, DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, request.signal)
           )
         : (upstream.body as AsyncIterable<Uint8Array>)
-    await pipeline(Readable.from(stream), response)
+    const inspect = async function* (): AsyncGenerator<Uint8Array | string> {
+      const decoder = new TextDecoder()
+      let buffered = '',
+        dropping = false
+      for await (const chunk of stream) {
+        if (!connection && target.wire === 'responses') {
+          buffered += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true })
+          const records = buffered.split(/\r?\n\r?\n/)
+          buffered = records.pop() ?? ''
+          for (const record of records) {
+            if (dropping) {
+              dropping = false
+              continue
+            }
+            if (record.length > 16384) continue
+            try {
+              const data = record
+                .split(/\r?\n/)
+                .filter((line) => line.startsWith('data:'))
+                .map((line) => line.slice(5).trimStart())
+                .join('\n')
+              const event = JSON.parse(data)
+              if (event?.type === 'error' || event?.type === 'response.failed') {
+                const error =
+                  event.type === 'response.failed' ? event.response?.error : (event.error ?? event)
+                log.warn('provider stream failure', {
+                  ...diagnosticContext,
+                  source: 'provider-stream',
+                  ...errorDetail(JSON.stringify({ error }), target.key)
+                })
+              }
+            } catch {
+              /* Observation never changes forwarding or exposes successful payloads. */
+            }
+          }
+          if (buffered.length > 16384) {
+            buffered = ''
+            dropping = true
+          }
+        }
+        yield chunk
+      }
+    }
+    await pipeline(Readable.from(inspect()), response)
   }
 }

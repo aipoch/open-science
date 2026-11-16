@@ -137,6 +137,47 @@ export function projectDiagnosticError(
       )
         result[key] = text(candidate, 64)
     }
+    if (read(source, 'adapter') === 'responses') {
+      result.adapter = 'responses'
+      const diagnostics = object(read(source, 'diagnostics'))
+      if (diagnostics) {
+        const state: DiagnosticRecord = {}
+        const phase = read(diagnostics, 'phase')
+        if (
+          [
+            'input',
+            'response',
+            'stream',
+            'event-json',
+            'event',
+            'provider',
+            'missing-completion',
+            'tool-arguments'
+          ].includes(String(phase))
+        )
+          state.phase = phase
+        const origin = read(diagnostics, 'source')
+        if (
+          ['provider-http', 'provider-stream', 'provider-transport', 'application'].includes(
+            String(origin)
+          )
+        )
+          state.source = origin
+        for (const key of ['httpStatus', 'eventCount']) {
+          const value = read(diagnostics, key)
+          if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
+            state[key] = value
+        }
+        for (const key of ['receivedDone', 'receivedCompletion']) {
+          const value = read(diagnostics, key)
+          if (typeof value === 'boolean') state[key] = value
+        }
+        const requestId = read(diagnostics, 'requestId')
+        if (typeof requestId === 'string' && /^[a-zA-Z0-9._:-]{1,128}$/.test(requestId))
+          state.requestId = text(requestId, 128)
+        result.diagnostics = state
+      }
+    }
     if (depth <= MAX_CAUSE_DEPTH) {
       const nestedError = object(rawError) ? project(rawError, depth + 1) : undefined
       if (nestedError) result.error = nestedError

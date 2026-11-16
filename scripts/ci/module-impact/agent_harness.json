@@ -44,7 +44,8 @@
     "packages/agent-harness/src/media.ts",
     "packages/agent-harness/src/native-media.test.ts",
     "packages/agent-harness/src/tool-results.ts",
-    "packages/agent-harness/src/tool-results.test.ts"
+    "packages/agent-harness/src/tool-results.test.ts",
+    "packages/agent-harness/src/responses-diagnostics.test.ts"
   ],
   "interfacePaths": [
     "packages/agent-harness/src/mcp.ts",
@@ -84,7 +85,8 @@
       "packages/agent-harness/src/journal-store.test.ts",
       "packages/agent-harness/src/delegation.test.ts",
       "packages/agent-harness/src/native-media.test.ts",
-      "packages/agent-harness/src/tool-results.test.ts"
+      "packages/agent-harness/src/tool-results.test.ts",
+      "packages/agent-harness/src/responses-diagnostics.test.ts"
     ],
     "contract": [
       "src/main/host-layer-dependencies.architecture.test.ts",

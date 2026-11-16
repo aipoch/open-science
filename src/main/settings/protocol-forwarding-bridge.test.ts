@@ -686,3 +686,188 @@ it('refuses a persisted remote HTTP target before forwarding a prompt or credent
     await bridge.close()
   }
 })
+
+it('retains bounded redacted upstream error fields and prevents source-header spoofing', async () => {
+  const { captureDiagnosticLogs } = await import('../diagnostics/integration-test-helpers')
+  const { projectDiagnosticLog } = await import('../session-diagnostics/projection')
+  const key = 'PRIVATE_KEY_CANARY'
+  const wire = JSON.stringify({
+    error: {
+      code: 'server_error',
+      message: `temporary failure ${key}`,
+      credentials: 'never-export'
+    },
+    prompt: 'PRIVATE_PROMPT_CANARY'
+  })
+  const bridge = new ProtocolForwardingBridge(
+    [
+      {
+        id: 'fixture',
+        wire: 'responses',
+        endpoint: 'https://provider.example/v1/responses',
+        model: 'fixture',
+        key
+      }
+    ],
+    'fixture',
+    async () =>
+      new Response(wire, {
+        status: 502,
+        headers: {
+          'x-request-id': 'upstream-123',
+          'x-open-science-error-source': 'application',
+          'x-open-science-request-id': 'spoofed',
+          'x-open-science-upstream-status': '401'
+        }
+      })
+  )
+  const connection = await bridge.start()
+  try {
+    const lines = await captureDiagnosticLogs(async () => {
+      const response = await fetch(connection.baseUrl + '/v1/responses', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ stream: true, input: [] })
+      })
+      expect(response.status).toBe(502)
+      expect(response.headers.get('x-open-science-error-source')).toBe('provider-http')
+      expect(response.headers.get('x-open-science-request-id')).toBe('upstream-123')
+      expect(response.headers.get('x-open-science-upstream-status')).toBeNull()
+      expect(await response.text()).toBe(wire)
+    })
+    const entries = lines
+      .map((line) => JSON.parse(line))
+      .filter((entry) => entry.scope === 'provider-response')
+    expect(entries).toHaveLength(1)
+    expect(entries[0].data).toMatchObject({
+      source: 'provider-http',
+      status: 502,
+      code: 'server_error',
+      bodyComplete: true,
+      requestId: 'upstream-123'
+    })
+    expect(JSON.stringify(entries)).not.toMatch(
+      /PRIVATE_KEY_CANARY|PRIVATE_PROMPT_CANARY|never-export/
+    )
+    expect(projectDiagnosticLog(entries[0])).toMatchObject({
+      diagnostics: {
+        requestId: 'upstream-123',
+        providerResponse: {
+          source: 'provider-http',
+          status: 502,
+          code: 'server_error',
+          message: expect.stringContaining('[redacted]')
+        }
+      }
+    })
+  } finally {
+    await bridge.close()
+  }
+})
+
+it('observes chunked Responses error events without recording successful content or changing wire bytes', async () => {
+  const { captureDiagnosticLogs } = await import('../diagnostics/integration-test-helpers')
+  const wire =
+    'data: ' +
+    JSON.stringify({ type: 'response.output_text.delta', delta: 'PRIVATE_SUCCESS_CANARY' }) +
+    '\r\n\r\n' +
+    'data: ' +
+    JSON.stringify({
+      type: 'response.failed',
+      response: { error: { code: 'server_error', message: 'Failed after partial output' } }
+    }) +
+    '\n\n'
+  const bytes = new TextEncoder().encode(wire)
+  const bridge = new ProtocolForwardingBridge(
+    [
+      {
+        id: 'fixture',
+        wire: 'responses',
+        endpoint: 'https://provider.example/v1/responses',
+        model: 'fixture'
+      }
+    ],
+    'fixture',
+    async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            for (let i = 0; i < bytes.length; i += 7) controller.enqueue(bytes.slice(i, i + 7))
+            controller.close()
+          }
+        }),
+        { headers: { 'content-type': 'text/event-stream' } }
+      )
+  )
+  const connection = await bridge.start()
+  try {
+    const lines = await captureDiagnosticLogs(async () => {
+      const response = await fetch(connection.baseUrl + '/v1/responses', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ stream: true, input: [] })
+      })
+      expect(await response.text()).toBe(wire)
+    })
+    const entries = lines
+      .map((line) => JSON.parse(line))
+      .filter((entry) => entry.scope === 'provider-response')
+    expect(entries).toHaveLength(1)
+    expect(entries[0].data).toMatchObject({
+      source: 'provider-stream',
+      status: 200,
+      code: 'server_error',
+      message: 'Failed after partial output'
+    })
+    expect(JSON.stringify(entries)).not.toContain('PRIVATE_SUCCESS_CANARY')
+  } finally {
+    await bridge.close()
+  }
+})
+
+it('bounds an unterminated upstream error body while retaining its HTTP provenance', async () => {
+  let cancelled = false
+  const bridge = new ProtocolForwardingBridge(
+    [
+      {
+        id: 'fixture',
+        wire: 'responses',
+        endpoint: 'https://provider.example/v1/responses',
+        model: 'fixture'
+      }
+    ],
+    'fixture',
+    async () =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('{'))
+          },
+          cancel() {
+            cancelled = true
+          }
+        }),
+        { status: 502 }
+      )
+  )
+  const connection = await bridge.start()
+  try {
+    const response = await fetch(connection.baseUrl + '/v1/responses', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      body: '{}'
+    })
+    expect(response.status).toBe(502)
+    expect(response.headers.get('x-open-science-error-source')).toBe('provider-http')
+    expect(await response.text()).toContain('diagnostic limit')
+    expect(cancelled).toBe(true)
+  } finally {
+    await bridge.close()
+  }
+})
