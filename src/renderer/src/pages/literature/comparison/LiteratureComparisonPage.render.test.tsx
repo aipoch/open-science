@@ -162,7 +162,7 @@ describe('comparison workflow', () => {
         )
       }
       render(<SelectedComparison />)
-      fireEvent.click(await screen.findByRole('button', { name: 'Pause after current cell' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Pause after current batch' }))
       fireEvent.click(screen.getByRole('button', { name: 'Switch to B' }))
       await screen.findByRole('heading', { name: 'Table B' })
       if (editor === 'configuration') chooseTableAction('Table settings')
@@ -394,8 +394,11 @@ describe('comparison workflow', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
       expect(screen.getByText('Previous extraction was interrupted')).toBeTruthy()
       expect(
-        (screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' }) as HTMLButtonElement)
-          .disabled
+        (
+          screen.getByRole('button', {
+            name: 'Continue extraction ({{count}} cells)'
+          }) as HTMLButtonElement
+        ).disabled
       ).toBe(false)
       expect(command).toHaveBeenCalledTimes(failure === 'check' ? 1 : 2)
     }
@@ -557,21 +560,26 @@ describe('comparison workflow', () => {
       'Table settings'
     ])
       expect(screen.queryByRole('button', { name })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Pause after current cell' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pause after current batch' }))
     await waitFor(() => expect(command).toHaveBeenCalledWith({ action: 'pause', tableId: 'table' }))
     const saving = { ...table, state: 'paused' as const }
     rerender(<LiteratureComparisonPage table={saving} {...props} />)
     expect(screen.getByText('Saving the current cell before pausing…')).toBeTruthy()
     expect(screen.queryByText('Paused')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Continue extraction ({{count}} cells)' })).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: 'Continue extraction ({{count}} cells)' })
+    ).toBeNull()
     expect(screen.getByText('Extraction continues when you leave this page.')).toBeTruthy()
     const paused = { ...saving, remainingCellIds: [], cells: fixture().cells }
     rerender(<LiteratureComparisonPage table={paused} {...props} />)
     expect(screen.getByText('Paused')).toBeTruthy()
     expect(screen.queryByText('Saving the current cell before pausing…')).toBeNull()
     expect(
-      (screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' }) as HTMLButtonElement)
-        .disabled
+      (
+        screen.getByRole('button', {
+          name: 'Continue extraction ({{count}} cells)'
+        }) as HTMLButtonElement
+      ).disabled
     ).toBe(true)
     expect(translate).toHaveBeenCalledWith('Current task progress: {{done}} / {{total}}', {
       done: 1,
@@ -3729,7 +3737,9 @@ describe('pending comparison candidates', () => {
         sourceChecks: [{ itemId: 'third-paper', sourceKey: 'third-source', status: 'available' }]
       })
     )
-    const continueButton = screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' })
+    const continueButton = screen.getByRole('button', {
+      name: 'Continue extraction ({{count}} cells)'
+    })
     expect((continueButton as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(continueButton)
     expect(command).toHaveBeenCalledWith({
@@ -3752,8 +3762,11 @@ describe('pending comparison candidates', () => {
         .disabled
     ).toBe(true)
     expect(
-      (screen.getByRole('button', { name: 'Continue extraction ({{count}} cells)' }) as HTMLButtonElement)
-        .disabled
+      (
+        screen.getByRole('button', {
+          name: 'Continue extraction ({{count}} cells)'
+        }) as HTMLButtonElement
+      ).disabled
     ).toBe(false)
   })
 })

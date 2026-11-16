@@ -46,6 +46,7 @@ import {
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { ProgressBar } from '@/components/ui/progress-bar'
 import { ErrorNotice } from '@/components/error-notice'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import * as Dialog from '@/components/ui/dialog'
@@ -965,9 +966,7 @@ export function LiteratureComparisonPage({
     sampleStep && currentResults.length > 0 && pendingCells.length > 0 ? (
       <Button
         variant="outline"
-        disabled={
-          busy || taskActive || editing || reviewStatus.pending || reviewStatus.failed
-        }
+        disabled={busy || taskActive || editing || reviewStatus.pending || reviewStatus.failed}
         onClick={() =>
           void prepare({
             action: 'run',
@@ -1156,7 +1155,7 @@ export function LiteratureComparisonPage({
                   disabled={busy}
                   onClick={() => void run({ action: 'pause', tableId: table.id })}
                 >
-                  {t('Pause after current cell')}
+                  {t('Pause after current batch')}
                 </Button>
               ) : (
                 !pausing &&
@@ -2413,7 +2412,25 @@ export function LiteratureComparisonPage({
                     }}
                   />
                 )}
-                {busy && !sourceChecks && <p role="status">{t('Checking sources…')}</p>}
+                {busy && !sourceChecks && (
+                  <div className="mt-2 w-full max-w-md space-y-1.5" role="status">
+                    <p>{t('Checking sources…')}</p>
+                    <ProgressBar label={t('Checking sources…')} pulse />
+                    <p className="text-xs text-muted-foreground">
+                      {t('Checking sources for {{count}} references…', {
+                        count: new Set(
+                          (request?.action === 'resume'
+                            ? table.cells
+                                .filter((cell) => table.remainingCellIds.includes(cell.id))
+                                .map((cell) => cell.itemId)
+                            : request && 'itemIds' in request
+                              ? request.itemIds
+                              : undefined) ?? table.members.map((member) => member.itemId)
+                        ).size
+                      })}
+                    </p>
+                  </div>
+                )}
                 {sourceChecks && (
                   <>
                     <div

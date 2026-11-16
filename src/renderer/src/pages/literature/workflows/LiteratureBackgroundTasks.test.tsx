@@ -396,7 +396,7 @@ it('shows comparison progress from summaries without reading table contents', as
   expect(screen.getByText('Bounded comparison')).toBeTruthy()
   expect(screen.getByText(/321 \/ 1200/)).toBeTruthy()
   expect(comparisons.mock.calls.every(([request]) => request.action === 'list')).toBe(true)
-  fireEvent.click(screen.getByRole('button', { name: 'Pause after current cell' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Pause after current batch' }))
   await waitFor(() =>
     expect(comparisons).toHaveBeenCalledWith({ action: 'pause', tableId: 'comparison' })
   )
@@ -442,7 +442,7 @@ it.each([1, 0])(
     expect(row.textContent).toContain(
       running ? 'Saving the current cell before pausing…' : 'Paused'
     )
-    expect(within(row).queryByRole('button', { name: 'Pause after current cell' })).toBeNull()
+    expect(within(row).queryByRole('button', { name: 'Pause after current batch' })).toBeNull()
   }
 )
 

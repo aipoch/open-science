@@ -412,7 +412,7 @@ function BackgroundTasks({
                                 .catch(() => setError(true))
                             }}
                           >
-                            {t('Pause after current cell')}
+                            {t('Pause after current batch')}
                           </Button>
                         )}
                       </div>
