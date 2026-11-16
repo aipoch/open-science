@@ -193,6 +193,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "啟動在存取系統憑證時停止。現有憑證和設定檔資料已保留。"
   },
   "renderer": {
+    "Pros": "優點",
+    "Cons": "缺點",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "最多保留最近 30 筆已結束的執行記錄。對話和檔案會保留。",
     "Network protocol": "協定",
     "Delete address?": "刪除位址？",

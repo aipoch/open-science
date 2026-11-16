@@ -758,6 +758,96 @@ describe('notebook MCP server config', () => {
 describe('ask_user_question tool', () => {
   const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'ask_user_question')
 
+  it('publishes optional trade-off annotations and preserves all four combinations', () => {
+    const schema = z.object(tool!.inputSchema)
+    expect(z.toJSONSchema(schema)).toMatchObject({
+      properties: {
+        questions: {
+          items: {
+            properties: {
+              options: {
+                items: {
+                  required: ['label'],
+                  properties: {
+                    description: {
+                      type: 'string',
+                      description: 'Additional context when the label alone is unclear.'
+                    },
+                    pros: {
+                      type: 'string',
+                      maxLength: 4000,
+                      description:
+                        "One concrete advantage of choosing this option for the user's task. Omit if not applicable."
+                    },
+                    cons: {
+                      type: 'string',
+                      maxLength: 4000,
+                      description:
+                        'One concrete cost, limitation, or prerequisite of choosing this option. Omit if not applicable.'
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    })
+    expect(tool!.description).toContain('Include pros and/or cons only for meaningful trade-offs.')
+    expect(tool!.description).toContain("Use the user's language and omit unsupported claims.")
+    const options = [
+      { label: 'Both', description: 'Context', pros: 'Benefit', cons: 'Cost' },
+      { label: 'Pros only', pros: 'Benefit' },
+      { label: 'Cons only', cons: 'Cost' },
+      { label: 'Neither' }
+    ]
+    const question = { question: 'Which approach?', kind: 'single-select', options }
+    expect(schema.parse({ questions: [question] })).toEqual({ questions: [question] })
+    expect(
+      sanitizeAgentUserChoiceRequest({ sessionId: 'session-1', questions: [question] })
+    ).toEqual({ sessionId: 'session-1', questions: [question] })
+    for (const field of ['description', 'pros', 'cons'] as const) {
+      for (const invalid of [[], '  ', 'x'.repeat(4001), null, 42]) {
+        const questions = [
+          { ...question, options: [{ label: 'A', [field]: invalid }, { label: 'B' }] }
+        ]
+        expect(schema.safeParse({ questions }).success).toBe(false)
+        expect(
+          sanitizeAgentUserChoiceRequest({ sessionId: 'session-1', questions })
+        ).toBeUndefined()
+      }
+      const boundaryQuestions = [
+        { ...question, options: [{ label: 'A', [field]: 'x'.repeat(4000) }, { label: 'B' }] }
+      ]
+      expect(schema.safeParse({ questions: boundaryQuestions }).success).toBe(true)
+      expect(
+        sanitizeAgentUserChoiceRequest({ sessionId: 'session-1', questions: boundaryQuestions })
+      ).toBeDefined()
+      if (field !== 'description') {
+        const paddedQuestions = [
+          {
+            ...question,
+            options: [{ label: 'A', [field]: `  ${'x'.repeat(4000)}  ` }, { label: 'B' }]
+          }
+        ]
+        const parsed = schema.parse({ questions: paddedQuestions })
+        expect(
+          sanitizeAgentUserChoiceRequest({ sessionId: 'session-1', questions: paddedQuestions })
+        ).toEqual({ sessionId: 'session-1', ...parsed })
+      }
+      const questions = [
+        { ...question, options: [{ label: 'A', [field]: '  text  ' }, { label: 'B' }] }
+      ]
+      expect(schema.parse({ questions })).toMatchObject({
+        questions: [{ options: [{ [field]: 'text' }, { label: 'B' }] }]
+      })
+      expect(
+        sanitizeAgentUserChoiceRequest({ sessionId: 'session-1', questions })?.questions[0]
+          .options[0][field]
+      ).toBe('text')
+    }
+  })
+
   it('accepts 1-3 compact questions', () => {
     expect(tool).toBeDefined()
     expect(tool?.method).toBe('requestUserInput')

@@ -2383,7 +2383,9 @@ class AcpRuntime {
             options: question.options.map((option) => ({
               value: option.label,
               label: option.label,
-              ...(option.description ? { description: option.description } : {})
+              ...(option.description ? { description: option.description } : {}),
+              ...(option.pros ? { pros: option.pros } : {}),
+              ...(option.cons ? { cons: option.cons } : {})
             }))
           },
           {
@@ -2421,7 +2423,9 @@ class AcpRuntime {
                     anyOf: question.options.map((option) => ({
                       const: option.label,
                       title: option.label,
-                      ...(option.description ? { description: option.description } : {})
+                      ...(option.description ? { description: option.description } : {}),
+                      ...(option.pros ? { pros: option.pros } : {}),
+                      ...(option.cons ? { cons: option.cons } : {})
                     }))
                   }
                 }
@@ -2430,7 +2434,9 @@ class AcpRuntime {
                   oneOf: question.options.map((option) => ({
                     const: option.label,
                     title: option.label,
-                    ...(option.description ? { description: option.description } : {})
+                    ...(option.description ? { description: option.description } : {}),
+                    ...(option.pros ? { pros: option.pros } : {}),
+                    ...(option.cons ? { cons: option.cons } : {})
                   }))
                 })
           }

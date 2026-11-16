@@ -193,6 +193,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "启动在访问系统凭据时停止。现有凭据和配置文件数据已保留。"
   },
   "renderer": {
+    "Pros": "优点",
+    "Cons": "缺点",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "最多保留最近 30 条已结束的运行记录。对话和文件会保留。",
     "Network protocol": "协议",
     "Delete address?": "删除地址？",

@@ -193,6 +193,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。"
   },
   "renderer": {
+    "Pros": "利点",
+    "Cons": "制約",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "終了した実行記録を最新30件まで保持します。会話とファイルは保持されます。",
     "Network protocol": "通信プロトコル",
     "Delete address?": "アドレスを削除しますか？",

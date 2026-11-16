@@ -194,6 +194,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten."
   },
   "renderer": {
+    "Pros": "Vorteile",
+    "Cons": "Einschränkungen",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "Bis zu 30 abgeschlossene Ausführungsprotokolle werden aufbewahrt. Konversationen und Dateien bleiben erhalten.",
     "Network protocol": "Protokoll",
     "Delete address?": "Adresse löschen?",
