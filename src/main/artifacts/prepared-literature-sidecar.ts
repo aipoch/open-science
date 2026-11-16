@@ -23,6 +23,7 @@ const readPreparedLiteratureSidecar = async (
     maxBytes?: number
     onBytes?: (bytes: number) => void
     grantedImportRoots?: string[]
+    projectFolderRoot?: string
   }
 ): Promise<ReturnType<typeof artifactLiteratureSidecarSchema.parse> | undefined> => {
   if (source.kind !== 'localPath' || !/\.(?:docx|zip)$/iu.test(source.path)) {
@@ -35,7 +36,8 @@ const readPreparedLiteratureSidecar = async (
     allowedImportRoots,
     relativeBaseDirs,
     'artifact',
-    options?.grantedImportRoots
+    options?.grantedImportRoots,
+    options?.projectFolderRoot
   )
   const candidate = `${sourcePath}${ARTIFACT_LITERATURE_SIDECAR_SUFFIX}`
   try {

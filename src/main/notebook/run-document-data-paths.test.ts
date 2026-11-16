@@ -4,6 +4,10 @@ import { describe, expect, it } from 'vitest'
 
 import type { NotebookRunDocument } from '../../shared/notebook'
 import { decodeRunDocumentDataPaths, encodeRunDocumentDataPaths } from './run-document-data-paths'
+import {
+  decodeRunDocumentDataPaths as decodeProjectPaths,
+  encodeRunDocumentDataPaths as encodeProjectPaths
+} from './run-document-data-path-codec'
 
 const ROOT = '/data/os'
 
@@ -78,6 +82,38 @@ const buildLegacyDocument = (): NotebookRunDocument => {
 }
 
 describe('run document data-path codec', () => {
+  it('relocates the frozen session output environment with the project without rewriting user code', () => {
+    const document = buildDocument()
+    const projectRoot = '/original/project'
+    document.runs[0].frozenShellContext = {
+      cwd: projectRoot,
+      handoffDir: `${ROOT}/handoff`,
+      runtimeRoot: `${ROOT}/runtime`,
+      notebookSessionRoot: document.notebookSessionRoot,
+      inputRoot: `${ROOT}/inputs`,
+      protectedDirs: [],
+      environment: {
+        OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR: `${projectRoot}/notebooks/default-project/session-1/data`,
+        CUSTOM: '/user/value'
+      },
+      timeoutMs: 1,
+      platform: 'linux'
+    }
+    const encoded = encodeProjectPaths(document, ROOT, projectRoot)
+    expect(encoded.runs[0].frozenShellContext?.environment.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR).toBe(
+      '$PROJECT/notebooks/default-project/session-1/data'
+    )
+    const decoded = decodeProjectPaths(encoded, '/new/data', '/moved/project')
+    expect(decoded.runs[0].frozenShellContext?.environment).toEqual({
+      OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR: join(
+        '/moved/project',
+        'notebooks/default-project/session-1/data'
+      ),
+      CUSTOM: '/user/value'
+    })
+    expect(decoded.runs[0].script).toBe(document.runs[0].script)
+  })
+
   it('encodes every data-root path field to a $DATA sentinel and drops artifact fileUrl', () => {
     const doc = buildDocument()
     const encoded = encodeRunDocumentDataPaths(doc, ROOT)
@@ -191,5 +227,42 @@ describe('run document data-path codec', () => {
     expect(() => decodeRunDocumentDataPaths(doc, ROOT)).toThrow(
       /portable relative path within the data root/
     )
+  })
+})
+
+describe('project-owned Notebook path portability', () => {
+  it('rebases declared project paths independently of managed paths and leaves source text and relative names unchanged', () => {
+    const document = buildDocument()
+    document.workspaceCwd = '/research/project'
+    document.runs[0].cwdBefore = '/research/project/input'
+    document.runs[0].script = 'open("relative.csv", "w").write("/research/project")'
+    const encoded = encodeProjectPaths(document, ROOT, '/research/project')
+    expect(encoded.workspaceCwd).toBe('$PROJECT/')
+    expect(encoded.runs[0].cwdBefore).toBe('$PROJECT/input')
+    expect(encoded.runs[0].workingFiles[0].path).toBe(
+      '$DATA/notebooks/default-project/session-1/data/processed.csv'
+    )
+    const reopened = decodeProjectPaths(encoded, '/new-managed', '/moved/project')
+    expect(reopened.workspaceCwd).toBe(join('/moved/project'))
+    expect(reopened.runs[0].cwdBefore).toBe(join('/moved/project', 'input'))
+    expect(reopened.runs[0].workingFiles[0].path).toBe(
+      join('/new-managed', 'notebooks/default-project/session-1/data/processed.csv')
+    )
+    expect(reopened.runs[0].workingFiles[0].relativePath).toBe('data/processed.csv')
+    expect(reopened.runs[0].script).toBe(document.runs[0].script)
+    expect(reopened.runs[0].text).toEqual(document.runs[0].text)
+  })
+
+  it.each(['$PROJECT/../escape', '$PROJECT/C:/escape', '$PROJECT/\\escape', '$PROJECT//absolute'])(
+    'rejects escaping project path %s',
+    (path) => {
+      const document = { ...buildDocument(), workspaceCwd: path }
+      expect(() => decodeProjectPaths(document, ROOT, '/project')).toThrow()
+    }
+  )
+
+  it('requires a registered project root for encoded project paths', () => {
+    const document = { ...buildDocument(), workspaceCwd: '$PROJECT/data' }
+    expect(() => decodeProjectPaths(document, ROOT)).toThrow('no registered project root')
   })
 })

@@ -10,6 +10,7 @@ import type {
   ResearchVideoPresentation,
   ResearchVideoPresentationRequest
 } from '../../shared/research-video-presentation'
+import { provenanceStorageRoot } from '../artifacts/provenance-storage'
 
 const log = createLogger('research-video')
 
@@ -217,7 +218,7 @@ export async function deleteStoredResearchFilms(
   identity.parse(request.sessionId)
   if (importedId) {
     z.string().uuid().parse(importedId)
-    let current = root
+    let current = provenanceStorageRoot(root, `artifacts/${request.projectId}`)
     let exists = true
     for (const segment of [
       'artifacts',

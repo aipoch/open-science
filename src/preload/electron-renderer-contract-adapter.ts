@@ -121,6 +121,11 @@ const encodeRequestArguments = (
       if (!sourcePath) throw new Error('The dropped file has no native path.')
       return [args[0], sourcePath]
     }
+    case 'native-folder-validation-request': {
+      const path = getPathForFile(args[0])
+      if (!path) throw new Error('The dropped folder has no native path.')
+      return [{ path }]
+    }
     case 'native-file-upload-request': {
       const sourcePath = getPathForFile(args[0])
       return sourcePath ? [{ ...(args[1] as object), sourcePath }] : null
@@ -160,7 +165,9 @@ export const createElectronRendererContractAdapter = (
     if (encodedArgs === null) return null as Result
     const result = await port.invoke(channel, ...encodedArgs)
     try {
-      return contract.applicationCommand === 'runtime-validated'
+      // Reviewer history remains a legacy command, with a transitional typed Electron outcome.
+      return contract.applicationCommand === 'runtime-validated' ||
+        publicPath === 'reviewer.getForSession'
         ? unwrapApplicationCommandOutcome<Result>(result)
         : (result as Result)
     } catch (error) {
@@ -170,6 +177,7 @@ export const createElectronRendererContractAdapter = (
           publicPath === 'sessions.rename' ||
           publicPath === 'sessions.setPinned' ||
           (publicPath === 'sessions.importPackage' && error.code === 'session-package-busy') ||
+          publicPath === 'reviewer.getForSession' ||
           (publicPath.startsWith('schedules.') && error.code.startsWith('schedule-')) ||
           (publicPath === 'literature.citationStyles' && error.code.startsWith('csl-')))
       ) {

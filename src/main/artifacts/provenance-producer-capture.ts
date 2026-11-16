@@ -1,5 +1,5 @@
 import { readFile, realpath, stat } from 'node:fs/promises'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type { Prisma } from '@prisma/client'
 
@@ -251,7 +251,8 @@ class ArtifactProvenanceProducerCapture {
     request: CreateArtifactVersionRequest,
     createdAt: Date,
     target: ArtifactVersionTargetCapture,
-    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer,
+    projectFolderRoot?: string
   ): Promise<ArtifactVersionProducerCapture> {
     if (
       request.imageTaskId &&
@@ -325,7 +326,8 @@ class ArtifactProvenanceProducerCapture {
             this.options.storageRoot,
             request.projectId,
             request.notebookSessionId
-          )
+          ),
+          projectFolderRoot
         )
       : undefined
     const sourceFileObservation = sourceFileAssessment?.verified
@@ -362,7 +364,13 @@ class ArtifactProvenanceProducerCapture {
     }
     const inferredProducerRunId = request.producerRunId
       ? undefined
-      : await this.inferProducerRunId(document, sourceFileObservation, scope)
+      : await this.inferProducerRunId(
+          document,
+          sourceFileObservation,
+          scope,
+          projectFolderRoot,
+          target.checksum
+        )
     const producerRunId = request.producerRunId ?? inferredProducerRunId
     if (!producerRunId) {
       if (sourceFileAssessment?.notebookSessionOwned) {
@@ -399,7 +407,9 @@ class ArtifactProvenanceProducerCapture {
       const observedOwners = await this.findObservedWorkingFileRunIds(
         document,
         sourceFileObservation,
-        scope
+        scope,
+        projectFolderRoot,
+        target.checksum
       )
       computeOutputOwners =
         (await this.options.computeJobReader?.findOutputOwners(
@@ -483,7 +493,13 @@ class ArtifactProvenanceProducerCapture {
       })
     )
     const sourceGenerationId = sourceFileObservation
-      ? await this.findSourceGenerationId(producerRun, sourceFileObservation, target.checksum)
+      ? await this.findSourceGenerationId(
+          producerRun,
+          sourceFileObservation,
+          target.checksum,
+          document,
+          projectFolderRoot
+        )
       : undefined
     const notebookDependencies = await this.options.dependencyAnalyzer
       ?.project({
@@ -702,17 +718,27 @@ class ArtifactProvenanceProducerCapture {
   private async inferProducerRunId(
     document: Awaited<ReturnType<NotebookRunRepository['findExisting']>>,
     observation: CreateArtifactVersionRequest['sourceFileObservation'],
-    scope: ProducerScope
+    scope: ProducerScope,
+    projectFolderRoot?: string,
+    artifactChecksum?: string
   ): Promise<string | undefined> {
     if (!document || !observation) return undefined
-    const matches = await this.findObservedWorkingFileRunIds(document, observation, scope)
+    const matches = await this.findObservedWorkingFileRunIds(
+      document,
+      observation,
+      scope,
+      projectFolderRoot,
+      artifactChecksum
+    )
     return matches.length === 1 ? matches[0] : undefined
   }
 
   private async findSourceGenerationId(
     run: NotebookRunRecord,
     observation: SourceFileObservation,
-    artifactChecksum: string
+    artifactChecksum: string,
+    document: NonNullable<Awaited<ReturnType<NotebookRunRepository['findExisting']>>>,
+    projectFolderRoot?: string
   ): Promise<string | undefined> {
     const observedPath = await canonicalPath(observation.path)
     const matches = (
@@ -722,7 +748,14 @@ class ArtifactProvenanceProducerCapture {
           file.generationId &&
           file.checksum === artifactChecksum &&
           file.size === observation.sizeBytes &&
-          (await canonicalPath(file.path)) === observedPath
+          ((await canonicalPath(file.path)) === observedPath ||
+            (await this.projectOutputPath(
+              document,
+              run,
+              file,
+              projectFolderRoot,
+              artifactChecksum
+            )) === observedPath)
             ? file.generationId
             : undefined
         )
@@ -737,10 +770,15 @@ class ArtifactProvenanceProducerCapture {
     document: Awaited<ReturnType<NotebookRunRepository['findExisting']>>,
     observation: SourceFileObservation,
     artifactChecksum: string,
-    notebookSessionRoot: string
+    notebookSessionRoot: string,
+    projectFolderRoot?: string
   ): Promise<SourceFileObservationAssessment> {
     const observedPath = await canonicalPath(observation.path)
-    const rootPaths = [notebookSessionRoot, ...(document ? [document.workspaceCwd] : [])]
+    const rootPaths = [
+      notebookSessionRoot,
+      ...(document ? [document.workspaceCwd] : []),
+      ...(projectFolderRoot ? [projectFolderRoot] : [])
+    ]
     const roots = await Promise.all(rootPaths.map(canonicalPath))
     const assessment = { notebookSessionOwned: isStrictDescendant(roots[0], observedPath) }
     if (
@@ -782,7 +820,9 @@ class ArtifactProvenanceProducerCapture {
   private async findObservedWorkingFileRunIds(
     document: NonNullable<Awaited<ReturnType<NotebookRunRepository['findExisting']>>>,
     observation: SourceFileObservation,
-    scope: ProducerScope
+    scope: ProducerScope,
+    projectFolderRoot?: string,
+    artifactChecksum?: string
   ): Promise<string[]> {
     if (
       !Number.isFinite(observation.sizeBytes) ||
@@ -795,7 +835,11 @@ class ArtifactProvenanceProducerCapture {
 
     const observedPath = await canonicalPath(observation.path)
     const documentRoots = await Promise.all(
-      [document.notebookSessionRoot, document.workspaceCwd].map(canonicalPath)
+      [
+        document.notebookSessionRoot,
+        document.workspaceCwd,
+        ...(projectFolderRoot ? [projectFolderRoot] : [])
+      ].map(canonicalPath)
     )
     const isInsideDocumentRoot = documentRoots.some((root) =>
       isStrictDescendant(root, observedPath)
@@ -807,11 +851,26 @@ class ArtifactProvenanceProducerCapture {
       await Promise.all(
         candidates.map(async (run) => {
           for (const file of run.workingFiles) {
+            const projectPath = await this.projectOutputPath(
+              document,
+              run,
+              file,
+              projectFolderRoot,
+              artifactChecksum
+            )
+            const applied = run.projectFolderChanges?.some(
+              (change) =>
+                change.state === 'applied' &&
+                change.runId === run.runId &&
+                change.candidateChecksum === artifactChecksum &&
+                change.candidateSizeBytes === observation.sizeBytes &&
+                file.relativePath === `data/${change.relativePath}`
+            )
             if (
-              (await canonicalPath(file.path)) === observedPath &&
+              ((await canonicalPath(file.path)) === observedPath || projectPath === observedPath) &&
               file.createdByRunId === run.runId &&
               file.size === observation.sizeBytes &&
-              file.mtimeMs === observation.mtimeMs
+              (file.mtimeMs === observation.mtimeMs || (projectPath === observedPath && applied))
             ) {
               return run.runId
             }
@@ -824,6 +883,45 @@ class ArtifactProvenanceProducerCapture {
     // mtime is diagnostic context, not a causal execution receipt. Only a WorkingFile observation
     // attributed to one run may promote an omitted declaration to available producer evidence.
     return [...new Set(workingFileMatches)]
+  }
+
+  // The observer keeps Project outputs under stable logical data/ paths. Interpret that
+  // projection only with host-owned current folder authority and a matching immutable generation.
+  // Direct execution records cwdAfter; precise writes instead carry an applied candidate receipt
+  // because their independent preparation is torn down before the kernel returns.
+  private async projectOutputPath(
+    document: NonNullable<Awaited<ReturnType<NotebookRunRepository['findExisting']>>>,
+    run: NotebookRunRecord,
+    file: NotebookRunRecord['workingFiles'][number],
+    projectFolderRoot: string | undefined,
+    artifactChecksum: string | undefined
+  ): Promise<string | undefined> {
+    if (
+      !projectFolderRoot ||
+      !file.generationId ||
+      !file.checksum ||
+      file.checksum !== artifactChecksum ||
+      !isStrictDescendant(resolve(document.dataRoot), resolve(file.path))
+    )
+      return undefined
+    const projectRoot = await canonicalPath(projectFolderRoot)
+    const runCwd = run.cwdAfter ? await canonicalPath(run.cwdAfter) : undefined
+    const direct = runCwd && (runCwd === projectRoot || isStrictDescendant(projectRoot, runCwd))
+    const applied = run.projectFolderChanges?.some(
+      (change) =>
+        change.projectId === document.projectId &&
+        change.sessionId === document.sessionId &&
+        change.runId === run.runId &&
+        change.state === 'applied' &&
+        change.candidateChecksum === artifactChecksum &&
+        change.candidateSizeBytes === file.size &&
+        file.relativePath === `data/${change.relativePath}`
+    )
+    if (!direct && !applied) return undefined
+    const candidate = await canonicalPath(
+      join(projectRoot, relative(resolve(document.dataRoot), resolve(file.path)))
+    )
+    return isStrictDescendant(projectRoot, candidate) ? candidate : undefined
   }
 
   private async validateInputReferences(

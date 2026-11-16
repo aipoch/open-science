@@ -5,7 +5,8 @@ import type { PermissionProfileId } from '../../shared/permission-profiles'
 // Each callback reads the current Session profile at the actual host decision, after discovery.
 // Binding preparation and code-risk approval remain separate capabilities.
 export function bindNotebookApprovals(
-  notebook: Pick<NotebookRuntimeService, 'setExecutionApproval' | 'setRuntimeBindingApproval'>,
+  notebook: Pick<NotebookRuntimeService, 'setExecutionApproval' | 'setRuntimeBindingApproval'> &
+    Partial<Pick<NotebookRuntimeService, 'setProjectFolderChangeApproval'>>,
   runtimeForApproval: () =>
     Pick<AcpRuntimeCoordinator, 'getState' | 'requestAppApproval'> | undefined,
   readSessionProfile?: (
@@ -33,6 +34,10 @@ export function bindNotebookApprovals(
     // A user may attach the session and tighten its policy while disk is being read.
     return runtime().getState().permissionProfiles[request.sessionId]?.selectedProfile ?? saved
   }
+  notebook.setProjectFolderChangeApproval?.(async (request) => {
+    if (request.permissionPrompts === 'none') return false
+    return runtime().requestAppApproval(request)
+  })
   notebook.setExecutionApproval(async (request) => {
     if ((await profileFor(request)) === 'full') return true
     if (request.permissionPrompts === 'none') return false

@@ -59,7 +59,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'One `notebook_execute` per Python/R cell; reuse `cellId`. Idle/capacity reclamation loses variables; persist reusable data. Skills: repeat kernelSkillIds per dependent cell; call directly in code, never import. Connectors require `repl_execute`; respect `host.capabilities()`.',
   'Use call forms in `repl_execute`; batch safe independent operations.',
   'Connector documents: use loaded text or the framework Skill loader, never Shell/REPL. `host.skills` manages authored Skills. If neither is available, stop and report.',
-  'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
+  'Keep .open-science/ app-owned. Call `notebook_state` before generating files. Use its `outputRoot` (`OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR`), when set, for absolute writes and later reads. Use plain relative paths for inputs in the Notebook working directory (bound Project folder when configured). Keep cwd unchanged; use `OPEN_SCIENCE_HANDOFF_DIR` for connector handoff. Never overwrite originals.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
   'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before retrying.',
@@ -68,7 +68,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
-  'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Reuse saved relative filename and runId; inline small text.',
+  'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "<exact saved path>" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Use saved path and runId; inline small text.',
   '</open_science_notebook_instructions>'
 ].join('\n')
 
@@ -339,7 +339,7 @@ const buildShellExecuteDoc = (
     'Follow recovery retry prerequisites/guidance. Recovery describes that attempt, not current health; exitCode:null never authorizes repetition.',
     'Foreground for needed results; background:true for independent work. Accepted background Runs survive Turn end/MCP disconnect; explicitly cancel with background_run.',
     'Keep commands application-managed: background:true, never &, nohup, setsid, disown, Start-Process, Start-Job or equivalent detachment.',
-    'Do NOT copy a generated notebook output into the workspace here. Publish with `write_artifact_file`, using the same relative filename you saved with; it resolves against session data across platforms.',
+    'Publish with `write_artifact_file` using the exact saved absolute path when outputRoot is present. Keep outputs out of the provider workspace.',
     'One managed command. Python/R: notebook_execute; JavaScript: repl_execute; installs: manage_packages. Never run analysis scripts, inline code or installers here.'
   ].join('\n')
 }
@@ -934,7 +934,8 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
       'endedAt',
       'exitCode',
       'runtimeStatus',
-      'errorCode'
+      'errorCode',
+      'outputRoot'
     ]),
     ...(recovery ? { recovery } : {}),
     ...(staleness.value ? { staleness: staleness.value } : {}),
@@ -1143,7 +1144,14 @@ const compactNotebookStateResult = (raw: unknown): unknown => {
     : []
 
   return {
-    ...pickDefined(record, ['sessionId', 'cwd', 'dataRoot', 'kernelStatus', 'activeRunId']),
+    ...pickDefined(record, [
+      'sessionId',
+      'cwd',
+      'dataRoot',
+      'outputRoot',
+      'kernelStatus',
+      'activeRunId'
+    ]),
     ...(runtimeBindings ? { runtimeBindings } : {}),
     cellCount: Array.isArray(record.cells) ? record.cells.length : 0,
     ...(cells.length ? { cells } : {}),
@@ -1745,7 +1753,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_state',
     title: 'Get notebook state',
     description:
-      'Return compact session state: cell identities, latest run metadata/output preview, cwd/dataRoot, kernel status, and runtime bindings. Full run history stays in the notebook preview.',
+      'Compact state: cells, recent runs, cwd, dataRoot, outputRoot when enabled, kernel status and bindings. Full history: Notebook preview.',
     method: 'state',
     inputSchema: {},
     mapResult: compactNotebookStateResult,

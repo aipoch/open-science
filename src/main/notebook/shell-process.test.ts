@@ -507,6 +507,7 @@ describe('notebook shell process behavior', () => {
         handoffDir: 'C:\\handoff',
         runtimeRoot: portableRuntimeRoot,
         inputRoot: 'C:\\inputs',
+        outputRoot: 'C:\\project\\notebooks\\project-1\\session-1\\frames\\child\\data',
         sessionId: 'session-1',
         projectId: 'project-1',
         platform: 'win32',
@@ -542,12 +543,15 @@ describe('notebook shell process behavior', () => {
             ...notebookWorkloadCacheEnv(portableRuntimeRoot),
             NPM_CONFIG_PREFIX: shellNpmPaths(portableRuntimeRoot, 'linux').prefix,
             NPM_CONFIG_CACHE: shellNpmPaths(portableRuntimeRoot, 'linux').cache,
-            OPEN_SCIENCE_INPUT_DIR: 'C:\\inputs'
+            OPEN_SCIENCE_INPUT_DIR: 'C:\\inputs',
+            OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR:
+              'C:\\project\\notebooks\\project-1\\session-1\\frames\\child\\data'
           },
           filesystem: expect.objectContaining({
             readOnlyRoots: expect.arrayContaining(['C:\\inputs']),
             readWriteRoots: expect.arrayContaining([
-              shellNpmPaths(portableRuntimeRoot, 'linux').prefix
+              shellNpmPaths(portableRuntimeRoot, 'linux').prefix,
+              'C:\\project\\notebooks\\project-1\\session-1\\frames\\child\\data'
             ])
           })
         })

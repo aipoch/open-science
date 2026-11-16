@@ -1,3 +1,6 @@
+import { PROJECT_RECORD_DIRECTORY } from '../storage/data-location-identity'
+import { realpath as resolveFileRoot } from 'node:fs/promises'
+import { mapProjectFolderAcpPath } from './project-folder-file-path'
 import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import {
   registerResourceObservation,
@@ -1439,7 +1442,60 @@ class AcpRuntime {
       },
       observeClaudeSdkMessage: (params) => this.observeClaudeSdkMessage(params),
       filesystem: {
-        resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),
+        resolveSessionCwd: (sessionId) =>
+          this.resolveSessionCwd(this.sessionRegistry.resolveAppSessionId(sessionId)),
+        resolveFileAccess: async (providerSessionId) => {
+          const sessionId = this.sessionRegistry.resolveAppSessionId(providerSessionId)
+          const cwd = this.resolveSessionCwd(sessionId)
+          const attachment = this.sessionRegistry.lookup(sessionId)?.attachment
+          const projectId = this.resolveSessionProjectId(sessionId)
+          const execution = this.sessionInteractions.current(sessionId)
+          const files = this.options.projectFolderFiles
+          const root = await files?.resolveRoot(projectId)
+          const managedRoot = root ? await resolveFileRoot(cwd) : undefined
+          if (
+            this.sessionRegistry.lookup(sessionId)?.attachment !== attachment ||
+            this.resolveSessionCwd(sessionId) !== cwd
+          )
+            throw new Error('ACP Session changed during file access.')
+          await this.providerPromptExecutor.observeProviderRequest(providerSessionId)
+          return {
+            root: root ?? cwd,
+            canonicalRoot: Boolean(root),
+            ...(root
+              ? {
+                  additionalRoots: [{ path: managedRoot!, access: 'rw' as const }],
+                  protectedReadRoots: [join(root, PROJECT_RECORD_DIRECTORY)],
+                  mapPath: (path: string) => mapProjectFolderAcpPath(cwd, root, path)
+                }
+              : {}),
+            ...(root && files
+              ? {
+                  write: async (path: string, content: string) => {
+                    if (
+                      !execution ||
+                      execution.kind !== 'prompt' ||
+                      this.sessionInteractions.current(sessionId) !== execution ||
+                      this.sessionRegistry.lookup(sessionId)?.attachment !== attachment
+                    )
+                      throw new Error('ACP file writes require the original active Session turn.')
+                    return files.write(
+                      {
+                        projectId,
+                        sessionId,
+                        runId: execution.turnToken,
+                        cwd,
+                        path,
+                        content,
+                        permissionPrompts: execution.permissionPrompts
+                      },
+                      execution.signal
+                    )
+                  }
+                }
+              : {})
+          }
+        },
         protectedReadRoots: () => this.protectedReadRoots(),
         listGrantedRoots: () => this.options.grantedRoots?.list?.() ?? Promise.resolve([])
       },

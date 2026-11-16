@@ -14,6 +14,12 @@ import { ReproducibilityOutput } from './ReproducibilityOutput'
 import { ReproducibilityOutputStorage } from './ReproducibilityOutputStorage'
 import * as dependencyGraph from './artifact-reproducibility-graph'
 import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '@aipoch/reproducibility/comparison'
+import {
+  buildBoundedExecutionSnapshot,
+  parseArtifactExecutionSnapshot
+} from '../../../../main/artifacts/provenance-execution-evidence'
+import { projectPublicArtifactExecutionSnapshot } from '../../../../main/artifacts/provenance-execution-projection'
+import { OPEN_INPUT_UPLOAD_EVENT } from './composer-focus-events'
 
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? ((): void => {})
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -270,6 +276,104 @@ describe('ArtifactReproducibilityPanel', () => {
     container.remove()
     vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  it('carries unfrozen folder inputs through persisted execution into the Artifact reproducibility consumer without hiding its graph', async () => {
+    const captured = buildBoundedExecutionSnapshot(
+      {
+        schemaVersion: 2,
+        rootFrameId: 'root',
+        agentFrameId: 'frame',
+        messageBranchId: 'branch',
+        terminalPromptMessageId: 'prompt',
+        producerRunId: 'run-1',
+        producerRunIndex: 0,
+        createdAt: '2026-11-16T00:00:00.000Z'
+      },
+      [
+        {
+          runIndex: 0,
+          run: {
+            runId: 'run-1',
+            cellId: 'cell',
+            source: 'agent',
+            kernelKind: 'python',
+            status: 'completed',
+            script: 'read_csv("raw.csv")',
+            startedAt: 1,
+            endedAt: 2,
+            text: { stdout: '', stderr: '', traceback: '', plain: [] },
+            outputs: [],
+            workingFiles: [],
+            projectFolderInputs: [
+              { relativePath: 'cohort/raw.csv', sizeBytes: 8, frozen: false },
+              { relativePath: 'labels.csv', sizeBytes: 10, checksum: 'a'.repeat(64), frozen: false }
+            ]
+          }
+        }
+      ]
+    )
+    const saved = parseArtifactExecutionSnapshot(JSON.stringify(captured))
+    const execution = projectPublicArtifactExecutionSnapshot(saved, [])
+    expect(execution.runs[0]?.projectFolderInputs).toEqual(captured.runs[0]?.projectFolderInputs)
+    const value = projection()
+    value.completeness = 'incomplete'
+    value.reasonCodes = ['absolute-path-unfrozen']
+    const originalGraph = structuredClone(value)
+    const artifactVersion = {
+      projectId: 'project',
+      appSessionId: 'session',
+      artifactId: 'artifact',
+      versionId: 'version'
+    }
+    const upload = vi.fn()
+    window.addEventListener(OPEN_INPUT_UPLOAD_EVENT, upload)
+    try {
+      await act(async () =>
+        root.render(
+          <ArtifactReproducibilityPanel
+            projection={value}
+            environmentRuns={execution.runs}
+            artifactVersion={artifactVersion}
+          />
+        )
+      )
+      expect(within(container).getByRole('button', { name: /Incomplete capture/ })).toBeTruthy()
+      expect(container.textContent).toContain(
+        'Inputs from the project folder are not frozen, so this run has partial provenance.'
+      )
+      expect(container.textContent).toContain('cohort/raw.csv')
+      expect(container.textContent).toContain('labels.csv')
+      expect(container.textContent).toContain('Dependency')
+      expect(container.textContent).toContain('source.csv')
+      expect(value).toEqual(originalGraph)
+      await act(async () =>
+        fireEvent.click(
+          within(container).getByRole('button', { name: 'Add key inputs as uploads' })
+        )
+      )
+      expect(upload).toHaveBeenCalledOnce()
+      expect((upload.mock.calls[0]![0] as CustomEvent).detail).toEqual({
+        projectId: 'project',
+        sessionId: 'session'
+      })
+      await act(async () =>
+        root.render(
+          <ArtifactReproducibilityPanel
+            projection={value}
+            environmentRuns={execution.runs}
+            artifactVersion={artifactVersion}
+            readOnly
+          />
+        )
+      )
+      expect(
+        within(container).queryByRole('button', { name: 'Add key inputs as uploads' })
+      ).toBeNull()
+      expect(container.textContent).toContain('cohort/raw.csv')
+    } finally {
+      window.removeEventListener(OPEN_INPUT_UPLOAD_EVENT, upload)
+    }
   })
 
   it('shows imported checks as source evidence and blocks execution without hiding history', async () => {

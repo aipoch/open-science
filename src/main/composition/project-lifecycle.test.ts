@@ -2,11 +2,14 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setImmediate } from 'node:timers/promises'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CredentialRequestBroker } from '../connectors/credential-request-broker'
 import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import type { SessionDeletionHandlers } from '../session-persistence/coordinator'
+
+configureTestRuntimeMetadata()
 
 const mocks = vi.hoisted(() => ({
   relay: vi.fn(),

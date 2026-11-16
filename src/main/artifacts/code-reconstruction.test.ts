@@ -12,9 +12,8 @@ import {
 } from '../acp/artifact-code-reconstruction-runner'
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
-import { notebookHelperEvidenceKey } from '../notebook/helper-evidence'
 import { artifactProvenanceGraphValue } from './artifact-provenance-graph'
-import { reproductionRecipes } from './reproducibility-host'
+import { notebookHelperEvidenceKey, reproductionRecipes } from './reproducibility-host'
 
 import type {
   ArtifactProvenanceGraph,

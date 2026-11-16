@@ -1,3 +1,4 @@
+import { isProjectInternalRecordPath } from '../../shared/project-internal-records'
 import { matchesWriteScope } from '@aipoch/notebook-analysis'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -39,15 +40,23 @@ import { NodeVersionFileOperator } from '../managed-file-versions/version-file-o
 import { reportNotebookFileAnalysis } from './evidence-diagnostics'
 import { createRootNotebookLane } from './lane-identity'
 import { notebookPromptInputPath } from './prompt-input-materialization'
-import { getNotebookFileEvidenceLocation } from './repository'
+import { NotebookRunRepository } from './repository'
 import { analyzeScientificOutputs } from './scientific-output-analysis'
 
 const log = createLogger('notebook:file-evidence')
 
 type WorkingFileObservationRequest = {
   dataRoot: string
+  outputRoot?: string
+  outputRelativePath?: string
+  isOutputDirectoryCurrent?: () => boolean
   notebookSessionRoot: string
   cwd?: string
+  // Outside the owned output directory, Project-folder runs observe only declared paths.
+  observationMode?: 'declared-paths'
+  projectFolderRoot?: string
+  projectFolderStageRoot?: string
+  unfrozenInputPaths?: readonly string[]
   code?: string
   language?: NotebookLanguage
   kind?: 'python' | 'r' | 'repl'
@@ -774,11 +783,12 @@ export async function updateImportedEvidencePool(
   storageRoot: string,
   projectId: string,
   stagedRoot: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  stagedStorageRoot = storageRoot
 ): Promise<void> {
   const publish = operation === 'publish-imported-pool'
   if (publish) await ensureWorkingFileEvidenceProject(storageRoot, projectId)
-  const source = await secureEvidenceRoot(storageRoot, stagedRoot, false)
+  const source = await secureEvidenceRoot(stagedStorageRoot, stagedRoot, false)
   const prefix = EXECUTION_FILE_EVIDENCE_DIR + '/' + projectId + '/blobs'
   const pool = await secureEvidenceRoot(storageRoot, join(storageRoot, prefix), publish)
   await runSerializedEvidenceWorker(
@@ -1379,13 +1389,16 @@ const snapshotEntry = async (
   logicalSessionRoot: string,
   candidatePath: string
 ): Promise<SnapshotEntry | undefined> => {
+  if (isProjectInternalRecordPath(relative(observedRoot, candidatePath))) return undefined
   const linkMetadata = await lstat(candidatePath)
   if (linkMetadata.isSymbolicLink()) return undefined
   const canonicalPath = await realpath(candidatePath)
-  if (!isPathInside(observedRoot, canonicalPath)) return undefined
+  const scopedPath = relative(observedRoot, canonicalPath)
+  if (!isPathInside(observedRoot, canonicalPath) || isProjectInternalRecordPath(scopedPath))
+    return undefined
   const metadata = await stat(canonicalPath)
   if (!metadata.isFile()) return undefined
-  const logicalPath = resolve(logicalObservedRoot, relative(observedRoot, canonicalPath))
+  const logicalPath = resolve(logicalObservedRoot, scopedPath)
   return {
     physicalPath: canonicalPath,
     path: logicalPath,
@@ -1402,10 +1415,34 @@ const snapshotEntry = async (
 const captureSnapshot = async (
   observedRoot: string,
   logicalObservedRoot: string,
-  logicalSessionRoot: string
+  logicalSessionRoot: string,
+  selectedPaths?: readonly string[],
+  excludedLogicalRoot?: string
 ): Promise<SnapshotCapture> => {
   try {
     const files = new Map<string, SnapshotEntry>()
+    if (selectedPaths) {
+      if (selectedPaths.length > MAX_FALLBACK_SNAPSHOT_ENTRIES) throw new SnapshotEntryLimitError()
+      for (const path of selectedPaths) {
+        const candidate = resolve(logicalSessionRoot, path)
+        if (
+          !isPathInside(logicalObservedRoot, candidate) ||
+          (excludedLogicalRoot && isPathInside(excludedLogicalRoot, candidate))
+        )
+          continue
+        const entry = await snapshotEntry(
+          observedRoot,
+          logicalObservedRoot,
+          logicalSessionRoot,
+          resolve(observedRoot, relative(logicalObservedRoot, candidate))
+        ).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return undefined
+          throw error
+        })
+        if (entry) files.set(entry.path, entry)
+      }
+      return { state: 'available', files }
+    }
     let entriesSeen = 0
     const visit = async (directory: string): Promise<void> => {
       const entries = await readdir(directory, { withFileTypes: true })
@@ -1423,9 +1460,16 @@ const captureSnapshot = async (
         for (const file of captured) if (file) files.set(file.path, file)
       }
       for (const entry of entries) {
+        if (isProjectInternalRecordPath(entry.name)) continue
+        const candidatePath = join(directory, entry.name)
+        if (
+          excludedLogicalRoot &&
+          resolve(logicalObservedRoot, relative(observedRoot, candidatePath)) ===
+            excludedLogicalRoot
+        )
+          continue
         entriesSeen += 1
         if (entriesSeen > MAX_FALLBACK_SNAPSHOT_ENTRIES) throw new SnapshotEntryLimitError()
-        const candidatePath = join(directory, entry.name)
         if (entry.isSymbolicLink()) continue
         if (entry.isDirectory()) {
           await flushFiles()
@@ -1483,9 +1527,7 @@ const diffSnapshots = (
 }
 
 const fallbackObservation = (
-  observedRoot: string,
-  logicalObservedRoot: string,
-  logicalSessionRoot: string,
+  capture: () => Promise<SnapshotCapture>,
   before: ReadonlyMap<string, SnapshotEntry>,
   reasonCodes: readonly ExecutionFileEvidenceReason[],
   lifecycle?: { active: ActiveObservation; unregister: () => void }
@@ -1503,7 +1545,7 @@ const fallbackObservation = (
         lifecycle.unregister()
         return { changes: [], reasonCodes: ['observer-conflict'], available: false }
       }
-      const after = await captureSnapshot(observedRoot, logicalObservedRoot, logicalSessionRoot)
+      const after = await capture()
       const conflicted = lifecycle?.active.conflicted ?? false
       lifecycle?.unregister()
       if (conflicted) {
@@ -1529,17 +1571,29 @@ const startRootObservation = async (
   rootPath: string,
   logicalRootPath: string,
   logicalSessionRootPath: string,
-  dependencies: WorkingFileObservationDependencies = {}
+  dependencies: WorkingFileObservationDependencies = {},
+  options: {
+    selectedPaths?: readonly string[]
+    allowExternal?: boolean
+    isCurrent?: () => boolean
+    excludedLogicalRoot?: string
+  } = {}
 ): Promise<RootObservation> => {
   let watcher: FSWatcher | undefined
   try {
+    const { selectedPaths, allowExternal, isCurrent, excludedLogicalRoot } = options
+    if (isCurrent && !isCurrent()) throw new Error('Notebook output directory changed.')
     const logicalObservedRoot = resolve(logicalRootPath)
     const logicalSessionRoot = resolve(logicalSessionRootPath)
     const [observedRoot, sessionRoot] = await Promise.all([
       realpath(rootPath),
       realpath(logicalSessionRootPath)
     ])
-    if (!isPathInside(sessionRoot, observedRoot)) {
+    if (
+      !isPathInside(sessionRoot, observedRoot) &&
+      !(allowExternal && selectedPaths !== undefined) &&
+      !isCurrent
+    ) {
       return {
         initialFiles: [],
         initialAvailable: false,
@@ -1547,6 +1601,57 @@ const startRootObservation = async (
       }
     }
 
+    const capture = async (): Promise<SnapshotCapture> => {
+      try {
+        if (isCurrent && !isCurrent()) return { state: 'unavailable', reason: 'observer-failed' }
+        const snapshot = await captureSnapshot(
+          observedRoot,
+          logicalObservedRoot,
+          logicalSessionRoot,
+          selectedPaths,
+          excludedLogicalRoot
+        )
+        if (isCurrent && !isCurrent()) return { state: 'unavailable', reason: 'observer-failed' }
+        return snapshot
+      } catch {
+        return { state: 'unavailable', reason: 'observer-failed' }
+      }
+    }
+
+    if (selectedPaths) {
+      const before = await capture()
+      if (before.state === 'unavailable')
+        return {
+          initialFiles: [],
+          initialAvailable: false,
+          finish: async () => ({ changes: [], reasonCodes: [before.reason], available: false })
+        }
+      const active = { conflicted: false }
+      const unregister = registerObservation(observedRoot, active)
+      let finished = false
+      return {
+        initialFiles: [...before.files.values()],
+        initialAvailable: true,
+        finish: async () => {
+          if (finished) return { changes: [], reasonCodes: ['observer-failed'], available: false }
+          finished = true
+          try {
+            const after = await capture()
+            if (active.conflicted)
+              return { changes: [], reasonCodes: ['observer-conflict'], available: false }
+            if (after.state === 'unavailable')
+              return { changes: [], reasonCodes: [after.reason], available: false }
+            return {
+              changes: diffSnapshots(before.files, after.files),
+              reasonCodes: [],
+              available: true
+            }
+          } finally {
+            unregister()
+          }
+        }
+      }
+    }
     const active: ActiveObservation = { conflicted: false }
     const changedPaths = new Set<string>()
     let watcherUnavailable = false
@@ -1568,6 +1673,7 @@ const startRootObservation = async (
             return
           }
           const candidatePath = resolve(observedRoot, eventPath)
+          if (isProjectInternalRecordPath(relative(observedRoot, candidatePath))) return
           if (!isPathInside(observedRoot, candidatePath)) {
             watcherUnavailable = true
             return
@@ -1588,7 +1694,7 @@ const startRootObservation = async (
     }
 
     changedPaths.clear()
-    const before = await captureSnapshot(observedRoot, logicalObservedRoot, logicalSessionRoot)
+    const before = await capture()
     if (before.state === 'unavailable') {
       watcher?.close()
       return {
@@ -1601,9 +1707,7 @@ const startRootObservation = async (
       watcher?.close()
       const unregister = registerObservation(observedRoot, active)
       return fallbackObservation(
-        observedRoot,
-        logicalObservedRoot,
-        logicalSessionRoot,
+        capture,
         before.files,
         [
           ...(watcherUnavailable || !watcher ? (['watcher-unavailable'] as const) : []),
@@ -1630,9 +1734,7 @@ const startRootObservation = async (
         }
         if (watcherUnavailable || watcherLimitExceeded) {
           return fallbackObservation(
-            observedRoot,
-            logicalObservedRoot,
-            logicalSessionRoot,
+            capture,
             before.files,
             [
               ...(watcherUnavailable ? (['watcher-unavailable'] as const) : []),
@@ -1645,7 +1747,7 @@ const startRootObservation = async (
         try {
           // Watch events may be coalesced or report only a renamed directory. A non-empty
           // event list is not a complete final view; reconcile the bounded tree before freezing.
-          const after = await captureSnapshot(observedRoot, logicalObservedRoot, logicalSessionRoot)
+          const after = await capture()
           if (active.conflicted)
             return { changes: [], reasonCodes: ['observer-conflict'], available: false }
           if (after.state === 'unavailable')
@@ -1675,6 +1777,7 @@ const startRootObservation = async (
 const beginEvidenceCapture = async (
   request: WorkingFileObservationRequest,
   observations: readonly RootObservation[],
+  capturableObservations: readonly RootObservation[],
   dependencies: WorkingFileObservationDependencies
 ): Promise<ActiveEvidenceCapture | undefined> => {
   if (!request.runId || !SAFE_ACTIVITY_ID.test(request.runId)) return undefined
@@ -1730,7 +1833,9 @@ const beginEvidenceCapture = async (
     )
   }
   const initialFiles = selectInitialFilesForCapture(
-    observations.flatMap((observation) => observation.initialFiles),
+    capturableObservations
+      .flatMap((observation) => observation.initialFiles)
+      .filter((file) => !request.unfrozenInputPaths?.includes(file.relativePath)),
     request.sourceFileAccess
   )
   const registeredInputsByPath = new Map<string, NotebookRunInputFile | undefined>()
@@ -1885,6 +1990,9 @@ const prepareSourceFileAccess = async (
     ? {
         OPEN_SCIENCE_NOTEBOOK_DIR: resolve(request.notebookSessionRoot),
         OPEN_SCIENCE_NOTEBOOK_DATA_DIR: resolve(request.dataRoot),
+        ...(request.outputRoot
+          ? { OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR: resolve(request.outputRoot) }
+          : {}),
         OPEN_SCIENCE_HANDOFF_DIR: join(resolve(request.notebookSessionRoot), 'handoff')
       }
     : undefined
@@ -1901,7 +2009,32 @@ const prepareSourceFileAccess = async (
     if (!isAbsolute(path) && /^[a-z][a-z\d+.-]*:/iu.test(path)) {
       return undefined
     }
-    const absolute = resolve(executionRoot, path)
+    let absolute = resolve(executionRoot, path)
+    if (
+      request.outputRoot &&
+      request.outputRelativePath &&
+      isPathInside(resolve(request.outputRoot), absolute)
+    ) {
+      absolute = resolve(
+        request.dataRoot,
+        request.outputRelativePath,
+        relative(resolve(request.outputRoot), absolute)
+      )
+    } else if (
+      request.projectFolderStageRoot &&
+      isPathInside(resolve(request.projectFolderStageRoot), absolute)
+    ) {
+      absolute = resolve(
+        request.dataRoot,
+        relative(resolve(request.projectFolderStageRoot), absolute)
+      )
+    } else if (
+      request.projectFolderRoot &&
+      isPathInside(resolve(request.projectFolderRoot), absolute)
+    ) {
+      absolute = resolve(request.dataRoot, relative(resolve(request.projectFolderRoot), absolute))
+    }
+    if (isProjectInternalRecordPath(relative(sessionRoot, absolute))) return undefined
     if (!isPathInside(sessionRoot, absolute)) {
       return undefined
     }
@@ -2238,28 +2371,86 @@ const startWorkingFileObservation = async (
       reasonCodes: ['source-analysis-unsupported-call' as const]
     }))
   }
+  if (request.observationMode === 'declared-paths' && preparedRequest.sourceFileAccess) {
+    preparedRequest.sourceFileAccess = {
+      ...preparedRequest.sourceFileAccess,
+      externalState: 'partial',
+      reasonCodes: uniqueReasons([
+        ...preparedRequest.sourceFileAccess.reasonCodes,
+        'absolute-path-not-frozen'
+      ])
+    }
+  }
   const logicalSessionRoot = resolve(request.notebookSessionRoot)
   const handoffRoot = join(logicalSessionRoot, 'handoff')
+  const output =
+    request.outputRoot &&
+    request.outputRelativePath &&
+    (request.isOutputDirectoryCurrent ||
+      !request.projectFolderRoot ||
+      !isPathInside(resolve(request.projectFolderRoot), resolve(request.outputRoot)))
+      ? {
+          kind: 'data' as const,
+          path: request.outputRoot,
+          logicalPath: resolve(request.dataRoot, request.outputRelativePath)
+        }
+      : undefined
+  const declaredPaths = [
+    ...new Set([
+      ...(preparedRequest.sourceFileAccess?.reads ?? []),
+      ...(preparedRequest.sourceFileAccess?.writes ?? [])
+    ])
+  ]
   const roots: Array<{ kind: 'data' | 'handoff'; path: string; logicalPath: string }> = [
-    { kind: 'data', path: request.dataRoot, logicalPath: request.dataRoot },
+    {
+      kind: 'data',
+      path:
+        request.projectFolderStageRoot ??
+        (request.projectFolderRoot &&
+        isPathInside(resolve(request.projectFolderRoot), resolve(request.cwd ?? request.dataRoot))
+          ? request.projectFolderRoot
+          : request.dataRoot),
+      logicalPath: request.dataRoot
+    },
+    ...(output ? [output] : []),
     ...(await realpath(handoffRoot).then(
       () => [{ kind: 'handoff' as const, path: handoffRoot, logicalPath: handoffRoot }],
       () => []
     ))
   ]
   const observations = await Promise.all(
-    roots.map((root) =>
-      startRootObservation(root.path, root.logicalPath, logicalSessionRoot, dependencies)
-    )
+    roots.map((root) => {
+      const isCurrent = root === output ? request.isOutputDirectoryCurrent : undefined
+      // A Project tree is still observed only at declared paths. Its owned output directory has a
+      // bounded snapshot so dynamically named outputs can be captured without scanning the Project.
+      const selectedPaths =
+        !isCurrent && (request.observationMode === 'declared-paths' || root === output)
+          ? declaredPaths
+          : undefined
+      return startRootObservation(root.path, root.logicalPath, logicalSessionRoot, dependencies, {
+        selectedPaths,
+        allowExternal: root.path === request.projectFolderRoot || root === output,
+        isCurrent,
+        excludedLogicalRoot: root !== output ? output?.logicalPath : undefined
+      })
+    })
   )
-  const capture = await beginEvidenceCapture(preparedRequest, observations, dependencies).catch(
-    (error) => {
-      if (process.env.OPEN_SCIENCE_DEBUG_FILE_EVIDENCE === '1') {
-        log.error('file-evidence initial capture failed', diagnosticErrorFields(error))
-      }
-      return undefined
+  const capturableObservations = request.projectFolderRoot
+    ? observations.filter(
+        (_observation, index) => roots[index] === output || roots[index].kind === 'handoff'
+      )
+    : observations
+  const capture = await beginEvidenceCapture(
+    preparedRequest,
+    observations,
+    capturableObservations,
+    dependencies
+  ).catch((error) => {
+    if (process.env.OPEN_SCIENCE_DEBUG_FILE_EVIDENCE === '1') {
+      log.error('file-evidence initial capture failed', diagnosticErrorFields(error))
     }
-  )
+    return undefined
+  })
   // Reuse the generations already frozen by the evidence worker; no extra file read/hash.
   if (
     capture &&
@@ -2303,6 +2494,7 @@ const startWorkingFileObservation = async (
       const declaredWrites = new Set(preparedRequest.sourceFileAccess?.writes)
       for (let index = 0; capture && index < observations.length; index++) {
         const result = results[index]
+        if (roots[index] === output && !result.available) continue
         const changed = new Set(result.changes.map((change) => change.relativePath))
         for (const before of observations[index].initialFiles) {
           if (!declaredWrites.has(before.relativePath) || changed.has(before.relativePath)) continue
@@ -2410,8 +2602,7 @@ const computeEvidenceLocation = (
   sessionId: string
 ): WorkingFileEvidenceLocation => {
   const lane = createRootNotebookLane(projectId, sessionId, `root-frame-${sessionId}`)
-  const location = getNotebookFileEvidenceLocation(storageRoot, projectId, sessionId, lane)
-  return { storageRoot, ...location }
+  return new NotebookRunRepository(storageRoot).fileEvidenceLocation(projectId, sessionId, lane)
 }
 
 const explicitTransferSnapshot = async (

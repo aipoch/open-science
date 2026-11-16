@@ -79,7 +79,9 @@ const createNotebookApplication = (deps: NotebookApplicationDeps): NotebookAppli
         events.publish('notebook:memory-policy-changed', {
           hasLiveResources,
           memory: projectNotebookMemoryPolicyState(state)
-        })
+        }),
+      onProjectFolderChangesChanged: (scope) =>
+        events.publish('notebook:project-folder-changes-changed', scope)
     }
   })
   const localRpc: NotebookLocalRpcCapability = runtime

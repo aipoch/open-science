@@ -17,7 +17,10 @@ import {
 } from '@/stores/preview-workbench-store'
 
 import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from '../preview-file-item'
-import { createPreviewFileItemFromMention } from '../preview-file-item'
+import {
+  createPreviewFileItemFromMention,
+  createPreviewFileItemFromProjectFolder
+} from '../preview-file-item'
 
 import {
   ArtifactMentionPopup,
@@ -134,6 +137,8 @@ const nodesEqual = (a: ComposerNode[], b: ComposerNode[]): boolean => {
       if (node.source === 'linked-folder' && other.source === 'linked-folder') {
         return node.rootId === other.rootId && node.relativePath === other.relativePath
       }
+      if (node.source === 'project-folder' && other.source === 'project-folder')
+        return node.projectId === other.projectId && node.path === other.path
       if (node.source !== 'linked-folder' && other.source !== 'linked-folder') {
         return node.path === other.path && node.versionId === other.versionId
       }
@@ -644,6 +649,21 @@ export const ComposerEditor = ({
     if (!root || !chip || !root.contains(chip)) return
     const source = chip.getAttribute('data-mention-source')
 
+    if (source === 'project-folder') {
+      const projectId = chip.getAttribute('data-mention-project-id')
+      const path = chip.getAttribute('data-mention-path')
+      if (projectId && path) {
+        event.preventDefault()
+        usePreviewWorkbenchStore.getState().openFileDialog(
+          createPreviewFileItemFromProjectFolder({
+            projectId,
+            path,
+            name: chip.getAttribute('data-mention-filename') ?? path
+          })
+        )
+      }
+      return
+    }
     if (source === 'linked-folder') {
       const rootId = chip.getAttribute('data-mention-root-id')
       const relativePath = chip.getAttribute('data-mention-relative-path')
@@ -929,6 +949,11 @@ export const ComposerEditor = ({
     undoCaretRef.current = root ? currentCaretPosition(root) : undefined
     if ('type' in ref && (ref.type === 'literature' || ref.type === 'literature-scope')) {
       if (!artifactMention.replaceTokenWith(ref)) undoCaretRef.current = undefined
+      return
+    }
+    if ('source' in ref && ref.source === 'project-folder') {
+      if (!artifactMention.replaceTokenWith({ type: 'artifact', ...ref }))
+        undoCaretRef.current = undefined
       return
     }
     const artifact = ref as PickedArtifact

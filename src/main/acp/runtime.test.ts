@@ -25918,7 +25918,7 @@ describe('ACP runtime session management', () => {
     })
     expect(fakeAgent.newSessions[0]._meta).toMatchObject({
       systemPrompt: {
-        append: expect.stringContaining('writable session workspace')
+        append: expect.stringContaining('Notebook working directory')
       }
     })
     const createdSessionMeta = JSON.stringify(fakeAgent.newSessions[0]._meta)
@@ -26113,9 +26113,7 @@ describe('ACP runtime session management', () => {
     })
     expect(fakeAgent.newSessions[0]._meta).toMatchObject({
       systemPrompt: {
-        append: expect.stringContaining(
-          'Do not save generated user-facing files directly into the workspace'
-        )
+        append: expect.stringContaining('Only claim a generated file is available after')
       }
     })
     expect(fakeAgent.newSessions[0]._meta).toMatchObject({
@@ -34554,6 +34552,128 @@ it.each(
       await httpHost.close()
       await rpc.close()
       await service.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
+
+it.each(['ask', 'auto', 'full'] as const)(
+  'keeps stable provider cwd while bound ACP filenames use staged service (%s)',
+  async (profile) => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'acp-bound-runtime-')))
+    const managed = join(root, 'managed')
+    const project = join(root, 'project')
+    await mkdir(managed)
+    await mkdir(project)
+    await writeFile(join(managed, 'session-result.txt'), 'MANAGED')
+    await writeFile(join(project, 'raw.csv'), 'ORIGINAL')
+    const process = new FakeAgentProcess()
+    const newCwds: string[] = []
+    const readResults: string[] = []
+    const write = vi.fn(async () => true)
+    const connection = acp
+      .agent({ name: 'bound-project-probe' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: false, sessionCapabilities: { close: {} } },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, (context) => {
+        newCwds.push(context.params.cwd)
+        return {
+          sessionId: 'provider-bound-session',
+          modes: {
+            currentModeId: 'default',
+            availableModes: [
+              { id: 'default', name: 'Default' },
+              { id: 'acceptEdits', name: 'Auto' },
+              { id: 'bypassPermissions', name: 'Full' }
+            ]
+          }
+        }
+      })
+      .onRequest(acp.methods.agent.session.setMode, () => ({}))
+      .onRequest(acp.methods.agent.session.prompt, async (context) => {
+        readResults.push(
+          (
+            await context.client.request(acp.methods.client.fs.readTextFile, {
+              sessionId: 'provider-bound-session',
+              path: 'raw.csv'
+            })
+          ).content
+        )
+        await context.client.request(acp.methods.client.fs.writeTextFile, {
+          sessionId: 'provider-bound-session',
+          path: 'raw.csv',
+          content: 'CANDIDATE'
+        })
+        readResults.push(
+          (
+            await context.client.request(acp.methods.client.fs.readTextFile, {
+              sessionId: 'provider-bound-session',
+              path: join(managed, 'raw.csv')
+            })
+          ).content
+        )
+        await context.client.request(acp.methods.client.fs.writeTextFile, {
+          sessionId: 'provider-bound-session',
+          path: join(managed, 'raw.csv'),
+          content: 'CANDIDATE'
+        })
+        expect(
+          (
+            await context.client.request(acp.methods.client.fs.readTextFile, {
+              sessionId: 'provider-bound-session',
+              path: join(managed, 'session-result.txt')
+            })
+          ).content
+        ).toBe('MANAGED')
+        return { stopReason: 'end_turn' }
+      })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: managed,
+      spawnAgent: () => asAgentProcess(process),
+      projectFolderFiles: {
+        resolveRoot: async (projectId) => (projectId === 'bound-project' ? project : undefined),
+        write
+      }
+    })
+    try {
+      const session = await runtime.createSession({
+        cwd: managed,
+        projectId: 'bound-project',
+        permissionProfile: profile
+      })
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Prepare a change',
+        permissionPrompts: 'none'
+      })
+      expect(newCwds).toEqual([managed])
+      expect(readResults).toEqual(['ORIGINAL', 'ORIGINAL'])
+      expect(write).toHaveBeenCalledTimes(2)
+      expect(write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: 'bound-project',
+          sessionId: session.sessionId,
+          path: join(project, 'raw.csv'),
+          cwd: managed,
+          content: 'CANDIDATE',
+          permissionPrompts: 'none'
+        }),
+        expect.any(AbortSignal)
+      )
+      expect(await readFile(join(project, 'raw.csv'), 'utf8')).toBe('ORIGINAL')
+    } finally {
+      await runtime.shutdownForQuit()
+      connection.close()
       await rm(root, { recursive: true, force: true })
     }
   }

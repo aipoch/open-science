@@ -1,5 +1,8 @@
 import type { RequestPermissionRequest, ToolKind } from '@agentclientprotocol/sdk'
-import { describe, expect, it } from 'vitest'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, describe, expect, it } from 'vitest'
 import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 
 import {
@@ -14,6 +17,11 @@ import {
   resolveMcpProviderLeafIdentity,
   withTrustedMcpToolIdentity
 } from './permission-policy'
+
+const fixtureRoot = mkdtempSync(join(tmpdir(), 'permission-policy-'))
+const workspace = join(fixtureRoot, 'My Study 研究 项目')
+mkdirSync(workspace)
+afterAll(() => rmSync(fixtureRoot, { recursive: true, force: true }))
 
 const createPermissionRequest = (
   kind: ToolKind,
@@ -260,10 +268,140 @@ describe('permission policy', () => {
     ).toBeUndefined()
   })
   it('accepts only paths contained by the workspace', () => {
-    expect(isWithinWorkspace('src/index.ts', '/workspace/project')).toBe(true)
-    expect(isWithinWorkspace('/workspace/project/data.csv', '/workspace/project')).toBe(true)
-    expect(isWithinWorkspace('../secrets.txt', '/workspace/project')).toBe(false)
-    expect(isWithinWorkspace('/tmp/outside.txt', '/workspace/project')).toBe(false)
+    expect(isWithinWorkspace('src/index.ts', workspace)).toBe(true)
+    expect(isWithinWorkspace(join(workspace, 'data.csv'), workspace)).toBe(true)
+    expect(isWithinWorkspace('../secrets.txt', workspace)).toBe(false)
+    expect(isWithinWorkspace('/tmp/outside.txt', workspace)).toBe(false)
+  })
+
+  it('requires Auto review for edits through escaping directory links and junctions', () => {
+    const outside = join(fixtureRoot, 'outside-secret')
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'secret.txt'), 'SECRET')
+    symlinkSync(
+      outside,
+      join(workspace, 'linked-data'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    for (const path of [
+      'linked-data/secret.txt',
+      'linked-data/new.txt',
+      'linked-data/new-directory/result.txt',
+      join(workspace, 'linked-data', 'secret.txt'),
+      ...(process.platform === 'win32' ? [] : ['linked-data/../outside-secret/secret.txt'])
+    ]) {
+      const request = createPermissionRequest('edit', [{ path }])
+      expect(
+        resolveAutomaticPermission(request, {
+          profile: 'auto',
+          autoReviewStrategy: 'conservative',
+          cwd: workspace
+        }),
+        path
+      ).toBeUndefined()
+    }
+  })
+
+  it('requires review for parent traversal through unresolved and linked components', () => {
+    const outside = join(fixtureRoot, 'ambiguous-outside')
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'secret.txt'), 'SECRET')
+    symlinkSync(
+      outside,
+      join(workspace, 'ambiguous-escape'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    for (const path of [
+      'missing/../ambiguous-escape/secret.txt',
+      'missing/../ambiguous-escape/new.txt',
+      'ambiguous-escape/../new.txt',
+      'internal-data/../new.txt',
+      ...(process.platform === 'win32' ? ['missing\\..\\ambiguous-escape\\secret.txt'] : [])
+    ]) {
+      expect(
+        resolveAutomaticPermission(createPermissionRequest('edit', [{ path }]), {
+          profile: 'auto',
+          autoReviewStrategy: 'conservative',
+          cwd: workspace
+        }),
+        path
+      ).toBeUndefined()
+    }
+    expect(isWithinWorkspace('new.txt', `${workspace}/internal-data/..`)).toBe(false)
+    // Providers may recursively create the missing directory, then physically follow the link.
+    mkdirSync(join(workspace, 'missing'))
+    expect(isWithinWorkspace('missing/../ambiguous-escape/secret.txt', workspace)).toBe(false)
+  })
+
+  it('does not auto approve case-sensitive sibling directories', () => {
+    const upper = join(fixtureRoot, 'CaseStudy')
+    const lower = join(fixtureRoot, 'casestudy')
+    mkdirSync(upper)
+    mkdirSync(lower, { recursive: true })
+    if (realpathSync.native(upper) === realpathSync.native(lower)) return
+    writeFileSync(join(lower, 'secret.txt'), 'SECRET')
+    expect(isWithinWorkspace(join(lower, 'secret.txt'), upper)).toBe(false)
+    expect(isWithinWorkspace(join(lower, 'new.txt'), upper)).toBe(false)
+    expect(isWithinWorkspace(join(upper, 'new.txt'), upper)).toBe(true)
+  })
+
+  it('approves existing and new internal files, including names starting with two dots', () => {
+    writeFileSync(join(workspace, 'data 数据.csv'), 'a,b')
+    writeFileSync(join(workspace, '..foo'), 'data')
+    mkdirSync(join(workspace, 'internal-data'))
+    symlinkSync(
+      join(workspace, 'internal-data'),
+      join(workspace, 'internal-link'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    for (const path of ['data 数据.csv', '..foo', '..data/result.txt', 'internal-link/new.txt']) {
+      expect(
+        resolveAutomaticPermission(createPermissionRequest('edit', [{ path }]), {
+          profile: 'auto',
+          autoReviewStrategy: 'conservative',
+          cwd: workspace
+        }),
+        path
+      ).toBe('allow')
+    }
+  })
+
+  it('canonicalizes a linked workspace root before comparing paths', () => {
+    const alias = join(fixtureRoot, 'workspace-alias')
+    symlinkSync(workspace, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    expect(isWithinWorkspace(join(workspace, 'new.txt'), alias)).toBe(true)
+    expect(isWithinWorkspace('new.txt', alias)).toBe(true)
+  })
+
+  it.skipIf(process.platform === 'win32')('requires review for escaping file links', () => {
+    const outsideFile = join(fixtureRoot, 'outside-file.txt')
+    writeFileSync(outsideFile, 'SECRET')
+    symlinkSync(outsideFile, join(workspace, 'linked-file.txt'))
+    expect(isWithinWorkspace('linked-file.txt', workspace)).toBe(false)
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'requires review for dangling file and ancestor links',
+    () => {
+      symlinkSync(join(fixtureRoot, 'missing.txt'), join(workspace, 'dangling-file'))
+      symlinkSync(join(fixtureRoot, 'missing-directory'), join(workspace, 'dangling-directory'))
+      for (const path of ['dangling-file', 'dangling-directory/new.txt']) {
+        expect(isWithinWorkspace(path, workspace), path).toBe(false)
+      }
+    }
+  )
+
+  it('requires review when paths cannot be resolved or any reported location escapes', () => {
+    writeFileSync(join(workspace, 'ordinary-file'), 'data')
+    expect(isWithinWorkspace('ordinary-file/child', workspace)).toBe(false)
+    expect(isWithinWorkspace('bad\0path', workspace)).toBe(false)
+    expect(isWithinWorkspace('new.txt', join(fixtureRoot, 'missing-workspace'))).toBe(false)
+    expect(
+      resolveAutomaticPermission(
+        createPermissionRequest('edit', [{ path: 'data 数据.csv' }, { path: '../outside.txt' }]),
+        { profile: 'auto', autoReviewStrategy: 'conservative', cwd: workspace }
+      )
+    ).toBeUndefined()
   })
 
   it('auto-approves structured workspace reads, searches, and edits', () => {
@@ -271,7 +409,7 @@ describe('permission policy', () => {
       expect(
         canConservativelyAutoApprove(
           createPermissionRequest(kind, [{ path: 'results/output.csv' }]),
-          '/workspace/project'
+          workspace
         )
       ).toBe(true)
     }
@@ -281,19 +419,15 @@ describe('permission policy', () => {
     expect(
       canConservativelyAutoApprove(
         createPermissionRequest('execute', [{ path: 'script.py' }]),
-        '/workspace/project'
+        workspace
       )
     ).toBe(false)
-    expect(
-      canConservativelyAutoApprove(createPermissionRequest('fetch'), '/workspace/project')
-    ).toBe(false)
-    expect(
-      canConservativelyAutoApprove(createPermissionRequest('read'), '/workspace/project')
-    ).toBe(false)
+    expect(canConservativelyAutoApprove(createPermissionRequest('fetch'), workspace)).toBe(false)
+    expect(canConservativelyAutoApprove(createPermissionRequest('read'), workspace)).toBe(false)
     expect(
       canConservativelyAutoApprove(
         createPermissionRequest('edit', [{ path: '../outside.txt' }]),
-        '/workspace/project'
+        workspace
       )
     ).toBe(false)
   })
@@ -304,7 +438,7 @@ describe('permission policy', () => {
         createPermissionRequest('read', [{ path: 'results/output.csv' }], {
           title: 'mcp__pencil__batch_get'
         }),
-        '/workspace/project'
+        workspace
       )
     ).toBe(false)
     expect(
@@ -312,7 +446,7 @@ describe('permission policy', () => {
         createPermissionRequest('edit', [{ path: 'design.pen' }], {
           title: 'mcp__pencil__batch_design'
         }),
-        '/workspace/project'
+        workspace
       )
     ).toBe(false)
   })
@@ -364,7 +498,7 @@ describe('permission policy', () => {
         createPermissionRequest('edit', [{ path: 'results/output.csv' }], {
           title: 'open-science-artifacts_write_artifact_file'
         }),
-        '/workspace/project',
+        workspace,
         ['open-science-artifacts', 'open-science-notebook']
       )
     ).toBe(false)
@@ -374,7 +508,7 @@ describe('permission policy', () => {
     expect(
       canConservativelyAutoApprove(
         createPermissionRequest('edit', [{ path: 'results/output.csv' }], { title: 'Edit' }),
-        '/workspace/project',
+        workspace,
         ['open-science-artifacts', 'open-science-notebook']
       )
     ).toBe(true)
@@ -389,7 +523,7 @@ describe('permission policy', () => {
       resolveAutomaticPermission(request, {
         profile: 'auto',
         autoReviewStrategy: 'conservative',
-        cwd: '/workspace/project',
+        cwd: workspace,
         mcpServerNames: ['open-science-artifacts', 'open-science-notebook']
       })
     ).toBeUndefined()
@@ -635,21 +769,21 @@ describe('permission policy', () => {
       resolveAutomaticPermission(request, {
         profile: 'auto',
         autoReviewStrategy: 'conservative',
-        cwd: '/workspace/project'
+        cwd: workspace
       })
     ).toBe('allow')
     expect(
       resolveAutomaticPermission(request, {
         profile: 'ask',
         autoReviewStrategy: 'conservative',
-        cwd: '/workspace/project'
+        cwd: workspace
       })
     ).toBeUndefined()
     expect(
       resolveAutomaticPermission(request, {
         profile: 'auto',
         autoReviewStrategy: 'native',
-        cwd: '/workspace/project'
+        cwd: workspace
       })
     ).toBeUndefined()
   })

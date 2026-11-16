@@ -108,7 +108,9 @@ describe('Content blob migration', () => {
         '0057_project_optimization_prompt',
         '0058_session_schedules',
         '0059_session_history',
-        '0060_image_models'
+        '0060_image_models',
+        '0061_project_folder',
+        '0062_artifact_output_delivery'
       ]
     })
     await expect(
@@ -216,10 +218,12 @@ describe('Content blob migration', () => {
                 '0057_project_optimization_prompt',
                 '0058_session_schedules',
                 '0059_session_history',
-                '0060_image_models'
+                '0060_image_models',
+                '0061_project_folder',
+                '0062_artifact_output_delivery'
               ],
         from: schema === 'pre-ledger' ? null : '0029_compute_host_execution_mode',
-        to: '0060_image_models'
+        to: '0062_artifact_output_delivery'
       })
 
       await expect(

@@ -20,7 +20,7 @@ type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
 type MessageUploadAttachment = NonNullable<ChatSession['messages'][number]['uploads']>[number]
 type ArtifactMentionPart = Exclude<
   Extract<MessagePart, { type: 'artifact' }>,
-  { source: 'linked-folder' }
+  { source: 'linked-folder' | 'project-folder' }
 >
 
 const createManagedArtifact = (overrides: Partial<MessageArtifact> = {}): MessageArtifact => ({

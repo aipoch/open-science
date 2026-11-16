@@ -22,7 +22,8 @@ it('preserves existing versions and inbound heads while admitting only explicit 
         sessionId: 's',
         filename: 'image.png',
         normalizedFilename: 'image.png'
-      }
+      },
+      select: { id: true }
     })
     await client.artifactVersion.create({
       data: {
@@ -49,11 +50,12 @@ it('preserves existing versions and inbound heads while admitting only explicit 
     })
     await client.artifactLineage.update({
       where: { id: 'file' },
-      data: { currentVersionId: 'version' }
+      data: { currentVersionId: 'version' },
+      select: { id: true }
     })
     const before = await client.artifactVersion.findUniqueOrThrow({ where: { id: 'version' } })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      applied: ['0060_image_models']
+      applied: ['0060_image_models', '0061_project_folder', '0062_artifact_output_delivery']
     })
     expect(await client.artifactVersion.findUniqueOrThrow({ where: { id: 'version' } })).toEqual(
       before

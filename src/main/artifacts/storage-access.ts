@@ -1,4 +1,9 @@
 import {
+  assertProjectRecordPath,
+  getProjectRecordRoot,
+  getProjectRecordRoots
+} from '../storage/data-location-identity'
+import {
   lstat,
   mkdir,
   open,
@@ -15,6 +20,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import { isProjectInternalRecordPath } from '../../shared/project-internal-records'
 import type { ArtifactFile } from '../../shared/artifacts'
 import type { FileDurability } from '@aipoch/durable-files'
 import type {
@@ -94,7 +100,14 @@ const getArtifactMetadataPath = (directory: string, filename: string): string =>
   return join(directory, METADATA_DIR, metadataName)
 }
 
-const getProjectArtifactDir = (storageRoot: string, projectId: string): string =>
+const getProjectArtifactDir = (storageRoot: string, projectId: string): string => {
+  assertSafePathSegment(projectId)
+  const root = getProjectRecordRoot(storageRoot, projectId)
+  const directory = join(root ?? storageRoot, ARTIFACTS_DIR, projectId)
+  return root ? assertProjectRecordPath(root, directory) : directory
+}
+
+const getProjectPendingArtifactDir = (storageRoot: string, projectId: string): string =>
   join(storageRoot, ARTIFACTS_DIR, assertSafePathSegment(projectId))
 
 const getArtifactCurrentRunFilePath = (
@@ -103,7 +116,7 @@ const getArtifactCurrentRunFilePath = (
   sessionId: string
 ): string =>
   join(
-    getProjectArtifactDir(storageRoot, projectId),
+    getProjectPendingArtifactDir(storageRoot, projectId),
     assertSafePathSegment(sessionId),
     PENDING_DIR,
     CURRENT_RUN_FILE
@@ -159,23 +172,43 @@ const resolveAllowedImportFilePath = async (
   allowedImportRoots: string[],
   relativeBaseDirs: string[] = [],
   purpose: 'artifact' | 'literature' = 'artifact',
-  grantedImportRoots: string[] = []
+  grantedImportRoots: string[] = [],
+  projectFolderRoot?: string
 ): Promise<string> => {
   const externalRoots = purpose === 'artifact' && isAbsolute(filePath) ? grantedImportRoots : []
   if (allowedImportRoots.length === 0 && externalRoots.length === 0)
     throw importRootsError(filePath, allowedImportRoots, purpose)
   if (relativeBaseDirs.length === 0 && !isAbsolute(filePath)) {
     throw new Error(
-      `Artifact local source path does not exist: "${filePath}". A relative path resolves against the notebook session data dir or the session workspace, but this turn carries neither — pass an absolute path to the already-saved file instead.`
+      `Artifact local source path does not exist: "${filePath}". A relative path resolves against the bound Project folder, Notebook data dir, or session workspace, but this turn carries none — pass an absolute path to the already-saved file instead.`
     )
   }
+  const logicalParts = filePath
+    .replaceAll('\\', '/')
+    .split('/')
+    .filter((part) => part && part !== '.')
+  const projectWorkingPath = logicalParts[0] === 'data' && !logicalParts.includes('..')
   const candidates = isAbsolute(filePath)
     ? [resolve(filePath)]
-    : relativeBaseDirs.map((baseDir) => resolve(baseDir, filePath))
+    : relativeBaseDirs.flatMap((baseDir) => [
+        resolve(baseDir, filePath),
+        ...(projectWorkingPath && baseDir === projectFolderRoot
+          ? [resolve(baseDir, ...logicalParts.slice(1))]
+          : [])
+      ])
+  const isReservedProjectSource = (path: string): boolean =>
+    Boolean(
+      projectFolderRoot &&
+      isPathInsideRoot(projectFolderRoot, path) &&
+      isProjectInternalRecordPath(relative(projectFolderRoot, path))
+    )
   let resolvedFilePath: string | undefined
   for (const candidate of candidates) {
     try {
-      resolvedFilePath = await realpath(candidate)
+      const physicalPath = await realpath(candidate)
+      if (isReservedProjectSource(candidate) || isReservedProjectSource(physicalPath))
+        throw importRootsError(filePath, allowedImportRoots, purpose)
+      resolvedFilePath = physicalPath
       break
     } catch (error) {
       if (!isMissingFileError(error)) throw error
@@ -188,7 +221,7 @@ const resolveAllowedImportFilePath = async (
       )
     }
     throw new Error(
-      `Artifact local source path does not exist: "${filePath}". Save the file to disk (inside the notebook session workspace) before calling write_artifact_file, pass an absolute path to an already-saved file, or use inline content instead.`
+      `Artifact local source path does not exist: "${filePath}". Save the file in the Notebook working directory (the bound Project folder when configured) before calling write_artifact_file, pass an absolute path to an already-saved file, or use inline content instead.`
     )
   }
   const resolvedRoots = (
@@ -235,12 +268,22 @@ class ArtifactStorageAccess {
     return getProjectArtifactDir(this.storageRoot, projectId)
   }
 
+  getProjectPendingArtifactDir(projectId: string): string {
+    return getProjectPendingArtifactDir(this.storageRoot, projectId)
+  }
+
   getPendingRunDir(projectId: string, sessionId: string, runId: string): string {
-    return join(this.getProjectArtifactDir(projectId), sessionId, PENDING_DIR, runId)
+    return join(this.getProjectPendingArtifactDir(projectId), sessionId, PENDING_DIR, runId)
   }
 
   getMessageDir(projectId: string, sessionId: string, messageId: string): string {
-    return join(this.getProjectArtifactDir(projectId), sessionId, messageId)
+    const path = join(
+      this.getProjectArtifactDir(projectId),
+      assertSafePathSegment(sessionId),
+      assertSafePathSegment(messageId)
+    )
+    const root = getProjectRecordRoot(this.storageRoot, projectId)
+    return root ? assertProjectRecordPath(root, path) : path
   }
 
   async resolveArtifactFilename(directory: string, filename: string): Promise<string> {
@@ -348,16 +391,23 @@ class ArtifactStorageAccess {
     })
   }
 
+  private assertRecordPath(path: string): string {
+    const root = getProjectRecordRoots(this.storageRoot).find((root) =>
+      isPathInsideRoot(root, path)
+    )
+    return root ? assertProjectRecordPath(root, path) : path
+  }
+
   async writeArtifactMetadata(
     directory: string,
     filename: string,
     metadata: ArtifactMetadata
   ): Promise<void> {
     if (Object.values(metadata).every((value) => value === undefined)) return
-    const metadataDirectory = join(directory, METADATA_DIR)
+    const metadataDirectory = this.assertRecordPath(join(directory, METADATA_DIR))
     await mkdir(metadataDirectory, { recursive: true })
     await this.durability.syncDirectory(directory)
-    const path = getArtifactMetadataPath(directory, filename)
+    const path = this.assertRecordPath(getArtifactMetadataPath(directory, filename))
     const temporaryPath = join(metadataDirectory, `.${randomUUID()}.tmp`)
     try {
       await writeFile(temporaryPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
@@ -372,7 +422,7 @@ class ArtifactStorageAccess {
   async readArtifactMetadata(directory: string, filename: string): Promise<ArtifactMetadata> {
     try {
       const metadata = JSON.parse(
-        await readFile(getArtifactMetadataPath(directory, filename), 'utf8')
+        await readFile(this.assertRecordPath(getArtifactMetadataPath(directory, filename)), 'utf8')
       ) as unknown
       if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) return {}
       const value = metadata as Record<string, unknown>
@@ -424,11 +474,18 @@ class ArtifactStorageAccess {
     filename: string
   ): Promise<void> {
     try {
-      await mkdir(join(targetDirectory, METADATA_DIR), { recursive: true })
-      await rename(
-        getArtifactMetadataPath(sourceDirectory, filename),
-        getArtifactMetadataPath(targetDirectory, filename)
-      )
+      await mkdir(this.assertRecordPath(join(targetDirectory, METADATA_DIR)), { recursive: true })
+      const source = this.assertRecordPath(getArtifactMetadataPath(sourceDirectory, filename))
+      const target = this.assertRecordPath(getArtifactMetadataPath(targetDirectory, filename))
+      try {
+        await rename(source, target)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
+        const metadata = JSON.parse(await readFile(source, 'utf8')) as ArtifactMetadata
+        await this.writeArtifactMetadata(targetDirectory, filename, metadata)
+        await rm(source)
+        await this.durability.syncDirectory(join(sourceDirectory, METADATA_DIR))
+      }
     } catch (error) {
       if (isMissingFileError(error)) return
       throw error
@@ -487,7 +544,7 @@ const createArtifactPublicationStorage = (
   assertSafePathSegment,
   assertSafeFilename,
   normalizeArtifactVersionIds,
-  getProjectArtifactDir: (projectId) => access.getProjectArtifactDir(projectId),
+  getProjectArtifactDir: (projectId) => access.getProjectPendingArtifactDir(projectId),
   getPendingRunDir: (projectId, sessionId, runId) =>
     access.getPendingRunDir(projectId, sessionId, runId),
   getMessageDir: (projectId, sessionId, messageId) =>

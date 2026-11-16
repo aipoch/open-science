@@ -407,6 +407,7 @@ type ElectronApp = {
     framework?: AgentFrameworkId
   ) => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
+  selectDirectoryInNextDialog: (path: string) => Promise<void>
   holdNextFakeSessionCreate: () => Promise<{ started: string; release: string; closed: string }>
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
   restartWithPackage: (path: string) => Promise<Page>
@@ -428,7 +429,12 @@ type ElectronApp = {
   markResourceProfilePhase: (phase: string) => Promise<void>
   pressMainWindowShortcut: (key: string, modifiers: ShortcutModifier[]) => Promise<void>
   readFakeAgentPrompts: () => Promise<
-    readonly Readonly<{ sessionId: string; role: 'main' | 'delegate'; prompt: string }>[]
+    readonly Readonly<{
+      sessionId: string
+      role: 'main' | 'delegate'
+      prompt: string
+      content?: unknown[]
+    }>[]
   >
   requestMainWindowClose: () => Promise<void>
   restoreDelegatedHandoffCleanup: (childName: string) => Promise<void>
@@ -1448,6 +1454,16 @@ class ElectronAppHarness implements ElectronApp {
     return path
   }
 
+  async selectDirectoryInNextDialog(path: string): Promise<void> {
+    await this.runningApplication.evaluate(({ dialog }, selected) => {
+      const original = dialog.showOpenDialog
+      dialog.showOpenDialog = async () => {
+        dialog.showOpenDialog = original
+        return { canceled: false, filePaths: [selected] }
+      }
+    }, path)
+  }
+
   async holdNextFakeSessionCreate(): Promise<{ started: string; release: string; closed: string }> {
     const directory = await this.createTestDirectory('session-create-gate')
     const gate = {
@@ -1827,7 +1843,12 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async readFakeAgentPrompts(): Promise<
-    readonly Readonly<{ sessionId: string; role: 'main' | 'delegate'; prompt: string }>[]
+    readonly Readonly<{
+      sessionId: string
+      role: 'main' | 'delegate'
+      prompt: string
+      content?: unknown[]
+    }>[]
   > {
     const path = join(this.roots.storageRoot, 'e2e-handoff-captures', 'provider-prompts.jsonl')
     const content = await readFile(path, 'utf8').catch(() => '')
@@ -1836,7 +1857,12 @@ class ElectronAppHarness implements ElectronApp {
       .filter(Boolean)
       .map(
         (line) =>
-          JSON.parse(line) as { sessionId: string; role: 'main' | 'delegate'; prompt: string }
+          JSON.parse(line) as {
+            sessionId: string
+            role: 'main' | 'delegate'
+            prompt: string
+            content?: unknown[]
+          }
       )
   }
 

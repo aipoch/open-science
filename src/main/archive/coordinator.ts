@@ -52,6 +52,7 @@ class ArchiveCoordinator {
 
   private readonly projectQueues = new Map<string, Promise<void>>()
   private markReadSessions: (sessionIds: string[]) => Promise<void> = async () => undefined
+  private readonly mutatingProjectIds = new Set<string>()
   private readonly deletingProjectIds = new Set<string>()
   private readonly exportingSessions = new Map<string, string>()
   private readonly deletingSessionRecoveryFiles = new Set<string>()
@@ -312,6 +313,41 @@ class ArchiveCoordinator {
     })
   }
 
+  // Layout upgrades use the existing work-admission queue, but require all writers to be idle.
+  // Fence synchronous external-owner admission while checking durable and runtime activity.
+  withIdleProjectMutation<Result>(
+    projectId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    return this.enqueue(projectId, async () => {
+      await this.activeProject(projectId)
+      this.assertProjectExportAvailable(projectId)
+      this.mutatingProjectIds.add(projectId)
+      try {
+        if (
+          [...this.pendingDispatches.values()].some((pending) => pending.projectId === projectId) ||
+          (await this.runtime.isProjectBusy(projectId))
+        )
+          throw new Error('Finish or stop running work before enabling session outputs.')
+        try {
+          await this.sessions.assertProjectArchivable(projectId, (sessionId) =>
+            this.runtime.isSessionBusy(projectId, sessionId)
+          )
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message === 'Finish or stop active sessions before archiving this project.'
+          )
+            throw new Error('Finish or stop running work before enabling session outputs.')
+          throw error
+        }
+        return await operation()
+      } finally {
+        this.mutatingProjectIds.delete(projectId)
+      }
+    })
+  }
+
   withProjectDeletion<Result>(
     projectId: string,
     operation: () => Promise<Result>
@@ -466,6 +502,8 @@ class ArchiveCoordinator {
   }
 
   private assertProjectDeletionAvailable(projectId: string): void {
+    if (this.mutatingProjectIds.has(projectId))
+      throw new Error('Project session output layout is being enabled.')
     if (this.deletingProjectIds.has(projectId)) {
       throw new Error('Project is being deleted.')
     }

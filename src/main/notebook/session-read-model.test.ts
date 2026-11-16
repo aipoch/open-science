@@ -66,6 +66,7 @@ const makeSession = (
     cwd: snapshot.cwd,
     notebookSessionRoot,
     dataRoot: snapshot.dataRoot,
+    outputRoot: snapshot.outputRoot,
     runtimeRoot: snapshot.runtimeRoot,
     runJsonPath: snapshot.runJsonPath,
     lane: createFrameNotebookLane(projectId, sessionId, 'root-frame-session-1'),
@@ -125,6 +126,31 @@ const makeReadModel = (
   })
 
 describe('NotebookSessionReadModel', () => {
+  it('exposes outputRoot in live state, run results, and session references without replacing cwd/dataRoot', async () => {
+    const storageRoot = await createRoot()
+    const outputRoot = join(
+      storageRoot,
+      'project',
+      'notebooks',
+      'default-project',
+      'session-1',
+      'data'
+    )
+    const session = makeSession(storageRoot, { outputRoot })
+    const model = makeReadModel(storageRoot, session)
+    const state = await model.state(session)
+    expect(state).toMatchObject({ cwd: session.cwd, dataRoot: session.dataRoot, outputRoot })
+    expect(model.toRunSummary(session, makeRun())).toMatchObject({
+      dataRoot: session.dataRoot,
+      outputRoot
+    })
+    expect(model.toSessionReference(session)).toMatchObject({
+      workspaceCwd: session.cwd,
+      dataRoot: session.dataRoot,
+      outputRoot
+    })
+  })
+
   it('returns only actionable live handoff data and never consults durable storage', async () => {
     const storageRoot = await createRoot()
     const repository = new NotebookRunRepository(storageRoot)

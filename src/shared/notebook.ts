@@ -469,6 +469,8 @@ export type NotebookRunRecord = {
   // Immutable file-generation evidence is stored in a checksummed per-run sidecar. Optional keeps
   // historical run.json documents readable without fabricating capture coverage.
   fileEvidence?: ExecutionFileEvidenceSummary
+  projectFolderChanges?: import('./project-folder-changes').ProjectFolderChange[]
+  projectFolderInputs?: import('./project-folder-changes').ProjectFolderRunInput[]
   // New native runs persist the exact registered input Versions. Optional keeps legacy run.json
   // documents readable; repository normalization supplies an empty array for old records.
   inputFiles?: NotebookRunInputFile[]
@@ -725,6 +727,8 @@ export type NotebookSessionState = {
   cwd: string
   notebookSessionRoot: string
   dataRoot: string
+  // Explicit generated-output destination; cwd and internal dataRoot retain their existing meaning.
+  outputRoot?: string
   runtimeRoot: string
   pythonPath?: string
   kernelStatus: NotebookKernelMetadata['lastKnownStatus']
@@ -763,6 +767,8 @@ export type NotebookSessionReference = ProjectIdScope & {
   workspaceCwd: string
   notebookSessionRoot: string
   dataRoot: string
+  // Explicit generated-output destination; cwd and internal dataRoot retain their existing meaning.
+  outputRoot?: string
   runtimeRoot: string
   runJsonPath: string
 }
@@ -783,6 +789,7 @@ export type NotebookRunSummary = Omit<
   inputFiles: NotebookInputFileSummary[]
   notebookSessionRoot: string
   dataRoot: string
+  outputRoot?: string
   runtimeRoot: string
   pythonPath?: string
   kernelName: string

@@ -79,7 +79,8 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
         options.writeOptions.allowedImportRoots ?? [],
         options.writeOptions.relativeBaseDirs,
         'artifact',
-        options.writeOptions.grantedImportRoots
+        options.writeOptions.grantedImportRoots,
+        options.writeOptions.projectFolderRoot
       )
       const sourceHandle = await open(sourcePath, 'r')
       try {

@@ -1,3 +1,4 @@
+import { assertProjectRecordPath, getProjectRecordRoots } from '../storage/data-location-identity'
 import { realpath, stat } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 
@@ -58,10 +59,18 @@ class ArtifactCompatibilityOwner {
       throw new Error('Invalid artifact file path.')
     }
 
-    const artifactRoot = resolve(this.options.storage.storageRoot, ARTIFACTS_DIR)
     const requestedPath = resolve(request.path)
+    const recordRoot = getProjectRecordRoots(this.options.storage.storageRoot).find((root) =>
+      isPathInsideRoot(root, requestedPath)
+    )
+    if (recordRoot) assertProjectRecordPath(recordRoot, requestedPath)
+    const artifactRoots = [
+      this.options.storage.storageRoot,
+      ...getProjectRecordRoots(this.options.storage.storageRoot)
+    ].map((root) => resolve(root, ARTIFACTS_DIR))
+    const artifactRoot = artifactRoots.find((root) => isPathInsideRoot(root, requestedPath))
+    if (!artifactRoot) throw new Error('Artifact file is outside artifact storage.')
     assertPathInsideArtifactRoot(artifactRoot, requestedPath)
-    const resolvedArtifactRoot = await realpath(artifactRoot)
     let resolvedFilePath: string
     try {
       resolvedFilePath = await realpath(requestedPath)
@@ -71,6 +80,18 @@ class ArtifactCompatibilityOwner {
       if (!recovered) throw error
       resolvedFilePath = await realpath(recovered)
     }
+    const resolvedRoots = await Promise.all(
+      artifactRoots.map((root) =>
+        realpath(root).catch((error: unknown) => {
+          if (isMissingFileError(error)) return undefined
+          throw error
+        })
+      )
+    )
+    const resolvedArtifactRoot = resolvedRoots.find(
+      (root) => root && isPathInsideRoot(root, resolvedFilePath)
+    )
+    if (!resolvedArtifactRoot) throw new Error('Artifact file is outside artifact storage.')
     assertPathInsideArtifactRoot(resolvedArtifactRoot, resolvedFilePath)
     if (!(await stat(resolvedFilePath)).isFile()) throw new Error('Artifact path is not a file.')
     return resolvedFilePath
@@ -93,10 +114,13 @@ class ArtifactCompatibilityOwner {
         return undefined
       }
       if (!markerResult.marker.messageId) return undefined
+      const projectId = basename(dirname(sourceSessionDir))
       const candidate = join(
-        dirname(sourceSessionDir),
-        markerResult.marker.sessionId,
-        markerResult.marker.messageId,
+        this.options.storage.getMessageDir(
+          projectId,
+          markerResult.marker.sessionId,
+          markerResult.marker.messageId
+        ),
         basename(requestedPath)
       )
       return (await stat(candidate).catch(() => undefined))?.isFile() ? candidate : undefined

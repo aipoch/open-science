@@ -907,7 +907,20 @@ describe.skipIf(process.platform === 'win32' || !python3)('managed Python kernel
 gate('NotebookKernelExecutor (fake loop)', () => {
   it('wraps persistent kernel startup with the shared process sandbox', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-network-sandbox-')
-    const request = baseRequest(cwdDir)
+    const request = {
+      ...baseRequest(cwdDir),
+      outputRoot: join(
+        cwdDir,
+        'project',
+        'notebooks',
+        'project-1',
+        'session-1',
+        'frames',
+        'child',
+        'data'
+      )
+    }
+    await mkdir(request.outputRoot, { recursive: true })
     const requestController = new AbortController()
     const cleanup = vi.fn().mockResolvedValue({
       processesTerminated: true,
@@ -975,6 +988,12 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       expect(sandboxInvocation.filesystem.readWriteRoots).not.toContain(request.dataRoot)
       expect(sandboxInvocation.filesystem.deniedWriteRoots).toContain(request.inputRoot)
       expect(sandboxInvocation.filesystem.deniedWriteRoots).not.toContain(request.runtimeRoot)
+      expect(sandboxInvocation.env.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR).toBe(request.outputRoot)
+      expect(sandboxInvocation.filesystem.readWriteRoots).toContain(request.outputRoot)
+      expect(sandboxInvocation.filesystem.readWriteRoots).not.toContain(join(cwdDir!, 'project'))
+      expect(sandboxInvocation.filesystem.readWriteRoots).not.toContain(
+        join(cwdDir!, 'project', 'notebooks', 'project-1', 'session-1', 'frames')
+      )
       expect(beginExecution).toHaveBeenCalledTimes(2)
       expect(beginExecution).toHaveBeenNthCalledWith(
         1,
@@ -4270,6 +4289,7 @@ type BuildEnvFn = (
   kind: 'python' | 'r' | 'repl',
   request: ReturnType<typeof baseRequest> & {
     code: string
+    outputRoot?: string
     mcpRpcEndpoint?: string
     mcpRpcSocketPath?: string
     mcpRpcToken?: string
@@ -4305,6 +4325,26 @@ describe('NotebookKernelExecutor spawn env', () => {
     expect(buildEnv('python', request, '/tmp/figs').OPEN_SCIENCE_HANDOFF_DIR).toBe(expected)
     expect(buildEnv('r', request, '/tmp/figs').OPEN_SCIENCE_HANDOFF_DIR).toBe(expected)
     expect(buildEnv('repl', request, '/tmp/figs').OPEN_SCIENCE_HANDOFF_DIR).toBe(expected)
+  })
+
+  it('exposes the explicit output root independently of cwd and internal data for Python, R, and REPL', () => {
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
+    const request = {
+      ...baseRequest(cwdDir!),
+      code: 'x',
+      outputRoot: join(cwdDir!, 'project', 'notebooks', 'project-1', 'session-1', 'data')
+    }
+    const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
+    for (const kind of ['python', 'r', 'repl'] as const) {
+      const env = buildEnv(kind, request, '/tmp/figs')
+      expect(env.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR).toBe(request.outputRoot)
+      expect(env.OPEN_SCIENCE_NOTEBOOK_DATA_DIR).toBe(request.dataRoot)
+      expect(request.cwd).not.toBe(request.outputRoot)
+      expect(
+        buildEnv(kind, { ...request, outputRoot: undefined }, '/tmp/figs')
+          .OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR
+      ).toBeUndefined()
+    }
   })
 
   it('projects cache-only Data Storage paths for every kernel language', () => {

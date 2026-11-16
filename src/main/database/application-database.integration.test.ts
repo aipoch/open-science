@@ -42,14 +42,21 @@ describe('application database (integration)', () => {
       MIGRATION_MANIFEST.filter(({ id }) => id <= '0057_project_optimization_prompt')
     )
     const project = await client.project.create({
-      data: { name: 'Migration check', optimizationPrompt: 'Keep this prompt' }
+      data: { name: 'Migration check', optimizationPrompt: 'Keep this prompt' },
+      select: { id: true }
     })
     const readLedger = (): Promise<Array<{ id: string; checksum: string }>> =>
       client.$queryRawUnsafe('SELECT id, checksum FROM "_open_science_migrations" ORDER BY id')
     const before = await readLedger()
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       from: '0057_project_optimization_prompt',
-      applied: ['0058_session_schedules', '0059_session_history', '0060_image_models']
+      applied: [
+        '0058_session_schedules',
+        '0059_session_history',
+        '0060_image_models',
+        '0061_project_folder',
+        '0062_artifact_output_delivery'
+      ]
     })
     expect((await readLedger()).slice(0, before.length)).toEqual(before)
     await expect(
@@ -190,7 +197,9 @@ describe('application database (integration)', () => {
         '0057_project_optimization_prompt',
         '0058_session_schedules',
         '0059_session_history',
-        '0060_image_models'
+        '0060_image_models',
+        '0061_project_folder',
+        '0062_artifact_output_delivery'
       ]
     })
 
@@ -1225,7 +1234,9 @@ describe('application database (integration)', () => {
         '0057_project_optimization_prompt',
         '0058_session_schedules',
         '0059_session_history',
-        '0060_image_models'
+        '0060_image_models',
+        '0061_project_folder',
+        '0062_artifact_output_delivery'
       ]
     })
 

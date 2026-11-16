@@ -6,7 +6,10 @@ import {
   ELECTRON_APPLICATION_COMMAND_CHANNELS,
   RENDERER_CONTRACT_CATALOG
 } from '../shared/renderer-contract-catalog'
-import { toApplicationCommandErrorEnvelope } from '../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  toApplicationCommandErrorEnvelope
+} from '../shared/application-command-contract'
 import type { ApplicationCallerLease } from './application-command-router'
 import { callerLeaseForEvent } from './caller-lifecycle'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
@@ -27,7 +30,11 @@ export function installDesktopRuntimeElectronAdapter(
   const documents = new WeakMap<ApplicationCallerLease, string>()
   const senders = new Map<string, { sender: WebContents; lease: ApplicationCallerLease }>()
   const releaseCallbacks = new Set<() => void>()
-  const enveloped = new Set([...ELECTRON_APPLICATION_COMMAND_CHANNELS, 'sessions:save-session'])
+  const enveloped = new Set([
+    ...ELECTRON_APPLICATION_COMMAND_CHANNELS,
+    'sessions:save-session',
+    'reviewer:get-for-session'
+  ])
   const rendererChannels = new Set(
     RENDERER_CONTRACT_CATALOG.filter(({ kind }) => kind === 'method').map(({ channel }) => channel)
   )
@@ -94,6 +101,8 @@ export function installDesktopRuntimeElectronAdapter(
         try {
           return { ok: true, result: await invoke() }
         } catch (error) {
+          if (channel === 'reviewer:get-for-session' && !(error instanceof ApplicationCommandError))
+            throw error
           return { ok: false, error: toApplicationCommandErrorEnvelope(error) }
         }
       })

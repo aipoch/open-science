@@ -1,3 +1,8 @@
+import {
+  ApplicationCommandError,
+  toApplicationCommandErrorEnvelope,
+  type ApplicationCommandOutcome
+} from '../../shared/application-command-contract'
 // IPC layer for the reviewer feature. Follows the same patterns as src/main/acp/ipc.ts and
 // src/main/artifacts/ipc.ts: ipcMain.handle for renderer-callable commands and the shared renderer
 // broadcaster for push events to Electron windows and optional web clients.
@@ -896,8 +901,21 @@ const registerReviewerIpcHandlers = (
   owner: ReviewerCommandOwner = createReviewerCommandOwner(options)
 ): ReviewerCommandOwner => {
   ipcMainHandle(REVIEWER_IPC.RUN, (_event, request: ReviewRunRequest) => owner.run(request))
-  ipcMainHandle(REVIEWER_IPC.GET_FOR_SESSION, (_event, request: ReviewSessionRequest) =>
-    owner.getForSession(request)
+  // Electron strips custom Error fields from rejected invokes. Preserve folder recovery codes as
+  // an explicit outcome; the preload adapter unwraps it before exposing the ordinary reviewer API.
+  ipcMainHandle(
+    REVIEWER_IPC.GET_FOR_SESSION,
+    async (
+      _event,
+      request: ReviewSessionRequest
+    ): Promise<ApplicationCommandOutcome<ReviewWithChecks[]>> => {
+      try {
+        return { ok: true, result: await owner.getForSession(request) }
+      } catch (error) {
+        if (!(error instanceof ApplicationCommandError)) throw error
+        return { ok: false, error: toApplicationCommandErrorEnvelope(error) }
+      }
+    }
   )
   ipcMainHandle(REVIEWER_IPC.GET_REVIEW_LOG, (_event, request: ReviewLogRequest) =>
     owner.getReviewLog(request)

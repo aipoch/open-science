@@ -448,7 +448,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   async preflightGrantedRoot(
     path: string,
     access: GrantedLocalRootAccess,
-    requestedPath?: string
+    requestedPath?: string,
+    scope: 'tree' | 'target' = 'tree'
   ): Promise<void> {
     if (this.platform !== 'win32') return
     // WSL2 grants use guest-side bubblewrap and must not depend on native helper readiness.
@@ -468,8 +469,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
     await this.getOrCreateSandbox().preflightGrantedRoot(path, access, requestedPath, {
       filesystem,
-      // A grant is persisted once; report protected descendants now rather than on every command.
-      scope: 'tree'
+      scope
     })
   }
 

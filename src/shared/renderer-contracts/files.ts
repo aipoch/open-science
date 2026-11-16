@@ -15,6 +15,8 @@ import type {
 } from '../file-save'
 
 import type {
+  ArtifactOutputDeliveryStatus,
+  ManagedFileRetryOutputDeliveryRequest,
   ManagedFileVersionCancelDiffRequest,
   ManagedFileVersionDiffRequest,
   ManagedFileVersionDiffResult,
@@ -146,6 +148,11 @@ export const managedFileVersionsCancelDiffContracts = {
       request: ManagedFileVersionDiffRequest
     ) => Promise<ManagedFileVersionIpcResult<ManagedFileVersionDiffResult>>
   >()('managed-file-versions', ['managed-file-versions:diff-text', ELECTRON]),
+  'managedFileVersions.retryOutputDelivery': callable<
+    (
+      request: ManagedFileRetryOutputDeliveryRequest
+    ) => Promise<ManagedFileVersionIpcResult<ArtifactOutputDeliveryStatus | undefined>>
+  >()('managed-file-versions', ['managed-file-versions:retry-output-delivery', ELECTRON]),
   'managedFileVersions.inspect': callable<
     (
       request: ManagedFileVersionInspectRequest

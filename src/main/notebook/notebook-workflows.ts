@@ -2,6 +2,15 @@ import type {
   NotebookMemoryPolicyState,
   NotebookMemoryPolicyStateRequest
 } from '../../shared/notebook-memory'
+import { z } from 'zod'
+import type {
+  ProjectFolderChange,
+  ProjectFolderChangeScope,
+  ProjectFolderChangeRequest,
+  ProjectFolderChangePage,
+  ProjectFolderChangePreview,
+  ListProjectFolderChangesRequest
+} from '../../shared/project-folder-changes'
 import type { ReplayRunIndex } from '../../shared/replay'
 import type {
   NotebookProjectResources,
@@ -80,6 +89,22 @@ type NotebookCommandRuntime = {
     request?: NotebookProcessMonitorRequest
   ) => Promise<NotebookProcessMonitorSnapshot>
   terminateMonitoredProcess?: (request: TerminateNotebookProcessRequest) => Promise<void>
+  inspectProjectFolderChange(
+    scope: ProjectFolderChangeScope,
+    id: string
+  ): Promise<ProjectFolderChange>
+  revertProjectFolderChange(
+    scope: ProjectFolderChangeScope,
+    id: string
+  ): Promise<ProjectFolderChange>
+  previewProjectFolderChange(
+    scope: ProjectFolderChangeScope,
+    id: string
+  ): Promise<ProjectFolderChangePreview>
+  listProjectFolderChanges(
+    scope: ProjectFolderChangeScope,
+    options?: { afterId?: string; limit?: number }
+  ): Promise<ProjectFolderChangePage>
   runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]>
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
   getMemoryPolicyState(
@@ -120,6 +145,14 @@ type NotebookCommandWorkflows = {
   ): Promise<NotebookResourceRelease>
   processMonitor(request?: NotebookProcessMonitorRequest): Promise<NotebookProcessMonitorSnapshot>
   terminateMonitoredProcess(request: TerminateNotebookProcessRequest): Promise<void>
+  inspectProjectFolderChange(request: ProjectFolderChangeRequest): Promise<ProjectFolderChange>
+  revertProjectFolderChange(request: ProjectFolderChangeRequest): Promise<ProjectFolderChange>
+  previewProjectFolderChange(
+    request: ProjectFolderChangeRequest
+  ): Promise<ProjectFolderChangePreview>
+  listProjectFolderChanges(
+    request: ListProjectFolderChangesRequest
+  ): Promise<ProjectFolderChangePage>
   runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]>
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
   memoryPolicyState(request: NotebookMemoryPolicyStateRequest): Promise<NotebookMemoryPolicyState>
@@ -166,6 +199,18 @@ const withoutTrustedTurnContext = <
   void inputRunLeaseId
   return publicRequest as Request
 }
+
+const folderScope = z.object({
+  projectId: z.string().min(1).max(512),
+  sessionId: z.string().min(1).max(512)
+})
+const changeRequest = folderScope.extend({ id: z.string().uuid() }).strict()
+const listChangesRequest = folderScope
+  .extend({
+    afterId: z.string().uuid().optional(),
+    limit: z.number().int().min(1).max(100).optional()
+  })
+  .strict()
 
 type NotebookResourceAvailability = {
   withSessionAvailable<Result>(
@@ -231,6 +276,22 @@ const createNotebookCommandWorkflows = (
     return release
   }
   return {
+    inspectProjectFolderChange: (request) => {
+      const parsed = changeRequest.parse(request)
+      return withDataRootWrite(() => runtime.inspectProjectFolderChange(parsed, parsed.id))
+    },
+    revertProjectFolderChange: (request) => {
+      const parsed = changeRequest.parse(request)
+      return withDataRootWrite(() => runtime.revertProjectFolderChange(parsed, parsed.id))
+    },
+    previewProjectFolderChange: (request) => {
+      const parsed = changeRequest.parse(request)
+      return runtime.previewProjectFolderChange(parsed, parsed.id)
+    },
+    listProjectFolderChanges: (request) => {
+      const parsed = listChangesRequest.parse(request)
+      return runtime.listProjectFolderChanges(parsed, parsed)
+    },
     processMonitor: (request) =>
       runtime.getProcessMonitor?.(request) ??
       Promise.reject(new Error('Process monitoring is unavailable.')),

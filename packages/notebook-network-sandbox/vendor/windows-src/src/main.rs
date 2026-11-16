@@ -1172,9 +1172,10 @@ mod windows_host {
         if ownership_record(installation_id, &root)?.is_some() {
             return Ok(true);
         }
-        // Absence may be a transient gap while setup replaces a journal. Never interpret a busy
-        // mutation as permission to run unprotected; confirm absence without waiting behind it.
-        let _lock = OperationLock::acquire_with_timeout(installation_id, 0)?;
+        // The lock also covers routine status and cleanup calls. Let short operations finish so
+        // their contention does not reject normal startup in standard mode. Recheck under the
+        // lock in case setup was replacing the journal. Leave time before the caller's 5s timeout.
+        let _lock = OperationLock::acquire_with_timeout(installation_id, 3_000)?;
         Ok(ownership_record(installation_id, &root)?.is_some())
     }
 
@@ -5108,6 +5109,35 @@ mod windows_host {
                 std::cell::RefCell::new(None);
         }
         use crate::WINDOWS_ACL_TARGET_MISSING_MARKER;
+
+        #[test]
+        fn configured_waits_for_transient_contention_before_confirming_absence() {
+            let installation_id = &new_resource_key().unwrap()[..24];
+            let parent = unique_test_root("configured-contention");
+            fs::create_dir_all(&parent).unwrap();
+            let root = parent.join(installation_id);
+            let requested = root.to_string_lossy();
+            let lock = OperationLock::acquire(installation_id).unwrap();
+            let (started, checking) = std::sync::mpsc::channel();
+            let (finished, result) = std::sync::mpsc::channel();
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    started.send(()).unwrap();
+                    finished
+                        .send(configured(installation_id, &requested))
+                        .unwrap();
+                });
+                checking.recv().unwrap();
+                let while_locked = result.recv_timeout(std::time::Duration::from_millis(200));
+                drop(lock);
+                assert!(matches!(
+                    while_locked,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                ));
+                assert!(!result.recv().unwrap().unwrap());
+            });
+            fs::remove_dir_all(parent).unwrap();
+        }
 
         #[test]
         fn configured_rejects_unconfirmed_absence_during_a_mutation() {

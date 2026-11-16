@@ -2,11 +2,15 @@
   "ownerPaths": [
     "src/renderer/src/components/ProjectDeletionCleanupNotice.tsx",
     "src/renderer/src/components/ProjectPicker.test.tsx",
-    "src/renderer/src/components/ProjectPicker.tsx"
+    "src/renderer/src/components/ProjectPicker.tsx",
+    "src/renderer/src/components/ProjectFolderNotice.tsx",
+    "src/renderer/src/lib/project-folder.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ProjectDeletionCleanupNotice.tsx",
-    "src/renderer/src/components/ProjectPicker.tsx"
+    "src/renderer/src/components/ProjectPicker.tsx",
+    "src/renderer/src/components/ProjectFolderNotice.tsx",
+    "src/renderer/src/lib/project-folder.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -222,5 +226,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Project-folder notices and validation models expand the reviewed project-controls boundary; retain full CI validation until the new sources and consumers are reviewed."
 }

@@ -2258,3 +2258,37 @@ it.each(['current', 'historical'] as const)(
     }
   }
 )
+
+it('passes a live Project-folder mention and its current bytes to the provider without importing a Version', async () => {
+  const root = await createRoot()
+  const path = join(root, 'sample.csv')
+  await writeFile(path, 'id,value\n17,314\n')
+  const owner = new AcpPromptContentOwner({
+    fileReferenceResolver: createManagedFileReferenceResolver({
+      projectFolders: { resolveFile: async () => path }
+    })
+  })
+  const reference = {
+    id: 'project-folder:p:nested/sample.csv',
+    name: 'sample.csv',
+    source: 'project-folder' as const,
+    projectId: 'p',
+    path: 'nested/sample.csv'
+  }
+  const prepared = await owner.prepare({
+    appSessionId: 's',
+    projectId: 'p',
+    text: 'analyze this file',
+    historyImages: [],
+    historyUploads: [],
+    currentUploads: [],
+    references: [reference],
+    codexSkillInputs: [],
+    skillImportEnabled: false,
+    skillImportTurnToken: undefined,
+    onSkillImportAttachmentEligible: vi.fn()
+  })
+  expect(JSON.stringify(prepared.content)).toContain('17,314')
+  expect(JSON.stringify(prepared.content)).toContain(path)
+  expect(prepared.turnInputs?.references).toEqual([reference])
+})

@@ -50,6 +50,7 @@ const INSTALLED_BUT_NOT_DELIVERED_EVENTS = {} as const satisfies Record<
 // These functions exist on the real Electron preload API but the current AST generator does not
 // recognize their implementation shape or channel constants. T1b must make each omission explicit.
 const GENERATED_SOURCE_OMISSIONS = [
+  'projects.inspectDroppedFolder',
   'previewResources.cancelResearchVideoExport',
   'previewResources.exportResearchVideo',
   'previewResources.researchVideoExportProgress',
@@ -102,6 +103,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'locale.setPreference',
   'managedFileVersions.cancelDiff',
   'managedFileVersions.diffText',
+  'managedFileVersions.retryOutputDelivery',
   'managedFileVersions.saveBinaryEdit',
   'managedFileVersions.saveTextEdit',
   'network.checkConnectivity',
@@ -238,6 +240,7 @@ const WEB_UNAVAILABLE_CHANNELS = [
 ] as const
 
 const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
+  projects: ['locate-folder', 'validate-folder'],
   'pdf-structure': ['read-cached', 'parse', 'cancel', 'read-thumbnail', 'clear-cache'],
   'local-models': ['get-snapshot', 'install', 'cancel', 'remove', 'set-ocr-languages'],
   artifacts: ['open-file'],

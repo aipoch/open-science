@@ -1,3 +1,5 @@
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import { createElectronRendererContractAdapter } from '../../preload/electron-renderer-contract-adapter'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -770,7 +772,7 @@ describe('reviewer IPC handlers', () => {
         DATA_ROOT,
         expect.any(Function)
       )
-      expect(result).toEqual(flagged)
+      expect(result).toEqual({ ok: true, result: flagged })
     })
 
     it('loads the renderer list through the log-free summary projection', async () => {
@@ -799,7 +801,7 @@ describe('reviewer IPC handlers', () => {
 
       expect(getReviewSummariesForProjectSession).toHaveBeenCalledWith('project-1', 'session-1')
       expect(getReviewsForSession).not.toHaveBeenCalled()
-      expect(result).toEqual(summaries)
+      expect(result).toEqual({ ok: true, result: summaries })
     })
 
     it('resolves staleness through one exact-version batch and preserves the lease contract', async () => {
@@ -970,7 +972,7 @@ describe('reviewer IPC handlers', () => {
         DATA_ROOT,
         expect.any(Function)
       )
-      expect(result).toBe(reviews)
+      expect(result).toEqual({ ok: true, result: reviews })
     })
 
     it('distinguishes unreadable current evidence from an ordinary historical pass', async () => {
@@ -1018,9 +1020,10 @@ describe('reviewer IPC handlers', () => {
         }
       )
 
-      expect(result).toEqual(
-        reviews.map((review) => ({ ...review, verificationUnavailable: true }))
-      )
+      expect(result).toEqual({
+        ok: true,
+        result: reviews.map((review) => ({ ...review, verificationUnavailable: true }))
+      })
       // A read error is distinct from a missing Session and from a confirmed scope change.
       expect(flagStaleReviews).not.toHaveBeenCalled()
     })
@@ -1621,6 +1624,55 @@ describe('Main correction completion ownership', () => {
     }
     expect(runReview).not.toHaveBeenCalled()
   })
+  it.each([
+    ['project-folder-not-found', true],
+    ['project-folder-unavailable', true],
+    ['command-failed', false]
+  ] as const)(
+    'preserves %s through the registered Electron handler and preload wire boundary',
+    async (code, typed) => {
+      getReviewSummariesForProjectSession.mockRejectedValueOnce(
+        typed
+          ? new ApplicationCommandError(code, 'Records temporarily unavailable')
+          : new Error('Corrupt record checksum')
+      )
+      registerReviewerIpcHandlers({ acpRuntime, managedFileVersions })
+      const invoke = vi.fn(async (channel: string, request: unknown) => {
+        const handler = handlers.get(channel)
+        if (!handler) throw new Error('Handler is missing')
+        // Electron transports fulfilled JSON values; rejected Error properties would be lost.
+        try {
+          return JSON.parse(JSON.stringify(await handler({}, request)))
+        } catch (error) {
+          throw new Error(error instanceof Error ? error.message : String(error))
+        }
+      })
+      const adapter = createElectronRendererContractAdapter({
+        invoke,
+        send: vi.fn(),
+        on: vi.fn(),
+        removeListener: vi.fn(),
+        getPathForFile: () => ''
+      })
+      const failure = await adapter
+        .invoke('reviewer.getForSession', { projectId: 'project-1', appSessionId: 'session-1' })
+        .then(
+          () => undefined,
+          (error: unknown) => error
+        )
+      if (typed) {
+        expect(failure).toEqual({ code, message: 'Records temporarily unavailable' })
+        expect(failure).not.toBeInstanceOf(Error)
+      } else {
+        expect(failure).toBeInstanceOf(Error)
+        expect((failure as Error).message).toBe('Corrupt record checksum')
+      }
+      expect(invoke).toHaveBeenCalledExactlyOnceWith(REVIEWER_IPC.GET_FOR_SESSION, {
+        projectId: 'project-1',
+        appSessionId: 'session-1'
+      })
+    }
+  )
 })
 
 await configureTestElectronHost(await import('electron'))

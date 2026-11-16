@@ -1,5 +1,6 @@
 import { useImageComposerHost } from './image-edit/image-composer-bridge'
 import { imageEditorScope } from './image-edit/image-editor-state'
+import { ProjectFolderChangeHistory } from './ProjectFolderChangeHistory'
 import { usePromptOptimization } from './composer/use-prompt-optimization'
 
 import { ScheduleCardsProvider } from './schedules/ScheduleMessageCard'
@@ -170,7 +171,11 @@ import { requestAnnotationReveal } from './annotations/annotation-reveal'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
 import { BookmarksPopover } from './bookmarks/BookmarksPopover'
 import { useBookmarks } from './bookmarks/bookmark-context'
-import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
+import {
+  FOCUS_COMPOSER_EVENT,
+  OPEN_INPUT_UPLOAD_EVENT,
+  type InputUploadScope
+} from './composer-focus-events'
 import { ComposerEditor } from './composer/ComposerEditor'
 import {
   appendArtifactMention,
@@ -336,6 +341,7 @@ const formatAttachmentSize = (size: number): string => {
 }
 
 type ConversationPanelView = {
+  projectFolderRecovery?: React.ReactNode
   activeSession: ChatSession | undefined
   sessionLoadError?: string
   onRetrySessionLoad?: () => void
@@ -801,6 +807,24 @@ const ConversationPanel = ({
     window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
   }
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const inputUploadProjectId = activeSession?.projectId
+  const inputUploadSessionId = activeSession?.id
+  useEffect(() => {
+    const openInputUpload = (event: Event): void => {
+      const scope = (event as CustomEvent<InputUploadScope>).detail
+      if (
+        !canEditDraft ||
+        !inputUploadSessionId ||
+        !scope ||
+        scope.projectId !== inputUploadProjectId ||
+        scope.sessionId !== inputUploadSessionId
+      )
+        return
+      fileInputRef.current?.click()
+    }
+    window.addEventListener(OPEN_INPUT_UPLOAD_EVENT, openInputUpload)
+    return () => window.removeEventListener(OPEN_INPUT_UPLOAD_EVENT, openInputUpload)
+  }, [inputUploadProjectId, inputUploadSessionId, canEditDraft])
   const sendButtonRef = useRef<HTMLButtonElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // The workspace retains pending Resume state while this panel remounts for another session.
@@ -1991,6 +2015,7 @@ const ConversationPanel = ({
                 />
               )}
               <div className="px-1 md:px-3">
+                {view.projectFolderRecovery}
                 <ComposerNoticeSlot
                   draftConflict={
                     composerError === DISCUSSION_DRAFT_CONFLICT
@@ -2085,6 +2110,14 @@ const ConversationPanel = ({
                     sessionId={activeSession.id}
                     request={delegatedQuestion}
                     onRespond={onRespondToElicitation}
+                  />
+                ) : null}
+
+                {activeSession && !isImported ? (
+                  <ProjectFolderChangeHistory
+                    key={`${activeSession.projectId}:${activeSession.id}`}
+                    scope={{ projectId: activeSession.projectId, sessionId: activeSession.id }}
+                    revision={`${pendingPermissions.map((request) => request.requestId).join(':')}:${isStopping ? 'stopping' : 'idle'}`}
                   />
                 ) : null}
 

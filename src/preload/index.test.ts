@@ -252,7 +252,10 @@ const coreContractGroups = RENDERER_CONTRACT_GROUPS.filter(
   ({ capability }) => !runtimeContractCapabilities.has(capability)
 )
 const coreContracts = coreContractGroups.flatMap(({ contracts }) => contracts)
-const validatedApplicationCommandChannels = new Set(ELECTRON_APPLICATION_COMMAND_CHANNELS)
+const validatedApplicationCommandChannels = new Set([
+  ...ELECTRON_APPLICATION_COMMAND_CHANNELS,
+  'reviewer:get-for-session'
+])
 
 const getApiCallable = (publicPath: string): ((...args: unknown[]) => unknown) => {
   const callable = publicPath
@@ -468,6 +471,7 @@ describe('preload bridge — public surface inventory', () => {
       'managedFileVersions.cancelDiff',
       'managedFileVersions.diffText',
       'managedFileVersions.inspect',
+      'managedFileVersions.retryOutputDelivery',
       'managedFileVersions.saveBinaryEdit',
       'managedFileVersions.saveTextEdit',
       'memory.clearAll',
@@ -499,14 +503,19 @@ describe('preload bridge — public surface inventory', () => {
       'notebook.getReference',
       'notebook.getResourceRelease',
       'notebook.inspectNamespace',
+      'notebook.inspectProjectFolderChange',
+      'notebook.listProjectFolderChanges',
       'notebook.onAvailable',
       'notebook.onChanged',
       'notebook.onMemoryPolicyChanged',
       'notebook.onMemoryRejected',
+      'notebook.onProjectFolderChangesChanged',
+      'notebook.previewProjectFolderChange',
       'notebook.readInputPreview',
       'notebook.releaseSessionResources',
       'notebook.restart',
       'notebook.retryResourceRelease',
+      'notebook.revertProjectFolderChange',
       'notebook.runCell',
       'notebook.runIndex',
       'notebook.shutdown',
@@ -596,20 +605,26 @@ describe('preload bridge — public surface inventory', () => {
       'projectFiles.resolveFile',
       'projectFiles.searchArtifacts',
       'projects.cancelPromptOptimization',
+      'projects.checkFolder',
       'projects.create',
       'projects.delete',
       'projects.get',
+      'projects.inspectDroppedFolder',
       'projects.list',
       'projects.listDeletionCleanup',
+      'projects.listFolder',
+      'projects.locateFolder',
       'projects.onCreated',
       'projects.onDeleted',
       'projects.onDeletionCleanupChanged',
       'projects.onUpdated',
       'projects.optimizePrompt',
+      'projects.readFolderPreview',
       'projects.recordOptimizationEvent',
       'projects.retryDeletionCleanup',
       'projects.update',
       'projects.updateArchive',
+      'projects.validateFolder',
       'remoteAccess.approve',
       'remoteAccess.detect',
       'remoteAccess.disable',

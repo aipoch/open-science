@@ -66,6 +66,14 @@ type AcpAgentConnectionHooks = Readonly<{
   toolLess?: boolean
   filesystem: Readonly<{
     resolveSessionCwd: (sessionId: string) => string
+    resolveFileAccess?: (sessionId: string) => Promise<{
+      root: string
+      canonicalRoot?: boolean
+      protectedReadRoots?: readonly string[]
+      additionalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
+      mapPath?: (path: string) => Promise<string>
+      write?: (path: string, content: string) => Promise<boolean>
+    }>
     protectedReadRoots: () => readonly string[]
     listGrantedRoots?: () => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
   }>
@@ -418,21 +426,42 @@ class AcpAgentConnectionAdapter {
             .onRequest(acp.methods.client.elicitation.create, (context) =>
               hooks.createElicitation(context.params)
             )
-            .onRequest(acp.methods.client.fs.readTextFile, async (context) =>
-              readWorkspaceTextFile(
-                hooks.filesystem.resolveSessionCwd(context.params.sessionId),
-                context.params,
-                [...hooks.filesystem.protectedReadRoots()],
-                (await hooks.filesystem.listGrantedRoots?.()) ?? []
+            .onRequest(acp.methods.client.fs.readTextFile, async (context) => {
+              const access = await hooks.filesystem.resolveFileAccess?.(context.params.sessionId)
+              return readWorkspaceTextFile(
+                access?.root ?? hooks.filesystem.resolveSessionCwd(context.params.sessionId),
+                {
+                  ...context.params,
+                  path: access?.mapPath
+                    ? await access.mapPath(context.params.path)
+                    : context.params.path
+                },
+                [...hooks.filesystem.protectedReadRoots(), ...(access?.protectedReadRoots ?? [])],
+                [
+                  ...(access?.additionalRoots ?? []),
+                  ...((await hooks.filesystem.listGrantedRoots?.()) ?? [])
+                ],
+                access?.canonicalRoot
               )
-            )
-            .onRequest(acp.methods.client.fs.writeTextFile, async (context) =>
-              writeWorkspaceTextFile(
-                hooks.filesystem.resolveSessionCwd(context.params.sessionId),
-                context.params,
-                (await hooks.filesystem.listGrantedRoots?.()) ?? []
+            })
+            .onRequest(acp.methods.client.fs.writeTextFile, async (context) => {
+              const access = await hooks.filesystem.resolveFileAccess?.(context.params.sessionId)
+              return writeWorkspaceTextFile(
+                access?.root ?? hooks.filesystem.resolveSessionCwd(context.params.sessionId),
+                {
+                  ...context.params,
+                  path: access?.mapPath
+                    ? await access.mapPath(context.params.path)
+                    : context.params.path
+                },
+                [
+                  ...(access?.additionalRoots ?? []),
+                  ...((await hooks.filesystem.listGrantedRoots?.()) ?? [])
+                ],
+                access?.write,
+                access?.canonicalRoot
               )
-            )
+            })
     ).connect(stream)
     void connection.closed.then(() => abort.abort())
     return connection

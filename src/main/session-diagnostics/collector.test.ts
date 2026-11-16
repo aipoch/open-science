@@ -1,3 +1,6 @@
+import { initializeProjectRecordStorage } from '../projects/record-storage'
+import { NotebookRunRepository } from '../notebook/repository'
+import { createRootNotebookLane } from '../notebook/lane-identity'
 import { stat, mkdtemp, mkdir, writeFile, readFile, rm, readdir, symlink } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -1037,4 +1040,55 @@ describe('session diagnostics isolated collector', () => {
     )
     expect(await readFile(sessionPath(input), 'utf8')).toBe(raw)
   })
+})
+
+it('collects hydrated Notebook records from the external project record root', async () => {
+  const input = await fixture()
+  const folder = join(dirname(input.dataRoot), 'research-folder')
+  await mkdir(folder)
+  await initializeProjectRecordStorage(input.dataRoot, folder, {
+    format: 'open-science-project',
+    version: 1,
+    projectId: 'project',
+    name: 'Research',
+    createdAt: 1
+  })
+  const notebooks = new NotebookRunRepository(input.dataRoot)
+  const lane = createRootNotebookLane('project', 'session', 'root-frame-session')
+  await notebooks.loadOrCreate({
+    projectId: 'project',
+    sessionId: 'session',
+    lane,
+    workspaceCwd: folder
+  })
+  await notebooks.appendRun({
+    projectId: 'project',
+    sessionId: 'session',
+    lane,
+    run: {
+      runId: 'retained-run',
+      cellId: 'cell',
+      source: 'user',
+      kernelKind: 'python',
+      status: 'completed',
+      script: 'print("retained")',
+      startedAt: 1,
+      endedAt: 2,
+      text: { stdout: 'retained output', stderr: '', traceback: '', plain: [] },
+      outputs: [],
+      artifacts: [],
+      workingFiles: []
+    }
+  })
+  const result = await runSessionDiagnosticWorker({
+    ...input,
+    selectedItems: ['notebook'],
+    includeExecutionCode: true
+  })
+  expect(result).toMatchObject({ kind: 'archive', partial: false })
+  const notebook = JSON.parse(
+    await readFile(join(input.directory!, 'content/notebook/run.json'), 'utf8')
+  )
+  expect(JSON.stringify(notebook)).toContain('retained-run')
+  expect(JSON.stringify(notebook)).not.toContain(folder)
 })

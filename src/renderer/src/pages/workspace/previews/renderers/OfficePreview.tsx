@@ -26,7 +26,11 @@ import {
 
 import { LocalFileFallbackAction } from '../../LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from '../../ManagedFileDownloadButton'
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import {
+  PreviewFallbackCard,
+  PreviewLoadingContent,
+  PreviewUnsupportedContent
+} from '../PreviewFallback'
 import { usePreviewRuntime } from '../preview-runtime-context'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { officePreviewHostLeaseCoordinator } from './office-preview-lease'
@@ -541,6 +545,9 @@ export const OfficePreviewContent = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
+  if (source === 'project-folder') {
+    return <PreviewUnsupportedContent path={item.path} name={item.name} source={source} />
+  }
   if (source === 'local' && !item.fromNotebookDataLink && !staged) {
     return (
       <PreviewFallbackCard

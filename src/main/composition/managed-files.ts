@@ -1,5 +1,7 @@
 import type { ArtifactProducerInputScope } from '../managed-file-versions/read-port'
 import { openComputeOutputPreview } from '../compute/job-output-preview'
+import { ArtifactOutputDelivery } from '../artifacts/output-delivery'
+import { getProjectSessionOutputLayout } from '../projects/session-output-layout'
 import { PptxAgentHandler } from '../pptx-edit/agent-handler'
 import { PptxDraftReview } from '../pptx-edit/draft-review'
 import { PptxDraftStore } from '../pptx-edit/draft-store'
@@ -9,6 +11,8 @@ import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { createNotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
 import { parseLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import type { ManagedPreviewSource } from '../../shared/preview-resources'
+import type { Project } from '../../shared/projects'
+import { ProjectFolderFiles } from '../projects/project-folder-files'
 import { createDefaultArtifactRepository } from '../artifacts/ipc'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
@@ -43,6 +47,7 @@ export function composeManagedFiles({
   notebookNetworkSandbox,
   getNotebookInputRegistry,
   captureImageGenerationPreviewScope,
+  getProject,
   readLiteratureItems
 }: {
   grantedRootsRepositoryRef: { current?: GrantedLocalRootsRepository }
@@ -60,9 +65,11 @@ export function composeManagedFiles({
     artifactId: string
     versionId: string
   }) => ArtifactProducerInputScope | undefined
+  getProject: (id: string) => Promise<Project | null>
   readLiteratureItems: ReadArtifactLiteratureItems
 }): {
   artifactRepository: ReturnType<typeof createDefaultArtifactRepository>
+  artifactOutputDelivery: ArtifactOutputDelivery
   notebookRepository: NotebookRunRepository
   notebookDependencyAnalyzer: NotebookDependencyAnalyzer
   immutableInputAuthority: ImmutableInputAuthority
@@ -94,6 +101,14 @@ export function composeManagedFiles({
 } {
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
   const artifactRepository = createDefaultArtifactRepository()
+  const artifactOutputDelivery = new ArtifactOutputDelivery({
+    storageRoot: resolveDataRoot(),
+    getClient: () => getProjectDbClient(resolveConfigRoot()),
+    openVersion: (request, versionId) => managedFileVersionService.openVersion(request, versionId),
+    getLayout: async (projectId, sessionId) =>
+      getProjectSessionOutputLayout(resolveDataRoot(), projectId, sessionId)
+  })
+  managedFileVersionService.setArtifactOutputDelivery(artifactOutputDelivery)
   const notebookRepository = new NotebookRunRepository(resolveDataRoot())
   const notebookDependencyAnalyzer = createNotebookDependencyAnalyzer({
     storageRoot: resolveDataRoot(),
@@ -109,6 +124,7 @@ export function composeManagedFiles({
     inputAuthority: immutableInputAuthority,
     readLiteratureItems,
     managedFileVersions: managedFileVersionService,
+    onHeadActivated: (versions) => artifactOutputDelivery.deliverActivated(versions),
     compatibilityRepository: artifactRepository,
     notebookRepository,
     dependencyAnalyzer: notebookDependencyAnalyzer,
@@ -182,10 +198,13 @@ export function composeManagedFiles({
   const pptxAgent = new PptxAgentHandler(managedFileVersionService, pptxDrafts)
   const pptxDraftReview = new PptxDraftReview(managedFileVersionService, pptxDrafts)
   // One registry owns short-lived capability URLs for both managed artifact repositories.
+  const projectFolderFiles = new ProjectFolderFiles(getProject, resolveDataRoot)
   const previewResources = new ManagedPreviewResources({
     openStagedEdit: async (key) => pptxEditSessions.openStaged(key),
     resolvePath: resolveManagedFilePath,
     openComputeOutput: openComputeOutputPreview,
+    openProjectFolderFile: ({ projectId, path }) =>
+      projectFolderFiles.openPreview({ projectId, relativePath: path }),
     openLiterature: (reference) => literatureAttachmentAuthority.openReference(reference),
     openLatestManagedFile: (source, request) =>
       managedFileVersionService.openLatest({ source, ...request }),
@@ -220,6 +239,7 @@ export function composeManagedFiles({
   const managedPreviewOwners = createManagedPreviewOwnerRegistry(previewResources)
   return {
     artifactRepository,
+    artifactOutputDelivery,
     notebookRepository,
     notebookDependencyAnalyzer,
     immutableInputAuthority,

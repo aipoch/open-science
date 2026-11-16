@@ -7,19 +7,29 @@ import type {
 import type { ReadArtifactLiteratureItems } from './literature-manifest'
 import { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
-import { NotebookRuntimeService } from '../notebook/runtime-service'
+import {
+  NotebookRuntimeService,
+  type NotebookRuntimeServiceOptions
+} from '../notebook/runtime-service'
 import { createProvenanceTestFixture, provenanceGraph } from './provenance-test-fixtures'
 import { type ArtifactMcpEnvironment } from './mcp-server'
 
 // The fixture exposes the exact composed production services to barrier-based integration tests.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-export const createArtifactSaveFixture = async (readItems?: ReadArtifactLiteratureItems) => {
+export const createArtifactSaveFixture = async (
+  readItems?: ReadArtifactLiteratureItems,
+  notebookOptions: Pick<
+    NotebookRuntimeServiceOptions,
+    'assertProjectFolderHealthy' | 'discoverRuntimes' | 'notebookRuntimeSettings'
+  > = {}
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+) => {
   const fixture = await createProvenanceTestFixture({ readLiteratureItems: readItems })
   const service = new NotebookRuntimeService({
     configRoot: fixture.storageRoot,
     dataRoot: fixture.storageRoot,
     projectId: 'project-1',
-    repository: fixture.notebookRepository
+    repository: fixture.notebookRepository,
+    ...notebookOptions
   })
   const grantedRoots = new GrantedLocalRootsRepository(async () => fixture.client)
   const server = new NotebookLocalRpcServer(service, {
@@ -59,12 +69,14 @@ export const createArtifactSaveFixture = async (readItems?: ReadArtifactLiteratu
   return {
     ...fixture,
     server,
+    service,
     grantedRoots,
     connection,
     binding,
     environment,
     dispose: async () => {
       await server.close()
+      await service.shutdownAll()
       await fixture.dispose()
     }
   }

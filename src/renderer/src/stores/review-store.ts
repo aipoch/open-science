@@ -1,3 +1,4 @@
+import { projectFolderFailure } from '@/lib/project-folder-error'
 // Renderer-side store for reviewer state. Backed by SQLite (via IPC) and updated by push events
 // from the main process as review lifecycle/checks change.
 
@@ -16,6 +17,7 @@ type ReviewStoreData = {
 type ReviewStore = ReviewStoreData & {
   // Load existing reviews for a session from the DB at startup.
   loadReviewsForSession: (sessionId: string, projectId?: string) => Promise<void>
+  retryReviewsAfterFolderRecovery: (sessionId: string, projectId: string) => void
   // Handle a push event from the main process (lifecycle/checks updated).
   handleReviewUpdate: (event: ReviewUpdateEvent) => void
   // Returns the reviews for a session, newest-first.
@@ -116,6 +118,7 @@ export const createInitialReviewState = (): ReviewStoreData => ({
 // Session ids with a load in flight, so repeated focus events don't launch overlapping loads. Kept
 // outside the store (transient control state, not rendered) and cleared in loadReviewsForSession.
 const loadsInFlight = new Set<string>()
+const folderRecoveryRetries = new Set<string>()
 const reviewSessionKey = (projectId: string, sessionId: string): string =>
   `${projectId}\0${sessionId}`
 const EMPTY_REVIEWS: ReviewWithChecks[] = []
@@ -214,8 +217,14 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
         }
       })
     } catch (error) {
-      console.error('Failed to load review history:', error)
-      const message = error instanceof Error ? error.message : String(error)
+      if (!projectFolderFailure(error)) console.error('Failed to load review history:', error)
+      const message =
+        error &&
+        typeof error === 'object' &&
+        'message' in error &&
+        typeof error.message === 'string'
+          ? error.message
+          : String(error)
       set((state) => ({
         loadErrorsBySession: {
           ...state.loadErrorsBySession,
@@ -224,7 +233,18 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
       }))
     } finally {
       loadsInFlight.delete(key)
+      if (folderRecoveryRetries.delete(key) && get().loadErrorsBySession[key] !== undefined)
+        void get().loadReviewsForSession(sessionId, projectId)
     }
+  },
+
+  retryReviewsAfterFolderRecovery: (sessionId, projectId) => {
+    const key = reviewSessionKey(projectId, sessionId)
+    // A pre-relocation request can fail after the folder has recovered. Queue one retry after
+    // that request settles instead of letting the ordinary focus-load dedup swallow recovery.
+    if (loadsInFlight.has(key)) folderRecoveryRetries.add(key)
+    else if (get().loadErrorsBySession[key] !== undefined)
+      void get().loadReviewsForSession(sessionId, projectId)
   },
 
   handleReviewUpdate: (event: ReviewUpdateEvent) => {

@@ -47,6 +47,10 @@ import type {
   ShellRuntimeBinding
 } from '../../shared/notebook'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import {
+  getProjectSessionOutputLayout,
+  isOwnedProjectNotebookOutputDirectory
+} from '../projects/session-output-layout'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
 import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
@@ -55,11 +59,12 @@ import { HostViewImageError } from './host-view-image-service'
 import { getNotebookInputRoot } from './input-staging'
 import { notebookLaneKey, notebookLaneScope } from './lane-identity'
 import { detectManagedRuntimeMutation } from './managed-runtime-guard'
-import { NotebookRunSubmissionConflictError, getNotebookFileEvidenceLocation } from './repository'
+import { NotebookRunSubmissionConflictError, type NotebookRunRepository } from './repository'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import type {
   NotebookSessionAggregate,
   NotebookSessionExecutionResult,
+  NotebookSessionExecutionRequest,
   NotebookSessionMcpRpcConnection,
   NotebookSessionResolvedInterpreter,
   NotebookSessionRuntimeBinding
@@ -130,8 +135,14 @@ type McpRpcConnectionResolver = (
 ) => Promise<NotebookSessionMcpRpcConnection>
 
 type NotebookExecutionOwnerOptions = {
+  projectFolderForSession?: (session: NotebookSessionAggregate) => Promise<string | undefined>
+  executeNotebook?: (
+    session: NotebookSessionAggregate,
+    request: NotebookSessionExecutionRequest
+  ) => Promise<NotebookSessionExecutionResult>
   configRoot: string
   storageRoot: string
+  repository: Pick<NotebookRunRepository, 'fileEvidenceLocation'>
   runTerminalization: NotebookRunTerminalizationOwner
   dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   environmentStateTracker: Pick<EnvironmentStateTracker, 'prepareRun' | 'captureCompletedRun'>
@@ -520,19 +531,41 @@ class NotebookExecutionOwner {
     return getNotebookInputRoot(this.options.storageRoot, session.projectId, session.sessionId)
   }
 
+  private outputObservation(
+    session: NotebookSessionAggregate
+  ): Pick<
+    NotebookSessionExecutionRequest,
+    'outputRoot' | 'outputRelativePath' | 'isOutputDirectoryCurrent'
+  > {
+    const { outputRoot, outputRelativePath, projectId, sessionId } = session
+    if (!outputRoot || !outputRelativePath) return {}
+    const { storageRoot } = this.options
+    return {
+      outputRoot,
+      outputRelativePath,
+      isOutputDirectoryCurrent: () => {
+        const layout = getProjectSessionOutputLayout(storageRoot, projectId, sessionId)
+        return (
+          layout !== undefined &&
+          join(layout.projectRoot, outputRelativePath) === outputRoot &&
+          isOwnedProjectNotebookOutputDirectory(storageRoot, projectId, outputRelativePath)
+        )
+      }
+    }
+  }
+
   private fileEvidenceLocation(session: NotebookSessionAggregate): {
     fileEvidenceStorageRoot: string
     fileEvidenceRoot: string
     fileEvidenceStoragePrefix: string
   } {
-    const location = getNotebookFileEvidenceLocation(
-      this.options.storageRoot,
+    const location = this.options.repository.fileEvidenceLocation(
       session.projectId,
       session.sessionId,
       session.lane
     )
     return {
-      fileEvidenceStorageRoot: this.options.storageRoot,
+      fileEvidenceStorageRoot: location.storageRoot,
       fileEvidenceRoot: location.root,
       fileEvidenceStoragePrefix: location.storageKeyPrefix
     }
@@ -938,49 +971,52 @@ class NotebookExecutionOwner {
                     )
                   }
                   reachedExecutor = true
-                  let executionResult = await session
-                    .execute({
-                      executionAdmission,
-                      runId,
-                      kernelEpochId,
-                      code: durableAdmission.run.script,
-                      ...(helperPlan.injections.length
-                        ? { helperModules: helperPlan.injections }
-                        : {}),
-                      cwd: cwdBefore,
-                      language: cell.language,
-                      environment,
-                      notebookSessionRoot: session.notebookSessionRoot,
-                      inputRoot: this.inputRoot(session),
-                      dataRoot: session.dataRoot,
-                      ...this.fileEvidenceLocation(session),
-                      runtimeRoot: session.runtimeRoot,
-                      protectedDirs: [
-                        getAppClaudeConfigDir(this.options.configRoot),
-                        ...helperPlan.protectedGenerationRoots
-                      ],
-                      timeoutMs: request.timeoutMs,
-                      signal,
-                      resolvedInterpreter,
-                      sessionId: session.sessionId,
-                      projectId: session.projectId,
-                      inputRunLeaseId: request.inputRunLeaseId,
-                      ...(durableAdmission.run.inputFiles?.length
-                        ? { registeredInputFiles: durableAdmission.run.inputFiles }
-                        : {}),
-                      ...(sourceFileAccessContext ? { sourceFileAccessContext } : {})
-                    })
-                    .catch((error: unknown) => {
-                      if (error instanceof NotebookExecutionStopError) throw error
-                      if (error instanceof NotebookExecutionAdmissionError)
-                        return errorToExecutionResult(error, cwdBefore)
-                      executedOnLiveKernel = false
-                      const fallback =
-                        session.consumeForceStopped(processKey) || signal?.aborted
-                          ? cancelledExecutionResult(cwdBefore)
-                          : errorToExecutionResult(error, cwdBefore)
-                      return { ...fallback, kernelDispatched: true }
-                    })
+                  let executionResult = await (
+                    this.options.executeNotebook ?? ((session, request) => session.execute(request))
+                  )(session, {
+                    executionAdmission,
+                    runId,
+                    kernelEpochId,
+                    code: durableAdmission.run.script,
+                    ...(helperPlan.injections.length
+                      ? { helperModules: helperPlan.injections }
+                      : {}),
+                    cwd: cwdBefore,
+                    language: cell.language,
+                    environment,
+                    notebookSessionRoot: session.notebookSessionRoot,
+                    inputRoot: this.inputRoot(session),
+                    dataRoot: session.dataRoot,
+                    ...this.outputObservation(session),
+                    ...this.fileEvidenceLocation(session),
+                    runtimeRoot: session.runtimeRoot,
+                    protectedDirs: [
+                      getAppClaudeConfigDir(this.options.configRoot),
+                      ...helperPlan.protectedGenerationRoots
+                    ],
+                    timeoutMs: request.timeoutMs,
+                    signal,
+                    resolvedInterpreter,
+                    sessionId: session.sessionId,
+                    projectId: session.projectId,
+                    projectFolderPermissionPrompts:
+                      readTrustedNotebookBindingPermissionPrompts(request),
+                    inputRunLeaseId: request.inputRunLeaseId,
+                    ...(durableAdmission.run.inputFiles?.length
+                      ? { registeredInputFiles: durableAdmission.run.inputFiles }
+                      : {}),
+                    ...(sourceFileAccessContext ? { sourceFileAccessContext } : {})
+                  }).catch((error: unknown) => {
+                    if (error instanceof NotebookExecutionStopError) throw error
+                    if (error instanceof NotebookExecutionAdmissionError)
+                      return errorToExecutionResult(error, cwdBefore)
+                    executedOnLiveKernel = false
+                    const fallback =
+                      session.consumeForceStopped(processKey) || signal?.aborted
+                        ? cancelledExecutionResult(cwdBefore)
+                        : errorToExecutionResult(error, cwdBefore)
+                    return { ...fallback, kernelDispatched: true }
+                  })
                   const forceStopped = session.consumeForceStopped(processKey)
                   if (forceStopped && executionResult.status !== 'completed') {
                     executionResult = {
@@ -1458,34 +1494,37 @@ class NotebookExecutionOwner {
                 notebookExecutionCredential(request)
               )
               reachedExecutor = true
-              return session
-                .execute({
-                  executionAdmission,
-                  runId,
-                  kernelEpochId,
-                  code: request.code,
-                  kind: 'repl',
-                  ...(sourceFileAccessContext ? { sourceFileAccessContext } : {}),
-                  cwd: session.cwd,
-                  notebookSessionRoot: session.notebookSessionRoot,
-                  inputRoot: this.inputRoot(session),
-                  dataRoot: session.dataRoot,
-                  ...this.fileEvidenceLocation(session),
-                  runtimeRoot: session.runtimeRoot,
-                  protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
-                  timeoutMs: request.timeoutMs,
-                  signal,
-                  mcpRpcEndpoint: mcpRpc?.endpoint,
-                  mcpRpcSocketPath: mcpRpc?.socketPath,
-                  mcpRpcToken: mcpRpc?.token,
-                  sessionId: session.sessionId,
-                  projectId: session.projectId,
-                  workspaceCwd: request.workspaceCwd,
-                  inputRunLeaseId: request.inputRunLeaseId,
-                  controlInvocationId: runId,
-                  controlInvocationNonce: releaseControlInvocation?.nonce
-                })
-                .finally(() => releaseControlInvocation?.())
+              return (
+                this.options.executeNotebook ?? ((session, request) => session.execute(request))
+              )(session, {
+                executionAdmission,
+                runId,
+                kernelEpochId,
+                code: request.code,
+                kind: 'repl',
+                ...(sourceFileAccessContext ? { sourceFileAccessContext } : {}),
+                cwd: session.cwd,
+                notebookSessionRoot: session.notebookSessionRoot,
+                inputRoot: this.inputRoot(session),
+                dataRoot: session.dataRoot,
+                ...this.outputObservation(session),
+                ...this.fileEvidenceLocation(session),
+                runtimeRoot: session.runtimeRoot,
+                protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
+                timeoutMs: request.timeoutMs,
+                signal,
+                mcpRpcEndpoint: mcpRpc?.endpoint,
+                mcpRpcSocketPath: mcpRpc?.socketPath,
+                mcpRpcToken: mcpRpc?.token,
+                sessionId: session.sessionId,
+                projectId: session.projectId,
+                projectFolderPermissionPrompts:
+                  readTrustedNotebookBindingPermissionPrompts(request),
+                workspaceCwd: request.workspaceCwd,
+                inputRunLeaseId: request.inputRunLeaseId,
+                controlInvocationId: runId,
+                controlInvocationNonce: releaseControlInvocation?.nonce
+              }).finally(() => releaseControlInvocation?.())
             })()
         ).catch((error: unknown) => {
           // Preparation can yield after the Run starts but before the interpreter receives it.
@@ -1573,11 +1612,17 @@ class NotebookExecutionOwner {
     this.assertShellAdmissionAvailable(session)
     const platform = this.options.platform ?? process.platform
     const runtimeRoot = session.runtimeRoot
+    const boundFolder = await this.options.projectFolderForSession?.(session)
     const handoffDir = join(session.notebookSessionRoot, 'handoff')
     const inputRoot = this.inputRoot(session)
     const protectedDirs = [getAppClaudeConfigDir(this.options.configRoot)]
     const frozenShellContext: NonNullable<NotebookRunRecord['frozenShellContext']> = {
-      cwd: session.cwd,
+      cwd:
+        boundFolder &&
+        session.cwd !== boundFolder &&
+        !session.cwd.startsWith(boundFolder + (platform === 'win32' ? '\\' : '/'))
+          ? boundFolder
+          : session.cwd,
       handoffDir,
       runtimeRoot,
       notebookSessionRoot: session.notebookSessionRoot,
@@ -1640,6 +1685,7 @@ class NotebookExecutionOwner {
       // No command can use this empty environment: persist the preparation failure below.
       preparationFailure = error.result
     }
+    if (session.outputRoot) environment.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR = session.outputRoot
     frozenShellContext.environment = Object.fromEntries(
       Object.entries(environment).filter(
         (entry): entry is [string, string] => entry[1] !== undefined
@@ -1756,12 +1802,14 @@ class NotebookExecutionOwner {
           : []
         // Recheck admission after async lookup - shutdown or revocation could have happened
         this.assertShellAdmissionAvailable(session)
+        const projectFolderRoot = boundFolder
         const shellProcessRequest = {
           executionAdmission: guardNotebookExecutionAdmission(
             notebookExecutionAdmission(request),
             lifecycleSignal,
             () => this.assertShellAdmissionAvailable(session)
           ),
+          ...(projectFolderRoot ? { projectFolderRoot } : {}),
           laneKey: notebookLaneKey(session.lane),
           runId,
           executionReference: runId,
@@ -1772,6 +1820,9 @@ class NotebookExecutionOwner {
           runtimeRoot: frozenShellContext.runtimeRoot,
           notebookSessionRoot: frozenShellContext.notebookSessionRoot,
           inputRoot: frozenShellContext.inputRoot,
+          ...(session.outputRoot
+            ? { outputRoot: session.outputRoot, outputRelativePath: session.outputRelativePath }
+            : {}),
           protectedDirs: frozenShellContext.protectedDirs,
           environment: frozenShellContext.environment,
           sessionId: session.sessionId,
@@ -1867,6 +1918,10 @@ class NotebookExecutionOwner {
               lifecycleSignal.throwIfAborted()
               const workingFileObservation = await startWorkingFileObservation({
                 dataRoot: session.dataRoot,
+                ...this.outputObservation(session),
+                ...(projectFolderRoot
+                  ? { projectFolderRoot, observationMode: 'declared-paths' as const }
+                  : {}),
                 notebookSessionRoot: frozenShellContext.notebookSessionRoot,
                 ...this.fileEvidenceLocation(session),
                 runId: runId!,

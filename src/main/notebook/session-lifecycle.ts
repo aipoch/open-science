@@ -9,11 +9,7 @@ import type {
 } from '../../shared/notebook'
 import { parseNotebookLanguage } from '../../shared/notebook'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
-import {
-  NotebookRunRepository,
-  getNotebookFileEvidenceLocation,
-  getNotebookRunJsonPath
-} from './repository'
+import { NotebookRunRepository } from './repository'
 import {
   NotebookSessionAggregate,
   type NotebookSessionExecutor,
@@ -39,6 +35,10 @@ import type { NotebookExecutionOwner } from './execution-owner'
 import { assertResearchSessionWritable } from '../storage/session-package-state'
 import type { IdleInterpreter } from './idle-reclamation'
 import type { NotebookOwnedResource } from './owned-resources'
+import {
+  ensureProjectNotebookOutputDirectory,
+  getNotebookSessionOutputRelativePath
+} from '../projects/session-output-layout'
 
 type RuntimeSession = NotebookSessionAggregate
 type PendingOperation<Result> = Promise<Result> & { resource: NotebookOwnedResource }
@@ -284,6 +284,7 @@ class NotebookSessionLifecycleOwner {
       this.terminal ||
       this.deletingSessionIds.has(resource.sessionId) ||
       this.deletingProjectIds.has(resource.projectId) ||
+      this.relocatingProjectIds.has(resource.projectId) ||
       this.hasPendingWork(resource.sessionId) ||
       this.idleTeardowns.has(resource.sessionId) ||
       !stillIdle()
@@ -304,6 +305,8 @@ class NotebookSessionLifecycleOwner {
     return teardown
   }
   private readonly announcedAgentLaneKeys = new Set<string>()
+  private readonly relocatingProjectIds = new Set<string>()
+  private readonly projectRelocations = new Map<string, Promise<unknown>>()
   private readonly deletingProjectIds = new Set<string>()
   private readonly deletingSessionIds = new Set<string>()
   private readonly pendingEnsuresByProject = new Map<
@@ -375,15 +378,14 @@ class NotebookSessionLifecycleOwner {
           lane
         )
       }
-      const fileEvidenceLocation = getNotebookFileEvidenceLocation(
-        this.options.storageRoot,
+      const fileEvidenceLocation = this.options.repository.fileEvidenceLocation(
         projectId,
         request.sessionId,
         lane
       )
       await reconcileWorkingFileEvidence(
         {
-          storageRoot: this.options.storageRoot,
+          storageRoot: fileEvidenceLocation.storageRoot,
           root: fileEvidenceLocation.root,
           storageKeyPrefix: fileEvidenceLocation.storageKeyPrefix
         },
@@ -397,6 +399,14 @@ class NotebookSessionLifecycleOwner {
         })
       })
 
+      const scope = notebookLaneScope(lane)
+      const outputRoot = await ensureProjectNotebookOutputDirectory(
+        this.options.storageRoot,
+        projectId,
+        request.sessionId,
+        scope.kind === 'frame' ? scope.agentFrameId : undefined
+      )
+      this.assertDeletionAvailable(projectId, request.sessionId)
       assertCreationAvailable()
       const ownedExecutor = this.createExecutor(lane)
       const session = new NotebookSessionAggregate({
@@ -405,13 +415,18 @@ class NotebookSessionLifecycleOwner {
         cwd: document.dataRoot,
         notebookSessionRoot: document.notebookSessionRoot,
         dataRoot: document.dataRoot,
+        ...(outputRoot
+          ? {
+              outputRoot,
+              outputRelativePath: getNotebookSessionOutputRelativePath(
+                projectId,
+                request.sessionId,
+                scope.kind === 'frame' ? scope.agentFrameId : undefined
+              )
+            }
+          : {}),
         runtimeRoot: document.kernel.runtimeRoot,
-        runJsonPath: getNotebookRunJsonPath(
-          this.options.storageRoot,
-          projectId,
-          request.sessionId,
-          lane
-        ),
+        runJsonPath: this.options.repository.runJsonPath(projectId, request.sessionId, lane),
         executionCount: document.runs.length,
         initialKernelStatus: document.kernel.lastKnownStatus,
         initialTerminatedKernelInstances: document.kernel.terminatedKernelInstances,
@@ -723,17 +738,56 @@ class NotebookSessionLifecycleOwner {
     )
   }
 
+  async withProjectFolderRelocation<Result>(
+    projectId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    this.relocatingProjectIds.add(projectId)
+    const reason = new Error('Project folder is being relocated.')
+    for (const controller of this.operationAbortControllersByProject.get(projectId) ?? [])
+      controller.abort(reason)
+    const previous = this.projectRelocations.get(projectId) ?? Promise.resolve()
+    let stopped = false
+    const running = previous
+      .catch(() => undefined)
+      .then(async () => {
+        await this.quiesceProject(projectId)
+        stopped = true
+        return operation()
+      })
+    this.projectRelocations.set(projectId, running)
+    return running.finally(() => {
+      if (this.projectRelocations.get(projectId) === running) {
+        this.projectRelocations.delete(projectId)
+        // Unconfirmed termination retains this fence. A later successful retry can release it;
+        // true deletion has its own independent fence and is never cleared by relocation.
+        if (stopped) this.relocatingProjectIds.delete(projectId)
+      }
+    })
+  }
+
+  async recoverProjectFolderRelocation(projectId: string): Promise<void> {
+    const running = this.projectRelocations.get(projectId)
+    if (running) await running.catch(() => undefined)
+    if (this.relocatingProjectIds.has(projectId))
+      await this.withProjectFolderRelocation(projectId, async () => undefined)
+  }
+
   async shutdownProject(projectId: string): Promise<void> {
     this.beginProjectDeletion(projectId)
+    return this.quiesceProject(projectId)
+  }
+
+  private async quiesceProject(projectId: string): Promise<void> {
     return this.withShellTeardown(
       { projectId },
       new Error('Notebook Project is shutting down.'),
       async () => {
-        this.beginProjectDeletion(projectId)
         await Promise.allSettled([
           ...(this.pendingEnsuresByProject.get(projectId) ?? []),
           ...(this.pendingOperationsByProject.get(projectId) ?? [])
         ])
+        // The registry retains the original owner until reaping succeeds.
         const lanes = Array.from(this.options.sessions.values())
           .filter((session) => session.projectId === projectId)
           .map((session) => session.lane)
@@ -788,7 +842,7 @@ class NotebookSessionLifecycleOwner {
       await this.options.waitForRevocationDrains()
       const session = this.options.sessions.get(lane)
       const removed = await this.options.sessions.remove(lane)
-      // Registry removal invalidates activity even when process reaping remains unconfirmed.
+      // A teardown attempt can change the published activity even while the registry retains the owner.
       if (session) this.notifyChanged(session)
       return removed
     })
@@ -808,6 +862,8 @@ class NotebookSessionLifecycleOwner {
   }
 
   private assertDeletionAvailable(projectId: string, sessionId: string): void {
+    if (this.relocatingProjectIds.has(projectId))
+      throw new Error('Project folder is being relocated.')
     if (this.deletingProjectIds.has(projectId)) {
       throw new Error('Project is being deleted.')
     }

@@ -11,7 +11,7 @@ import { posix } from 'node:path'
 import { z } from 'zod'
 import type { NotebookRunDocument } from '../../shared/notebook'
 import { PACKAGE_MAX_FILE_BYTES } from '../../shared/session-package'
-import { resolveStorageKey } from '../artifacts/provenance-storage'
+import { provenanceStorageRoot, resolveStorageKey } from '../artifacts/provenance-storage'
 import { createPackageContentVerifier } from './materialize'
 import { assertPackageSourcePath, fileChecksum, readPackageJson } from './archive'
 import type { PackageRecords } from './records-contract'
@@ -184,7 +184,11 @@ export async function inheritedComputeChecksums(
     })
   )
   if (!jobs.size) return {}
-  const records = await collectLaneRecords(root, lane, new Set(jobs.keys()))
+  const records = await collectLaneRecords(
+    provenanceStorageRoot(root, lane),
+    lane,
+    new Set(jobs.keys())
+  )
   const checksums: Record<string, string> = Object.create(null)
   for (const record of records?.records ?? []) {
     const { job, ref } = jobs.get(record.activityId)!
@@ -221,7 +225,7 @@ export async function collectPackageLogEvidence(
   }
   const result: PortableEvidence = []
   for (const [key, ids] of groups) {
-    let lane = await collectLaneRecords(root, key, ids, signal)
+    let lane = await collectLaneRecords(provenanceStorageRoot(root, key), key, ids, signal)
     const [, project, session] = key.split('/')
     if (
       backfillSession &&
@@ -252,8 +256,8 @@ export async function collectPackageLogEvidence(
       })
       if (missing.length) {
         const { backfillWorkingFileEvidence } = await import('../notebook/working-file-observer')
-        await backfillWorkingFileEvidence(root, key, missing, signal)
-        lane = await collectLaneRecords(root, key, ids, signal)
+        await backfillWorkingFileEvidence(provenanceStorageRoot(root, key), key, missing, signal)
+        lane = await collectLaneRecords(provenanceStorageRoot(root, key), key, ids, signal)
       }
     }
     if (!lane) continue

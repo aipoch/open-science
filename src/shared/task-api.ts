@@ -163,7 +163,7 @@ export type TaskSessionSummary = {
   artifactCount: number
 }
 
-export type TaskProject = Omit<Project, 'agentContext' | 'sessionDefaults'> & {
+export type TaskProject = Omit<Project, 'agentContext' | 'sessionDefaults' | 'rootPath'> & {
   hasAgentContext: boolean
 }
 

@@ -1,3 +1,4 @@
+import { ArtifactOutputDeliveryNotice } from './ArtifactOutputDeliveryNotice'
 import { PdfExportProvider } from './pdf-annotations/PdfExportProvider'
 import { useVersionHistoryPages } from './use-version-history-pages'
 import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
@@ -293,6 +294,7 @@ const PreviewFileHeader = ({
   imageEditorVersionId?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const liveFile = item.source === 'local' || item.source === 'project-folder'
   const previewActions = usePreviewActions()
   // The header overflow stays scoped to provenance/context while the content menu owns the full
   // capability recipe, including download, full-screen, and close.
@@ -344,8 +346,7 @@ const PreviewFileHeader = ({
     <header
       data-testid="preview-card-header"
       className={`flex shrink-0 items-center gap-1 border-b border-border-300/50 px-2 ${
-        // The local header carries the file path on a second line, so it grows past one row.
-        item.source === 'local' ? 'min-h-8 py-0.5' : 'h-8'
+        liveFile ? 'min-h-8 py-0.5' : 'h-8'
       }`}
     >
       {!managedControlsOnly && onOpenProvenance && provenanceEntry === 'leading' ? (
@@ -375,13 +376,13 @@ const PreviewFileHeader = ({
               )}
               <span className="min-w-0 flex-1">
                 <ExtensionPreservingFileName name={item.name} className="flex-1" />
-                {item.source === 'local' ? (
+                {liveFile ? (
                   <span
-                    data-testid="local-file-path"
+                    data-testid={item.source === 'local' ? 'local-file-path' : undefined}
                     className="flex min-w-0 items-center gap-1 text-[10px] font-normal leading-tight text-text-100"
                   >
                     <span className="shrink-0 rounded-full bg-muted px-1.5 py-px">
-                      {t('This computer')}
+                      {item.source === 'project-folder' ? t('Project folder') : t('This computer')}
                     </span>
                     <span className="truncate">{item.path}</span>
                   </span>
@@ -390,7 +391,7 @@ const PreviewFileHeader = ({
             </span>
           </TooltipTrigger>
           <TooltipContent className={tooltipClassName}>
-            {item.source === 'local' ? item.path : item.title}
+            {liveFile ? item.path : item.title}
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
@@ -508,24 +509,26 @@ const PreviewFileHeader = ({
                   </Tooltip>
                 </TooltipProvider>
               ) : null}
-              <ManagedFileDownloadButton
-                source={item.source ?? 'artifact'}
-                path={item.path}
-                versionId={item.selectedVersionId}
-                {...(item.projectId && item.managedFileId
-                  ? {
-                      projectId: item.projectId,
-                      fileId: item.managedFileId,
-                      ...(downloadVersionContext ??
-                        (item.selectedVersionId ? { versionId: item.selectedVersionId } : {}))
-                    }
-                  : {})}
-                suggestedName={item.name}
-                download={managedDownload}
-                downloadSelectedVersion={Boolean(imageEditorVersionId)}
-                tone="strong"
-                className="bg-transparent shadow-none"
-              />
+              {item.source !== 'project-folder' ? (
+                <ManagedFileDownloadButton
+                  source={item.source ?? 'artifact'}
+                  path={item.path}
+                  versionId={item.selectedVersionId}
+                  {...(item.projectId && item.managedFileId
+                    ? {
+                        projectId: item.projectId,
+                        fileId: item.managedFileId,
+                        ...(downloadVersionContext ??
+                          (item.selectedVersionId ? { versionId: item.selectedVersionId } : {}))
+                      }
+                    : {})}
+                  suggestedName={item.name}
+                  download={managedDownload}
+                  downloadSelectedVersion={Boolean(imageEditorVersionId)}
+                  tone="strong"
+                  className="bg-transparent shadow-none"
+                />
+              ) : null}
               {mentionTarget ? (
                 <ProjectFileMentionButton
                   target={mentionTarget}
@@ -1070,7 +1073,8 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       ? undefined
       : managedWorkflow.downloadVersionContext
     const managedDownload = useManagedFileDownload({
-      source: actionItem.source ?? 'artifact',
+      source:
+        actionItem.source === 'project-folder' ? undefined : (actionItem.source ?? 'artifact'),
       path: actionItem.path,
       ...(actionItem.projectId && actionItem.managedFileId
         ? {
@@ -1847,10 +1851,14 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   }
                 }
               : {}),
-            download: {
-              execute: managedDownload.execute,
-              disabled: managedDownload.status === 'saving' || managedDownloadUnavailable
-            },
+            ...(resolvedPreviewItem.source === 'project-folder'
+              ? {}
+              : {
+                  download: {
+                    execute: managedDownload.execute,
+                    disabled: managedDownload.status === 'saving' || managedDownloadUnavailable
+                  }
+                }),
             ...(onOpenFullScreen ? { 'open-fullscreen': { execute: onOpenFullScreen } } : {}),
             close: { execute: closePreview }
           }
@@ -2048,6 +2056,17 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   ) : undefined
                 }
               />
+              {!provenanceFocused &&
+              managedWorkflow.identity?.source === 'artifact' &&
+              managedInspect?.outputDelivery &&
+              managedInspect.selectedVersionId === managedInspect.headVersionId ? (
+                <ArtifactOutputDeliveryNotice
+                  key={`${projectId}:${managedWorkflow.identity.fileId}:${managedInspect.outputDelivery.versionId}`}
+                  identity={managedWorkflow.identity}
+                  delivery={managedInspect.outputDelivery}
+                  onUpdated={managedWorkflow.refreshInspect}
+                />
+              ) : null}
               {!provenanceFocused &&
               !managedWorkflow.inspectLoading &&
               managedWorkflow.inspectError ? (
