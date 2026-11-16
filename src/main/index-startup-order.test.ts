@@ -31,6 +31,7 @@ describe('single Node runtime production startup', () => {
   it('installs native shutdown listeners before launching Node and protects a quit during startup', () => {
     before('await app.whenReady()', 'system.installPowerMonitorListeners()')
     before('system.installPowerMonitorListeners()', 'await startOrAttachDesktopBackend(')
+    before('system.installPowerMonitorListeners()', 'initialBackendLaunch = (async () =>')
     before("app.on('before-quit', holdStartupQuit)", 'await app.whenReady()')
     before('if (startupQuitRequested)', "app.removeListener('before-quit', holdStartupQuit)")
   })
@@ -55,6 +56,25 @@ describe('single Node runtime production startup', () => {
       backendSource.indexOf('databaseStartup.complete()')
     )
     before('await connectDesktopRuntime(', 'const lifecycle = installAppLifecycle(')
+  })
+  it('starts loading the core runtime while database verification is pending', () => {
+    const databaseOwner = backendSource.indexOf(
+      'const databaseStartup = createDatabaseStartupOwner('
+    )
+    const coreRuntimePrefetch = backendSource.indexOf(
+      "const coreRuntimeImport = import('./core-runtime')"
+    )
+    const databaseVerification = backendSource.indexOf(
+      'const state = await databaseStartup.start()'
+    )
+    const coreRuntimeAwait = backendSource.indexOf(
+      'const { createCoreRuntime } = await coreRuntimeImport'
+    )
+
+    expect(databaseOwner).toBeGreaterThan(-1)
+    expect(coreRuntimePrefetch).toBeGreaterThan(databaseOwner)
+    expect(coreRuntimePrefetch).toBeLessThan(databaseVerification)
+    expect(coreRuntimeAwait).toBeGreaterThan(databaseVerification)
   })
   it('projects authoritative locale without writing it before the renderer imports its historical cache', () => {
     expect(mainSource).toContain("client.invokeHost('locale:snapshot')")
