@@ -39,6 +39,13 @@ describe('authenticated WSL memory reader transport', () => {
         transport.reader.pinInitialNamespace(signal),
         transport.reader.pageSize(signal)
       ])
+      await expect(
+        Promise.all(
+          Array.from({ length: 32 }, () =>
+            transport.reader.read('/proc/42/cgroup', signal, 0x9fa0n)
+          )
+        )
+      ).resolves.toHaveLength(32)
       expect(first).toBe('/proc/42/cgroup')
       expect(second).toBe('/proc/42/stat')
       expect(proof.identity).toBe('4:4026531835')

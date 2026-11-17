@@ -69,8 +69,7 @@ def read_fact(path, expected):
     finally:
         os.close(fd)
 
-def process_snapshot(pid):
-    root = '/proc/' + str(pid)
+def process_identity(root, pid):
     value = read_fact(root + '/stat', PROCFS).decode('ascii')
     closing = value.rfind(') ')
     fields = value[closing + 2:].split() if closing >= 0 else []
@@ -78,7 +77,10 @@ def process_snapshot(pid):
         raise ValueError('invalid process identity')
     return (fields[19], read_fact(root + '/cgroup', PROCFS))
 
-def process_children(pid, budget):
+def process_snapshot(pid):
+    return process_identity('/proc/' + str(pid), pid)
+
+def process_children(pid, budget, expected_cgroup):
     root = '/proc/' + str(pid) + '/task'
     fd = checked_open(root, PROCFS)
     tasks = []
@@ -94,15 +96,21 @@ def process_children(pid, budget):
     finally:
         os.close(fd)
     children = set()
+    identities = []
     for task in tasks:
-        value = read_fact(root + '/' + task + '/children', PROCFS).decode('ascii')
+        task_root = root + '/' + task
+        identity = process_identity(task_root, int(task))
+        if identity[1] != expected_cgroup:
+            raise ValueError('execution thread changed cgroup')
+        identities.append((task, identity))
+        value = read_fact(task_root + '/children', PROCFS).decode('ascii')
         for child in value.split():
             if not child.isdigit() or int(child) <= 0:
                 raise ValueError('invalid child identity')
             children.add(int(child))
             if len(children) > 256:
                 raise ValueError('execution tree exceeds process bound')
-    return (tuple(sorted(tasks)), tuple(sorted(children)))
+    return (tuple(sorted(identities)), tuple(sorted(children)))
 
 def validate_tree(request):
     pid, birth, token = request.get('pid'), request.get('birth'), request.get('token')
@@ -126,7 +134,7 @@ def validate_tree(request):
         identity = process_snapshot(current)
         if identity[1] != anchor[1]:
             raise ValueError('execution process changed cgroup')
-        children = process_children(current, budget)
+        children = process_children(current, budget, anchor[1])
         snapshots[current] = (identity, children)
         queue.extend(children[1])
         if len(snapshots) + len(queue) > 256:
@@ -135,7 +143,7 @@ def validate_tree(request):
         raise ValueError('original workload is not present')
     after_budget = [0]
     for current, (identity, children) in snapshots.items():
-        if process_snapshot(current) != identity or process_children(current, after_budget) != children:
+        if process_snapshot(current) != identity or process_children(current, after_budget, anchor[1]) != children:
             raise ValueError('execution tree changed during sampling')
     if process_snapshot(pid) != anchor:
         raise ValueError('original process changed')
@@ -309,14 +317,15 @@ export const createWslMemoryReader = (
         return
       }
       const abortRequest = (): void => stop()
-      requestSignal.addEventListener('abort', abortRequest, { once: true })
+      if (requestSignal !== signal)
+        requestSignal.addEventListener('abort', abortRequest, { once: true })
       pending.set(id, {
         resolve: (value) => {
-          requestSignal.removeEventListener('abort', abortRequest)
+          if (requestSignal !== signal) requestSignal.removeEventListener('abort', abortRequest)
           resolve(value)
         },
         reject: (error) => {
-          requestSignal.removeEventListener('abort', abortRequest)
+          if (requestSignal !== signal) requestSignal.removeEventListener('abort', abortRequest)
           reject(error)
         }
       })

@@ -9,20 +9,39 @@ import { createWslMemoryReader, wslMemoryReaderProgram } from './memory-policy-w
 const enabled =
   process.platform === 'win32' && process.env.OPEN_SCIENCE_TEST_WSL_MEMORY_READER === '1'
 const anchorProgram = String.raw`
-import json, os, signal, subprocess, sys
+import json, os, signal, subprocess, sys, threading
 signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError()))
 signal.alarm(20)
 child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+ready, release = threading.Event(), threading.Event()
+thread_child_released = [False]
+def worker():
+    # A non-leader task owns this child; reading only /task/<pid>/children
+    # would omit a real execution descendant.
+    descendant = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+    ready.set()
+    try:
+        release.wait(25)
+    finally:
+        descendant.kill()
+        descendant.wait(timeout=3)
+        thread_child_released[0] = descendant.returncode is not None
+thread = threading.Thread(target=worker)
+thread.start()
 try:
+    if not ready.wait(3):
+        raise ValueError('thread-owned descendant not ready')
     with open('/proc/self/stat') as source:
         stat = source.read()
     birth = stat[stat.rfind(') ') + 2:].split()[19]
     print(json.dumps({'pid': os.getpid(), 'birth': birth}), flush=True)
     sys.stdin.read()
 finally:
+    release.set()
+    thread.join(timeout=4)
     child.kill()
     child.wait(timeout=3)
-    print(json.dumps({'released': child.returncode is not None}), flush=True)
+    print(json.dumps({'released': child.returncode is not None and thread_child_released[0] and not thread.is_alive()}), flush=True)
 `
 
 describe.skipIf(!enabled)('real WSL authenticated memory reader', () => {
