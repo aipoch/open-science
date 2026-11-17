@@ -193,7 +193,7 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
         // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '471ea3a21d38c0ecd17191c83f9ce4b3986f42538fd276a04b2ec8eb9d9857a9',
+          '27b9903b2fece98497965223cbe231fb066cbea8df0f2cc0723a5ae336dd5165',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
