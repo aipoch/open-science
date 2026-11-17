@@ -63,18 +63,23 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-it('agrees with the installer helper on cache trust and leaf names', () => {
-  const sandbox = mkdtempSync(join(tmpdir(), 'reset-cache-parity-'))
-  roots.push(sandbox)
-  const runtime = join(sandbox, 'runtime')
-  const parent = join(sandbox, 'OpenScienceTmp')
-  const identity = 'RESET-FIXTURE\\cache-owner'
-  mkdirSync(runtime)
-  mkdirSync(parent)
-  const powershell = join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe')
-  const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
-  // Build the fixtures and read the verdicts from the standalone reset script.
-  const command = `
+it.skipIf(process.platform !== 'win32')(
+  'agrees with the installer helper on cache trust and leaf names',
+  () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'reset-cache-parity-'))
+    roots.push(sandbox)
+    const runtime = join(sandbox, 'runtime')
+    const parent = join(sandbox, 'OpenScienceTmp')
+    const identity = 'RESET-FIXTURE\\cache-owner'
+    mkdirSync(runtime)
+    mkdirSync(parent)
+    const powershell = join(
+      process.env.SystemRoot!,
+      'System32/WindowsPowerShell/v1.0/powershell.exe'
+    )
+    const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
+    // Build the fixtures and read the verdicts from the standalone reset script.
+    const command = `
 $ErrorActionPreference = 'Stop'
 . ${quote(script)}
 $runtime = ${quote(runtime)}
@@ -98,36 +103,37 @@ foreach ($path in @($parent, $cache)) {
   CacheLeaf = Get-CacheLeaf $runtime $identity
   CompactLeaf = Get-CompactCacheLeaf $runtime $identity
 } | ConvertTo-Json -Compress`
-  const reset = spawnSync(
-    powershell,
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-EncodedCommand',
-      Buffer.from(command, 'utf16le').toString('base64')
-    ],
-    { encoding: 'utf8', timeout: 30_000 }
-  )
-  expect(reset.status, reset.stderr).toBe(0)
-  const helper = runUninstallHelper(
-    [
-      'test-inspect-cache',
-      '--parent',
-      parent,
-      '--cache',
-      join(parent, JSON.parse(reset.stdout).Leaf),
-      '--runtime-root',
-      runtime,
-      '--identity',
-      identity
-    ],
-    process.env
-  )
-  expect(helper.status, helper.stderr).toBe(0)
-  expect(JSON.parse(helper.stdout)).toMatchObject(JSON.parse(reset.stdout))
-})
+    const reset = spawnSync(
+      powershell,
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-EncodedCommand',
+        Buffer.from(command, 'utf16le').toString('base64')
+      ],
+      { encoding: 'utf8', timeout: 30_000 }
+    )
+    expect(reset.status, reset.stderr).toBe(0)
+    const helper = runUninstallHelper(
+      [
+        'test-inspect-cache',
+        '--parent',
+        parent,
+        '--cache',
+        join(parent, JSON.parse(reset.stdout).Leaf),
+        '--runtime-root',
+        runtime,
+        '--identity',
+        identity
+      ],
+      process.env
+    )
+    expect(helper.status, helper.stderr).toBe(0)
+    expect(JSON.parse(helper.stdout)).toMatchObject(JSON.parse(reset.stdout))
+  }
+)
 
 describe.skipIf(process.platform !== 'win32')('Windows data reset', () => {
   it('includes both data and profile brand names in a confirmed reset', () => {
