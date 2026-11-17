@@ -22,10 +22,18 @@ type CgroupMount = {
   controllers: string[]
 }
 
+export type LinuxMemoryReader = {
+  read(path: string, signal: AbortSignal, expectedFs?: bigint): Promise<string>
+  pinInitialNamespace(signal: AbortSignal): Promise<NamespaceProof>
+  pageSize(signal: AbortSignal): Promise<number>
+}
+
 type Options = {
   readFile?: (path: string, signal: AbortSignal) => Promise<string>
+  reader?: LinuxMemoryReader
   procRoot?: string
   pid?: number | 'self'
+  expectedBirth?: string
   // proc/mountinfo cannot prove the absence of namespace-hidden ancestors. Only the
   // trusted runtime/deployment certification owner may supply this fact.
   ancestorVisibility?: 'complete' | 'certified'
@@ -252,7 +260,7 @@ export class LinuxMemoryPolicyAdapter implements MemoryPolicyAdapter {
     let visibility = this.options.ancestorVisibility
     if (!visibility) {
       try {
-        proof = await pinInitialNamespace(this.procRoot, signal)
+        proof = await this.pinNamespace(signal)
         visibility = 'complete'
       } catch (error) {
         if (signal.aborted || error instanceof MemoryPolicyError) throw error
@@ -264,13 +272,13 @@ export class LinuxMemoryPolicyAdapter implements MemoryPolicyAdapter {
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
         signal.throwIfAborted()
+        const birth = pid === 'self' ? undefined : await this.readBirth(processRoot, signal)
         const [meminfo, overcommit, membership, mountinfo] = await Promise.all([
           this.read(`${this.procRoot}/meminfo`, signal),
           this.read(`${this.procRoot}/sys/vm/overcommit_memory`, signal),
           this.read(`${processRoot}/cgroup`, signal),
           this.read(`${processRoot}/mountinfo`, signal)
         ])
-        const birth = pid === 'self' ? undefined : await this.readBirth(processRoot, signal)
         const mode = parseLinuxOvercommitMode(overcommit)
         const host = parseLinuxMemoryInfo(meminfo)
         if (mode !== 2) {
@@ -325,7 +333,12 @@ export class LinuxMemoryPolicyAdapter implements MemoryPolicyAdapter {
         const mountPrefix = pid === 'self' ? '' : `${processRoot}/root`
         const version = group.hierarchy === 'v2' ? 2 : 1
         const pageSize =
-          version === 1 ? (this.options.pageSize ?? (await readPageSize(this.procRoot, signal))) : 1
+          version === 1
+            ? (this.options.pageSize ??
+              (await (this.options.reader
+                ? this.options.reader.pageSize(signal)
+                : readPageSize(this.procRoot, signal))))
+            : 1
         if (!Number.isSafeInteger(pageSize) || pageSize <= 0 || (pageSize & (pageSize - 1)) !== 0)
           fail('The kernel page size is invalid.')
         const constraints: MemoryCgroupConstraint[] = []
@@ -434,13 +447,19 @@ export class LinuxMemoryPolicyAdapter implements MemoryPolicyAdapter {
     signal: AbortSignal
   ): Promise<void> {
     if (!proof) return
-    const after = await pinInitialNamespace(this.procRoot, signal)
+    const after = await this.pinNamespace(signal)
     try {
       if (proof.identity !== after.identity)
         fail('The reader cgroup namespace changed while memory was sampled.')
     } finally {
       await after.close()
     }
+  }
+
+  private pinNamespace(signal: AbortSignal): Promise<NamespaceProof> {
+    return this.options.reader
+      ? this.options.reader.pinInitialNamespace(signal)
+      : pinInitialNamespace(this.procRoot, signal)
   }
 
   private async readBirth(processRoot: string, signal: AbortSignal): Promise<string> {
@@ -455,15 +474,19 @@ export class LinuxMemoryPolicyAdapter implements MemoryPolicyAdapter {
             .split(/\s+/)[19]
     if (!startTime || !/^\d+$/.test(startTime))
       fail('The target execution process birth cannot be verified.')
+    if (this.options.expectedBirth !== undefined && startTime !== this.options.expectedBirth)
+      fail('The target execution process no longer belongs to the original owner.')
     return startTime
   }
 
   private async read(path: string, signal: AbortSignal, expectedFs = procfsMagic): Promise<string> {
     signal.throwIfAborted()
     try {
-      const result = this.options.readFile
-        ? await this.options.readFile(path, signal)
-        : (await boundedReadBuffer(path, signal, expectedFs, this.procRoot)).toString('utf8')
+      const result = this.options.reader
+        ? await this.options.reader.read(path, signal, expectedFs)
+        : this.options.readFile
+          ? await this.options.readFile(path, signal)
+          : (await boundedReadBuffer(path, signal, expectedFs, this.procRoot)).toString('utf8')
       signal.throwIfAborted()
       if (Buffer.byteLength(result) > maxFileBytes)
         fail('A Linux memory fact exceeds its bounded file size.')

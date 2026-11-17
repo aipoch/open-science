@@ -168,6 +168,124 @@ describe('LinuxMemoryPolicyAdapter', () => {
     }
   })
 
+  it('uses the authenticated execution-domain reader for every kernel and namespace fact', async () => {
+    const readPaths: string[] = []
+    let pinned = 0
+    let closed = 0
+    const adapter = new LinuxMemoryPolicyAdapter({
+      pid: 42,
+      expectedBirth: '123',
+      reader: {
+        read: async (path, _signal, expectedFs) => {
+          readPaths.push(path)
+          expect(expectedFs).toBe(0x9fa0n)
+          if (path === '/proc/42/stat') return `42 (owned shell) S ${'0 '.repeat(18)}123\n`
+          if (path === '/proc/42/cgroup' || path === '/proc/42/mountinfo') return ''
+          if (!(path in files)) throw new Error('missing')
+          return files[path]
+        },
+        pinInitialNamespace: async () => {
+          pinned++
+          return {
+            identity: '4:4026531835',
+            close: async () => {
+              closed++
+            }
+          }
+        },
+        pageSize: async () => {
+          throw new Error('v2 does not need a page size')
+        }
+      }
+    })
+
+    await expect(adapter.sample(new AbortController().signal)).resolves.toMatchObject({
+      platform: 'linux',
+      facts: { availableBytes: 819_200 }
+    })
+    expect(readPaths).toContain('/proc/42/stat')
+    expect(pinned).toBe(2)
+    expect(closed).toBe(2)
+  })
+
+  it('rejects a stable reused numeric PID whose birth differs from the original owner', async () => {
+    const reads: string[] = []
+    const adapter = new LinuxMemoryPolicyAdapter({
+      pid: 42,
+      expectedBirth: '123',
+      ancestorVisibility: 'complete',
+      readFile: async (path) => {
+        reads.push(path)
+        if (path === '/proc/42/stat') return `42 (reused shell) S ${'0 '.repeat(18)}124\n`
+        if (path === '/proc/42/cgroup' || path === '/proc/42/mountinfo') return ''
+        if (!(path in files)) throw new Error('missing')
+        return files[path]
+      }
+    })
+
+    await expect(adapter.sample(new AbortController().signal)).rejects.toMatchObject({
+      code: 'linux-memory-unavailable'
+    })
+    expect(reads).toEqual(['/proc/42/stat'])
+  })
+
+  it('rejects a remote namespace replacement while facts are sampled', async () => {
+    let pins = 0
+    let closed = 0
+    const adapter = new LinuxMemoryPolicyAdapter({
+      reader: {
+        read: async (path) => {
+          if (!(path in files)) throw new Error('missing')
+          return files[path]
+        },
+        pinInitialNamespace: async () => ({
+          identity: `${++pins}:4026531835`,
+          close: async () => {
+            closed++
+          }
+        }),
+        pageSize: async () => 4096
+      }
+    })
+    await expect(adapter.sample(new AbortController().signal)).rejects.toMatchObject({
+      code: 'linux-memory-unavailable'
+    })
+    expect(closed).toBe(2)
+  })
+
+  it('uses the guest auxiliary-vector page size for cgroup v1 unlimited limits', async () => {
+    let pageReads = 0
+    const local: Record<string, string> = {
+      '/proc/self/cgroup': '5:memory:/notebook\n',
+      '/proc/self/mountinfo': '42 24 0:38 / /run/memory rw - cgroup cgroup rw,memory\n',
+      '/proc/meminfo': files['/proc/meminfo'],
+      '/proc/sys/vm/overcommit_memory': '0\n',
+      '/run/memory/notebook/memory.usage_in_bytes': '200\n',
+      '/run/memory/notebook/memory.limit_in_bytes': '1000\n',
+      '/run/memory/notebook/memory.use_hierarchy': '1\n',
+      '/run/memory/memory.usage_in_bytes': '500\n',
+      '/run/memory/memory.limit_in_bytes': String(((1n << 63n) - 1n) & ~(65_536n - 1n)),
+      '/run/memory/memory.use_hierarchy': '1\n'
+    }
+    const adapter = new LinuxMemoryPolicyAdapter({
+      reader: {
+        read: async (path, _signal, expectedFs) => {
+          expect(expectedFs).toBe(path.startsWith('/proc/') ? 0x9fa0n : 0x27e0ebn)
+          if (!(path in local)) throw new Error('missing')
+          return local[path]
+        },
+        pinInitialNamespace: async () => ({ identity: '4:4026531835', close: async () => {} }),
+        pageSize: async () => {
+          pageReads++
+          return 65_536
+        }
+      }
+    })
+    const sample = await adapter.sample(new AbortController().signal)
+    expect(pageReads).toBe(1)
+    expect(sample.facts.cgroup?.constraints[1].maxBytes).toBeUndefined()
+  })
+
   it('continues to limiting ancestors when a leaf has no applicable memory controller', async () => {
     const local: Record<string, string> = {
       ...files,
