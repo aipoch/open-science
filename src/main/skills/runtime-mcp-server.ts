@@ -1,18 +1,12 @@
-import {
-  readSkillRuntimeCatalog as readCatalog,
-  loadSkillDocument as loadDocument,
-  loadSkillDocumentContent as loadDocumentContent,
-  type SkillRuntimeEnvironment as PackageEnvironment,
-  type SkillRuntimeCatalog
+import type {
+  SkillRuntimeEnvironment as PackageEnvironment,
+  SkillRuntimeCatalog
 } from '@aipoch/skills/projection'
 import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import { isAbsolute, join } from 'node:path'
 import { createHash } from 'node:crypto'
-
-import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { createRequire } from 'node:module'
 import { installToolErrorRecovery } from '../../shared/tool-error-recovery'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { z } from 'zod'
 import type { McpServer } from '@agentclientprotocol/sdk'
 
 import { SKILL_RUNTIME_MCP_SERVER_ARG } from '../mcp-server-args'
@@ -20,6 +14,36 @@ import { SKILL_RUNTIME_MCP_SERVER_ARG } from '../mcp-server-args'
 type SkillRuntimeEnvironment = Omit<PackageEnvironment, 'skillsDirectory'> & {
   skillsDirectory?: string
 }
+type ModelContextProtocolServer = import('@modelcontextprotocol/sdk/server/mcp.js').McpServer
+type SkillRuntimeDependencies = {
+  McpServer: typeof import('@modelcontextprotocol/sdk/server/mcp.js').McpServer
+  StdioServerTransport: typeof import('@modelcontextprotocol/sdk/server/stdio.js').StdioServerTransport
+  z: typeof import('zod').z
+}
+
+const nodeRequire = createRequire(import.meta.url)
+type SkillProjectionDependencies = Pick<
+  typeof import('@aipoch/skills/projection'),
+  'readSkillRuntimeCatalog' | 'loadSkillDocument' | 'loadSkillDocumentContent'
+>
+
+const loadSkillProjectionDependencies = (): SkillProjectionDependencies => {
+  const projection = nodeRequire(
+    '@aipoch/skills/projection'
+  ) as typeof import('@aipoch/skills/projection')
+  return {
+    readSkillRuntimeCatalog: projection.readSkillRuntimeCatalog,
+    loadSkillDocument: projection.loadSkillDocument,
+    loadSkillDocumentContent: projection.loadSkillDocumentContent
+  }
+}
+
+const loadSkillRuntimeDependencies = (): SkillRuntimeDependencies => ({
+  McpServer: nodeRequire('@modelcontextprotocol/sdk/server/mcp.js').McpServer,
+  StdioServerTransport: nodeRequire('@modelcontextprotocol/sdk/server/stdio.js')
+    .StdioServerTransport,
+  z: nodeRequire('zod').z
+})
 const packageEnvironment = (environment: SkillRuntimeEnvironment): PackageEnvironment => ({
   ...environment,
   skillsDirectory: environment.skillsDirectory ?? join(environment.root, '.claude', 'skills')
@@ -27,24 +51,32 @@ const packageEnvironment = (environment: SkillRuntimeEnvironment): PackageEnviro
 // These limits describe the MCP tool schema, not the stored Skill catalog.
 const readSkillRuntimeCatalog = (
   environment: SkillRuntimeEnvironment
-): Promise<SkillRuntimeCatalog> =>
-  readCatalog(packageEnvironment(environment), {
+): Promise<SkillRuntimeCatalog> => {
+  const { readSkillRuntimeCatalog } = loadSkillProjectionDependencies()
+  return readSkillRuntimeCatalog(packageEnvironment(environment), {
     maxEntries: 256,
     maxDescriptionLength: 1024,
     maxMetadataBytes: 64 * 1024 - 2 * 1024,
     measureEntry: ({ name, description }) =>
       Buffer.byteLength(JSON.stringify(JSON.stringify([name, description]) + '\n'), 'utf8')
   })
+}
 const loadSkillDocument = (
   environment: SkillRuntimeEnvironment,
   skill: string,
   args?: string
-): ReturnType<typeof loadDocument> => loadDocument(packageEnvironment(environment), skill, args)
+): ReturnType<SkillProjectionDependencies['loadSkillDocument']> => {
+  const { loadSkillDocument } = loadSkillProjectionDependencies()
+  return loadSkillDocument(packageEnvironment(environment), skill, args)
+}
 const loadSkillDocumentContent = (
   environment: SkillRuntimeEnvironment,
   skill: string,
   args?: string
-): Promise<string> => loadDocumentContent(packageEnvironment(environment), skill, args)
+): Promise<string> => {
+  const { loadSkillDocumentContent } = loadSkillProjectionDependencies()
+  return loadSkillDocumentContent(packageEnvironment(environment), skill, args)
+}
 
 // This identifier is model-facing when Claude renders the aliased call. Keep application and
 // projection implementation names out of the Agent-visible tool contract.
@@ -70,7 +102,10 @@ type SkillRuntimeMcpServerConfig = Readonly<{
   allowedNames?: readonly string[]
 }>
 
-const createSkillNameInputSchema = (catalog: SkillRuntimeCatalog): z.ZodType<string> => {
+const createSkillNameInputSchema = (
+  catalog: SkillRuntimeCatalog,
+  z: SkillRuntimeDependencies['z']
+): import('zod').ZodType<string> => {
   // A string plus selection metadata avoids a redundant anyOf of literals and an
   // unrestricted string. The latter is valid JSON Schema, but presents the first Skill as
   // a distinct branch even though every canonical name has exactly the same call shape.
@@ -91,9 +126,10 @@ const createSkillNameInputSchema = (catalog: SkillRuntimeCatalog): z.ZodType<str
 const createSkillRuntimeMcpServer = async (
   environment: SkillRuntimeEnvironment
 ): Promise<ModelContextProtocolServer> => {
+  const { McpServer, z } = loadSkillRuntimeDependencies()
   const catalog = await readSkillRuntimeCatalog(environment)
   const server = installToolErrorRecovery(
-    new ModelContextProtocolServer({ name: SKILL_RUNTIME_MCP_SERVER_NAME, version: '1.0.0' })
+    new McpServer({ name: SKILL_RUNTIME_MCP_SERVER_NAME, version: '1.0.0' })
   )
   server.registerTool(
     LOAD_SKILL_TOOL_NAME,
@@ -101,7 +137,7 @@ const createSkillRuntimeMcpServer = async (
       title: 'Load Skill',
       description: LOAD_SKILL_DESCRIPTION_HEADER,
       inputSchema: {
-        skill: createSkillNameInputSchema(catalog),
+        skill: createSkillNameInputSchema(catalog, z),
         args: z
           .string()
           .optional()
@@ -234,6 +270,7 @@ const environmentFromProcess = (env: NodeJS.ProcessEnv = process.env): SkillRunt
 }
 
 const runSkillRuntimeMcpServer = async (): Promise<void> => {
+  const { StdioServerTransport } = loadSkillRuntimeDependencies()
   const server = await createSkillRuntimeMcpServer(environmentFromProcess())
   await server.connect(new StdioServerTransport())
 }

@@ -44,21 +44,22 @@
   --annotation-offset-y: 0px;
 }
 
+/* The PDF dock shows each split tool as one surface; the actions stay independent. */
+.annotation-style-split [data-split-trigger]::after {
+  content: none;
+}
 .annotation-style-split[data-open='true'] {
   background: var(--muted);
 }
-.annotation-style-trigger[data-state='open'] {
-  background: color-mix(in oklch, var(--muted), var(--foreground) 12%);
+.annotation-style-split[data-open='true'] button {
+  background: transparent;
 }
 @media (hover: hover) {
   .annotation-style-split:hover {
     background: var(--muted);
   }
-  .annotation-style-apply:hover {
-    background: color-mix(in oklch, var(--muted), var(--foreground) 6%);
-  }
-  .annotation-style-trigger:hover {
-    background: color-mix(in oklch, var(--muted), var(--foreground) 12%);
+  .annotation-style-split:hover button {
+    background: transparent;
   }
 }
 
@@ -147,12 +148,6 @@
   transform: translateY(1px);
 }
 @media (hover: hover) {
-  .pdf-area-action:hover {
-    background: color-mix(in oklch, var(--muted), var(--foreground) 6%);
-  }
-  .pdf-area-menu-trigger:hover {
-    background: color-mix(in oklch, var(--muted), var(--foreground) 12%);
-  }
   .annotation-color-button:hover {
     outline: 1px solid var(--border);
     outline-offset: 3px;
@@ -194,4 +189,8 @@
     transition: none;
     transform: none;
   }
+}
+
+.pdf-tool-options[data-split-panel] {
+  box-shadow: var(--shadow-menu);
 }

@@ -10,11 +10,107 @@ const valid = (r) =>
   printed = new RegExp(`^(?:Figure|Fig\\.?)\\s+(${ordinal})[.:]\\s+\\p{L}`, 'u'),
   reference = new RegExp(`^(?:Figure|Fig\\.?)\\s+(${ordinal})\\s+\\p{L}`, 'u')
 
+// A leading abbreviated figure reference can close the preceding page's
+// sentence after a figure. The independently drawn caption stays the owner.
+function nativeContinuedFigureReference(start, runs, page, captions, previous) {
+  const number = /^Fig\.\s+(\d+)\.\s+\p{Lu}/u.exec(start?.text ?? '')?.[1]
+  if (
+    !number ||
+    !valid(start) ||
+    previous?.pageNumber !== page.pageNumber - 1 ||
+    page.rotation !== 0 ||
+    previous.rotation !== 0 ||
+    !Array.isArray(previous.lines) ||
+    page.invalidGraphicsBounds !== 0 ||
+    page.width !== previous.width ||
+    page.height !== previous.height ||
+    !Array.isArray(page.graphicsBounds) ||
+    !page.graphicsBounds.length ||
+    page.graphicsBounds.length > 4096 ||
+    runs.length > 4096 ||
+    !Number.isFinite(page.width) ||
+    !Number.isFinite(page.height)
+  )
+    return false
+  const last = previous.lines.reduce(
+    (bottom, row) => (!bottom || row.y > bottom.y ? row : bottom),
+    undefined
+  )
+  const em = start.fontSize
+  if (
+    !last ||
+    !/\bas shown in\s*$/iu.test(last.text) ||
+    last.y < previous.height * 0.88 ||
+    last.y + last.height > previous.height ||
+    last.width < page.width * 0.6 ||
+    Math.abs(last.fontSize - em) > 0.02 ||
+    Math.abs(last.x - start.x) > em * 0.1 ||
+    Math.abs(last.x + last.width - start.right) > em * 0.25
+  )
+    return false
+  const prior = captions.filter(
+    (c) =>
+      c.page === page.pageNumber &&
+      finiteRect(c.rect) &&
+      c.rect[3] < start.y &&
+      /^Figure\s+(\d+)\.\s+(?:\([^()]+\)\s+)?\p{Lu}/u.exec(c.lines?.[0] ?? '')?.[1] === number
+  )
+  if (prior.length !== 1) return false
+  const [cap] = prior
+  const [left, top, right, bottom] = cap.rect
+  if (
+    cap.lines.length < 2 ||
+    !/[.!?]$/u.test(cap.lines.at(-1)) ||
+    left - start.x < em * 2 ||
+    right - left < page.width * 0.45 ||
+    Math.abs(start.right - right) > em * 0.25 ||
+    start.y - bottom < em ||
+    start.y - bottom > em * 3
+  )
+    return false
+  const printedRows = runs.filter(
+    (r) => cap.lines.includes(r.text) && r.y >= top && r.bottom <= bottom
+  )
+  if (
+    printedRows.length !== cap.lines.length ||
+    printedRows.some((r) => Math.abs(r.x - left) > 0.02 || r.fontSize > em * 0.92) ||
+    runs.some((r) => r.y > bottom && r.y < start.y)
+  )
+    return false
+  const next = runs.filter((r) => r.y > start.y).sort((a, b) => a.y - b.y)[0]
+  if (
+    !next ||
+    !valid(next) ||
+    next.y <= start.bottom ||
+    next.y - start.bottom > em * 0.55 ||
+    Math.abs(next.x - start.x) > em * 0.1 ||
+    Math.abs(next.right - start.right) > em * 0.25 ||
+    Math.abs(next.fontSize - em) > 0.02
+  )
+    return false
+  const graphics = page.graphicsBounds.map(
+    (g) =>
+      finiteRect(g.normalizedRect) &&
+      g.normalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width))
+  )
+  return (
+    graphics.every((r) => r && r[3] <= top) &&
+    top - Math.max(...graphics.map((r) => r[3])) < em * 2 &&
+    graphics.some(
+      (r) =>
+        top - r[3] < em * 5 &&
+        (r[3] - r[1]) * (r[2] - r[0]) > page.width * page.height * 0.01 &&
+        Math.min(r[2], right) - Math.max(r[0], left) > (right - left) * 0.6
+    )
+  )
+}
+
 // A complete independently printed caption and an entire indented body
 // paragraph distinguish this reference. Neither an unfamiliar verb nor a
 // duplicate ordinal alone suppresses a caption. This grants no Source role.
-export function nativePrintedCaptionBodyReference(start, runs, page, captions) {
+export function nativePrintedCaptionBodyReference(start, runs, page, captions, previousPage) {
   try {
+    if (nativeContinuedFigureReference(start, runs, page, captions, previousPage)) return true
     const number = reference.exec(start?.text ?? '')?.[1],
       em = start?.fontSize
     if (

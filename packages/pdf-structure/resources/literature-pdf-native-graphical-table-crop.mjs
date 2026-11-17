@@ -1,3 +1,4 @@
+import { nativeFigurePathPaint } from './literature-pdf-figure-native-complete-form.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { collectTableRules } from './literature-pdf-graphics.mjs'
@@ -46,7 +47,7 @@ function paintStates(operators) {
     } else if (op === OPS.setFillRGBColor) fillColor = args?.[0]
     else if (op === OPS.setStrokeRGBColor) strokeColor = args?.[0]
     else if (op === OPS.showText) texts.set(index, { fillAlpha, fillColor })
-    else if (op === OPS.constructPath) paths.set(index, { strokeColor })
+    else if (op === OPS.constructPath) paths.set(index, { strokeColor, fillColor })
   }
   return stack.length ? undefined : { texts, paths }
 }
@@ -398,6 +399,154 @@ export function validateNativeGraphicalTableCropPng(png, proof) {
   )
 }
 
+// Two aligned rows of opaque cell fills immediately above a full-width body
+// rule identify the header of this graphical table.
+function completeFilledHeader(table, page, native, boxes, competingRects, current) {
+  const tokens = native.content.items.flatMap((item, index) =>
+    item.str?.trim()
+      ? [
+          tableTextToken(
+            { ...item, sourceItem: { pageNumber: page.pageNumber, index, text: item.str } },
+            native.viewport,
+            0
+          )
+        ]
+      : []
+  )
+  const inv = nativePageTextPacketInventory(page, tokens, native, true)
+  const states = inv && paintStates(native.operators)
+  if (!inv || !states || inv.evidence.images.length) return
+  const old = table.rect
+  if (table.caption.rect[1] < old[3]) return
+  const maxTop = old[1] - 30
+  const local = [],
+    foreignPaints = []
+  for (const [index, state] of inv.evidence.paths) {
+    const args = inv.o.argsArray[index]
+    if ([OPS.endPath, OPS.clip, OPS.eoClip].includes(args?.[0])) continue
+    const rect = nativeFigurePathPaint(inv, index, state)?.rect
+    if (!valid(rect) || (state.clip && !inside(state.clip, rect))) return
+    if (!over(rect, [old[0], maxTop, old[2], old[1]])) {
+      if (!over(rect, old)) foreignPaints.push(rect)
+      continue
+    }
+    const color = states.paths.get(index)?.fillColor
+    const seq = Array.from(args?.[1]?.[0] ?? [])
+    const x = [seq[1], seq[4], seq[7], seq[10]],
+      y = [seq[2], seq[5], seq[8], seq[11]]
+    if (
+      args[0] !== OPS.fill ||
+      state.fillAlpha !== 1 ||
+      !visible(color) ||
+      seq.length !== 13 ||
+      [seq[0], seq[3], seq[6], seq[9], seq[12]].join(',') !== '0,1,1,1,4' ||
+      !seq.every(Number.isFinite) ||
+      new Set(x).size !== 2 ||
+      new Set(y).size !== 2 ||
+      !x.every((v, n) => v === x[(n + 1) % 4] || y[n] === y[(n + 1) % 4]) ||
+      state.transform[1] !== 0 ||
+      state.transform[2] !== 0 ||
+      rect[0] < old[0] ||
+      rect[2] > old[2] ||
+      rect[1] < maxTop
+    )
+      return
+    local.push({ rect, color, index })
+  }
+  const bands = []
+  for (const { rect, color } of local.sort((a, b) => a.rect[1] - b.rect[1])) {
+    const band = bands.at(-1)
+    if (band && Math.abs(band.rects[0][1] - rect[1]) < 0.01) band.rects.push(rect)
+    else bands.push({ rects: [rect], color })
+    if (bands.at(-1).color !== color) return
+  }
+  if (bands.length !== 2 || bands[0].color !== bands[1].color) return
+  const [upper, lower] = bands.map(({ rects }) => rects.sort((a, b) => a[0] - b[0]))
+  if (upper.length < 3 || upper.length !== lower.length || upper.length > 32) return
+  const frame = union([...upper, ...lower]),
+    height = upper[0][3] - upper[0][1]
+  if (
+    !(height > 0) ||
+    frame[0] - old[0] > height ||
+    old[2] - frame[2] > height ||
+    frame[3] < old[1] ||
+    frame[3] - old[1] > height * 0.4 ||
+    Math.abs(lower[0][1] - upper[0][3]) > 0.01 ||
+    upper.some(
+      (r, i) => Math.abs(r[0] - lower[i][0]) > 0.01 || Math.abs(r[2] - lower[i][2]) > 0.01
+    ) ||
+    [upper, lower].some((band) =>
+      band.some(
+        (r, i) =>
+          Math.abs(r[1] - band[0][1]) > 0.01 ||
+          Math.abs(r[3] - band[0][3]) > 0.01 ||
+          (i && Math.abs(r[0] - band[i - 1][2]) > 0.01)
+      )
+    ) ||
+    !joinHorizontalTableRules(collectTableRules(native.operators, native.viewport)).some(
+      (r) =>
+        Math.abs(r[1] - frame[3]) < height * 0.2 &&
+        Math.abs(r[0] - frame[0]) < height * 0.2 &&
+        Math.abs(r[2] - frame[2]) < height * 0.2
+    )
+  )
+    return
+  const header = boxes.filter((box) =>
+    over(box.rect, [frame[0], frame[1] - height * 0.4, frame[2], frame[3]])
+  )
+  const rows = [upper, lower].map((band) =>
+    header.filter((box) =>
+      band.some(
+        (r) =>
+          inside([r[0], r[1] - height * 0.4, r[2], r[3]], box.rect) &&
+          (box.rect[1] + box.rect[3]) / 2 > r[1] &&
+          (box.rect[1] + box.rect[3]) / 2 < r[3]
+      )
+    )
+  )
+  if (
+    rows.some((row) => row.length < upper.length - 1) ||
+    new Set(rows.flat()).size !== header.length
+  )
+    return
+  if (
+    local.some(
+      ({ index }) =>
+        !native.graphicsBounds.some(
+          (graphic) => graphic.operationIndex === index && graphic.kind === 'path'
+        )
+    )
+  )
+    return
+  const nativeCrop = [
+    old[0],
+    Math.min(frame[1], ...header.map((box) => box.rect[1])) - 0.5,
+    old[2],
+    old[3]
+  ]
+  const extra = [nativeCrop[0], nativeCrop[1], nativeCrop[2], old[1]]
+  if (
+    !valid(extra) ||
+    old[1] - nativeCrop[1] > 30 ||
+    !inside([0, 0, page.width, page.height], nativeCrop) ||
+    competingRects.some((rect) => over(rect, extra)) ||
+    boxes.some((box) => !header.includes(box) && over(box.rect, extra)) ||
+    foreignPaints.some((rect) => over(rect, extra)) ||
+    !current()
+  )
+    return
+  return {
+    table: { ...table, rect: nativeCrop },
+    current,
+    nativeCrop,
+    bounds: { width: page.width, height: page.height },
+    foreignGlyphs: boxes
+      .filter((box) => !header.includes(box) && !over(box.rect, old))
+      .map((box) => box.rect),
+    foreignPaints: [...foreignPaints, ...competingRects]
+  }
+}
+
 // Complete native vector-rule tables published as PNGs without a cell grid.
 // Raster/mixed-image pages keep their existing fallback; foreign fonts stay excluded.
 export function completeNativeUnstructuredTableCrop(table, scope) {
@@ -479,6 +628,10 @@ export function completeNativeUnstructuredTableCrop(table, scope) {
     }
     const selected = boxes.filter((b) => over(b.rect, old))
     if (selected.length < 9) return
+    const header =
+      native.glyphBounds &&
+      completeFilledHeader(table, page, native, boxes, competingRects, current)
+    if (header) return header
     const rulePaintBounds = new Map(),
       rulePaintOperations = new Map()
     collectTableRules(native.operators, v, rulePaintBounds, rulePaintOperations)

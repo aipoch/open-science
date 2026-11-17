@@ -33,6 +33,7 @@ import {
   type ManagedFileVersionErrorCode,
   type ManagedFileVersionInspectRequest,
   type ManagedFileVersionInspectResult,
+  type ManagedFileVersionSaveBinaryEditRequest,
   type ManagedFileVersionSaveTextEditRequest,
   type ManagedTextFormat,
   type SaveTextEditResult
@@ -150,10 +151,33 @@ const assertSafeStorageSegment = (value: string, label: string): string => {
   return value
 }
 
+type VersionAuthorship = Pick<ManagedFileVersionDescriptor, 'author' | 'summary'>
+
+const ORIGIN_AUTHORS: Partial<Record<string, ManagedFileVersionDescriptor['author']>> = {
+  agent_generated: 'agent',
+  user_edit: 'user',
+  user_upload: 'user'
+}
+
+const binaryEditAuthorship = (metadata: string): VersionAuthorship | undefined => {
+  try {
+    const parsed = JSON.parse(metadata) as { kind?: unknown; actor?: unknown; summary?: unknown }
+    if (parsed.kind !== 'binary-edit') return undefined
+    if (parsed.actor !== 'user' && parsed.actor !== 'agent') return undefined
+    return {
+      author: parsed.actor,
+      ...(typeof parsed.summary === 'string' && parsed.summary ? { summary: parsed.summary } : {})
+    }
+  } catch {
+    return undefined
+  }
+}
+
 const toDescriptor = (
   source: ManagedFileSource,
   displayName: string,
-  version: ManagedFileVersionRecord
+  version: ManagedFileVersionRecord,
+  authorship?: ReadonlyMap<string, VersionAuthorship>
 ): ManagedFileVersionDescriptor => ({
   id: version.id,
   source,
@@ -165,7 +189,9 @@ const toDescriptor = (
   contentType: version.contentType,
   sizeBytes: Number(version.sizeBytes),
   checksum: version.checksum,
-  createdAt: version.createdAt.toISOString()
+  createdAt: version.createdAt.toISOString(),
+  ...(authorship?.get(version.id) ??
+    (ORIGIN_AUTHORS[version.originKind] ? { author: ORIGIN_AUTHORS[version.originKind] } : {}))
 })
 
 const normalizeTextBytes = (content: string, format: ManagedTextFormat): Buffer => {
@@ -471,6 +497,15 @@ class ManagedFileVersionService {
     ])
     const writeUnavailableReason = await this.writeUnavailableReason(resolved.logicalFile)
     const eligibility = await this.readTextEligibility(resolved)
+    const authorship = await this.loadAuthorship([
+      ...page.versions,
+      ...previous,
+      ...next,
+      resolved.version,
+      head.version
+    ])
+    const describe = (version: ManagedFileVersionRecord): ManagedFileVersionDescriptor =>
+      toDescriptor(request.source, resolved.logicalFile.displayName, version, authorship)
 
     return {
       source: request.source,
@@ -480,22 +515,12 @@ class ManagedFileVersionService {
       displayName: resolved.logicalFile.displayName,
       headVersionId: resolved.logicalFile.currentVersionId!,
       selectedVersionId: resolved.version.id,
-      versions: page.versions.map((version) =>
-        toDescriptor(request.source, resolved.logicalFile.displayName, version)
-      ),
+      versions: page.versions.map(describe),
       nextCursor: page.nextCursor,
-      previousVersion: previous[0]
-        ? toDescriptor(request.source, resolved.logicalFile.displayName, previous[0])
-        : undefined,
-      nextVersion: next[0]
-        ? toDescriptor(request.source, resolved.logicalFile.displayName, next[0])
-        : undefined,
-      selectedVersion: toDescriptor(
-        request.source,
-        resolved.logicalFile.displayName,
-        resolved.version
-      ),
-      headVersion: toDescriptor(request.source, resolved.logicalFile.displayName, head.version),
+      previousVersion: previous[0] ? describe(previous[0]) : undefined,
+      nextVersion: next[0] ? describe(next[0]) : undefined,
+      selectedVersion: describe(resolved.version),
+      headVersion: describe(head.version),
       canEdit: eligibility.editable && writeUnavailableReason === undefined,
       canDiff: eligibility.editable && resolved.version.basedOnVersionId !== null,
       ...(eligibility.editable ? { text: eligibility.text, textFormat: eligibility.format } : {}),
@@ -505,6 +530,23 @@ class ManagedFileVersionService {
           ? {}
           : { unavailableReason: eligibility.reason })
     }
+  }
+
+  private async loadAuthorship(
+    versions: readonly ManagedFileVersionRecord[]
+  ): Promise<Map<string, VersionAuthorship>> {
+    const ids = [...new Set(versions.map((version) => version.id))]
+    const client = await this.options.getClient()
+    const operations = await client.managedFileVersionWriteOperation.findMany({
+      where: { resultVersionId: { in: ids }, state: 'published' },
+      select: { resultVersionId: true, textFormatJson: true }
+    })
+    const authorship = new Map<string, VersionAuthorship>()
+    for (const operation of operations) {
+      const parsed = binaryEditAuthorship(operation.textFormatJson)
+      if (parsed && operation.resultVersionId) authorship.set(operation.resultVersionId, parsed)
+    }
+    return authorship
   }
 
   async openLatest(request: ManagedFileIdentity): Promise<ManagedFileReadLease> {
@@ -895,6 +937,78 @@ class ManagedFileVersionService {
     return this.resumeOperation(client, logicalFile, operation, bytes)
   }
 
+  async saveBinaryEdit(
+    request: ManagedFileVersionSaveBinaryEditRequest
+  ): Promise<SaveTextEditResult> {
+    this.assertBinarySaveRequest(request)
+    const bytes = Buffer.from(request.content)
+    assertWithinResourceBudget('file', bytes.byteLength, LOCAL_RESOURCE_BUDGETS.artifactFileBytes)
+    const operationMetadata = canonicalJson({
+      kind: 'binary-edit',
+      actor: request.actor,
+      summary: request.summary,
+      opCount: request.opCount
+    })
+    const client = await this.options.getClient()
+    await this.assertProjectWritable(client, request.projectId)
+    const logicalFile = await this.loadLogicalFile(client, request)
+    await this.assertFileWritable(client, logicalFile)
+    await this.assertPublicationAllowed(client, logicalFile)
+    const existing = await client.managedFileVersionWriteOperation.findUnique({
+      where: { operationId: request.operationId }
+    })
+    const checksum = sha256(bytes)
+    if (existing) {
+      this.assertOperationMatches(existing, request, checksum, bytes.byteLength)
+      if (existing.textFormatJson !== operationMetadata) {
+        operationError('OPERATION_REUSED', 'Write operation id was reused for another edit.')
+      }
+      return this.resumeOperation(client, logicalFile, existing, bytes, 0, true)
+    }
+    const headVersionId = logicalFile.currentVersionId
+    if (!headVersionId) {
+      return operationError('VERSION_NOT_FOUND', 'Managed file has no published version.')
+    }
+    const basedOn = await this.loadVersion(client, logicalFile, request.basedOnVersionId)
+    if (!basedOn || basedOn.state !== COMPLETE_STATE[request.source]) {
+      return operationError('VERSION_NOT_FOUND', 'Base version was not found.')
+    }
+    if (request.source === 'artifact' && !isManagedVisibleArtifactVersion(basedOn)) {
+      return operationError('VERSION_NOT_FOUND', 'Base version is not published.')
+    }
+    if (basedOn.fileId !== logicalFile.id) {
+      return operationError('VERSION_NOT_IN_FILE', 'Base version belongs to another file.')
+    }
+    const head = await this.loadVersion(client, logicalFile, headVersionId)
+    if (!head || head.state !== COMPLETE_STATE[request.source]) {
+      return operationError('CONTENT_INTEGRITY_FAILED', 'Managed file head is not published.')
+    }
+    if (headVersionId !== request.expectedHeadVersionId) {
+      return {
+        kind: 'conflict',
+        expectedHeadVersionId: request.expectedHeadVersionId,
+        actualHead: toDescriptor(request.source, logicalFile.displayName, head)
+      }
+    }
+    if (
+      (!request.restore || request.basedOnVersionId === headVersionId) &&
+      checksum === basedOn.checksum &&
+      bytes.byteLength === Number(basedOn.sizeBytes)
+    ) {
+      return this.noOpResult(client, logicalFile, request, basedOn)
+    }
+    const operation = await this.createOperation(
+      client,
+      logicalFile,
+      request,
+      checksum,
+      bytes.byteLength,
+      operationMetadata
+    )
+    this.maybeCrash('after-journal')
+    return this.resumeOperation(client, logicalFile, operation, bytes)
+  }
+
   async recoverPendingWrites(): Promise<ManagedFileVersionRecoveryResult> {
     const client = await this.options.getClient()
     const result: ManagedFileVersionRecoveryResult = {
@@ -1120,6 +1234,28 @@ class ManagedFileVersionService {
     assertSafeStorageSegment(request.operationId, 'operation id')
     if (!(request.content instanceof Uint8Array)) {
       operationError('INVALID_REQUEST', 'Derived Artifact content must be bytes.')
+    }
+  }
+
+  private assertBinarySaveRequest(request: ManagedFileVersionSaveBinaryEditRequest): void {
+    this.assertIdentity(request)
+    assertSafeStorageSegment(request.basedOnVersionId, 'base version id')
+    assertSafeStorageSegment(request.expectedHeadVersionId, 'expected head version id')
+    assertSafeStorageSegment(request.operationId, 'operation id')
+    if (request.restore !== undefined && typeof request.restore !== 'boolean') {
+      operationError('INVALID_REQUEST', 'Restore must be a boolean.')
+    }
+    if (!(request.content instanceof Uint8Array)) {
+      operationError('INVALID_REQUEST', 'Binary edit content must be bytes.')
+    }
+    if (request.actor !== 'user' && request.actor !== 'agent') {
+      operationError('INVALID_REQUEST', 'Binary edit actor is invalid.')
+    }
+    if (typeof request.summary !== 'string' || request.summary.length > 500) {
+      operationError('INVALID_REQUEST', 'Binary edit summary is invalid.')
+    }
+    if (!Number.isInteger(request.opCount) || request.opCount < 0 || request.opCount > 10_000) {
+      operationError('INVALID_REQUEST', 'Binary edit operation count is invalid.')
     }
   }
 
@@ -2403,7 +2539,7 @@ class ManagedFileVersionService {
   private async noOpResult(
     client: PrismaClient,
     logicalFile: ManagedLogicalFile,
-    request: ManagedFileVersionSaveTextEditRequest,
+    request: ManagedFileVersionWriteRequest,
     basedOn: ManagedFileVersionRecord
   ): Promise<SaveTextEditResult> {
     return client.$transaction(async (tx) => {

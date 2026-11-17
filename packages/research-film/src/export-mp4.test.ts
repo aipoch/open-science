@@ -101,7 +101,8 @@ setTimeout(() => {}, 4000);`,
           settled,
           settled
         )
-        await vi.waitFor(() => readFile(ready))
+        // Process startup can exceed one second under parallel encode/test load.
+        await vi.waitFor(() => readFile(ready), { timeout: 5000 })
         vi.useFakeTimers()
         controller.abort()
         await vi.advanceTimersByTimeAsync(5000)

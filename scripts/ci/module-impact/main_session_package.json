@@ -94,7 +94,7 @@
     "src/main/session-package/research-films.ts",
     "src/main/session-package/research-films-contract.ts"
   ],
-  "consumerModules": [],
+  "consumerModules": ["research_video"],
   "testFiles": {
     "owner": [
       "scripts/inspect-session-fork-snapshots.test.ts",
@@ -146,7 +146,8 @@
       "src/main/session-package/desktop-composition.test.ts",
       "src/main/session-persistence/prompt-preparation-restart.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/composition/session-packages.test.ts"
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/research-film.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

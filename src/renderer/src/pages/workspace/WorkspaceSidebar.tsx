@@ -960,7 +960,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
               <DropdownMenuContent
                 aria-label={t('Project actions')}
                 className={cn(
-                  'max-h-[var(--radix-dropdown-menu-content-available-height)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto',
+                  'flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-56 flex-col overflow-hidden',
                   mobileMode && 'z-[80]'
                 )}
                 side="bottom"
@@ -968,11 +968,15 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                 sideOffset={6}
                 collisionPadding={8}
                 onFocus={(event) => {
-                  if (event.target !== event.currentTarget) return
+                  if (
+                    event.target !== event.currentTarget ||
+                    (event.relatedTarget instanceof Node &&
+                      event.currentTarget.contains(event.relatedTarget))
+                  )
+                    return
                   const search =
                     event.currentTarget.querySelector<HTMLInputElement>('[data-project-search]')
-                  if (!search) return
-                  search.focus()
+                  search?.focus({ preventScroll: true })
                 }}
               >
                 <DropdownMenuItem
@@ -1104,91 +1108,98 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                     ) : null}
                   </div>
                 ) : null}
-                {projectQuery.trim() && projectMatches.length === 0 ? (
-                  <p role="status" className="px-2 py-3 text-center text-sm text-muted-foreground">
-                    {t('No matching projects')}
-                  </p>
-                ) : null}
-                {visibleProjectMatches.map(
-                  ({ project, description, titlePositions, descriptionPositions }, index) => (
-                    <DropdownMenuItem
-                      key={project.id}
-                      data-project-id={project.id}
-                      className="items-start py-2"
-                      disabled={!onOpenProject}
-                      onSelect={() => onOpenProject?.(project.id)}
-                      onKeyDown={(event) => {
-                        if (index !== 0 || event.key !== 'ArrowUp') return
-                        const search = event.currentTarget
-                          .closest<HTMLElement>('[role="menu"]')
-                          ?.querySelector<HTMLInputElement>('[data-project-search]')
-                        if (!search) return
-                        event.preventDefault()
-                        event.stopPropagation()
-                        search.focus()
-                      }}
+                <div data-project-list className="min-h-0 overflow-y-auto overscroll-contain">
+                  {projectQuery.trim() && projectMatches.length === 0 ? (
+                    <p
+                      role="status"
+                      className="px-2 py-3 text-center text-sm text-muted-foreground"
                     >
-                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span
-                          data-project-title
-                          className="truncate font-medium"
-                          title={project.name}
-                        >
-                          <HighlightedText
-                            text={project.name}
-                            positions={titlePositions}
-                            highlightClassName="bg-transparent text-primary"
-                          />
-                        </span>
-                        {description ? (
+                      {t('No matching projects')}
+                    </p>
+                  ) : null}
+                  {visibleProjectMatches.map(
+                    ({ project, description, titlePositions, descriptionPositions }, index) => (
+                      <DropdownMenuItem
+                        key={project.id}
+                        data-project-id={project.id}
+                        className="items-start py-2"
+                        disabled={!onOpenProject}
+                        onSelect={() => onOpenProject?.(project.id)}
+                        onKeyDown={(event) => {
+                          if (index !== 0 || event.key !== 'ArrowUp') return
+                          const search = event.currentTarget
+                            .closest<HTMLElement>('[role="menu"]')
+                            ?.querySelector<HTMLInputElement>('[data-project-search]')
+                          if (!search) return
+                          event.preventDefault()
+                          event.stopPropagation()
+                          search.focus()
+                        }}
+                      >
+                        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                           <span
-                            data-project-description
-                            className="line-clamp-2 break-words text-xs leading-4 text-muted-foreground"
+                            data-project-title
+                            className="truncate font-medium"
+                            title={project.name}
                           >
                             <HighlightedText
-                              text={description}
-                              positions={descriptionPositions}
+                              text={project.name}
+                              positions={titlePositions}
                               highlightClassName="bg-transparent text-primary"
                             />
                           </span>
-                        ) : null}
-                      </span>
-                    </DropdownMenuItem>
-                  )
-                )}
-                {!showAllProjects && remainingProjectCount > 0 ? (
-                  <DropdownMenuItem
-                    asChild
-                    onSelect={(event) => {
-                      event.preventDefault()
-                      const menu = (event.currentTarget as HTMLElement).closest<HTMLElement>(
-                        '[role="menu"]'
-                      )
-                      onShowAllProjectsChange?.(true)
-                      // The selected control unmounts after expansion; restore focus after that commit.
-                      window.setTimeout(() => {
-                        menu?.querySelector<HTMLElement>('[data-project-id]')?.focus()
-                      }, 0)
-                    }}
-                  >
-                    <button
-                      type="button"
-                      className="min-h-0! w-fit! gap-1 rounded-sm! bg-transparent! px-2 py-1 text-[11px]! text-muted-foreground! hover:bg-transparent! focus:bg-transparent! focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-transparent! data-[highlighted]:text-foreground!"
+                          {description ? (
+                            <span
+                              data-project-description
+                              className="line-clamp-2 break-words text-xs leading-4 text-muted-foreground"
+                            >
+                              <HighlightedText
+                                text={description}
+                                positions={descriptionPositions}
+                                highlightClassName="bg-transparent text-primary"
+                              />
+                            </span>
+                          ) : null}
+                        </span>
+                      </DropdownMenuItem>
+                    )
+                  )}
+                  {!showAllProjects && remainingProjectCount > 0 ? (
+                    <DropdownMenuItem
+                      asChild
+                      onSelect={(event) => {
+                        event.preventDefault()
+                        const menu = (event.currentTarget as HTMLElement).closest<HTMLElement>(
+                          '[role="menu"]'
+                        )
+                        onShowAllProjectsChange?.(true)
+                        // Continue at the first newly revealed project when the expand control unmounts.
+                        window.setTimeout(() => {
+                          menu
+                            ?.querySelectorAll<HTMLElement>('[data-project-id]')
+                            [visibleProjectMatches.length]?.focus()
+                        }, 0)
+                      }}
                     >
-                      <ChevronDown
-                        className="size-3.5 shrink-0"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      />
-                      <span>
-                        {t('Show remaining {{count}} projects', {
-                          count: remainingProjectCount,
-                          defaultValue_one: 'Show remaining {{count}} project'
-                        })}
-                      </span>
-                    </button>
-                  </DropdownMenuItem>
-                ) : null}
+                      <button
+                        type="button"
+                        className="min-h-0! w-fit! gap-1 rounded-sm! bg-transparent! px-2 py-1 text-[11px]! text-muted-foreground! hover:bg-transparent! focus:bg-transparent! focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-transparent! data-[highlighted]:text-foreground!"
+                      >
+                        <ChevronDown
+                          className="size-3.5 shrink-0"
+                          strokeWidth={2}
+                          aria-hidden="true"
+                        />
+                        <span>
+                          {t('Show remaining {{count}} projects', {
+                            count: remainingProjectCount,
+                            defaultValue_one: 'Show remaining {{count}} project'
+                          })}
+                        </span>
+                      </button>
+                    </DropdownMenuItem>
+                  ) : null}
+                </div>
                 {otherProjects.length > 0 ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem
                   data-project-new

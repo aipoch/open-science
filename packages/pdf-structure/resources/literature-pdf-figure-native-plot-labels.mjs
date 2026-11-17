@@ -35,7 +35,7 @@ import {
   nativeMesh4RenderContextData,
   matchNativeFigureRenderContext as strokePreviewMatch
 } from './literature-pdf-render-bounds.mjs'
-import { area, intersection, union } from './literature-pdf-page-geometry.mjs'
+import { area, intersection, lineRect, union } from './literature-pdf-page-geometry.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
 
@@ -389,11 +389,106 @@ export function nativeRasterTitlePixelPngSafe(plan, png, rect, page) {
   }
 }
 
+// The initial crop can fall between both rails of one closed vector axis.
+// Recover horizontally only when its own native tick column and title agree.
+function nativeHorizontallyClippedAxis(page, figure, captions, tables, rules, tokens) {
+  const { rect: old, caption } = figure
+  if (
+    page.invalidGraphicsBounds !== 0 ||
+    !Array.isArray(page.graphicsBounds) ||
+    !page.graphicsBounds.length ||
+    !normalRasterBox(old) ||
+    !normalRasterBox(caption?.rect) ||
+    figure.reason ||
+    figure.parts ||
+    figure.cropRects ||
+    figure.sourceItems?.length ||
+    figure.fallbackFigure ||
+    !/^(?:Figure|Fig\.?)\s+\d+[.:]/iu.test(caption?.lines?.[0] ?? '') ||
+    old[3] >= caption.rect[1]
+  )
+    return
+  const font = Math.max(
+    ...(page.lines ?? [])
+      .filter((line) => intersection(lineRect(line), caption.rect) > 0)
+      .map((line) => line.fontSize)
+  )
+  if (!Number.isFinite(font) || font <= 0) return
+  const frames = nativeClosedRuleFrames(rules).filter(
+    (r) =>
+      r[0] < old[0] &&
+      r[2] > old[2] &&
+      r[1] >= old[1] &&
+      r[3] <= old[3] &&
+      old[0] - r[0] <= font &&
+      r[2] - old[2] <= font * 3 &&
+      r[3] - r[1] >= font * 6 &&
+      intersection(old, r) / area(r) >= 0.85
+  )
+  if (frames.length !== 1) return
+  const [frame] = frames
+  const withFrame = { ...figure, rect: union([old, frame]) }
+  const labels = nativeExternalFrameLabels(page, withFrame, captions, tables, rules, tokens)
+  const column = tokens.filter((t) => labels.includes(t.rect) && t.rect[2] <= frame[0])
+  const ticks = column.filter((t) => t.horizontal && /^[−-]?\d+(?:\.\d+)?$/u.test(t.text.trim()))
+  const titles = column.filter((t) => t.horizontal === false)
+  if (ticks.length < 3 || titles.length !== 1) return
+  const rect = union([withFrame.rect, ...labels])
+  if (rect[1] !== old[1] || rect[3] !== old[3]) return
+  if (
+    tokens.some(
+      (t) =>
+        t.text.trim() &&
+        intersection(t.rect, rect) > intersection(t.rect, old) + 0.01 &&
+        (!t.sourceItem ||
+          t.sourceItem.pageNumber !== page.pageNumber ||
+          t.sourceSegment ||
+          t.sourceItem.text !== t.text ||
+          t.height > font ||
+          t.text.length > 45)
+    )
+  )
+    return
+  if (
+    page.graphicsBounds.some((g) => {
+      const normalized = g.paintedNormalizedRect ?? g.normalizedRect
+      if (!normalRasterFiniteBox(normalized)) return true
+      const b = normalized.map((v, i) => v * (i % 2 ? page.height : page.width))
+      if (intersection(b, rect) <= intersection(b, old) + 0.01) return false
+      if (g.kind !== 'path') return true
+      const withinAxis = b.every((v, i) => (i < 2 ? v >= rect[i] - 1 : v <= rect[i] + 1))
+      const enclosesAxis =
+        b.every((v, i) => (i < 2 ? v <= rect[i] : v >= rect[i])) &&
+        area(b) <= area(rect) * 1.5 &&
+        b[3] < caption.rect[1] &&
+        !captions.some((c) => c.page === page.pageNumber && intersection(c.rect, b) > 0) &&
+        !tables.some((t) => intersection(t, b) > 0)
+      const enclosesFrame = b.every(
+        (v, i) => (i < 2 ? v <= frame[i] : v >= frame[i]) && Math.abs(v - frame[i]) <= font
+      )
+      const exactRule = rules.some(
+        (r) =>
+          (r[2] - r[0] >= (frame[2] - frame[0]) * 0.9 ||
+            r[3] - r[1] >= (frame[3] - frame[1]) * 0.9) &&
+          r.every(
+            (v, i) =>
+              (i < 2 ? v >= rect[i] && v >= b[i] : v <= rect[i] && v <= b[i]) &&
+              Math.abs(v - b[i]) <= font
+          )
+      )
+      return !withinAxis && !enclosesAxis && !enclosesFrame && !exactRule
+    })
+  )
+    return
+  return { ...figure, rect }
+}
+
 // Rotated source runs and keyed horizontal strokes establish ownership beyond
 // a plot's crop. Numeric tick columns anchor axes; three aligned marker/text
 // pairs anchor a common legend. Proximity alone does not own ordinary prose.
 export function nativeAttachedPlotLabels(page, figure, captions, tables, rules, tokens) {
   if (!figure.rect?.every(Number.isFinite)) return figure
+  figure = nativeHorizontallyClippedAxis(page, figure, captions, tables, rules, tokens) ?? figure
   const bounds = figure.rect
   const source = tokens.filter(
     (t) =>

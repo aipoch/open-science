@@ -2,6 +2,8 @@
 
 Generate English narrated research films from frozen session snapshots or an existing `video.json`. The default result is a self-contained HTML player plus a source ZIP. MP4 encoding is optional.
 
+For operation replay, supply `source.provenance.mode = "operation-replay"` and a version-1 `source.replay` evidence snapshot. The author returns a separate strict case containing ordered evidence IDs and narration; the JavaScript player derives actor labels and record contents from the frozen evidence. It executes no model-generated scripts or research operations. Multiple records can share one measured narration window. The existing explanation screenplay format is unchanged.
+
 The package owns screenplay validation and correction, shared and per-scene animation authoring, narration chunking and synthesis, caption alignment, audio mixing, timeline construction, the player and its bundled stage, source archives, encoding, and worker lifetimes. It preserves the original `video.json` / `anims/*.js` format.
 
 In Open-Science, generation starts only from the user's research-film button and runs independently of conversation turns. The host uses tool-less model inference for authoring; generation is not exposed as an Agent/MCP tool. Players and source bundles are stored as session-derived film files, not published as conversation Artifacts.

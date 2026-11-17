@@ -77,3 +77,56 @@ it('retains the native segmented top stroke and every paired-cohort source recor
   expect(result.grid).toContainEqual(['Anti-hormonal therapy, %', '', '', '', '', '0.558'])
   expect(result.unassigned).toEqual([])
 })
+
+it.each(['closed', 'missing leaf', 'missing value', 'competing caption'] as const)(
+  'recovers an inset two-group table only with complete native evidence (%s)',
+  (kind) => {
+    const table = { cropRect: [20, 195, 565, 300], structure: { objects: [] } }
+    const rect = [330, 170, 592, 195]
+    const captions = [{ rect, lines: ['Table 1: Trial quality across datasets.'] }]
+    if (kind === 'competing caption')
+      captions.push({ rect: [331, 346, 591, 365], lines: ['Table 2: Another experiment.'] })
+    const rules = [
+      [334, 213, 587, 213],
+      [375, 252, 463, 252],
+      [482, 252, 587, 252],
+      [334, 277, 587, 277],
+      [334, 364, 587, 364]
+    ]
+    const token = (
+      text: string,
+      x: number,
+      baseline: number,
+      height = 10
+    ): {
+      text: string
+      horizontal: boolean
+      height: number
+      baseline: number
+      rect: number[]
+    } => ({
+      text,
+      horizontal: true,
+      height,
+      baseline,
+      rect: [x, baseline - height, x + 24, baseline]
+    })
+    const xs = [379, 425, 490, 549]
+    const items = [
+      token('Trial', 343, 254),
+      token('Training', 408, 247),
+      token('Testing', 517, 247),
+      ...xs.flatMap((x, n) =>
+        kind === 'missing leaf' && n === 3 ? [] : [token(n % 2 ? 'High' : 'Low', x, 267)]
+      ),
+      ...[301, 323, 345].flatMap((y, row) => [
+        token(String.fromCharCode(65 + row), 343, y, 20),
+        ...xs.flatMap((x, col) =>
+          kind === 'missing value' && row === 2 && col === 3 ? [] : [token('1.25', x, y, 20)]
+        )
+      ])
+    ]
+    const crop = recoverCaptionSeparatedHeaderCrop(table, items, captions, rules)
+    expect(crop).toEqual(kind === 'closed' ? [333.5, 212.5, 587.5, 364.5] : undefined)
+  }
+)

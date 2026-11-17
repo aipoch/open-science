@@ -46,7 +46,7 @@ import type { NotebookLanguage } from '../../../../shared/notebook-language-cont
 import { isEnvEnabled, type RuntimeUsage } from '../../../../shared/notebook-runtime'
 import type { Wsl2BashPreviewStatus } from '../../../../shared/wsl-setup'
 import { provisionProgressText } from '../workspace/provision-progress-text'
-import { PythonIcon, RIcon } from './language-icons'
+import { PythonIcon, RIcon } from '@/components/language-icons'
 import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
 import { NotebookRecoveryNotice } from './NotebookRecoveryNotice'
 import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'

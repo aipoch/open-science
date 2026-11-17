@@ -1,0 +1,44 @@
+{
+  "source": "User-supplied build-preview.zip (2026-11-16)",
+  "files": [
+    {
+      "path": "generic.js",
+      "sourceSha256": "4c2c16c171f0135b2202f71036c419a5b08ed12ec71f061a38e0228129fd13af",
+      "bundledSha256": "71ced292ccd2f6e7d51c4a9d43d85515a4207fffb03caac75bf78817aafbc849"
+    },
+    {
+      "path": "generic.css",
+      "sourceSha256": "77a1106e12b157b742d1f76d63ff3aa495f57dce08baae749773d3cccef76983",
+      "bundledSha256": "c85bcf3fef5accc0f732a1e22adec8249a0be7c42c531ad7e21c60732350324d"
+    },
+    {
+      "path": "opening-layout.css",
+      "sourceSha256": "d183bdfd9ccf840f04f40309c9da8415c10c1e738d863e056d9b893423fdb7f5",
+      "bundledSha256": "da69a772a1dedf92d1eb98adf711cb745cf81915e1b7a34c75e16e3e3ee0bdfc"
+    },
+    {
+      "path": "end-card.css",
+      "sourceSha256": "0b11bfc7c97ceb1285c505c8d1232dbe290d1e605fd10ccf9029f55de560dd6d",
+      "bundledSha256": "16b25365169b15aa4933a821a81480c9625d0f08005a26b0b93668a5f9a3d155"
+    },
+    {
+      "path": "libs/operations-composer-v2.js",
+      "sourceSha256": "7027eb0a0e2231e97bf83c24be814f0f1e2a4fa506114d22a2ecb05256dfbe7c",
+      "bundledSha256": "c1b96092c71496bfe0725f43729c92442e4927041ecf59dcce4e81894d7b930a"
+    },
+    {
+      "path": "libs/operation-opening.js",
+      "sourceSha256": "1a0e7653b74d890b4c97c926c9ca7f30437a7a0fdbc5a22b9e03429c3840254b",
+      "bundledSha256": "e998e4601154a316ce49319d09bae4898392f97fe6ec4d9a2b3fa29d3b288a6a"
+    },
+    {
+      "path": "libs/operation-end-card.js",
+      "sourceSha256": "04c31c5cc030326a4e2044a8475ba8937a6e1a8451bb09f1f8dfc9363370fcd0",
+      "bundledSha256": "5bed5fe30195d1b43034f66b1ba01f0826ca1c1a0c19f100b280ee60cbef18a2"
+    }
+  ],
+  "hashSemantics": {
+    "sourceSha256": "Original imported file bytes, before formatting and workbench adaptations.",
+    "bundledSha256": "Current checked-in file bytes, after formatting and workbench adaptations."
+  }
+}

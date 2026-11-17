@@ -57,6 +57,10 @@ type ManagedFileVersionDescriptor = {
   sizeBytes: number
   checksum: string
   createdAt: string
+  /** Who produced the version, when the history records it. */
+  author?: ManagedFileVersionBinaryEditActor
+  /** Short description saved with a binary edit. */
+  summary?: string
 }
 
 type ManagedFileVersionInspectResult = {
@@ -157,6 +161,19 @@ type ManagedFileVersionSaveTextEditRequest = ManagedFileIdentity & {
   expectedHeadVersionId: string
   content: string
   operationId: string
+}
+
+type ManagedFileVersionBinaryEditActor = 'user' | 'agent'
+
+type ManagedFileVersionSaveBinaryEditRequest = ManagedFileIdentity & {
+  restore?: boolean
+  basedOnVersionId: string
+  expectedHeadVersionId: string
+  operationId: string
+  content: Uint8Array
+  actor: ManagedFileVersionBinaryEditActor
+  summary: string
+  opCount: number
 }
 
 type SaveTextEditResult =
@@ -293,6 +310,8 @@ export {
   type ManagedFileVersionInspectRequest,
   type ManagedFileVersionOriginKind,
   type ManagedFileVersionSaveTextEditRequest,
+  type ManagedFileVersionSaveBinaryEditRequest,
+  type ManagedFileVersionBinaryEditActor,
   type ManagedTextEditEligibility,
   type ManagedTextEditUnavailableReason,
   type ManagedTextFormat,

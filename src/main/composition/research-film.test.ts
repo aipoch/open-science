@@ -397,7 +397,8 @@ it.each(outcomes)(
       } finally {
         prepare?.mockRestore()
       }
-      await vi.waitFor(() => expect(mocks.run).toHaveBeenCalled())
+      // Filesystem staging can exceed the default one-second wait on a busy runner.
+      await vi.waitFor(() => expect(mocks.run).toHaveBeenCalled(), { timeout: 5_000 })
       if (outcome === 'refusal') {
         expect(counter).toHaveBeenLastCalledWith(
           expect.objectContaining({

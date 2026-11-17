@@ -1281,48 +1281,55 @@ describe('cached PDF table source ownership', () => {
     ).toBe(false)
   })
 
-  it('keeps uncertain table native units while applying an independent reliable table', async () => {
-    const f = setup()
-    f.cached.elements[0].table!.issues = [
-      { code: 'native-table-structure-ambiguous', detail: 'No unique row owner' }
-    ]
-    f.cached.elements.push({
-      ...structuredClone(f.cached.elements[0]),
-      id: 'independent',
-      regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
-      table: {
-        rowCount: 1,
-        columnCount: 1,
-        issues: [],
-        unassignedText: [],
-        cells: [
-          {
-            row: 0,
-            column: 0,
-            rowSpan: 1,
-            columnSpan: 1,
-            text: 'Prose',
-            regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
-            sourceItems: [{ pageNumber: 1, index: 2, text: 'Prose' }]
-          }
-        ]
-      }
-    })
-    const result = await applyCachedPdfTableSources(f.context)
-    expect(result.source.units.find((unit) => unit.id === 'group')).toEqual(
-      f.extraction.source.units[0]
-    )
-    expect(
-      result.source.units
-        .filter((unit) => unit.id.startsWith('table-source:'))
-        .map((unit) => unit.source)
-    ).toEqual(['Prose'])
-    expect(result.coverage.warnings).toContainEqual({
-      unitId: 'group',
-      reasons: ['table-layout', 'table-structure-unreliable']
-    })
-    expect(f.cached.elements).toHaveLength(2)
-  })
+  it.each(['complete origins', 'missing cell origin'])(
+    'keeps uncertain table native units while applying an independent reliable table: %s',
+    async (mode) => {
+      const f = setup()
+      f.cached.elements[0].table!.issues = [
+        { code: 'native-table-structure-ambiguous', detail: 'No unique row owner' }
+      ]
+      if (mode === 'missing cell origin') delete f.cached.elements[0].table!.cells[0].sourceItems
+      f.cached.elements.push({
+        ...structuredClone(f.cached.elements[0]),
+        id: 'independent',
+        regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
+        table: {
+          rowCount: 1,
+          columnCount: 1,
+          issues: [],
+          unassignedText: [],
+          cells: [
+            {
+              row: 0,
+              column: 0,
+              rowSpan: 1,
+              columnSpan: 1,
+              text: 'Prose',
+              regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
+              sourceItems: [{ pageNumber: 1, index: 2, text: 'Prose' }]
+            }
+          ]
+        }
+      })
+      const result = await applyCachedPdfTableSources(f.context)
+      expect(result.source.units.find((unit) => unit.id === 'group')).toEqual(
+        f.extraction.source.units[0]
+      )
+      expect(
+        result.source.units
+          .filter((unit) => unit.id.startsWith('table-source:'))
+          .map((unit) => unit.source)
+      ).toEqual(['Prose'])
+      expect(
+        result.coverage.warnings.find((warning) => warning.unitId === 'group')?.reasons
+      ).toEqual(
+        mode === 'complete origins'
+          ? ['table-layout', 'table-structure-unreliable']
+          : ['table-layout']
+      )
+      expect(f.cached.elements).toHaveLength(2)
+    }
+  )
 
   it('keeps the entire native unit when a reliable table shares it with a conflicting table', async () => {
     const f = setup()
@@ -3575,9 +3582,13 @@ it.each(['complete', 'detached', 'wide-mark', 'other-order-change'])(
 
 function scientificOwnerSetup(kind: string) {
   const f = setup()
-  const values = ['1', '.', '5', '×', '10', '−', '2']
-  const positions = [10, 14, 16, 23, 32, 40, 44]
-  const widths = [4, 2, 4, 6, 8, 4, 3]
+  const paired = kind.startsWith('paired-')
+  const coefficient = paired ? '1.5 (1.2)' : '1.5'
+  const extra = paired ? 20 : 0
+  const values = ['1', '.', paired ? '5 (1.2)' : '5', '×', '10', '−', '2']
+  const positions = [10, 14, 16, 23 + extra, 32 + extra, 40 + extra, 44 + extra]
+  const widths = [4, 2, 4 + extra, 6, 8, 4, 3]
+  const width = (37 + extra) / 100
   f.items.splice(
     0,
     f.items.length,
@@ -3591,7 +3602,7 @@ function scientificOwnerSetup(kind: string) {
         0,
         index < 5 ? 10 : 6,
         positions[index],
-        index < 5 || kind === 'flat-native' ? 80 : 84
+        index < 5 || kind.endsWith('flat-native') ? 80 : 84
       ],
       width: widths[index],
       height: index < 5 ? 10 : 6,
@@ -3619,12 +3630,12 @@ function scientificOwnerSetup(kind: string) {
       units: [
         {
           id: 'scientific',
-          source: '1.5 × 10⁻²' + (kind === 'partial-owner' ? ' Prose' : ''),
+          source: coefficient + ' × 10⁻²' + (kind === 'partial-owner' ? ' Prose' : ''),
           ...(kind !== 'ordinary-owner' ? { sourceOnly: true } : {}),
           fragments: [
             {
               pageNumber: 1,
-              rect: { x: 0.1, y: 0.1, width: 0.37, height: kind === 'partial-owner' ? 0.6 : 0.1 },
+              rect: { x: 0.1, y: 0.1, width, height: kind === 'partial-owner' ? 0.6 : 0.1 },
               items: (kind === 'partial-owner'
                 ? [...claims, { pageNumber: 1, index: 7, text: 'Prose' }]
                 : claims
@@ -3656,7 +3667,7 @@ function scientificOwnerSetup(kind: string) {
     }
   }
   const element = f.cached.elements[0]
-  element.regions = [{ page: 1, x: 0.1, y: 0.09, width: 0.37, height: 0.12 }]
+  element.regions = [{ page: 1, x: 0.1, y: 0.09, width, height: 0.12 }]
   element.table!.columnCount = 1
   element.table!.issues = []
   element.table!.cells = [
@@ -3665,12 +3676,12 @@ function scientificOwnerSetup(kind: string) {
       column: 0,
       rowSpan: 1,
       columnSpan: 1,
-      text: '1.5 × 10−' + (kind === 'wrong-script' ? '3' : '2'),
-      ...(kind === 'missing-runs'
+      text: coefficient + ' × 10−' + (kind === 'wrong-script' ? '3' : '2'),
+      ...(kind.endsWith('missing-runs')
         ? {}
         : {
             textRuns: [
-              { text: '1.5 × 10', position: 'normal' as const },
+              { text: coefficient + ' × 10', position: 'normal' as const },
               {
                 text: '−' + (kind === 'wrong-script' ? '3' : '2'),
                 position: 'superscript' as const
@@ -3696,16 +3707,19 @@ it.each([
   'flat-native',
   'wrong-script',
   'partial-owner',
-  'ordinary-owner'
+  'ordinary-owner',
+  'paired-complete',
+  'paired-missing-runs',
+  'paired-flat-native'
 ])(
   'preserves a canonical scientific owner only with complete native script evidence: %s',
   async (kind) => {
     const f = scientificOwnerSetup(kind),
       before = structuredClone(f.cached)
     const result = await applyCachedPdfTableSources(f.context)
-    if (kind === 'complete') {
+    if (kind.endsWith('complete')) {
       expect(result.source.units.find((u) => u.id.startsWith('table-source:'))?.source).toBe(
-        '1.5 × 10⁻²'
+        kind === 'paired-complete' ? '1.5 (1.2) × 10⁻²' : '1.5 × 10⁻²'
       )
       expect(result.source.units.find((u) => u.id === 'prose')).toEqual(
         f.context.extraction.source.units[1]
@@ -4525,3 +4539,117 @@ it('keeps normal cell publication for a valid native spanning header', async () 
     await f.destroy()
   }
 })
+
+it.each(['complete', 'changed-literal', 'broken-region'])(
+  'keeps an exact shared native header without retaining neighboring prose (%s)',
+  async (variant) => {
+    const f = setup()
+    const specs = [
+      ['Label', 10, 82, 13, 10],
+      ['Mode Size', 32, 82, 40, 10],
+      ['Value', 73, 82, 12, 10],
+      ['Alpha', 10, 65, 12, 10],
+      ['10', 32, 65, 9, 10],
+      ['20', 52, 65, 9, 10],
+      ['30', 73, 65, 9, 10],
+      ['Beta', 10, 49, 11, 10],
+      ['12', 32, 49, 9, 10],
+      ['24', 52, 49, 9, 10],
+      ['36', 73, 49, 9, 10],
+      ['Table 1: Example records.', 10, 96, 68, 4],
+      ['Independent prose', 10, 20, 61, 10]
+    ] as const
+    const native = specs.map(([str, x, y, width, height]) => ({
+      ...f.items[0],
+      str,
+      width,
+      height,
+      transform: [height, 0, 0, height, x, y]
+    }))
+    f.items.splice(0, f.items.length, ...native)
+    const region = (
+      index: number
+    ): { page: number; x: number; y: number; width: number; height: number } => {
+      const [, x, y, width, height] = specs[index]
+      return {
+        page: 1,
+        x: x / 100,
+        y: (100 - y - height) / 100,
+        width: width / 100,
+        height: height / 100
+      }
+    }
+    const origin = (index: number): { pageNumber: number; index: number; text: string } => ({
+      pageNumber: 1,
+      index,
+      text: native[index].str
+    })
+    const source = createPdfTranslationSource({
+      ...f.extraction.source,
+      units: [
+        {
+          id: 'header',
+          source: 'Label Mode Size Value',
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.1, y: 0.08, width: 0.75, height: 0.1 },
+              items: [0, 1, 2].map(origin)
+            }
+          ]
+        },
+        ...native.slice(3).map((item, index) => ({
+          id: 'record-' + index,
+          source: item.str,
+          fragments: [{ pageNumber: 1, rect: region(index + 3), items: [origin(index + 3)] }]
+        }))
+      ]
+    })
+    f.context.extraction = { ...f.extraction, source }
+    const element = f.cached.elements[0]
+    element.regions = [{ page: 1, x: 0.09, y: 0.07, width: 0.78, height: 0.5 }]
+    element.caption = { text: native[11].str, regions: [region(11)] }
+    element.table = {
+      rowCount: 3,
+      columnCount: 4,
+      unassignedText: [],
+      issues: [{ code: 'native-table-structure-ambiguous', detail: 'Uncertain record allocation' }],
+      cells: [
+        ...[
+          { text: 'Label', index: 0, rect: region(0) },
+          {
+            text: variant === 'changed-literal' ? 'Kind' : 'Mode',
+            index: 1,
+            rect: { ...region(1), x: variant === 'broken-region' ? 0.325 : 0.32, width: 0.14 }
+          },
+          { text: 'Size', index: 1, rect: { ...region(1), x: 0.52, width: 0.2 } },
+          { text: 'Value', index: 2, rect: region(2) }
+        ].map(({ text, index, rect }, column) => ({
+          row: 0,
+          column,
+          rowSpan: 1,
+          columnSpan: 1,
+          text,
+          sourceItems: [origin(index)],
+          regions: [rect]
+        })),
+        ...native.slice(3, 11).map((item, index) => ({
+          row: Math.floor(index / 4) + 1,
+          column: index % 4,
+          rowSpan: 1,
+          columnSpan: 1,
+          text: item.str,
+          sourceItems: [origin(index + 3)],
+          regions: [region(index + 3)]
+        }))
+      ]
+    }
+    const out = await applyCachedPdfStructureSources(f.context)
+    expect(out.extraction.source.units).toEqual([
+      { ...source.units[0], ...(variant === 'complete' ? { sourceOnly: true } : {}) },
+      ...source.units.slice(1)
+    ])
+    expect(out.retainedSourcePageNumbers ?? []).toEqual([])
+    expect(out.extraction.source.originalRegions).toEqual(source.originalRegions)
+  }
+)

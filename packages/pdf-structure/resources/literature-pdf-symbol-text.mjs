@@ -98,7 +98,8 @@ function positionedNativeGlyphs(operators, observeGlyph) {
     stack = []
   let matrix = [1, 0, 0, 1, 0, 0],
     textMatrix = [...matrix]
-  let size = 0,
+  let fontName,
+    size = 0,
     charSpace = 0,
     wordSpace = 0,
     hScale = 1,
@@ -117,12 +118,12 @@ function positionedNativeGlyphs(operators, observeGlyph) {
     const op = operators.fnArray[run],
       args = operators.argsArray[run]
     if (op === OPS.save || op === OPS.paintFormXObjectBegin) {
-      stack.push({ matrix, size, charSpace, wordSpace, hScale, rise, leading })
+      stack.push({ matrix, fontName, size, charSpace, wordSpace, hScale, rise, leading })
       if (op === OPS.paintFormXObjectBegin && args[0])
         matrix = Util.transform(matrix, Array.from(args[0]))
     } else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
       const state = stack.pop()
-      if (state) ({ matrix, size, charSpace, wordSpace, hScale, rise, leading } = state)
+      if (state) ({ matrix, fontName, size, charSpace, wordSpace, hScale, rise, leading } = state)
       else active = false
     } else if (op === OPS.transform) matrix = Util.transform(matrix, args)
     else if (op === OPS.beginText) {
@@ -145,7 +146,7 @@ function positionedNativeGlyphs(operators, observeGlyph) {
       leading = -args[1]
       move(args[0], args[1])
     } else if (op === OPS.nextLine) move(0, -leading)
-    else if (op === OPS.setFont) size = args[1]
+    else if (op === OPS.setFont) [fontName, size] = args
     else if (op === OPS.setCharSpacing) charSpace = args[0]
     else if (op === OPS.setWordSpacing) wordSpace = args[0]
     else if (op === OPS.setHScale) hScale = args[0] / 100
@@ -181,6 +182,7 @@ function positionedNativeGlyphs(operators, observeGlyph) {
         observeGlyph?.({
           operationIndex: run,
           glyphIndex: index,
+          fontName,
           glyph,
           active,
           transform: [...transform],
@@ -1262,8 +1264,99 @@ function recoverUnmappedCidAdvances(page, content, operators) {
   }
 }
 
+// PDF.js drops the legacy form-feed code before returning text items. A
+// measured Type 1 mark can restore the specific blank inside a mass unit.
+function recoverComputerModernMassSymbol(page, content, operators) {
+  const slots = content.items.flatMap((item, index, items) => {
+    const before = items[index - 1],
+      after = items[index + 1]
+    const fontSize = item.transform?.[0]
+    return item.str === ' ' &&
+      item.height === 0 &&
+      item.dir === 'ltr' &&
+      Number.isFinite(fontSize) &&
+      fontSize > 0 &&
+      item.transform[1] === 0 &&
+      item.transform[2] === 0 &&
+      item.transform[3] === fontSize &&
+      item.width > fontSize * 0.5 &&
+      item.width < fontSize &&
+      /\(\s*M$/u.test(before?.str ?? '') &&
+      /^\)/u.test(after?.str ?? '') &&
+      before.fontName === item.fontName &&
+      after.fontName === item.fontName &&
+      before.transform[5] === item.transform[5] &&
+      after.transform[5] === item.transform[5] &&
+      Math.abs(before.transform[4] + before.width - item.transform[4]) < 0.01 &&
+      Math.abs(after.transform[4] - item.transform[4] - item.width) < 0.01
+      ? [{ item, index, fontSize }]
+      : []
+  })
+  if (!slots.length || !operators?.fnArray?.length) return content
+  const native = []
+  const points = positionedNativeGlyphs(
+    operators,
+    ({ operationIndex, glyphIndex, glyph, fontName }) => {
+      if (
+        glyph.originalCharCode !== 12 ||
+        glyph.unicode !== '\f' ||
+        glyph.isInFont !== true ||
+        glyph.isSpace !== false ||
+        glyph.accent !== null ||
+        glyph.width !== 963 ||
+        !fontName
+      )
+        return
+      const font = page.commonObjs?.has?.(fontName) ? page.commonObjs.get(fontName) : undefined
+      if (
+        symbolFontName(font?.name) === 'CMSY6' &&
+        font.type === 'Type1' &&
+        font.differences?.length === 0 &&
+        font.defaultEncoding?.[12] === '' &&
+        font.widths?.[12] === 963
+      )
+        native.push({ operationIndex, glyphIndex, fontName })
+    }
+  )
+  const repaired = new Map()
+  for (const { item, index, fontSize } of slots) {
+    const [, , , , x, y] = item.transform
+    const matches = native.flatMap(({ operationIndex, glyphIndex, fontName }) => {
+      const point = points.get(operationIndex)?.get(glyphIndex)
+      if (!point) return []
+      const { start, end, axis, height } = point
+      return Math.abs(start[0] - x) < 0.01 &&
+        end[0] <= x + item.width &&
+        x + item.width - end[0] < fontSize * 0.12 &&
+        y - start[1] > fontSize * 0.08 &&
+        y - start[1] < fontSize * 0.22 &&
+        height > fontSize * 0.6 &&
+        height < fontSize * 0.75
+        ? [
+            {
+              ...item,
+              str: '⊙',
+              // The native text item is a blank. It cannot certify a source string.
+              sourceItem: undefined,
+              fontName,
+              width: end[0] - start[0],
+              height,
+              transform: [axis, 0, 0, height, ...start],
+              inlineSymbol: true
+            }
+          ]
+        : []
+    })
+    if (matches.length === 1) repaired.set(index, matches[0])
+  }
+  return repaired.size
+    ? { ...content, items: content.items.map((item, index) => repaired.get(index) ?? item) }
+    : content
+}
+
 export async function repairPdfSymbolText(page, content, operators) {
   if (content.items.some((item) => item.transform)) operators ??= await page.getOperatorList()
+  content = recoverComputerModernMassSymbol(page, content, operators)
   content = recoverUnmappedCidAdvances(page, content, operators)
   content = repairSpacedTextOffsets(content, operators)
   const originalContent = content

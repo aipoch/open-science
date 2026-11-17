@@ -2,86 +2,118 @@ import { useLayoutEffect, useRef, useState } from 'react'
 
 import { cn } from '@/lib/utils'
 
-import { getExtensionPreservingFileNameParts } from './extension-preserving-file-name'
+import {
+  getExtensionPreservingFileNameParts,
+  type ExtensionPreservingFileNameParts
+} from './extension-preserving-file-name'
 
 type ExtensionPreservingFileNameProps = {
   name: string
   className?: string
+  // Retained for existing card callers; both densities follow the same width-based rule.
   compact?: boolean
 }
 
-// Gives the basename room to truncate while keeping its ending and common final extensions visible.
+type MeasuredName = {
+  name: string
+  naturalWidth: number
+  parts: ExtensionPreservingFileNameParts
+}
+
+// All file-name surfaces share a measured prefix / ellipsis / suffix / extension layout.
 const ExtensionPreservingFileName = ({
   name,
-  className,
-  compact = false
+  className
 }: ExtensionPreservingFileNameProps): React.JSX.Element => {
   const rootRef = useRef<HTMLSpanElement>(null)
-  const measureRef = useRef<HTMLSpanElement>(null)
-  const [useCompactAbbreviation, setUseCompactAbbreviation] = useState(compact)
+  const probeRef = useRef<HTMLSpanElement>(null)
+  const [measured, setMeasured] = useState<MeasuredName>()
 
   useLayoutEffect(() => {
-    if (!compact) return
-
-    const updateAbbreviation = (): void => {
-      const availableWidth = rootRef.current?.getBoundingClientRect().width ?? 0
-      const requiredWidth = measureRef.current?.getBoundingClientRect().width ?? 0
-      if (availableWidth === 0 || requiredWidth === 0) return
-      setUseCompactAbbreviation(requiredWidth > availableWidth)
-    }
-
-    updateAbbreviation()
     const root = rootRef.current
-    if (!root || typeof ResizeObserver === 'undefined') return
+    const probe = probeRef.current
+    if (!root || !probe) return
 
-    const observer = new ResizeObserver(updateAbbreviation)
+    const update = (): void => {
+      const width = root.getBoundingClientRect().width
+      if (width <= 0) return
+      const widths = new Map<string, number>([['', 0]])
+      const measure = (text: string): number => {
+        const cached = widths.get(text)
+        if (cached !== undefined) return cached
+        probe.textContent = text
+        const result = probe.getBoundingClientRect().width
+        probe.textContent = ''
+        widths.set(text, result)
+        return result
+      }
+      const naturalWidth = measure(name)
+      if (naturalWidth <= 0) return
+      const parts = getExtensionPreservingFileNameParts(name, { width, measure })
+      setMeasured((previous) =>
+        previous?.name === name &&
+        previous.naturalWidth === naturalWidth &&
+        previous.parts.head === parts.head &&
+        previous.parts.tail === parts.tail &&
+        previous.parts.extension === parts.extension &&
+        previous.parts.isAbbreviated === parts.isAbbreviated
+          ? previous
+          : { name, naturalWidth, parts }
+      )
+    }
+    update()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(update)
     observer.observe(root)
-    return () => observer.disconnect()
-  }, [compact, name])
+    // Fonts can change text widths even when the container width stays fixed.
+    document.fonts?.addEventListener('loadingdone', update)
+    return () => {
+      observer.disconnect()
+      document.fonts?.removeEventListener('loadingdone', update)
+    }
+  }, [name])
 
-  const { head, tail, extension, isCompactAbbreviation } = getExtensionPreservingFileNameParts(
-    name,
-    compact && useCompactAbbreviation
-  )
+  const current = measured?.name === name ? measured : undefined
+  const { head, tail, extension, isAbbreviated } =
+    current?.parts ?? getExtensionPreservingFileNameParts(name)
 
   return (
     <span
       ref={rootRef}
       data-testid="file-name-root"
+      aria-label={name}
+      dir="ltr"
+      style={{ width: current?.naturalWidth, unicodeBidi: 'isolate' }}
       className={cn(
         'relative flex min-w-0 max-w-full items-center overflow-hidden whitespace-nowrap',
         className
       )}
     >
-      {compact ? (
-        <span
-          ref={measureRef}
-          aria-hidden="true"
-          className="pointer-events-none absolute invisible whitespace-nowrap"
-        >
-          {name}
-        </span>
-      ) : null}
       <span
-        data-testid="file-name-head"
-        className={cn('min-w-0', isCompactAbbreviation ? 'shrink-0' : 'shrink truncate')}
-      >
+        ref={probeRef}
+        aria-hidden="true"
+        className="pointer-events-none invisible absolute w-max whitespace-nowrap"
+      />
+      <bdi data-testid="file-name-head" className="min-w-0 shrink truncate">
         {head}
-      </span>
-      {isCompactAbbreviation ? (
+      </bdi>
+      {isAbbreviated ? (
         <span data-testid="file-name-ellipsis" className="shrink-0">
-          ...
+          …
         </span>
       ) : null}
       {tail ? (
-        <span data-testid="file-name-tail" className="shrink-0">
+        <bdi data-testid="file-name-tail" className="shrink-0">
           {tail}
-        </span>
+        </bdi>
       ) : null}
       {extension ? (
         <span
           data-testid="file-name-extension"
-          className="max-w-[50%] shrink-0 overflow-hidden text-ellipsis"
+          className={cn(
+            'shrink-0 overflow-hidden text-ellipsis',
+            (!current || isAbbreviated) && 'max-w-[50%]'
+          )}
         >
           {extension}
         </span>

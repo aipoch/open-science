@@ -18,11 +18,23 @@ import type {
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import type { NotebookCommandWorkflows } from './notebook-workflows'
+import type {
+  NotebookProcessMonitorRequest,
+  TerminateNotebookProcessRequest
+} from '../../shared/notebook-process-monitor'
 
 const log = createLogger('notebook:ipc')
 
 // Registers renderer-callable notebook commands on the main-process IPC bus.
 const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void => {
+  ipcMainHandle('notebook:process-monitor', (_event, request?: NotebookProcessMonitorRequest) =>
+    handlers.processMonitor(request)
+  )
+  ipcMainHandle(
+    'notebook:terminate-monitored-process',
+    (_event, request: TerminateNotebookProcessRequest) =>
+      handlers.terminateMonitoredProcess(request)
+  )
   ipcMainHandle('notebook:run-index', (_event, request: NotebookSessionRequest) =>
     handlers.runIndex(request)
   )

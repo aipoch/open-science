@@ -93,3 +93,23 @@ test('PDF note markers appear on hover, selection and keyboard focus without cov
   await page.keyboard.press('Enter')
   await expect(note).toBeVisible()
 })
+
+test('PDF dock fits the reading pane and dismisses split tool hints after hover', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 494, height: 650 })
+  await page.goto('/pdf-outline.html?notes')
+  const area = page.getByRole('button', { name: 'Select area to annotate', exact: true })
+  const arrow = page.getByRole('button', { name: 'Area selection actions' })
+  await area.hover()
+  await expect(page.getByRole('tooltip')).toBeVisible()
+  await arrow.hover()
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.mouse.move(10, 100)
+  await expect(page.getByRole('menu')).not.toBeVisible()
+  await expect(page.getByRole('tooltip')).not.toBeVisible()
+  const view = await page.getByRole('group', { name: 'PDF view controls' }).boundingBox()
+  const button = await area.boundingBox()
+  expect(button!.y + button!.height / 2).toBeGreaterThan(view!.y)
+  expect(button!.y + button!.height / 2).toBeLessThan(view!.y + view!.height)
+})
