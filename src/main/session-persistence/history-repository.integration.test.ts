@@ -257,6 +257,34 @@ it('serves mixed JSON and JSONL through the same history API and saves each in i
   expect(await client.sessionHistoryItem.count({ where: { sessionId: 'session' } })).toBe(0)
 })
 
+it('serves JSONL pages without transient record problems and strips older polluted headers', async () => {
+  const repository = await setup()
+  await repository.saveSession({ ...fixture(), recordProblems: ['missing-record'] })
+  const journal = await readFile(sessionJournalPath(logicalPath()), 'utf8')
+  expect(journal).not.toContain('recordProblems')
+  const stored = await client.sessionHistoryIndex.findUniqueOrThrow({
+    where: { sessionId: 'session' }
+  })
+  expect(JSON.parse(stored.headerJson)).not.toHaveProperty('recordProblems')
+  const page = (await repository.loadSessionHistoryPage(request))!
+  expect(page.complete).toBeUndefined()
+  expect(page.session).not.toHaveProperty('recordProblems')
+
+  // A pre-fix index could still contain the Main-only fact. Reading it through the ordinary
+  // entry point must not surface it, and must not require a rebuild of the derived index.
+  await client.sessionHistoryIndex.update({
+    where: { sessionId: 'session' },
+    data: {
+      headerJson: JSON.stringify({
+        ...JSON.parse(stored.headerJson),
+        recordProblems: ['missing-record']
+      })
+    }
+  })
+  const polluted = (await reopen().loadSessionHistoryPage(request))!
+  expect(polluted.session).not.toHaveProperty('recordProblems')
+})
+
 it('reads indexed JSONL pages without loading the complete conversation', async () => {
   const repository = await setup()
   await repository.saveSession(fixture())

@@ -39,11 +39,36 @@ type HistoryItem = {
 }
 type Header = Omit<
   PersistedChatSession,
-  'messages' | 'activities' | 'activityGroups' | 'artifacts' | 'conversationGraph'
+  | 'messages'
+  | 'activities'
+  | 'activityGroups'
+  | 'artifacts'
+  | 'conversationGraph'
+  | 'recordProblems'
 >
 type Cursor = { projectId: string; sessionId: string; revision: number; before: number }
 
 const itemKey = (kind: string, id: string): string => JSON.stringify([kind, id])
+
+const runtimeIncremental = (
+  previous: {
+    projectId: string
+    revision: bigint
+    scopeKey: string
+    sourceFingerprint: string
+  } | null,
+  session: PersistedChatSession,
+  scopeKey: string,
+  revision: number,
+  runtime?: { changes: RuntimeSessionChanges; sourceFingerprint: string }
+): boolean =>
+  Boolean(
+    runtime &&
+    previous?.projectId === session.projectId &&
+    previous.revision + 1n === BigInt(revision) &&
+    previous.scopeKey === scopeKey &&
+    previous.sourceFingerprint === runtime.sourceFingerprint
+  )
 
 const parseCursor = (
   request: LoadSessionHistoryPageRequest,
@@ -173,12 +198,31 @@ const historyItems = (
 }
 
 const sessionHeader = (session: PersistedChatSession): Header => {
-  const { messages, activities, activityGroups, artifacts, conversationGraph, ...header } = session
+  const {
+    messages,
+    activities,
+    activityGroups,
+    artifacts,
+    conversationGraph,
+    recordProblems,
+    ...header
+  } = session
   void messages
   void activities
   void activityGroups
   void artifacts
   void conversationGraph
+  // Main-only read facts are response data, never durable Session state. Older indexes may still
+  // carry them, so readPage applies the same exclusion when it parses a stored header.
+  void recordProblems
+  return header
+}
+
+const parseStoredHeader = (headerJson: string): Header => {
+  const stored = JSON.parse(headerJson) as unknown
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return stored as Header
+  const { recordProblems: ignored, ...header } = stored as Header & { recordProblems?: unknown }
+  void ignored
   return header
 }
 
@@ -215,6 +259,18 @@ const serializePayload = (item: HistoryItem): string => {
   return JSON.stringify(payload)
 }
 
+const serializeItems = (
+  items: readonly HistoryItem[],
+  only?: ReadonlySet<string>
+): Map<string, string> => {
+  const payloads = new Map<string, string>()
+  for (const item of items) {
+    const key = itemKey(item.kind, item.itemId)
+    if (!only || only.has(key)) payloads.set(key, serializePayload(item))
+  }
+  return payloads
+}
+
 export class SessionHistoryProjectionRepository {
   constructor(private readonly prisma: () => Promise<PrismaClient>) {}
 
@@ -224,33 +280,54 @@ export class SessionHistoryProjectionRepository {
     runtime?: { changes: RuntimeSessionChanges; sourceFingerprint: string },
     transaction?: Prisma.TransactionClient
   ): Promise<void> {
+    const graph = session.conversationGraph
+    const complex = Boolean(graph && (graph.frames.length !== 1 || graph.branches.length !== 1))
+    const revision = session.revision ?? 0
+    // Pure in-memory projection. Complex graphs are removed before any display record is read or
+    // serialized; simple graphs build their items and response header exactly once.
+    const computation = complex
+      ? { complex: true as const }
+      : (() => {
+          const { items, scopeKey } = historyItems(session)
+          return {
+            complex: false as const,
+            items,
+            scopeKey,
+            headerJson: JSON.stringify(sessionHeader(session)),
+            totalItems: items.filter(({ ordinal }) => ordinal !== null).length
+          }
+        })()
+    const client = transaction ? undefined : await this.prisma()
+    const runtimeKeys = runtime?.changes
+      ? new Set([
+          ...runtime.changes.messages.map(({ id }) => itemKey('message', id)),
+          ...runtime.changes.activities.map(({ id }) => itemKey('activity', id)),
+          ...runtime.changes.activityGroups.map(({ id }) => itemKey('group', id))
+        ])
+      : undefined
+
+    // Prepare payloads without reading the current index: runtime hints only identify the
+    // after-images that can be serialized safely before the write transaction. The transaction
+    // still validates the hint and falls back to serializing missing/new rows inside the lock.
+    const preparedPayloads = computation.complex
+      ? undefined
+      : runtimeKeys
+        ? serializeItems(computation.items, runtimeKeys)
+        : serializeItems(computation.items)
+
     const operation = async (tx: Prisma.TransactionClient): Promise<void> => {
-      const graph = session.conversationGraph
-      if (graph && (graph.frames.length !== 1 || graph.branches.length !== 1)) {
+      if (computation.complex) {
         // These conversations use the complete reader for branch/Frame navigation. Remove
         // any older display projection instead of maintaining rows that cannot be paginated.
         await this.delete(session.id, tx)
         return
       }
-      const { items, scopeKey } = historyItems(session)
-      const revision = session.revision ?? 0
+      const { items, scopeKey, headerJson, totalItems } = computation
       const previous = await tx.sessionHistoryIndex.findUnique({ where: { sessionId: session.id } })
-      const runtimeChanges = runtime?.changes
       // Revision alone cannot detect an externally replaced file at the same revision. Hints
       // apply only when the indexed source is the exact authority the reducer started from.
-      const incremental =
-        runtimeChanges &&
-        previous?.projectId === session.projectId &&
-        previous.revision + 1n === BigInt(revision) &&
-        previous.scopeKey === scopeKey &&
-        previous.sourceFingerprint === runtime.sourceFingerprint
-      const changed = incremental
-        ? new Set([
-            ...runtimeChanges.messages.map(({ id }) => itemKey('message', id)),
-            ...runtimeChanges.activities.map(({ id }) => itemKey('activity', id)),
-            ...runtimeChanges.activityGroups.map(({ id }) => itemKey('group', id))
-          ])
-        : undefined
+      const incremental = runtimeIncremental(previous, session, scopeKey, revision, runtime)
+      const changed = incremental ? runtimeKeys : undefined
       const existing = await tx.sessionHistoryItem.findMany({
         where: { sessionId: session.id },
         select: {
@@ -271,16 +348,16 @@ export class SessionHistoryProjectionRepository {
           revision: BigInt(revision),
           sourceFingerprint,
           scopeKey,
-          headerJson: JSON.stringify(sessionHeader(session)),
-          totalItems: items.filter(({ ordinal }) => ordinal !== null).length
+          headerJson,
+          totalItems
         },
         update: {
           projectId: session.projectId,
           revision: BigInt(revision),
           sourceFingerprint,
           scopeKey,
-          headerJson: JSON.stringify(sessionHeader(session)),
-          totalItems: items.filter(({ ordinal }) => ordinal !== null).length
+          headerJson,
+          totalItems
         }
       })
       const additions: Prisma.SessionHistoryItemCreateManyInput[] = []
@@ -288,8 +365,12 @@ export class SessionHistoryProjectionRepository {
         const key = itemKey(item.kind, item.itemId)
         const old = byId.get(key)
         byId.delete(key)
+        // New rows and non-incremental fallbacks have no prepared payload; serialize them
+        // inside the write transaction so the committed row always reflects this session.
         const payloadJson =
-          !old || !changed || changed.has(key) ? serializePayload(item) : undefined
+          !old || !changed || changed.has(key)
+            ? (preparedPayloads?.get(key) ?? serializePayload(item))
+            : undefined
         const data = {
           ordinal: item.ordinal,
           promptMessageId: item.promptMessageId,
@@ -333,7 +414,7 @@ export class SessionHistoryProjectionRepository {
       }
     }
     if (transaction) await operation(transaction)
-    else await (await this.prisma()).$transaction(operation, { maxWait: 30_000 })
+    else await client!.$transaction(operation, { maxWait: 30_000, timeout: 10_000 })
   }
 
   async readPage(
@@ -429,7 +510,7 @@ export class SessionHistoryProjectionRepository {
           revision,
           ...(messageBranchId ? { messageBranchId } : {}),
           session: {
-            ...(JSON.parse(index.headerJson) as Header),
+            ...parseStoredHeader(index.headerJson),
             messages,
             activities,
             activityGroups,

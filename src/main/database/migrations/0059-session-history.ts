@@ -52,6 +52,13 @@ const legacySessionHistoryMigration = {
   id: '0051_session_history'
 } as const
 
+// An intermediate local build briefly used history as 0058 before upstream assigned that number to
+// schedules. Only an exact, complete released local ledger is bridged; its DDL bytes stay frozen.
+const jsonlSessionHistory0058Migration = {
+  ...sessionHistoryMigration,
+  id: '0058_session_history'
+} as const
+
 // Frozen intermediate fork release. Upstream later assigned 0055 to a different migration, so the
 // current history migration moved to 0059 and this exact released row is bridged before upgrade.
 const jsonlSessionHistory0055Migration = {
@@ -59,4 +66,9 @@ const jsonlSessionHistory0055Migration = {
   id: '0055_session_history'
 } as const
 
-export { jsonlSessionHistory0055Migration, legacySessionHistoryMigration, sessionHistoryMigration }
+export {
+  jsonlSessionHistory0055Migration,
+  jsonlSessionHistory0058Migration,
+  legacySessionHistoryMigration,
+  sessionHistoryMigration
+}

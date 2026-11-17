@@ -11,6 +11,7 @@ import { literatureSmartPauseRunMigration } from './migrations/0045-literature-s
 import { literatureTranslationMigration } from './migrations/0050-literature-translation'
 import {
   jsonlSessionHistory0055Migration,
+  jsonlSessionHistory0058Migration,
   legacySessionHistoryMigration,
   sessionHistoryMigration
 } from './migrations/0059-session-history'
@@ -2028,6 +2029,7 @@ const applyManifestMigration = async (
   options: {
     repairVisionEvidenceReference?: boolean
     repairLiteratureManifestReference?: boolean
+    replaceLegacyLedgerRow?: Readonly<{ id: string; checksum: string }>
   } = {}
 ): Promise<void> => {
   const preserveCurrentSchema = await hasCurrentManagedFileVersionFoundation(client)
@@ -2146,6 +2148,22 @@ const applyManifestMigration = async (
     await client.$transaction(
       async (transaction) => {
         const transactionClient = transaction as unknown as PrismaClient
+        if (options.replaceLegacyLedgerRow) {
+          const removed = await migrationSqlExecutor.execute(
+            transactionClient,
+            'DELETE FROM "_open_science_migrations" WHERE "id" = ? AND "checksum" = ?',
+            options.replaceLegacyLedgerRow.id,
+            options.replaceLegacyLedgerRow.checksum
+          )
+          if (removed !== 1) {
+            throw new DatabaseMigrationError(
+              'database_history_invalid',
+              'The fork database migration row changed before its atomic replacement.',
+              false,
+              options.replaceLegacyLedgerRow.id
+            )
+          }
+        }
         // A pre-ledger build may already have emitted the current generated schema. When this
         // migration's complete verifier contract is already satisfied, adopt its immutable ledger
         // identity without replaying non-idempotent SQLite ALTER TABLE statements.
@@ -2390,12 +2408,15 @@ const migrateApplicationDatabaseWithManifest = async (
   }
 
   const applied: string[] = []
-  // The personal fork shipped history as 0051 before upstream assigned that number, and an
-  // intermediate fork release used 0055 before upstream assigned that number to a different
-  // migration. Only bridge an exact, complete released ledger. Keep the derived tables and
-  // authoritative Session files intact; the 0059 history migration adopts them after the
-  // upstream suffix.
+  // The personal fork shipped history as 0051 before upstream assigned that number, and
+  // intermediate fork releases used 0055 and 0058 before upstream reassigned those numbers.
+  // Only bridge an exact, complete released ledger. Keep the derived tables and authoritative
+  // Session files intact; the 0059 history migration adopts them after the upstream suffix.
   const legacyHistoryCandidates = [
+    {
+      migration: jsonlSessionHistory0058Migration,
+      expectedThroughId: '0057_project_optimization_prompt'
+    },
     {
       migration: legacySessionHistoryMigration,
       expectedThroughId: '0050_literature_translation'
@@ -2438,11 +2459,15 @@ const migrateApplicationDatabaseWithManifest = async (
     validateLedger(prefix, manifest)
     const next = manifest[prefix.length]!
     await runMigrationVerifiers(client, migration.verifiers)
+    // Keep the pre-upgrade snapshot: it must retain the exact released fork row and checksum.
+    // The frozen row is replaced only inside the first upstream migration's transaction, so a
+    // failure there rolls back both the schema work and the legacy ledger row.
+    options.onProgress?.({ phase: 'migrating', migrationId: next.id })
     await ensureBackupBeforeMigration(next)
-    await client.$executeRaw`
-      DELETE FROM "_open_science_migrations"
-      WHERE "id" = ${row.id} AND "checksum" = ${legacyChecksum}
-    `
+    await applyManifestMigration(client, next, {
+      replaceLegacyLedgerRow: { id: row.id, checksum: legacyChecksum }
+    })
+    applied.push(next.id)
     ledger = await readLedger(client)
   }
   const appliedCount = validateLedger(ledger, manifest)

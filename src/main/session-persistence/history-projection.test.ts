@@ -30,6 +30,94 @@ const setup = async (): Promise<SessionHistoryProjectionRepository> => {
   await migrateApplicationDatabase(client)
   return new SessionHistoryProjectionRepository(async () => client!)
 }
+// Delegate to the real Prisma client while recording the exact interactive transaction options.
+// This keeps the assertions on the actual call path instead of a mocked $transaction body.
+const recordingClient = (
+  real: PrismaClient
+): {
+  client: PrismaClient
+  calls: { options: { maxWait?: number; timeout?: number } | undefined }[]
+  inTransaction: () => boolean
+} => {
+  const calls: { options: { maxWait?: number; timeout?: number } | undefined }[] = []
+  let active = 0
+  const client = new Proxy(real, {
+    get(target, property) {
+      if (property === '$transaction') {
+        return (operation: unknown, options?: { maxWait?: number; timeout?: number }) => {
+          calls.push({ options })
+          const transaction = target.$transaction.bind(target) as (
+            operation: unknown,
+            options?: { maxWait?: number; timeout?: number }
+          ) => Promise<unknown>
+          active += 1
+          let pending: Promise<unknown>
+          try {
+            pending = transaction(operation, options)
+          } catch (error) {
+            active -= 1
+            throw error
+          }
+          return pending.finally(() => {
+            active -= 1
+          })
+        }
+      }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    }
+  }) as PrismaClient
+  return { client, calls, inTransaction: () => active > 0 }
+}
+// Track display-model reads that bypass the interactive transaction. The transaction client is
+// supplied by Prisma, so any read through this proxy is an out-of-transaction planning read.
+const runtimeReadScope = (
+  real: PrismaClient
+): { client: PrismaClient; readsOutsideTransaction: string[] } => {
+  const readsOutsideTransaction: string[] = []
+  let active = 0
+  const client = new Proxy(real, {
+    get(target, property) {
+      if (property === '$transaction') {
+        const transaction = target.$transaction.bind(target) as (
+          operation: unknown,
+          options?: { maxWait?: number; timeout?: number }
+        ) => Promise<unknown>
+        return (operation: unknown, options?: { maxWait?: number; timeout?: number }) => {
+          active += 1
+          let pending: Promise<unknown>
+          try {
+            pending = transaction(operation, options)
+          } catch (error) {
+            active -= 1
+            throw error
+          }
+          return pending.finally(() => {
+            active -= 1
+          })
+        }
+      }
+      if (property === 'sessionHistoryIndex' || property === 'sessionHistoryItem') {
+        const delegate = Reflect.get(target, property, target) as object
+        return new Proxy(delegate, {
+          get(targetDelegate, method) {
+            const value = Reflect.get(targetDelegate, method, targetDelegate)
+            if (typeof value !== 'function') return value
+            return (...args: unknown[]) => {
+              if (active === 0) {
+                readsOutsideTransaction.push(`${String(property)}.${String(method)}`)
+              }
+              return value.apply(targetDelegate, args)
+            }
+          }
+        })
+      }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    }
+  }) as PrismaClient
+  return { client, readsOutsideTransaction }
+}
 const message = (id: string, role: 'user' | 'agent', createdAt: number): PersistedChatMessage => ({
   id,
   role,
@@ -129,10 +217,35 @@ describe('SQLite Session display history', () => {
       'activities',
       'activityGroups',
       'artifacts',
-      'conversationGraph'
+      'conversationGraph',
+      'recordProblems'
     ]) {
       expect(header).not.toHaveProperty(field)
     }
+  })
+
+  it('keeps transient record problems out of new headers and older derived indexes', async () => {
+    const index = await setup()
+    const full: PersistedChatSession = { ...session(1), recordProblems: ['size-limit'] }
+    await index.sync(full, 'source')
+    const stored = await client!.sessionHistoryIndex.findUniqueOrThrow({
+      where: { sessionId: full.id }
+    })
+    expect(JSON.parse(stored.headerJson)).not.toHaveProperty('recordProblems')
+    expect((await index.readPage(request, 'source'))!.session).not.toHaveProperty('recordProblems')
+
+    // Older indexes persisted the same transient Main fact in headerJson. Excluding it on read
+    // keeps them usable without a rebuild or a second display-only schema.
+    await client!.sessionHistoryIndex.update({
+      where: { sessionId: full.id },
+      data: {
+        headerJson: JSON.stringify({
+          ...JSON.parse(stored.headerJson),
+          recordProblems: ['missing-record']
+        })
+      }
+    })
+    expect((await index.readPage(request, 'source'))!.session).not.toHaveProperty('recordProblems')
   })
 
   it('does not decode off-page tool bodies and preserves complete Unicode tool output', async () => {
@@ -423,6 +536,46 @@ describe('SQLite Session display history', () => {
     ])
   })
 
+  it('validates independent runtime syncs inside the transaction and serializes new rows there', async () => {
+    await setup()
+    const scope = runtimeReadScope(client!)
+    const index = new SessionHistoryProjectionRepository(async () => scope.client)
+    const full = session(0)
+    await index.sync(full, 'one')
+    const added = {
+      id: 'late-artifact',
+      kind: 'managed-file' as const,
+      path: '/artifact/late.txt',
+      fileUrl: 'file:///artifact/late.txt'
+    }
+    const next = {
+      ...full,
+      revision: 2,
+      title: 'Runtime title',
+      artifacts: [...full.artifacts!, added]
+    }
+    scope.readsOutsideTransaction.length = 0
+    await index.sync(next, 'two', {
+      changes: { messages: [], activities: [], activityGroups: [], branches: [] },
+      sourceFingerprint: 'one'
+    })
+    expect(scope.readsOutsideTransaction).toEqual([])
+    const stored = await client!.sessionHistoryItem.findUnique({
+      where: {
+        sessionId_kind_itemId: {
+          sessionId: full.id,
+          kind: 'artifact',
+          itemId: added.id
+        }
+      }
+    })
+    expect(stored?.payloadJson).toContain('/artifact/late.txt')
+    expect(await index.readPage(request, 'two')).toMatchObject({
+      revision: 2,
+      session: { title: 'Runtime title' }
+    })
+  })
+
   it('joins a caller transaction and rolls back the header, payload and deletion together', async () => {
     const index = await setup()
     await index.sync(session(1), 'before')
@@ -466,6 +619,89 @@ describe('SQLite Session display history', () => {
       hasMore: false,
       session: { activities: [], activityGroups: [] }
     })
+  })
+
+  it('passes the explicit sync budget and serializes a full rebuild before the transaction', async () => {
+    await setup()
+    const recorder = recordingClient(client!)
+    const index = new SessionHistoryProjectionRepository(async () => recorder.client)
+    const full = session(2)
+    Object.defineProperty(full.messages[1]!, 'content', {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        if (recorder.inTransaction())
+          throw new Error('Full rebuild payload was serialized inside the transaction')
+        return 'answer body'
+      }
+    })
+    await index.sync(full, 'outside')
+    expect(recorder.calls).toEqual([{ options: { maxWait: 30_000, timeout: 10_000 } }])
+    const page = await new SessionHistoryProjectionRepository(async () => client!).readPage(
+      request,
+      'outside'
+    )
+    expect(page).toMatchObject({
+      totalItems: 4,
+      session: {
+        messages: [
+          message('prompt', 'user', 1),
+          { ...message('answer', 'agent', 150), content: 'answer body' }
+        ]
+      }
+    })
+  })
+
+  it('passes the thirty-second admission budget to real page-read transactions', async () => {
+    await setup()
+    await new SessionHistoryProjectionRepository(async () => client!).sync(
+      session(2),
+      'page-budget'
+    )
+    const recorder = recordingClient(client!)
+    const index = new SessionHistoryProjectionRepository(async () => recorder.client)
+    const page = await index.readPage(request, 'page-budget')
+    expect(page).toMatchObject({ totalItems: 4, hasMore: false })
+    expect(recorder.calls).toEqual([{ options: { maxWait: 30_000 } }])
+  })
+
+  it('fails invalid display records before writing and rolls back rejected SQLite batches', async () => {
+    const index = await setup()
+    expect(await client!.sessionHistoryIndex.count()).toBe(0)
+    expect(await client!.sessionHistoryItem.count()).toBe(0)
+    const invalid = {
+      ...session(1),
+      messages: [
+        ...session(1).messages,
+        { id: 'unreadable', role: 'agent', createdAt: 200 } as unknown as PersistedChatMessage
+      ]
+    } satisfies PersistedChatSession
+    await expect(index.sync(invalid, 'failed-rebuild')).rejects.toThrow('invalid display record')
+    expect(await client!.sessionHistoryIndex.count()).toBe(0)
+    expect(await client!.sessionHistoryItem.count()).toBe(0)
+    expect(await index.readPage(request, 'failed-rebuild')).toBeUndefined()
+
+    await index.sync(session(1), 'before')
+    const before = await index.readPage(request, 'before')
+    expect(before).toMatchObject({ revision: 1, totalItems: 3 })
+    await client!.$executeRawUnsafe(
+      "CREATE TRIGGER reject_history_insert BEFORE INSERT ON SessionHistoryItem BEGIN SELECT RAISE(ABORT, 'rejected history item'); END"
+    )
+    try {
+      // session(2) adds a tool row, so the index upsert and the rejected item batch must roll
+      // back together instead of leaving a newer header over the previous page.
+      await expect(index.sync({ ...session(2), revision: 2 }, 'after')).rejects.toThrow()
+    } finally {
+      await client!.$executeRawUnsafe('DROP TRIGGER reject_history_insert')
+    }
+    expect(await index.readPage(request, 'before')).toEqual(before)
+    expect(
+      await client!.sessionHistoryIndex.findUniqueOrThrow({ where: { sessionId: 'session-1' } })
+    ).toMatchObject({ revision: 1n, sourceFingerprint: 'before' })
+    expect(await index.readPage(request, 'after')).toBeUndefined()
+
+    await index.sync({ ...session(2), revision: 2 }, 'after')
+    expect(await index.readPage(request, 'after')).toMatchObject({ revision: 2, totalItems: 4 })
   })
 
   it('reads the same indexed page after restarting the database client', async () => {
