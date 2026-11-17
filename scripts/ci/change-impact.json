@@ -534,6 +534,8 @@
         "e2e/highlight-style-isolation.spec.ts",
         "e2e/message-queue-presentation-gate.spec.ts",
         "e2e/mobile-message-handoff.spec.ts",
+        "e2e/run-marks-navigation.spec.ts",
+        "e2e/fixtures/scroll-geometry.ts",
         "e2e/message-scroll-anchor.spec.ts",
         "e2e/message-scroll-reanchor.spec.ts",
         "e2e/message-scroll-release.spec.ts",
@@ -694,7 +696,11 @@
     {
       "id": "desktop_e2e_browser_fixtures",
       "role": "overlay",
-      "paths": ["e2e/fixtures/localized-settings.ts", "e2e/fixtures/settings-preferences.ts"],
+      "paths": [
+        "e2e/fixtures/localized-settings.ts",
+        "e2e/fixtures/settings-preferences.ts",
+        "e2e/fixtures/scroll-geometry.ts"
+      ],
       "capabilities": ["renderer_browser_e2e"]
     },
     {
