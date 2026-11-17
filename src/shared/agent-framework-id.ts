@@ -30,6 +30,7 @@ export const AGENT_MODEL_ROUTE_VALUES = [
   'opencode-anthropic',
   'opencode-openai',
   'codebuddy-openai',
+  'codebuddy-subscription',
   'pi',
   'open-science-agent',
   'codex-responses',

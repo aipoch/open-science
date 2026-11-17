@@ -1,3 +1,8 @@
+import {
+  codeBuddyAccounts,
+  readCodeBuddyAccountRequest,
+  type CodeBuddyAccountRequest
+} from '../../../shared/codebuddy-subscription'
 import type {
   ProviderDeletionScenarioModelHandling,
   RefreshProviderModelsRequest,
@@ -40,6 +45,7 @@ type RuntimeSettingsWorkflowStore = Pick<
   | 'loginIsolatedClaude'
   | 'loginIsolatedClaudeBrowser'
   | 'logoutIsolatedClaude'
+  | 'codeBuddyAccount'
   | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
   | 'beginXaiOAuthLogin'
@@ -242,6 +248,19 @@ class RuntimeSettingsWorkflows {
         [CLAUDE_ISOLATED_PROVIDER_ID],
         snapshot.activeProviderId === CLAUDE_ISOLATED_PROVIDER_ID
       )
+    }
+    return result
+  }
+
+  async codeBuddyAccount(
+    input: CodeBuddyAccountRequest
+  ): ReturnType<RuntimeSettingsWorkflowStore['codeBuddyAccount']> {
+    const request = readCodeBuddyAccountRequest(input)
+    const result = await this.settings.codeBuddyAccount(request)
+    if (result.ok && (request.action === 'login' || request.action === 'logout')) {
+      const id = codeBuddyAccounts[request.site].id
+      const snapshot = await this.settings.getSettingsView()
+      this.effects.requestProviderReconnect([id], snapshot.activeProviderId === id)
     }
     return result
   }

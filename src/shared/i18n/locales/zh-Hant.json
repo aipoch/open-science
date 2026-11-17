@@ -8271,6 +8271,9 @@
     "System details": "系統詳細資訊",
     "About monitoring": "關於監控",
     "Sum of current kernel uptimes, including idle time.": "目前各 Kernel 存續時間的總和，包含閒置時間。",
-    "Total kernel uptime: {{duration}}": "Kernel 累計存續時間：{{duration}}"
+    "Total kernel uptime: {{duration}}": "Kernel 累計存續時間：{{duration}}",
+    "CodeBuddy (China)": "CodeBuddy（中國站）",
+    "CodeBuddy (International)": "CodeBuddy（國際站）",
+    "CodeBuddy account request failed.": "CodeBuddy 帳號請求失敗。"
   }
 }

@@ -8614,7 +8614,8 @@
         "src/renderer/src/pages/settings/ScenarioModelList.tsx",
         "src/renderer/src/pages/settings/SubagentModelSelect.tsx",
         "src/renderer/src/pages/settings/provider-key-security.ts",
-        "src/renderer/src/pages/settings/ClassificationPanel.tsx"
+        "src/renderer/src/pages/settings/ClassificationPanel.tsx",
+        "src/renderer/src/pages/settings/CodeBuddySubscriptionRow.tsx"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -8631,7 +8632,8 @@
         "src/renderer/src/pages/settings/ScenarioModelList.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/SubagentModelSelect.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/provider-key-security.ts": "presentation-model",
-        "src/renderer/src/pages/settings/ClassificationPanel.tsx": "presentation-adapter"
+        "src/renderer/src/pages/settings/ClassificationPanel.tsx": "presentation-adapter",
+        "src/renderer/src/pages/settings/CodeBuddySubscriptionRow.tsx": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [
@@ -10909,11 +10911,17 @@
       "sources": [
         "src/main/settings/codex-auth.ts",
         "src/main/settings/crypto.ts",
-        "src/main/settings/provider-env.ts"
+        "src/main/settings/provider-env.ts",
+        "src/main/settings/codebuddy-auth.ts",
+        "src/main/settings/codebuddy-profile.ts"
       ],
       "layer": "application-service",
       "sourceLayers": {},
-      "consumerModules": ["settings_backend_resolution", "settings_service_facade"],
+      "consumerModules": [
+        "settings_backend_resolution",
+        "settings_service_facade",
+        "settings_provider_accounts"
+      ],
       "requiredTests": [
         "src/main/settings/codex-auth.test.ts",
         "src/main/settings/crypto.test.ts",
@@ -10924,7 +10932,8 @@
         "src/renderer/web/api-installer.test.ts",
         "src/shared/provider-reasoning-effort.test.ts",
         "src/shared/renderer-contract-catalog.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/main/settings/codebuddy-auth.test.ts"
       ],
       "externalImports": [
         "@agentclientprotocol/sdk",
@@ -10935,7 +10944,8 @@
         "node:net",
         "node:os",
         "node:path",
-        "node:stream"
+        "node:stream",
+        "node:readline"
       ]
     },
     "acp_session_policy": {

@@ -37,6 +37,7 @@ const expectedChannels = [
   'settings:login-isolated-claude',
   'settings:login-isolated-claude-browser',
   'settings:logout-isolated-claude',
+  'settings:codebuddy-account',
   'settings:login-isolated-codex',
   'settings:logout-isolated-codex',
   'settings:begin-xai-oauth-login',
@@ -91,7 +92,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings runtime application commands', () => {
-  it('installs the exact 22-command inventory and keeps Task-only routing off renderer IPC', async () => {
+  it('installs the exact 23-command inventory and keeps Task-only routing off renderer IPC', async () => {
     const { dependencies, workflowMethod } = createDependencies()
     const selected = { activeProviderId: 'provider-1' }
     workflowMethod('setActiveProvider').mockResolvedValue(selected)

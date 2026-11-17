@@ -1,4 +1,8 @@
 import {
+  codeBuddyAccountEnvironment,
+  codeBuddyHostEnvironment
+} from '../settings/codebuddy-profile'
+import {
   spawn,
   type ChildProcessWithoutNullStreams,
   type SpawnOptionsWithoutStdio
@@ -89,6 +93,8 @@ export const isolateCodeBuddyEnvironment = async (
   env: Readonly<Record<string, string>>,
   configDir: string
 ): Promise<Record<string, string>> => {
+  if (env.CODEBUDDY_INTERNET_ENVIRONMENT && env.USERPROFILE)
+    throw new Error('CodeBuddy subscription accounts are available in the main conversation only.')
   const sourceConfigDir = env.CODEBUDDY_CONFIG_DIR
   if (sourceConfigDir && sourceConfigDir !== configDir) {
     await cp(sourceConfigDir, configDir, { recursive: true })
@@ -122,7 +128,12 @@ export const createCodeBuddyFramework = ({
       needsShell ? `"${input.executablePath}"` : input.executablePath,
       args,
       {
-        env: { ...augmentedPathEnv(sourceEnv), ...input.env },
+        env: {
+          ...(input.env.CODEBUDDY_INTERNET_ENVIRONMENT && input.env.USERPROFILE
+            ? codeBuddyHostEnvironment(sourceEnv)
+            : augmentedPathEnv(sourceEnv)),
+          ...input.env
+        },
         stdio: 'pipe',
         windowsHide: true,
         shell: needsShell
@@ -159,11 +170,15 @@ export const createCodeBuddyFramework = ({
   prepareModelConfig(provider: ResolvedProvider, ctx: ModelConfigContext): AgentModelConfig {
     const baseUrl = resolveChatCompletionsBaseUrl(provider)
     const chatCompletionsUrl = resolveChatCompletionsUrl(provider)
-    if (!baseUrl || !chatCompletionsUrl || !provider.key || !provider.model) {
+    const account =
+      provider.type === 'codebuddy-subscription' && provider.codeBuddySite
+        ? codeBuddyAccountEnvironment(ctx.storageRoot, provider.codeBuddySite)
+        : undefined
+    if (!account && (!baseUrl || !chatCompletionsUrl || !provider.key || !provider.model)) {
       throw new Error('CodeBuddy requires an OpenAI-compatible base URL, API key, and model.')
     }
 
-    const configDir = codeBuddyStorageDir(ctx.storageRoot)
+    const configDir = account?.CODEBUDDY_CONFIG_DIR ?? codeBuddyStorageDir(ctx.storageRoot)
     const persistentSystemPrompt = ctx.systemPromptAppends
       ?.filter((append): append is string => Boolean(append))
       .map((append) => renderAppMcpToolReferences('codebuddy', append))
@@ -185,10 +200,12 @@ export const createCodeBuddyFramework = ({
     return {
       env: {
         CODEBUDDY_CONFIG_DIR: configDir,
-        CODEBUDDY_API_KEY: provider.key,
-        CODEBUDDY_BASE_URL: baseUrl,
-        CODEBUDDY_MODEL: provider.model,
-        OPEN_SCIENCE_CODEBUDDY_CHAT_COMPLETIONS_URL: chatCompletionsUrl,
+        ...(account ?? {
+          CODEBUDDY_API_KEY: provider.key!,
+          CODEBUDDY_BASE_URL: baseUrl!,
+          CODEBUDDY_MODEL: provider.model!,
+          OPEN_SCIENCE_CODEBUDDY_CHAT_COMPLETIONS_URL: chatCompletionsUrl!
+        }),
         CODEBUDDY_SKIP_BUILTIN_MARKETPLACE: '1',
         CODEBUDDY_DISABLE_HOT_RELOAD: '1',
         CODEBUDDY_DISABLE_AUTO_MEMORY: '1',
@@ -204,15 +221,19 @@ export const createCodeBuddyFramework = ({
         NO_BROWSER: '1'
       },
       configFiles: [
-        {
-          path: join(configDir, 'models.json'),
-          mode: 0o600,
-          content: `${JSON.stringify(
-            { models: [modelConfig], availableModels: [provider.model] },
-            null,
-            2
-          )}\n`
-        },
+        ...(account
+          ? []
+          : [
+              {
+                path: join(configDir, 'models.json'),
+                mode: 0o600,
+                content: `${JSON.stringify(
+                  { models: [modelConfig], availableModels: [provider.model] },
+                  null,
+                  2
+                )}\n`
+              }
+            ]),
         {
           path: join(configDir, 'settings.json'),
           mode: 0o600,

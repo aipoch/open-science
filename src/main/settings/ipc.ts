@@ -347,6 +347,12 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:logout-isolated-claude', () =>
     snapshotCommits.projectAfter(workflows.runtime.logoutIsolatedClaude())
   )
+  ipcMainHandle('settings:codebuddy-account', (_event, request) => {
+    const result = workflows.runtime.codeBuddyAccount(request)
+    return request?.action === 'login' || request?.action === 'logout'
+      ? snapshotCommits.projectAfter(result)
+      : result
+  })
   ipcMainHandle('settings:login-isolated-codex', () =>
     snapshotCommits.projectAfter(workflows.runtime.loginIsolatedCodex())
   )

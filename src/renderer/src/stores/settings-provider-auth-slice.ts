@@ -1,3 +1,4 @@
+import type { CodeBuddyAccountRequest } from '../../../shared/codebuddy-subscription'
 import type { StoreApi } from 'zustand'
 
 import {
@@ -36,6 +37,7 @@ export type ProviderAuthActions = {
   saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
   cancelCodexLogin: () => Promise<void>
+  codeBuddyAccount: (request: CodeBuddyAccountRequest) => Promise<ValidateProviderResult>
   loginIsolatedCodex: () => Promise<ValidateProviderResult>
   logoutIsolatedCodex: () => Promise<ValidateProviderResult>
   loginSharedClaude: () => Promise<ValidateProviderResult>
@@ -74,6 +76,7 @@ type ProviderAuthCommands = Pick<
   | 'saveValidatedProvider'
   | 'cancelCodexLogin'
   | 'cancelClaudeLogin'
+  | 'codeBuddyAccount'
   | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
   | 'loginSharedClaude'
@@ -194,6 +197,16 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
   },
 
   cancelCodexLogin: () => getCommands().cancelCodexLogin(),
+
+  codeBuddyAccount: async (request) => {
+    const commands = getCommands()
+    const result = await commands.codeBuddyAccount(request)
+    if (request.action === 'login' || request.action === 'logout') {
+      reconcileSnapshot(await commands.getSettings())
+      await refreshPreflight()
+    }
+    return result
+  },
 
   loginIsolatedCodex: async () => {
     const commands = getCommands()

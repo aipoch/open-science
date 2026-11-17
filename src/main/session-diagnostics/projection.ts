@@ -338,6 +338,7 @@ const permissionLogStates: Record<string, readonly string[]> = {
     'opencode-anthropic',
     'opencode-openai',
     'codebuddy-openai',
+    'codebuddy-subscription',
     'pi',
     'codex-responses',
     'codex-responses-compatibility',

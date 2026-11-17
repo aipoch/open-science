@@ -8269,6 +8269,9 @@
     "System details": "시스템 세부 정보",
     "About monitoring": "모니터링 정보",
     "Sum of current kernel uptimes, including idle time.": "현재 커널별 가동 시간의 합계이며 유휴 시간을 포함합니다.",
-    "Total kernel uptime: {{duration}}": "총 커널 가동 시간: {{duration}}"
+    "Total kernel uptime: {{duration}}": "총 커널 가동 시간: {{duration}}",
+    "CodeBuddy (China)": "CodeBuddy(중국)",
+    "CodeBuddy (International)": "CodeBuddy(국제)",
+    "CodeBuddy account request failed.": "CodeBuddy 계정 요청에 실패했습니다."
   }
 }

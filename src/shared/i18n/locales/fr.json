@@ -8623,6 +8623,9 @@
     "System details": "Détails du système",
     "About monitoring": "À propos de la surveillance",
     "Sum of current kernel uptimes, including idle time.": "Somme des durées de fonctionnement des noyaux actuels, temps d’inactivité inclus.",
-    "Total kernel uptime: {{duration}}": "Durée totale de fonctionnement des noyaux : {{duration}}"
+    "Total kernel uptime: {{duration}}": "Durée totale de fonctionnement des noyaux : {{duration}}",
+    "CodeBuddy (China)": "CodeBuddy (Chine)",
+    "CodeBuddy (International)": "CodeBuddy (international)",
+    "CodeBuddy account request failed.": "La demande liée au compte CodeBuddy a échoué."
   }
 }

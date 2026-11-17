@@ -112,6 +112,12 @@ export const ProviderKindIcon = ({
     return <img src={openaiLogo} alt="" className={cn('size-5 shrink-0', className)} />
   }
 
+  if (kindKey === 'codebuddy-subscription') {
+    return (
+      <AgentFrameworkIcon frameworkId="codebuddy" className={cn('size-5 shrink-0', className)} />
+    )
+  }
+
   if (kindKey === 'xai-subscription') {
     return <img src={grokLogo} alt="" className={cn('size-5 shrink-0', className)} />
   }

@@ -8443,6 +8443,9 @@
     "System details": "Systemdetails",
     "About monitoring": "Über die Überwachung",
     "Sum of current kernel uptimes, including idle time.": "Summe der Laufzeiten der aktuellen Kernel, einschließlich Leerlaufzeit.",
-    "Total kernel uptime: {{duration}}": "Gesamtlaufzeit der Kernel: {{duration}}"
+    "Total kernel uptime: {{duration}}": "Gesamtlaufzeit der Kernel: {{duration}}",
+    "CodeBuddy (China)": "CodeBuddy (China)",
+    "CodeBuddy (International)": "CodeBuddy (International)",
+    "CodeBuddy account request failed.": "Die CodeBuddy-Kontoanfrage ist fehlgeschlagen."
   }
 }

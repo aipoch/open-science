@@ -8776,6 +8776,9 @@
     "System details": "Сведения о системе",
     "About monitoring": "О мониторинге",
     "Sum of current kernel uptimes, including idle time.": "Сумма времени работы текущих ядер, включая время простоя.",
-    "Total kernel uptime: {{duration}}": "Суммарное время работы ядер: {{duration}}"
+    "Total kernel uptime: {{duration}}": "Суммарное время работы ядер: {{duration}}",
+    "CodeBuddy (China)": "CodeBuddy (Китай)",
+    "CodeBuddy (International)": "CodeBuddy (международный)",
+    "CodeBuddy account request failed.": "Не удалось выполнить запрос к учётной записи CodeBuddy."
   }
 }

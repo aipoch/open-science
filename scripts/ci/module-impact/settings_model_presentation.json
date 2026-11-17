@@ -28,7 +28,8 @@
     "src/renderer/src/pages/settings/model-panel-i18n.render.test.tsx",
     "src/renderer/src/pages/settings/provider-key-security.ts",
     "src/renderer/src/pages/settings/ClassificationPanel.tsx",
-    "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx"
+    "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
+    "src/renderer/src/pages/settings/CodeBuddySubscriptionRow.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AgentHomeImportView.tsx",

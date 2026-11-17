@@ -1,3 +1,4 @@
+import { codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
   isAgentFrameworkId,
   AGENT_MODEL_ROUTE_VALUES,
@@ -49,6 +50,7 @@ const PROVIDER_TYPES = new Set<ProviderType>([
   'official',
   'codex-shared',
   'codex-isolated',
+  'codebuddy-subscription',
   'xai-subscription'
 ])
 
@@ -184,6 +186,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     characterCount(name) > PROVIDER_RESOURCE_LIMITS.nameCharacters
   )
     return undefined
+  if (type === 'codebuddy-subscription' && !codeBuddySiteForId(id)) return undefined
   if (!PROVIDER_TYPES.has(type)) {
     log.warn('dropping stored provider with unknown type', { id, type })
     return undefined

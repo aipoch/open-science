@@ -8271,6 +8271,9 @@
     "System details": "システムの詳細",
     "About monitoring": "監視について",
     "Sum of current kernel uptimes, including idle time.": "現在の各カーネルの稼働時間の合計です。アイドル時間を含みます。",
-    "Total kernel uptime: {{duration}}": "カーネルの合計稼働時間：{{duration}}"
+    "Total kernel uptime: {{duration}}": "カーネルの合計稼働時間：{{duration}}",
+    "CodeBuddy (China)": "CodeBuddy（中国版）",
+    "CodeBuddy (International)": "CodeBuddy（国際版）",
+    "CodeBuddy account request failed.": "CodeBuddy アカウントのリクエストに失敗しました。"
   }
 }

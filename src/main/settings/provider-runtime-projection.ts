@@ -1,3 +1,4 @@
+import { codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
   type ModelProtocol,
   getOfficialVendor,
@@ -252,6 +253,16 @@ class ProviderRuntimeProjectionOwner {
   }
 
   resolveProvider(provider: StoredProvider, modelOverride?: string): ResolvedProvider {
+    if (provider.type === 'codebuddy-subscription') {
+      const codeBuddySite = codeBuddySiteForId(provider.id)
+      if (!codeBuddySite) throw new Error('Invalid CodeBuddy provider ID.')
+      return {
+        type: provider.type,
+        codeBuddySite,
+        model: modelOverride ?? provider.model,
+        apiEndpoints: ['chat-completions']
+      }
+    }
     if (provider.type === 'custom' && provider.baseUrl) {
       const error = getCustomProviderBaseUrlError(provider.baseUrl)
       if (error) throw new Error(error)
@@ -347,6 +358,8 @@ class ProviderRuntimeProjectionOwner {
   }
 
   private availableModels(provider: StoredProvider): string[] {
+    if (provider.type === 'codebuddy-subscription' && provider.fetchedModels?.length)
+      return provider.fetchedModels
     if (isCodexSubscriptionProvider(provider.type)) {
       return getOfficialVendorModelIds('openai')
     }

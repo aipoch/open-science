@@ -1,3 +1,4 @@
+import { codeBuddyAccounts } from '../../shared/codebuddy-subscription'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -17,6 +18,34 @@ const { ProviderRuntimeProjectionOwner } = await import('./provider-runtime-proj
 const { encryptKey } = await import('./crypto')
 
 describe('ProviderRuntimeProjectionOwner', () => {
+  it('routes the same model to the saved CodeBuddy account when both sites are configured', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const framework = getAgentFramework('codebuddy')
+    const targets = (['internal', 'external'] as const).map((site) => {
+      const record: StoredProvider = {
+        ...codeBuddyAccounts[site],
+        type: 'codebuddy-subscription',
+        model: 'same-model',
+        apiEndpoints: ['chat-completions']
+      }
+      const selection = { kind: 'required', model: 'same-model' } as const
+      expect(
+        owner.resolveRuntimeTarget(record, selection, getAgentFramework('codex'))
+          .frameworkCompatible
+      ).toBe(false)
+      const target = owner.resolveRuntimeTarget(record, selection, framework)
+      expect(target.providerId).toBe(record.id)
+      const config = framework.prepareModelConfig(target.provider, {
+        storageRoot: 'profiles',
+        executablePath: 'codebuddy'
+      })
+      expect(config.env?.CODEBUDDY_INTERNET_ENVIRONMENT).toBe(site)
+      expect(config.env).not.toHaveProperty('CODEBUDDY_API_KEY')
+      expect(config.configFiles?.some((file) => file.path.endsWith('models.json'))).toBe(false)
+      return config.env?.HOME
+    })
+    expect(new Set(targets).size).toBe(2)
+  })
   it.each([
     { type: 'codex-shared', codexAuthMode: undefined },
     { type: 'codex-isolated', codexAuthMode: 'imported' },

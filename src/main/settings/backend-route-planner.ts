@@ -395,6 +395,7 @@ class BackendRoutePlanner {
       })
     }
     if (frameworkId === 'codebuddy') {
+      if (route === 'codebuddy-subscription') return Object.freeze({ kind: 'direct' })
       if (active.apiEndpoints.includes('chat-completions')) return Object.freeze({ kind: 'direct' })
       return Object.freeze({
         kind: 'codebuddy-provider-compatibility',

@@ -38,7 +38,8 @@
     "src/shared/session-event-hydrator.ts",
     "src/shared/session-event-hydrator.test.ts",
     "src/shared/runtime-startup.ts",
-    "src/shared/provider-url-policy.ts"
+    "src/shared/provider-url-policy.ts",
+    "src/shared/codebuddy-subscription.ts"
   ],
   "interfacePaths": [
     "src/shared/agent-framework-id.ts",

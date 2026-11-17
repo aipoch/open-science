@@ -1,3 +1,4 @@
+import type { CodeBuddySite } from '../../shared/codebuddy-subscription'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -24,6 +25,7 @@ export type ResolvedProvider = {
   // Framework-local provider id used only for a generation's pre-registered transport routes.
   // It is derived from the persisted provider/model identity and never contains a credential.
   agentProviderId?: string
+  codeBuddySite?: CodeBuddySite
   codexAuthMode?: CodexSubscriptionAuthMode
   codexTransport?: CodexSubscriptionTransport
   codexAutoUseHttps?: boolean

@@ -1,3 +1,6 @@
+import { isDesktopRenderer } from '@/lib/interface-scale'
+import { CodeBuddySubscriptionRow } from './CodeBuddySubscriptionRow'
+import { codeBuddyAccounts } from '../../../../shared/codebuddy-subscription'
 import { resolveProviderEffectiveModel } from '../../../../shared/provider-reasoning-effort'
 import { ErrorNotice } from '@/components/error-notice'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
@@ -225,7 +228,9 @@ const ProvidersPanel = ({
   }, [cancelXaiOAuthLogin])
 
   // Subscription accounts stay visible for the frameworks that own their authentication transport.
+  const showCodeBuddyAccounts = agentFrameworkId === 'codebuddy' && isDesktopRenderer()
   const visibleProviders = providers.filter((provider) => {
+    if (provider.type === 'codebuddy-subscription') return false
     if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
       return agentFrameworkId === 'claude-code'
     if (isCodexSubscriptionProvider(provider.type))
@@ -637,43 +642,61 @@ const ProvidersPanel = ({
           </Button>
         }
       >
-        <ProviderList
-          providers={visibleProviders}
-          activeProviderId={activeProviderId}
-          activeModel={activeModel}
-          agentFrameworkId={agentFrameworkId}
-          frameworkEndpoints={frameworkEndpoints}
-          frameworkName={frameworkName}
-          claudeSubscriptionProviderId={claudeSubscriptionProviderId}
-          busyProviderId={busyProviderId}
-          onEdit={onEditProvider}
-          onDelete={setProviderPendingDeletion}
-          onTest={(provider) => void handleTest(provider)}
-          isCodexLoginPending={isCodexLoginPending}
-          onCancelCodexLogin={() => void cancelCodexLogin()}
-          onLoginIsolatedCodex={() => void handleCodexLogin()}
-          onLogoutIsolatedCodex={() => void handleCodexLogout()}
-          onReimportCodexAuthentication={(provider) => void handleCodexReimport(provider)}
-          isClaudeSharedLoginPending={isClaudeSharedLoginPending}
-          onLoginSharedClaude={() => void handleClaudeSharedLogin()}
-          onCancelSharedClaudeLogin={() => void cancelSharedClaudeLogin()}
-          onLogoutSharedClaude={() => void handleClaudeSharedDisconnect()}
-          isClaudeIsolatedLoginPending={isClaudeIsolatedLoginPending}
-          onLoginIsolatedClaude={() => void handleClaudeIsolatedBrowserLogin()}
-          onCancelIsolatedClaudeLogin={() => {
-            // Explicit cancel: suppress the "Sign-in cancelled" error the browser flow would
-            // otherwise surface when its promise resolves, and close the fallback paste modal.
-            manualClaudePasteWonRef.current = true
-            setIsClaudeSignInOpen(false)
-            void cancelIsolatedClaudeLogin()
-          }}
-          onLoginIsolatedClaudePaste={() => setIsClaudeSignInOpen(true)}
-          onLogoutIsolatedClaude={() => void handleClaudeLogout()}
-          isXaiLoginPending={isXaiLoginPending}
-          onLoginXai={() => void handleXaiLogin()}
-          onCancelXaiLogin={handleCancelXaiLogin}
-          onLogoutXai={() => void handleXaiLogout()}
-        />
+        {showCodeBuddyAccounts && (
+          <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+            {(['internal', 'external'] as const).map((site) => {
+              const configured = providers.some(
+                (p) => p.id === codeBuddyAccounts[site].id && p.type === 'codebuddy-subscription'
+              )
+              return (
+                <CodeBuddySubscriptionRow
+                  key={site + configured}
+                  site={site}
+                  configured={configured}
+                />
+              )
+            })}
+          </div>
+        )}
+        {(!showCodeBuddyAccounts || visibleProviders.length > 0) && (
+          <ProviderList
+            providers={visibleProviders}
+            activeProviderId={activeProviderId}
+            activeModel={activeModel}
+            agentFrameworkId={agentFrameworkId}
+            frameworkEndpoints={frameworkEndpoints}
+            frameworkName={frameworkName}
+            claudeSubscriptionProviderId={claudeSubscriptionProviderId}
+            busyProviderId={busyProviderId}
+            onEdit={onEditProvider}
+            onDelete={setProviderPendingDeletion}
+            onTest={(provider) => void handleTest(provider)}
+            isCodexLoginPending={isCodexLoginPending}
+            onCancelCodexLogin={() => void cancelCodexLogin()}
+            onLoginIsolatedCodex={() => void handleCodexLogin()}
+            onLogoutIsolatedCodex={() => void handleCodexLogout()}
+            onReimportCodexAuthentication={(provider) => void handleCodexReimport(provider)}
+            isClaudeSharedLoginPending={isClaudeSharedLoginPending}
+            onLoginSharedClaude={() => void handleClaudeSharedLogin()}
+            onCancelSharedClaudeLogin={() => void cancelSharedClaudeLogin()}
+            onLogoutSharedClaude={() => void handleClaudeSharedDisconnect()}
+            isClaudeIsolatedLoginPending={isClaudeIsolatedLoginPending}
+            onLoginIsolatedClaude={() => void handleClaudeIsolatedBrowserLogin()}
+            onCancelIsolatedClaudeLogin={() => {
+              // Explicit cancel: suppress the "Sign-in cancelled" error the browser flow would
+              // otherwise surface when its promise resolves, and close the fallback paste modal.
+              manualClaudePasteWonRef.current = true
+              setIsClaudeSignInOpen(false)
+              void cancelIsolatedClaudeLogin()
+            }}
+            onLoginIsolatedClaudePaste={() => setIsClaudeSignInOpen(true)}
+            onLogoutIsolatedClaude={() => void handleClaudeLogout()}
+            isXaiLoginPending={isXaiLoginPending}
+            onLoginXai={() => void handleXaiLogin()}
+            onCancelXaiLogin={handleCancelXaiLogin}
+            onLogoutXai={() => void handleXaiLogout()}
+          />
+        )}
         {providerTestError ? (
           <Notice
             inline

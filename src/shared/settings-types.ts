@@ -46,6 +46,7 @@ export type ProviderType =
   | 'official'
   | 'codex-shared'
   | 'codex-isolated'
+  | 'codebuddy-subscription'
   | 'xai-subscription'
 
 // The stored Codex subscription always uses the app-owned runtime type. This discriminator preserves
