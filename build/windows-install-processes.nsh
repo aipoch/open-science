@@ -33,6 +33,8 @@
   Push $R7
   Push $R8
   Push $R9
+  Push 0
+  retry_inventory_${_OSP_ID}:
   StrCpy $R2 "${ROOT}"
   trim_${_OSP_ID}:
     StrCpy $R3 $R2 1 -1
@@ -47,6 +49,7 @@
   # System services and protected processes in session 0 are outside the interactive install
   # session. Ignore those when their limited query handle is unavailable, but fail closed for
   # processes in the current session where the installed application can be running.
+  StrCpy $R0 -1
   System::Call 'kernel32::ProcessIdToSessionId(i R1, *i .R0)i.R7'
   ${If} $R7 = 0
     StrCpy $R9 "error"
@@ -72,21 +75,19 @@
       System::Call '*$R5(i, i, i .R7)'
       ${If} $R7 <> $R1
       ${AndIf} $R7 <> 0
-        # Keep the process session in $R0 while inspecting it. Session 0 contains protected
+        # Keep the process session on the stack while inspecting it. Session 0 contains protected
         # services that are outside an interactive install and may reject limited queries.
         # Query failures for those processes can be ignored; failures in any other session leave
         # the inventory unproven and fail closed.
+        StrCpy $R6 -1
         System::Call 'kernel32::ProcessIdToSessionId(i R7, *i .R6)i.R8'
-        ${If} $R8 = 0
-          StrCpy $R0 $R6
-        ${Else}
-          # If the session cannot be read, inspect the process directly rather than silently
-          # dropping a possible application child from the inventory.
-          StrCpy $R0 -1
-        ${EndIf}
-        System::Call 'kernel32::OpenProcess(i ${_OSP_ACCESS}, i 0, i R7)p.R8'
+        Push $R6
+        System::Call 'kernel32::OpenProcess(i ${_OSP_ACCESS}, i 0, i R7)p.R8 ?e'
         ${If} $R8 <> 0
-          System::Call 'kernel32::QueryFullProcessImageNameW(pR8, i 0, w .R6, *i ${NSIS_MAX_STRLEN})i.R7'
+          Pop $R7
+          Pop $R6
+          Push $R6
+          System::Call 'kernel32::QueryFullProcessImageNameW(pR8, i 0, w .R6, *i ${NSIS_MAX_STRLEN})i.R7 ?e'
           ${If} $R7 <> 0
             StrCpy $R6 $R6 $R3
             # LogicLib == is case-insensitive, like the previous CIM prefix match.
@@ -98,21 +99,48 @@
             ${EndIf}
           ${Else}
             # A live process whose image cannot be inspected leaves the inventory unproven.
-            ${If} $R0 <> 0
-              StrCpy $R9 "error"
-            ${EndIf}
+            # ERROR_INVALID_PARAMETER is the same snapshot race as above. Session 0 protected
+            # services may reject the limited query while outside the interactive install.
           ${EndIf}
           System::Call 'kernel32::CloseHandle(pR8)'
+          Pop $R8
+          Pop $R6
+          ${If} $R7 = 0
+            ${If} $R8 <> 87
+            ${AndIf} $R8 <> 6
+            ${AndIf} $R8 <> 1168
+            ${AndIf} $R6 <> 0
+              !if "${ACTION}" == "stop"
+                ${If} $R9 <> 0
+                  StrCpy $R9 "error"
+                ${EndIf}
+              !else
+              StrCpy $R9 "error"
+              !endif
+            ${EndIf}
+          ${EndIf}
           !if "${ACTION}" != "stop"
             ${If} $R9 == 0
               Goto done_${_OSP_ID}
             ${EndIf}
           !endif
         ${Else}
+          Pop $R7
+          Pop $R6
           # Do not continue with an incomplete process inventory. Access-denied and exiting
           # processes outside the interactive session can be protected services in session 0.
-          ${If} $R0 <> 0
+          # ERROR_INVALID_PARAMETER means the process exited after the snapshot.
+          ${If} $R7 <> 87
+          ${AndIf} $R7 <> 6
+          ${AndIf} $R7 <> 1168
+          ${AndIf} $R6 <> 0
+            !if "${ACTION}" == "stop"
+              ${If} $R9 <> 0
+                StrCpy $R9 "error"
+              ${EndIf}
+            !else
             StrCpy $R9 "error"
+            !endif
           ${EndIf}
         ${EndIf}
       ${EndIf}
@@ -121,6 +149,14 @@
     done_${_OSP_ID}:
     System::Free $R5
     System::Call 'kernel32::CloseHandle(pR4)'
+  ${EndIf}
+  Pop $R4
+  ${If} $R9 == "error"
+    ${If} $R4 == 0
+      Push 1
+      Sleep 50
+      Goto retry_inventory_${_OSP_ID}
+    ${EndIf}
   ${EndIf}
   StrCpy $R0 $R9
   Pop $R9

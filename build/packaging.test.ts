@@ -1472,6 +1472,8 @@ SectionEnd
     expect(inventory).toContain('StrCpy $R2 "$R2\\"')
     expect(inventory).toContain('A live process whose image cannot be inspected')
     expect(inventory).toContain('Do not continue with an incomplete process inventory')
+    expect(inventory).toContain('retry_inventory_')
+    expect(inventory).toContain('Sleep 50')
   })
 
   it('caches the per-user install location before the HKCU uninstall pass deletes it', () => {
