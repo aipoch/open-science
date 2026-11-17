@@ -147,6 +147,37 @@ it.each([1, 1.2])('joins the first centered title at %s times body size', (ratio
   expect(r.owner(0)).not.toBe(r.owner(2))
 })
 
+it.each([1, 2])('keeps the title, byline, and affiliation apart on page %s', (page) => {
+  const f = fixture('centered-title-and-affiliation')
+  f.pages[0].page = page
+  const r = read(f)
+  const owners = [r.owner(0), r.owner(2), r.owner(8)]
+  expect(new Set(owners).size).toBe(3)
+  expect(owners.map((owner) => owner.fragments.length)).toEqual([1, 1, 1])
+})
+
+it.each([true, false])('continues a late sentence start with matching folios: %s', (matching) => {
+  const input = fixture('sentence-start-at-page-end')
+  if (!matching) input.pages[2].items[0].str = 'x'
+  const { result } = read(input)
+  const unit = result.units.find((owner) => owner.items.includes('2:9'))!
+  expect(unit.fragments.map((fragment) => fragment.page)).toEqual(matching ? [2, 3] : [2])
+  expect(unit.items.includes('3:1')).toBe(matching)
+  expect(unit.items).not.toContain('2:8')
+})
+
+it.each([true, false])('separates small-cap front headings with a matching face: %s', (matches) => {
+  const input = fixture('small-cap-front-headings')
+  if (!matches) {
+    for (const mark of input.pages[0].items.slice(7, 10)) mark.fontName = 'Other'
+  }
+  const r = read(input)
+  expect(r.owner(1) !== r.owner(4)).toBe(matches)
+  expect(r.owner(7) !== r.owner(11)).toBe(matches)
+  expect(r.owner(1)).toBe(r.owner(2))
+  expect(r.owner(7)).toBe(r.owner(9))
+})
+
 it.each([
   'new-paragraph',
   'different-process',

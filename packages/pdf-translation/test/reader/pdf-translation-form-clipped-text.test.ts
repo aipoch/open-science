@@ -39,6 +39,47 @@ it('excludes only the complete clipped occurrence and accounts visible repeated 
   }
 })
 
+it.each([
+  'clipped-font',
+  'clipped-font-shared-outside',
+  'clipped-font-with-visible-form-text',
+  'clipped-font-rectangle',
+  'clipped-font-triangle',
+  'clipped-font-restored-rectangle',
+  'clipped-font-unclipped-rectangle',
+  'untracked font selection'
+])(
+  'excludes split source items only when every use of their native font is clipped: %s',
+  async (fault) => {
+    const document = await formPage(fault === 'untracked font selection' ? 'clipped-font' : fault)
+    try {
+      const page = await document.getPage(1),
+        content = await getPdfTranslationTextContent(page),
+        viewport = page.getViewport({ scale: 1 })
+      if (fault === 'untracked font selection') {
+        const operators = await page.getOperatorList(),
+          font = operators.argsArray[operators.fnArray.indexOf(OPS.setFont)][0]
+        operators.fnArray.push(OPS.setGState)
+        operators.argsArray.push([[['Font', [font, 12]]]])
+      }
+      const proof = await readNativeFormClippedText(page, content, viewport)
+      expect(
+        content.items.flatMap((item) => ('str' in item && item.str.trim() ? [item.str] : []))
+      ).toContain('Hidden heading')
+      expect(
+        [...(proof?.indexes ?? [])].map((index) => (content.items[index] as { str: string }).str)
+      ).toEqual(
+        ['clipped-font', 'clipped-font-rectangle'].includes(fault)
+          ? ['Hidden heading', 'record']
+          : []
+      )
+      if (proof) expect(proof.current()).toBe(true)
+    } finally {
+      await document.destroy()
+    }
+  }
+)
+
 it.each(['nested', 'repeated-form'])(
   'preserves occurrence-specific ancestor clips: %s',
   async (fault) => {

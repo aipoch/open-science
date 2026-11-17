@@ -45,3 +45,32 @@ it.each([
   expect(result).toHaveLength(accepted ? 1 : 0)
   if (accepted) expect(result[0]).toMatchObject({ indices: [1, 2], label: 'Qˆ' })
 })
+
+it.each(['centered', 'inline', 'detached', 'ordinary-font', 'wide'])(
+  'keeps a spacing tilde with one native mathematical base only: %s',
+  (variant) => {
+    const mark: NativeMathObject = {
+      i: 1,
+      text: '˜',
+      fontName: variant === 'ordinary-font' ? 'Times-Roman' : 'ABCDEF+CMR10',
+      bounds:
+        variant === 'inline'
+          ? [101, 102, 104.5, 103]
+          : variant === 'detached'
+            ? [110, 107, 113.5, 108]
+            : variant === 'wide'
+              ? [100, 107, 105.5, 108]
+              : [101, 107, 104.5, 108]
+    }
+    const base: NativeMathObject = {
+      i: 2,
+      text: 'q',
+      fontName: 'CMBX10',
+      bounds: [101, 100, 105, 106]
+    }
+    const resolved = resolveNativeMathAccents([mark, base])
+    if (variant === 'centered')
+      expect(resolved).toEqual([expect.objectContaining({ indices: [1, 2], labels: ['q˜', '˜q'] })])
+    else expect(resolved).toEqual([])
+  }
+)

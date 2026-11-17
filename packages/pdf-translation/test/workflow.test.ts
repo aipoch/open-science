@@ -2006,6 +2006,8 @@ it.each([
   ['Non-Hispanic White', '非西班牙裔白人'],
   ['SEX-BASED ANALYSES', '基于性别的分析'],
   ['COMPETING INTERESTS STATEMENT', '利益冲突声明'],
+  ['COMPETING INTERESTS', '利益冲突'],
+  ['Supplementary Information', '补充信息'],
   ['CONTRIBUTORSHIP STATEMENT', '作者贡献声明'],
   ['Structural Metadata', '结构元数据'],
   ['ABC Information Record', 'ABC 信息记录'],
