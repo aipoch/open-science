@@ -37,6 +37,7 @@ type Dependencies = {
   logger: Pick<RuntimeDiagnosticLogger, 'info' | 'error'>
 }
 
+const completedReleaseLimitPerProject = 20
 const keyFor = (scope: Scope): string => JSON.stringify([scope.projectId, scope.sessionId])
 const sameResource = (left: NotebookOwnedResource, right: NotebookOwnedResource): boolean =>
   left.identity === right.identity &&
@@ -68,6 +69,26 @@ export class NotebookResourceReleaseOwner {
   private lastSampleAt = -Infinity
 
   constructor(private readonly dependencies: Dependencies) {}
+
+  private retainCompletedReleases(): void {
+    const completed = new Map<string, string[]>()
+    for (const [operationId, { view }] of this.releases) {
+      if (view.status !== 'released') continue
+      const ids = completed.get(view.projectId) ?? []
+      ids.push(operationId)
+      completed.set(view.projectId, ids)
+    }
+    for (const ids of completed.values())
+      for (const operationId of ids.slice(0, -completedReleaseLimitPerProject))
+        this.releases.delete(operationId)
+  }
+
+  private complete(release: Release): void {
+    // A retry may finish long after its original request. Refresh insertion order so retention is
+    // based on completion, not on when the first attempt was created.
+    this.releases.delete(release.view.operationId)
+    this.releases.set(release.view.operationId, release)
+  }
 
   private id(resource: NotebookOwnedResource): string {
     let id = this.ids.get(resource.identity)
@@ -359,6 +380,7 @@ export class NotebookResourceReleaseOwner {
         .finally(() => {
           writer()
           releaseHold()
+          this.complete(release)
           if (release.view.status === 'released') {
             release.resources = []
             release.results.clear()
@@ -373,6 +395,10 @@ export class NotebookResourceReleaseOwner {
             incompleteCount: release.view.resources.filter(({ status }) => status === 'incomplete')
               .length
           })
+          this.dependencies.changed()
+        })
+        .finally(() => {
+          this.retainCompletedReleases()
           this.dependencies.changed()
         })
       this.dependencies.observe(scope, operation)
