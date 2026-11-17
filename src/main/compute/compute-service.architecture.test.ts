@@ -413,6 +413,7 @@ describe('Compute service architecture', () => {
         'listHostedTargets',
         'listRayTargets',
         'listModalTargets',
+        'listExternalTargets',
         'wakeExternalJobs',
         'wakeJobPoller',
         'reconcileExternalJobs',
