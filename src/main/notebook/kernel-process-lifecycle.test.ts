@@ -27,7 +27,6 @@ vi.mock('../process-tree-windows', () => ({ reapWindowsOwnedJob }))
 vi.mock('../windows-process-query', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../windows-process-query')>()
   windowsProcessIsAlive.mockImplementation(actual.windowsProcessIsAlive)
-  listWindowsProcesses.mockImplementation(actual.listWindowsProcesses)
   return { ...actual, listWindowsProcesses, windowsProcessIsAlive }
 })
 
@@ -52,7 +51,8 @@ describe('KernelProcessLifecycleOwner', () => {
     await Promise.all(trackedChildren.splice(0).map((child) => terminateProcessTree(child)))
     vi.restoreAllMocks()
     windowsProcessIsAlive.mockClear()
-    listWindowsProcesses.mockClear()
+    listWindowsProcesses.mockReset()
+    listWindowsProcesses.mockReturnValue([])
     reapWindowsOwnedJob.mockReset()
     if (root) await rm(root, { recursive: true, force: true })
     root = undefined

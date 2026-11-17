@@ -571,6 +571,7 @@
         "e2e/settings-error-transport.spec.ts",
         "e2e/desktop-runtime-startup.spec.ts",
         "e2e/desktop-runtime-native-relaunch.spec.ts",
+        "e2e/kernel-startup-fence.spec.ts",
         "e2e/runtime-update-ui-acceptance.spec.ts",
         "e2e/session-journal-recovery.spec.ts",
         "e2e/session-history-pages.spec.ts",
@@ -645,6 +646,8 @@
         "e2e/fixtures/project.ts",
         "e2e/fixtures/renderer-failure-gate.ts",
         "e2e/fixtures/research-analysis.mjs",
+        "e2e/fixtures/kernel-fence.mjs",
+        "e2e/fixtures/kernel-fence.d.mts",
         "e2e/fixtures/sanitized-performance.png",
         "e2e/fixtures/session-outcome-preload.cjs",
         "e2e/fixtures/settings-preferences.ts"
