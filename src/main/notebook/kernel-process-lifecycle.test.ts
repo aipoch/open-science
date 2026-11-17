@@ -17,6 +17,9 @@ import {
 } from '../process-tree'
 
 const windowsProcessIsAlive = vi.hoisted(() => vi.fn<(pid: number) => boolean>(() => true))
+const listWindowsProcesses = vi.hoisted(() =>
+  vi.fn<() => Array<{ pid: number; ppid: number; executablePath: string | null }>>(() => [])
+)
 const reapWindowsOwnedJob = vi.hoisted(() => vi.fn<(name: string) => Promise<boolean>>())
 
 vi.mock('../process-tree-windows', () => ({ reapWindowsOwnedJob }))
@@ -24,7 +27,8 @@ vi.mock('../process-tree-windows', () => ({ reapWindowsOwnedJob }))
 vi.mock('../windows-process-query', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../windows-process-query')>()
   windowsProcessIsAlive.mockImplementation(actual.windowsProcessIsAlive)
-  return { ...actual, windowsProcessIsAlive }
+  listWindowsProcesses.mockImplementation(actual.listWindowsProcesses)
+  return { ...actual, listWindowsProcesses, windowsProcessIsAlive }
 })
 
 const processIsAlive = (pid: number): boolean => {
@@ -47,6 +51,8 @@ describe('KernelProcessLifecycleOwner', () => {
   afterEach(async () => {
     await Promise.all(trackedChildren.splice(0).map((child) => terminateProcessTree(child)))
     vi.restoreAllMocks()
+    windowsProcessIsAlive.mockClear()
+    listWindowsProcesses.mockClear()
     reapWindowsOwnedJob.mockReset()
     if (root) await rm(root, { recursive: true, force: true })
     root = undefined
@@ -461,7 +467,7 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(kill).not.toHaveBeenCalledWith(-process.pid, 0)
   })
 
-  it('keeps a proofless Windows receipt fenced when only the native host process has exited', async () => {
+  it('clears a proofless Windows receipt when the exited host has no live descendants', async () => {
     windowsProcessIsAlive.mockReturnValueOnce(false)
     const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
 
@@ -478,9 +484,54 @@ describe('KernelProcessLifecycleOwner', () => {
         kernelEpochId: 'epoch-a',
         pid: 4242
       })
-    ).resolves.toBe('unknown')
+    ).resolves.toBe('dead')
 
     expect(kill).not.toHaveBeenCalled()
+  })
+
+  it('keeps a proofless Windows receipt fenced when a live descendant remains', async () => {
+    windowsProcessIsAlive.mockReturnValueOnce(false)
+    listWindowsProcesses.mockReturnValueOnce([
+      { pid: 4343, ppid: 4242, executablePath: 'host-child.exe' },
+      { pid: 4444, ppid: 4343, executablePath: 'python.exe' }
+    ])
+
+    await expect(
+      defaultController('win32').probe({
+        version: 1,
+        receiptId: 'receipt-windows-descendant',
+        ownerInstanceId: 'owner-a',
+        ownerToken: 'owner-token-a',
+        platform: 'win32',
+        spawnedAt: 1,
+        laneKey: 'lane-a',
+        processKey: 'repl',
+        kernelEpochId: 'epoch-a',
+        pid: 4242
+      })
+    ).resolves.toBe('unknown')
+  })
+
+  it('keeps a proofless Windows receipt fenced when the process snapshot is unavailable', async () => {
+    windowsProcessIsAlive.mockReturnValueOnce(false)
+    listWindowsProcesses.mockImplementationOnce(() => {
+      throw new Error('process snapshot unavailable')
+    })
+
+    await expect(
+      defaultController('win32').probe({
+        version: 1,
+        receiptId: 'receipt-windows-unreadable-snapshot',
+        ownerInstanceId: 'owner-a',
+        ownerToken: 'owner-token-a',
+        platform: 'win32',
+        spawnedAt: 1,
+        laneKey: 'lane-a',
+        processKey: 'repl',
+        kernelEpochId: 'epoch-a',
+        pid: 4242
+      })
+    ).resolves.toBe('unknown')
   })
 
   it.each(['started-and-reaped', 'never-started'] as const)(
@@ -609,6 +660,9 @@ describe('KernelProcessLifecycleOwner', () => {
     )
     first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
     windowsProcessIsAlive.mockReturnValueOnce(false).mockReturnValueOnce(false)
+    listWindowsProcesses.mockReturnValueOnce([
+      { pid: 4343, ppid: 4242, executablePath: 'python.exe' }
+    ])
     const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
     await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
     await writeFile(

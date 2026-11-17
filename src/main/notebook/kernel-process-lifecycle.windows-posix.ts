@@ -19,7 +19,11 @@ import {
   terminateOwnedPosixProcessGroupById,
   type ProcessTreeKillResult
 } from '../process-tree'
-import { windowsProcessCommandLine, windowsProcessIsAlive } from '../windows-process-query'
+import {
+  listWindowsProcesses,
+  windowsProcessCommandLine,
+  windowsProcessIsAlive
+} from '../windows-process-query'
 import { reapWindowsOwnedJob } from '../process-tree-windows'
 import {
   readProcessStartToken,
@@ -222,6 +226,32 @@ const processEvidence = async (
   return capture('ps', ['eww', '-p', String(record.pid), '-o', 'command='])
 }
 
+// Legacy Windows receipts predate the named Job and supervisor proof. When their recorded host
+// has exited, the process table is the remaining authoritative evidence we can inspect: a live
+// descendant whose parent chain still leads to that host means the old process tree may survive.
+// A failed native query remains unknown so recovery never clears a receipt on incomplete evidence.
+const windowsProcessTreeIsGone = (hostPid: number): boolean => {
+  try {
+    const childrenByParent = new Map<number, number[]>()
+    for (const process of listWindowsProcesses()) {
+      const children = childrenByParent.get(process.ppid) ?? []
+      children.push(process.pid)
+      childrenByParent.set(process.ppid, children)
+    }
+    const pending = [...(childrenByParent.get(hostPid) ?? [])]
+    const visited = new Set<number>()
+    while (pending.length > 0) {
+      const pid = pending.pop()!
+      if (visited.has(pid)) continue
+      visited.add(pid)
+      pending.push(...(childrenByParent.get(pid) ?? []))
+    }
+    return visited.size === 0
+  } catch {
+    return false
+  }
+}
+
 const proofFileConfirmsWindowsProcessTreeReaped = (proof: WindowsProcessTreeProof): boolean => {
   try {
     const value = JSON.parse(readFileSync(proof.path, 'utf8')) as Record<string, unknown>
@@ -291,11 +321,12 @@ const defaultController = (
     if (platform === 'win32') {
       try {
         if (!windowsProcessIsAlive(record.pid)) {
-          return record.windowsProcessTreeProof
-            ? (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
-              ? 'dead'
-              : 'unknown'
-            : 'unknown'
+          if (
+            record.windowsProcessTreeProof &&
+            (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
+          )
+            return 'dead'
+          return windowsProcessTreeIsGone(record.pid) ? 'dead' : 'unknown'
         }
       } catch {
         // Fall back to the portable PID probe. An unreadable native query must not authorize
@@ -305,11 +336,12 @@ const defaultController = (
     const alive = pidIsAlive(record.pid)
     if (platform === 'win32') {
       if (!alive) {
-        return record.windowsProcessTreeProof
-          ? (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
-            ? 'dead'
-            : 'unknown'
-          : 'unknown'
+        if (
+          record.windowsProcessTreeProof &&
+          (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
+        )
+          return 'dead'
+        return windowsProcessTreeIsGone(record.pid) ? 'dead' : 'unknown'
       }
     }
     if (platform !== 'win32') {
