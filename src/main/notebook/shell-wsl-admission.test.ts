@@ -260,6 +260,44 @@ describe.skipIf(process.platform === 'win32')('WSL Shell owner memory admission'
     expect(h.cleanup).toHaveBeenCalledTimes(2)
   })
 
+  it('retains failed cleanup after a missing capability and fences reuse until original-owner recovery', async () => {
+    const h = await harness(true)
+    let verified = false
+    h.cleanup.mockImplementation(async (_reason, outcome) => ({
+      processesTerminated: verified && outcome.processesTerminated,
+      networkClosed: true,
+      temporaryResourcesRemoved: verified
+    }))
+    const execute = (): Promise<NotebookShellResult> =>
+      h.adapter.execute({
+        ...h.request,
+        command: 'printf fresh-attempt',
+        executionAdmission: h.admission(true)
+      })
+    const first = await execute()
+    expect(first).toMatchObject({
+      stdout: '',
+      exitCode: null,
+      ownedTreeReaped: false,
+      errorCode: 'shell-cleanup-incomplete',
+      recovery: { retryAfter: 'cleanup-verified' }
+    })
+    expect(h.adapter.resources()).toHaveLength(1)
+    expect(h.adapter.resources()[0].phase).toBe('cleanup-pending')
+    expect(h.factory).not.toHaveBeenCalled()
+    expect(await execute()).toMatchObject({
+      errorCode: 'shell-cleanup-incomplete',
+      ownedTreeReaped: false
+    })
+    expect(h.factory).not.toHaveBeenCalled()
+    verified = true
+    expect(await h.adapter.shutdown()).toEqual({ reaped: true })
+    expect(h.adapter.resources()).toEqual([])
+    expect(await execute()).toMatchObject({ exitCode: 0, stdout: 'fresh-attempt' })
+    expect(h.factory).toHaveBeenCalledOnce()
+    expect(await h.adapter.shutdown()).toEqual({ reaped: true })
+  })
+
   it('replaces the guest policy on context reset without chaining disposed execution authority', async () => {
     const h = await harness()
     expect(

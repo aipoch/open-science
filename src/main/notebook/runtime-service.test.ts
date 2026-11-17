@@ -4922,7 +4922,11 @@ describe('notebook runtime service', () => {
         runId: expect.any(String),
         cwd: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
         executionReference: expect.any(String),
-        executionAdmission: { prepare: expect.any(Function), assertCurrent: expect.any(Function) },
+        executionAdmission: {
+          prepare: expect.any(Function),
+          assertCurrent: expect.any(Function),
+          withExecutionDomain: expect.any(Function)
+        },
         handoffDir: join(root, 'notebooks', 'default-project', 'session-1', 'handoff'),
         notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
         inputRoot: getNotebookInputRoot(root, 'default-project', 'session-1'),

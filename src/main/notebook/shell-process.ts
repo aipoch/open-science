@@ -863,6 +863,7 @@ const runShellCommand = (
       const rawReady = Promise.withResolvers<void>()
       let rawReadyBuffer = ''
       let rawReadyPending = oneShotWsl
+      let rawWaitingForNetwork = false
       let stdout = ''
       let stderr = ''
       let stdoutBytes = 0
@@ -1178,9 +1179,18 @@ const runShellCommand = (
           options.signal?.throwIfAborted()
           admission.assertCurrent('dispatch')
           const encoded = Buffer.from(options.command, 'utf8').toString('base64')
-          endSandboxExecution = sandboxed?.beginExecution?.()
+          endSandboxExecution = sandboxed?.beginExecution?.({
+            commandText: options.command,
+            executionReference: options.executionReference,
+            signal: options.signal,
+            onNetworkWaitChange: (waiting) => {
+              rawWaitingForNetwork = waiting
+              timeoutTimer.setPaused(waiting)
+            }
+          })
+          admission.assertCurrent('dispatch')
           child.stdin.end(`eval "$(printf %s '${encoded}' | base64 -d)"\n`)
-          timeoutTimer.setPaused(false)
+          timeoutTimer.setPaused(rawWaitingForNetwork)
         })().catch((error: unknown) => {
           if (settled || exited || failed) return
           failed = true

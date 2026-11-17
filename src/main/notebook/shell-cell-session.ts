@@ -543,6 +543,11 @@ export class ShellCellSession {
     } catch (error) {
       // A trusted refusal happens before stdin.write. Preserve the persistent namespace.
       if (error instanceof NotebookExecutionAdmissionError) {
+        if (
+          this.processResult?.ownedTreeReaped === false ||
+          this.processResult?.errorCode === 'shell-cleanup-incomplete'
+        )
+          return this.processResult
         return {
           stdout: '',
           stderr: error.message,

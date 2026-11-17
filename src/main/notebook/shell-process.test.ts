@@ -1216,6 +1216,99 @@ describe('notebook shell process behavior', () => {
     }
   })
 
+  it('opens one raw WSL network epoch only after both memory gates and closes it at finish', async () => {
+    vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+    let releaseGuest: (() => void) | undefined
+    const guestGate = new Promise<void>((resolve) => {
+      releaseGuest = resolve
+    })
+    let guestVerified = false
+    const guest = new MemoryPolicyService({
+      adapter: {
+        platform: 'linux',
+        defaultExecutionScope: fixtureProbe.executionScope,
+        sample: async () => {
+          await guestGate
+          guestVerified = true
+          return {
+            platform: 'linux',
+            source: 'fixture',
+            executionScope: fixtureProbe.executionScope,
+            facts: { totalBytes: 1000, availableBytes: 800, overcommitMode: 0 }
+          }
+        }
+      }
+    })
+    vi.mocked(wslMemory.createWslExecutionMemoryPolicy).mockResolvedValueOnce(guest)
+    const endExecution = vi.fn()
+    const beginExecution = vi.fn(() => {
+      expect(guestVerified).toBe(true)
+      return endExecution
+    })
+    const cleanup = vi.fn(async () => ({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }))
+    const controller = new AbortController()
+    const command = 'printf finished'
+    const running = runShellCommand({
+      executionAdmission: fixtureAdmission(),
+      command,
+      cwd: process.cwd(),
+      handoffDir: process.cwd(),
+      runtimeRoot: portableRuntimeRoot,
+      sessionId: 'raw-wsl-session',
+      projectId: 'raw-wsl-project',
+      executionReference: 'raw-wsl-reference',
+      signal: controller.signal,
+      platform: 'win32',
+      runtimeBinding: {
+        kind: 'wsl2-bash',
+        profileId: 'fixture-profile',
+        distro: 'fixture-distro',
+        user: 'fixture-user'
+      },
+      previewAvailable,
+      terminateTree: async () => ({ reaped: true }),
+      processSandbox: {
+        wrap: async (invocation) => ({
+          executable: process.execPath,
+          args: [
+            '-e',
+            'process.stdout.write("\\0open-science-wsl-ready\\0"); process.stdin.once("data", () => { process.stdout.write("finished"); process.stdin.destroy() })'
+          ],
+          env: invocation.env,
+          memoryProbe: fixtureProbe,
+          beginExecution,
+          annotateStderr: (stderr) => stderr,
+          confirmProcessState: async () => 'started-and-reaped',
+          cleanup
+        })
+      }
+    })
+    try {
+      await vi.waitFor(() =>
+        expect(wslMemory.createWslExecutionMemoryPolicy).toHaveBeenCalledOnce()
+      )
+      expect(beginExecution).not.toHaveBeenCalled()
+      releaseGuest?.()
+      await expect(running).resolves.toMatchObject({ stdout: 'finished', exitCode: 0 })
+      expect(beginExecution).toHaveBeenCalledExactlyOnceWith({
+        commandText: command,
+        executionReference: 'raw-wsl-reference',
+        signal: controller.signal,
+        onNetworkWaitChange: expect.any(Function)
+      })
+      expect(endExecution).toHaveBeenCalledOnce()
+      expect(cleanup).toHaveBeenCalledOnce()
+    } finally {
+      releaseGuest?.()
+      await running
+      guest.dispose()
+    }
+  })
+
   it.each([true, false])(
     'retains WSL launch evidence until guest cleanup is proven after an identity race: %s',
     async (reaped) => {
