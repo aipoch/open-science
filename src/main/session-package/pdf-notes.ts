@@ -17,7 +17,8 @@ export { packagePdfNotesSchema, type PackagePdfNotes } from './pdf-notes-contrac
 // Resolve from restored package versions even when every snapshot annotation was deleted.
 export const readPackagePdfSource = async (
   client: PrismaClient,
-  request: ListPdfAnnotationsRequest
+  request: ListPdfAnnotationsRequest,
+  includedStorageKeys?: ReadonlySet<string>
 ): Promise<PdfAnnotationSource | undefined> => {
   const { projectId, sessionId, sourceFileId, versionId } = request
   if (!projectId || !sessionId || !versionId) return undefined
@@ -35,6 +36,7 @@ export const readPackagePdfSource = async (
   const version = upload ?? artifact
   const fileId = upload?.uploadFile.id ?? artifact?.artifact.id
   if (!version || !fileId) return undefined
+  if (includedStorageKeys && !includedStorageKeys.has(version.contentStorageKey)) return undefined
   return {
     kind: upload ? 'upload-version' : 'artifact-version',
     projectId,

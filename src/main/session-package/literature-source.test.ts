@@ -57,7 +57,8 @@ describe('session package literature source', () => {
       items: [metadata],
       attachments: [
         { versionId: version.id, attachmentId: version.attachmentId, itemId: version.itemId }
-      ]
+      ],
+      unavailableVersionIds: []
     })
     expect(() => validatePackageLiterature(snapshot)).not.toThrow()
     const archived = structuredClone(snapshot)
@@ -77,20 +78,30 @@ describe('session package literature source', () => {
     const snapshot = records()
     await expect(
       capturePackageLiterature(undefined, session, snapshot, [version.id])
-    ).rejects.toThrow('Literature source is unavailable')
+    ).rejects.toThrow('Literature PDF Version is unavailable')
     expect(snapshot).toEqual(records())
   })
 
   it.each([
-    { ids: ['version-1'], rows: [] },
-    { ids: ['version-1'], rows: [{ ...version, id: 'wrong-version' }] },
-    { ids: ['version-1', 'version-2'], rows: [version, version] }
-  ])('rejects incomplete or substituted version identities: $ids', async ({ ids, rows }) => {
+    { kind: 'incomplete', ids: ['version-1'], rows: [], error: 'is unavailable' },
+    {
+      kind: 'substituted',
+      ids: ['version-1'],
+      rows: [{ ...version, id: 'wrong-version' }],
+      error: 'identity is invalid'
+    },
+    {
+      kind: 'duplicate',
+      ids: ['version-1', 'version-2'],
+      rows: [version, version],
+      error: 'identity is invalid'
+    }
+  ])('rejects $kind version identities', async ({ ids, rows, error }) => {
     const port = source()
     port.readVersions = async () => rows
     const snapshot = records()
     await expect(capturePackageLiterature(port, session, snapshot, ids)).rejects.toThrow(
-      'Literature PDF Version is unavailable'
+      `Literature PDF Version ${error}`
     )
     expect(snapshot).toEqual(records())
     expect(port.readItem).not.toHaveBeenCalled()

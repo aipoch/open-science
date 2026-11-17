@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { LibrarySourceCitationLink } from './LibrarySourceCitationLink'
 import type { LiteratureSourceCitation } from '../../../../shared/literature-source-citation'
+import { createUploadVersionReference } from '../../../../shared/uploads'
 
 const harness = vi.hoisted(() => ({
   reveal: vi.fn(),
@@ -64,10 +65,22 @@ const button = (text: string): HTMLButtonElement => {
   expect(found).toBeTruthy()
   return found!
 }
-const show = async (value = citation, snapshotOnly = false): Promise<void> => {
+const show = async (
+  value = citation,
+  snapshotOnly = false,
+  options?: {
+    packageLiterature?: { items: { itemId: string; metadataRevision: number; item: unknown }[] }
+    packageSessionId?: string
+  }
+): Promise<void> => {
   await act(async () =>
     root.render(
-      <LibrarySourceCitationLink citation={value} snapshotOnly={snapshotOnly}>
+      <LibrarySourceCitationLink
+        citation={value}
+        snapshotOnly={snapshotOnly}
+        packageLiterature={options?.packageLiterature}
+        packageSessionId={options?.packageSessionId}
+      >
         1
       </LibrarySourceCitationLink>
     )
@@ -81,6 +94,46 @@ it('opens package citation metadata in a read-only snapshot dialog', async () =>
   expect(document.body.textContent).toContain('Saved reference metadata from the Session package.')
   expect(document.body.textContent).toContain(citation.title)
   expect(harness.openReference).not.toHaveBeenCalled()
+})
+
+it('uses the packaged bibliographic snapshot and imported session for package citations', async () => {
+  await show({ ...citation, itemId: 'item-1' }, true, {
+    packageSessionId: 'imported-session',
+    packageLiterature: {
+      items: [
+        {
+          itemId: 'item-1',
+          metadataRevision: 7,
+          item: {
+            itemType: 'journalArticle',
+            title: 'Packaged article',
+            abstract: 'Abstract retained in the package.'
+          }
+        }
+      ]
+    }
+  })
+  await click(button('View reference'))
+  expect(document.body.textContent).toContain('Packaged article')
+  expect(document.body.textContent).toContain('Abstract retained in the package.')
+  expect(document.body.textContent).not.toContain('Document')
+  await click(document.querySelector('button[aria-label="Close"]')!)
+  await click(button('1'))
+  await click(button('View source page'))
+  expect(harness.reveal.mock.calls[0][0].source).toEqual({
+    kind: 'upload-version',
+    projectId: 'project-1',
+    sessionId: 'imported-session',
+    sourceFileId: citation.source!.attachmentId,
+    versionId: citation.source!.versionId,
+    checksum: citation.source!.checksum,
+    name: citation.source!.name,
+    path: createUploadVersionReference(citation.source!.versionId, {
+      projectId: 'project-1',
+      sessionId: 'imported-session',
+      fileId: citation.source!.attachmentId
+    })
+  })
 })
 
 it('shows the excerpt on demand and reveals the original immutable PDF version at its page', async () => {

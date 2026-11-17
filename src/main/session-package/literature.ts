@@ -2,6 +2,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { PackageLiteratureSource } from './literature-source'
 import type { PackageLiterature } from './literature-contract'
 import { packageLiteratureSchema } from './literature-contract'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import type { PackageRecords } from './records-contract'
 import type { PersistedToolActivity } from '../../shared/session-message-contract'
 import {
@@ -235,7 +236,8 @@ export const capturePackageLiterature = async (
   source: PackageLiteratureSource | undefined,
   session: PersistedChatSession,
   records: PackageRecords,
-  additionalVersionIds: readonly string[] = []
+  additionalVersionIds: readonly string[] = [],
+  contentAvailable?: (storageKey: string) => Promise<boolean>
 ): Promise<Map<string, string>> => {
   const references = sessionLiteratureReferences(session)
   for (const id of additionalVersionIds) references.versionIds.add(id)
@@ -252,19 +254,75 @@ export const capturePackageLiterature = async (
         ])
       ).values()
     ],
-    attachments: [...(records.literature?.attachments ?? [])]
+    attachments: [...(records.literature?.attachments ?? [])],
+    unavailableVersionIds: [...(records.literature?.unavailableVersionIds ?? [])]
   }
   const localVersionIds = [...references.versionIds].filter(
     (id) => !literature.attachments.some((entry) => entry.versionId === id)
   )
-  if (localVersionIds.length && !source) throw new Error('Literature source is unavailable.')
-  const rows = localVersionIds.length ? await source!.readVersions(localVersionIds) : []
+  const candidates =
+    localVersionIds.length && source ? await source.readVersions(localVersionIds) : []
+  const availableRows = contentAvailable
+    ? (
+        await Promise.all(
+          candidates.map(async (row) =>
+            (await contentAvailable(row.storageKey)) ? row : undefined
+          )
+        )
+      ).filter((row): row is (typeof candidates)[number] => row !== undefined)
+    : candidates
+  const returnedIds = new Set(availableRows.map(({ id }) => id))
+  // Missing bytes do not erase authoritative version metadata needed by historical
+  // reading bindings. The exporter records these versions as excluded file content.
+  const rows = candidates
   if (
-    rows.length !== localVersionIds.length ||
-    new Set(rows.map(({ id }) => id)).size !== rows.length ||
-    rows.some(({ id }) => !localVersionIds.includes(id))
+    new Set(candidates.map(({ id }) => id)).size !== candidates.length ||
+    candidates.some(({ id }) => !localVersionIds.includes(id))
   )
-    throw new Error('Literature PDF Version is unavailable.')
+    throw new Error('Literature PDF Version identity is invalid.')
+  const citationByVersion = new Map(
+    sessionSourceCitations(session)
+      .filter(
+        (
+          citation
+        ): citation is LiteratureSourceCitation & {
+          source: NonNullable<LiteratureSourceCitation['source']>
+        } => Boolean(citation.source)
+      )
+      .map((citation) => [citation.source.versionId, citation])
+  )
+  const unavailableIds = localVersionIds.filter((id) => !returnedIds.has(id))
+  for (const id of unavailableIds) {
+    if (candidates.some((row) => row.id === id)) {
+      if (!literature.unavailableVersionIds.includes(id)) literature.unavailableVersionIds.push(id)
+      continue
+    }
+    const citation = citationByVersion.get(id)
+    if (!citation) {
+      const mention = (session.conversationGraph?.messages ?? session.messages)
+        .flatMap((message) => message.parts ?? [])
+        .some((part) => part.type === 'literature' && part.attachmentVersionId === id)
+      if (!mention) throw new Error('Literature PDF Version is unavailable.')
+      if (!literature.unavailableVersionIds.includes(id)) literature.unavailableVersionIds.push(id)
+      continue
+    }
+    const itemId = citation.itemId
+    if (!literature.items.some((item) => item.itemId === itemId))
+      literature.items.push(
+        (await source?.readItem(itemId)) ?? {
+          itemId,
+          metadataRevision: 1,
+          item: literatureItemInputSchema.parse({ itemType: 'document', title: citation.title })
+        }
+      )
+    if (!literature.attachments.some((entry) => entry.versionId === id))
+      literature.attachments.push({
+        versionId: id,
+        attachmentId: citation.source.attachmentId,
+        itemId
+      })
+    if (!literature.unavailableVersionIds.includes(id)) literature.unavailableVersionIds.push(id)
+  }
   if (
     rows.length &&
     !records.tables.FileOriginSession.some(
@@ -369,6 +427,15 @@ export const validatePackageLiterature = (records: PackageRecords): void => {
     throw new Error('Duplicate Literature package identity.')
   for (const entry of literature.attachments) {
     const version = records.tables.UploadVersion.find((row) => row.id === entry.versionId)
+    if (
+      !version &&
+      !records.tables.ArtifactVersion.some((row) => row.id === entry.versionId) &&
+      literature.unavailableVersionIds.includes(entry.versionId)
+    ) {
+      if (!literature.items.some((item) => item.itemId === entry.itemId))
+        throw new Error('Literature package attachment ownership is invalid.')
+      continue
+    }
     const file = records.tables.UploadFile.find((row) => row.id === entry.attachmentId)
     if (
       !version ||
@@ -410,15 +477,22 @@ export const validatePackageLiteratureSession = (
               annotation.source.kind === 'literature-attachment-version'
           )
       )
-    if (hasFileReference || citations.length)
-      throw new Error('Literature PDF reference has no packaged Version.')
+    if (hasFileReference) throw new Error('Literature PDF reference has no packaged Version.')
     return
   }
   const references = sessionLiteratureReferences(session)
   const entries = new Map(records.literature?.attachments.map((entry) => [entry.versionId, entry]))
   const versions = new Map(records.tables.UploadVersion.map((version) => [version.id, version]))
+  const artifactVersionIds = new Set(records.tables.ArtifactVersion.map((version) => version.id))
+  // A historical missing-version marker cannot exempt an existing native version
+  // from the attachment mapping and ownership checks below.
+  const unavailable = new Set(
+    (records.literature.unavailableVersionIds ?? []).filter(
+      (id) => !versions.has(id) && !artifactVersionIds.has(id)
+    )
+  )
   for (const versionId of references.versionIds)
-    if (!entries.has(versionId))
+    if (!entries.has(versionId) && !unavailable.has(versionId))
       throw new Error('Literature PDF reference has no packaged Version.')
   for (const item of references.items)
     if (!records.literature.items.some((entry) => entry.itemId === item.itemId))
@@ -431,7 +505,7 @@ export const validatePackageLiteratureSession = (
       !entry ||
       entry.itemId !== citation.itemId ||
       entry.attachmentId !== source.attachmentId ||
-      version?.checksum !== source.checksum
+      (version ? version.checksum !== source.checksum : !unavailable.has(source.versionId))
     )
       throw new Error('Literature citation content identity mismatch.')
   }
@@ -454,6 +528,7 @@ export const validatePackageLiteratureSession = (
       if (
         part.type === 'literature' &&
         part.attachmentVersionId &&
+        !(!entries.has(part.attachmentVersionId) && unavailable.has(part.attachmentVersionId)) &&
         entries.get(part.attachmentVersionId)?.itemId !== part.itemId
       )
         throw new Error('Literature reference attachment ownership mismatch.')

@@ -166,6 +166,9 @@ async function createStartupHarness(
   )
   reads.length = 0
   const composed = composeSessionProjection({
+    sessionPackageService: {
+      hydrateSessionLiterature: async (session: PersistedChatSession) => session
+    },
     sessionRepository: repository,
     sessionPersistenceCoordinator: coordinator,
     settingsService: {

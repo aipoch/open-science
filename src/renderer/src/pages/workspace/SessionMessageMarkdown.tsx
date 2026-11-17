@@ -45,6 +45,10 @@ type SessionMessageMarkdownProps = {
   artifacts: MessageArtifact[]
   sourceCitationHrefs?: readonly string[]
   snapshotOnly?: boolean
+  packageLiterature?: Readonly<{
+    items: readonly Readonly<{ itemId: string; metadataRevision: number; item: unknown }>[]
+  }>
+  packageSessionId?: string
   workspaceCwd?: string
   notebookReference?: NotebookSessionReference
   onPreviewArtifact: (artifact: MessageArtifact) => void
@@ -58,6 +62,8 @@ const SessionArtifactContext = createContext<Pick<
   | 'artifacts'
   | 'sourceCitationHrefs'
   | 'snapshotOnly'
+  | 'packageLiterature'
+  | 'packageSessionId'
   | 'workspaceCwd'
   | 'notebookReference'
   | 'onPreviewArtifact'
@@ -284,6 +290,8 @@ const SessionMessageMarkdown = memo(
     artifacts,
     sourceCitationHrefs,
     snapshotOnly,
+    packageLiterature,
+    packageSessionId,
     workspaceCwd,
     notebookReference,
     onPreviewArtifact,
@@ -320,6 +328,8 @@ const SessionMessageMarkdown = memo(
                 citation={citation}
                 className={className}
                 snapshotOnly={context.snapshotOnly}
+                packageLiterature={context.packageLiterature}
+                packageSessionId={context.packageSessionId}
               >
                 {children}
               </LibrarySourceCitationLink>
@@ -427,6 +437,8 @@ const SessionMessageMarkdown = memo(
         artifacts,
         sourceCitationHrefs,
         snapshotOnly,
+        packageLiterature,
+        packageSessionId,
         workspaceCwd,
         notebookReference,
         onPreviewArtifact,
@@ -436,6 +448,8 @@ const SessionMessageMarkdown = memo(
         artifacts,
         sourceCitationHrefs,
         snapshotOnly,
+        packageLiterature,
+        packageSessionId,
         workspaceCwd,
         notebookReference,
         onPreviewArtifact,

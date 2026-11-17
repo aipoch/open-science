@@ -2,11 +2,12 @@ import { createLiteraturePackageSource } from '../literature/package-source'
 import { persistentContentReferences } from '../storage/prisma-content-references'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, unlink, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createTestPdf } from '../../../test/fixtures/literature-pdf'
+import { createUploadVersionReference } from '../../shared/uploads'
 import {
   createLinearConversationGraph,
   forkEditedConversationMessage,
@@ -39,6 +40,7 @@ import {
 } from '../../shared/literature-source-citation'
 import type { PersistedToolActivity } from '../../shared/session-message-contract'
 import { PackageLiteratureReader } from './literature-reader'
+import { writePackageRoCrateMetadata } from './ro-crate'
 import { SessionPackageService } from './service'
 
 vi.mock('electron', () => ({
@@ -236,6 +238,65 @@ const citationReceipt = (value: PersistedChatSession): string => {
   const output = activity.toolContent![0] as { content: { text: string } }
   return JSON.parse(output.content.text).openScienceLiteraturePresentation.sourceCitationHrefs[0]
 }
+
+it.each([false, true])(
+  'resolves the imported PDF source without annotation snapshots (excluded=%s)',
+  async (excluded) => {
+    const source = await setup(),
+      target = await setup()
+    await seed(source)
+    const value = citationSession()
+    await new SessionRepository(source.storageRoot).saveSession(value)
+    const archive = join(source.storageRoot, 'unannotated-citation.science')
+    await source.service.exportTo({ projectId: value.projectId, sessionId: value.id }, archive, {
+      selectFiles: async (files) => (excluded ? files.map(({ storageKey }) => storageKey) : [])
+    })
+    const imported = await target.service.importFrom(archive)
+    const saved = (await new SessionRepository(target.storageRoot).loadSession(
+      imported.projectId,
+      imported.sessionId
+    ))!
+    const citation = parseLiteratureSourceCitationHref(citationReceipt(saved))!
+    const request = {
+      ...imported,
+      sourceFileId: citation.source!.attachmentId,
+      versionId: citation.source!.versionId
+    }
+    expect((await target.service.readOrigin(imported)).pdfNotes ?? []).toEqual([])
+    const result = await target.service.readPdfNotes(request)
+    expect(result.items).toEqual([])
+    expect(result.total).toBe(0)
+    if (excluded) expect(result.source).toBeUndefined()
+    else {
+      expect(result.source).toEqual({
+        kind: 'upload-version',
+        projectId: imported.projectId,
+        sessionId: imported.sessionId,
+        sourceFileId: citation.source!.attachmentId,
+        versionId: citation.source!.versionId,
+        checksum: citation.source!.checksum,
+        name: citation.source!.name,
+        path: createUploadVersionReference(citation.source!.versionId, {
+          ...imported,
+          fileId: citation.source!.attachmentId
+        })
+      })
+      const row = await target.client.uploadVersion.findUniqueOrThrow({
+        where: { id: citation.source!.versionId }
+      })
+      expect(await readFile(join(target.storageRoot, row.contentStorageKey))).toEqual(
+        createTestPdf()
+      )
+      expect(
+        (await target.service.readPdfNotes({ ...request, sourceFileId: 'unrelated-file' })).source
+      ).toBeUndefined()
+      expect(
+        (await target.service.readPdfNotes({ ...request, versionId: 'version-1' })).source
+      ).toBeUndefined()
+      expect(await target.client.pdfAnnotation.count()).toBe(0)
+    }
+  }
+)
 
 it('collects and maps only completed, prompt-bound Library citation receipts', () => {
   const valid = citationSession()
@@ -930,6 +991,421 @@ it('imports historical metadata-only Literature mentions with attachment IDs but
     item: { title: 'Historical metadata' }
   })
   expect(await target.client.uploadVersion.count()).toBe(0)
+  const forwarded = join(target.storageRoot, 'historical-metadata-forwarded.science')
+  await target.service.exportTo(imported, forwarded)
+  const second = await target.service.importFrom(forwarded)
+  const restored = await new SessionRepository(target.storageRoot).loadSession(
+    second.projectId,
+    second.sessionId
+  )
+  const secondOrigin = await target.service.readOrigin(second)
+  expect(restored?.messages[0].parts?.[0]).toEqual({
+    ...saved?.messages[0].parts?.[0],
+    itemId: secondOrigin.identities['item-1']
+  })
+  expect(secondOrigin.literature?.unavailableVersionIds).toContain('version-1')
+  expect(await target.client.uploadVersion.count()).toBe(0)
+})
+
+it.each(['missing', 'symbolic-link'] as const)(
+  'exports citation metadata only for confirmed missing PDF bytes (%s)',
+  async (state) => {
+    const source = await setup(),
+      target = await setup()
+    await seed(source)
+    const value = citationSession()
+    await new SessionRepository(source.storageRoot).saveSession(value)
+    const pdfPath = join(source.storageRoot, 'content/blobs/paper')
+    await unlink(pdfPath)
+    if (state === 'symbolic-link') {
+      const other = join(source.storageRoot, 'other.pdf')
+      await writeFile(other, createTestPdf())
+      await symlink(other, pdfPath)
+    }
+    const archive = join(source.storageRoot, 'physically-missing.science')
+    const exporting = source.service.exportTo(
+      { projectId: value.projectId, sessionId: value.id },
+      archive
+    )
+    if (state === 'symbolic-link') {
+      await expect(exporting).rejects.toThrow('link or special file')
+      await expect(readFile(archive)).rejects.toMatchObject({ code: 'ENOENT' })
+      return
+    }
+    await exporting
+    const imported = await target.service.importFrom(archive)
+    const saved = (await new SessionRepository(target.storageRoot).loadSession(
+      imported.projectId,
+      imported.sessionId
+    ))!
+    const citation = parseLiteratureSourceCitationHref(citationReceipt(saved))!
+    expect(citation.quote).toBe(sourceCitation().quote)
+    expect(citation.context).toBe(sourceCitation().context)
+    const origin = await target.service.readOrigin(imported)
+    expect(origin.literature?.unavailableVersionIds).toContain('version-1')
+    expect(origin.literature?.items[0].item).toMatchObject({
+      itemType: 'journalArticle',
+      title: 'Evidence paper',
+      abstract: 'Abstract preserved without the PDF.'
+    })
+    expect(await target.client.uploadVersion.count()).toBe(1)
+    expect(origin.sourceManifest.excludedFiles).toHaveLength(1)
+    const missingReader = new PackageLiteratureReader({
+      storageRoot: target.storageRoot,
+      getClient: async () => target.client,
+      files: new ManagedFileVersionService({
+        storageRoot: target.storageRoot,
+        getClient: async () => target.client
+      })
+    })
+    await expect(missingReader.openContent(citation.source!.versionId)).rejects.toThrow(
+      'not included'
+    )
+    expect(await target.client.literatureItem.count()).toBe(0)
+    const forwarded = join(target.storageRoot, 'still-missing.science')
+    await target.service.exportTo(imported, forwarded)
+    await expect(target.service.importFrom(forwarded)).resolves.toBeDefined()
+    expect(await target.client.uploadVersion.count()).toBe(2)
+    expect(
+      citationReceipt(
+        (await new SessionRepository(source.storageRoot).loadSession(value.projectId, value.id))!
+      )
+    ).toBe(citationReceipt(value))
+  }
+)
+
+it.each(['runtime', 'message', 'binding-only'] as const)(
+  'preserves unavailable PDF reading context through export and import (%s)',
+  async (location) => {
+    const source = await setup(),
+      target = await setup()
+    await seed(source)
+    const value = location === 'binding-only' ? session() : citationSession()
+    const context = session().runtimeContext!.pdfContext!
+    if (location === 'runtime') value.runtimeContext = session().runtimeContext
+    if (location === 'message') value.messages[0].pdfContext = context
+    await new SessionRepository(source.storageRoot).saveSession(value)
+    await unlink(join(source.storageRoot, 'content/blobs/paper'))
+    const archive = join(source.storageRoot, 'missing-with-context.science')
+    await source.service.exportTo({ projectId: value.projectId, sessionId: value.id }, archive, {
+      selectFiles: async (files) => {
+        expect(files).toEqual([])
+        return []
+      }
+    })
+    const imported = await target.service.importFrom(archive)
+    const saved = (await new SessionRepository(target.storageRoot).loadSession(
+      imported.projectId,
+      imported.sessionId
+    ))!
+    const binding = (
+      location === 'message' ? saved.messages[0].pdfContext : saved.runtimeContext?.pdfContext
+    )!.bindings[0]
+    expect(binding).toMatchObject({
+      sourceKind: 'literature-attachment-version',
+      name: 'paper.pdf',
+      checksum: sha256(createTestPdf()),
+      sizeBytes: createTestPdf().length
+    })
+    expect(binding.sourceVersionId).not.toBe('version-1')
+    const origin = await target.service.readOrigin(imported)
+    expect(origin.literature?.unavailableVersionIds).toContain('version-1')
+    expect(origin.sourceManifest.excludedFiles).toHaveLength(1)
+    expect(
+      (
+        await target.service.readPdfNotes({
+          ...imported,
+          sourceFileId: binding.sourceFileId,
+          versionId: binding.sourceVersionId
+        })
+      ).source
+    ).toBeUndefined()
+    const forwarded = join(target.storageRoot, 'missing-context-forwarded.science')
+    await target.service.exportTo(imported, forwarded)
+    const second = await target.service.importFrom(forwarded)
+    const restored = (await new SessionRepository(target.storageRoot).loadSession(
+      second.projectId,
+      second.sessionId
+    ))!
+    const next = (
+      location === 'message' ? restored.messages[0].pdfContext : restored.runtimeContext?.pdfContext
+    )!.bindings[0]
+    expect(next).toMatchObject({
+      checksum: binding.checksum,
+      sizeBytes: binding.sizeBytes,
+      name: binding.name
+    })
+    expect(next.sourceVersionId).not.toBe(binding.sourceVersionId)
+    expect((await target.service.readOrigin(second)).sourceManifest.excludedFiles).toHaveLength(1)
+    const unchanged = (await new SessionRepository(source.storageRoot).loadSession(
+      value.projectId,
+      value.id
+    ))!
+    expect(
+      location === 'message'
+        ? unchanged.messages[0].pdfContext
+        : unchanged.runtimeContext?.pdfContext
+    ).toEqual(context)
+  }
+)
+
+it.each(['citation-checksum', 'attachment-owner', 'binding-size'] as const)(
+  'rejects invalid existing PDF identity despite an unavailable marker (%s)',
+  async (invalid) => {
+    const source = await setup(),
+      target = await setup()
+    await seed(source)
+    const value = citationSession()
+    await new SessionRepository(source.storageRoot).saveSession(value)
+    const archive = join(source.storageRoot, 'original-identities.science')
+    await source.service.exportTo({ projectId: value.projectId, sessionId: value.id }, archive)
+    const directory = join(source.storageRoot, 'contradictory-marker')
+    const manifest = await readPackageArchive(archive, directory)
+    const records = JSON.parse(await readFile(join(directory, 'records.json'), 'utf8'))
+    records.literature.unavailableVersionIds = ['version-1']
+    let changedSession = value
+    let changedDocument: string | undefined
+    if (invalid === 'citation-checksum') {
+      const bad = sourceCitation()
+      bad.source!.checksum = 'b'.repeat(64)
+      changedDocument = (await readFile(join(directory, 'session.json'), 'utf8')).replaceAll(
+        createLiteratureSourceCitationHref(sourceCitation()),
+        createLiteratureSourceCitationHref(bad)
+      )
+    } else if (invalid === 'attachment-owner')
+      records.tables.UploadVersion[0].uploadFileId = 'unrelated-file'
+    else {
+      changedSession = { ...value, runtimeContext: session().runtimeContext }
+      changedSession.runtimeContext = {
+        ...changedSession.runtimeContext!,
+        pdfContext: {
+          version: 1,
+          bindings: changedSession.runtimeContext!.pdfContext!.bindings.map((b) => ({
+            ...b,
+            sizeBytes: b.sizeBytes + 1
+          }))
+        }
+      }
+    }
+    await writeFile(join(directory, 'records.json'), JSON.stringify(records))
+    await writeFile(
+      join(directory, 'session.json'),
+      changedDocument ?? JSON.stringify({ version: 2, session: changedSession })
+    )
+    manifest.inventory = await Promise.all(
+      manifest.inventory.map((entry) =>
+        entry.path === 'records.json'
+          ? packageEntry(directory, 'records.json', 'records')
+          : entry.path === 'session.json'
+            ? packageEntry(directory, 'session.json', 'session')
+            : entry
+      )
+    )
+    await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
+    if (invalid === 'citation-checksum') {
+      await writePackageRoCrateMetadata(directory, manifest, records)
+      await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
+    }
+    const tampered = join(source.storageRoot, 'invalid-existing.science')
+    await writePackageArchive(directory, tampered)
+    await expect(target.service.importFrom(tampered)).rejects.toThrow(
+      invalid === 'citation-checksum'
+        ? 'citation content identity mismatch'
+        : invalid === 'attachment-owner'
+          ? 'attachment ownership is invalid'
+          : 'binding identity mismatch'
+    )
+    expect(await target.client.project.count()).toBe(0)
+    expect(await target.client.uploadVersion.count()).toBe(0)
+  }
+)
+
+it('rejects an unavailable Literature mention with an existing Version but no attachment mapping', async () => {
+  const source = await setup(),
+    target = await setup()
+  await seed(source)
+  const value = session()
+  value.runtimeContext = undefined
+  value.messages = [
+    {
+      id: 'mention',
+      role: 'user',
+      content: 'Review this reference',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1,
+      parts: [
+        {
+          type: 'literature',
+          itemId: 'item-1',
+          metadataRevision: 1,
+          item: literatureItemInputSchema.parse({
+            itemType: 'journalArticle',
+            title: 'Evidence paper'
+          }),
+          attachmentVersionId: 'version-1'
+        }
+      ]
+    }
+  ]
+  await new SessionRepository(source.storageRoot).saveSession(value)
+  const archive = join(source.storageRoot, 'mention-with-version.science')
+  await source.service.exportTo({ projectId: value.projectId, sessionId: value.id }, archive)
+  const directory = join(source.storageRoot, 'missing-attachment-mapping')
+  const manifest = await readPackageArchive(archive, directory)
+  const records = JSON.parse(await readFile(join(directory, 'records.json'), 'utf8'))
+  expect(records.tables.UploadVersion.map((row: { id: string }) => row.id)).toEqual(['version-1'])
+  records.literature.attachments = []
+  records.literature.unavailableVersionIds = ['version-1']
+  await writeFile(join(directory, 'records.json'), JSON.stringify(records))
+  manifest.inventory = await Promise.all(
+    manifest.inventory.map((entry) =>
+      entry.path === 'records.json' ? packageEntry(directory, 'records.json', 'records') : entry
+    )
+  )
+  await writePackageRoCrateMetadata(directory, manifest, records)
+  await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
+  const tampered = join(source.storageRoot, 'missing-attachment-mapping.science')
+  await writePackageArchive(directory, tampered)
+  await expect(target.service.importFrom(tampered)).rejects.toThrow(
+    'Literature PDF reference has no packaged Version.'
+  )
+  expect(await target.client.project.count()).toBe(0)
+  expect(await target.client.uploadVersion.count()).toBe(0)
+})
+
+it('rejects an unavailable Literature attachment backed by an existing Artifact Version', async () => {
+  const target = await setup()
+  const directory = join(target.storageRoot, 'artifact-disguised-as-literature')
+  const manifest = await readPackageArchive(
+    fileURLToPath(new URL('./fixtures/session-package-v0.31.1-artifact.science', import.meta.url)),
+    directory
+  )
+  const records = JSON.parse(await readFile(join(directory, 'records.json'), 'utf8'))
+  const versionId = records.tables.ArtifactVersion[0].id
+  expect(records.tables.UploadVersion).toEqual([])
+  records.literature = {
+    items: [
+      {
+        itemId: 'historical-item',
+        metadataRevision: 1,
+        item: literatureItemInputSchema.parse({ itemType: 'document', title: 'Historical item' })
+      }
+    ],
+    attachments: [{ versionId, attachmentId: 'historical-attachment', itemId: 'historical-item' }],
+    unavailableVersionIds: [versionId]
+  }
+  manifest.requiredFeatures = [...(manifest.requiredFeatures ?? []), 'literature']
+  await writeFile(join(directory, 'records.json'), JSON.stringify(records))
+  manifest.inventory = await Promise.all(
+    manifest.inventory.map((entry) =>
+      entry.path === 'records.json' ? packageEntry(directory, 'records.json', 'records') : entry
+    )
+  )
+  await writePackageRoCrateMetadata(directory, manifest, records)
+  await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
+  const tampered = join(target.storageRoot, 'artifact-disguised-as-literature.science')
+  await writePackageArchive(directory, tampered)
+  await expect(target.service.importFrom(tampered)).rejects.toThrow(
+    'Literature package attachment ownership is invalid.'
+  )
+  expect(await target.client.project.count()).toBe(0)
+  expect(await target.client.artifactVersion.count()).toBe(0)
+})
+
+it('hydrates complete metadata for an existing imported session only from its verified package', async () => {
+  const source = await setup(),
+    target = await setup()
+  await seed(source)
+  const value = citationSession()
+  await new SessionRepository(source.storageRoot).saveSession(value)
+  const archive = join(source.storageRoot, 'metadata-hydration.science')
+  await source.service.exportTo({ projectId: value.projectId, sessionId: value.id }, archive)
+  const imported = await target.service.importFrom(archive)
+  const repository = new SessionRepository(target.storageRoot)
+  const saved = (await repository.loadSession(imported.projectId, imported.sessionId))!
+  const legacy = { ...saved, packageOrigin: { ...saved.packageOrigin!, literature: undefined } }
+  const loaded = await target.service.hydrateSessionLiterature(legacy)
+  expect(loaded.packageOrigin?.literature).toEqual(saved.packageOrigin?.literature)
+  expect(loaded.packageOrigin?.literature?.items[0].itemId).not.toBe('item-1')
+  expect(legacy.packageOrigin.literature).toBeUndefined()
+  expect(await target.service.hydrateSessionLiterature(value)).toBe(value)
+  const recordsPath = join(
+    target.storageRoot,
+    'artifacts',
+    imported.projectId,
+    imported.sessionId,
+    '.session-package/source/records.json'
+  )
+  await writeFile(recordsPath, '{}')
+  expect(await target.service.hydrateSessionLiterature(legacy)).toBe(legacy)
+})
+
+it('round-trips historical citation receipts when the referenced PDF is unavailable', async () => {
+  const source = await setup(),
+    target = await setup()
+  await seed(source)
+  const value = citationSession()
+  await new SessionRepository(source.storageRoot).saveSession(value)
+  const archive = join(source.storageRoot, 'citation-without-pdf.science')
+  await source.service.exportTo({ projectId: value.projectId, sessionId: value.id }, archive, {
+    selectFiles: async (files) => files.map(({ storageKey }) => storageKey)
+  })
+  const directory = join(source.storageRoot, 'citation-without-pdf-history')
+  const manifest = await readPackageArchive(archive, directory)
+  const records = JSON.parse(await readFile(join(directory, 'records.json'), 'utf8'))
+  delete records.literature
+  for (const key of Object.keys(records.tables)) records.tables[key] = []
+  await writeFile(join(directory, 'records.json'), JSON.stringify(records))
+  delete manifest.requiredFeatures
+  manifest.excludedFiles = []
+  manifest.inventory = await Promise.all(
+    manifest.inventory
+      .filter((entry) => !entry.storageKey && entry.path !== 'ro-crate-metadata.json')
+      .map((entry) =>
+        entry.path === 'records.json' ? packageEntry(directory, 'records.json', 'records') : entry
+      )
+  )
+  await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
+  const historical = join(source.storageRoot, 'citation-without-pdf-history.science')
+  await writePackageArchive(directory, historical)
+
+  const imported = await target.service.importFrom(historical)
+  const saved = (await new SessionRepository(target.storageRoot).loadSession(
+    imported.projectId,
+    imported.sessionId
+  ))!
+  const href = citationReceipt(saved)
+  const citation = resolveLiteratureSourceCitationHref('#library-cite=0123456789abcdef', [href])!
+  expect(citation.source?.versionId).toBeDefined()
+  expect(await target.client.uploadVersion.count()).toBe(0)
+
+  const forwarded = join(target.storageRoot, 'citation-without-pdf-forwarded.science')
+  await target.service.exportTo(imported, forwarded)
+  const second = await target.service.importFrom(forwarded)
+  const restored = await new SessionRepository(target.storageRoot).loadSession(
+    second.projectId,
+    second.sessionId
+  )
+  const restoredHref = citationReceipt(restored!)
+  expect(
+    resolveLiteratureSourceCitationHref('#library-cite=0123456789abcdef', [restoredHref])
+  ).toMatchObject({
+    title: citation.title,
+    quote: citation.quote,
+    context: citation.context,
+    source: { versionId: citation.source?.versionId }
+  })
+  expect(await target.client.uploadVersion.count()).toBe(0)
+  const origin = await target.service.readOrigin(second)
+  expect(origin.literature).toBeDefined()
+  expect(origin.literature?.attachments).toContainEqual({
+    versionId: citation.source?.versionId,
+    attachmentId: citation.source?.attachmentId,
+    itemId: citation.itemId
+  })
+  expect(origin.literature?.unavailableVersionIds ?? []).toContain(citation.source?.versionId)
 })
 
 it('forks a PDF referenced only by a private bookmark and keeps its metadata and target usable', async () => {
@@ -1117,6 +1593,8 @@ for (const fixtureCase of frozenImportFixtures) {
         'source'
       )
       const records = JSON.parse(await readFile(join(recordsRoot, 'records.json'), 'utf8'))
+      // This frozen pre-extension package has no missing-content marker field.
+      expect(records.literature).not.toHaveProperty('unavailableVersionIds')
       expect(records.literature.items).toHaveLength(1)
       expect(records.literature.items[0]).toMatchObject({
         itemId: 'item-1',
@@ -1163,6 +1641,13 @@ for (const fixtureCase of frozenImportFixtures) {
         itemId: 'item-1',
         versionId: 'version-1'
       })
+      const forwarded = join(target.storageRoot, 'forwarded-legacy-literature.science')
+      await target.service.exportTo(imported, forwarded)
+      const second = await target.service.importFrom(forwarded)
+      const secondOrigin = await target.service.readOrigin(second)
+      expect(secondOrigin.literature?.items).toEqual(origin.literature?.items)
+      expect(secondOrigin.literature?.attachments).toEqual(origin.literature?.attachments)
+      expect(secondOrigin.literature?.unavailableVersionIds).toEqual([])
     }
   })
 }

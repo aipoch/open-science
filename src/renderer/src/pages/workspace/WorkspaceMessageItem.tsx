@@ -139,6 +139,8 @@ type WorkspaceMessageItemProps = {
   workspaceCwd?: string
   notebookReference?: NotebookSessionReference
   isPackageSession?: boolean
+  packageLiterature?: NonNullable<NonNullable<ChatSession['packageOrigin']>['literature']>
+  packageSessionId?: string
   deletedDiscussionSourceId?: string
   onPreviewArtifact: (artifact: MessageArtifact) => void
   onPreviewArtifactModal?: (artifact: MessageArtifact) => void
@@ -1332,6 +1334,8 @@ const WorkspaceMessageItemImpl = ({
   workspaceCwd,
   notebookReference,
   isPackageSession = false,
+  packageLiterature,
+  packageSessionId,
   deletedDiscussionSourceId,
   onPreviewArtifact,
   onPreviewArtifactModal = onPreviewArtifact,
@@ -1976,6 +1980,8 @@ const WorkspaceMessageItemImpl = ({
                       artifacts={fileReferences}
                       sourceCitationHrefs={sourceCitationHrefs}
                       snapshotOnly={isPackageSession}
+                      packageLiterature={packageLiterature}
+                      packageSessionId={packageSessionId}
                       workspaceCwd={workspaceCwd}
                       notebookReference={notebookReference}
                       onPreviewArtifact={onPreviewArtifact}
@@ -1989,6 +1995,8 @@ const WorkspaceMessageItemImpl = ({
                     artifacts={fileReferences}
                     sourceCitationHrefs={sourceCitationHrefs}
                     snapshotOnly={isPackageSession}
+                    packageLiterature={packageLiterature}
+                    packageSessionId={packageSessionId}
                     workspaceCwd={workspaceCwd}
                     notebookReference={notebookReference}
                     onPreviewArtifact={onPreviewArtifact}
@@ -2116,6 +2124,8 @@ const areWorkspaceMessageItemPropsEqual = (
   previous.notebookReference === next.notebookReference &&
   previous.deletedDiscussionSourceId === next.deletedDiscussionSourceId &&
   (previous.isPackageSession ?? false) === (next.isPackageSession ?? false) &&
+  previous.packageLiterature === next.packageLiterature &&
+  previous.packageSessionId === next.packageSessionId &&
   previous.onPreviewArtifact === next.onPreviewArtifact &&
   previous.onPreviewArtifactModal === next.onPreviewArtifactModal &&
   previous.onPreviewUploadAttachment === next.onPreviewUploadAttachment &&

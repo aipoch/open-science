@@ -245,7 +245,20 @@ export const packageOriginSchema = z
     sourceSessionId: identity,
     importedAt: z.number().int().nonnegative(),
     manifestChecksum: checksum,
-    excludedFiles: z.array(packageExcludedFileSchema).max(10000).optional()
+    excludedFiles: z.array(packageExcludedFileSchema).max(10000).optional(),
+    // Read-only metadata retained for renderer citation details; it grants no file access.
+    literature: z
+      .object({
+        items: z.array(
+          z.object({ itemId: z.string(), metadataRevision: z.number(), item: z.unknown() })
+        ),
+        attachments: z.array(
+          z.object({ versionId: z.string(), attachmentId: z.string(), itemId: z.string() })
+        ),
+        unavailableVersionIds: z.array(z.string()).default([])
+      })
+      .strict()
+      .optional()
   })
   .strict()
 export type SessionPackageOrigin = z.infer<typeof packageOriginSchema>

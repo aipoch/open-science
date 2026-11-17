@@ -9,6 +9,7 @@ import type { LiteratureSourceCitation } from '../../../../shared/literature-sou
 import { requestPdfSourceReveal } from './annotations/annotation-reveal'
 import { ArtifactLiteratureDetailDialog } from './ArtifactLiteratureDetailDialog'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { createUploadVersionReference } from '../../../../shared/uploads'
 
 function highlightQuote(text: string, quote: string | undefined): ReactNode {
   const index = quote ? text.indexOf(quote) : -1
@@ -79,12 +80,18 @@ export function LibrarySourceCitationLink({
   citation,
   children,
   className,
-  snapshotOnly = false
+  snapshotOnly = false,
+  packageLiterature,
+  packageSessionId
 }: {
   citation: LiteratureSourceCitation
   children: ReactNode
   className?: string
   snapshotOnly?: boolean
+  packageLiterature?: Readonly<{
+    items: readonly Readonly<{ itemId: string; metadataRevision: number; item: unknown }>[]
+  }>
+  packageSessionId?: string
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -112,12 +119,19 @@ export function LibrarySourceCitationLink({
           id: `library-citation:${source.versionId}:${citation.pageStart}`,
           kind: 'pdf',
           source: {
-            kind: 'literature-attachment-version',
+            kind: packageSessionId ? 'upload-version' : 'literature-attachment-version',
             sourceFileId: source.attachmentId,
             versionId: source.versionId,
             checksum: source.checksum,
             name: source.name,
-            path: createLiteratureAttachmentVersionReference(source.versionId)
+            path: packageSessionId
+              ? createUploadVersionReference(source.versionId, {
+                  projectId,
+                  sessionId: packageSessionId,
+                  fileId: source.attachmentId
+                })
+              : createLiteratureAttachmentVersionReference(source.versionId),
+            ...(packageSessionId ? { projectId, sessionId: packageSessionId } : {})
           },
           selector: {
             kind: 'page-note',
@@ -191,11 +205,15 @@ export function LibrarySourceCitationLink({
           snapshotOnly
           reference={{
             itemId: citation.itemId,
-            metadataRevision: 1,
-            item: literatureItemInputSchema.parse({
-              itemType: 'document',
-              title: citation.title
-            })
+            metadataRevision:
+              packageLiterature?.items.find((entry) => entry.itemId === citation.itemId)
+                ?.metadataRevision ?? 1,
+            item: literatureItemInputSchema.parse(
+              packageLiterature?.items.find((entry) => entry.itemId === citation.itemId)?.item ?? {
+                itemType: 'document',
+                title: citation.title
+              }
+            )
           }}
           onOpenChange={setShowSnapshot}
         />

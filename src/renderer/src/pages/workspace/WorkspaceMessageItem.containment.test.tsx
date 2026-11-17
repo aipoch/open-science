@@ -35,6 +35,24 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   PresentedAgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
 }))
 
+const packageCitation = vi.hoisted(() => ({ enabled: false }))
+vi.mock('./SessionMessageMarkdown', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./SessionMessageMarkdown')>()
+  return {
+    ...original,
+    SessionMessageMarkdown: (
+      props: React.ComponentProps<typeof original.SessionMessageMarkdown>
+    ) =>
+      packageCitation.enabled ? (
+        <div data-testid="package-citation">
+          {props.packageSessionId}:{props.packageLiterature?.items[0]?.itemId}
+        </div>
+      ) : (
+        <original.SessionMessageMarkdown {...props} />
+      )
+  }
+})
+
 // Drive presentation from sourceOpen so completing a streamed row is not masked by the
 // real jitter buffer still reporting isPresenting in jsdom.
 vi.mock('@/components/streamdown/use-smooth-streaming-content', () => ({
@@ -94,12 +112,55 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount())
+  packageCitation.enabled = false
+  vi.restoreAllMocks()
   container.remove()
   document.body.innerHTML = ''
   delete (window as unknown as { api?: unknown }).api
 })
 
 describe('WorkspaceMessageItem content-visibility containment', () => {
+  it('refreshes package citation metadata and scope while the Message is unchanged', async () => {
+    packageCitation.enabled = true
+    const message = createMessage()
+    const literature = {
+      items: [{ itemId: 'recovered-item', metadataRevision: 1, item: {} }],
+      attachments: [],
+      unavailableVersionIds: []
+    }
+    const renderPackage = async (
+      packageSessionId: string,
+      packageLiterature?: typeof literature
+    ): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageItem
+            message={message}
+            isPackageSession
+            packageSessionId={packageSessionId}
+            packageLiterature={packageLiterature}
+            onPreviewArtifact={noop}
+            onPreviewUploadAttachment={noop}
+            onOpenSkillMention={noop}
+            onPreviewMentionArtifact={noop}
+          />
+        )
+      })
+    }
+    await renderPackage('imported-session')
+    expect(container.querySelector('[data-testid="package-citation"]')?.textContent).toBe(
+      'imported-session:'
+    )
+    await renderPackage('imported-session', literature)
+    expect(container.querySelector('[data-testid="package-citation"]')?.textContent).toBe(
+      'imported-session:recovered-item'
+    )
+    await renderPackage('another-session', literature)
+    expect(container.querySelector('[data-testid="package-citation"]')?.textContent).toBe(
+      'another-session:recovered-item'
+    )
+  })
+
   it('keeps containment disabled after a streamed one-line Agent reply completes', async () => {
     await renderItem(createMessage({ status: 'streaming' }))
     expect(containmentDisabled()).toBe(true)

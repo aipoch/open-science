@@ -1965,6 +1965,8 @@ const WorkspaceMessageScrollerImpl = ({
                     workspaceCwd: activeSession?.cwd,
                     notebookReference,
                     isPackageSession: Boolean(activeSession?.packageOrigin),
+                    packageLiterature: activeSession?.packageOrigin?.literature,
+                    packageSessionId: activeSession?.packageOrigin ? activeSession.id : undefined,
                     deletedDiscussionSourceId: activeSession?.deletedDiscussionSourceId,
                     onPreviewArtifact,
                     onPreviewArtifactModal,
@@ -2358,6 +2360,8 @@ const WorkspaceMessageScrollerImpl = ({
                 <WorkspaceMessageItem
                   message={optimisticMessage}
                   isPackageSession={Boolean(activeSession?.packageOrigin)}
+                  packageLiterature={activeSession?.packageOrigin?.literature}
+                  packageSessionId={activeSession?.packageOrigin ? activeSession.id : undefined}
                   deletedDiscussionSourceId={activeSession?.deletedDiscussionSourceId}
                   disableScrollAnchor={windowFindOpen}
                   skipScrollAnchorOnMount={skipScrollAnchorOnMount}

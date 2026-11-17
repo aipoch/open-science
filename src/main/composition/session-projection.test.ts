@@ -99,7 +99,9 @@ const fixture = (() => {
     projectRuntimeSession: (value: PersistedChatSession) => value,
     recordSessionRecordProblem: vi.fn()
   }
+  const hydrateSessionLiterature = vi.fn(async (session: PersistedChatSession) => session)
   const composed = composeSessionProjection({
+    sessionPackageService: { hydrateSessionLiterature },
     settingsService: {
       allowNotebookNetworkDomain: vi.fn(),
       allowNotebookNetworkDestination: allowDestination
@@ -113,7 +115,7 @@ const fixture = (() => {
     auxiliaryUsageRecorder: {},
     archiveCoordinator: {}
   } as unknown as Parameters<typeof composeSessionProjection>[0])
-  return { ...composed, session, allowDestination, coordinator }
+  return { ...composed, session, allowDestination, coordinator, hydrateSessionLiterature }
 }) satisfies () => ReturnType<typeof composeSessionProjection> & { session: PersistedChatSession }
 
 describe('host network approval recovery', () => {
@@ -161,4 +163,50 @@ describe('host network approval recovery', () => {
     expect(recovered.diagnostics?.isComplete).toBe(true)
     expect(recovered.sessions[0].runtimeContext?.networkApprovals).toBeUndefined()
   })
+})
+
+describe('imported Session literature hydration', () => {
+  it.each([true, false])(
+    'hydrates detail reads without rewriting the saved Session (project recovery complete: %s)',
+    async (complete) => {
+      const f = fixture()
+      recovery.complete = complete
+      f.session.runtimeContext = { version: 1, revision: 1 }
+      f.session.packageOrigin = {
+        importId: 'import-fixture',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64),
+        excludedFiles: []
+      }
+      const literature = {
+        items: [
+          {
+            itemId: 'mapped-item',
+            metadataRevision: 3,
+            item: { itemType: 'journalArticle' as const, title: 'Saved bibliographic metadata' }
+          }
+        ],
+        attachments: [],
+        unavailableVersionIds: []
+      }
+      f.hydrateSessionLiterature.mockImplementationOnce(async (session) => ({
+        ...session,
+        packageOrigin: { ...session.packageOrigin!, literature }
+      }))
+
+      const loaded = await f.sessionPersistenceBackend.loadOne({
+        projectId: f.session.projectId,
+        sessionId: f.session.id
+      })
+
+      expect(loaded?.packageOrigin?.literature).toEqual(literature)
+      expect(f.hydrateSessionLiterature).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ id: f.session.id, packageOrigin: f.session.packageOrigin })
+      )
+      expect(f.session.packageOrigin.literature).toBeUndefined()
+      expect(f.coordinator.patchSessionRuntimeContext).not.toHaveBeenCalled()
+    }
+  )
 })
