@@ -329,7 +329,7 @@ export function createResponsesModel(input: ResponsesModelOptions): AgentModel {
             const detail = object(
               type === 'response.failed' ? object(event.response).error : (event.error ?? event)
             )
-            // 原有四种语义 code 继续有效；其他原因走 protocol，并只附固定枚举。
+            // Preserve the four existing semantic codes; use protocol and fixed enums for other reasons.
             const diagnostics = normalizeProviderError({ error: detail })
             const reason = diagnostics.reason
             const code =

@@ -61,7 +61,7 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
       }
       if (item.wire === 'interrupt') {
         response.write(partialProviderReply(protocol))
-        // 先让真实网络链路收到正文，再关闭连接，区别于建立连接失败。
+        // Deliver response content before disconnecting to distinguish interruption from connection failure.
         setTimeout(() => response.destroy(), 100)
         return
       }
@@ -203,7 +203,7 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
           expect
             .soft(JSON.stringify(failure), `${protocol}/${item.id}: HTML 不透传`)
             .not.toContain('PRIVATE_GATEWAY_PAGE')
-          // 认证恢复可能另有阻塞提示；截图选中保留上游诊断的当前轮次错误。
+          // Authentication recovery may add another notice; capture the current turn's upstream diagnostics.
           if (item.reason === 'configuration/auth-failed') {
             const more = notice.getByRole('button', { name: /^\d+ more notices?$/ })
             if (await more.isVisible()) {

@@ -79,7 +79,7 @@ it('commits captured text, tools and usage through HTTP to a cold journal store'
       } finally {
         await session.dispose()
       }
-      // 使用新 store 冷读取磁盘，避免把内存快照当作持久化成功。
+      // Reopen the store from disk to verify persistence independently of the in-memory snapshot.
       const cold = (await createJournalAgentStore({ directory }).load(sessionId))!
       const assistant = cold.messages.filter((message) => message.role === 'assistant')
       expect(assistant).toHaveLength(index === 1 ? 2 : 1)

@@ -25,7 +25,7 @@ export type ChatCompletionsOptions = {
   inputCapabilities?: InputCapabilities
 }
 
-/** 有界解析状态及白名单错误字段；不保存正文、工具参数或请求信息。 */
+/** Parse bounded status and allowed error fields without retaining content, tool arguments, or requests. */
 export type ChatCompletionsDiagnostics = Readonly<{
   httpStatus: number
   phase:
@@ -50,7 +50,7 @@ export type ChatCompletionsDiagnostics = Readonly<{
   requestId?: string
 }>
 
-/** 只保留规范化诊断，不保留原始响应或网络异常。 */
+/** Retain normalized diagnostics only, excluding raw responses and network exceptions. */
 export class ChatCompletionsError extends Error {
   readonly diagnostics?: ChatCompletionsDiagnostics
   constructor(
@@ -100,11 +100,11 @@ function normalizeUsage(value: unknown): ModelUsage {
 }
 
 /**
- * 校验终态后的兼容尾帧，确保不会丢弃新增内容或工具增量。
+ * Validate compatibility frames after completion without discarding new content or tool deltas.
  *
  * Args:
- *   choice: 已校验为主 choice 的后续帧。
- *   finish: 首次记录的终态，后续帧不得改变它。
+ *   choice: A subsequent frame already validated as the primary choice.
+ *   finish: The first recorded finish reason, which subsequent frames must preserve.
  */
 function validateTerminalTrailer(
   choice: Record<string, unknown>,
@@ -124,7 +124,7 @@ function validateTerminalTrailer(
     } else if (name === 'tool_calls' || name === 'reasoning_details') {
       if (!Array.isArray(value) || value.length !== 0) return protocol()
     } else if (name === 'function_call' || value !== '') {
-      // 未知扩展也只能为空；不能把未识别的音视频或其他载荷当作空尾帧吞掉。
+      // Unknown extensions must also be empty; never discard unrecognized audio, video, or other payloads.
       return protocol()
     }
   }

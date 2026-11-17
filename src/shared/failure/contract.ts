@@ -38,7 +38,7 @@ export type FailureFacts = Readonly<{
 
 export type Recognizer = (facts: FailureFacts) => ClassifiedFailure | undefined
 
-/** 内置 harness 只传这组标准 code；禁止透传服务商自定义标识。 */
+/** The built-in harness exposes only these standard codes, never provider-defined identifiers. */
 export const PROVIDER_ERROR_CODES = [
   'authentication_error',
   'insufficient_quota',

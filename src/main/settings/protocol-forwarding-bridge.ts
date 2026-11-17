@@ -262,7 +262,7 @@ export class ProtocolForwardingBridge {
         signal: request.signal
       })
     } catch (error) {
-      // 这是宿主建立上游连接失败，不是服务商返回的 HTTP 502。
+      // This is a host connection failure, rather than an upstream HTTP 502 response.
       if (!request.signal.aborted)
         response.setHeader('x-open-science-provider-failure', 'connection')
       throw error

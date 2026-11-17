@@ -526,7 +526,7 @@ export function createHarnessAcpAgent(directory: string): {
             void response.body?.cancel().catch(() => undefined)
             throw new Error('Model provider connection failed')
           }
-          // endpoint 已限定为宿主回环地址；仅此处信任中转层记录的原始状态。
+          // The endpoint is restricted to host loopback; only here trust the bridge's original status.
           const upstreamStatus = Number(response.headers.get('x-open-science-upstream-status'))
           if (
             !response.ok &&

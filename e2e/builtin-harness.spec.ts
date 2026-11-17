@@ -68,7 +68,7 @@ test('built-in harness executes approved host MCP and restores its session after
       delta: { role: 'assistant', content: '' },
       finish_reason: call ? 'tool_calls' : 'stop'
     }
-    // 覆盖正文和工具终态后的重复空尾帧，确保桌面持久化及重启恢复也能完成。
+    // Cover repeated empty trailing frames after text and tool completion, including restart recovery.
     response.end(
       [
         { choices: [{ index: 0, delta, finish_reason: null }] },

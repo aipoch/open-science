@@ -24,7 +24,7 @@ export const recognizeProvider: Recognizer = ({
   text = ''
 }) => {
   if (origin === 'provider' && protocol) {
-    // 内置适配器已丢弃上游文案，只按真实状态、标准 code 和失败阶段分类。
+    // Built-in adapters discard upstream messages; classify by actual status, standard code, and phase.
     const reasons = {
       authentication_error: 'configuration/auth-failed',
       insufficient_quota: 'configuration/billing',
@@ -60,7 +60,7 @@ export const recognizeProvider: Recognizer = ({
     }
   }
 
-  // 保留历史框架的固定错误包装识别；任意服务商文案只在确认来源后参与分类。
+  // Keep legacy framework wrappers; use provider messages for classification only after verifying their origin.
   if (
     /^(?:(?:ApplicationCommandError|RequestError|Error|Agent session resume failed):\s*)*Authentication required\.?$/i.test(
       text.trim()
@@ -79,7 +79,7 @@ export const recognizeProvider: Recognizer = ({
   const structuredCode = String(code ?? '').toLowerCase()
   const detail = responseMessage ?? text
   const billingCode = BILLING.test(structuredCode)
-  // 明确传输状态优先，429 中的结构化额度错误属于账户配置。
+  // Explicit transport status takes precedence; structured quota errors in 429 indicate account configuration.
   if (status === 413) return undefined
   if (status === 401 || status === 403)
     return { category: 'configuration', reason: 'configuration/auth-failed', diagnostics: {} }

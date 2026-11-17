@@ -25,7 +25,7 @@ export type ProviderErrorCase = Readonly<{
   reason: FailureReason
 }>
 
-/** 覆盖方案中全部业务错误类型，以及状态、响应结构和流结束的关键分支。 */
+/** Cover all planned failure reasons and key status, response-shape, and stream-ending branches. */
 export const providerErrorCases: readonly ProviderErrorCase[] = [
   {
     id: 'E01',

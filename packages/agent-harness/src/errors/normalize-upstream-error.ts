@@ -10,7 +10,7 @@ export type AdapterErrorPhase =
   | 'missing-finish'
   | 'tool-arguments'
 
-/** 对外只传固定原因；服务商文案及未知 code 只能留在适配器内部。 */
+/** Expose fixed reasons only; keep provider messages and unknown codes inside the adapter. */
 export type ProviderErrorReason =
   | 'authentication_error'
   | 'insufficient_quota'
@@ -49,7 +49,7 @@ const object = (value: unknown): Record<string, unknown> | undefined =>
     ? (value as Record<string, unknown>)
     : undefined
 
-/** 指定响应头仅允许短请求标识；不截断、不读取 JSON 中的 request_id。 */
+/** Accept only short request IDs from declared headers; never truncate or read JSON request_id fields. */
 export const responseErrorDiagnostics = (response: Response): UpstreamErrorDiagnostics => {
   const requestId = REQUEST_ID_HEADERS.map((name) => response.headers.get(name)).find(
     (value) => value !== null && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)
@@ -57,7 +57,7 @@ export const responseErrorDiagnostics = (response: Response): UpstreamErrorDiagn
   return requestId ? { requestId } : {}
 }
 
-/** 状态和上游语义只转换成有限原因，未知正文不跨适配器边界。 */
+/** Map status and upstream semantics to finite reasons without exposing unknown response content. */
 const identifyReason = (codes: string[], message: string, status?: number): ProviderErrorReason => {
   if (status === 401 || status === 403) return 'authentication_error'
   if (status === 413) return 'context_length_exceeded'
@@ -83,7 +83,7 @@ const identifyReason = (codes: string[], message: string, status?: number): Prov
   return 'provider_error'
 }
 
-/** JSON / SSE 错误只在内部识别；任意 message、未知 code 和额外字段均丢弃。 */
+/** Recognize JSON/SSE errors internally; discard arbitrary messages, unknown codes, and extra fields. */
 export const normalizeProviderError = (
   value: unknown,
   status?: number
@@ -98,14 +98,15 @@ export const normalizeProviderError = (
 }
 
 /**
- * 有界读取错误正文，并在超时、取消或超限后释放流；读取失败不覆盖 HTTP 状态。
+ * Read bounded error content and release the stream on timeout, cancellation, or overflow.
+ * Read failures preserve the HTTP status.
  *
  * Args:
- *   response: 上游 HTTP 响应。
- *   signal: 当前模型调用的取消信号。
+ *   response: The upstream HTTP response.
+ *   signal: The cancellation signal for the current model call.
  *
  * Returns:
- *   有限的标准错误原因和已校验的响应头请求标识。
+ *   A finite standard failure reason and a validated request ID from response headers.
  */
 export const normalizeUpstreamError = async (
   response: Response,
@@ -122,7 +123,7 @@ export const normalizeUpstreamError = async (
   let size = 0
   let complete = false
   const decoder = new TextDecoder()
-  // cancel() 可能受底层 stream 的实现影响而不结束，因此不等待其完成。
+  // Some underlying streams never settle cancel(), so do not await it.
   const stop = AbortSignal.any([signal, AbortSignal.timeout(ERROR_BODY_TIMEOUT_MS)])
   let stopped!: () => void
   const cancelled = new Promise<undefined>((resolve) => {
@@ -146,11 +147,11 @@ export const normalizeUpstreamError = async (
       const part = chunk.value.subarray(0, remaining)
       size += part.byteLength
       body += decoder.decode(part, { stream: true })
-      // 恰好达到上限仍需确认 EOF；只有多出字节才判为截断，额外字节不保留。
+      // Confirm EOF at the exact limit; only extra bytes imply truncation, and they are not retained.
       if (chunk.value.byteLength > remaining) break
     }
   } catch {
-    // 上游中断时仍保留响应头的 request-id；不把异常或请求信息写进诊断。
+    // Preserve the header request ID on interruption without recording exceptions or request details.
   } finally {
     stop.removeEventListener('abort', cancel)
     cancel()
@@ -167,7 +168,7 @@ export const normalizeUpstreamError = async (
     try {
       return { ...headers, ...normalizeProviderError(JSON.parse(text), response.status) }
     } catch {
-      // 损坏或截断的 JSON 不降级为原文，避免把整个响应当作错误消息。
+      // Never use malformed or truncated JSON as a raw error message.
       return headers
     }
   }

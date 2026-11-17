@@ -14,7 +14,7 @@ export const isAgentAuthenticationRequired = (message: string | null | undefined
     message?.trim() ?? ''
   )
 
-// 结构化认证失败沿用已有恢复状态机，避免“无需 Agent 登录”隐藏服务商凭据错误。
+// Reuse authentication recovery so providers needing no Agent login still expose credential failures.
 const authenticationFailure = (
   message: string | null | undefined,
   failure?: ClassifiedFailure

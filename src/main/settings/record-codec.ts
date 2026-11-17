@@ -286,7 +286,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   const modelCatalog = decodeModelCatalog(value.modelCatalog)
   const modelCatalogStatus = decodeModelCatalogStatus(value.modelCatalogStatus)
   const catalogParameters = decodeCatalogParameters(value.catalogParameters)
-  // 缺失的目录字段保持缺失，避免重复保存被误判为供应商配置变更。
+  // Keep absent catalog fields absent so repeated saves do not appear to change the provider.
   if (modelCatalog !== undefined) provider.modelCatalog = modelCatalog
   if (modelCatalogStatus !== undefined) provider.modelCatalogStatus = modelCatalogStatus
   if (catalogParameters !== undefined) provider.catalogParameters = catalogParameters

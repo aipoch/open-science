@@ -4521,7 +4521,7 @@ describe('SettingsService: official vendors', () => {
       expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) })
     )
 
-    // 新目录决定可选模型，不再追加服务商未返回的兼容名称。
+    // The refreshed catalog defines membership without appending unlisted compatibility aliases.
     expect((await repository.getSettings()).providers[0].fetchedModels).toEqual([
       'deepseek-v5',
       'deepseek-v4-pro'
@@ -4877,7 +4877,7 @@ describe('SettingsService: image-input capability', () => {
 
   it('projects the capability of the refreshed default model when no model is selected', async () => {
     const service = createService()
-    // 新目录的首项为文本模型；未显式选模时，能力投影应与刷新后的默认项一致。
+    // With no explicit selection, capabilities follow the refreshed default, which is text-only here.
     vi.stubGlobal(
       'fetch',
       vi
