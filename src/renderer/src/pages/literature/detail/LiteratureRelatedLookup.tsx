@@ -123,9 +123,7 @@ function LiteratureRelatedSession(
           <SelectContent>
             <SelectItem value="europe-pmc">{t('Europe PMC')}</SelectItem>
             <SelectItem value="opencitations">{t('OpenCitations · SKG-IF')}</SelectItem>
-            <SelectItem value="opencitations-index">
-              {t('OpenCitations · Index v2')}
-            </SelectItem>
+            <SelectItem value="opencitations-index">{t('OpenCitations · Index v2')}</SelectItem>
           </SelectContent>
         </Select>
       </div>

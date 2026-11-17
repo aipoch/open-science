@@ -817,8 +817,8 @@ it.each([
 )
 
 it.each([
-  ['rate-limited', 'OpenCitations is limiting requests. Try again later.'],
-  ['authentication', 'OpenCitations rejected the request. Try again later.']
+  ['rate-limited', 'OpenCitations · SKG-IF is limiting requests. Try again later.'],
+  ['authentication', 'OpenCitations · SKG-IF rejected the request. Try again later.']
 ] as const)('shows OpenCitations %s errors in list and graph', async (issue, message) => {
   related.mockImplementation(async (request) =>
     request.provider === 'opencitations'

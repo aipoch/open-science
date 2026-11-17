@@ -1873,14 +1873,14 @@ it('names OpenCitations omitted and empty relationships without suggesting anoth
   )
   render(<LiteratureCitationGraph item={item} provider="opencitations" onSaved={vi.fn()} />)
   await screen.findAllByText(
-    'OpenCitations did not provide relationships for this page; the paper may still have references or citations.'
+    'OpenCitations · SKG-IF did not provide relationships for this page; the paper may still have references or citations.'
   )
   expect(
     screen.getAllByText(
-      'Some relationships could not be matched to a record in OpenCitations and are not shown.'
+      'Some relationships could not be matched to a record in OpenCitations · SKG-IF and are not shown.'
     )
   ).toHaveLength(2)
-  expect(screen.getByText('Source: OpenCitations')).toBeTruthy()
+  expect(screen.getByText('Source: OpenCitations · SKG-IF')).toBeTruthy()
   expect(screen.queryByText('Source: Europe PMC')).toBeNull()
   expect(screen.queryByText('Source: Semantic Scholar')).toBeNull()
 })
