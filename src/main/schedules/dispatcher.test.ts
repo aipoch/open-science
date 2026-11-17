@@ -1558,14 +1558,31 @@ it('does not replay pruned slots after clock rollback and resume', async () => {
   const db = createProjectDbClient(root)
   const repo = new ScheduleRepository(async () => db)
   const slots: number[] = []
-  const owner = new ScheduleDispatcher(async () => db, {
-    inspect: async () => ({ kind: 'missing' }),
-    dispatch: async (work, authorize) => {
-      await authorize()
-      slots.push(work.scheduledAt.getTime())
-      return { kind: 'succeeded' }
+  let settled = Promise.withResolvers<void>()
+  let dispatched = false
+  const owner = new ScheduleDispatcher(
+    async () => db,
+    {
+      inspect: async () => ({ kind: 'missing' }),
+      dispatch: async (work, authorize) => {
+        await authorize()
+        dispatched = true
+        slots.push(work.scheduledAt.getTime())
+        return { kind: 'succeeded' }
+      }
+    },
+    () => {
+      if (dispatched) {
+        dispatched = false
+        settled.resolve()
+      }
     }
-  })
+  )
+  const tickAndWaitForSettlement = async (): Promise<void> => {
+    settled = Promise.withResolvers<void>()
+    await owner.tick()
+    await settled.promise
+  }
   const start = Date.parse('2026-11-14T08:00:00Z')
   try {
     await migrateApplicationDatabase(db)
@@ -1582,13 +1599,11 @@ it('does not replay pruned slots after clock rollback and resume', async () => {
     })
     for (let i = 1; i <= 31; i++) {
       vi.setSystemTime(start + i * 60000)
-      await owner.tick()
-      await vi.waitFor(async () => {
-        expect(
-          (await db.sessionSchedule.findUniqueOrThrow({ where: { id: task.id } })).admittedCount
-        ).toBe(i)
-        expect(await db.scheduleOccurrence.count({ where: { phase: { not: 'settled' } } })).toBe(0)
-      })
+      await tickAndWaitForSettlement()
+      expect(
+        (await db.sessionSchedule.findUniqueOrThrow({ where: { id: task.id } })).admittedCount
+      ).toBe(i)
+      expect(await db.scheduleOccurrence.count({ where: { phase: { not: 'settled' } } })).toBe(0)
     }
     expect(await db.scheduleOccurrence.count()).toBe(30)
     expect(
@@ -1616,12 +1631,10 @@ it('does not replay pruned slots after clock rollback and resume', async () => {
     expect(slots).toHaveLength(31)
     expect(await db.scheduleOccurrence.count()).toBe(30)
     vi.setSystemTime(start + 32 * 60000)
-    await owner.tick()
-    await vi.waitFor(async () =>
-      expect(
-        (await db.sessionSchedule.findUniqueOrThrow({ where: { id: task.id } })).admittedCount
-      ).toBe(32)
-    )
+    await tickAndWaitForSettlement()
+    expect(
+      (await db.sessionSchedule.findUniqueOrThrow({ where: { id: task.id } })).admittedCount
+    ).toBe(32)
     expect(slots).toHaveLength(32)
     expect(new Set(slots).size).toBe(32)
     expect(slots.at(-1)).toBe(start + 32 * 60000)
