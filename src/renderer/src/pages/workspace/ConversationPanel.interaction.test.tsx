@@ -10096,6 +10096,72 @@ it('offers Fork to continue while leaving the imported conversation read-only', 
   ).toHaveLength(1)
 })
 
+it('opens an imported replay-only film from the history footer', async () => {
+  window.api.researchVideo = {
+    status: vi.fn(async (scope: { mode?: string }) =>
+      scope.mode === 'operation-replay'
+        ? {
+            result: {
+              id: 'film-1',
+              title: 'Imported film',
+              playerPath: '/imported/player.html',
+              sourcePath: '/imported/sources.zip',
+              duration: 12
+            }
+          }
+        : {}
+    ),
+    start: vi.fn()
+  } as unknown as typeof window.api.researchVideo
+  const activeSession: ChatSession = {
+    id: 'imported-session',
+    projectId: 'project-a',
+    title: 'Imported research',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+    packageOrigin: {
+      importId: 'import-operation',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+  }
+  renderPanel({ view: { activeSession } })
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  const footer = container.querySelector('[aria-label="Imported research history"]')!
+  const open = [...footer.querySelectorAll('button')].find((button) =>
+    button.textContent?.includes('View research film')
+  )
+  expect(open).toBeDefined()
+  await act(async () => {
+    open!.click()
+  })
+  const dialog = document.querySelector('[role="dialog"]')!
+  const play = [...dialog.querySelectorAll('button')].find((button) =>
+    button.textContent?.includes('Play research film')
+  )
+  expect(play).toBeDefined()
+  expect(dialog.textContent).toContain('Generate again')
+  await act(async () => {
+    play!.click()
+  })
+  expect(usePreviewWorkbenchStore.getState().items).toContainEqual(
+    expect.objectContaining({
+      id: 'research-video-film-1-player',
+      path: '/imported/player.html',
+      title: 'Imported film'
+    })
+  )
+  expect(window.api.researchVideo.start).not.toHaveBeenCalled()
+  expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+})
+
 it('shows the branch source chat number and opens that source session', () => {
   const source: ChatSession = {
     id: 'branch-source',
