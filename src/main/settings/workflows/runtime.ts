@@ -138,7 +138,12 @@ class RuntimeSettingsWorkflows {
     const current = after.providers.find((provider) => provider.id === request.providerId)
     // Catalog order can own an omitted model's default. Reconnect existing provider generations
     // through the same deferred transition used for provider edits; do not interrupt active turns.
-    if (previous && current && JSON.stringify([previous.models, previous.modelCatalog]) !== JSON.stringify([current.models, current.modelCatalog])) {
+    if (
+      previous &&
+      current &&
+      JSON.stringify([previous.models, previous.modelCatalog]) !==
+        JSON.stringify([current.models, current.modelCatalog])
+    ) {
       this.effects.requestProviderReconnect(
         affectedProviderIds(request.providerId),
         request.providerId === before.activeProviderId ||

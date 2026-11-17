@@ -4,7 +4,7 @@ import { providerValidationRoute } from './settings'
 import {
   type ModelProtocol,
   type OfficialVendorId,
-  isVendorModelMultimodal,
+  isVendorModelMultimodal
 } from '@aipoch/providers'
 import { isModelBridgeSupported } from './provider-bridge-policy'
 
@@ -66,7 +66,9 @@ export const configuredModelApiEndpoints = (
   model: string
 ): readonly ModelProtocol[] =>
   provider.type === 'official' && provider.vendorId
-    ? Object.keys(resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)?.routes ?? {}) as ModelProtocol[]
+    ? (Object.keys(
+        resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)?.routes ?? {}
+      ) as ModelProtocol[])
     : providerEndpoints(provider)
 
 export const buildConfiguredModelInventory = (
@@ -89,7 +91,10 @@ export const buildConfiguredModelInventory = (
     }
     if (isXaiSubscriptionProvider(provider.type)) return isVendorModelMultimodal('xai', model)
     if (provider.type === 'custom') return provider.supportsImageInput === true
-    return resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)?.supportsImageInput === true
+    return (
+      resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)
+        ?.supportsImageInput === true
+    )
   }
 
   return input.providers
@@ -112,7 +117,10 @@ export const buildConfiguredModelInventory = (
             ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
             model,
             label: model || provider.name,
-            metadata: provider.type === 'official' ? resolveOfficialModelCatalog(provider).find((entry) => entry.id === model) : undefined,
+            metadata:
+              provider.type === 'official'
+                ? resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)
+                : undefined,
             supportsImageInput: supportsImageInput(provider, model)
           })
       )

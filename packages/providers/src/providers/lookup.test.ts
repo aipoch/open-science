@@ -1040,7 +1040,9 @@ describe('provider registry', () => {
     expect(resolveVendorApiKeyUrl('tencent', 'china')).toBe(
       'https://console.cloud.tencent.com/tokenhub/apikey'
     )
-    expect(resolveVendorModelsUrl('tencent')).toBe('https://tokenhub-intl.tencentcloudmaas.com/v1/models')
+    expect(resolveVendorModelsUrl('tencent')).toBe(
+      'https://tokenhub-intl.tencentcloudmaas.com/v1/models'
+    )
 
     expect(getOfficialVendor('tencent')?.models.map(({ id }) => id)).toEqual([
       'hy4',
@@ -1260,7 +1262,9 @@ describe('provider registry', () => {
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 }
     ])
 
-    expect(resolveVendorModelsUrl(bailianId)).toBe('https://{workspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/models')
+    expect(resolveVendorModelsUrl(bailianId)).toBe(
+      'https://{workspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/models'
+    )
   })
 
   it('defaults Bailian for Plan to Beijing and resolves the Singapore subscription separately', () => {

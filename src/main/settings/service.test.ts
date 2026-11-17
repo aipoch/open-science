@@ -4490,7 +4490,7 @@ describe('SettingsService: official vendors', () => {
     expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
   })
 
-  it('refreshes DeepSeek models while retaining bundled compatibility names', async () => {
+  it('uses the complete refreshed DeepSeek catalog for available model membership', async () => {
     const service = createService()
     mockedNet.fetch.mockClear()
     vi.stubGlobal(
@@ -4521,22 +4521,16 @@ describe('SettingsService: official vendors', () => {
       expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) })
     )
 
-    // Preserve the raw discovery result, but expose compatibility names in the effective catalog.
+    // 新目录决定可选模型，不再追加服务商未返回的兼容名称。
     expect((await repository.getSettings()).providers[0].fetchedModels).toEqual([
       'deepseek-v5',
       'deepseek-v4-pro'
     ])
     const view = (await service.getSettingsView()).providers[0]
-    expect(view.models).toEqual([
-      'deepseek-v5',
-      'deepseek-v4-pro',
-      'deepseek-flash',
-      'deepseek-v4-flash',
-      'deepseek-v4-flash-vision-exp'
-    ])
+    expect(view.models).toEqual(['deepseek-v5', 'deepseek-v4-pro'])
   })
 
-  it('keeps a captured DeepSeek session model usable and passes its original id after refresh', async () => {
+  it('preserves a captured removed model id and requires reselection when it is used', async () => {
     await repository.setAgentFramework('claude-code')
     const service = createService()
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
@@ -4564,17 +4558,14 @@ describe('SettingsService: official vendors', () => {
       ok: true
     })
     expect((await service.getSettingsView()).activeModel).toBe('deepseek-v4-flash')
-    const backend = await service.resolveAgentBackend(selection)
-    expect(backend.env.ANTHROPIC_MODEL).toBe('deepseek-v4-flash')
-    expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
+    await expect(service.resolveAgentBackend(selection)).rejects.toThrow(
+      'The configured model is no longer available from provider "DeepSeek": "deepseek-v4-flash". Pick another model in Settings → Model.'
+    )
   })
 
   it('reports a refresh failure without changing the bundled catalog', async () => {
     const service = createService()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({ status: 401, json: () => Promise.resolve({}) })
-    )
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })))
 
     const created = (
       await service.upsertProvider({
@@ -4600,7 +4591,7 @@ describe('SettingsService: official vendors', () => {
 
     const result = await service.refreshProviderModels({ providerId: created.id })
     expect(result.ok).toBe(false)
-    expect(result.message).toMatch(/no model-list endpoint/i)
+    expect(result.code).toBe('unsupported')
   })
 
   it.each(['opencode', 'claude-code'] as const)(
@@ -4884,9 +4875,9 @@ describe('SettingsService: image-input capability', () => {
     expect(view?.supportsImageInput).toBe(true)
   })
 
-  it('uses the vendor default model, not the refreshed catalog head, for the capability fallback', async () => {
+  it('projects the capability of the refreshed default model when no model is selected', async () => {
     const service = createService()
-    // A refresh reorders Kimi's catalog so a text-only id leads, while the default remains multimodal.
+    // 新目录的首项为文本模型；未显式选模时，能力投影应与刷新后的默认项一致。
     vi.stubGlobal(
       'fetch',
       vi
@@ -4900,12 +4891,9 @@ describe('SettingsService: image-input capability', () => {
     ).providers[0]
     await service.refreshProviderModels({ providerId: created.id })
 
-    // With no active model, the capability must match the model resolveProvider actually spawns — the
-    // bundled multimodal default — not the refreshed list head kimi-k2.7-code (text-only), or
-    // OpenCode would keep stripping images from a default that supports them.
     const view = (await service.getSettingsView()).providers.find((p) => p.id === created.id)
     expect(view?.models[0]).toBe('kimi-k2.7-code')
-    expect(view?.supportsImageInput).toBe(true)
+    expect(view?.supportsImageInput).toBe(false)
   })
 })
 

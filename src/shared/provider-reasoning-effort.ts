@@ -75,11 +75,16 @@ export const resolveProviderReasoningEffortProfile = (
 
   switch (providerType) {
     case 'official': {
-      const capability = resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)?.reasoningEffort
+      const capability = resolveOfficialModelCatalog(provider).find(
+        (entry) => entry.id === model
+      )?.reasoningEffort
       if (capability) {
         if (!capability.supported || !capability.values.length) return { supported: false }
         const v = capability.values
-        return { supported: true, slots: [v[0], v[1] ?? v[0], v[2] ?? v.at(-1)!, v[3] ?? v.at(-1)!, v[4] ?? v.at(-1)!] }
+        return {
+          supported: true,
+          slots: [v[0], v[1] ?? v[0], v[2] ?? v.at(-1)!, v[3] ?? v.at(-1)!, v[4] ?? v.at(-1)!]
+        }
       }
       return provider.vendorId
         ? resolveVendorModelReasoningEffort(provider.vendorId, model)

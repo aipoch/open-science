@@ -383,7 +383,9 @@ it.each([
       text: 'answer',
       stopReason: 'end_turn'
     })
-    expect(String(fetch.mock.calls[0][0])).toMatch(new RegExp(`^${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\?|$)`))
+    expect(String(fetch.mock.calls[0][0])).toMatch(
+      new RegExp(`^${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\?|$)`)
+    )
     expect(new Headers(fetch.mock.calls[0][1]?.headers).get(header!)).toBe(
       header === 'x-api-key' ? 'secret' : 'Bearer secret'
     )
@@ -513,10 +515,18 @@ it.each([
     const fetch = vi.fn<typeof globalThis.fetch>(async () =>
       Response.json({ data: [{ id: 'new-model' }] })
     )
-    const provider = createProvider({ id: id!, region, key: 'secret', fetch, ...(id === 'xai' ? { discovery: { url } } : {}) })
+    const provider = createProvider({
+      id: id!,
+      region,
+      key: 'secret',
+      fetch,
+      ...(id === 'xai' ? { discovery: { url } } : {})
+    })
     expect(provider.supportsModelDiscovery).toBe(true)
     await expect(provider.listModels()).resolves.toMatchObject({ ok: true, models: ['new-model'] })
-    expect(String(fetch.mock.calls[0][0])).toMatch(new RegExp(`^${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\?|$)`))
+    expect(String(fetch.mock.calls[0][0])).toMatch(
+      new RegExp(`^${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\?|$)`)
+    )
     expect(new Headers(fetch.mock.calls[0][1]?.headers).get(header!)).toBe(
       header === 'x-api-key' ? 'secret' : 'Bearer secret'
     )

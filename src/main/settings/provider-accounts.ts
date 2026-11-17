@@ -1,4 +1,4 @@
-import { decodeCatalogParameters } from './model-catalog-codec'
+import { decodeCatalogParameters } from '../../shared/provider-model-catalog-codec'
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
 import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
@@ -380,9 +380,20 @@ class ProviderAccountsModule {
       const region = request.region ?? existing?.region
       provider.vendorId = vendorId
       if (region) provider.region = region
-      provider.catalogParameters = request.catalogParameters === undefined ? existing?.catalogParameters : decodeCatalogParameters(request.catalogParameters)
-      if (request.catalogParameters && !provider.catalogParameters) throw new Error('Invalid catalog parameters.')
-      if (existing?.fetchedModels && vendorId === existing.vendorId && region === existing.region && !request.key && JSON.stringify(provider.catalogParameters ?? {}) === JSON.stringify(existing.catalogParameters ?? {})) {
+      provider.catalogParameters =
+        request.catalogParameters === undefined
+          ? existing?.catalogParameters
+          : decodeCatalogParameters(request.catalogParameters)
+      if (request.catalogParameters && !provider.catalogParameters)
+        throw new Error('Invalid catalog parameters.')
+      if (
+        existing?.fetchedModels &&
+        vendorId === existing.vendorId &&
+        region === existing.region &&
+        !request.key &&
+        JSON.stringify(provider.catalogParameters ?? {}) ===
+          JSON.stringify(existing.catalogParameters ?? {})
+      ) {
         provider.modelCatalog = existing.modelCatalog
         provider.modelCatalogStatus = existing.modelCatalogStatus
         provider.fetchedModels = existing.fetchedModels

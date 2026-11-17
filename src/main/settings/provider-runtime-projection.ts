@@ -1,4 +1,7 @@
-import { resolveOfficialModelCatalog, isCatalogModelAvailable } from '../../shared/provider-model-catalog'
+import {
+  resolveOfficialModelCatalog,
+  isCatalogModelAvailable
+} from '../../shared/provider-model-catalog'
 import {
   type ModelProtocol,
   getOfficialVendor,
@@ -81,8 +84,12 @@ class ProviderRuntimeProjectionOwner {
     if (isXaiSubscriptionProvider(provider.type))
       return ['messages', 'chat-completions', 'responses']
     if (provider.type === 'official' && provider.vendorId) {
-      const model = resolveOfficialModelCatalog(provider).find((entry) => entry.id === (activeModel ?? this.availableModels(provider)[0]))
-      return Object.keys(model?.routes ?? {}).length > 0 ? Object.keys(model!.routes!) as ModelProtocol[] : resolveVendorApiEndpoints(provider.vendorId)
+      const model = resolveOfficialModelCatalog(provider).find(
+        (entry) => entry.id === (activeModel ?? this.availableModels(provider)[0])
+      )
+      return Object.keys(model?.routes ?? {}).length > 0
+        ? (Object.keys(model!.routes!) as ModelProtocol[])
+        : resolveVendorApiEndpoints(provider.vendorId)
     }
 
     return provider.apiEndpoints && provider.apiEndpoints.length > 0
@@ -179,7 +186,12 @@ class ProviderRuntimeProjectionOwner {
   ): ProviderRuntimeTarget {
     const availableModels = this.availableModels(storedProvider)
     // Preserve pinned IDs for history; reject continuation rather than silently selecting another model.
-    const pinned = selection.kind === 'required' ? selection.model : selection.kind === 'configured' ? selection.requestedModel ?? storedProvider.model : undefined
+    const pinned =
+      selection.kind === 'required'
+        ? selection.model
+        : selection.kind === 'configured'
+          ? (selection.requestedModel ?? storedProvider.model)
+          : undefined
     if (storedProvider.modelCatalog && pinned && !availableModels.includes(pinned)) {
       throw new Error(buildConfiguredModelUnavailableMessage(pinned, storedProvider.name))
     }
@@ -291,8 +303,11 @@ class ProviderRuntimeProjectionOwner {
         type: 'custom',
         vendorId: provider.vendorId,
         baseUrl: routes?.messages ?? resolveVendorBaseUrl(provider.vendorId, provider.region),
-        chatCompletionsBaseUrl: routes?.['chat-completions'] ?? resolveVendorChatCompletionsBaseUrl(provider.vendorId, provider.region),
-        responsesBaseUrl: routes?.responses ?? resolveVendorResponsesBaseUrl(provider.vendorId, provider.region),
+        chatCompletionsBaseUrl:
+          routes?.['chat-completions'] ??
+          resolveVendorChatCompletionsBaseUrl(provider.vendorId, provider.region),
+        responsesBaseUrl:
+          routes?.responses ?? resolveVendorResponsesBaseUrl(provider.vendorId, provider.region),
         maxInputTokens: descriptor?.maxInputTokens,
         maxOutputTokens: descriptor?.maxOutputTokens,
         model,
@@ -346,7 +361,11 @@ class ProviderRuntimeProjectionOwner {
     if (isXaiSubscriptionProvider(provider.type)) return true
     if (provider.type === 'custom') return provider.supportsImageInput === true
     if (provider.type === 'official' && provider.vendorId) {
-      return resolveOfficialModelCatalog(provider).find((entry) => entry.id === (activeModel ?? this.availableModels(provider)[0]))?.supportsImageInput === true
+      return (
+        resolveOfficialModelCatalog(provider).find(
+          (entry) => entry.id === (activeModel ?? this.availableModels(provider)[0])
+        )?.supportsImageInput === true
+      )
     }
     return false
   }
@@ -361,7 +380,9 @@ class ProviderRuntimeProjectionOwner {
         : getOfficialVendorModelIds('xai')
     }
     if (provider.type === 'official' && provider.vendorId) {
-      return resolveOfficialModelCatalog(provider).filter(isCatalogModelAvailable).map((entry) => entry.id)
+      return resolveOfficialModelCatalog(provider)
+        .filter(isCatalogModelAvailable)
+        .map((entry) => entry.id)
     }
     return provider.model ? [provider.model] : []
   }

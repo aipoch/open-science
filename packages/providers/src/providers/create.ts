@@ -51,14 +51,29 @@ export function createProvider(configuration: ProviderConfiguration): Provider {
     : undefined
   const definition = getProviderDefinition(id)
   const catalog = isOfficialVendorId(id) ? resolveVendorModelCatalog(id, region) : undefined
-  const modelsUrl = configuration.discovery?.url ?? catalog?.url ?? (id === 'xai' ? resolveModelDiscoveryUrl(id, region) : undefined)
+  const modelsUrl =
+    configuration.discovery?.url ??
+    catalog?.url ??
+    (id === 'xai' ? resolveModelDiscoveryUrl(id, region) : undefined)
   return Object.freeze({
     id,
     supportsModelDiscovery: Boolean(modelsUrl),
     listModels(options?: ListModelsOptions) {
       if (!modelsUrl)
         return Promise.resolve({ ok: false, message: 'This provider has no model-list endpoint.' })
-      return listProviderModels({ url: modelsUrl, vendorId: id, key, options: configuration.discovery?.url ? undefined : catalog?.options, parameters: configuration.discovery?.parameters, knownModelIds: isOfficialVendorId(id) ? getOfficialVendor(id)?.models.map((m) => m.id) : undefined }, { ...options, fetchImpl })
+      return listProviderModels(
+        {
+          url: modelsUrl,
+          vendorId: id,
+          key,
+          options: configuration.discovery?.url ? undefined : catalog?.options,
+          parameters: configuration.discovery?.parameters,
+          knownModelIds: isOfficialVendorId(id)
+            ? getOfficialVendor(id)?.models.map((m) => m.id)
+            : undefined
+        },
+        { ...options, fetchImpl }
+      )
     },
     supportsTextGeneration(modelId: string) {
       try {

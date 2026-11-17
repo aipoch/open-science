@@ -1,4 +1,11 @@
-import { bearerCatalog, publicCatalog, anthropicCatalog, bailianCatalog, openCodeCatalog, openRouterCatalog } from './catalog-configurations'
+import {
+  bearerCatalog,
+  publicCatalog,
+  anthropicCatalog,
+  bailianCatalog,
+  openCodeCatalog,
+  openRouterCatalog
+} from './catalog-configurations'
 import type { OfficialVendor } from './types'
 
 // The shipped vendor set. Each entry owns its endpoint and catalog; model lists are intentionally
@@ -107,7 +114,20 @@ const definitions: readonly OfficialVendor[] = [
   {
     id: 'xai',
     modelsListUrl: 'https://api.x.ai/v1/language-models',
-    modelsList: { ...bearerCatalog, itemsPath: 'models', fields: { name: 'name', supportsImageInput: { path: 'input_modalities', includes: 'image' }, efforts: 'capabilities.reasoning_effort' }, enrichment: { url: 'https://api.x.ai/v1/models', itemsPath: 'data', fields: { contextWindow: 'context_length' } } },
+    modelsList: {
+      ...bearerCatalog,
+      itemsPath: 'models',
+      fields: {
+        name: 'name',
+        supportsImageInput: { path: 'input_modalities', includes: 'image' },
+        efforts: 'capabilities.reasoning_effort'
+      },
+      enrichment: {
+        url: 'https://api.x.ai/v1/models',
+        itemsPath: 'data',
+        fields: { contextWindow: 'context_length' }
+      }
+    },
     label: 'xAI (Grok)',
     // xAI documents four selectable effort values for Grok 4.6 and 4.7. Models with a different capability
     // override this default below; models without a documented effort control stay unsupported.
@@ -157,7 +177,16 @@ const definitions: readonly OfficialVendor[] = [
   {
     id: 'deepseek',
     modelsListUrl: 'https://api.deepseek.com/v1/models',
-    modelsList: { ...bearerCatalog, fields: { name: 'name', contextWindow: 'context_window', maxOutputTokens: 'max_output_tokens', supportsImageInput: { path: 'input_modalities', includes: 'image' }, efforts: 'effort.supported_levels' } },
+    modelsList: {
+      ...bearerCatalog,
+      fields: {
+        name: 'name',
+        contextWindow: 'context_window',
+        maxOutputTokens: 'max_output_tokens',
+        supportsImageInput: { path: 'input_modalities', includes: 'image' },
+        efforts: 'effort.supported_levels'
+      }
+    },
     label: 'DeepSeek',
     // DeepSeek V4 supports an explicit thinking-off switch plus high/max reasoning effort.
     reasoningEffort: { supported: true, values: ['none', 'high', 'max'] },
@@ -202,7 +231,10 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'china',
         modelsListUrl: 'https://{workspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/models',
-        modelsList: { ...bailianCatalog, inputs: [{ id: 'workspaceId', location: 'url', required: true }] },
+        modelsList: {
+          ...bailianCatalog,
+          inputs: [{ id: 'workspaceId', location: 'url', required: true }]
+        },
         label: 'China',
         baseUrl: 'https://dashscope.aliyuncs.com/apps/anthropic/v1/messages',
         chatCompletionsBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -483,7 +515,14 @@ const definitions: readonly OfficialVendor[] = [
   {
     id: 'kimi',
     modelsListUrl: 'https://api.moonshot.cn/v1/models',
-    modelsList: { ...bearerCatalog, fields: { contextWindow: 'context_length', supportsImageInput: 'supports_image_in', supportsReasoning: 'supports_reasoning' } },
+    modelsList: {
+      ...bearerCatalog,
+      fields: {
+        contextWindow: 'context_length',
+        supportsImageInput: 'supports_image_in',
+        supportsReasoning: 'supports_reasoning'
+      }
+    },
     label: 'Kimi (Moonshot)',
     reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] },
     // Moonshot serves both routes on one host: Anthropic /v1/messages under `/anthropic` and the
@@ -616,7 +655,7 @@ const definitions: readonly OfficialVendor[] = [
         label: 'Global',
         baseUrl: 'https://api.stepfun.ai',
         chatCompletionsBaseUrl: 'https://api.stepfun.ai/v1',
-        apiKeyUrl: 'https://platform.stepfun.ai/interface-key',
+        apiKeyUrl: 'https://platform.stepfun.ai/interface-key'
       },
       {
         id: 'china',
@@ -625,7 +664,7 @@ const definitions: readonly OfficialVendor[] = [
         label: 'China',
         baseUrl: 'https://api.stepfun.com',
         chatCompletionsBaseUrl: 'https://api.stepfun.com/v1',
-        apiKeyUrl: 'https://platform.stepfun.com/interface-key',
+        apiKeyUrl: 'https://platform.stepfun.com/interface-key'
       }
     ],
     models: [
@@ -720,7 +759,18 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'china',
         modelsListUrl: 'https://token.sensenova.cn/v1/models',
-        modelsList: { ...bearerCatalog, filter: { path: 'output_modalities', includes: 'text' }, fields: { name: 'name', contextWindow: 'context_length', maxOutputTokens: 'max_output_length', supportsImageInput: { path: 'input_modalities', includes: 'image' }, supportsTools: { path: 'supported_features', includes: 'tools' }, supportsReasoning: { path: 'supported_features', includes: 'reasoning' } } },
+        modelsList: {
+          ...bearerCatalog,
+          filter: { path: 'output_modalities', includes: 'text' },
+          fields: {
+            name: 'name',
+            contextWindow: 'context_length',
+            maxOutputTokens: 'max_output_length',
+            supportsImageInput: { path: 'input_modalities', includes: 'image' },
+            supportsTools: { path: 'supported_features', includes: 'tools' },
+            supportsReasoning: { path: 'supported_features', includes: 'reasoning' }
+          }
+        },
         label: 'China',
         baseUrl: 'https://token.sensenova.cn',
         chatCompletionsBaseUrl: 'https://token.sensenova.cn/v1',
@@ -1779,7 +1829,17 @@ const definitions: readonly OfficialVendor[] = [
   {
     id: 'requesty',
     modelsListUrl: 'https://router.requesty.ai/v1/models',
-    modelsList: { ...publicCatalog, fields: { contextWindow: 'context_window', maxOutputTokens: 'max_output_tokens', supportsImageInput: 'supports_vision', supportsTools: 'supports_tool_calling', supportsReasoning: 'supports_reasoning', efforts: 'reasoning.supported_efforts' } },
+    modelsList: {
+      ...publicCatalog,
+      fields: {
+        contextWindow: 'context_window',
+        maxOutputTokens: 'max_output_tokens',
+        supportsImageInput: 'supports_vision',
+        supportsTools: 'supports_tool_calling',
+        supportsReasoning: 'supports_reasoning',
+        efforts: 'reasoning.supported_efforts'
+      }
+    },
     label: 'Requesty',
     // Like OpenRouter, each curated entry declares its own capability and unknown ids stay
     // conservative.

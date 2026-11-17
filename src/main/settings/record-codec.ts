@@ -1,4 +1,8 @@
-import { decodeModelCatalog, decodeModelCatalogStatus, decodeCatalogParameters } from './model-catalog-codec'
+import {
+  decodeModelCatalog,
+  decodeModelCatalogStatus,
+  decodeCatalogParameters
+} from '../../shared/provider-model-catalog-codec'
 import {
   isAgentFrameworkId,
   AGENT_MODEL_ROUTE_VALUES,

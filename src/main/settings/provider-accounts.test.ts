@@ -2131,6 +2131,7 @@ describe('ProviderAccountsModule', () => {
       {
         ok: false,
         category: 'unknown',
+        code: 'stale',
         message: 'Provider not found.'
       }
     )
@@ -2147,7 +2148,7 @@ describe('ProviderAccountsModule', () => {
     await expect(module.refreshProviderModels({ providerId })).resolves.toEqual({
       ok: false,
       category: 'unknown',
-      message: 'This provider has no model-list endpoint.'
+      code: 'unsupported'
     })
   })
 
@@ -2409,7 +2410,7 @@ describe('ProviderAccountsModule', () => {
     expect((await repository.getSettings()).providers[0].fetchedModels).toBeUndefined()
   })
 
-  it('preserves unrelated provider edits while applying a pending model catalog refresh', async () => {
+  it('preserves provider edits and rejects a refresh started before the saved revision changed', async () => {
     await module.upsertProvider({
       type: 'official',
       name: 'DeepSeek',
@@ -2438,21 +2439,23 @@ describe('ProviderAccountsModule', () => {
     })
     response.resolve(Response.json({ data: [{ id: 'deepseek-v5' }] }))
 
-    await expect(refresh).resolves.toMatchObject({ ok: true, models: ['deepseek-v5'] })
-    await expect(repository.getSettings()).resolves.toMatchObject({
+    await expect(refresh).resolves.toMatchObject({ ok: false, code: 'stale' })
+    const saved = await repository.getSettings()
+    expect(saved).toMatchObject({
       providers: [
         expect.objectContaining({
           id: original.id,
           name: 'Renamed DeepSeek',
-          keyRef: original.keyRef,
-          fetchedModels: ['deepseek-v5']
+          keyRef: original.keyRef
         })
       ]
     })
+    expect(saved.providers[0].fetchedModels).toEqual(original.fetchedModels)
+    expect(saved.providers[0].modelCatalog).toEqual(original.modelCatalog)
   })
 
   it.each([
-    { vendorId: 'deepseek', model: 'deepseek-v4-pro', preserved: true },
+    { vendorId: 'deepseek', model: 'deepseek-v4-pro', preserved: false },
     { vendorId: 'anthropic', model: 'claude-opus-5', preserved: false }
   ] as const)(
     'resolves configured models after catalog refresh for $vendorId',

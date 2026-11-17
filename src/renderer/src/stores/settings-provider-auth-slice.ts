@@ -50,7 +50,9 @@ export type ProviderAuthActions = {
   waitXaiOAuthLogin: () => Promise<XaiOAuthLoginResult>
   cancelXaiOAuthLogin: () => Promise<void>
   logoutXaiOAuth: () => Promise<void>
-  refreshProviderModels: (request: string | RefreshProviderModelsRequest) => Promise<RefreshProviderModelsResult>
+  refreshProviderModels: (
+    request: string | RefreshProviderModelsRequest
+  ) => Promise<RefreshProviderModelsResult>
   setActiveProvider: (providerId: string, model?: string) => Promise<void>
   setAgentFramework: (id: AgentFrameworkId) => Promise<void>
   deleteProvider: (
@@ -279,7 +281,9 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
 
   refreshProviderModels: async (request) => {
     const commands = getCommands()
-    const result = await commands.refreshProviderModels(typeof request === 'string' ? { providerId: request } : request)
+    const result = await commands.refreshProviderModels(
+      typeof request === 'string' ? { providerId: request } : request
+    )
     try {
       reconcileSnapshot(await commands.getSettings())
     } catch (error) {
