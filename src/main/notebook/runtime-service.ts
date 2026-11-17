@@ -589,7 +589,9 @@ class NotebookRuntimeService {
   async getMemoryPolicyState(
     request: NotebookMemoryPolicyStateRequest
   ): Promise<NotebookMemoryPolicyState> {
-    const policy = await this.getMemoryPolicy()
+    const policy =
+      (request.executionScope && this.shellProcess.memoryPolicy?.(request.executionScope)) ||
+      (await this.getMemoryPolicy())
     // UI input cannot create sampler domains or silently substitute a host sample for WSL.
     const state = await policy.getState({ executionScope: request.executionScope })
     if (request.executionScope && request.executionScope !== state.executionScope) {
@@ -647,7 +649,7 @@ class NotebookRuntimeService {
       request.shellRuntime ??
       this.options.shellRuntimeBinding ??
       defaultShellRuntimeBinding(this.options.platform)
-    return binding.kind === 'wsl2-bash' ? `wsl:${binding.profileId}` : undefined
+    return binding.kind === 'wsl2-bash' ? 'windows:host' : undefined
   }
 
   private async admitExecutionRequest<
@@ -1391,7 +1393,8 @@ class NotebookRuntimeService {
       new NotebookShellProcessAdapter(
         options.platform,
         options.processSandbox,
-        this.shellProcessOwnership
+        this.shellProcessOwnership,
+        options.configRoot
       )
     this.executionOwner = new NotebookExecutionOwner({
       reviewCode: (...args) => this.reviewCode(...args),

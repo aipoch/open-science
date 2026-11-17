@@ -37,6 +37,11 @@ export type NotebookExecutionBoundary = 'submit' | 'create' | 'dispatch' | 'rest
 export type NotebookExecutionAdmission = {
   prepare(boundary: NotebookExecutionBoundary): Promise<void>
   assertCurrent(boundary: NotebookExecutionBoundary): void
+  /** Main-only original-owner capability, preserving the same refusal and human-retry authority. */
+  withExecutionDomain?(
+    policy: NotebookMemoryPolicyPort,
+    executionScope: string
+  ): NotebookExecutionAdmission
 }
 
 const admissionKey = Symbol('Notebook host execution admission')
@@ -64,6 +69,16 @@ export const guardNotebookExecutionAdmission = (
   assertHostCurrent: () => void
 ): NotebookExecutionAdmission | undefined =>
   admission && {
+    ...(admission.withExecutionDomain
+      ? {
+          withExecutionDomain: (policy: NotebookMemoryPolicyPort, scope: string) =>
+            guardNotebookExecutionAdmission(
+              admission.withExecutionDomain!(policy, scope),
+              signal,
+              assertHostCurrent
+            )!
+        }
+      : {}),
     prepare: async (boundary) => {
       signal?.throwIfAborted()
       assertHostCurrent()
@@ -109,7 +124,24 @@ export const createNotebookExecutionAdmission = (options: {
       state
     )
   }
-  return {
+  const admission: NotebookExecutionAdmission = {
+    withExecutionDomain: (domainPolicy, executionScope) => {
+      const guest = createNotebookExecutionAdmission({
+        ...options,
+        policy: async () => domainPolicy,
+        executionScope
+      })
+      return {
+        prepare: async (boundary) => {
+          await admission.prepare(boundary)
+          await guest.prepare(boundary)
+        },
+        assertCurrent: (boundary) => {
+          admission.assertCurrent(boundary)
+          guest.assertCurrent(boundary)
+        }
+      }
+    },
     prepare: async (boundary) => {
       options.signal?.throwIfAborted()
       options.assertHostCurrent?.(boundary)
@@ -144,4 +176,5 @@ export const createNotebookExecutionAdmission = (options: {
       assertMemory(policy.currentState({ executionScope: options.executionScope }))
     }
   }
+  return admission
 }

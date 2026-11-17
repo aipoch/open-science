@@ -64,7 +64,7 @@ describe('WindowsMemoryPolicyAdapter', () => {
     }
   })
 
-  it('uses one Windows host snapshot for a known WSL scope without rewriting its domain', async () => {
+  it('never authorizes a WSL domain with Windows host facts alone', async () => {
     const native = {
       sampleWindowsResources: vi.fn(async () =>
         windowsSample({
@@ -81,21 +81,10 @@ describe('WindowsMemoryPolicyAdapter', () => {
     })
 
     await expect(service.getState({ executionScope: 'wsl:profile-1' })).resolves.toMatchObject({
-      status: 'healthy',
-      source: 'windows-performance-info',
-      executionScope: 'wsl:profile-1',
-      facts: {
-        totalBytes: 1000,
-        availableBytes: 800,
-        commitLimitBytes: 1000,
-        committedBytes: 200
-      }
+      status: 'unavailable',
+      reason: { code: 'execution-domain-unavailable' }
     })
-    await expect(service.getState({ executionScope: 'wsl:profile-1' })).resolves.toMatchObject({
-      executionScope: 'wsl:profile-1'
-    })
-    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(1)
-    expect(native.sampleWindowsResources).toHaveBeenCalledWith(false, [])
+    expect(native.sampleWindowsResources).not.toHaveBeenCalled()
   })
 })
 

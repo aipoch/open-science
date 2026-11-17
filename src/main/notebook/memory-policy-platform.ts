@@ -60,9 +60,7 @@ export class WindowsMemoryPolicyAdapter implements MemoryPolicyAdapter {
 
   async sample(signal: AbortSignal, requestedScope?: string): Promise<MemoryPolicySample> {
     const executionScope = requestedScope ?? this.defaultExecutionScope
-    const wslProfile = executionScope.startsWith('wsl:') ? executionScope.slice(4) : undefined
-    if (executionScope !== this.defaultExecutionScope && !wslProfile)
-      verifyHost(executionScope, 'windows')
+    verifyHost(executionScope, 'windows')
     signal.throwIfAborted()
     if (typeof this.native.sampleWindowsResources !== 'function') missingComponent()
     const result = await this.native.sampleWindowsResources(false, [])
