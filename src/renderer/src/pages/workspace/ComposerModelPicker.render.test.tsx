@@ -934,7 +934,7 @@ describe('ComposerModelPicker', () => {
           vendorId: 'openai',
           name: 'OpenAI',
           models: ['gpt-5.2', 'gpt-5.5'],
-          fetchedModels: ['gpt-5.2', 'gpt-5.5']
+          modelCatalog: { fetchedAt: 1, models: [{ id: 'gpt-5.2' }, { id: 'gpt-5.5' }] }
         }),
         provider({ id: 'gw', name: 'Gateway', apiEndpoints: ['chat-completions'], models: ['gm'] })
       ],
