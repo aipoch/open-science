@@ -483,9 +483,9 @@ it.each(['item', 'attachment', 'checksum'] as const)(
         join(source.storageRoot, 'invalid-citations.science')
       )
     ).rejects.toThrow('citation content identity mismatch')
-    expect(() => validatePackageLiteratureSession({ tables: {} } as never, value)).toThrow(
-      'no packaged Version'
-    )
+    // A missing Literature section is a supported legacy-package shape. The real export
+    // validation above still rejects the mismatched citation once Literature metadata exists.
+    expect(() => validatePackageLiteratureSession({ tables: {} } as never, value)).not.toThrow()
   }
 )
 
