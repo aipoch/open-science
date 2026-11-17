@@ -687,6 +687,70 @@ it('refuses a persisted remote HTTP target before forwarding a prompt or credent
   }
 })
 
+it.each(['network', 'http', 'success'] as const)(
+  'keeps OAuth %s diagnostics within the authentication owner',
+  async (scenario) => {
+    const { captureDiagnosticLogs } = await import('../diagnostics/integration-test-helpers')
+    const privateAccount = 'PRIVATE_ACCOUNT_CANARY'
+    const bridge = new ProtocolForwardingBridge(
+      [
+        {
+          id: 'subscription',
+          wire: 'responses',
+          endpoint: 'https://provider.example/v1/responses',
+          model: 'fixture',
+          resolveConnection: async () => ({
+            endpoint: 'https://provider.example/v1/responses',
+            key: 'PRIVATE_ACCESS_CANARY',
+            headers: { 'ChatGPT-Account-Id': privateAccount }
+          })
+        }
+      ],
+      'subscription',
+      async () => {
+        if (scenario === 'network') throw new TypeError(`Disconnected from ${privateAccount}`)
+        return new Response(
+          scenario === 'http'
+            ? JSON.stringify({ error: { message: privateAccount } })
+            : 'data: {"type":"response.completed","response":{}}\n\n',
+          {
+            status: scenario === 'http' ? 502 : 200,
+            headers: {
+              'content-type': scenario === 'http' ? 'application/json' : 'text/event-stream',
+              'x-request-id': privateAccount,
+              'x-open-science-request-id': 'PRIVATE_SPOOFED_CANARY'
+            }
+          }
+        )
+      }
+    )
+    const connection = await bridge.start()
+    try {
+      const lines = await captureDiagnosticLogs(async (log) => {
+        log.info('OAuth privacy fixture')
+        const response = await fetch(connection.baseUrl + '/v1/responses', {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: '{}'
+        })
+        expect(response.status).toBe(scenario === 'success' ? 200 : 502)
+        expect(response.headers.get('x-request-id')).toBeNull()
+        expect(response.headers.get('x-open-science-request-id')).toBeNull()
+        expect(await response.text()).not.toContain('PRIVATE_')
+      })
+      expect(lines.join('\n')).not.toContain('PRIVATE_')
+      expect(
+        lines.map((line) => JSON.parse(line)).filter((entry) => entry.scope === 'provider-response')
+      ).toHaveLength(0)
+    } finally {
+      await bridge.close()
+    }
+  }
+)
+
 it('retains bounded redacted upstream error fields and prevents source-header spoofing', async () => {
   const { captureDiagnosticLogs } = await import('../diagnostics/integration-test-helpers')
   const { projectDiagnosticLog } = await import('../session-diagnostics/projection')

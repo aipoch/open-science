@@ -167,6 +167,7 @@ export function createResponsesModel(input: ResponsesModelOptions): AgentModel {
       let phase: ResponsesDiagnostics['phase'] = 'input'
       let httpStatus: number | undefined
       let source: ResponsesDiagnostics['source']
+      let providerResponse = false
       let requestId: string | undefined
       let eventCount = 0,
         receivedDone = false,
@@ -226,6 +227,7 @@ export function createResponsesModel(input: ResponsesModelOptions): AgentModel {
           throw new ResponsesError('network')
         }
         httpStatus = response.status
+        providerResponse = response.headers.get('x-open-science-response-source') === 'provider'
         const origin = response.headers.get('x-open-science-error-source')
         if (
           origin === 'provider-http' ||
@@ -432,12 +434,15 @@ export function createResponsesModel(input: ResponsesModelOptions): AgentModel {
         // The shared SSE reader uses ChatCompletionsError; retain the actual adapter identity.
         const readerError = error instanceof ChatCompletionsError
         if (error instanceof ResponsesError || error instanceof SyntaxError || readerError) {
+          if (
+            readerError &&
+            error.code === 'network' &&
+            providerResponse &&
+            source !== 'application'
+          )
+            source = 'provider-transport'
           throw new ResponsesError(
-            error instanceof ResponsesError
-              ? error.code
-              : readerError && error.code === 'limit'
-                ? 'limit'
-                : 'protocol',
+            error instanceof ResponsesError || readerError ? error.code : 'protocol',
             error instanceof ResponsesError ? error.status : undefined,
             {
               phase: readerError ? 'stream' : phase,

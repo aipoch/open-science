@@ -314,20 +314,23 @@ export class ProtocolForwardingBridge {
       } catch (error) {
         request.signal.throwIfAborted()
         // The exception came from the fetch boundary, not application request preparation.
-        log.warn('provider transport failed', {
-          source: 'provider-transport',
-          model: target.model,
-          endpoint: target.wire,
-          origin: endpoint.origin,
-          durationMs: Date.now() - startedAt,
-          transportCode: networkCode(error),
-          ...errorDetail(
-            JSON.stringify({
-              error: { message: error instanceof Error ? error.message : 'Network request failed' }
-            }),
-            connection?.key ?? target.key
-          )
-        })
+        if (!connection)
+          log.warn('provider transport failed', {
+            source: 'provider-transport',
+            model: target.model,
+            endpoint: target.wire,
+            origin: endpoint.origin,
+            durationMs: Date.now() - startedAt,
+            transportCode: networkCode(error),
+            ...errorDetail(
+              JSON.stringify({
+                error: {
+                  message: error instanceof Error ? error.message : 'Network request failed'
+                }
+              }),
+              target.key
+            )
+          })
         throw new ProviderTransportError()
       }
     }
@@ -338,7 +341,7 @@ export class ProtocolForwardingBridge {
       signal: request.signal
     })
     // Upstream headers cannot impersonate locally generated transport/application failures.
-    const upstreamRequestId = requestIdOf(upstream.headers, connection?.key ?? target.key)
+    const upstreamRequestId = connection ? undefined : requestIdOf(upstream.headers, target.key)
     const diagnosticContext = {
       source: 'provider-http',
       model: target.model,

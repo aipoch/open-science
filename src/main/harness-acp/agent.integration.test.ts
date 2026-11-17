@@ -1528,6 +1528,73 @@ it.each([500, 502, 'missing-completion'] as const)(
   }
 )
 
+it('classifies a provider disconnect after partial Responses output through real HTTP and ACP', async () => {
+  let upstreamResponse: ServerResponse | undefined
+  const server = createServer(async (request, response) => {
+    request.resume()
+    await once(request, 'end')
+    upstreamResponse = response
+    response.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'x-request-id': 'stream-request-123'
+    })
+    response.write('data: {"type":"response.output_text.delta","delta":"partial"}\n\n')
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  cleanup.push(async () => {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  })
+  const bridge = new ProtocolForwardingBridge(
+    [
+      {
+        id: 'target',
+        wire: 'responses',
+        endpoint: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/responses`,
+        model: 'fixture'
+      }
+    ],
+    'target',
+    fetch,
+    { token: 'local-test-token' }
+  )
+  const bridgeConnection = await bridge.start()
+  cleanup.push(() => bridge.close())
+  const f = await fixture(bridgeConnection.baseUrl + '/v1/responses')
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: []
+  })
+  const pending = prompt(f.connection, sessionId).catch((error: unknown) => error)
+  await vi.waitFor(() => expect(JSON.stringify(f.updates)).toContain('partial'))
+  upstreamResponse!.destroy(new Error('private upstream connection details'))
+  const failure = await pending
+  expect(failure).toMatchObject({
+    code: -32603,
+    data: {
+      errorName: 'APIError',
+      errorKind: 'connection_error',
+      adapter: 'responses',
+      adapterCode: 'network',
+      requestId: 'stream-request-123',
+      diagnostics: {
+        source: 'provider-transport',
+        phase: 'stream',
+        httpStatus: 200,
+        eventCount: 1,
+        receivedDone: false,
+        receivedCompletion: false
+      }
+    }
+  })
+  expect(classifyFailure(collectPromptFailureFacts(failure))).toMatchObject({
+    category: 'service',
+    reason: 'service/connection-failed'
+  })
+  expect(JSON.stringify(failure)).not.toContain('private')
+})
+
 it.each(['http', 'auth', 'network', 'application', 'stream'] as const)(
   'classifies %s failures through upstream, forwarding bridge, Responses and ACP',
   async (scenario) => {
