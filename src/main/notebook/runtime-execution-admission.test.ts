@@ -5,12 +5,150 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { NotebookRuntimeService } from './runtime-service'
 import type { NotebookExecutionRequest } from './execution-contract'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
+import { withNotebookExecutionIntent } from './execution-intent'
 
 let root: string | undefined
 let runtime: NotebookRuntimeService | undefined
 afterEach(async () => {
   await runtime?.shutdownAll()
   if (root) await rm(root, { recursive: true, force: true })
+})
+
+it('forces a fresh check for a prepared user continuation but not for an inherited Agent intent', async () => {
+  root = await mkdtemp(join(tmpdir(), 'runtime-user-retry-admission-'))
+  const submissions: Array<{ signal: AbortSignal; force: boolean }> = []
+  const getState = vi.fn(async (request?: { signal?: AbortSignal; force?: boolean }) => {
+    if (request?.signal) submissions.push({ signal: request.signal, force: request.force === true })
+    return {
+      status: 'healthy' as const,
+      reason: { code: 'healthy' },
+      source: 'test-os',
+      executionScope: 'test:host'
+    }
+  })
+  runtime = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectId: 'project',
+    memoryPolicy: {
+      getState,
+      currentState: () => ({
+        status: 'healthy',
+        reason: { code: 'healthy' },
+        source: 'test-os',
+        executionScope: 'test:host'
+      })
+    }
+  })
+  const scope = { projectId: 'project', sessionId: 'session', workspaceCwd: root }
+  const intent = runtime.createExecutionIntent(scope)
+  intent.prepareUserExecution()
+  await runtime.executeControl(
+    withNotebookExecutionIntent({ ...scope, code: 'globalThis.continued = 1' }, intent)
+  )
+  await runtime.executeControl(
+    withNotebookExecutionIntent({ ...scope, code: 'globalThis.agent = 2' }, intent)
+  )
+
+  const first = submissions[0]
+  const last = submissions.at(-1)
+  expect(first?.force).toBe(true)
+  expect(last?.force).toBe(false)
+  expect(last?.signal).not.toBe(first?.signal)
+  expect(
+    submissions.filter(({ signal }) => signal === first?.signal).every(({ force }) => force)
+  ).toBe(true)
+  expect(
+    submissions.filter(({ signal }) => signal === last?.signal).every(({ force }) => !force)
+  ).toBe(true)
+  expect(
+    submissions
+      .filter(({ signal }) => signal !== first?.signal && signal !== last?.signal)
+      .every(({ force }) => !force)
+  ).toBe(true)
+})
+
+it('recovers a failed sample for one prepared continuation without forcing the next Agent request', async () => {
+  root = await mkdtemp(join(tmpdir(), 'runtime-user-retry-recovery-'))
+  const submissions: Array<{ signal: AbortSignal; force: boolean }> = []
+  let sampledAt = 0
+  const memoryPolicy = {
+    getState: async (request?: { signal?: AbortSignal; force?: boolean }) => {
+      if (!request?.signal)
+        return {
+          status: 'healthy' as const,
+          reason: { code: 'healthy' },
+          source: 'test-os',
+          executionScope: 'test:host'
+        }
+      submissions.push({ signal: request.signal, force: request.force === true })
+      if (request.force) sampledAt = 1000
+      return sampledAt
+        ? {
+            status: 'healthy' as const,
+            reason: { code: 'healthy' },
+            source: 'test-os',
+            executionScope: 'test:host',
+            sampledAt
+          }
+        : {
+            status: 'unavailable' as const,
+            reason: { code: 'sample-failed', retryAfterMs: 30_000 },
+            source: 'test-os',
+            executionScope: 'test:host'
+          }
+    },
+    currentState: () => ({
+      status: sampledAt ? ('healthy' as const) : ('unavailable' as const),
+      reason: { code: sampledAt ? 'healthy' : 'sample-failed' },
+      source: 'test-os',
+      executionScope: 'test:host',
+      sampledAt: sampledAt || undefined
+    })
+  }
+  runtime = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectId: 'project',
+    memoryPolicy
+  })
+  const scope = { projectId: 'project', sessionId: 'session', workspaceCwd: root }
+  await expect(
+    runtime.executeControl(
+      withNotebookExecutionIntent(
+        { ...scope, code: 'globalThis.rejected = true' },
+        runtime.createExecutionIntent(scope)
+      )
+    )
+  ).rejects.toMatchObject({ code: 'NOTEBOOK_MEMORY_UNAVAILABLE' })
+  const intent = runtime.createExecutionIntent(scope)
+  intent.prepareUserExecution()
+  await expect(
+    runtime.executeControl(
+      withNotebookExecutionIntent({ ...scope, code: 'globalThis.recovered = 1' }, intent)
+    )
+  ).resolves.toMatchObject({ status: 'completed' })
+  await expect(
+    runtime.executeControl(
+      withNotebookExecutionIntent({ ...scope, code: 'globalThis.agent = 2' }, intent)
+    )
+  ).resolves.toMatchObject({ status: 'completed' })
+  const first = submissions.find(({ force }) => force)
+  const last = submissions.at(-1)
+  expect(first).toBeDefined()
+  expect(last?.force).toBe(false)
+  expect(last?.signal).not.toBe(first?.signal)
+  expect(
+    submissions.filter(({ signal }) => signal === first?.signal).every(({ force }) => force)
+  ).toBe(true)
+  expect(
+    submissions.filter(({ signal }) => signal === last?.signal).every(({ force }) => !force)
+  ).toBe(true)
+  expect(
+    submissions
+      .filter(({ signal }) => signal !== first?.signal && signal !== last?.signal)
+      .every(({ force }) => !force)
+  ).toBe(true)
 })
 
 it('rejects pressure before accepting a REPL execution while history remains readable', async () => {

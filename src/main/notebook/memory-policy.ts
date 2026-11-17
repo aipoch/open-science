@@ -166,7 +166,8 @@ export class MemoryPolicyService {
       return Promise.resolve(current)
     }
     if (state.pending) return this.waitFor(state.pending, request)
-    if (state.settling || this.now() < state.nextSampleAt) {
+    // A forced user check bypasses only the error backoff. It never overlaps a timed-out read.
+    if (state.settling || (!request.force && this.now() < state.nextSampleAt)) {
       const next = state.observation ?? this.unavailableState(key, 'sample-pending')
       return Promise.resolve({
         ...next,

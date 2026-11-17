@@ -706,6 +706,7 @@ class NotebookRuntimeService {
         policy: () => this.getMemoryPolicy(),
         signal: signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
         executionScope,
+        force: intent?.consumeUserExecutionPreparation(),
         assertHostCurrent: (boundary) => {
           intent?.assertExecutable()
           assertHostCurrent?.(boundary)
