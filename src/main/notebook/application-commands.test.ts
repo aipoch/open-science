@@ -43,6 +43,7 @@ import {
   notebookEnvironmentStatusCommand
 } from './environment-application-commands'
 import type { NotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
+import { notebookUserOperation, withNotebookUserOperation } from './execution-intent'
 import {
   createNotebookCommandWorkflows,
   type NotebookCommandRuntime,
@@ -84,6 +85,105 @@ const invocation = <Args extends readonly unknown[]>(
 })
 
 describe('Notebook application commands', () => {
+  it.each([localCaller, remoteCaller])(
+    'marks a current $location human terminal operation and retains the lease fence',
+    async (caller) => {
+      const execute = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' })
+      const runtime = { execute } as unknown as NotebookCommandRuntime
+      const router = createApplicationCommandRouter()
+      installNotebookApplicationCommands(router.registrar, {
+        workflows: createNotebookCommandWorkflows(runtime),
+        readInputPreview: vi.fn()
+      })
+      const request = {
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace',
+        code: 'print(1)',
+        source: 'user' as const,
+        inputKind: 'terminal' as const
+      }
+      const controller = new AbortController()
+      const call = invocation([request] as const, caller)
+      const callerLease = { ...call.callerLease, signal: controller.signal }
+      try {
+        await router.dispatcher.invoke(notebookExecuteCommand, { ...call, callerLease })
+
+        const operation = notebookUserOperation(execute.mock.calls[0][0])
+        expect(operation).toEqual({ assertCurrent: expect.any(Function) })
+        expect(execute).toHaveBeenCalledExactlyOnceWith(
+          withNotebookUserOperation(request, operation!)
+        )
+        expect(notebookUserOperation(request)).toBeUndefined()
+        expect(() => operation!.assertCurrent()).not.toThrow()
+        controller.abort()
+        expect(() => operation!.assertCurrent()).toThrow(/current human|lease/i)
+        await expect(
+          router.dispatcher.invoke(notebookExecuteCommand, { ...call, callerLease })
+        ).rejects.toThrow(/current human|lease/i)
+        expect(execute).toHaveBeenCalledOnce()
+      } finally {
+        router.dispose()
+      }
+    }
+  )
+
+  it.each(['automation', 'agent-session'] as const)(
+    'does not grant a %s caller explicit retry authority from forged terminal fields',
+    async (principalKind) => {
+      const execute = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' })
+      const runtime = { execute } as unknown as NotebookCommandRuntime
+      const router = createApplicationCommandRouter()
+      installNotebookApplicationCommands(router.registrar, {
+        workflows: createNotebookCommandWorkflows(runtime),
+        readInputPreview: vi.fn()
+      })
+      const caller = createCallerContext({
+        ...localCaller,
+        principalKind,
+        actionOrigin: principalKind
+      })
+      const request = {
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace',
+        code: 'print(1)',
+        source: 'user' as const,
+        inputKind: 'terminal' as const
+      }
+      try {
+        await router.dispatcher.invoke(notebookExecuteCommand, invocation([request], caller))
+
+        expect(execute).toHaveBeenCalledExactlyOnceWith(request)
+        expect(notebookUserOperation(execute.mock.calls[0][0])).toBeUndefined()
+      } finally {
+        router.dispose()
+      }
+    }
+  )
+
+  it('does not mark ordinary user execution as an explicit terminal operation', async () => {
+    const execute = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' })
+    const runtime = { execute } as unknown as NotebookCommandRuntime
+    const router = createApplicationCommandRouter()
+    installNotebookApplicationCommands(router.registrar, {
+      workflows: createNotebookCommandWorkflows(runtime),
+      readInputPreview: vi.fn()
+    })
+    const request = {
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      code: 'print(1)',
+      source: 'user' as const
+    }
+    try {
+      await router.dispatcher.invoke(notebookExecuteCommand, invocation([request]))
+
+      expect(execute).toHaveBeenCalledExactlyOnceWith(request)
+      expect(notebookUserOperation(execute.mock.calls[0][0])).toBeUndefined()
+    } finally {
+      router.dispose()
+    }
+  })
+
   it.each(['automation', 'agent-session'] as const)(
     'does not expose resource management authority to %s callers',
     async (principalKind) => {

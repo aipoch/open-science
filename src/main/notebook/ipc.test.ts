@@ -7,7 +7,11 @@ import { join } from 'node:path'
 
 import { NotebookRuntimeService } from './runtime-service'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
-import { withNotebookExecutionIntent } from './execution-intent'
+import {
+  notebookUserOperation,
+  withNotebookExecutionIntent,
+  withNotebookUserOperation
+} from './execution-intent'
 
 const { ipcHandlers, log } = vi.hoisted(() => ({
   ipcHandlers: new Map<string, (...args: unknown[]) => unknown>(),
@@ -37,6 +41,52 @@ beforeEach(() => {
 afterEach(() => clearMigrationPending())
 
 describe('notebook IPC handlers', () => {
+  it('marks only a current native human terminal request and retains the caller fence', async () => {
+    const execute = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' })
+    const service = { execute } as unknown as NotebookRuntimeService
+    registerNotebookIpcHandlers(createNotebookCommandWorkflows(service))
+    const sender = Object.assign(new EventEmitter(), { id: 322, isDestroyed: () => false })
+    const request = {
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      code: 'print(1)',
+      source: 'user' as const,
+      inputKind: 'terminal' as const
+    }
+    const handler = ipcHandlers.get('notebook:execute')!
+
+    await handler({ sender }, request)
+
+    const operation = notebookUserOperation(execute.mock.calls[0][0])
+    expect(operation).toEqual({ assertCurrent: expect.any(Function) })
+    expect(execute).toHaveBeenCalledExactlyOnceWith(withNotebookUserOperation(request, operation!))
+    expect(notebookUserOperation(request)).toBeUndefined()
+    expect(() => operation!.assertCurrent()).not.toThrow()
+    sender.emit('destroyed')
+    expect(() => operation!.assertCurrent()).toThrow(/current human|lease/i)
+    await expect(Promise.resolve().then(() => handler({ sender }, request))).rejects.toThrow(
+      /current human|lease/i
+    )
+    expect(execute).toHaveBeenCalledOnce()
+  })
+
+  it('does not mark an ordinary user execution as an explicit terminal operation', async () => {
+    const execute = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' })
+    const service = { execute } as unknown as NotebookRuntimeService
+    registerNotebookIpcHandlers(createNotebookCommandWorkflows(service))
+    const request = {
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      code: 'print(1)',
+      source: 'user' as const
+    }
+
+    await ipcHandlers.get('notebook:execute')!(undefined, request)
+
+    expect(execute).toHaveBeenCalledExactlyOnceWith(request)
+    expect(notebookUserOperation(execute.mock.calls[0][0])).toBeUndefined()
+  })
+
   it.skipIf(process.platform === 'win32')(
     'rejects a legacy release when its native caller is destroyed during Session validation',
     async () => {
@@ -333,9 +383,10 @@ describe('notebook IPC handlers', () => {
       language: 'python' as const
     }
     const handler = ipcHandlers.get('notebook:execute')
+    const sender = Object.assign(new EventEmitter(), { id: 323, isDestroyed: () => false })
 
-    await expect(handler?.(undefined, request)).resolves.toBe(executionFailure)
-    await expect(handler?.(undefined, request)).rejects.toBe(submissionFailure)
+    await expect(handler?.({ sender }, request)).resolves.toBe(executionFailure)
+    await expect(handler?.({ sender }, request)).rejects.toBe(submissionFailure)
 
     expect(log.error).toHaveBeenNthCalledWith(1, 'user terminal execution failed', {
       sessionId: 'session-1',

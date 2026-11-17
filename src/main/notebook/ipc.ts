@@ -2,6 +2,7 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { callerContextForEvent, canSatisfyHumanApproval } from '../caller-context'
 import { callerLeaseForEvent } from '../caller-lifecycle'
+import { withNotebookUserOperation } from './execution-intent'
 import type {
   NotebookProjectResourcesRequest,
   NotebookResourceReleaseRequest,
@@ -120,8 +121,13 @@ const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void =
   ipcMainHandle('notebook:run-cell', (_event, request: RunNotebookCellRequest) =>
     handlers.runCell(request)
   )
-  ipcMainHandle('notebook:execute', async (_event, request: ExecuteNotebookCodeRequest) => {
+  ipcMainHandle('notebook:execute', async (event, request: ExecuteNotebookCodeRequest) => {
     try {
+      if (request.source === 'user' && request.inputKind === 'terminal') {
+        const assertCurrent = human(event)
+        assertCurrent()
+        request = withNotebookUserOperation(request, { assertCurrent })
+      }
       const result = await handlers.execute(request)
       if (
         request.source === 'user' &&
