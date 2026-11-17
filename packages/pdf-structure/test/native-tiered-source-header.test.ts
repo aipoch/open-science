@@ -588,3 +588,305 @@ it('permits unrelated whole sources outside the table without sharing a native o
   expect(result.grid).toEqual(f.expected)
   expect(result.unassigned).toEqual([])
 })
+
+it.each(['grouped header', 'missing repeated lane', 'displaced group', 'intersecting body ink'])(
+  'uses matching segmented rules and native body ink to reconcile a partial tier (%s)',
+  (shape) => {
+    const cuts = [20, 150, 190, 230, 270, 310]
+    const columnRects = cuts.slice(1).map((x, i) => [cuts[i], 39, x, 152])
+    const make = (
+      text: string,
+      x: number,
+      y: number,
+      width: number
+    ): ReturnType<typeof JSON.parse> => ({
+      text,
+      rect: [x, y - 10, x + width, y],
+      height: 10,
+      baseline: y,
+      horizontal: true
+    })
+    const header = [
+      make('AX', 164, 53, 12),
+      make('BY', 204, 53, 12),
+      make('Group', shape === 'displaced group' ? 248 : 250, 53, 40),
+      make('Low', 241, 66, 18),
+      make('High', 281, 66, 18)
+    ]
+    const data = Array.from({ length: 4 }, (_, row) => [
+      make(
+        'Trial ' + String.fromCharCode(65 + row),
+        30,
+        shape === 'intersecting body ink' && !row ? 80 : 86 + 17 * row,
+        55
+      ),
+      ...cuts
+        .slice(1, -1)
+        .map((x, column) => make(String(10 + row * 4 + column), x + 13, 86 + 17 * row, 14))
+    ])
+    const pageItems = [...header, ...data.flat()]
+    for (const [index, item] of pageItems.entries())
+      item.sourceItem = { pageNumber: 1, index, text: item.text }
+    const rows = [
+      { rect: [20, 41, 310, 71] },
+      ...data.map((_, row) => ({ rect: [20, row ? 92 + row * 16 : 71, 310, 91 + row * 16] }))
+    ]
+    const cell = (
+      row: number,
+      column: number,
+      item: ReturnType<typeof JSON.parse>
+    ): ReturnType<typeof JSON.parse> => ({
+      row,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      text: item.text,
+      sourceTokens: [item],
+      sourceRects: [item.rect],
+      sourceItems: [item.sourceItem]
+    })
+    const body = data.flatMap((items, row) =>
+      items.map((item, column) => cell(row + 1, column, item))
+    )
+    const cells = [
+      cell(0, 1, header[0]),
+      cell(0, 2, header[1]),
+      cell(0, 3, header[3]),
+      cell(0, 4, header[4]),
+      ...body
+    ]
+    const bodyBefore = structuredClone(body)
+    const rules = [
+      [20, 40, 310, 40],
+      ...[72, 123].flatMap((y) =>
+        columnRects.map(([left, , right]) => [left + 4, y, right - 4, y])
+      ),
+      [20, 150, 310, 150]
+    ]
+    if (shape === 'missing repeated lane') rules.splice(8, 1)
+    const unassigned = ['Group']
+    const repaired = reconcileNativeTieredHeader({
+      cells,
+      rows,
+      columnRects,
+      headerRows: [0],
+      pageItems,
+      rules,
+      captions: [{ rect: [20, 17, 310, 27], lines: ['Table 1: Bench results.'] }],
+      unassigned,
+      repairs: []
+    })
+    if (shape === 'grouped header') {
+      expect(repaired).toBe(1)
+      expect(unassigned).toEqual([])
+      expect(cells.find((c) => c.text === 'Group')).toMatchObject({
+        row: 0,
+        column: 3,
+        colSpan: 2,
+        sourceItems: [header[2].sourceItem]
+      })
+      expect(body).toEqual(bodyBefore.map((c) => ({ ...c, row: c.row + 1 })))
+    } else {
+      expect(repaired).toBe(0)
+      expect(unassigned).toEqual(['Group'])
+      expect(body).toEqual(bodyBefore)
+    }
+  }
+)
+
+it.each(['complete frame', 'missing wall', 'misaligned literal gap', 'body interference'])(
+  'restores exact three-leaf labels from closed two-tier parent frames (%s)',
+  (shape) => {
+    const cuts = [0, ...Array.from({ length: 13 }, (_, i) => 40 + i * 30)]
+    const columns = cuts.slice(1).map((right, i) => [cuts[i], 30, right, 130])
+    let index = 0
+    const item = (
+      text: string,
+      x: number,
+      y: number,
+      width: number
+    ): ReturnType<typeof JSON.parse> => ({
+      text,
+      baseline: y,
+      rect: [x, y - 10, x + width, y],
+      height: 10,
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index: index++, text }
+    })
+    const parents = Array.from({ length: 4 }, (_, i) =>
+      item('Set ' + String.fromCharCode(65 + i), 72 + i * 90, 42, 26)
+    )
+    const leaves = Array.from({ length: 12 }, (_, i) =>
+      item(['Mode', 'Peak', 'Sum'][i % 3], 43 + i * 30, 54, 18)
+    )
+    const [left, right] = leaves.slice(2, 4)
+    const fused = item(left.text + ' ' + right.text, left.rect[0], 54, right.rect[2] - left.rect[0])
+    const pageItems = [...parents, ...leaves.slice(0, 2), fused, ...leaves.slice(4)]
+    const measuredRuns = [
+      {
+        text: fused.text,
+        baseline: fused.baseline,
+        rect: fused.rect,
+        gaps: [
+          {
+            index: shape === 'misaligned literal gap' ? 2 : 3,
+            left: left.rect[2],
+            right: right.rect[0]
+          }
+        ],
+        glyphRuns: [0, 0, 0, 1, 1, 1, 1],
+        literalGlyphs: [...fused.text.replace(/\s/gu, '')]
+      }
+    ]
+    const rows = [
+      { rect: [0, 31, 400, 41] },
+      { rect: [0, 44, 400, 55] },
+      ...[57, 73, 89, 105].map((y) => ({ rect: [0, y, 400, y + 16] }))
+    ]
+    const rules = [
+      [40, 32, 400, 32],
+      [40, 44, 400, 44],
+      [0, 56, 400, 56],
+      [0, 120, 400, 120],
+      ...Array.from({ length: 5 }, (_, i) => 40 + i * 90).flatMap((x) => [
+        [x, 32, x, 44],
+        [x, 44, x, 56]
+      ])
+    ]
+    if (shape === 'missing wall') rules.splice(7, 1)
+    const cell = (
+      row: number,
+      column: number,
+      source: ReturnType<typeof JSON.parse>
+    ): ReturnType<typeof JSON.parse> => ({
+      row,
+      column,
+      colSpan: 1,
+      rowSpan: 1,
+      text: source.text,
+      sourceRects: [source.rect],
+      sourceTokens: [source],
+      sourceItems: [source.sourceItem]
+    })
+    const body = [0, 1, 2].map((n) =>
+      cell(
+        n + 2,
+        0,
+        item('Record ' + n, 4, shape === 'body interference' && !n ? 55 : 68 + n * 16, 30)
+      )
+    )
+    const cells = [cell(0, 2, parents[0]), cell(1, 1, leaves[0]), ...body]
+    const sourceBody = structuredClone(body)
+    const unassigned = [fused.text]
+    const result = reconcileNativeTieredHeader({
+      cells,
+      rows,
+      columnRects: columns,
+      headerRows: [0, 1],
+      pageItems,
+      rules,
+      unassigned,
+      repairs: [],
+      measuredRuns,
+      captions: []
+    })
+    expect(result).toBe(shape === 'complete frame' ? 1 : 0)
+    expect(cells.filter((c) => c.row >= 2)).toEqual(sourceBody)
+    if (result) {
+      expect(cells.filter((c) => c.colSpan === 3).map((c) => c.text)).toEqual(
+        parents.map((i) => i.text)
+      )
+      expect(cells.filter((c) => c.row === 1).map((c) => c.text)).toEqual(leaves.map((i) => i.text))
+      expect(cells.flatMap((c) => c.sourceSegments ?? []).map((s) => [s.start, s.end])).toEqual([
+        [0, 3],
+        [4, 8]
+      ])
+      expect(unassigned).toEqual([])
+    } else {
+      expect(unassigned).toEqual([fused.text])
+    }
+  }
+)
+
+it('uses the ruled groups and literal right edges to restore sparse numeric lanes', () => {
+  const tokens: {
+    text: string
+    rect: number[]
+    horizontal: boolean
+    baseline: number
+    height: number
+    sourceItem: { pageNumber: number; index: number; text: string }
+  }[] = []
+  const token = (text: string, x: number, baseline: number, width = 6): void => {
+    tokens.push({
+      text,
+      rect: [x, baseline - 9, x + width, baseline],
+      horizontal: true,
+      baseline,
+      height: 9,
+      sourceItem: { pageNumber: 1, index: tokens.length, text }
+    })
+  }
+  const rightEdges = Array.from({ length: 11 }, (_, column) => 20 + column * 20)
+  const x0 = 10,
+    x1 = 230,
+    firstWall = 24,
+    centerWall = 127,
+    rowCount = 10
+  token('Group Alpha', 52, 35, 48)
+  token('Group Beta', 155, 35, 48)
+  for (const [column, right] of rightEdges.entries())
+    token(column === 0 ? 'i' : ['N', 'a', 'b', 'c', 'd'][(column - 1) % 5], right - 6, 49)
+  for (let row = 0; row < rowCount; row++)
+    for (const [column, right] of rightEdges.entries()) {
+      if ((column === 1 || column === 6) && row % 3 !== 0) continue
+      const text =
+        column === 0 ? String(row) : column === 1 || column === 6 ? '2' : `${row + 1}.${column}`
+      const width = text.length * 3
+      token(text, right - width, 64 + row * 14, width)
+    }
+  const rail = (x: number): number[] => [x, 24, x, 194]
+  const rules = [20, 22, 53, 196, 198]
+    .map((y) => [x0, y, x1, y])
+    .concat([rail(firstWall), rail(centerWall)])
+  const cropRect = [8, 18, 232, 200]
+  const columns = Array.from({ length: 10 }, (_, i) => ({
+    label: 'table column',
+    score: 1,
+    rect: [i * 20, 10, (i + 1) * 20 + 7, 172]
+  }))
+  const modelRows = Array.from({ length: rowCount }, (_, row) => ({
+    label: 'table row',
+    score: 1,
+    rect: [4, 38 + row * 14, 223, 53 + row * 14]
+  }))
+  const table = {
+    id: 'page-1-table-1',
+    cropRect,
+    columnCount: 10,
+    rowCount,
+    structure: { objects: [...columns, ...modelRows] },
+    spans: [],
+    grid: [],
+    unassigned: []
+  }
+  const captions = [{ page: 1, rect: [30, 6, 100, 16], lines: ['Table I. Measured statistics.'] }]
+  const candidate = refineTable(table, tokens, captions, [], rules)
+  const negative = refineTable(table, tokens, captions, [], rules.slice(0, -1))
+  expect(candidate.repairs).toContain('native-paired-precision-columns-recovered')
+  expect(negative.repairs).not.toContain('native-paired-precision-columns-recovered')
+  expect(candidate.grid).toHaveLength(12)
+  expect(candidate.grid[0]).toHaveLength(11)
+  expect(candidate.unassigned).toEqual([])
+  expect(
+    candidate.cells.filter(
+      (cell: { row: number; colSpan: number }) => cell.row === 0 && cell.colSpan === 5
+    )
+  ).toHaveLength(2)
+  const owned = candidate.cells.flatMap(
+    (cell: { sourceItems?: { index: number }[] }) => cell.sourceItems ?? []
+  )
+  expect(
+    owned.map((origin: { index: number }) => origin.index).sort((a: number, b: number) => a - b)
+  ).toEqual(tokens.map((_, index) => index))
+})

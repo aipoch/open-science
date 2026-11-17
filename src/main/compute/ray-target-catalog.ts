@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { isAbsolute, join, posix } from 'node:path'
-import { resolveRayJobsEndpoint } from '@aipoch/compute/node'
+import { normalizeRayDashboardEndpoint } from '@aipoch/compute/ray-endpoint'
 import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 import { z } from 'zod'
 import type { RayTarget, RayTargetConfig } from '../../shared/compute'
@@ -18,7 +18,7 @@ const endpoint = z
   .max(2048)
   .transform((value, ctx) => {
     try {
-      return resolveRayJobsEndpoint(value)
+      return normalizeRayDashboardEndpoint(value)
     } catch {
       ctx.addIssue({ code: 'custom', message: 'Invalid Ray Dashboard endpoint.' })
       return z.NEVER

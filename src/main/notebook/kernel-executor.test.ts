@@ -388,6 +388,32 @@ const baseRequest = (
   runtimeRoot: join(cwd, 'runtime')
 })
 
+gate('NotebookKernelExecutor process monitoring', () => {
+  it('terminates an exact interpreter and rejects its old handle after cold restart', async () => {
+    const directory = await makeDefaultEnvCwd('os-process-monitor-')
+    const executor = makeExecutor()
+    try {
+      await executor.execute({ ...baseRequest(directory), code: 'monitor' })
+      const [original] = executor.monitoredProcesses()
+      expect(original.pid).toBeGreaterThan(0)
+      expect(original.status).toBe('idle')
+      expect(original.lastCell).toEqual({ code: 'monitor', truncated: false })
+      await original.terminate()
+      expect(executor.monitoredProcesses()).toEqual([])
+      expect(processIsAlive(original.pid!)).toBe(false)
+      await executor.execute({ ...baseRequest(directory), code: 'continue' })
+      const [replacement] = executor.monitoredProcesses()
+      expect(replacement.identity).not.toBe(original.identity)
+      expect(replacement.lastCell).toEqual({ code: 'continue', truncated: false })
+      await expect(original.terminate()).rejects.toThrow('changed')
+      expect(processIsAlive(replacement.pid!)).toBe(true)
+    } finally {
+      await executor.shutdown()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+})
+
 gate('NotebookKernelExecutor failed-cell output capture', () => {
   it.each(['timeout', 'cancelled'] as const)(
     'still cancels generation freezing when an execution is %s',

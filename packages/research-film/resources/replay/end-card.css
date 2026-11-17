@@ -1,0 +1,82 @@
+/* Original end-card proportions and local radial glow. */
+.dv-end {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 26px;
+  margin-top: -40px;
+  color: #111;
+  font-family: Inter, sans-serif;
+  isolation: isolate;
+}
+
+.dv-end::before {
+  content: '';
+  position: absolute;
+  inset: -80px -200px;
+  z-index: -1;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 255, 255, 0.97) 0 50%,
+    rgba(255, 255, 255, 0.8) 65%,
+    rgba(255, 255, 255, 0) 78%
+  );
+}
+
+.dv-lockup-wrap {
+  position: relative;
+}
+
+.dv-logo-particles {
+  position: absolute;
+  pointer-events: none;
+}
+
+.dv-end .dv-lockup {
+  display: block;
+  position: relative;
+  height: 120px;
+  width: auto;
+}
+
+.dv-end h2 {
+  margin: 0;
+  font:
+    400 64px/1.05 Georgia,
+    serif;
+  letter-spacing: -0.02em;
+}
+
+.dv-feature-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px;
+}
+
+.dv-feature-chips span {
+  border: 1px solid #ccc9bf;
+  background: #edece7;
+  border-radius: 10px;
+  padding: 10px 22px;
+  font-size: 26px;
+  font-weight: 500;
+}
+
+.dv-cta {
+  font:
+    400 30px/1.5 'Roboto Mono',
+    monospace;
+  background: #111;
+  color: #fff;
+  border-radius: 999px;
+  padding: 12px 30px;
+}
+
+.dv-aipoch {
+  display: block;
+  height: 46px;
+  width: auto;
+  margin-top: 10px;
+}

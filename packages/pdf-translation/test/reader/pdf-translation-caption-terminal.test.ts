@@ -12,7 +12,11 @@ import {
   getPdfTranslationLayoutSnapshot,
   restorePdfTranslationExtraction
 } from '../../src/reader/snapshot.js'
-import type { PdfLayoutPage } from '../../src/reader/layout.js'
+import {
+  groupPdfTranslationPages,
+  type PdfLayoutPage,
+  type PdfLayoutTextItem
+} from '../../src/reader/layout.js'
 import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
 
 // Anonymous embedded Noto font, shared by three native pages. Page 1 uses one
@@ -207,7 +211,7 @@ it('serializes fresh sources without proof and restores historical snapshots unc
   })
   rememberPdfTranslationExtraction(extraction)
   const snapshot = getPdfTranslationLayoutSnapshot(extraction.source)!
-  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-15')
+  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-65')
   const saved = JSON.parse(JSON.stringify(snapshot))
   expect(Object.keys(saved).sort()).toEqual(
     ['version', 'parserVersion', 'fingerprint', 'pages', 'units', 'coverage'].sort()
@@ -220,3 +224,56 @@ it('serializes fresh sources without proof and restores historical snapshots unc
   )
   expect(historical.source.units).toEqual(saved.units)
 })
+
+it.each(['matching captions', 'different tail', 'different center'] as const)(
+  'joins repeated centered caption endings only with a full native witness: %s',
+  (mode) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height = 8
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      fontName: height === 8 ? 'Caption' : 'Body',
+      fontVertical: false,
+      hasEOL: true,
+      transform: [height, 0, 0, height, x, 800 - y]
+    })
+    const captions = (number: number, y: number): PdfLayoutTextItem[] => [
+      row(`Fig. ${number}. Response estimates calculated for different`, 325, y, 200),
+      row(
+        number === 3 && mode === 'different tail' ? 'test samples.' : 'input ranges.',
+        number === 3 && mode === 'different center' ? 413 : 404,
+        y + 9.2,
+        42
+      )
+    ]
+    const body = row('Independent body prose follows the measurements.', 50, 400, 240, 10)
+    const pages: PdfLayoutPage[] = [
+      {
+        page: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        items: [...captions(1, 120), ...captions(2, 250), body]
+      },
+      { page: 2, width: 600, height: 800, rotation: 0, items: [...captions(3, 120), body] }
+    ]
+    const { units } = groupPdfTranslationPages({ pages })
+    const heads = units.filter((unit) => unit.source.startsWith('Fig. '))
+    expect(heads).toHaveLength(3)
+    expect(heads.every((unit) => unit.source.endsWith('input ranges.'))).toBe(
+      mode === 'matching captions'
+    )
+    if (mode === 'matching captions')
+      expect(heads.every((unit) => unit.fragments.length === 2)).toBe(true)
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(
+      pages.flatMap((p) => p.items.map((_, index) => `${p.page}:${index}`)).sort()
+    )
+  }
+)

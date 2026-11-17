@@ -642,16 +642,6 @@ const WorkspaceMessageScrollerImpl = ({
   const previousMessageScrollerScrollTopRef = useRef(0)
   const scrollToFirstMessageHideTimeoutRef = useRef<number | undefined>(undefined)
   const [scrollThresholdAllowsFirstMessage, setScrollThresholdAllowsFirstMessage] = useState(false)
-  const handleScrollToFirstMessageButtonRef = useCallback(
-    (node: HTMLButtonElement | null): void => {
-      scrollToFirstMessageButtonRef.current = node
-      if (node) return
-      scrollToFirstMessageHoveredRef.current = false
-      scrollToFirstMessageFocusedRef.current = false
-      setScrollToFirstMessageFocused(false)
-    },
-    [setScrollToFirstMessageFocused]
-  )
   const handleMessageScrollerViewportRef = useCallback((node: HTMLDivElement | null): void => {
     messageScrollerViewportRef.current = node
     setMessageScrollerViewport(node)
@@ -1241,6 +1231,13 @@ const WorkspaceMessageScrollerImpl = ({
   useLayoutEffect(() => {
     updateScrollToFirstMessageEligibility()
   }, [currentSessionId, updateScrollToFirstMessageEligibility, visibleMessageIdsKey])
+  useEffect(() => {
+    if (statusAllowsScrollToFirstMessage) return
+    scrollToFirstMessageHoveredRef.current = false
+    scrollToFirstMessageFocusedRef.current = false
+    const frame = window.requestAnimationFrame(() => setScrollToFirstMessageFocused(false))
+    return () => window.cancelAnimationFrame(frame)
+  }, [statusAllowsScrollToFirstMessage])
   useLayoutEffect(() => {
     previousMessageScrollerScrollTopRef.current = messageScrollerViewportRef.current?.scrollTop ?? 0
     hideScrollToFirstMessage()
@@ -1786,8 +1783,10 @@ const WorkspaceMessageScrollerImpl = ({
               ref={messageScrollerContentRef}
               className={cn(
                 'mx-auto w-full max-w-4xl gap-0 px-4 pb-[56px]',
-                // Native find must scroll against final row heights, not deferred containment sizes.
-                windowFindOpen && '[&>[data-message-id]]:[content-visibility:visible]'
+                // Find and history navigation need final row heights. History remains
+                // bounded by the transcript window; the following tail still defers layout.
+                (windowFindOpen || !transcriptWindow.isFollowingEnd) &&
+                  '[&>[data-message-id]]:[content-visibility:visible]'
               )}
             >
               {reviewLoadError ? (
@@ -2364,7 +2363,7 @@ const WorkspaceMessageScrollerImpl = ({
 
           {showScrollToFirstMessage ? (
             <MessageScrollerButton
-              ref={handleScrollToFirstMessageButtonRef}
+              ref={scrollToFirstMessageButtonRef}
               direction="start"
               behavior="instant"
               onClick={() => {
@@ -2415,18 +2414,27 @@ const WorkspaceMessageScrollerImpl = ({
               })
             }}
             size="icon-lg"
-            className="z-10 rounded-full border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3"
+            className="group/scroll-end z-10 rounded-full border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3"
           >
             {optimisticMessage || agentLoadingPhase !== 'hidden' || presentationRevealing ? (
-              <span aria-hidden="true" className="flex items-center gap-0.5">
-                {[0, 1, 2].map((index) => (
-                  <span
-                    key={index}
-                    className="size-1 rounded-full bg-current motion-safe:animate-[scroll-indicator-wave_1.2s_ease-in-out_infinite]"
-                    style={{ animationDelay: `${index * 120}ms` }}
-                  />
-                ))}
-              </span>
+              <>
+                <span
+                  aria-hidden="true"
+                  className="flex items-center gap-0.5 group-hover/scroll-end:hidden group-focus-visible/scroll-end:hidden"
+                >
+                  {[0, 1, 2].map((index) => (
+                    <span
+                      key={index}
+                      className="size-1 rounded-full bg-current motion-safe:animate-[scroll-indicator-wave_1.2s_ease-in-out_infinite]"
+                      style={{ animationDelay: `${index * 120}ms` }}
+                    />
+                  ))}
+                </span>
+                <ArrowDownIcon
+                  aria-hidden="true"
+                  className="hidden group-hover/scroll-end:block group-focus-visible/scroll-end:block"
+                />
+              </>
             ) : undefined}
           </MessageScrollerButton>
           <div

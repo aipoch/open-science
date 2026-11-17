@@ -270,6 +270,7 @@
         "packages/environment/src/external-r-library.ts",
         "src/main/notebook/configured-shell-runtime.ts",
         "src/main/notebook/kernel-executor.ts",
+        "src/main/notebook/process-monitor.ts",
         "src/main/notebook/kernel-executable-read-root.ts",
         "src/main/notebook/local-rpc-server.ts",
         "src/main/notebook/managed-runtime-guard.ts",
@@ -523,6 +524,7 @@
         "e2e/transcript-capacity.spec.ts",
         "e2e/session-residency-capacity.spec.ts",
         "e2e/compute-execution-mode.spec.ts",
+        "e2e/compute-process-monitor.spec.ts",
         "e2e/find-overlay.spec.ts",
         "e2e/literature-client-sync.spec.ts",
         "e2e/journal-attributes.spec.ts",
@@ -533,6 +535,8 @@
         "e2e/highlight-style-isolation.spec.ts",
         "e2e/message-queue-presentation-gate.spec.ts",
         "e2e/mobile-message-handoff.spec.ts",
+        "e2e/run-marks-navigation.spec.ts",
+        "e2e/fixtures/scroll-geometry.ts",
         "e2e/message-scroll-anchor.spec.ts",
         "e2e/message-scroll-reanchor.spec.ts",
         "e2e/message-scroll-release.spec.ts",
@@ -693,7 +697,11 @@
     {
       "id": "desktop_e2e_browser_fixtures",
       "role": "overlay",
-      "paths": ["e2e/fixtures/localized-settings.ts", "e2e/fixtures/settings-preferences.ts"],
+      "paths": [
+        "e2e/fixtures/localized-settings.ts",
+        "e2e/fixtures/settings-preferences.ts",
+        "e2e/fixtures/scroll-geometry.ts"
+      ],
       "capabilities": ["renderer_browser_e2e"]
     },
     {

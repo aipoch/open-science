@@ -72,6 +72,7 @@ const SHELL_NETWORK_TRANSPORT_UNSUPPORTED_PREFIX = 'WSL2_NETWORK_TRANSPORT_UNSUP
 
 // Runtime-private port: platform invocation, encoding, env projection, and teardown stay in its adapter.
 type NotebookShellProcess = {
+  monitoredProcesses?: () => import('./process-monitor').MonitoredInterpreter[]
   idleProcesses?: () => Array<IdleInterpreter & { laneKey?: string }>
   execute(request: NotebookShellProcessRequest): Promise<NotebookShellResult>
   prepareEnvironment?(
@@ -1149,6 +1150,34 @@ const runShellCommand = (
 // Each lane owns a live interpreter; runShellCommand remains the one-shot spawn/cleanup owner.
 class NotebookShellProcessAdapter implements NotebookShellProcess {
   private readonly sessions = new Map<string, ShellCellSession>()
+  monitoredProcesses(): import('./process-monitor').MonitoredInterpreter[] {
+    return [...this.sessions].flatMap(([key, session]) => {
+      const observed = session.monitoredProcess
+      if (!observed) return []
+      return [
+        {
+          processKey: 'shell',
+          projectId: session.identity.projectId,
+          sessionId: session.identity.sessionId,
+          lane: session.identity.laneKey ?? 'root',
+          kind: 'shell' as const,
+          environment: session.identity.runtimeBinding?.kind,
+          startedAt: session.startedAt,
+          ...observed,
+          terminate: async () => {
+            if (
+              this.sessions.get(key) !== session ||
+              session.monitoredProcess?.identity !== observed.identity
+            )
+              throw new Error('Shell process changed. Refresh the list.')
+            const result = await session.shutdown()
+            if (!result.reaped) throw new Error(SHELL_CLEANUP_INCOMPLETE_MESSAGE)
+            if (this.sessions.get(key) === session) this.sessions.delete(key)
+          }
+        }
+      ]
+    })
+  }
   idleProcesses(): Array<IdleInterpreter & { laneKey?: string }> {
     return [...this.sessions]
       .filter(([, session]) => session.isLive)

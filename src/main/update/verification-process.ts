@@ -39,7 +39,15 @@ export class VerificationProcessExitError extends UpdateLifecycleError {
   }
 }
 
-/** Bounded subprocesses keep cancellation and recovery UI responsive. */
+export class VerificationProcessTimeoutError extends UpdateLifecycleError {
+  // Progress written before the deadline; diagnostics redact and shorten it like exit stderr.
+  stderr = ''
+  constructor() {
+    super('install-failed', 'Installation verification exceeded its time limit.')
+  }
+}
+
+/** Bounded subprocesses keep cancellation and recovery UI responsive. Never invokes a shell. */
 export async function runVerificationProcess(
   command: string,
   args: string[],
@@ -139,6 +147,8 @@ export async function runVerificationProcess(
           return
         }
         if (failure) {
+          if (failure instanceof VerificationProcessTimeoutError)
+            failure.stderr = Buffer.concat(stderr).toString()
           reject(failure)
           return
         }
@@ -172,16 +182,7 @@ export async function runVerificationProcess(
     const abort = (): void => stop(options.signal?.reason ?? new Error('Verification cancelled.'))
     options.signal?.addEventListener('abort', abort, { once: true })
     const timer = setTimeout(
-      () =>
-        stop(
-          Object.assign(
-            new UpdateLifecycleError(
-              'install-failed',
-              'Installation verification exceeded its time limit.'
-            ),
-            { code: 'ETIMEDOUT' }
-          )
-        ),
+      () => stop(new VerificationProcessTimeoutError()),
       options.timeoutMs ?? 120_000
     )
     const collect = (chunks: Buffer[], chunk: Buffer): void => {

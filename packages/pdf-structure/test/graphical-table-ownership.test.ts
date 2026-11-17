@@ -489,3 +489,65 @@ it('keeps one image without guessing between equally supported captions', () => 
   expect(result[0].caption).toBeUndefined()
   expect(result[0].rect).toEqual([70, 250, 400, 400])
 })
+
+it('keeps a numbered raster plate out of an off-column graphical table fallback', () => {
+  const width = 600
+  const height = 800
+  type Caption = { page: number; lines: string[]; rect: number[] }
+  type Line = {
+    text: string
+    x: number
+    y: number
+    width: number
+    height: number
+    fontSize: number
+  }
+  type Graphic = {
+    kind: 'image' | 'path'
+    operationIndex: number
+    normalizedRect: number[]
+    imageHash?: string
+  }
+  const caption = (text: string, rect: number[]): Caption => ({ page: 1, lines: [text], rect })
+  const leftTable = caption('Table 1. Recorded experimental steps.', [45, 160, 220, 170])
+  const rightFigure = caption('Figure 2. Six views of the object.', [320, 175, 570, 185])
+  const rightTable = caption('Table 2. Numeric comparisons.', [320, 250, 570, 260])
+  const line = ({ lines: [text], rect: [x, y, right, bottom] }: Caption): Line => ({
+    text,
+    x,
+    y,
+    width: right - x,
+    height: bottom - y,
+    fontSize: 9
+  })
+  const frame = [350, 40, 540, 172]
+  const images = [40, 105].flatMap((y) => [350, 413, 476].map((x) => [x, y, x + 64, y + 65]))
+  const graphic = (kind: Graphic['kind'], rect: number[], operationIndex: number): Graphic => ({
+    kind,
+    operationIndex,
+    normalizedRect: rect.map((v, i) => v / (i % 2 ? height : width)),
+    ...(kind === 'image' ? { imageHash: `anonymous-${operationIndex}` } : {})
+  })
+  const captions = [leftTable, rightFigure, rightTable]
+  const page = {
+    width,
+    height,
+    pageNumber: 1,
+    rotation: 0,
+    renderRotation: 0,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [
+      graphic('path', frame, 0),
+      graphic('path', frame, 1),
+      ...images.map((rect, i) => graphic('image', rect, i + 2))
+    ],
+    lines: captions.map(line)
+  }
+  const tables = [[330, 275, 565, 330]]
+  expect(associateGraphicalTables(page, captions, tables)).toEqual([])
+
+  const noKnownFigure = [leftTable, rightTable]
+  expect(
+    associateGraphicalTables({ ...page, lines: noKnownFigure.map(line) }, noKnownFigure, tables)
+  ).toEqual(expect.arrayContaining([expect.objectContaining({ caption: leftTable })]))
+})

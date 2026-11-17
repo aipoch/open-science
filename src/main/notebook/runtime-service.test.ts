@@ -17,6 +17,7 @@ import type {
   NotebookExecutionResult,
   NotebookExecutorLifecycleCallbacks
 } from './runtime-service'
+import { NotebookProcessMonitor } from './process-monitor'
 import { NotebookSessionAggregate, type NotebookSessionExecutor } from './session-aggregate'
 import {
   NotebookRuntimeService,
@@ -1388,6 +1389,51 @@ describe('notebook runtime service', () => {
     expect(installPackagesImpl).not.toHaveBeenCalled()
 
     service.releaseProjectDeletion('default-project')
+  })
+
+  it('omits collapsed source from metric transport and projects only requested previews without mutating the cache', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+    const snapshot = {
+      sampledAt: Date.now(),
+      host: {
+        hostname: 'host',
+        platform: 'darwin',
+        cpuCount: 8,
+        memoryTotalBytes: 1000,
+        memoryUsedBytes: 500,
+        uptimeSeconds: 1
+      },
+      processMetricsAvailable: true,
+      instances: Array.from({ length: 100 }, (_, index) => ({
+        id: `kernel-${index}`,
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        lane: 'root',
+        kind: 'python' as const,
+        status: 'idle' as const,
+        startedAt: 1,
+        processes: [],
+        hasLastCell: true,
+        lastCell: { code: 'x'.repeat(32_000), truncated: true }
+      }))
+    }
+    const read = vi.spyOn(NotebookProcessMonitor.prototype, 'snapshot').mockResolvedValue(snapshot)
+    try {
+      const collapsed = await service.getProcessMonitor()
+      expect(collapsed.instances.every((item) => item.hasLastCell && !item.lastCell)).toBe(true)
+      expect(JSON.stringify(collapsed).length).toBeLessThan(25_000)
+      const expanded = await service.getProcessMonitor({ sourceIds: ['kernel-99'] })
+      expect(expanded.sampledAt).toBe(collapsed.sampledAt)
+      expect(expanded.instances.filter((item) => item.lastCell)).toHaveLength(1)
+      expect(expanded.instances[99].lastCell?.code).toHaveLength(32_000)
+      expect(snapshot.instances.every((item) => item.lastCell.code.length === 32_000)).toBe(true)
+      await expect(service.getProcessMonitor({ sourceIds: [42] } as never)).rejects.toThrow(
+        'Invalid kernel source'
+      )
+    } finally {
+      read.mockRestore()
+    }
   })
 
   it('peeks only actionable in-memory handoff state without creating or reloading a Session', async () => {

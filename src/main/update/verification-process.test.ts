@@ -328,7 +328,12 @@ describe('bounded verification subprocess', () => {
     try {
       const cli = `
         require('node:child_process').spawn(process.execPath,
-          ['-e', ${JSON.stringify(browser)}, ${JSON.stringify(root)}], { cwd: '..', stdio: 'ignore' }).unref();
+          ['-e', ${JSON.stringify(browser)}, ${JSON.stringify(root)}], {
+            cwd: '..',
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true
+          }).unref();
         process.stderr.write('auth diagnostic');
         process.exitCode = ${exitCode};
       `

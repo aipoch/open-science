@@ -21,6 +21,8 @@ const root = await mkdtemp(join(tmpdir(), 'research-film-consumer-'))
 let worker
 try {
   const resources = researchFilmResources()
+  assert.match(await readFile(join(resources.replayDirectory, 'generic.js'), 'utf8'), /__seek/)
+  assert.match(await readFile(join(resources.replayDirectory, 'generic.css'), 'utf8'), /1920px/)
   assert.match(await readFile(join(resources.authoringDirectory, 'KIT.md'), 'utf8'), /k\.ctx/)
   assert.match(await readFile(join(resources.stageDirectory, 'index.html'), 'utf8'), /html/)
   const source = {

@@ -10,7 +10,14 @@ import { createProject, openRecentSession, sendPrompt } from './certification/he
 
 const execute = promisify(execFile)
 const stem = '非小细胞肺癌免疫治疗耐药与肿瘤相关巨噬细胞_综述'
-const names = [stem + '.md', stem + '.docx', '研究'.repeat(30) + '.md', 'a'.repeat(252) + '.md']
+const names = [
+  stem + '.md',
+  stem + '.docx',
+  '研究'.repeat(30) + '.md',
+  'a'.repeat(252) + '.md',
+  'demo_chart.md',
+  'study_analysis_results.docx'
+]
 const prompt = 'Create long filename artifacts.'
 const content = '# Long filename report\n\n中文附件完整内容。\n'
 
@@ -76,6 +83,7 @@ test('publishes and downloads long Unicode attachments before and after restart'
   const originals = session!.artifacts!
 
   const verify = async (round: string): Promise<void> => {
+    await page.setViewportSize({ width: 1440, height: 900 })
     const restored = await page.evaluate(
       async (id) =>
         (await window.api.sessions.loadAll()).sessions.find((session) => session.id === id),
@@ -128,6 +136,16 @@ test('publishes and downloads long Unicode attachments before and after restart'
         .last()
         .click()
       await expect(page.getByText('中文附件完整内容。', { exact: true }).last()).toBeVisible()
+      const tab = page.getByRole('tab').and(page.getByTitle(name, { exact: true }))
+      await expect(tab).toHaveAccessibleName(name)
+      await expect(tab.getByTestId('file-name-ellipsis')).toBeVisible()
+      const prefix = tab.getByTestId('file-name-head')
+      await expect(prefix).toContainText(name.slice(0, 3))
+      await expect(tab.getByTestId('file-name-tail')).toHaveCount(0)
+      expect(
+        await tab.evaluate((el) => el.parentElement!.getBoundingClientRect().width)
+      ).toBeLessThanOrEqual(160)
+      expect(await prefix.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
     }
     await page
       .getByRole('button', { name: `Preview generated file ${names[1]}`, exact: true })
@@ -138,6 +156,50 @@ test('publishes and downloads long Unicode attachments before and after restart'
       page.frameLocator('iframe[data-office-preview-frame]').locator('.docx-review-counter')
     ).toHaveText('1 / 1')
     await page.screenshot({ path: testInfo.outputPath(`${round}.png`) })
+    await page
+      .getByRole('tab')
+      .and(page.getByTitle(names[0], { exact: true }))
+      .click()
+    await expect(page.getByText('中文附件完整内容。', { exact: true }).last()).toBeVisible()
+    await page.getByRole('button', { name: 'Files', exact: true }).click()
+    for (const name of [names[4], names[5]]) {
+      await page.getByRole('tab', { name: 'Files', exact: true }).click()
+      await page
+        .getByRole('button', { name: `Open ${name} in split view beside the session`, exact: true })
+        .click()
+    }
+    for (const name of [names[1], names[2], 'Files']) {
+      const close = page.locator(`[data-preview-close="${name}"]`)
+      if (await close.count()) await close.click()
+    }
+    const english = page.getByRole('tab').and(page.getByTitle(names[5], { exact: true }))
+    await expect(english).toHaveAccessibleName(names[5])
+    await expect(english.getByTestId('file-name-head')).toHaveText('study')
+    await expect(english.getByTestId('file-name-tail')).toHaveCount(0)
+    const short = page.getByRole('tab').and(page.getByTitle(names[4], { exact: true }))
+    await expect(short.getByTestId('file-name-ellipsis')).toHaveCount(0)
+    const strip = page.getByTestId('preview-tab-strip')
+    await english.click()
+    await expect
+      .poll(() =>
+        strip.evaluate((el) => {
+          const bounds = el.getBoundingClientRect()
+          return Array.from(el.querySelectorAll('[role="presentation"]')).every((tab) => {
+            const rect = tab.getBoundingClientRect()
+            return rect.left >= bounds.left && rect.right <= bounds.right
+          })
+        })
+      )
+      .toBe(true)
+    await expect(page.locator('[data-office-preview-state="ready"]')).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath(`${round}-markdown.png`) })
+    const chrome = await page.getByTestId('preview-panel-top-bar').boundingBox()
+    if (chrome) {
+      await page.screenshot({
+        path: testInfo.outputPath(`${round}-filename-detail.png`),
+        clip: { x: chrome.x, y: chrome.y, width: chrome.width, height: 120 }
+      })
+    }
   }
   await verify('published')
   page = await app.restart()

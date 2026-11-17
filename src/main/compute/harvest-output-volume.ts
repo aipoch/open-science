@@ -1,10 +1,10 @@
 import {
   archiveHuggingFaceOutputs,
   listHuggingFaceJobOutputs,
-  stageRayJobOutputs,
   type ComputeConnectionLease,
   type FileEntry
 } from '@aipoch/compute/node'
+import { stageRayJobOutputs } from '@aipoch/compute/ray'
 import type { ComputeJob } from '../../shared/compute'
 import { withHostedPublication } from './hugging-face-job-journal'
 import { withRayPublication } from './ray-job-journal'

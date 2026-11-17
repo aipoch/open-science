@@ -1,111 +1,237 @@
-import { RESEARCH_DATASET_TOOLS } from '@aipoch/connector-builtins/research-datasets'
-import { MOLECULAR_DATA_TOOLS } from '@aipoch/connector-builtins/molecular-data'
-import { EUROPEPMC_TOOLS } from '@aipoch/connector-builtins/literature-europepmc'
-import { TCIA_TOOLS } from '@aipoch/connector-builtins/tcia'
-import { KEGG_TOOLS } from '@aipoch/connector-builtins/kegg'
-import { RXNORM_TOOLS } from '@aipoch/connector-builtins/rxnorm'
-import { DAILYMED_TOOLS } from '@aipoch/connector-builtins/dailymed'
-import { BIOSAMPLES_TOOLS } from '@aipoch/connector-builtins/biosamples'
-import { WIKIPATHWAYS_TOOLS } from '@aipoch/connector-builtins/wikipathways'
-import { MOLECULE_PREVIEW_TOOL } from './molecule-artifact-adapter'
+import { createRequire } from 'node:module'
+
 import { ConnectorArgumentsError, createConnectorRegistry } from '@aipoch/connector-core'
-import { ALLIANCE_TOOLS } from '@aipoch/connector-builtins/alliance'
-import { BIOMART_TOOLS } from '@aipoch/connector-builtins/biomart'
-import { BIORXIV_TOOLS } from '@aipoch/connector-builtins/biorxiv'
-import { CANCER_MODELS_TOOLS } from '@aipoch/connector-builtins/cancer-models'
-import { CELLOSAURUS_TOOLS } from '@aipoch/connector-builtins/cellosaurus'
-import { CELLGUIDE_TOOLS } from '@aipoch/connector-builtins/cellguide'
-import { CELLXGENE_DISCOVER_TOOLS } from '@aipoch/connector-builtins/cellxgene-discover'
-import { CHEMBL_TOOLS } from '@aipoch/connector-builtins/chembl'
-import { CHEMISTRY_TOOLS } from '@aipoch/connector-builtins/chemistry'
-import { CLINICAL_GENOMICS_TOOLS } from '@aipoch/connector-builtins/clinical-genomics'
-import { CLINPGX_TOOLS } from '@aipoch/connector-builtins/clinpgx'
-import { CLINICAL_TRIALS_TOOLS } from '@aipoch/connector-builtins/clinical-trials'
-import { DRUG_REGULATORY_TOOLS } from '@aipoch/connector-builtins/drug-regulatory'
-import { createEncoriTools } from '@aipoch/connector-builtins/encori'
+import type { ConnectorRegistry, ToolDescriptor } from '@aipoch/connector-core'
 import { publishUserFile } from '../user-file-publisher'
-import { EXPRESSION_TOOLS } from '@aipoch/connector-builtins/expression'
-import { GENES_TOOLS } from '@aipoch/connector-builtins/genes'
-import { GENOMES_TOOLS } from '@aipoch/connector-builtins/genomes'
-import { GDC_TOOLS } from '@aipoch/connector-builtins/gdc'
-import { PDC_TOOLS } from '@aipoch/connector-builtins/pdc'
-import { HUMAN_GENETICS_TOOLS } from '@aipoch/connector-builtins/human-genetics'
-import { HMMER_TOOLS } from '@aipoch/connector-builtins/hmmer'
-import { IEDB_TOOLS } from '@aipoch/connector-builtins/iedb'
-import { INTERPROSCAN_TOOLS } from '@aipoch/connector-builtins/interproscan'
-import { LITERATURE_TOOLS } from '@aipoch/connector-builtins/literature'
-import { ORPHADATA_TOOLS } from '@aipoch/connector-builtins/orphadata'
-import { MONARCH_TOOLS } from '@aipoch/connector-builtins/monarch'
-import { MOLECULE_TOOLS } from '@aipoch/connector-builtins/molecule'
-import { OMICS_ARCHIVES_TOOLS } from '@aipoch/connector-builtins/omics-archives'
-import { PATHWAY_COMMONS_TOOLS } from '@aipoch/connector-builtins/pathway-commons'
-import { PROTEIN_ANNOTATION_TOOLS } from '@aipoch/connector-builtins/protein-annotation'
-import { PUBMED_TOOLS } from '@aipoch/connector-builtins/pubmed'
-import { REGULATION_TOOLS } from '@aipoch/connector-builtins/regulation'
-import { RESEARCH_RESOURCES_TOOLS } from '@aipoch/connector-builtins/research-resources'
-import { RNA_TOOLS } from '@aipoch/connector-builtins/rna'
-import { STRUCTURES_TOOLS } from '@aipoch/connector-builtins/structures'
-import { VARIANTS_TOOLS } from '@aipoch/connector-builtins/variants'
-import { ZENODO_TOOLS } from '@aipoch/connector-builtins/zenodo'
-import { ZINC_TOOLS } from '@aipoch/connector-builtins/zinc'
-import type { ToolDescriptor } from '@aipoch/connector-core'
+import { MOLECULE_PREVIEW_TOOL } from './molecule-preview-tool'
 
-const ALL_TOOLS: ToolDescriptor[] = [
-  ...RESEARCH_DATASET_TOOLS,
-  ...MOLECULAR_DATA_TOOLS,
-  ...EUROPEPMC_TOOLS,
-  ...TCIA_TOOLS,
-  ...KEGG_TOOLS,
-  ...RXNORM_TOOLS,
-  ...DAILYMED_TOOLS,
-  ...BIOSAMPLES_TOOLS,
-  ...WIKIPATHWAYS_TOOLS,
+const nodeRequire = createRequire(import.meta.url)
 
-  ...ALLIANCE_TOOLS,
-  ...BIOMART_TOOLS,
-  ...BIORXIV_TOOLS,
-  ...CANCER_MODELS_TOOLS,
-  ...CELLOSAURUS_TOOLS,
-  ...CELLGUIDE_TOOLS,
-  ...CELLXGENE_DISCOVER_TOOLS,
-  ...CHEMBL_TOOLS,
-  ...CHEMISTRY_TOOLS,
-  ...CLINICAL_GENOMICS_TOOLS,
-  ...CLINPGX_TOOLS,
-  ...CLINICAL_TRIALS_TOOLS,
-  ...DRUG_REGULATORY_TOOLS,
-  ...createEncoriTools((path, write, signal) =>
+type BuiltinModule = Record<string, unknown>
+type LazyLoader = () => readonly ToolDescriptor[]
+
+// Keep the historical descriptor-derived order without importing every builtin package during
+// startup. New bundled connectors must be added here together with their lazy loader below.
+const ALL_CONNECTOR_IDS = [
+  'research-datasets',
+  'drug-regulatory',
+  'ctd',
+  'biodbnet',
+  'chea3',
+  'cellosaurus',
+  'europepmc',
+  'tcia',
+  'kegg',
+  'rxnorm',
+  'dailymed',
+  'biosamples',
+  'wikipathways',
+  'alliance',
+  'biomart',
+  'biorxiv',
+  'cancer-models',
+  'cellguide',
+  'cellxgene-discover',
+  'chembl',
+  'chemistry',
+  'clinical-genomics',
+  'clinical-trials',
+  'encori',
+  'expression',
+  'genes',
+  'genomes',
+  'gdc',
+  'pdc',
+  'human-genetics',
+  'hmmer',
+  'iedb',
+  'interproscan',
+  'literature',
+  'monarch',
+  'orphadata',
+  'molecule',
+  'omics-archives',
+  'pathway-commons',
+  'protein-annotation',
+  'pubmed',
+  'regulation',
+  'research-resources',
+  'rna',
+  'structures',
+  'variants',
+  'zenodo',
+  'zinc'
+] as const
+
+const packageTools = (specifier: string, exportName: string): LazyLoader => {
+  let tools: readonly ToolDescriptor[] | undefined
+  return () => {
+    tools ??= (nodeRequire(specifier) as BuiltinModule)[exportName] as readonly ToolDescriptor[]
+    return tools
+  }
+}
+
+const encoriTools: LazyLoader = () => {
+  const { createEncoriTools } = nodeRequire('@aipoch/connector-builtins/encori') as {
+    createEncoriTools: (
+      publish: (
+        path: string,
+        write: (content: string) => Promise<void>,
+        signal?: AbortSignal
+      ) => Promise<unknown>
+    ) => readonly ToolDescriptor[]
+  }
+  return createEncoriTools((path, write, signal) =>
     publishUserFile(path, write, { exclusive: true, signal })
-  ),
-  ...EXPRESSION_TOOLS,
-  ...GENES_TOOLS,
-  ...GENOMES_TOOLS,
-  ...GDC_TOOLS,
-  ...PDC_TOOLS,
-  ...HUMAN_GENETICS_TOOLS,
-  ...HMMER_TOOLS,
-  ...IEDB_TOOLS,
-  ...INTERPROSCAN_TOOLS,
-  ...LITERATURE_TOOLS,
-  ...MONARCH_TOOLS,
-  ...ORPHADATA_TOOLS,
-  ...MOLECULE_TOOLS,
-  MOLECULE_PREVIEW_TOOL,
-  ...OMICS_ARCHIVES_TOOLS,
-  ...PATHWAY_COMMONS_TOOLS,
-  ...PROTEIN_ANNOTATION_TOOLS,
-  ...PUBMED_TOOLS,
-  ...REGULATION_TOOLS,
-  ...RESEARCH_RESOURCES_TOOLS,
-  ...RNA_TOOLS,
-  ...STRUCTURES_TOOLS,
-  ...VARIANTS_TOOLS,
-  ...ZENODO_TOOLS,
-  ...ZINC_TOOLS
-]
+  )
+}
 
-// The host chooses the bundled implementations. The registry itself knows none of them.
-const registry = createConnectorRegistry(ALL_TOOLS)
+const moleculeTools: LazyLoader = () => {
+  const { MOLECULE_TOOLS } = nodeRequire('@aipoch/connector-builtins/molecule') as {
+    MOLECULE_TOOLS: readonly ToolDescriptor[]
+  }
+  return [...MOLECULE_TOOLS, MOLECULE_PREVIEW_TOOL]
+}
+
+const lazyLoaders = new Map<string, LazyLoader>([
+  [
+    'research-datasets',
+    packageTools('@aipoch/connector-builtins/research-datasets', 'RESEARCH_DATASET_TOOLS')
+  ],
+  [
+    'molecular-data',
+    packageTools('@aipoch/connector-builtins/molecular-data', 'MOLECULAR_DATA_TOOLS')
+  ],
+  ['europepmc', packageTools('@aipoch/connector-builtins/literature-europepmc', 'EUROPEPMC_TOOLS')],
+  ['tcia', packageTools('@aipoch/connector-builtins/tcia', 'TCIA_TOOLS')],
+  ['kegg', packageTools('@aipoch/connector-builtins/kegg', 'KEGG_TOOLS')],
+  ['rxnorm', packageTools('@aipoch/connector-builtins/rxnorm', 'RXNORM_TOOLS')],
+  ['dailymed', packageTools('@aipoch/connector-builtins/dailymed', 'DAILYMED_TOOLS')],
+  ['biosamples', packageTools('@aipoch/connector-builtins/biosamples', 'BIOSAMPLES_TOOLS')],
+  ['wikipathways', packageTools('@aipoch/connector-builtins/wikipathways', 'WIKIPATHWAYS_TOOLS')],
+  ['alliance', packageTools('@aipoch/connector-builtins/alliance', 'ALLIANCE_TOOLS')],
+  ['biomart', packageTools('@aipoch/connector-builtins/biomart', 'BIOMART_TOOLS')],
+  ['biorxiv', packageTools('@aipoch/connector-builtins/biorxiv', 'BIORXIV_TOOLS')],
+  [
+    'cancer-models',
+    packageTools('@aipoch/connector-builtins/cancer-models', 'CANCER_MODELS_TOOLS')
+  ],
+  ['cellosaurus', packageTools('@aipoch/connector-builtins/cellosaurus', 'CELLOSAURUS_TOOLS')],
+  ['cellguide', packageTools('@aipoch/connector-builtins/cellguide', 'CELLGUIDE_TOOLS')],
+  [
+    'cellxgene-discover',
+    packageTools('@aipoch/connector-builtins/cellxgene-discover', 'CELLXGENE_DISCOVER_TOOLS')
+  ],
+  ['chembl', packageTools('@aipoch/connector-builtins/chembl', 'CHEMBL_TOOLS')],
+  ['chemistry', packageTools('@aipoch/connector-builtins/chemistry', 'CHEMISTRY_TOOLS')],
+  [
+    'clinical-genomics',
+    packageTools('@aipoch/connector-builtins/clinical-genomics', 'CLINICAL_GENOMICS_TOOLS')
+  ],
+  ['clinpgx', packageTools('@aipoch/connector-builtins/clinpgx', 'CLINPGX_TOOLS')],
+  [
+    'clinical-trials',
+    packageTools('@aipoch/connector-builtins/clinical-trials', 'CLINICAL_TRIALS_TOOLS')
+  ],
+  [
+    'drug-regulatory',
+    packageTools('@aipoch/connector-builtins/drug-regulatory', 'DRUG_REGULATORY_TOOLS')
+  ],
+  ['encori', encoriTools],
+  ['expression', packageTools('@aipoch/connector-builtins/expression', 'EXPRESSION_TOOLS')],
+  ['genes', packageTools('@aipoch/connector-builtins/genes', 'GENES_TOOLS')],
+  ['genomes', packageTools('@aipoch/connector-builtins/genomes', 'GENOMES_TOOLS')],
+  ['gdc', packageTools('@aipoch/connector-builtins/gdc', 'GDC_TOOLS')],
+  ['pdc', packageTools('@aipoch/connector-builtins/pdc', 'PDC_TOOLS')],
+  [
+    'human-genetics',
+    packageTools('@aipoch/connector-builtins/human-genetics', 'HUMAN_GENETICS_TOOLS')
+  ],
+  ['hmmer', packageTools('@aipoch/connector-builtins/hmmer', 'HMMER_TOOLS')],
+  ['iedb', packageTools('@aipoch/connector-builtins/iedb', 'IEDB_TOOLS')],
+  ['interproscan', packageTools('@aipoch/connector-builtins/interproscan', 'INTERPROSCAN_TOOLS')],
+  ['literature', packageTools('@aipoch/connector-builtins/literature', 'LITERATURE_TOOLS')],
+  ['orphadata', packageTools('@aipoch/connector-builtins/orphadata', 'ORPHADATA_TOOLS')],
+  ['monarch', packageTools('@aipoch/connector-builtins/monarch', 'MONARCH_TOOLS')],
+  ['molecule', moleculeTools],
+  [
+    'omics-archives',
+    packageTools('@aipoch/connector-builtins/omics-archives', 'OMICS_ARCHIVES_TOOLS')
+  ],
+  [
+    'pathway-commons',
+    packageTools('@aipoch/connector-builtins/pathway-commons', 'PATHWAY_COMMONS_TOOLS')
+  ],
+  [
+    'protein-annotation',
+    packageTools('@aipoch/connector-builtins/protein-annotation', 'PROTEIN_ANNOTATION_TOOLS')
+  ],
+  ['pubmed', packageTools('@aipoch/connector-builtins/pubmed', 'PUBMED_TOOLS')],
+  ['regulation', packageTools('@aipoch/connector-builtins/regulation', 'REGULATION_TOOLS')],
+  [
+    'research-resources',
+    packageTools('@aipoch/connector-builtins/research-resources', 'RESEARCH_RESOURCES_TOOLS')
+  ],
+  ['rna', packageTools('@aipoch/connector-builtins/rna', 'RNA_TOOLS')],
+  ['structures', packageTools('@aipoch/connector-builtins/structures', 'STRUCTURES_TOOLS')],
+  ['variants', packageTools('@aipoch/connector-builtins/variants', 'VARIANTS_TOOLS')],
+  ['zenodo', packageTools('@aipoch/connector-builtins/zenodo', 'ZENODO_TOOLS')],
+  ['zinc', packageTools('@aipoch/connector-builtins/zinc', 'ZINC_TOOLS')]
+])
+
+const combineLoaders = (...loaders: readonly LazyLoader[]): LazyLoader => {
+  let tools: readonly ToolDescriptor[] | undefined
+  return () => {
+    tools ??= loaders.flatMap((loader) => loader())
+    return tools
+  }
+}
+
+const researchDatasetTools = lazyLoaders.get('research-datasets')!
+lazyLoaders.set(
+  'drug-regulatory',
+  combineLoaders(researchDatasetTools, lazyLoaders.get('drug-regulatory')!)
+)
+lazyLoaders.set('ctd', researchDatasetTools)
+const molecularDataTools = lazyLoaders.get('molecular-data')!
+lazyLoaders.set('biodbnet', molecularDataTools)
+lazyLoaders.set('chea3', molecularDataTools)
+lazyLoaders.set('cellosaurus', combineLoaders(molecularDataTools, lazyLoaders.get('cellosaurus')!))
+const clinicalGenomicsTools = lazyLoaders.get('clinical-genomics')!
+lazyLoaders.set(
+  'clinical-genomics',
+  combineLoaders(clinicalGenomicsTools, lazyLoaders.get('clinpgx')!)
+)
+
+const registries = new Map<string, ConnectorRegistry>()
+const descriptorOwners = new Map<ToolDescriptor, ConnectorRegistry>()
+
+const registryFor = (connector: string): ConnectorRegistry | undefined => {
+  const loader = lazyLoaders.get(connector)
+  if (!loader) return undefined
+  let registry = registries.get(connector)
+  if (!registry) {
+    registry = createConnectorRegistry(loader())
+    registries.set(connector, registry)
+    for (const tool of registry.getConnectorTools(connector)) descriptorOwners.set(tool, registry)
+  }
+  return registry
+}
+
+const registry = {
+  connectorIds: ALL_CONNECTOR_IDS as readonly string[],
+  getConnectorTools: (connector: string): ToolDescriptor[] =>
+    registryFor(connector)?.getConnectorTools(connector) ?? [],
+  getDescriptor: (connector: string, method: string): ToolDescriptor | undefined =>
+    registryFor(connector)?.getDescriptor(connector, method),
+  validateToolArguments: (descriptor: ToolDescriptor, args: Record<string, unknown>): void => {
+    const owner = descriptorOwners.get(descriptor)
+    if (!owner)
+      throw new Error(`unregistered tool descriptor: ${descriptor.connector}/${descriptor.id}`)
+    owner.validateToolArguments(descriptor, args)
+  }
+}
+
 export const builtinConnectorRegistry: typeof registry = {
   ...registry,
   validateToolArguments(descriptor, args) {
@@ -121,9 +247,8 @@ export const builtinConnectorRegistry: typeof registry = {
     }
   }
 }
-export const {
-  connectorIds: ALL_CONNECTOR_IDS,
-  getConnectorTools,
-  getDescriptor,
-  validateToolArguments
-} = builtinConnectorRegistry
+
+export const { connectorIds, getConnectorTools, getDescriptor, validateToolArguments } =
+  builtinConnectorRegistry
+
+export { connectorIds as ALL_CONNECTOR_IDS }
