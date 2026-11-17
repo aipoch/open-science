@@ -597,12 +597,19 @@ function ResearchVideoModeButton({
           }}
           className="w-[min(480px,calc(100vw-2rem))]"
           footer={
-            (statusLoaded ||
-              busy ||
-              installing ||
-              status.canResume ||
-              status.result ||
-              model?.availability === 'ready') && (
+            !statusLoaded ? (
+              !diagnostic && (
+                <footer className={dialogFooterClassName}>
+                  <span
+                    role="status"
+                    className="inline-flex min-h-8 items-center gap-2 text-sm text-muted-foreground"
+                  >
+                    <Loader2 aria-hidden="true" className="size-4 motion-safe:animate-spin" />
+                    {t('Loading…')}
+                  </span>
+                </footer>
+              )
+            ) : (
               <footer className={`${dialogFooterClassName} justify-between gap-2`}>
                 {busy || installing ? (
                   <>

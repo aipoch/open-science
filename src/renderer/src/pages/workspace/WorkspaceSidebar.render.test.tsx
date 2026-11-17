@@ -858,7 +858,8 @@ describe('WorkspaceSidebar accessible render', () => {
         contentLoaded: false
       })
     ]
-    const status = vi.fn(async () => ({}))
+    const firstRead = deferred<Record<string, never>>()
+    const status = vi.fn(() => firstRead.promise)
     const start = vi.fn()
     const loadOne = vi.fn(async () => ({
       ...sessions[1],
@@ -958,6 +959,12 @@ describe('WorkspaceSidebar accessible render', () => {
       await act(async () => {
         await clickRadixMenuItem(film)
       })
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
+      expect(dialog?.querySelector('footer [role="status"]')?.textContent).toBe('Loading…')
+      expect(dialog?.textContent).not.toContain('Start generation')
+      await act(async () => firstRead.resolve({}))
+      expect(dialog?.querySelector('footer [role="status"]')).toBeNull()
+      expect(dialog?.querySelector('footer')?.textContent).toContain('Start generation')
       const scope = { projectId: sessions[1].projectId, sessionId: sessions[1].id }
       expect(loadOne).toHaveBeenCalledExactlyOnceWith(scope)
       expect(status).toHaveBeenCalledWith({
@@ -965,7 +972,6 @@ describe('WorkspaceSidebar accessible render', () => {
         branchId: 'root-branch',
         checkReadiness: true
       })
-      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
       expect(dialog?.textContent).toContain('Generating a film uses your token quota')
       expect(start).not.toHaveBeenCalled()
       expect(onOpenSession).not.toHaveBeenCalled()
