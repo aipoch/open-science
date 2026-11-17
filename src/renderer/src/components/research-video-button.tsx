@@ -579,6 +579,7 @@ function ResearchVideoModeButton({
       {open && (
         <WorkflowDialogFrame
           title={t('Research film')}
+          stage={statusLoaded ? mode : 'loading'}
           descriptionClassName="truncate"
           busy={false}
           onClose={() => {
@@ -595,7 +596,8 @@ function ResearchVideoModeButton({
               settingsAfterClose.current = false
             }
           }}
-          className="w-[min(480px,calc(100vw-2rem))]"
+          // Let the panel reveal the full layout without shrinking the scroll area mid-transition.
+          className="w-[min(480px,calc(100vw-2rem))] *:h-auto *:flex-none"
           footer={
             !statusLoaded ? (
               !diagnostic && (
@@ -797,19 +799,11 @@ function ResearchVideoModeButton({
                   )
                 })}
               </div>
-              {statusLoaded &&
-                !busy &&
-                !installing &&
-                !pending &&
-                !blocked &&
-                !confirmDeletion &&
-                (!status.result || confirmRegeneration) && (
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    {t(
-                      'Generating a film uses your token quota, and its quality depends on the model you select.'
-                    )}
-                  </p>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t(
+                  'Generating a film uses your token quota, and its quality depends on the model you select.'
                 )}
+              </p>
               {blocked && !busy && !diagnostic && (
                 <ErrorNotice
                   inline

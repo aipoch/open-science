@@ -961,6 +961,7 @@ describe('WorkspaceSidebar accessible render', () => {
       })
       const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
       expect(dialog?.querySelector('footer [role="status"]')?.textContent).toBe('Loading…')
+      expect(dialog?.textContent).toContain('Generating a film uses your token quota')
       expect(dialog?.textContent).not.toContain('Start generation')
       await act(async () => firstRead.resolve({}))
       expect(dialog?.querySelector('footer [role="status"]')).toBeNull()
@@ -972,7 +973,6 @@ describe('WorkspaceSidebar accessible render', () => {
         branchId: 'root-branch',
         checkReadiness: true
       })
-      expect(dialog?.textContent).toContain('Generating a film uses your token quota')
       expect(start).not.toHaveBeenCalled()
       expect(onOpenSession).not.toHaveBeenCalled()
       await act(async () =>
