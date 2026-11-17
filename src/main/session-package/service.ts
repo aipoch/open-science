@@ -1,11 +1,18 @@
 import { indexPortableEvidence } from '../artifacts/execution-evidence-log'
+import { ReviewRepository } from '../reviewer/repository'
+import { ComputeJobRepository } from '../compute/job-repository'
+import type { ReplayRecords } from '@aipoch/research-film'
 import {
   captureResearchFilms,
   appendResearchFilms,
   validateResearchFilms,
   type CapturedResearchFilms
 } from './research-films'
-import { researchFilmStorageKeys, type PackageResearchFilms } from './research-films-contract'
+import {
+  researchFilmStorageKeys,
+  packageFilms,
+  type PackageModeFilms as PackageResearchFilms
+} from './research-films-contract'
 import type {
   ResearchVideoPresentationRequest,
   ResearchVideoPresentation
@@ -486,6 +493,7 @@ const assertShareableFile = async (
 export class SessionPackageService {
   // Imports and recovery share one owner. A recovery call must never reap live staging.
   private operationTail: Promise<unknown> = Promise.resolve()
+  private queuedOperations = 0
   private closed = false
   private readonly shutdown = new AbortController()
   private signal = this.shutdown.signal
@@ -529,6 +537,7 @@ export class SessionPackageService {
 
   private serialize<Result>(work: () => Promise<Result>, signal?: AbortSignal): Promise<Result> {
     if (this.closed) return Promise.reject(new Error('Session package service is closed.'))
+    this.queuedOperations++
     const result = this.operationTail.then(() =>
       withPackageTransfer(async (transfer) => {
         this.shutdown.signal.throwIfAborted()
@@ -541,11 +550,19 @@ export class SessionPackageService {
         return work()
       })
     )
-    this.operationTail = result.then(
+    const settled = result.finally(() => {
+      this.queuedOperations--
+    })
+    this.operationTail = settled.then(
       () => undefined,
       () => undefined
     )
-    return result
+    return settled
+  }
+
+  /** Film retirement shares export's queue so a captured package source cannot disappear. */
+  withFilmRetention(work: () => Promise<boolean>): Promise<boolean> {
+    return this.queuedOperations ? Promise.resolve(false) : this.serialize(work)
   }
 
   private async waitForUser<T>(work: () => Promise<T>): Promise<T> {
@@ -768,8 +785,9 @@ export class SessionPackageService {
           ? JSON.stringify({ version: 2, session: forwardedSession })
           : undefined
       const records = parseNativeRecords(await readPackageJson(join(source, 'records.json')))
-      const previousFilmKeys = new Set(researchFilmStorageKeys(records.researchFilms))
+      const previousFilmKeys = new Set(researchFilmStorageKeys(packageFilms(records)))
       delete records.researchFilms
+      delete records.operationReplayFilms
       const inverseIds = Object.fromEntries(
         Object.entries(origin.identities).map(([oldId, localId]) => [localId, oldId])
       )
@@ -1435,6 +1453,8 @@ export class SessionPackageService {
             this.signal
           )
         if (records.researchFilms) currentRecords.researchFilms = records.researchFilms
+        if (records.operationReplayFilms)
+          currentRecords.operationReplayFilms = records.operationReplayFilms
         if (retainedOrigin?.literature)
           currentRecords.literature = mapPackageReferences(
             retainedOrigin.literature,
@@ -2382,7 +2402,11 @@ export class SessionPackageService {
       origin.researchFilms ?? [],
       origin.identities
     ) as PackageResearchFilms
-    const film = films.find((film) => film.branchId === branchId)
+    const film = films.find(
+      (film) =>
+        film.branchId === branchId &&
+        (film.mode ?? 'research-explanation') === (request.mode ?? 'research-explanation')
+    )
     if (!film) return undefined
     if (!options.includeUnavailable) {
       for (const key of [film.playerStorageKey, film.sourceStorageKey]) {
@@ -2404,6 +2428,70 @@ export class SessionPackageService {
       duration: film.duration,
       playerPath: join(this.options.storageRoot, film.playerStorageKey),
       sourcePath: join(this.options.storageRoot, film.sourceStorageKey)
+    }
+  }
+
+  /** Read-only film evidence; imported jobs remain history and acquire no execution authority. */
+  async readFilmEvidence(session: PersistedChatSession): Promise<ReplayRecords> {
+    const scope = { projectId: session.projectId, sessionId: session.id }
+    const [reviews, jobs, origin] = await Promise.all([
+      new ReviewRepository(this.options.getClient).getReviewSummariesForProjectSession(
+        scope.projectId,
+        scope.sessionId
+      ),
+      new ComputeJobRepository(this.options.getClient).findByOwner(scope),
+      session.packageOrigin || session.forkOrigin ? this.readOrigin(scope) : undefined
+    ])
+    const inherited = origin
+      ? (mapPackageReferences(
+          origin.history?.computeJobs ?? [],
+          origin.identities
+        ) as NonNullable<PackageHistory>['computeJobs'])
+      : []
+    if (reviews.length + jobs.length + inherited.length > 2000)
+      throw new Error('Too many records for an operation replay.')
+    return {
+      reviews: reviews.map((r) => ({
+        id: r.id,
+        messageId: r.turnMessageId,
+        status: r.outcome ?? r.lifecycle,
+        text: JSON.stringify({
+          scope: r.scope,
+          lifecycle: r.lifecycle,
+          outcome: r.outcome,
+          error: r.errorMessage,
+          checks: r.checks
+        }),
+        recordedAt: r.createdAt
+      })),
+      jobs: [
+        ...inherited.map((j) => ({
+          id: j.id,
+          status: j.status,
+          text: JSON.stringify({
+            command: j.command,
+            stdout: j.stdout,
+            stderr: j.stderr,
+            exitCode: j.exitCode,
+            unavailable: j.protectedContentUnavailable
+          }),
+          producerRunId: j.producerRunId,
+          recordedAt: j.createdAt
+        })),
+        ...jobs.map((j) => ({
+          id: j.job_id,
+          status: j.status,
+          text: JSON.stringify({
+            command: j.command,
+            stdout: j.stdout_tail,
+            stderr: j.stderr_tail,
+            exitCode: j.exit_code,
+            error: j.error_code
+          }),
+          producerRunId: j.producer_run_id,
+          recordedAt: j.created_at
+        }))
+      ]
     }
   }
 
@@ -2464,7 +2552,7 @@ export class SessionPackageService {
       history: records.history,
       literature: records.literature,
       pdfNotes: records.pdfNotes,
-      researchFilms: records.researchFilms,
+      researchFilms: packageFilms(records),
       logSessionIds: [
         ...new Set(
           (records.logEvidence ?? []).map((lane) => receipt.identities[lane.key.split('/')[2]])

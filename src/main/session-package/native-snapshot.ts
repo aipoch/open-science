@@ -1,4 +1,9 @@
-import { packageResearchFilmsSchema, researchFilmStorageKeys } from './research-films-contract'
+import {
+  packageResearchFilmsSchema,
+  researchFilmStorageKeys,
+  packageOperationReplayFilmsSchema,
+  packageFilms
+} from './research-films-contract'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import {
   indexPortableEvidence,
@@ -295,6 +300,8 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
   if ('logEvidence' in value) portableEvidenceSchema.parse(value.logEvidence)
   if ('researchFilms' in value && value.researchFilms !== undefined)
     packageResearchFilmsSchema.parse(value.researchFilms)
+  if ('operationReplayFilms' in value && value.operationReplayFilms !== undefined)
+    packageOperationReplayFilmsSchema.parse(value.operationReplayFilms)
   if ('literature' in value && value.literature !== undefined)
     packageLiteratureSchema.parse(value.literature)
   const tables = value.tables as Record<string, unknown>
@@ -332,7 +339,7 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
 }
 
 export const nativeStorageKeys = (records: PackageRecords): string[] => [
-  ...researchFilmStorageKeys(records.researchFilms),
+  ...researchFilmStorageKeys(packageFilms(records)),
   ...new Set(
     Object.values(records.tables).flatMap((rows) =>
       rows.flatMap((row) =>

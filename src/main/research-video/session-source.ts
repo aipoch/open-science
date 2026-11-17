@@ -1,4 +1,5 @@
 import { resolveMessageBranchPath } from '../../shared/conversation-graph'
+import { operationReplaySource } from './replay-source'
 import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
 import type {
   ResearchVideoPresentationRequest,
@@ -23,8 +24,7 @@ export function researchVideoGenerationBlock(
   const activeBranch = graph?.frames.find((frame) => frame.id === graph.rootFrameId)?.activeBranchId
   const branchId = request.branchId ?? activeBranch
   if (request.branchId && !graph) return 'unavailable'
-  if (graph && branchId && !graph.branches.some((branch) => branch.id === branchId))
-    return 'unavailable'
+  if (graph && !graph.branches.some((branch) => branch.id === branchId)) return 'unavailable'
   const messages = (
     graph && branchId ? resolveMessageBranchPath(graph, branchId) : session.messages
   ).filter(
@@ -36,6 +36,8 @@ export function researchVideoGenerationBlock(
     messages.some((message) => message.status === 'streaming')
   )
     return 'busy'
+  if (request.mode === 'operation-replay')
+    return operationReplaySource(session, request).replay?.events.length ? undefined : 'empty'
   if (!messages.some((message) => message.content.trim())) return 'empty'
   if (
     !messages.some(
@@ -58,6 +60,7 @@ export function researchVideoSessionSource(
     session.archivedAt
   )
     throw new Error('Research session is unavailable.')
+  if (request.mode === 'operation-replay') return operationReplaySource(session, request)
   const graph = session.conversationGraph
   const branchId =
     request.branchId ??

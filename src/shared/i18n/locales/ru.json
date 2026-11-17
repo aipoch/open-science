@@ -8290,7 +8290,6 @@
     "Continue generation": "Продолжить создание",
     "Generating animations…": "Создание анимаций…",
     "Writing research film…": "Подготовка исследовательского фильма…",
-    "Create a short film from this conversation.": "Создать короткий фильм на основе этого диалога.",
     "Generating a new film may take several minutes. Continue?": "Создание нового фильма может занять несколько минут. Продолжить?",
     "Research film ready": "Исследовательский фильм готов",
     "This session is unavailable.": "Этот сеанс недоступен.",
@@ -8787,6 +8786,12 @@
     "Link": "Ссылка",
     "Text color": "Цвет текста",
     "Remove link": "Удалить ссылку",
-    "Select text to format it, or format the entire text box.": "Выделите текст для форматирования или примените формат ко всему текстовому полю."
+    "Select text to format it, or format the entire text box.": "Выделите текст для форматирования или примените формат ко всему текстовому полю.",
+    "Film mode": "Режим фильма",
+    "Research explanation": "Объяснение исследования",
+    "Operation replay": "Воспроизведение операций",
+    "Explains the research question, methods, and findings with visuals.": "Наглядно объясняет вопрос исследования, методы и результаты.",
+    "Replays the conversation, actions, and results in order.": "Последовательно воспроизводит диалог, действия и результаты.",
+    "Another film is being generated. Wait for it to finish.": "Создаётся другой фильм. Дождитесь завершения."
   }
 }

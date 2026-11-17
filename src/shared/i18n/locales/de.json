@@ -7973,7 +7973,6 @@
     "Continue generation": "Generierung fortsetzen",
     "Generating animations…": "Animationen werden generiert…",
     "Writing research film…": "Forschungsfilm wird konzipiert…",
-    "Create a short film from this conversation.": "Einen Kurzfilm aus dieser Konversation erstellen.",
     "Generating a new film may take several minutes. Continue?": "Die Erstellung eines neuen Films kann einige Minuten dauern. Fortfahren?",
     "Research film ready": "Forschungsfilm ist bereit",
     "This session is unavailable.": "Diese Sitzung ist nicht verfügbar.",
@@ -8458,6 +8457,12 @@
     "Link": "Link",
     "Text color": "Textfarbe",
     "Remove link": "Link entfernen",
-    "Select text to format it, or format the entire text box.": "Wählen Sie Text aus, um ihn zu formatieren, oder formatieren Sie das gesamte Textfeld."
+    "Select text to format it, or format the entire text box.": "Wählen Sie Text aus, um ihn zu formatieren, oder formatieren Sie das gesamte Textfeld.",
+    "Film mode": "Filmmodus",
+    "Research explanation": "Forschungserklärung",
+    "Operation replay": "Ablaufwiedergabe",
+    "Explains the research question, methods, and findings with visuals.": "Veranschaulicht Forschungsfrage, Methoden und Ergebnisse.",
+    "Replays the conversation, actions, and results in order.": "Gibt Konversation, Aktionen und Ergebnisse der Reihe nach wieder.",
+    "Another film is being generated. Wait for it to finish.": "Ein anderer Film wird erstellt. Warte, bis er fertig ist."
   }
 }

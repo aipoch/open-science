@@ -3420,8 +3420,8 @@ const ConversationPanel = ({
                               onCompact={onCompactContext}
                             />
 
-                            {/* Give wrapping the picker's icon width; its label uses the remaining space. */}
-                            <div className="flex min-w-0 max-w-[220px] flex-[1_1_3.75rem] justify-end empty:hidden">
+                            {/* Reserve the icon width when wrapping; grow only as wide as the picker. */}
+                            <div className="flex min-w-0 max-w-max flex-[1_1_3.75rem] justify-end empty:hidden">
                               <ComposerModelPicker
                                 configuration={modelConfiguration}
                                 unavailable={modelUnavailable}
