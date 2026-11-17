@@ -32,6 +32,7 @@ import {
 // Editable value for the provider form, kept in its own module so the component file only exports a
 // component (satisfying react-refresh) while the wizard and settings page share this shape/factory.
 export type ProviderFormValue = {
+  catalogParameters?: Record<string, string>
   type: ProviderType
   codexTransport: CodexSubscriptionTransport
   name: string

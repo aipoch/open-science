@@ -1,3 +1,4 @@
+import { bearerCatalog, publicCatalog, anthropicCatalog, bailianCatalog, openCodeCatalog, openRouterCatalog } from './catalog-configurations'
 import type { OfficialVendor } from './types'
 
 // The shipped vendor set. Each entry owns its endpoint and catalog; model lists are intentionally
@@ -8,6 +9,8 @@ import type { OfficialVendor } from './types'
 const definitions: readonly OfficialVendor[] = [
   {
     id: 'openai',
+    modelsListUrl: 'https://api.openai.com/v1/models',
+    modelsList: { ...bearerCatalog, knownModelsOnly: true, fields: { lifecycle: 'shutdown_date' } },
     label: 'OpenAI',
     reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh'] },
     apiEndpoints: ['responses'],
@@ -73,11 +76,12 @@ const definitions: readonly OfficialVendor[] = [
   },
   {
     id: 'anthropic',
+    modelsListUrl: 'https://api.anthropic.com/v1/models',
+    modelsList: anthropicCatalog,
     label: 'Anthropic',
     reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] },
     baseUrl: 'https://api.anthropic.com',
     apiKeyUrl: 'https://console.anthropic.com/settings/keys',
-    modelsListUrl: 'https://api.anthropic.com/v1/models',
     models: [
       { id: 'claude-opus-5-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       { id: 'claude-opus-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
@@ -102,6 +106,8 @@ const definitions: readonly OfficialVendor[] = [
   },
   {
     id: 'xai',
+    modelsListUrl: 'https://api.x.ai/v1/language-models',
+    modelsList: { ...bearerCatalog, itemsPath: 'models', fields: { name: 'name', supportsImageInput: { path: 'input_modalities', includes: 'image' }, efforts: 'capabilities.reasoning_effort' }, enrichment: { url: 'https://api.x.ai/v1/models', itemsPath: 'data', fields: { contextWindow: 'context_length' } } },
     label: 'xAI (Grok)',
     // xAI documents four selectable effort values for Grok 4.6 and 4.7. Models with a different capability
     // override this default below; models without a documented effort control stay unsupported.
@@ -150,6 +156,8 @@ const definitions: readonly OfficialVendor[] = [
   },
   {
     id: 'deepseek',
+    modelsListUrl: 'https://api.deepseek.com/v1/models',
+    modelsList: { ...bearerCatalog, fields: { name: 'name', contextWindow: 'context_window', maxOutputTokens: 'max_output_tokens', supportsImageInput: { path: 'input_modalities', includes: 'image' }, efforts: 'effort.supported_levels' } },
     label: 'DeepSeek',
     // DeepSeek V4 supports an explicit thinking-off switch plus high/max reasoning effort.
     reasoningEffort: { supported: true, values: ['none', 'high', 'max'] },
@@ -162,7 +170,6 @@ const definitions: readonly OfficialVendor[] = [
     chatCompletionsBaseUrl: 'https://api.deepseek.com/v1',
     responsesBaseUrl: 'https://api.deepseek.com',
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
-    modelsListUrl: 'https://api.deepseek.com/v1/models',
     models: [
       // DeepSeek V4.1 Flash uses the stable API id deepseek-flash.
       { id: 'deepseek-flash', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
@@ -194,6 +201,8 @@ const definitions: readonly OfficialVendor[] = [
     regions: [
       {
         id: 'china',
+        modelsListUrl: 'https://{workspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/models',
+        modelsList: { ...bailianCatalog, inputs: [{ id: 'workspaceId', location: 'url', required: true }] },
         label: 'China',
         baseUrl: 'https://dashscope.aliyuncs.com/apps/anthropic/v1/messages',
         chatCompletionsBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -201,6 +210,8 @@ const definitions: readonly OfficialVendor[] = [
       },
       {
         id: 'global',
+        modelsListUrl: 'https://dashscope-us.aliyuncs.com/api/v1/models',
+        modelsList: bailianCatalog,
         label: 'Global',
         baseUrl: 'https://dashscope-us.aliyuncs.com/apps/anthropic/v1/messages',
         chatCompletionsBaseUrl: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1',
@@ -471,6 +482,8 @@ const definitions: readonly OfficialVendor[] = [
   },
   {
     id: 'kimi',
+    modelsListUrl: 'https://api.moonshot.cn/v1/models',
+    modelsList: { ...bearerCatalog, fields: { contextWindow: 'context_length', supportsImageInput: 'supports_image_in', supportsReasoning: 'supports_reasoning' } },
     label: 'Kimi (Moonshot)',
     reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] },
     // Moonshot serves both routes on one host: Anthropic /v1/messages under `/anthropic` and the
@@ -480,7 +493,6 @@ const definitions: readonly OfficialVendor[] = [
     baseUrl: 'https://api.moonshot.cn/anthropic',
     chatCompletionsBaseUrl: 'https://api.moonshot.cn/v1',
     apiKeyUrl: 'https://platform.kimi.com/console',
-    modelsListUrl: 'https://api.moonshot.cn/v1/models',
     models: [
       // https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart
       {
@@ -541,6 +553,8 @@ const definitions: readonly OfficialVendor[] = [
     regions: [
       {
         id: 'global',
+        modelsListUrl: 'https://api.minimax.io/v1/models',
+        modelsList: bearerCatalog,
         label: 'Global',
         baseUrl: 'https://api.minimax.io/anthropic',
         chatCompletionsBaseUrl: 'https://api.minimax.io/v1',
@@ -548,6 +562,8 @@ const definitions: readonly OfficialVendor[] = [
       },
       {
         id: 'china',
+        modelsListUrl: 'https://api.minimax.cn/v1/models',
+        modelsList: bearerCatalog,
         label: 'China',
         baseUrl: 'https://api.minimaxi.com/anthropic',
         chatCompletionsBaseUrl: 'https://api.minimaxi.com/v1',
@@ -595,19 +611,21 @@ const definitions: readonly OfficialVendor[] = [
     regions: [
       {
         id: 'global',
+        modelsListUrl: 'https://api.stepfun.ai/v1/models',
+        modelsList: bearerCatalog,
         label: 'Global',
         baseUrl: 'https://api.stepfun.ai',
         chatCompletionsBaseUrl: 'https://api.stepfun.ai/v1',
         apiKeyUrl: 'https://platform.stepfun.ai/interface-key',
-        modelsListUrl: 'https://api.stepfun.ai/v1/models'
       },
       {
         id: 'china',
+        modelsListUrl: 'https://api.stepfun.com/v1/models',
+        modelsList: bearerCatalog,
         label: 'China',
         baseUrl: 'https://api.stepfun.com',
         chatCompletionsBaseUrl: 'https://api.stepfun.com/v1',
         apiKeyUrl: 'https://platform.stepfun.com/interface-key',
-        modelsListUrl: 'https://api.stepfun.com/v1/models'
       }
     ],
     models: [
@@ -663,6 +681,8 @@ const definitions: readonly OfficialVendor[] = [
   },
   {
     id: 'xiaomimimo',
+    modelsListUrl: 'https://api.xiaomimimo.com/v1/models',
+    modelsList: bearerCatalog,
     label: 'Xiaomi MIMO',
     reasoningEffort: { supported: true, values: ['none', 'high'] },
     // Xiaomi MiMo exposes both routes: Anthropic /v1/messages under `/anthropic` and the OpenAI-compatible
@@ -671,7 +691,6 @@ const definitions: readonly OfficialVendor[] = [
     baseUrl: 'https://api.xiaomimimo.com/anthropic',
     chatCompletionsBaseUrl: 'https://api.xiaomimimo.com/v1',
     apiKeyUrl: 'https://platform.xiaomimimo.com/console/api-keys',
-    modelsListUrl: 'https://api.xiaomimimo.com/v1/models',
     models: [
       { id: 'mimo-v2.6-pro', contextWindow: 1_000_000, maxOutputTokens: 131_072 },
       { id: 'mimo-v2.6-flash', contextWindow: 1_000_000, maxOutputTokens: 131_072 },
@@ -700,6 +719,8 @@ const definitions: readonly OfficialVendor[] = [
       // Keep China first: pre-region provider records must retain their original endpoint.
       {
         id: 'china',
+        modelsListUrl: 'https://token.sensenova.cn/v1/models',
+        modelsList: { ...bearerCatalog, filter: { path: 'output_modalities', includes: 'text' }, fields: { name: 'name', contextWindow: 'context_length', maxOutputTokens: 'max_output_length', supportsImageInput: { path: 'input_modalities', includes: 'image' }, supportsTools: { path: 'supported_features', includes: 'tools' }, supportsReasoning: { path: 'supported_features', includes: 'reasoning' } } },
         label: 'China',
         baseUrl: 'https://token.sensenova.cn',
         chatCompletionsBaseUrl: 'https://token.sensenova.cn/v1',
@@ -707,6 +728,7 @@ const definitions: readonly OfficialVendor[] = [
       },
       {
         id: 'global',
+        modelsList: false,
         label: 'Global',
         baseUrl: 'https://token.sensenova.ai',
         chatCompletionsBaseUrl: 'https://token.sensenova.ai/v1',
@@ -792,6 +814,8 @@ const definitions: readonly OfficialVendor[] = [
     regions: [
       {
         id: 'international',
+        modelsListUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1/models',
+        modelsList: { ...bearerCatalog, fields: { name: 'name', lifecycle: 'status' } },
         label: 'International (Singapore)',
         baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com',
         chatCompletionsBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1',
@@ -799,6 +823,8 @@ const definitions: readonly OfficialVendor[] = [
       },
       {
         id: 'china',
+        modelsListUrl: 'https://tokenhub.tencentmaas.com/v1/models',
+        modelsList: { ...bearerCatalog, fields: { name: 'name', lifecycle: 'status' } },
         label: 'China (Guangzhou)',
         baseUrl: 'https://tokenhub.tencentmaas.com',
         chatCompletionsBaseUrl: 'https://tokenhub.tencentmaas.com/v1',
@@ -876,6 +902,8 @@ const definitions: readonly OfficialVendor[] = [
   },
   {
     id: 'nvidia',
+    modelsListUrl: 'https://integrate.api.nvidia.com/v1/models',
+    modelsList: { ...publicCatalog, knownModelsOnly: true },
     label: 'NVIDIA',
     reasoningEffort: { supported: false },
     apiEndpoints: ['chat-completions'],
@@ -897,6 +925,8 @@ const definitions: readonly OfficialVendor[] = [
   },
   {
     id: 'opencode-go',
+    modelsListUrl: 'https://opencode.ai/inference/go/v1/models',
+    modelsList: openCodeCatalog,
     label: 'OpenCode Go',
     reasoningEffort: { supported: false },
     apiEndpoints: ['chat-completions'],
@@ -1053,6 +1083,8 @@ const definitions: readonly OfficialVendor[] = [
   },
   {
     id: 'opencode',
+    modelsListUrl: 'https://opencode.ai/inference/v1/models',
+    modelsList: openCodeCatalog,
     label: 'OpenCode Zen',
     reasoningEffort: { supported: false },
     apiEndpoints: ['chat-completions'],
@@ -1433,6 +1465,8 @@ const definitions: readonly OfficialVendor[] = [
   // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
   {
     id: 'openrouter',
+    modelsListUrl: 'https://openrouter.ai/api/v1/models',
+    modelsList: openRouterCatalog,
     label: 'OpenRouter',
     // The gateway aggregates unrelated model families, so every curated entry below declares its
     // own capability. Unknown additions stay conservative instead of pretending to support five.
@@ -1744,6 +1778,8 @@ const definitions: readonly OfficialVendor[] = [
   // Requesty is also a multi-vendor gateway, so it follows OpenRouter at the end of the picker.
   {
     id: 'requesty',
+    modelsListUrl: 'https://router.requesty.ai/v1/models',
+    modelsList: { ...publicCatalog, fields: { contextWindow: 'context_window', maxOutputTokens: 'max_output_tokens', supportsImageInput: 'supports_vision', supportsTools: 'supports_tool_calling', supportsReasoning: 'supports_reasoning', efforts: 'reasoning.supported_efforts' } },
     label: 'Requesty',
     // Like OpenRouter, each curated entry declares its own capability and unknown ids stay
     // conservative.

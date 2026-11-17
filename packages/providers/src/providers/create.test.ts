@@ -383,7 +383,7 @@ it.each([
       text: 'answer',
       stopReason: 'end_turn'
     })
-    expect(fetch.mock.calls[0][0]).toBe(url)
+    expect(String(fetch.mock.calls[0][0])).toMatch(new RegExp(`^${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\?|$)`))
     expect(new Headers(fetch.mock.calls[0][1]?.headers).get(header!)).toBe(
       header === 'x-api-key' ? 'secret' : 'Bearer secret'
     )
@@ -505,7 +505,7 @@ it('preserves classification cancellation and response transport errors rather t
 it.each([
   ['deepseek', undefined, 'https://api.deepseek.com/v1/models', 'authorization'],
   ['anthropic', undefined, 'https://api.anthropic.com/v1/models', 'x-api-key'],
-  ['xai', undefined, 'https://api.x.ai/v1/models', 'authorization'],
+  ['xai', undefined, 'https://api.x.ai/v1/language-models', 'authorization'],
   ['stepfun', 'global', 'https://api.stepfun.ai/v1/models', 'authorization']
 ])(
   'discovers %s models with the same connection credentials and region',
@@ -513,10 +513,10 @@ it.each([
     const fetch = vi.fn<typeof globalThis.fetch>(async () =>
       Response.json({ data: [{ id: 'new-model' }] })
     )
-    const provider = createProvider({ id: id!, region, key: 'secret', fetch })
+    const provider = createProvider({ id: id!, region, key: 'secret', fetch, ...(id === 'xai' ? { discovery: { url } } : {}) })
     expect(provider.supportsModelDiscovery).toBe(true)
     await expect(provider.listModels()).resolves.toMatchObject({ ok: true, models: ['new-model'] })
-    expect(fetch.mock.calls[0][0]).toBe(url)
+    expect(String(fetch.mock.calls[0][0])).toMatch(new RegExp(`^${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\?|$)`))
     expect(new Headers(fetch.mock.calls[0][1]?.headers).get(header!)).toBe(
       header === 'x-api-key' ? 'secret' : 'Bearer secret'
     )

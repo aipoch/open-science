@@ -1,9 +1,10 @@
+import { resolveOfficialModelCatalog } from './provider-model-catalog'
+import type { CatalogModel } from '@aipoch/providers'
 import { providerValidationRoute } from './settings'
 import {
   type ModelProtocol,
   type OfficialVendorId,
   isVendorModelMultimodal,
-  resolveVendorModelApiEndpoints
 } from '@aipoch/providers'
 import { isModelBridgeSupported } from './provider-bridge-policy'
 
@@ -32,6 +33,7 @@ export type ConfiguredModelCatalogEntry = Readonly<{
   vendorId?: OfficialVendorId
   model: string
   label: string
+  metadata?: CatalogModel
   selectable: boolean
   supportsImageInput: boolean
   unavailableReason?: 'framework-incompatible' | 'model-bridge-unsupported'
@@ -60,11 +62,11 @@ export const parseConfiguredModelKey = (
 }
 
 export const configuredModelApiEndpoints = (
-  provider: Pick<ProviderView, 'type' | 'vendorId' | 'apiEndpoints'>,
+  provider: Pick<ProviderView, 'type' | 'vendorId' | 'apiEndpoints' | 'region' | 'modelCatalog'>,
   model: string
 ): readonly ModelProtocol[] =>
   provider.type === 'official' && provider.vendorId
-    ? resolveVendorModelApiEndpoints(provider.vendorId, model)
+    ? Object.keys(resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)?.routes ?? {}) as ModelProtocol[]
     : providerEndpoints(provider)
 
 export const buildConfiguredModelInventory = (
@@ -87,7 +89,7 @@ export const buildConfiguredModelInventory = (
     }
     if (isXaiSubscriptionProvider(provider.type)) return isVendorModelMultimodal('xai', model)
     if (provider.type === 'custom') return provider.supportsImageInput === true
-    return provider.vendorId ? isVendorModelMultimodal(provider.vendorId, model) : false
+    return resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)?.supportsImageInput === true
   }
 
   return input.providers
@@ -110,6 +112,7 @@ export const buildConfiguredModelInventory = (
             ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
             model,
             label: model || provider.name,
+            metadata: provider.type === 'official' ? resolveOfficialModelCatalog(provider).find((entry) => entry.id === model) : undefined,
             supportsImageInput: supportsImageInput(provider, model)
           })
       )

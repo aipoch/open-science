@@ -252,9 +252,11 @@ class SettingsRepository {
           existing.vendorId === provider.vendorId &&
           existing.region === provider.region &&
           existing.keyRef === provider.keyRef &&
+          JSON.stringify(existing.catalogParameters ?? {}) === JSON.stringify(provider.catalogParameters ?? {}) &&
+          !provider.modelCatalog &&
           existing.fetchedModels
         )
-          provider = { ...provider, fetchedModels: existing.fetchedModels }
+          provider = { ...provider, fetchedModels: existing.fetchedModels, modelCatalog: existing.modelCatalog, modelCatalogStatus: existing.modelCatalogStatus }
         // Full-provider saves can be based on a snapshot read before the runtime learned its Auto
         // fallback. Keep that main-owned state across Auto-to-Auto replacement; explicit transport
         // changes still clear it because either side of this guard is no longer Auto.
@@ -288,7 +290,8 @@ class SettingsRepository {
   // are preserved, and a deleted provider can never be recreated by a stale completion.
   async updateProviderModelCatalogIfTargetMatches(
     expectedProvider: StoredProvider,
-    fetchedModels: string[]
+    fetchedModels: string[] | undefined,
+    catalogPatch: Pick<StoredProvider, 'modelCatalog' | 'modelCatalogStatus'> = {}
   ): Promise<boolean> {
     let applied = false
 
@@ -301,13 +304,15 @@ class SettingsRepository {
         currentProvider.type !== expectedProvider.type ||
         currentProvider.vendorId !== expectedProvider.vendorId ||
         currentProvider.region !== expectedProvider.region ||
-        currentProvider.keyRef !== expectedProvider.keyRef
+        currentProvider.keyRef !== expectedProvider.keyRef ||
+        JSON.stringify(currentProvider.catalogParameters ?? {}) !== JSON.stringify(expectedProvider.catalogParameters ?? {}) ||
+        (currentProvider.configRevision ?? 0) !== (expectedProvider.configRevision ?? 0)
       ) {
         return settings
       }
 
       const providers = [...settings.providers]
-      providers[index] = { ...currentProvider, fetchedModels }
+      providers[index] = { ...currentProvider, ...(fetchedModels ? { fetchedModels } : {}), ...catalogPatch }
       applied = true
       return { ...settings, providers }
     })

@@ -149,8 +149,8 @@ describe('provider registry', () => {
     expect(resolveVendorBaseUrl('opencode')).toBe('https://opencode.ai/zen/v1')
     expect(resolveVendorApiEndpoints('opencode-go')).toEqual(['chat-completions'])
     expect(resolveVendorApiEndpoints('opencode')).toEqual(['chat-completions'])
-    expect(resolveVendorModelsUrl('opencode-go')).toBeUndefined()
-    expect(resolveVendorModelsUrl('opencode')).toBeUndefined()
+    expect(resolveVendorModelsUrl('opencode-go')).toBe('https://opencode.ai/inference/go/v1/models')
+    expect(resolveVendorModelsUrl('opencode')).toBe('https://opencode.ai/inference/v1/models')
 
     expect(goModels).toEqual([
       'kimi-k2.7-code',
@@ -454,7 +454,7 @@ describe('provider registry', () => {
     expect(resolveVendorApiEndpoints('nvidia')).toEqual(['chat-completions'])
     expect(resolveVendorBaseUrl('nvidia')).toBe('https://integrate.api.nvidia.com/v1')
     expect(resolveVendorApiKeyUrl('nvidia')).toBe('https://build.nvidia.com/settings/api-keys')
-    expect(resolveVendorModelsUrl('nvidia')).toBeUndefined()
+    expect(resolveVendorModelsUrl('nvidia')).toBe('https://integrate.api.nvidia.com/v1/models')
 
     expect(getOfficialVendor('nvidia')?.models.map(({ id }) => id)).toEqual([
       'nvidia/nemotron-3.5-lightning-30b-a3b',
@@ -761,7 +761,7 @@ describe('provider registry', () => {
     expect(resolveVendorModelsUrl('deepseek')).toBe('https://api.deepseek.com/v1/models')
     // GLM/MiniMax don't expose a model-list endpoint yet, so refresh is hidden for them.
     expect(resolveVendorModelsUrl('zhipu')).toBeUndefined()
-    expect(resolveVendorModelsUrl('minimax')).toBeUndefined()
+    expect(resolveVendorModelsUrl('minimax')).toBe('https://api.minimax.io/v1/models')
   })
 
   it('routes OpenRouter through both APIs with a curated catalog and no live refresh', () => {
@@ -772,7 +772,7 @@ describe('provider registry', () => {
       'https://openrouter.ai/workspaces/default/keys'
     )
     // Curated (300+ live ids would flood the picker), so refresh-from-vendor is hidden.
-    expect(resolveVendorModelsUrl('openrouter')).toBeUndefined()
+    expect(resolveVendorModelsUrl('openrouter')).toBe('https://openrouter.ai/api/v1/models')
   })
 
   it('routes Requesty through both APIs after OpenRouter with a curated catalog', () => {
@@ -783,7 +783,7 @@ describe('provider registry', () => {
     expect(resolveVendorBaseUrl('requesty')).toBe('https://router.requesty.ai')
     expect(resolveVendorChatCompletionsBaseUrl('requesty')).toBe('https://router.requesty.ai/v1')
     expect(resolveVendorApiKeyUrl('requesty')).toBe('https://app.requesty.ai/api-keys')
-    expect(resolveVendorModelsUrl('requesty')).toBeUndefined()
+    expect(resolveVendorModelsUrl('requesty')).toBe('https://router.requesty.ai/v1/models')
     expect(usesVendorMessagesApiKeyHeader('requesty')).toBe(false)
 
     expect(getVendorModelContextWindow('requesty', 'openai/gpt-5.4-mini')).toBe(400_000)
@@ -937,7 +937,7 @@ describe('provider registry', () => {
     expect(resolveVendorApiKeyUrl('sensenova')).toBe('https://platform.sensenova.cn/console/keys')
     // The live list also serves the image-generation-only sensenova-u1-fast, which the refresh
     // cannot filter out — so refresh-from-vendor is hidden and the chat catalog stays curated.
-    expect(resolveVendorModelsUrl('sensenova')).toBeUndefined()
+    expect(resolveVendorModelsUrl('sensenova')).toBe('https://token.sensenova.cn/v1/models')
 
     expect(getVendorModelIds('sensenova')).toEqual([
       'sensenova-6.8-flash-lite',
@@ -1040,7 +1040,7 @@ describe('provider registry', () => {
     expect(resolveVendorApiKeyUrl('tencent', 'china')).toBe(
       'https://console.cloud.tencent.com/tokenhub/apikey'
     )
-    expect(resolveVendorModelsUrl('tencent')).toBeUndefined()
+    expect(resolveVendorModelsUrl('tencent')).toBe('https://tokenhub-intl.tencentcloudmaas.com/v1/models')
 
     expect(getOfficialVendor('tencent')?.models.map(({ id }) => id)).toEqual([
       'hy4',
@@ -1142,7 +1142,7 @@ describe('provider registry', () => {
     expect(resolveVendorApiKeyUrl('xai')).toBe('https://console.x.ai/team/default/api-keys')
     // xAI's live catalog also includes image, audio, and video generation models, so keep refresh
     // hidden and expose only the curated language-model catalog.
-    expect(resolveVendorModelsUrl('xai')).toBeUndefined()
+    expect(resolveVendorModelsUrl('xai')).toBe('https://api.x.ai/v1/language-models')
   })
 
   it('exposes Grok 4.7 with its documented capabilities and keeps existing xAI models', () => {
@@ -1260,7 +1260,7 @@ describe('provider registry', () => {
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 }
     ])
 
-    expect(resolveVendorModelsUrl(bailianId)).toBeUndefined()
+    expect(resolveVendorModelsUrl(bailianId)).toBe('https://{workspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/models')
   })
 
   it('defaults Bailian for Plan to Beijing and resolves the Singapore subscription separately', () => {

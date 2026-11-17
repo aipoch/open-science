@@ -1,3 +1,4 @@
+import { decodeModelCatalog, decodeModelCatalogStatus, decodeCatalogParameters } from './model-catalog-codec'
 import {
   isAgentFrameworkId,
   AGENT_MODEL_ROUTE_VALUES,
@@ -278,6 +279,9 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
+  provider.modelCatalog = decodeModelCatalog(value.modelCatalog)
+  provider.modelCatalogStatus = decodeModelCatalogStatus(value.modelCatalogStatus)
+  provider.catalogParameters = decodeCatalogParameters(value.catalogParameters)
   if (keyRef) provider.keyRef = keyRef
   if (keyMask) provider.keyMask = keyMask
   if (accountEmail && type === 'xai-subscription') provider.accountEmail = accountEmail

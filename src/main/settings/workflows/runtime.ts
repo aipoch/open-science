@@ -132,13 +132,13 @@ class RuntimeSettingsWorkflows {
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['refreshProviderModels']>>> {
     const before = await this.settings.getSettingsView()
     const result = await this.settings.refreshProviderModels(request)
-    if (!result.ok) return result
+    if (!result.ok || request.draft || !request.providerId) return result
     const after = await this.settings.getSettingsView()
     const previous = before.providers.find((provider) => provider.id === request.providerId)
     const current = after.providers.find((provider) => provider.id === request.providerId)
     // Catalog order can own an omitted model's default. Reconnect existing provider generations
     // through the same deferred transition used for provider edits; do not interrupt active turns.
-    if (previous && current && JSON.stringify(previous.models) !== JSON.stringify(current.models)) {
+    if (previous && current && JSON.stringify([previous.models, previous.modelCatalog]) !== JSON.stringify([current.models, current.modelCatalog])) {
       this.effects.requestProviderReconnect(
         affectedProviderIds(request.providerId),
         request.providerId === before.activeProviderId ||

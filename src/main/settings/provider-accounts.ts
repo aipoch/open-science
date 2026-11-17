@@ -1,3 +1,4 @@
+import { decodeCatalogParameters } from './model-catalog-codec'
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
 import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
@@ -379,7 +380,11 @@ class ProviderAccountsModule {
       const region = request.region ?? existing?.region
       provider.vendorId = vendorId
       if (region) provider.region = region
-      if (existing?.fetchedModels && vendorId === existing.vendorId) {
+      provider.catalogParameters = request.catalogParameters === undefined ? existing?.catalogParameters : decodeCatalogParameters(request.catalogParameters)
+      if (request.catalogParameters && !provider.catalogParameters) throw new Error('Invalid catalog parameters.')
+      if (existing?.fetchedModels && vendorId === existing.vendorId && region === existing.region && !request.key && JSON.stringify(provider.catalogParameters ?? {}) === JSON.stringify(existing.catalogParameters ?? {})) {
+        provider.modelCatalog = existing.modelCatalog
+        provider.modelCatalogStatus = existing.modelCatalogStatus
         provider.fetchedModels = existing.fetchedModels
       }
       if (!carryKey()) throw new Error('API key is required for an official provider.')
@@ -426,6 +431,7 @@ class ProviderAccountsModule {
     if (existing?.lastValidationFailure !== undefined && preserveValidationFailure)
       provider.lastValidationFailure = existing.lastValidationFailure
 
+    this.modelCatalog.applyDraft(request.catalogDraftToken, provider, existing)
     return { provider, settings }
   }
 

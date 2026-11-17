@@ -1,3 +1,7 @@
+import { ErrorNotice } from '@/components/error-notice'
+import { resolveOfficialModelCatalog } from '../../../../shared/provider-model-catalog'
+import { resolveVendorModelCatalog, type CatalogSnapshot, type CatalogStatus } from '@aipoch/providers'
+import { modelCatalogErrorMessage } from './model-catalog-feedback'
 import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import type { TFunction } from 'i18next'
@@ -23,7 +27,6 @@ import {
   resolveVendorApiKeyUrl,
   type CustomReasoningEffortTransport
 } from '@aipoch/providers'
-import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
 import {
   CUSTOM_REASONING_EFFORT_PRESETS,
   CUSTOM_REASONING_EFFORT_TRANSPORTS,
@@ -63,6 +66,9 @@ type ProviderFormProps = {
   // Effective supported-model list to show as tags (defaults to the vendor's bundled catalog). Passed
   // in edit mode so live-fetched models are reflected.
   supportedModels?: string[]
+  modelCatalog?: CatalogSnapshot
+  modelCatalogStatus?: CatalogStatus
+  catalogError?: string
   // When provided (a saved official provider with a key), renders a "refresh from vendor" control.
   onRefreshModels?: () => void
   isRefreshingModels?: boolean
@@ -253,6 +259,9 @@ const ProviderForm = ({
   needsKey = false,
   errors = {},
   supportedModels,
+  modelCatalog,
+  modelCatalogStatus,
+  catalogError,
   onRefreshModels,
   isRefreshingModels = false,
   disabled = false,
@@ -263,6 +272,9 @@ const ProviderForm = ({
   framework
 }: ProviderFormProps): React.JSX.Element => {
   const { t } = useTranslation()
+  // Keep catalog feedback copy visible to the locale resource guard even though the helper maps codes.
+  void [t('Online refresh is not supported for this provider or region.'), t('Enter an API key to refresh the model list.'), t('Complete the catalog parameters before refreshing.'), t('The API key was rejected. Check the key and region.'), t('This credential does not have permission to read the model catalog.'), t('Too many catalog requests. Try again later.'), t('The model catalog service is temporarily unavailable.'), t('The configured model catalog address was not found.'), t('The model catalog request timed out. Try again.'), t('Could not connect to the model catalog. Check your network.'), t('The model catalog exceeds the supported size limit.'), t('The provider changed while loading models. Try again.'), t('The vendor returned an invalid or empty model catalog.'), t('Workspace ID'), t('Last updated: {{time}}'), t('Save to apply the refreshed model list.'), t('Model refresh failed. The previous list is kept.')];
+
   const fileCredentialNotice = useFileCredentialNotice()
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
@@ -1054,11 +1066,11 @@ const ProviderForm = ({
           ) : null}
 
           {(() => {
-            const models = value.vendorId
-              ? getOfficialVendorModelIds(value.vendorId, value.region, supportedModels)
-              : (supportedModels ?? [])
-
-            if (models.length === 0) return null
+            const catalog = value.vendorId ? resolveVendorModelCatalog(value.vendorId, value.region) : undefined
+            const models = resolveOfficialModelCatalog({ vendorId: value.vendorId, region: value.region, modelCatalog, fetchedModels: supportedModels })
+            const missingKey = catalog?.options.auth !== 'none' && !value.key.trim() && (!hasStoredKey || needsKey)
+            const missingParameter = catalog?.options.inputs?.some((input) => input.required && !value.catalogParameters?.[input.id]?.trim())
+            const disabledReason = !catalog ? modelCatalogErrorMessage('unsupported', t) : missingKey ? modelCatalogErrorMessage('missing-key', t) : missingParameter ? modelCatalogErrorMessage('missing-parameter', t) : undefined
 
             return (
               <div className="space-y-1.5">
@@ -1072,24 +1084,31 @@ const ProviderForm = ({
                       )}
                     />
                   </div>
-                  {onRefreshModels ? (
+                  {true ? (
                     <button
                       type="button"
                       onClick={onRefreshModels}
-                      disabled={disabled || isRefreshingModels}
+                      disabled={disabled || isRefreshingModels || Boolean(disabledReason) || !onRefreshModels}
                       className="text-xs font-medium text-primary underline underline-offset-2 hover:text-primary/80 disabled:opacity-50"
                     >
                       {isRefreshingModels ? t('Refreshing…') : t('Refresh from vendor')}
                     </button>
                   ) : null}
                 </div>
-                <div className="flex flex-wrap gap-1.5">
+                {catalog?.options.inputs?.map((input) => (
+                  <div key={input.id} className="space-y-1.5">
+                    <label className={fieldLabelClassName} htmlFor={`catalog-${input.id}`}>{t('Workspace ID')}</label>
+                    <Input id={`catalog-${input.id}`} value={value.catalogParameters?.[input.id] ?? ''} disabled={disabled || isRefreshingModels} onChange={(event) => onChange({ catalogParameters: { ...value.catalogParameters, [input.id]: event.target.value } })} />
+                  </div>
+                ))}
+                {disabledReason ? <p className="text-xs text-muted-foreground">{disabledReason}</p> : null}
+                {modelCatalog ? <p className="text-xs text-muted-foreground">{t('Last updated: {{time}}', { time: new Date(modelCatalog.fetchedAt).toLocaleString() })}</p> : null}
+                {catalogError || modelCatalogStatus?.ok === false ? <ErrorNotice inline role="alert" title={t('Model refresh failed. The previous list is kept.')} description={catalogError ?? modelCatalogErrorMessage(modelCatalogStatus?.code, t)} /> : null}
+                {modelCatalog && !catalogError ? <p className="text-xs text-muted-foreground">{t('Save to apply the refreshed model list.')}</p> : null}
+                <div className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto">
                   {models.map((model) => (
-                    <span
-                      key={model}
-                      className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
-                    >
-                      {model}
+                    <span key={model.id} title={[...(Object.keys(model.routes ?? {})), model.contextWindow, model.reasoningEffort?.supported ? model.reasoningEffort.values.join(' / ') : ''].filter(Boolean).join(' · ')} className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
+                      {model.id}{model.supportsImageInput ? ' ◉' : ''}{model.lifecycle ? ` (${model.lifecycle})` : ''}
                     </span>
                   ))}
                 </div>

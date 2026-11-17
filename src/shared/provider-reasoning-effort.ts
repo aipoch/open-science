@@ -1,3 +1,5 @@
+import { resolveOfficialModelCatalog } from './provider-model-catalog'
+import type { CatalogSnapshot } from '@aipoch/providers'
 import {
   resolveVendorModelReasoningEffort,
   resolveReasoningEffortProfile,
@@ -17,6 +19,8 @@ export type ProviderReasoningEffortSource = {
   vendorId?: OfficialVendorId
   model?: string
   models?: readonly string[]
+  region?: string
+  modelCatalog?: CatalogSnapshot
   reasoningEffortPreset?: ReasoningEffortPresetSetting
 }
 
@@ -70,10 +74,17 @@ export const resolveProviderReasoningEffortProfile = (
   const providerType = provider.type
 
   switch (providerType) {
-    case 'official':
+    case 'official': {
+      const capability = resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)?.reasoningEffort
+      if (capability) {
+        if (!capability.supported || !capability.values.length) return { supported: false }
+        const v = capability.values
+        return { supported: true, slots: [v[0], v[1] ?? v[0], v[2] ?? v.at(-1)!, v[3] ?? v.at(-1)!, v[4] ?? v.at(-1)!] }
+      }
       return provider.vendorId
         ? resolveVendorModelReasoningEffort(provider.vendorId, model)
         : { supported: false }
+    }
     case 'codex-shared':
     case 'codex-isolated':
       return model ? resolveVendorModelReasoningEffort('openai', model) : { supported: false }

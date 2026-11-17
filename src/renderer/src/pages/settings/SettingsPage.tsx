@@ -1,3 +1,5 @@
+import { modelCatalogErrorMessage } from './model-catalog-feedback'
+import type { RefreshProviderModelsResult } from '../../../../shared/settings'
 import { type SettingsEditorLeaveState, SettingsFormFooter } from './SettingsLayout'
 import { dismissSettingsManualUpdateGuide } from './settings-manual-update-guide'
 import { createBookmarkPreviewItem } from '../workspace/annotations/annotation-reveal'
@@ -93,7 +95,6 @@ import type { ArchivedView } from '@/lib/settings-navigation'
 import type { MemoryView } from '@/lib/settings-navigation'
 import type { TagsView } from '@/lib/settings-navigation'
 import type { CredentialsView } from '@/lib/settings-navigation'
-import { resolveVendorModelsUrl } from '@aipoch/providers'
 import { ProviderForm } from './ProviderForm'
 import {
   createEmptyProviderFormValue,
@@ -237,7 +238,8 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     reasoningEffortPreset: provider.reasoningEffortPreset ?? 'standard-5',
     reasoningEffortTransport: provider.reasoningEffortTransport ?? 'reasoning-effort',
     vendorId: provider.vendorId,
-    region: provider.region
+    region: provider.region,
+    catalogParameters: provider.catalogParameters
   })
 
 const toUpsertRequest = (
@@ -257,6 +259,7 @@ const toUpsertRequest = (
   reasoningEffortTransport: value.type === 'custom' ? value.reasoningEffortTransport : undefined,
   vendorId: value.vendorId,
   region: value.region,
+  catalogParameters: value.catalogParameters,
   key: value.key || undefined
 })
 
@@ -593,6 +596,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [providerBase, setProviderBase] = useState<ProviderView>()
   const [isSaving, setIsSaving] = useState(false)
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
+  const [catalogPreview, setCatalogPreview] = useState<{ signature: string; result: RefreshProviderModelsResult }>()
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
@@ -1061,6 +1065,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const canSave =
     !isSaving &&
     !isTestingConnection &&
+    !isRefreshingModels &&
     !providerEditTargetMissing &&
     !providerConflict &&
     !hasProviderFormErrors(formErrors)
@@ -1070,6 +1075,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // loads). A create pre-selects the official vendor matching the active agent framework. Also
   // clears any stale status message on entry.
   const modelViewKey = modelView.kind === 'edit' ? `edit:${modelView.providerId}` : modelView.kind
+  const catalogSignature = JSON.stringify([modelViewKey, providerBase?.configRevision ?? 0, formValue])
+  const visibleCatalogPreview = catalogPreview?.signature === catalogSignature ? catalogPreview.result : undefined
   const [seededModelView, setSeededModelView] = useState<string | undefined>(modelViewKey)
   if (open && modelViewKey !== seededModelView) {
     setSeededModelView(modelViewKey)
@@ -1108,6 +1115,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setConnectionResult(undefined)
     setStatusMessage(undefined)
     setIsTestingConnection(false)
+    setIsRefreshingModels(false)
     setIsSaving(false)
     savingOperation.current = false
   }, [open, historyIndex, formValue])
@@ -1141,6 +1149,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const canTestConnection = formValue.type === 'custom' || formValue.type === 'official'
   const prospectiveRequest = (): UpsertProviderRequest => ({
     ...toUpsertRequest(formValue, editingProvider?.id),
+    catalogDraftToken: visibleCatalogPreview?.draftToken,
     ...(modelView.kind === 'edit'
       ? { requireExisting: true, expectedConfigRevision: providerBase?.configRevision ?? 0 }
       : {})
@@ -1238,33 +1247,22 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     }
   }
 
-  // Pulls the vendor's live model list for the provider being edited; on success the form's tags and
-  // the model selectors reflect it. On failure the bundled catalog stays in place.
-  const handleRefreshModels = async (providerId: string): Promise<void> => {
+  // Refresh the exact form snapshot; stale responses must never replace a newly edited draft.
+  const handleRefreshModels = async (): Promise<void> => {
+    const generation = ++formOperationGeneration.current
     setIsRefreshingModels(true)
-    setStatusMessage(undefined)
-
     try {
-      const result = await refreshProviderModels(providerId)
-
-      setStatusOk(result.ok)
-      setStatusMessage(
-        result.ok
-          ? t('Loaded {{count}} models from the vendor.', {
-              defaultValue_one: 'Loaded {{count}} model from the vendor.',
-              count: result.models?.length ?? 0
-            })
-          : t("Couldn't fetch models: {{reason}}. Using the bundled list.", {
-              reason: result.message
-                ? localizeProviderResourceMessage(result.message, t)
-                : t('request failed')
-            })
-      )
+      const result = await refreshProviderModels({
+        providerId: editingProvider?.id,
+        expectedConfigRevision: providerBase?.configRevision,
+        draft: { ...toUpsertRequest(formValue, editingProvider?.id), catalogDraftToken: visibleCatalogPreview?.draftToken }
+      })
+      if (generation !== formOperationGeneration.current) return
+      setCatalogPreview({ signature: catalogSignature, result: result.ok ? result : { ...visibleCatalogPreview, ...result, catalog: result.catalog ?? visibleCatalogPreview?.catalog, draftToken: result.draftToken ?? visibleCatalogPreview?.draftToken } })
     } catch {
-      setStatusOk(false)
-      setStatusMessage(t('Could not refresh models from the vendor.'))
+      if (generation === formOperationGeneration.current) setCatalogPreview({ signature: catalogSignature, result: { ...visibleCatalogPreview, ok: false, category: 'network', code: 'network' } })
     } finally {
-      setIsRefreshingModels(false)
+      if (generation === formOperationGeneration.current) setIsRefreshingModels(false)
     }
   }
 
@@ -1970,14 +1968,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                               ? editingProvider?.models
                               : undefined
                           }
-                          onRefreshModels={
-                            editingProvider?.type === 'official' &&
-                            editingProvider.hasKey &&
-                            editingProvider.vendorId &&
-                            resolveVendorModelsUrl(editingProvider.vendorId, editingProvider.region)
-                              ? () => void handleRefreshModels(editingProvider.id)
-                              : undefined
-                          }
+                          onRefreshModels={() => void handleRefreshModels()}
+                          modelCatalog={visibleCatalogPreview?.catalog ?? (editingProvider?.vendorId === formValue.vendorId && editingProvider?.region === formValue.region ? editingProvider?.modelCatalog : undefined)}
+                          modelCatalogStatus={visibleCatalogPreview?.catalogStatus ?? editingProvider?.modelCatalogStatus}
+                          catalogError={visibleCatalogPreview && !visibleCatalogPreview.ok ? modelCatalogErrorMessage(visibleCatalogPreview.code, t) : undefined}
                           isRefreshingModels={isRefreshingModels}
                           disabled={isSaving}
                           encryptionAvailable={encryptionAvailable}
