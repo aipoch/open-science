@@ -14,6 +14,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   writeFile
 } from 'node:fs/promises'
@@ -464,6 +465,7 @@ const launchEnvironment = (
       'systemroot',
       'windir',
       'comspec',
+      'tmpdir',
       'temp',
       'tmp',
       'tmpdir',
@@ -491,6 +493,8 @@ const launchEnvironment = (
         !key.startsWith('OPEN_SCIENCE_E2E_') &&
         key !== 'OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT' &&
         key !== 'OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT' &&
+        key !== 'OPEN_SCIENCE_ALLOW_MULTI_INSTANCE' &&
+        key !== 'OPEN_SCIENCE_WEB_PORT' &&
         key !== 'OPEN_SCIENCE_MICROMAMBA_BIN'
       )
         delete environment[key]
@@ -968,8 +972,8 @@ class ElectronAppHarness implements ElectronApp {
         fakeAgentBinRoot: join(testRoot, 'fake-agent-bin'),
         fakeRemoteItRoot: join(testRoot, 'fake-remoteit'),
         fakeRemoteItState: join(testRoot, 'fake-remoteit-state.json'),
-        storageRoot: join(testRoot, 'storage'),
-        userDataRoot: join(testRoot, 'electron-profile')
+        storageRoot: join(await realpath(testRoot), 'storage'),
+        userDataRoot: join(await realpath(testRoot), 'electron-profile')
       },
       windowMode
     )

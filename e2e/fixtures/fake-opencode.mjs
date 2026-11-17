@@ -22,6 +22,7 @@ import {
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
+import { macAcceptance } from './macos-acceptance.mjs'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
 import { fencePrompt, retryFencePrompt, exerciseKernelFence } from './kernel-fence.mjs'
 
@@ -2986,6 +2987,8 @@ if (process.argv.includes('--version')) {
             }
           })
           reply = 'Compaction preview complete.'
+        } else if (prompt.includes('MACOS_ACCEPTANCE_REQUEST:')) {
+          reply = await macAcceptance(context.params.sessionId, prompt, withMcpClient, toolResult)
         } else if (prompt.includes('Verify Runtime approval ')) {
           reply = await verifyRuntimeApproval(context, prompt)
         } else if (prompt.includes('Verify risky code Home wait status.')) {
