@@ -1,7 +1,7 @@
 import { getRayToken } from './ray-token'
 import { posix } from 'node:path'
 import { ComputeHostUnavailableError, type ComputeJob } from '@aipoch/compute'
-import { resolveRayJobsEndpoint } from '@aipoch/compute/node'
+import { resolveRayJobsEndpoint } from '@aipoch/compute/ray-endpoint'
 import { externalComputeMode } from '../../shared/compute'
 import type {
   ComputeApprovalRequestInfo,

@@ -54,6 +54,7 @@ type RawComputeService = Pick<
   | 'cancelJob'
   | 'setSessionConcurrencyLimit'
   | 'getSessionConcurrencyStatus'
+  | 'listExternalTargets'
 >
 
 // The only Compute facade exposed to Agent RPC. Global ComputeService remains unrestricted for
@@ -72,16 +73,7 @@ export class AgentComputeService {
   private targets(
     mode: NonNullable<ReturnType<typeof externalComputeMode>>
   ): Promise<ExternalComputeTarget[]> {
-    switch (mode) {
-      case 'kubernetes':
-        return this.compute.listKubernetesTargets()
-      case 'hugging_face_jobs':
-        return this.compute.listHostedTargets()
-      case 'ray_jobs':
-        return this.compute.listRayTargets()
-      case 'modal_sandbox':
-        return this.compute.listModalTargets()
-    }
+    return this.compute.listExternalTargets(mode)
   }
   private async requireEnabled(sessionId: string, providerId: string): Promise<void> {
     if (!this.enabledIds(sessionId).includes(providerId)) throw new ComputeHostUnavailableError()

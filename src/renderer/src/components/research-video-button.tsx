@@ -40,7 +40,7 @@ import type {
   ResearchVideoPresentationStatus,
   ResearchFilmMode
 } from '../../../shared/research-video-presentation'
-import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
+import { isDesktopRenderer } from '@/lib/interface-scale'
 import { useSettingsStore } from '@/stores/settings-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
@@ -199,14 +199,21 @@ export function ResearchVideoButton(props: FilmButtonProps): React.JSX.Element |
   )
 }
 
+export function ResearchVideoDialog(
+  props: ResearchVideoPresentationRequest & { onDismiss: () => void }
+): React.JSX.Element {
+  return <ResearchVideoModeButton {...props} renderTrigger={() => null} />
+}
+
 function ResearchVideoModeButton({
   preferSavedFilm = false,
+  onDismiss,
   renderTrigger,
   projectId,
   sessionId,
   branchId,
   mode: initialMode = 'research-explanation'
-}: FilmButtonProps): React.JSX.Element | null {
+}: FilmButtonProps & { onDismiss?: () => void }): React.JSX.Element | null {
   const { t } = useTranslation()
   const [statuses, setStatuses] = useState<
     Partial<Record<ResearchFilmMode, ResearchVideoPresentationStatus>>
@@ -218,7 +225,7 @@ function ResearchVideoModeButton({
       ? (filmModes.find((candidate) => statuses[candidate]?.result) ?? initialMode)
       : initialMode)
 
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(Boolean(onDismiss))
   const request = filmRequest(projectId, sessionId, branchId, mode)
   const deletionScope = mode
   const [deletionTarget, setDeletionTarget] = useState<string>()
@@ -354,7 +361,7 @@ function ResearchVideoModeButton({
       {label}
     </button>
   )
-  const desktop = document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true'
+  const desktop = isDesktopRenderer()
   const wasInstalling = useEffectEvent((target: ResearchFilmMode) => mode === target && installing)
   const watching = Object.values(statuses).some(
     (next) =>
@@ -590,6 +597,7 @@ function ResearchVideoModeButton({
       {open && (
         <WorkflowDialogFrame
           title={t('Research film')}
+          stage={statusLoaded ? mode : 'loading'}
           descriptionClassName="truncate"
           busy={false}
           onClose={() => {
@@ -600,19 +608,28 @@ function ResearchVideoModeButton({
           onCloseAutoFocus={(event) => {
             event.preventDefault()
             triggerRef.current?.querySelector('button')?.focus()
+            onDismiss?.()
             if (settingsAfterClose.current) {
               useSettingsStore.getState().openSettingsToPanel('model')
               settingsAfterClose.current = false
             }
           }}
-          className="w-[min(480px,calc(100vw-2rem))]"
+          // Let the panel reveal the full layout without shrinking the scroll area mid-transition.
+          className="w-[min(480px,calc(100vw-2rem))] *:h-auto *:flex-none"
           footer={
-            (statusLoaded ||
-              busy ||
-              installing ||
-              status.canResume ||
-              status.result ||
-              model?.availability === 'ready') && (
+            !statusLoaded ? (
+              !diagnostic && (
+                <footer className={dialogFooterClassName}>
+                  <span
+                    role="status"
+                    className="inline-flex min-h-8 items-center gap-2 text-sm text-muted-foreground"
+                  >
+                    <Loader2 aria-hidden="true" className="size-4 motion-safe:animate-spin" />
+                    {t('Loading…')}
+                  </span>
+                </footer>
+              )
+            ) : (
               <footer className={`${dialogFooterClassName} justify-between gap-2`}>
                 {busy || installing ? (
                   <>
@@ -800,6 +817,11 @@ function ResearchVideoModeButton({
                   )
                 })}
               </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t(
+                  'Generating a film uses your token quota, and its quality depends on the model you select.'
+                )}
+              </p>
               {blocked && !busy && !diagnostic && (
                 <ErrorNotice
                   inline
