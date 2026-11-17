@@ -40,7 +40,7 @@ import type {
   ResearchVideoPresentationStatus,
   ResearchFilmMode
 } from '../../../shared/research-video-presentation'
-import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
+import { isDesktopRenderer } from '@/lib/interface-scale'
 import { useSettingsStore } from '@/stores/settings-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
@@ -198,16 +198,23 @@ export function ResearchVideoButton(props: FilmButtonProps): React.JSX.Element |
   )
 }
 
+export function ResearchVideoDialog(
+  props: ResearchVideoPresentationRequest & { onDismiss: () => void }
+): React.JSX.Element {
+  return <ResearchVideoModeButton {...props} renderTrigger={() => null} />
+}
+
 function ResearchVideoModeButton({
+  onDismiss,
   renderTrigger,
   projectId,
   sessionId,
   branchId,
   mode: initialMode = 'research-explanation'
-}: FilmButtonProps): React.JSX.Element | null {
+}: FilmButtonProps & { onDismiss?: () => void }): React.JSX.Element | null {
   const { t } = useTranslation()
   const [mode, setMode] = useState<ResearchFilmMode>(initialMode)
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(Boolean(onDismiss))
   const request = filmRequest(projectId, sessionId, branchId, mode)
   const deletionScope = mode
   const [deletionTarget, setDeletionTarget] = useState<string>()
@@ -340,7 +347,7 @@ function ResearchVideoModeButton({
       {label}
     </button>
   )
-  const desktop = document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true'
+  const desktop = isDesktopRenderer()
   const wasInstalling = useEffectEvent((target: ResearchFilmMode) => mode === target && installing)
   const watching = Object.values(statuses).some(
     (next) =>
@@ -582,6 +589,7 @@ function ResearchVideoModeButton({
           onCloseAutoFocus={(event) => {
             event.preventDefault()
             triggerRef.current?.querySelector('button')?.focus()
+            onDismiss?.()
             if (settingsAfterClose.current) {
               useSettingsStore.getState().openSettingsToPanel('model')
               settingsAfterClose.current = false
@@ -782,6 +790,19 @@ function ResearchVideoModeButton({
                   )
                 })}
               </div>
+              {statusLoaded &&
+                !busy &&
+                !installing &&
+                !pending &&
+                !blocked &&
+                !confirmDeletion &&
+                (!status.result || confirmRegeneration) && (
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {t(
+                      'Generating a film uses your token quota, and its quality depends on the model you select.'
+                    )}
+                  </p>
+                )}
               {blocked && !busy && !diagnostic && (
                 <ErrorNotice
                   inline

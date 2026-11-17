@@ -7806,6 +7806,7 @@
     "Generating narration and aligning captions…": "ナレーションの生成と字幕の調整中…",
     "Speech steps: {{completed}} / {{total}} · Lines: {{lines}} / {{totalLines}}": "音声処理：{{completed}} / {{total}} · 文：{{lines}} / {{totalLines}}",
     "Research film": "研究ショート動画",
+    "Generating a film uses your token quota, and its quality depends on the model you select.": "動画の生成にはトークン枠を使用し、仕上がりの品質は選択したモデルの性能に左右されます。",
     "Generate research film": "研究ショート動画を生成",
     "View research film": "研究ショート動画を表示",
     "Play research film": "研究ショート動画を再生",

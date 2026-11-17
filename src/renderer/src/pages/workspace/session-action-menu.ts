@@ -11,6 +11,7 @@ import {
   Pin,
   PinOff,
   Trash2,
+  Video,
   PackageCheck,
   Package
 } from 'lucide-react'
@@ -31,6 +32,7 @@ export type SessionActionId =
   | 'check-artifacts'
   | 'view-notebook'
   | 'view-replay'
+  | 'research-explanation'
   | 'discuss'
   | 'export'
   | 'export-package'
@@ -56,6 +58,7 @@ export const SESSION_ACTION_CATALOG = {
   'check-artifacts': { labelKey: 'Check session artifacts', icon: PackageCheck },
   'view-notebook': { labelKey: 'View notebook', icon: BookOpen },
   'view-replay': { labelKey: 'View replay', icon: Play },
+  'research-explanation': { labelKey: 'Generate research film', icon: Video },
   discuss: { labelKey: 'Discuss', icon: MessageSquare },
   export: { labelKey: 'Export conversation…', icon: Download },
   'export-package': { labelKey: 'Export Session package', icon: Package },
@@ -74,6 +77,7 @@ export const SESSION_ACTION_RECIPE = [
   { kind: 'action', action: 'download-artifacts' },
   { kind: 'action', action: 'check-artifacts' },
   { kind: 'action', action: 'view-notebook' },
+  { kind: 'action', action: 'research-explanation' },
   {
     kind: 'submenu',
     labelKey: 'Export',
@@ -97,6 +101,7 @@ type SessionActionOptions = {
   onDownloadArtifacts?: (session: ChatSession) => void
   onCheckArtifacts?: (session: ChatSession) => void
   onViewNotebook?: (session: ChatSession) => void
+  onOpenResearchFilm?: (session: ChatSession) => void | Promise<void>
   onViewReplay?: (session: ChatSession) => void
   onDiscussSession?: (session: ChatSession) => Promise<void>
   onExportSession?: (session: ChatSession) => void
@@ -171,6 +176,11 @@ export const createSessionActionBindings = (
     execute: ({ session }) => options.onViewReplay?.(session),
     hidden: !options.onViewReplay,
     disabled: ({ session }) => Boolean(session.isPending)
+  },
+  'research-explanation': {
+    execute: ({ session }) => options.onOpenResearchFilm?.(session),
+    hidden: ({ session }) =>
+      !options.onOpenResearchFilm || Boolean(session.isPending || session.firstPromptDraft)
   },
   discuss: {
     execute: ({ session }) => options.onDiscussSession?.(session),

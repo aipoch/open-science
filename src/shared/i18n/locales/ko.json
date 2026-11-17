@@ -7804,6 +7804,7 @@
     "Generating narration and aligning captions…": "내레이션 생성 및 자막 정렬 중…",
     "Speech steps: {{completed}} / {{total}} · Lines: {{lines}} / {{totalLines}}": "음성 처리: {{completed}} / {{total}} · 문장: {{lines}} / {{totalLines}}",
     "Research film": "연구 단편 영상",
+    "Generating a film uses your token quota, and its quality depends on the model you select.": "영상을 생성하면 토큰 할당량이 소모되며, 영상 품질은 선택한 모델의 성능에 따라 달라집니다.",
     "Generate research film": "연구 단편 영상 생성",
     "View research film": "연구 단편 영상 보기",
     "Play research film": "연구 단편 영상 재생",

@@ -7806,6 +7806,7 @@
     "Generating narration and aligning captions…": "正在生成旁白并对齐字幕…",
     "Speech steps: {{completed}} / {{total}} · Lines: {{lines}} / {{totalLines}}": "语音步骤：{{completed}} / {{total}} · 已完成句子：{{lines}} / {{totalLines}}",
     "Research film": "研究短片",
+    "Generating a film uses your token quota, and its quality depends on the model you select.": "生成短片会消耗你的词元额度，成片质量取决于所选模型的能力。",
     "Generate research film": "生成研究短片",
     "View research film": "查看研究短片",
     "Play research film": "播放研究短片",
