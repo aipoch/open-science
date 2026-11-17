@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +7,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import { initializeWsl2BashPreview } from '../wsl/wsl2-preview-gate'
+import type { MemoryPolicyObservation } from './memory-policy'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
+import { NotebookRuntimeService } from './runtime-service'
 import { runShellCommand } from './shell-process'
 
 configureTestRuntimeMetadata()
@@ -112,6 +115,92 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
     expect(diagnosticText).not.toContain('你好 stdout')
     expect(diagnosticText).toContain('real-wsl-execution')
   })
+
+  it('passes WSL memory admission with the Windows host snapshot and preserves its scope', async () => {
+    const manifestRoot = join(root, 'resources', 'notebook-network-sandbox', 'wsl2')
+    await mkdir(manifestRoot, { recursive: true })
+    await copyFile(
+      join(
+        process.cwd(),
+        'packages',
+        'notebook-network-sandbox',
+        'vendor',
+        'wsl2',
+        'manifest.json'
+      ),
+      join(manifestRoot, 'manifest.json')
+    )
+    initializeWsl2BashPreview({
+      platform: 'win32',
+      arch: 'x64',
+      packaged: true,
+      resourcesPath: join(root, 'resources')
+    })
+    const rejections: MemoryPolicyObservation[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project-wsl-memory',
+      platform: 'win32',
+      processSandbox: sandbox,
+      callbacks: { onMemoryPolicyRejected: (_context, state) => rejections.push(state) },
+      shellRuntimeBinding: {
+        kind: 'wsl2-bash',
+        profileId: 'real-profile',
+        distro: distro!,
+        user: user!
+      }
+    })
+    try {
+      const sampled = await (
+        await service.getMemoryPolicy()
+      ).getState({
+        executionScope: 'wsl:real-profile'
+      })
+      expect(sampled).toMatchObject({
+        status: 'healthy',
+        source: 'windows-performance-info',
+        executionScope: 'wsl:real-profile',
+        facts: {
+          totalBytes: expect.any(Number),
+          availableBytes: expect.any(Number),
+          commitLimitBytes: expect.any(Number),
+          committedBytes: expect.any(Number)
+        }
+      })
+      const result = await service.executeShell({
+        sessionId: 'session-wsl-memory',
+        workspaceCwd: workspace,
+        command: "printf 'wsl-memory-admission-ok\\n'",
+        timeoutMs: 15_000
+      })
+      if (result.errorCode === 'shell-network-transport-unsupported') {
+        // Mirrored networking is an opt-in environment prerequisite, not a memory policy refusal.
+        expect(result).toMatchObject({ exitCode: null, recovery: { execution: 'not-started' } })
+      } else {
+        expect(result, JSON.stringify(result)).toMatchObject({
+          exitCode: 0,
+          stdout: 'wsl-memory-admission-ok\n'
+        })
+      }
+      expect(rejections).toEqual([])
+      const state = (await service.getMemoryPolicy()).currentState({
+        executionScope: 'wsl:real-profile'
+      })
+      console.info('WSL Windows host memory admission', {
+        sampled,
+        readiness: state,
+        exitCode: result.exitCode,
+        errorCode: result.errorCode
+      })
+    } finally {
+      try {
+        expect(await service.dispose()).toEqual({ reaped: true })
+      } finally {
+        initializeWsl2BashPreview({ platform: 'win32', arch: 'x64', packaged: false })
+      }
+    }
+  }, 30_000)
 
   it.each([
     { reason: 'timeout' as const, timeoutMs: 1_000 },

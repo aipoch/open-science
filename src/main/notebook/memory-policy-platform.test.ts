@@ -49,7 +49,7 @@ describe('WindowsMemoryPolicyAdapter', () => {
     await expect(service.getState({ force: true })).resolves.toMatchObject({ status: 'healthy' })
   })
 
-  it('distinguishes an old native component and refuses an unsupported WSL execution domain', async () => {
+  it('distinguishes an old native component and refuses an unknown execution domain', async () => {
     const adapter = new WindowsMemoryPolicyAdapter({
       sampleWindowsResources: async () =>
         windowsSample({ availableBytes: 100, commitLimitBytes: 1000, committedBytes: 100 })
@@ -57,9 +57,45 @@ describe('WindowsMemoryPolicyAdapter', () => {
     await expect(adapter.sample(new AbortController().signal)).rejects.toMatchObject({
       code: 'memory-component-unavailable'
     })
-    await expect(adapter.sample(new AbortController().signal, 'wsl:Ubuntu')).rejects.toMatchObject({
-      code: 'execution-domain-unavailable'
+    for (const executionScope of ['wsl:', 'linux:pid:1', 'unknown:scope']) {
+      await expect(
+        new WindowsMemoryPolicyAdapter().sample(new AbortController().signal, executionScope)
+      ).rejects.toMatchObject({ code: 'execution-domain-unavailable' })
+    }
+  })
+
+  it('uses one Windows host snapshot for a known WSL scope without rewriting its domain', async () => {
+    const native = {
+      sampleWindowsResources: vi.fn(async () =>
+        windowsSample({
+          totalPhysicalBytes: 1000,
+          availableBytes: 800,
+          commitLimitBytes: 1000,
+          committedBytes: 200
+        })
+      )
+    }
+    const service = new MemoryPolicyService({
+      adapter: new WindowsMemoryPolicyAdapter(native),
+      now: () => 1000
     })
+
+    await expect(service.getState({ executionScope: 'wsl:profile-1' })).resolves.toMatchObject({
+      status: 'healthy',
+      source: 'windows-performance-info',
+      executionScope: 'wsl:profile-1',
+      facts: {
+        totalBytes: 1000,
+        availableBytes: 800,
+        commitLimitBytes: 1000,
+        committedBytes: 200
+      }
+    })
+    await expect(service.getState({ executionScope: 'wsl:profile-1' })).resolves.toMatchObject({
+      executionScope: 'wsl:profile-1'
+    })
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(1)
+    expect(native.sampleWindowsResources).toHaveBeenCalledWith(false, [])
   })
 })
 
