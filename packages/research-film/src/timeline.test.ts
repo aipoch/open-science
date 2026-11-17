@@ -34,6 +34,24 @@ describe('research video timeline', () => {
         'Scene veil'
       )
   })
+  it('gives the ending its own space and time to finish the logo animation', () => {
+    const story = {
+      scenes: [
+        {
+          ...spec.scenes[0],
+          role: 'outro',
+          panels: [...spec.scenes[0].panels, { type: 'end_card', at: 'end-0.1' }]
+        }
+      ]
+    }
+    const {
+      scenes: [scene]
+    } = buildVideoTimeline(story, voices)
+    const [report, card] = scene.panels
+    expect(report.t_out).toBe(card.occ_from)
+    expect(card.t_in).toBe(card.occ_from)
+    expect(scene.dur - card.t_in).toBeCloseTo(5)
+  })
   it('pins quantitative reveals to the corresponding spoken caption word', () => {
     const result = buildVideoTimeline(spec, voices)
     expect(result.duration).toBe(5.3)

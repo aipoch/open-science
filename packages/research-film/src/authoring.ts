@@ -178,6 +178,21 @@ export async function authorResearchFilmSource(options: {
     (correction) => author.writeScreenplay(source, signal, correction),
     (output) => {
       const parsed = parseResearchVideoScreenplay(output, source.messages.length)
+      const lastScene = parsed.scenes.at(-1)!
+      // Older illustration screenplays have no scene roles. Supply the fixed
+      // user-profile sign-off when resuming one through the generation path.
+      if (lastScene.role === undefined) {
+        if (lastScene.panels.at(-1)?.type === 'end_card') lastScene.role = 'outro'
+        else
+          parsed.scenes.push({
+            id: 'outro',
+            role: 'outro',
+            msg: lastScene.msg,
+            lines: [{ caption: 'Made with Open-Science.' }],
+            panels: [{ type: 'end_card' }]
+          })
+      } else if (lastScene.role !== 'outro' || lastScene.panels.at(-1)?.type !== 'end_card')
+        throw new Error('Finish with an outro scene whose final panel is an end_card.')
       researchVideoAnimationPlan(parsed)
       if (parsed.libs || parsed.assets || parsed.subjects)
         throw new Error(

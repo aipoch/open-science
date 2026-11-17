@@ -1,5 +1,5 @@
 import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from './source.js'
-import { readFile, realpath, stat, mkdir, writeFile, rm } from 'node:fs/promises'
+import { readFile, readdir, lstat, realpath, stat, mkdir, writeFile, rm } from 'node:fs/promises'
 import { resolve, relative, isAbsolute, dirname, extname, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { Script } from 'node:vm'
@@ -282,6 +282,23 @@ export async function buildResearchVideoPlayer(options: {
   if (sourceBytes > 200 * 1024 * 1024) throw new Error('Source bundle exceeds 200 MiB')
   sources['mix.wav'] = mix
   dataUrls['mix.wav'] = dataUrl('mix.wav', mix)
+  // The skill stores reusable drawings beside video.json, under subjects/*.json.
+  // Use the same source boundary and archive accounting as animation scripts.
+  const subjects: Record<string, unknown> = Object.create(null)
+  const subjectDirectory = join(root, 'subjects')
+  const subjectInfo = await lstat(subjectDirectory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error
+    return undefined
+  })
+  if (subjectInfo) {
+    if (!subjectInfo.isDirectory()) throw new Error('Invalid subjects directory')
+    for (const entry of await readdir(subjectDirectory, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+      const drawing = JSON.parse((await source(`subjects/${entry.name}`)).toString())
+      if (!Array.isArray(drawing?.parts)) throw new Error(`Invalid subject drawing: ${entry.name}`)
+      subjects[entry.name.slice(0, -5)] = drawing
+    }
+  }
   const data = {
     meta: {
       title: spec.title,
@@ -296,7 +313,7 @@ export async function buildResearchVideoPlayer(options: {
       : null,
     tables,
     codes,
-    subjects: {},
+    subjects,
     assets: [],
     svgs: {}
   }

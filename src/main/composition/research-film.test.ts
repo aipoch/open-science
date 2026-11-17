@@ -163,6 +163,13 @@ it.each(outcomes)(
                 { type: 'title', text: 'Evidence' },
                 { type: 'animation', script: 'anims/hook.js', size: 'band' }
               ]
+            },
+            {
+              id: 'outro',
+              role: 'outro',
+              msg: 1,
+              lines: [{ caption: 'Made with Open-Science.' }],
+              panels: [{ type: 'end_card' }]
             }
           ]
         })

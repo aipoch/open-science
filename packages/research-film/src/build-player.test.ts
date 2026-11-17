@@ -35,6 +35,9 @@ describe('research video source boundaries', () => {
     await writeFile(join(root, 'voice', 'word-times.json'), JSON.stringify({ s_0: [[0, 1]] }))
     await writeFile(join(root, 'voice', 's_0.wav'), Buffer.from('test audio'))
     await writeFile(join(root, 'mix.wav'), Buffer.from('test audio'))
+    const drawing = JSON.stringify({ parts: [{ type: 'circle', r: 10 }] })
+    await mkdir(join(root, 'subjects'))
+    await writeFile(join(root, 'subjects', 'landmark.json'), drawing)
     const engineDirectory = join(researchFilmResources().stageDirectory, '')
     const options = {
       specPath: join(root, 'video.json'),
@@ -46,6 +49,10 @@ describe('research video source boundaries', () => {
     const archive = unzipSync(await readFile(result.sourcePath))
     expect(Buffer.from(archive['engine/js/stage.js'])).toEqual(
       await readFile(join(engineDirectory, 'js/stage.js'))
+    )
+    expect(Buffer.from(archive['subjects/landmark.json']).toString()).toBe(drawing)
+    expect(await readFile(result.playerPath, 'utf8')).toContain(
+      `"subjects":{"landmark":${drawing}}`
     )
     expect(Buffer.from(archive['video.json'])).toEqual(await readFile(options.specPath))
     expect(JSON.parse(Buffer.from(archive['manifest.json']).toString()).files).toContainEqual({

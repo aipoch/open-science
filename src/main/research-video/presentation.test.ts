@@ -366,6 +366,13 @@ it('resumes an interrupted scene after restart using the validated screenplay an
               box: 'plain'
             }
           ]
+        },
+        {
+          id: 'outro',
+          role: 'outro',
+          msg: 1,
+          lines: [{ caption: 'Made with Open-Science.' }],
+          panels: [{ type: 'end_card' }]
         }
       ]
     })
