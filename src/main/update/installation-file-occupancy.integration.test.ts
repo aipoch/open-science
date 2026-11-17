@@ -193,11 +193,13 @@ it.runIf(process.platform === 'win32')(
     const root = await mkdtemp(join(tmpdir(), 'installation-data-holder-'))
     const data = join(root, 'settings.json')
     const payload = join(root, 'addon.node')
+    const wasm = join(root, 'grammar.wasm')
     const holders: ReturnType<typeof spawn>[] = []
     try {
       await writeFile(data, '{}')
       await writeFile(payload, 'fixture')
-      for (const file of [data, payload]) {
+      await writeFile(wasm, 'fixture')
+      for (const file of [data, payload, wasm]) {
         const child = spawn(
           process.execPath,
           [
@@ -213,6 +215,7 @@ it.runIf(process.platform === 'win32')(
       const pids = await inspectInstallationProcessesAsync(root)
       expect(pids).not.toContain(holders[0].pid)
       expect(pids).toContain(holders[1].pid)
+      expect(pids).toContain(holders[2].pid)
     } finally {
       for (const child of holders) {
         const closed = once(child, 'close')

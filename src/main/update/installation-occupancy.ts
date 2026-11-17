@@ -257,10 +257,13 @@ export async function inspectInstallationProcessesAsync(
             }
           }
           // Like Inno Setup's default CloseApplicationsFilter, query only loaded or mapped payload:
-          // executables, libraries, native addons, ASAR archives and Chromium's mapped .pak/.dat/.bin.
+          // executables, libraries, native addons, WebAssembly modules, ASAR archives and Chromium's
+          // mapped .pak/.dat/.bin.
           // Every registered file scales the cold Restart Manager query. Ordinary data files held
           // without delete sharing make the installer's staged removal fail and roll back instead.
-          const resources = files.filter(file => /\.(?:exe|dll|node|asar|pyd|pak|dat|bin)$/i.test(file))
+          const resources = files.filter(file =>
+            /\.(?:exe|dll|node|wasm|asar|pyd|pak|dat|bin)$/i.test(file)
+          )
           const stats = { fileCount: files.length, resourceCount: resources.length, enumMs: Date.now() - started }
           // A timed-out scanner has no stdout; stderr progress identifies the stage that was reached.
           process.stderr.write(JSON.stringify({ stage: 'resource-query', ...stats }) + '\n')

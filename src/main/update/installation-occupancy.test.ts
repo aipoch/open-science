@@ -418,6 +418,7 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
       { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'node.exe' },
       { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'LICENSE.txt' },
       { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'Resources.PAK' },
+      { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'grammar.wasm' },
       {
         isFile: () => false,
         isDirectory: () => true,
@@ -482,7 +483,8 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
       // Ordinary data files are left to the installer's staged removal and rollback.
       expect(query).toHaveBeenCalledWith([
         join('c:\\apps\\science', 'node.exe'),
-        join('c:\\apps\\science', 'Resources.PAK')
+        join('c:\\apps\\science', 'Resources.PAK'),
+        join('c:\\apps\\science', 'grammar.wasm')
       ])
       expect(mocks.spawnSync).not.toHaveBeenCalled()
       if (mode === 'sync') expect(mocks.run).not.toHaveBeenCalled()
@@ -496,8 +498,8 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
       windows([])
       expect(await inspect('c:\\apps\\science')).toEqual([])
       expect(mocks.info).toHaveBeenCalledWith('Windows installation occupancy inspected', {
-        fileCount: 3,
-        resourceCount: 2,
+        fileCount: 4,
+        resourceCount: 3,
         enumMs: expect.any(Number),
         rmMs: expect.any(Number),
         durationMs: expect.any(Number)
@@ -507,8 +509,8 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
       )
       expect(JSON.parse(stderr)).toMatchObject({
         stage: 'resource-query',
-        fileCount: 3,
-        resourceCount: 2
+        fileCount: 4,
+        resourceCount: 3
       })
     }
   )
