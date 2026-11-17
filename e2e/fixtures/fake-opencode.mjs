@@ -217,6 +217,13 @@ const suspendSessionWrites = async () => {
   await Promise.all(directories.map((directory) => chmod(directory, 0o500)))
 }
 
+// A fixture gate occupies one line. The provider may receive more context after the user text.
+const releaseGateFromPrompt = (prompt, marker) => {
+  const start = prompt.indexOf(marker)
+  if (start < 0) throw new Error(`Missing fixture gate: ${marker.trim()}`)
+  return JSON.parse(prompt.slice(start + marker.length).split(/\r?\n/u, 1)[0])
+}
+
 const stringEnvironment = (overrides = []) => {
   const environment = Object.fromEntries(
     Object.entries(process.env).filter((entry) => entry[1] !== undefined)
@@ -2719,7 +2726,7 @@ if (process.argv.includes('--version')) {
             })
             await delay(50)
           }
-          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
+          await waitForReleaseFile(releaseGateFromPrompt(prompt, 'Release file: '))
           reply = 'Native Markdown parser journey complete.'
         } else if (prompt.includes(RUNTIME_RESOURCE_STRESS_PROMPT)) {
           const stressMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
@@ -2793,7 +2800,7 @@ if (process.argv.includes('--version')) {
           await streamSegment(1, 12)
           // Let scroll-intent tests release the remaining stream after real reader input.
           if (prompt.includes('Release file: '))
-            await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
+            await waitForReleaseFile(releaseGateFromPrompt(prompt, 'Release file: '))
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -2834,7 +2841,7 @@ if (process.argv.includes('--version')) {
             await delay(50)
           }
           // Hold only the fake stream until the test has queued the follow-up through the UI.
-          const releaseFile = JSON.parse(prompt.split('Release file: ')[1])
+          const releaseFile = releaseGateFromPrompt(prompt, 'Release file: ')
           await waitForReleaseFile(releaseFile)
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
@@ -3172,7 +3179,7 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(DELEGATION_ARTIFACT_VERSION_INPUT_PROMPT)) {
           reply = await runArtifactVersionInputDelegation(context.params.sessionId)
         } else if (prompt.includes(DELEGATION_BOUNDED_COLLECT_PROMPT)) {
-          const releaseFile = JSON.parse(prompt.split('Release file: ')[1])
+          const releaseFile = releaseGateFromPrompt(prompt, 'Release file: ')
           const slowTask = `${DELEGATED_BOUNDED_SLOW_TASK}\nRelease file: ${JSON.stringify(releaseFile)}`
           const dispatched = controlResultValue(
             await executeControlCode(
@@ -3218,7 +3225,7 @@ if (process.argv.includes('--version')) {
           }
           reply = 'Production bounded collect journey completed.'
         } else if (prompt.includes(DELEGATION_SCROLL_INTENT_PROMPT)) {
-          const releaseFiles = JSON.parse(prompt.split('Release files: ')[1])
+          const releaseFiles = releaseGateFromPrompt(prompt, 'Release files: ')
           await runProductionDelegationRequest(
             context.params.sessionId,
             {
@@ -3352,7 +3359,7 @@ if (process.argv.includes('--version')) {
               content: { type: 'text', text: 'Two upward lanes are starting.' }
             }
           })
-          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
+          await waitForReleaseFile(releaseGateFromPrompt(prompt, 'Release file: '))
           reply = 'Reliable fairness source turn completed.'
         } else if (prompt.includes(SUBAGENT_MODEL_BATCH_PROMPT)) {
           const delegated = controlResultValue(
@@ -3541,10 +3548,10 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(RELIABLE_FAIRNESS_USER_PROMPT)) {
           reply = 'Concurrent real user prompt completed.'
         } else if (prompt.includes(DELEGATED_BOUNDED_SLOW_TASK)) {
-          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]), 120_000)
+          await waitForReleaseFile(releaseGateFromPrompt(prompt, 'Release file: '), 120_000)
           reply = 'Delayed bounded child completed.'
         } else if (prompt.includes(DELEGATED_SCROLL_INTENT_TASK)) {
-          const releaseFiles = JSON.parse(prompt.split('Release files: ')[1])
+          const releaseFiles = releaseGateFromPrompt(prompt, 'Release files: ')
           const messageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           const emit = async (text) =>
             context.client.notify(acp.methods.client.session.update, {
