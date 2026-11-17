@@ -8,6 +8,7 @@ import { createUploadVersionReference } from '../../../../shared/uploads'
 
 const harness = vi.hoisted(() => ({
   reveal: vi.fn(),
+  listSource: vi.fn(),
   openReference: vi.fn(),
   projectId: 'project-1' as string | undefined
 }))
@@ -48,6 +49,13 @@ beforeEach(() => {
     .mockReset()
     .mockReturnValue({ admitted: true, result: Promise.resolve('revealed') })
   harness.openReference.mockReset()
+  harness.listSource
+    .mockReset()
+    .mockResolvedValue({ source: { checksum: citation.source!.checksum } })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: { pdfAnnotations: { list: harness.listSource } }
+  })
   harness.projectId = 'project-1'
   container = document.createElement('div')
   document.body.append(container)
@@ -56,6 +64,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
+  delete (window as unknown as { api?: unknown }).api
 })
 const click = async (button: Element): Promise<void> => {
   await act(async () => button.dispatchEvent(new MouseEvent('click', { bubbles: true })))
@@ -136,8 +145,78 @@ it('uses the packaged bibliographic snapshot and imported session for package ci
   })
 })
 
+it('keeps package reference details usable without offering an omitted PDF preview', async () => {
+  harness.listSource.mockResolvedValue({ items: [], readOnly: true })
+  await show(citation, true, { packageSessionId: 'imported-session' })
+  expect(harness.listSource).toHaveBeenCalledExactlyOnceWith({
+    projectId: 'project-1',
+    sessionId: 'imported-session',
+    sourceFileId: citation.source!.attachmentId,
+    versionId: citation.source!.versionId
+  })
+  expect(document.body.textContent).toContain(
+    'The original PDF is unavailable in this Session package.'
+  )
+  expect(button('View source page').disabled).toBe(true)
+  await click(button('View source page'))
+  expect(harness.reveal).not.toHaveBeenCalled()
+  await click(button('View reference'))
+  expect(document.body.textContent).toContain('Saved reference metadata from the Session package.')
+})
+
+it('waits for package PDF membership before enabling its source action', async () => {
+  let resolve!: (result: unknown) => void
+  harness.listSource.mockReturnValue(
+    new Promise((done) => {
+      resolve = done
+    })
+  )
+  await show(citation, true, { packageSessionId: 'imported-session' })
+  expect(button('View source page').disabled).toBe(true)
+  await click(button('View source page'))
+  expect(harness.reveal).not.toHaveBeenCalled()
+  await act(async () => {
+    resolve({ source: { checksum: citation.source!.checksum } })
+  })
+  expect(button('View source page').disabled).toBe(false)
+  await click(button('View source page'))
+  expect(harness.reveal).toHaveBeenCalledTimes(1)
+})
+
+it('preserves a confirmed missing PDF when reopening the card and its source check fails', async () => {
+  harness.listSource
+    .mockResolvedValueOnce({ items: [], readOnly: true })
+    .mockRejectedValueOnce(new Error('temporarily unavailable'))
+  await show(citation, true, { packageSessionId: 'imported-session' })
+  expect(button('View source page').disabled).toBe(true)
+  await click(button('1'))
+  expect(document.body.textContent).not.toContain(
+    'The original PDF is unavailable in this Session package.'
+  )
+  await click(button('1'))
+  expect(harness.listSource).toHaveBeenCalledTimes(2)
+  expect(document.body.textContent).toContain(
+    'The original PDF is unavailable in this Session package.'
+  )
+  expect(button('View source page').disabled).toBe(true)
+  await click(button('View source page'))
+  expect(harness.reveal).not.toHaveBeenCalled()
+})
+
+it('does not mistake a failed package source check for a missing PDF', async () => {
+  harness.listSource.mockRejectedValue(new Error('temporarily unavailable'))
+  await show(citation, true, { packageSessionId: 'imported-session' })
+  expect(document.body.textContent).not.toContain(
+    'The original PDF is unavailable in this Session package.'
+  )
+  expect(button('View source page').disabled).toBe(false)
+  await click(button('View source page'))
+  expect(harness.reveal).toHaveBeenCalledTimes(1)
+})
+
 it('shows the excerpt on demand and reveals the original immutable PDF version at its page', async () => {
   await show()
+  expect(harness.listSource).not.toHaveBeenCalled()
   expect(document.body.textContent).toContain(citation.quote)
   expect(document.body.textContent).toContain('Page 3')
   await click(button('View source page'))

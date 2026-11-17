@@ -627,6 +627,32 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(domToDoc(root)).toEqual({ nodes: [...doc.nodes, { type: 'text', text: 'after' }] })
   })
 
+  it.each([
+    { type: 'literature-scope', scope: 'project' } as const,
+    {
+      type: 'literature-scope',
+      scope: 'collection',
+      collectionId: 'collection-a',
+      name: 'Research papers'
+    } as const
+  ])(
+    'keeps an editable caret after a prepared $scope scope without sending its marker',
+    (scope) => {
+      const doc: ComposerDoc = { nodes: [scope] }
+      const root = document.createElement('div')
+      applyDocToDom(root, doc)
+
+      expect(root.lastChild?.nodeType).toBe(Node.TEXT_NODE)
+      expect(root.lastChild?.textContent).toBe('\u2060')
+      expect(domToDoc(root)).toEqual(doc)
+
+      root.lastChild!.textContent = 'My question\u2060'
+      const edited = domToDoc(root)
+      expect(docToMessageParts(edited)).toEqual([scope, { type: 'text', text: 'My question' }])
+      expect(docToText(edited)).not.toContain('\u2060')
+    }
+  )
+
   it('clears prior content before rendering', () => {
     const root = document.createElement('div')
     root.textContent = 'stale'

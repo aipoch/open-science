@@ -790,5 +790,10 @@ export const applyDocToDom = (root: HTMLElement, doc: ComposerDoc): void => {
     else if (node.type === 'session') root.appendChild(createSessionChip(node))
     else root.appendChild(createPastedTextAnchor(node))
   }
-  if (doc.nodes.at(-1)?.type === 'pasted-text') root.appendChild(createPastedTextCaretHost())
+  // A prepared question can contain only a scope chip. Keep a drawable, editable caret target
+  // outside the non-editable token when the user clicks back into that otherwise empty editor.
+  const lastType = doc.nodes.at(-1)?.type
+  if (lastType === 'pasted-text' || lastType === 'literature-scope') {
+    root.appendChild(createPastedTextCaretHost())
+  }
 }

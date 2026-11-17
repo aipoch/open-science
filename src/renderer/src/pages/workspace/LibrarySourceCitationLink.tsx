@@ -97,11 +97,66 @@ export function LibrarySourceCitationLink({
   const [open, setOpen] = useState(false)
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState(false)
+  const [packageSourceResult, setPackageSourceResult] = useState<{
+    key: string
+    state: 'available' | 'unavailable' | 'unknown'
+  }>()
   const [showSnapshot, setShowSnapshot] = useState(false)
   const controller = useRef<AbortController | undefined>(undefined)
   useEffect(() => () => controller.current?.abort(), [])
+  const projectId = useNavigationStore.getState().activeProjectId
+  const packageSourceKey = JSON.stringify([
+    projectId,
+    packageSessionId,
+    citation.source?.attachmentId,
+    citation.source?.versionId,
+    citation.source?.checksum
+  ])
+  const packageSource =
+    packageSourceResult?.key === packageSourceKey ? packageSourceResult.state : 'checking'
+
+  useEffect(() => {
+    const source = citation.source
+    if (!open || !snapshotOnly || !packageSessionId || !source || !projectId) return
+    let active = true
+    // Receipt membership, not historical citation metadata, determines whether the
+    // imported package actually includes these PDF bytes.
+    void window.api.pdfAnnotations
+      .list({
+        projectId,
+        sessionId: packageSessionId,
+        sourceFileId: source.attachmentId,
+        versionId: source.versionId
+      })
+      .then(
+        (result) => {
+          if (active)
+            setPackageSourceResult({
+              key: packageSourceKey,
+              state: result.source?.checksum === source.checksum ? 'available' : 'unavailable'
+            })
+        },
+        () => {
+          if (active)
+            setPackageSourceResult((previous) =>
+              previous?.key === packageSourceKey
+                ? previous
+                : { key: packageSourceKey, state: 'unknown' }
+            )
+        }
+      )
+    return () => {
+      active = false
+    }
+  }, [open, snapshotOnly, packageSessionId, citation.source, projectId, packageSourceKey])
+
+  const sourceUnavailable = Boolean(
+    snapshotOnly && packageSessionId && packageSource === 'unavailable'
+  )
 
   const viewSource = async (): Promise<void> => {
+    if (sourceUnavailable || (snapshotOnly && packageSessionId && packageSource === 'checking'))
+      return
     const source = citation.source
     const projectId = useNavigationStore.getState().activeProjectId
     if (!source || !citation.pageStart || !projectId) {
@@ -182,9 +237,22 @@ export function LibrarySourceCitationLink({
         </div>
         <CitationExcerpt quote={citation.quote} context={citation.context} />
         {error ? <ErrorNotice inline description={t('The source could not be opened.')} /> : null}
+        {sourceUnavailable ? (
+          <p className="text-xs text-muted-foreground">
+            {t('The original PDF is unavailable in this Session package.')}
+          </p>
+        ) : null}
         <div className="flex flex-wrap gap-2">
           {citation.kind === 'pdf' ? (
-            <Button size="sm" disabled={opening} onClick={() => void viewSource()}>
+            <Button
+              size="sm"
+              disabled={
+                opening ||
+                sourceUnavailable ||
+                Boolean(snapshotOnly && packageSessionId && packageSource === 'checking')
+              }
+              onClick={() => void viewSource()}
+            >
               {t('View source page')}
             </Button>
           ) : null}

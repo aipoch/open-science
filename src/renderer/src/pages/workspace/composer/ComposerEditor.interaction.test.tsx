@@ -1071,6 +1071,19 @@ describe('ComposerEditor', () => {
     expect(selection?.anchorOffset).toBe(editor().childNodes.length)
   })
 
+  it('focuses an editable caret host after a prepared Library scope', () => {
+    renderEditor({
+      doc: { nodes: [{ type: 'literature-scope', scope: 'project' }] },
+      focusRequest: 'scope-question'
+    })
+
+    expect(document.activeElement).toBe(editor())
+    expect(window.getSelection()?.anchorNode).toBe(editor().lastChild)
+    expect(window.getSelection()?.anchorOffset).toBe(0)
+    expect(editor().lastChild?.nodeType).toBe(Node.TEXT_NODE)
+    expect(domToDoc(editor())).toEqual({ nodes: [{ type: 'literature-scope', scope: 'project' }] })
+  })
+
   it('forwards paste to onPaste and inserts clipboard text as plain text', () => {
     const onPaste = vi.fn()
     const onDocChange = vi.fn()

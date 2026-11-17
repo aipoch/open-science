@@ -63,6 +63,28 @@ for (const withDraft of [false, true]) {
   })
 }
 
+test('prepared Library scope retains keyboard input after clicking back into the composer', async ({
+  page
+}) => {
+  await page.goto('/library-workbench.html?qa&draft')
+  const editor = page.getByRole('textbox', { name: 'Message', exact: true })
+  await editor.click()
+  await page.keyboard.press('ControlOrMeta+A')
+  await page.keyboard.press('Backspace')
+  await expect(editor).toBeEmpty()
+  await page.getByRole('button', { name: 'Ask about this project' }).click()
+  await expect(editor).toHaveText(/^[\s\u2060]*@Library[\s\u2060]*$/)
+  await expect(editor.locator('[data-mention-type="literature-scope"]')).toHaveCount(1)
+  await editor.click()
+  await page.keyboard.press('End')
+  await page.keyboard.type('Compare the findings')
+  await expect(editor).toContainText('Compare the findings')
+  await expect(editor.locator('[data-mention-type="literature-scope"]')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect(page.locator('output')).toContainText('"scope":"project"')
+  await expect(page.locator('output')).toContainText('Compare the findings')
+})
+
 test('long source context expands and collapses without duplicate visible excerpts', async ({
   page
 }) => {
