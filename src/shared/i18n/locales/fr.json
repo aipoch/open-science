@@ -8142,6 +8142,7 @@
     "Generating narration and aligning captions…": "Génération de la narration et synchronisation des sous-titres…",
     "Speech steps: {{completed}} / {{total}} · Lines: {{lines}} / {{totalLines}}": "Étapes vocales : {{completed}} / {{total}} · Phrases : {{lines}} / {{totalLines}}",
     "Research film": "Court-métrage de recherche",
+    "Generating a film uses your token quota, and its quality depends on the model you select.": "La génération du film consomme une partie de votre quota de jetons et sa qualité dépend des capacités du modèle choisi.",
     "Generate research film": "Générer un court-métrage de recherche",
     "View research film": "Voir le court-métrage de recherche",
     "Play research film": "Lire le court-métrage de recherche",
