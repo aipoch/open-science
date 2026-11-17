@@ -136,6 +136,7 @@ function FilmErrorNotice({
 }
 
 type FilmButtonProps = ResearchVideoPresentationRequest & {
+  preferSavedFilm?: boolean
   renderTrigger?: (
     open: (() => void) | undefined,
     state: ResearchVideoTriggerState
@@ -199,6 +200,7 @@ export function ResearchVideoButton(props: FilmButtonProps): React.JSX.Element |
 }
 
 function ResearchVideoModeButton({
+  preferSavedFilm = false,
   renderTrigger,
   projectId,
   sessionId,
@@ -206,7 +208,16 @@ function ResearchVideoModeButton({
   mode: initialMode = 'research-explanation'
 }: FilmButtonProps): React.JSX.Element | null {
   const { t } = useTranslation()
-  const [mode, setMode] = useState<ResearchFilmMode>(initialMode)
+  const [statuses, setStatuses] = useState<
+    Partial<Record<ResearchFilmMode, ResearchVideoPresentationStatus>>
+  >({})
+  const [selectedMode, setMode] = useState<ResearchFilmMode>()
+  const mode =
+    selectedMode ??
+    (preferSavedFilm && !statuses[initialMode]?.result
+      ? (filmModes.find((candidate) => statuses[candidate]?.result) ?? initialMode)
+      : initialMode)
+
   const [open, setOpen] = useState(false)
   const request = filmRequest(projectId, sessionId, branchId, mode)
   const deletionScope = mode
@@ -225,9 +236,6 @@ function ResearchVideoModeButton({
   }, [confirmDeletion])
   const confirmationDescriptionId = useId()
   const modeDescriptionId = useId()
-  const [statuses, setStatuses] = useState<
-    Partial<Record<ResearchFilmMode, ResearchVideoPresentationStatus>>
-  >({})
   const status = statuses[mode] ?? {}
   const statusLoaded = statuses[mode] !== undefined
   const [model, setModel] = useState<LocalModelSnapshot>()
@@ -318,15 +326,21 @@ function ResearchVideoModeButton({
     status.preflightError !== missingRuntime &&
     status.preflightError !== RESEARCH_FILM_BUSY_MESSAGE &&
     knownPreflight
+  const loadingTrigger =
+    !statusLoaded ||
+    (preferSavedFilm &&
+      !selectedMode &&
+      !status.result &&
+      filmModes.some((candidate) => statuses[candidate] === undefined))
   const triggerState: ResearchVideoTriggerState = {
-    label: !statusLoaded
+    label: loadingTrigger
       ? t('Loading…')
       : busy || installing || pending
         ? t('View generation progress')
         : status.result
           ? t('View research film')
           : t('Generate research film'),
-    disabledReason: !statusLoaded ? t('Loading…') : undefined
+    disabledReason: loadingTrigger ? t('Loading…') : undefined
   }
   const renderSettingsButton = (label?: string): React.JSX.Element => (
     <button
@@ -545,12 +559,16 @@ function ResearchVideoModeButton({
     setConfirmRegeneration(false)
     setOpen(false)
   }
+  const openDialog = (): void => {
+    setMode(mode)
+    setOpen(true)
+  }
   if (!desktop) return renderTrigger ? <>{renderTrigger(undefined, triggerState)}</> : null
   return (
     <>
       <span ref={triggerRef} className="contents">
         {renderTrigger ? (
-          renderTrigger(() => setOpen(true), triggerState)
+          renderTrigger(openDialog, triggerState)
         ) : (
           <Button
             type="button"
@@ -558,9 +576,9 @@ function ResearchVideoModeButton({
             size="sm"
             disabled={pending || Boolean(triggerState.disabledReason)}
             title={triggerState.disabledReason}
-            onClick={() => setOpen(true)}
+            onClick={openDialog}
           >
-            {!statusLoaded || busy || installing ? (
+            {loadingTrigger || busy || installing ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             ) : (
               <Video className="size-4" aria-hidden="true" />

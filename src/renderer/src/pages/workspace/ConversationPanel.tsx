@@ -2321,6 +2321,7 @@ const ConversationPanel = ({
                               {t('View replay')}
                             </Button>
                             <ResearchVideoButton
+                              preferSavedFilm
                               key={`${activeSession.id}:${activeSession.conversationGraph?.frames.find((frame) => frame.id === activeSession.conversationGraph?.rootFrameId)?.activeBranchId ?? ''}`}
                               projectId={activeSession.projectId}
                               sessionId={activeSession.id}

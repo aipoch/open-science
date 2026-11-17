@@ -10096,17 +10096,22 @@ it('offers Fork to continue while leaving the imported conversation read-only', 
   ).toHaveLength(1)
 })
 
-it('opens an imported research film from the history footer', async () => {
+it('opens an imported replay-only film from the history footer', async () => {
   window.api.researchVideo = {
-    status: vi.fn().mockResolvedValue({
-      result: {
-        id: 'film-1',
-        title: 'Imported film',
-        playerPath: '/imported/player.html',
-        sourcePath: '/imported/sources.zip',
-        duration: 12
-      }
-    })
+    status: vi.fn(async (scope: { mode?: string }) =>
+      scope.mode === 'operation-replay'
+        ? {
+            result: {
+              id: 'film-1',
+              title: 'Imported film',
+              playerPath: '/imported/player.html',
+              sourcePath: '/imported/sources.zip',
+              duration: 12
+            }
+          }
+        : {}
+    ),
+    start: vi.fn()
   } as unknown as typeof window.api.researchVideo
   const activeSession: ChatSession = {
     id: 'imported-session',
@@ -10129,18 +10134,20 @@ it('opens an imported research film from the history footer', async () => {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
   })
-  const open = [...container.querySelectorAll('button')].find((button) =>
+  const footer = container.querySelector('[aria-label="Imported research history"]')!
+  const open = [...footer.querySelectorAll('button')].find((button) =>
     button.textContent?.includes('View research film')
   )
   expect(open).toBeDefined()
   await act(async () => {
     open!.click()
   })
-  const play = [...container.querySelectorAll('button')].find((button) =>
+  const dialog = document.querySelector('[role="dialog"]')!
+  const play = [...dialog.querySelectorAll('button')].find((button) =>
     button.textContent?.includes('Play research film')
   )
   expect(play).toBeDefined()
-  expect(container.textContent).toContain('Generate again')
+  expect(dialog.textContent).toContain('Generate again')
   await act(async () => {
     play!.click()
   })
@@ -10151,6 +10158,7 @@ it('opens an imported research film from the history footer', async () => {
       title: 'Imported film'
     })
   )
+  expect(window.api.researchVideo.start).not.toHaveBeenCalled()
   expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
 })
 
