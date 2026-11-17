@@ -90,7 +90,8 @@ it.runIf(process.platform === 'win32')(
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'installation-electron-scan-'))
     try {
-      await writeFile(join(root, 'fixture.txt'), 'fixture')
+      // A payload file keeps the real Restart Manager query in the Electron-hosted scanner.
+      await writeFile(join(root, 'fixture.dll'), 'fixture')
       scannerFixture.command = createRequire(__filename)('electron') as string
       await expect(inspectInstallationProcessesAsync(root)).resolves.toEqual([])
     } finally {
@@ -127,7 +128,7 @@ it.runIf(process.platform === 'win32')(
 )
 
 it.runIf(process.platform === 'win32')(
-  'finds a data-file holder through junctions with self and ancestor cycles',
+  'finds a payload holder through junctions with self and ancestor cycles',
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'installation-junction-scan-'))
     const installation = join(root, 'Science')
@@ -139,7 +140,7 @@ it.runIf(process.platform === 'win32')(
     try {
       await mkdir(installation)
       await mkdir(target)
-      const file = join(target, 'data ü.json')
+      const file = join(target, 'addon ü.node')
       await writeFile(file, '{}')
       await symlink(target, junction, 'junction')
       links.push(junction)
@@ -180,6 +181,45 @@ it.runIf(process.platform === 'win32')(
       scannerFixture.preload = ''
       scannerFixture.timeoutMs = undefined
       for (const link of links.reverse()) await unlink(link)
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  30_000
+)
+
+it.runIf(process.platform === 'win32')(
+  'leaves ordinary data-file holders to the installer while reporting payload holders',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'installation-data-holder-'))
+    const data = join(root, 'settings.json')
+    const payload = join(root, 'addon.node')
+    const holders: ReturnType<typeof spawn>[] = []
+    try {
+      await writeFile(data, '{}')
+      await writeFile(payload, 'fixture')
+      for (const file of [data, payload]) {
+        const child = spawn(
+          process.execPath,
+          [
+            '-e',
+            "require('node:fs').openSync(process.argv[1], 'r');process.stdout.write('ready');process.stdin.resume()",
+            file
+          ],
+          { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
+        )
+        holders.push(child)
+        await once(child.stdout!, 'data')
+      }
+      const pids = await inspectInstallationProcessesAsync(root)
+      expect(pids).not.toContain(holders[0].pid)
+      expect(pids).toContain(holders[1].pid)
+    } finally {
+      for (const child of holders) {
+        const closed = once(child, 'close')
+        child.stdin?.end()
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+        await closed
+      }
       await rm(root, { recursive: true, force: true })
     }
   },
@@ -314,7 +354,9 @@ describe.runIf(process.platform === 'win32')('interrupting a blocked installatio
           await expect(pending).rejects.toMatchObject({
             reason: 'installation-busy',
             cause: expect.objectContaining({
-              message: 'Installation verification exceeded its time limit.'
+              message: 'Installation verification exceeded its time limit.',
+              // The reached stage survives the deadline for the failure log.
+              stderr: phase === 'native' ? expect.stringContaining('"stage":"resource-query"') : ''
             })
           })
         }
