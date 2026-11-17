@@ -8389,7 +8389,6 @@
     "Lab server address is reachable.": "L'adresse du serveur Lab est accessible.",
     "This model does not support streaming. Pick a streaming-capable model for the Agent.": "Ce modèle ne prend pas en charge la diffusion en continu. Choisissez un modèle compatible avec la diffusion en continu pour l’agent.",
     "Access token quota": "Quota du jeton",
-    "Organization wallet": "Portefeuille de l’organisation",
     "Usage information is unavailable.": "Les informations d’utilisation ne sont pas disponibles.",
     "Effective remaining: {{amount}}": "Quota effectif restant: {{amount}}",
     "Cached": "En cache",

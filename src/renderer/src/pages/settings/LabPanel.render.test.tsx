@@ -172,7 +172,7 @@ describe('Lab settings panel', () => {
     expect(container.textContent).toContain('Usage')
     expect(container.textContent).toContain('Access token quota')
     expect(container.textContent).toContain('¥4.88 / ¥7.30')
-    expect(container.textContent).toContain('Organization wallet')
+    expect(container.textContent).not.toContain('Organization wallet')
     expect(container.textContent).toContain('Effective remaining: ¥4.88')
   })
 

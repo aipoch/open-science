@@ -438,15 +438,6 @@ export function LabPanel(): React.JSX.Element {
                             t
                           )}
                         </p>
-                        <p>
-                          {t('Organization wallet')}:{' '}
-                          {usageQuotaText(
-                            lab.usage,
-                            { unlimited: lab.usage.org.unlimited },
-                            usageAmountFor(lab.usage, 'org'),
-                            t
-                          )}
-                        </p>
                         {effectiveUsageText(lab.usage) ? (
                           <p>
                             {t('Effective remaining: {{amount}}', {

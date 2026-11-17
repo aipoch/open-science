@@ -8043,7 +8043,6 @@
     "Lab server address is reachable.": "Lab 服务器地址可访问。",
     "This model does not support streaming. Pick a streaming-capable model for the Agent.": "此模型不支持流式响应。请为智能体选择支持流式响应的模型。",
     "Access token quota": "令牌额度",
-    "Organization wallet": "组织钱包",
     "Usage information is unavailable.": "无法获取用量信息。",
     "Effective remaining: {{amount}}": "实际剩余额度：{{amount}}",
     "Cached": "已缓存",
