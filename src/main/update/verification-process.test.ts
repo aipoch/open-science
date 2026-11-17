@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { readFileSync } from 'node:fs'
-import { mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -309,17 +309,46 @@ describe('bounded verification subprocess', () => {
     ).resolves.toEqual({ stdout: 'verified', stderr: 'diagnostic' })
   })
 
-  it('reports the exit code of a CLI that preserves its children after a failed exit', async () => {
+  it.each([0, 1])('preserves a browser after natural CLI exit %i', async (exitCode) => {
     const root = await mkdtemp(join(tmpdir(), 'verification-preserve-'))
+    // A response to a post-exit request proves the browser is still running, even on hosts
+    // where a dead process remains visible as a zombie. Removing the request directory ends it.
+    const browser = `
+      const fs = require('node:fs');
+      const root = process.argv[1];
+      const timer = setInterval(() => {
+        if (!fs.existsSync(root)) return clearInterval(timer);
+        if (fs.existsSync(root + '/request')) {
+          fs.writeFileSync(root + '/response', 'alive');
+          clearInterval(timer);
+        }
+      }, 25);
+      setTimeout(() => process.exit(), 30000).unref();
+    `
     try {
-      const outcome = await runVerificationProcess(
-        process.execPath,
-        ['-e', "process.stderr.write('sign-in denied'); process.exit(1)"],
-        { cwd: root, stdin: 'pipe', preserveChildrenOnExit: true }
-      ).catch((error: unknown) => error)
-      expect(outcome).toBeInstanceOf(VerificationProcessExitError)
-      expect(outcome).toMatchObject({ exitCode: 1, stderr: 'sign-in denied' })
+      const cli = `
+        require('node:child_process').spawn(process.execPath,
+          ['-e', ${JSON.stringify(browser)}, ${JSON.stringify(root)}], { cwd: '..', stdio: 'ignore' }).unref();
+        process.stderr.write('auth diagnostic');
+        process.exitCode = ${exitCode};
+      `
+      const result = runVerificationProcess(process.execPath, ['-e', cli], {
+        cwd: root,
+        stdin: 'pipe',
+        preserveChildrenOnExit: true
+      })
+      if (exitCode === 0)
+        await expect(result).resolves.toEqual({ stdout: '', stderr: 'auth diagnostic' })
+      else {
+        await expect(result).rejects.toBeInstanceOf(VerificationProcessExitError)
+        await expect(result).rejects.toMatchObject({ exitCode, stderr: 'auth diagnostic' })
+      }
       expect(verificationDirectoryIsSettled(root)).toBe(true)
+      await writeFile(join(root, 'request'), '')
+      await vi.waitFor(
+        async () => expect(await readFile(join(root, 'response'), 'utf8')).toBe('alive'),
+        { timeout: 3000 }
+      )
     } finally {
       await rm(root, { recursive: true, force: true })
     }

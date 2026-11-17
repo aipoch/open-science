@@ -3,6 +3,7 @@ import {
   capturePosixProcessTreeIdentity,
   createPosixProcessTreeOwnership,
   trackOwnedPosixProcessTree,
+  releasePosixProcessTree,
   terminateProcessTree,
   registerProcessTreeOwnership
 } from '../process-tree'
@@ -51,8 +52,7 @@ export async function runVerificationProcess(
     shell?: boolean
     stdin?: 'pipe'
     // Interactive authentication may hand ownership of a browser to the user after the CLI exits.
-    // Windows leaves this tree untracked, so a CLI that exits on its own, with any code, is
-    // finished; only cancellation, timeout, and output overflow still terminate the tree.
+    // A natural exit with any code ends that ownership. Interrupted commands still require teardown.
     preserveChildrenOnExit?: boolean
   } = {}
 ): Promise<{ stdout: string; stderr: string }> {
@@ -60,8 +60,7 @@ export async function runVerificationProcess(
   return new Promise((resolve, reject) => {
     const jobName = `Local\\OpenScience.Delegation.${randomUUID()}`
     const ownership = createPosixProcessTreeOwnership(options.env)
-    const preserveChildrenOnExit =
-      process.platform === 'win32' && options.preserveChildrenOnExit === true
+    const preserveChildrenOnExit = options.preserveChildrenOnExit === true
     // Darwin commands such as ps can exit before kernel identity capture. Hold the same process
     // behind fd3 until tracking is installed; stdin stays dedicated to the target command.
     // Linux pins /proc birth in this JS turn, including an exited, not-yet-reaped zombie.
@@ -112,23 +111,26 @@ export async function runVerificationProcess(
     let completed = false
     const settle = (code: number | null, signal?: NodeJS.Signals | null): Promise<void> => {
       settlement ??= (async () => {
-        let deadline: NodeJS.Timeout | undefined
-        const result =
-          preserveChildrenOnExit && code !== null && !failure
-            ? { reaped: true }
-            : await Promise.race([
-                terminateProcessTree(child, 'SIGKILL'),
-                new Promise<{ reaped: false }>((resolve) => {
-                  deadline = setTimeout(() => resolve({ reaped: false }), 5000)
-                })
-              ])
-        if (deadline) clearTimeout(deadline)
+        let settled = true
+        if (preserveChildrenOnExit && code !== null && !failure) {
+          releasePosixProcessTree(child)
+        } else {
+          let deadline: NodeJS.Timeout | undefined
+          const result = await Promise.race([
+            terminateProcessTree(child, 'SIGKILL'),
+            new Promise<{ reaped: false }>((resolve) => {
+              deadline = setTimeout(() => resolve({ reaped: false }), 5000)
+            })
+          ])
+          clearTimeout(deadline)
+          settled = result.reaped
+        }
         child.stdin?.destroy()
         completed = true
         launchGate?.destroy()
         clearTimeout(timer)
         options.signal?.removeEventListener('abort', abort)
-        if (!result.reaped) {
+        if (!settled) {
           if (options.cwd) unsettledDirectories.add(options.cwd)
           child.stdout?.destroy()
           child.stderr?.destroy()

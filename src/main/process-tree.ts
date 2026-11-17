@@ -790,13 +790,25 @@ export const trackOwnedPosixProcessTree = (child: ChildProcess, ownershipToken?:
   void sampleActiveProcessTrees().finally(scheduleTrackedProcessSample)
 }
 
-const stopTrackedProcessTree = async (tracker: PosixProcessTracker): Promise<PosixProcessTable> => {
-  if (ownershipSampling) await ownershipSampling
+const stopSamplingTracker = (tracker: PosixProcessTracker): void => {
   activePosixProcessTrackers.delete(tracker)
   if (activePosixProcessTrackers.size === 0 && ownershipSampleTimer) {
     clearTimeout(ownershipSampleTimer)
     ownershipSampleTimer = undefined
   }
+}
+
+// A completed interactive CLI can hand its descendants to the user without signaling them.
+export const releasePosixProcessTree = (child: ChildProcess): void => {
+  const tracker = trackedPosixProcessTrees.get(child)
+  if (!tracker) return
+  stopSamplingTracker(tracker)
+  trackedPosixProcessTrees.delete(child)
+}
+
+const stopTrackedProcessTree = async (tracker: PosixProcessTracker): Promise<PosixProcessTable> => {
+  if (ownershipSampling) await ownershipSampling
+  stopSamplingTracker(tracker)
   const finalSample = await collectPosixProcessTable()
   captureTrackedDescendants(tracker, finalSample)
   return finalSample
