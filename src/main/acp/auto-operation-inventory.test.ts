@@ -190,8 +190,10 @@ describe('Auto operation completeness against real tool registrations', () => {
           '3bd949c59a19ad322a31d9c3274600e5d4c46023ffe5190115952c8029bda4bb',
         // Reviewed: interpreter descriptions now explain idle reclamation and volatile variables.
         // Tool schemas, handlers, operation classifiers and Auto dispositions are unchanged.
+        // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
+        // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '01966038a246d55bd4292509c6e3f6a0c5ab9e5b83d8d598f12624620703c731',
+          '471ea3a21d38c0ecd17191c83f9ce4b3986f42538fd276a04b2ec8eb9d9857a9',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.

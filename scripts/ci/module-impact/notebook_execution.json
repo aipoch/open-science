@@ -154,7 +154,9 @@
     "src/main/notebook/memory-policy.ts",
     "src/main/notebook/owned-resources.integration.test.ts",
     "src/main/notebook/owned-resources.ts",
-    "src/main/notebook/resource-memory.ts"
+    "src/main/notebook/resource-memory.ts",
+    "src/main/notebook/process-monitor.ts",
+    "src/main/notebook/process-monitor.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/environment-application-commands.ts",
@@ -253,7 +255,8 @@
     "src/main/notebook/memory-policy.test-support.ts",
     "src/main/notebook/memory-policy.ts",
     "src/main/notebook/owned-resources.ts",
-    "src/main/notebook/resource-memory.ts"
+    "src/main/notebook/resource-memory.ts",
+    "src/main/notebook/process-monitor.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -313,7 +316,8 @@
       "src/main/notebook/memory-policy-platform.test.ts",
       "src/main/notebook/memory-policy.native.integration.test.ts",
       "src/main/notebook/memory-policy.test.ts",
-      "src/main/notebook/owned-resources.integration.test.ts"
+      "src/main/notebook/owned-resources.integration.test.ts",
+      "src/main/notebook/process-monitor.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -879,6 +883,9 @@
       "src/main/notebook/python-lifecycle.windows.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
+  "capabilityOverlays": [
+    "notebook_network_sandbox",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

@@ -1,3 +1,7 @@
+import {
+  createNotebookCellPreview,
+  type NotebookCellPreview
+} from '../../shared/notebook-process-monitor'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { NotebookExecutionAdmissionError } from './execution-admission'
 import { createNotebookMemorySampler } from './resource-memory'
@@ -297,8 +301,10 @@ type PendingRequest = {
 
 // One persistent loop process for a (kind, env), reused across cells until it exits or is killed.
 type ProcState = {
+  lastCell?: NotebookCellPreview
   startedAt: number
   cleanupResult?: NotebookResourceCleanupResult
+  cleanupPending?: boolean
   kind: KernelProcessKind
   // Resolved env name backing this proc (DEFAULT_PY_ENV / DEFAULT_R_ENV or a named env); '' for the
   // env-agnostic repl. Reported to the idle/terminated callbacks so the caller keys per-env status.
@@ -631,6 +637,34 @@ class NotebookKernelExecutor implements NotebookExecutor {
       return result.reaped ? result : pending.retry()
     }
     return this.killChildTracked(proc)
+  }
+
+  monitoredProcesses(): import('./process-monitor').MonitoredKernelProcess[] {
+    const live = [...this.procs.values()]
+    const pending = [...this.pendingTeardowns.values()].map(({ owner }) => owner)
+    return [...new Set([...live, ...pending])].map((proc) => ({
+      identity: proc,
+      processKey: proc.key,
+      pid: proc.child.pid,
+      startedAt: proc.startedAt,
+      lastCell: proc.lastCell,
+      status:
+        this.procs.get(proc.key) === proc
+          ? proc.pending
+            ? 'running'
+            : 'idle'
+          : proc.cleanupPending
+            ? 'cleaning'
+            : 'cleanup-failed',
+      terminate: async () => {
+        if (this.procs.get(proc.key) === proc) {
+          await this.terminate(proc.kind, proc.env)
+        } else if (this.pendingTeardowns.get(proc.key)?.owner === proc) {
+          const result = await this.reconcilePendingTeardown(proc.key)
+          if (!result?.reaped) throw new Error('Notebook process-tree cleanup remains incomplete.')
+        } else throw new Error('Notebook process changed. Refresh the list.')
+      }
+    }))
   }
 
   idleProcesses(): ReturnType<NonNullable<NotebookExecutor['idleProcesses']>> {
@@ -2104,6 +2138,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           proc.child.stdin.write(frame)
           for (const directory of protectedDirAdditions) proc.protectedDirs.add(directory)
         }
+        proc.lastCell = createNotebookCellPreview(request.code)
         onDispatch()
       } catch (error) {
         this.clearPendingResources(pending)
@@ -2333,7 +2368,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
     reason: NotebookSandboxCleanupReason = 'cancel'
   ): Promise<NotebookResourceCleanupResult> {
     if (proc.cleanupResult?.reaped) return Promise.resolve(proc.cleanupResult)
-    const done = this.teardownProc(proc, reason)
+    proc.cleanupPending = true
+    const done = this.teardownProc(proc, reason).finally(() => {
+      proc.cleanupPending = false
+    })
     this.pendingTeardowns.set(proc.key, {
       completion: done,
       retry: () => this.killChildTracked(proc, reason),

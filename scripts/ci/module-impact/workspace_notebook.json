@@ -36,7 +36,14 @@
     "src/renderer/src/pages/workspace/NotebookMemoryNoticeBridge.tsx",
     "src/renderer/src/stores/notebook-memory-notice-store.ts",
     "src/renderer/src/pages/workspace/NotebookResourcePanel.tsx",
-    "src/renderer/src/pages/workspace/ProjectComputeInbox.resources.test.tsx"
+    "src/renderer/src/pages/workspace/ProjectComputeInbox.resources.test.tsx",
+    "src/renderer/src/pages/workspace/ComputeCellPreview.tsx",
+    "src/renderer/src/pages/workspace/ComputeCellPreview.test.tsx",
+    "src/renderer/src/pages/workspace/ComputePanel.tsx",
+    "src/renderer/src/pages/workspace/ComputeProcessMonitor.tsx",
+    "src/renderer/src/pages/workspace/ComputeProcessMonitor.test.tsx",
+    "src/renderer/src/pages/workspace/compute-monitor-presentation.ts",
+    "src/renderer/src/pages/workspace/compute-monitor-presentation.test.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/NotebookRecordCell.tsx",
@@ -59,7 +66,11 @@
     "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.tsx",
     "src/renderer/src/pages/workspace/NotebookMemoryNoticeBridge.tsx",
     "src/renderer/src/stores/notebook-memory-notice-store.ts",
-    "src/renderer/src/pages/workspace/NotebookResourcePanel.tsx"
+    "src/renderer/src/pages/workspace/NotebookResourcePanel.tsx",
+    "src/renderer/src/pages/workspace/ComputeCellPreview.tsx",
+    "src/renderer/src/pages/workspace/ComputePanel.tsx",
+    "src/renderer/src/pages/workspace/ComputeProcessMonitor.tsx",
+    "src/renderer/src/pages/workspace/compute-monitor-presentation.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -81,9 +92,14 @@
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/notebook-folder-access.test.ts",
       "src/renderer/src/pages/workspace/NotebookMemoryNoticeBridge.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/ProjectComputeInbox.resources.test.tsx"
+      "src/renderer/src/pages/workspace/ProjectComputeInbox.resources.test.tsx",
+      "src/renderer/src/pages/workspace/ComputeCellPreview.test.tsx",
+      "src/renderer/src/pages/workspace/ComputeProcessMonitor.test.tsx",
+      "src/renderer/src/pages/workspace/compute-monitor-presentation.test.ts"
     ],
-    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
+    "contract": [
+      "src/main/host-layer-dependencies.architecture.test.ts"
+    ],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
@@ -177,5 +193,5 @@
   },
   "capabilityOverlays": [],
   "fallbackCapability": "renderer_view",
-  "fullTestReason": "Notebook memory notices add live application events and a transient current-terminal retry owner beyond the reviewed renderer sources; retain full validation until the expanded boundary is reviewed."
+  "fullTestReason": "Notebook memory notices add live application events and a transient current-terminal retry owner beyond the reviewed renderer sources; retain full validation until the expanded boundary is reviewed. Compute process monitoring adds local process commands, polling and retained-preview activity beyond the reviewed Notebook presentation boundary; retain full validation until the expanded boundary is reviewed."
 }

@@ -25,6 +25,8 @@ import {
   notebookResourceReleaseCommand,
   notebookRetryResourceReleaseCommand,
   notebookMemoryPolicyStateCommand,
+  notebookProcessMonitorCommand,
+  notebookTerminateMonitoredProcessCommand,
   notebookReadInputPreviewCommand,
   notebookReferenceCommand,
   notebookRestartCommand,
@@ -124,7 +126,42 @@ describe('Notebook application commands', () => {
     }
   )
 
-  it('owns exactly the 27 renderer-callable Notebook and Environment commands', () => {
+  it('routes exact monitored instance IDs locally and rejects remote monitor/control requests', async () => {
+    const processMonitor = vi.fn(async () => ({ instances: [] }))
+    const terminateMonitoredProcess = vi.fn(async () => {})
+    const router = createApplicationCommandRouter()
+    installNotebookApplicationCommands(router.registrar, {
+      workflows: {
+        processMonitor,
+        terminateMonitoredProcess,
+        configureResourceReleaseGuard: vi.fn()
+      } as unknown as NotebookCommandWorkflows,
+      readInputPreview: vi.fn()
+    })
+    await router.dispatcher.invoke(notebookProcessMonitorCommand, invocation([]))
+    await router.dispatcher.invoke(
+      notebookTerminateMonitoredProcessCommand,
+      invocation([{ id: 'exact-instance', projectId: 'p1', sessionId: 's1' }])
+    )
+    expect(processMonitor).toHaveBeenCalledOnce()
+    expect(terminateMonitoredProcess).toHaveBeenCalledExactlyOnceWith({
+      id: 'exact-instance',
+      projectId: 'p1',
+      sessionId: 's1'
+    })
+    await expect(
+      router.dispatcher.invoke(notebookProcessMonitorCommand, invocation([], remoteCaller))
+    ).rejects.toThrow('local app')
+    await expect(
+      router.dispatcher.invoke(
+        notebookTerminateMonitoredProcessCommand,
+        invocation([{ id: 'exact-instance', projectId: 'p1', sessionId: 's1' }], remoteCaller)
+      )
+    ).rejects.toThrow('local app')
+    expect(terminateMonitoredProcess).toHaveBeenCalledOnce()
+  })
+
+  it('owns exactly the 29 renderer-callable Notebook and Environment commands', () =>
     expect([
       ...notebookApplicationCommands.commands,
       ...notebookEnvironmentApplicationCommands.commands
@@ -137,6 +174,8 @@ describe('Notebook application commands', () => {
       expect.objectContaining({ name: 'notebook:resource-release' }),
       expect.objectContaining({ name: 'notebook:retry-resource-release' }),
       expect.objectContaining({ name: 'notebook:memory-policy-state' }),
+      expect.objectContaining({ name: 'notebook:process-monitor' }),
+      expect.objectContaining({ name: 'notebook:terminate-monitored-process' }),
       expect.objectContaining({ name: 'notebook:inspect-namespace' }),
       expect.objectContaining({ name: 'notebook:reference' }),
       expect.objectContaining({ name: 'notebook:begin-code-cell' }),
@@ -156,8 +195,7 @@ describe('Notebook application commands', () => {
       expect.objectContaining({ name: 'notebook-env:provision' }),
       expect.objectContaining({ name: 'notebook-env:repair' }),
       expect.objectContaining({ name: 'notebook-env:cancel' })
-    ])
-  })
+    ]))
 
   it('routes Notebook commands through the owner workflows and input-preview port', async () => {
     const workflowMethods = [

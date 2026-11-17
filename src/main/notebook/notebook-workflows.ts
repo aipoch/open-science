@@ -11,6 +11,11 @@ import type {
   ReleaseNotebookSessionResourcesRequest
 } from '../../shared/notebook-resources'
 import type {
+  NotebookProcessMonitorSnapshot,
+  NotebookProcessMonitorRequest,
+  TerminateNotebookProcessRequest
+} from '../../shared/notebook-process-monitor'
+import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
   ExecuteNotebookCodeRequest,
@@ -71,6 +76,10 @@ type NotebookCommandRuntime = {
     request: NotebookResourceReleaseRequest,
     assertCurrent: () => void
   ): Promise<NotebookResourceRelease>
+  getProcessMonitor?: (
+    request?: NotebookProcessMonitorRequest
+  ) => Promise<NotebookProcessMonitorSnapshot>
+  terminateMonitoredProcess?: (request: TerminateNotebookProcessRequest) => Promise<void>
   runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]>
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
   getMemoryPolicyState(
@@ -109,6 +118,8 @@ type NotebookCommandWorkflows = {
     request: NotebookResourceReleaseRequest,
     assertCurrent: () => void
   ): Promise<NotebookResourceRelease>
+  processMonitor(request?: NotebookProcessMonitorRequest): Promise<NotebookProcessMonitorSnapshot>
+  terminateMonitoredProcess(request: TerminateNotebookProcessRequest): Promise<void>
   runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]>
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
   memoryPolicyState(request: NotebookMemoryPolicyStateRequest): Promise<NotebookMemoryPolicyState>
@@ -220,6 +231,15 @@ const createNotebookCommandWorkflows = (
     return release
   }
   return {
+    processMonitor: (request) =>
+      runtime.getProcessMonitor?.(request) ??
+      Promise.reject(new Error('Process monitoring is unavailable.')),
+    terminateMonitoredProcess: (request) =>
+      withDataRootWrite(
+        () =>
+          runtime.terminateMonitoredProcess?.(request) ??
+          Promise.reject(new Error('Process termination is unavailable.'))
+      ),
     configureResourceReleaseGuard: (guard) => {
       releaseBlockedReason = guard
     },

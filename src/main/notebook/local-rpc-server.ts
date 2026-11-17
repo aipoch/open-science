@@ -2218,6 +2218,18 @@ class NotebookLocalRpcServer {
     response: ServerResponse
   ): Promise<void> {
     const disconnect = new AbortController()
+    let terminationScope: { projectId: string; sessionId: string } | undefined
+    const terminationMetadata = (): {
+      manualKernelTerminations?: import('../../shared/notebook-process-monitor').ManualKernelTermination[]
+    } => {
+      const events =
+        terminationScope &&
+        this.service.manualKernelTerminations?.(
+          terminationScope.projectId,
+          terminationScope.sessionId
+        )
+      return events?.length ? { manualKernelTerminations: events } : {}
+    }
     let writeProducerSignal: AbortSignal | undefined
     let removeProducerCancellation: (() => void) | undefined
     let artifactAdmission: ReturnType<PendingRequestBudget['acquire']> | undefined
@@ -2808,6 +2820,16 @@ class NotebookLocalRpcServer {
           producerSignal.removeEventListener('abort', abortProducer)
         writeProducerSignal = executionCancellation.signal
       }
+      // Host/control methods remain independent of the Notebook runtime, including feedback reads.
+      if (
+        isNotebookLocalRpcMethod(method) &&
+        typeof resolvedParams.projectId === 'string' &&
+        typeof resolvedParams.sessionId === 'string'
+      )
+        terminationScope = {
+          projectId: resolvedParams.projectId,
+          sessionId: resolvedParams.sessionId
+        }
       const dispatchSignals = [
         disconnect.signal,
         ...(userCancellation ? [userCancellation] : []),
@@ -2845,7 +2867,7 @@ class NotebookLocalRpcServer {
                 artifactAdmission?.addBytes
               )
 
-      writeJson(response, 200, { result })
+      writeJson(response, 200, { result, ...terminationMetadata() })
     } catch (error) {
       recordStopFailure(error)
       // A captured control completion belongs to the approved handoff, not to this legacy RPC
@@ -2899,7 +2921,7 @@ class NotebookLocalRpcServer {
               : error instanceof PendingRequestLimitError
                 ? 429
                 : 500,
-        { error: serializedError }
+        { error: serializedError, ...terminationMetadata() }
       )
     } finally {
       removeProducerCancellation?.()

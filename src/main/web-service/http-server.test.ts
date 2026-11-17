@@ -3422,7 +3422,9 @@ describe('startWebHttpServer', () => {
 
     expect(localOnly(notebookChannels)).toEqual([
       'notebook:export-ipynb',
-      'notebook:export-ipynb-all'
+      'notebook:export-ipynb-all',
+      'notebook:process-monitor',
+      'notebook:terminate-monitored-process'
     ])
     expect(
       notebookChannels.filter((channel) => !localOnly(notebookChannels).includes(channel))

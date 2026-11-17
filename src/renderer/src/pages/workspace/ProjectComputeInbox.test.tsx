@@ -5,12 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
 import type { JobSummary } from '../../../../shared/compute'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
 import type { NotebookProjectResources } from '../../../../shared/notebook-resources'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { ProjectComputeInbox } from './ProjectComputeInbox'
 
 vi.mock('react-i18next', () => createI18nTestStub())
+vi.mock('./ComputeProcessMonitor', () => ({
+  ComputeProcessMonitor: ({ isActive }: { isActive?: boolean }) => (
+    <div data-testid="process-monitor" data-active={isActive} />
+  )
+}))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const session = (id: string, title: string): ChatSession => ({
@@ -89,6 +95,8 @@ describe('Project Compute inbox', () => {
     unsubscribe: Mock
   }> => {
     vi.useFakeTimers()
+    if (source === 'notebook')
+      document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
     const snapshot = (label: string): Snapshot =>
       source === 'jobs' ? [computeJob({ intent: label })] : notebookResources(label)
     const read = vi.fn<() => Promise<Snapshot>>().mockResolvedValue(snapshot('initial result'))
@@ -135,6 +143,7 @@ describe('Project Compute inbox', () => {
   afterEach(() => {
     act(() => root?.unmount())
     document.body.innerHTML = ''
+    document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
     vi.unstubAllGlobals()
     vi.useRealTimers()
   })
@@ -326,6 +335,85 @@ describe('Project Compute inbox', () => {
     expect(container.textContent).not.toContain('Unattached task')
     expect(container.textContent).not.toContain('Background tasks')
     expect(getProjectActivity).toHaveBeenCalledWith({ projectId: 'project-1' })
+  })
+
+  it('preserves remote kernel activity without mounting local process controls', async () => {
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
+    const getProjectActivity = vi.fn().mockResolvedValue({
+      kernels: [
+        {
+          projectId: 'project-1',
+          sessionId: 'session-current',
+          processKey: 'python:research',
+          kind: 'python',
+          environment: 'research',
+          status: 'running',
+          lastActivityAt: Date.now()
+        }
+      ],
+      backgroundRuns: []
+    })
+    const jobsList = vi.fn().mockResolvedValue([])
+    const openSession = vi.fn()
+    useNavigationStore.setState({ openSession })
+    vi.stubGlobal(
+      'window',
+      Object.assign(window, {
+        api: {
+          sessions: { list: vi.fn().mockResolvedValue({ sessions: [] }) },
+          notebook: {
+            getProjectActivity,
+            getProjectResources: vi.fn().mockResolvedValue(emptyResources()),
+            onChanged: vi.fn(() => () => undefined)
+          },
+          compute: { jobsList, onJobUpdated: vi.fn(() => () => undefined) }
+        }
+      })
+    )
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+
+    await act(async () => root?.render(<ProjectComputeInbox />))
+    await vi.waitFor(() => expect(container.textContent).toContain('Active kernels'))
+
+    expect(container.querySelector('[data-testid="process-monitor"]')).toBeNull()
+    expect(container.textContent).toContain('Current analysis')
+    expect(container.textContent).toContain('Python · research')
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Go to Session"]')
+    expect(button).toBeTruthy()
+    act(() => button?.click())
+    expect(openSession).toHaveBeenCalledWith('project-1', 'session-current', 'user')
+  })
+
+  it('forwards retained preview activity to the local process monitor', async () => {
+    const jobsList = vi.fn().mockResolvedValue([])
+    vi.stubGlobal(
+      'window',
+      Object.assign(window, {
+        api: {
+          sessions: { list: vi.fn().mockResolvedValue({ sessions: [] }) },
+          notebook: {
+            getProjectActivity: vi.fn().mockResolvedValue({ kernels: [], backgroundRuns: [] }),
+            getProjectResources: vi.fn().mockResolvedValue(emptyResources()),
+            onChanged: vi.fn(() => () => undefined)
+          },
+          compute: { jobsList, onJobUpdated: vi.fn(() => () => undefined) }
+        }
+      })
+    )
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+
+    await act(async () => root?.render(<ProjectComputeInbox isActive={false} />))
+    expect(
+      container.querySelector('[data-testid="process-monitor"]')?.getAttribute('data-active')
+    ).toBe('false')
+    await act(async () => root?.render(<ProjectComputeInbox isActive />))
+    expect(
+      container.querySelector('[data-testid="process-monitor"]')?.getAttribute('data-active')
+    ).toBe('true')
   })
 
   it('does not show archived output files in the Compute tab', async () => {

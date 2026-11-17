@@ -25,6 +25,10 @@ import type {
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import type { NotebookCommandWorkflows } from './notebook-workflows'
+import type {
+  NotebookProcessMonitorRequest,
+  TerminateNotebookProcessRequest
+} from '../../shared/notebook-process-monitor'
 
 const log = createLogger('notebook:ipc')
 
@@ -72,6 +76,14 @@ const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void =
     'notebook:retry-resource-release',
     (event, request: NotebookResourceReleaseRequest) =>
       handlers.retryResourceRelease(request, human(event))
+  )
+  ipcMainHandle('notebook:process-monitor', (_event, request?: NotebookProcessMonitorRequest) =>
+    handlers.processMonitor(request)
+  )
+  ipcMainHandle(
+    'notebook:terminate-monitored-process',
+    (_event, request: TerminateNotebookProcessRequest) =>
+      handlers.terminateMonitoredProcess(request)
   )
   ipcMainHandle('notebook:run-index', (_event, request: NotebookSessionRequest) =>
     handlers.runIndex(request)

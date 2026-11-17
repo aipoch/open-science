@@ -240,6 +240,10 @@ type NotebookLocalRpcCapability = {
     scope: NotebookExecutionIntentScope,
     promptId: string
   ): NotebookExecutionIntent | undefined
+  manualKernelTerminations?: (
+    projectId: string,
+    sessionId: string
+  ) => import('../../shared/notebook-process-monitor').ManualKernelTermination[]
   beginCodeCell(request: BeginNotebookCodeCellRequest, signal?: AbortSignal): Promise<unknown>
   appendCodeCell(request: AppendNotebookCodeCellRequest): Promise<unknown>
   abortCodeCell(request: AbortNotebookCodeCellRequest): Promise<unknown>

@@ -41,6 +41,11 @@ import type {
   RunNotebookCellRequest
 } from '../notebook'
 import type { NotebookLanguage } from '../notebook-language-contract'
+import type {
+  NotebookProcessMonitorSnapshot,
+  NotebookProcessMonitorRequest,
+  TerminateNotebookProcessRequest
+} from '../notebook-process-monitor'
 
 import type { ProvisionProgress, ProvisionStatus } from '@aipoch/environment/contracts'
 
@@ -67,6 +72,12 @@ export const contracts = {
   'notebook.retryResourceRelease': callable<
     (request: NotebookResourceReleaseRequest) => Promise<NotebookResourceRelease>
   >()('notebook', ['notebook:retry-resource-release']),
+  'notebook.getProcessMonitor': callable<
+    (request?: NotebookProcessMonitorRequest) => Promise<NotebookProcessMonitorSnapshot>
+  >()('notebook', ['notebook:process-monitor', LOCAL]),
+  'notebook.terminateMonitoredProcess': callable<
+    (request: TerminateNotebookProcessRequest) => Promise<void>
+  >()('notebook', ['notebook:terminate-monitored-process', LOCAL]),
   'notebook.appendCodeCell': callable<
     (request: AppendNotebookCodeCellRequest) => Promise<{
       sessionId: string
