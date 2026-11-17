@@ -59,7 +59,10 @@ export class WindowsMemoryPolicyAdapter implements MemoryPolicyAdapter {
   constructor(private readonly native: WindowsBinding = {}) {}
 
   async sample(signal: AbortSignal, requestedScope?: string): Promise<MemoryPolicySample> {
-    verifyHost(requestedScope, 'windows')
+    const executionScope = requestedScope ?? this.defaultExecutionScope
+    const wslProfile = executionScope.startsWith('wsl:') ? executionScope.slice(4) : undefined
+    if (executionScope !== this.defaultExecutionScope && !wslProfile)
+      verifyHost(executionScope, 'windows')
     signal.throwIfAborted()
     if (typeof this.native.sampleWindowsResources !== 'function') missingComponent()
     const result = await this.native.sampleWindowsResources(false, [])
@@ -87,7 +90,7 @@ export class WindowsMemoryPolicyAdapter implements MemoryPolicyAdapter {
     return {
       platform: this.platform,
       source: 'windows-performance-info',
-      executionScope: 'windows:host',
+      executionScope,
       facts: {
         totalBytes: system.totalPhysicalBytes,
         availableBytes: system.availableBytes,
