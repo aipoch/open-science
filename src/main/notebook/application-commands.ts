@@ -7,6 +7,7 @@ import {
   type ApplicationInvocation
 } from '../application-command-router'
 import { canSatisfyHumanApproval, type CallerContext } from '../caller-context'
+import { withNotebookUserOperation } from './execution-intent'
 import type { NotebookCommandWorkflows } from './notebook-workflows'
 
 type NotebookApplicationCommandDependencies = Readonly<{
@@ -252,7 +253,21 @@ const installNotebookApplicationCommands = (
       'notebook:finish-code-cell': (invocation) =>
         dependencies.workflows.finishCodeCell(invocation.args[0]),
       'notebook:run-cell': (invocation) => dependencies.workflows.runCell(invocation.args[0]),
-      'notebook:execute': (invocation) => dependencies.workflows.execute(invocation.args[0]),
+      'notebook:execute': (invocation) => {
+        const request = invocation.args[0]
+        if (
+          request.source === 'user' &&
+          request.inputKind === 'terminal' &&
+          canSatisfyHumanApproval(invocation.callerContext)
+        ) {
+          const assertCurrent = currentHuman(invocation)
+          assertCurrent()
+          return dependencies.workflows.execute(
+            withNotebookUserOperation(request, { assertCurrent })
+          )
+        }
+        return dependencies.workflows.execute(request)
+      },
       'notebook:background-run': (invocation) =>
         dependencies.workflows.getBackgroundRun(invocation.args[0]),
       'notebook:cancel-background-run': (invocation) =>
