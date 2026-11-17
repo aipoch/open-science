@@ -1,3 +1,6 @@
+import { isDesktopRenderer } from '@/lib/interface-scale'
+import { ResearchVideoDialog } from '@/components/research-video-button'
+import type { ResearchVideoPresentationRequest } from '../../../../shared/research-video-presentation'
 import type { ScheduleSummary } from '../../../../shared/session-schedules'
 import { OverlayLayerProvider } from '@/components/ui/overlay-layer'
 import { SchedulePage } from './schedules/SchedulePage'
@@ -149,7 +152,7 @@ type WorkspaceSidebarProps = {
   sidebarToggleButtonRef?: React.Ref<HTMLButtonElement>
   mobileMode?: boolean
   isMobileOpen?: boolean
-  onMobileClose?: () => void
+  onMobileClose?: () => HTMLElement | null | void
 }
 
 type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
@@ -190,6 +193,7 @@ type SessionRowCallbacks = Pick<
   | 'onSessionActionsOpenChange'
 > & {
   onOpenSession: (sessionId: string, clickDetail?: number) => void
+  onOpenResearchFilm?: (session: ChatSession) => Promise<void>
   onSessionContextMenu?: () => void
 }
 
@@ -362,6 +366,8 @@ const sessionRowActionClassName =
   'absolute right-1.5 top-1/2 z-10 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded text-text-100 opacity-0 transition-opacity duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100'
 
 const SESSION_ACTION_TARGET_PREFIX = 'session:'
+const sessionButtonId = (sessionId: string, mobile?: boolean): string =>
+  `sidebar-session-${mobile ? 'mobile' : 'desktop'}-${sessionId}`
 const sessionActionDangerClassName =
   'text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000'
 // Shared icon wrapper inside each project menu item row.
@@ -562,6 +568,7 @@ const SessionRow = memo(function SessionRow({
       : undefined,
     onViewNotebook: (target) => actions.onViewNotebook(target),
     onViewReplay: actions.onViewReplay,
+    onOpenResearchFilm: actions.onOpenResearchFilm,
     onDiscussSession: imported ? actions.onDiscussSession : undefined,
     onExportSession: canExportSession ? (target) => actions.onExportSession?.(target) : undefined,
     onForkSession: canForkSession
@@ -583,6 +590,8 @@ const SessionRow = memo(function SessionRow({
   })
   const sessionActionIdentityKey = JSON.stringify([
     session.id,
+    session.isPending,
+    session.firstPromptDraft,
     imported,
     session.updatedAt,
     session.pinned ?? false,
@@ -604,6 +613,7 @@ const SessionRow = memo(function SessionRow({
   const openSessionButton = (
     <button
       type="button"
+      id={sessionButtonId(session.id, mobileMode)}
       data-slot="session-open-button"
       title={imported ? t('Read-only') : undefined}
       className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left after:absolute after:inset-0 after:rounded-[inherit]"
@@ -1495,6 +1505,9 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
 
 const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const [film, setFilm] = useState<ResearchVideoPresentationRequest>()
+  const filmInvocation = useRef(0)
+  const filmReturnFocus = useRef<HTMLElement | null>(null)
   const mounted = useRef(true)
   const pendingOpen = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const cancelPendingOpen = useCallback(() => {
@@ -1550,6 +1563,32 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
   })
   const rowActions = useMemo<SessionRowCallbacks>(
     () => ({
+      onOpenResearchFilm: isDesktopRenderer()
+        ? async (session) => {
+            const revision = ++filmInvocation.current
+            const sidebar = latestProps.current
+            filmReturnFocus.current = sidebar.mobileMode
+              ? (sidebar.onMobileClose?.() ?? null)
+              : document.getElementById(sessionButtonId(session.id, false))
+            const request = { projectId: session.projectId, sessionId: session.id }
+            const source =
+              session.contentLoaded === false ? await window.api.sessions.loadOne(request) : session
+            if (
+              !mounted.current ||
+              revision !== filmInvocation.current ||
+              !latestProps.current.sessions.some(
+                (row) => row.id === session.id && row.projectId === session.projectId
+              )
+            )
+              return
+            const graph = source?.conversationGraph
+            setFilm({
+              ...request,
+              branchId: graph?.frames.find((frame) => frame.id === graph.rootFrameId)
+                ?.activeBranchId
+            })
+          }
+        : undefined,
       onSessionContextMenu: cancelPendingOpen,
       onOpenSession: (sessionId, clickDetail = 0) => {
         cancelPendingOpen()
@@ -1598,7 +1637,22 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
     }),
     [cancelPendingOpen]
   )
-  return <WorkspaceSidebarView {...props} rowActions={rowActions} />
+  return (
+    <>
+      <WorkspaceSidebarView {...props} rowActions={rowActions} />
+      {film && (
+        <ResearchVideoDialog
+          key={JSON.stringify(film)}
+          {...film}
+          onDismiss={() => {
+            setFilm(undefined)
+            filmReturnFocus.current?.focus()
+            filmReturnFocus.current = null
+          }}
+        />
+      )}
+    </>
+  )
 }
 
 const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
