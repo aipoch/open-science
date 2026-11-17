@@ -12,3 +12,7 @@
 {"name":"native-macron-keeps-base-relative-offset","change":"macron","accepted":true}
 {"name":"native-macron-detached-from-base-is-rejected","change":"macron-detached","accepted":false}
 {"name":"raised-native-hat-keeps-relative-offset","change":"raised-hat","accepted":true}
+{"name":"zero-advance circumflex inside an owned wide variable","change":"centered-unchanged","accepted":true}
+{"name":"detached zero-advance circumflex cannot reuse the original pairing","change":"centered-detached","accepted":false}
+{"name":"overlapping bases cannot own the same circumflex","change":"centered-ambiguous","accepted":false}
+{"name":"changed circumflex font cannot reuse the original pairing","change":"centered-changed-font","accepted":false}

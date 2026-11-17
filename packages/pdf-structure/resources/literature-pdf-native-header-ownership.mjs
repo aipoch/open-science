@@ -214,6 +214,8 @@ export function recoverNativeTwoTierParentHeaderGrid(table, items, captions, rul
     !proveTwoTierWholeCaption(above[0], items, original)
   )
     return
+  const pairedUncertainty = recoverPairedCountUncertaintyHeader(table, context)
+  if (pairedUncertainty) return pairedUncertainty
   const singleParentMath = recoverNativeSingleParentMathHeaderGrid(
     table,
     items,
@@ -255,7 +257,8 @@ export function recoverNativeTwoTierParentHeaderGrid(table, items, captions, rul
       height,
       0.2
     )
-  if (!head.length || !body || body.length < 4) return
+  const compactPairedHeader = body?.length === 2 && columns.length === 5
+  if (!head.length || !body || (body.length < 4 && !compactPairedHeader)) return
   const scalar = (s) => /^[<>≤≥−–+-]?\d[\d.,%]*$/.test(s),
     owner = (i, xs) => {
       const center = (i.rect[0] + i.rect[2]) / 2
@@ -382,8 +385,43 @@ export function recoverNativeTwoTierParentHeaderGrid(table, items, captions, rul
   }
   visit(0, 1, [])
   if (answers.length !== 1) return
-  const { cuts, scopes } = answers[0],
-    split = (Math.max(...upper.map((i) => i.baseline)) + lowerY) / 2,
+  const { cuts, scopes } = answers[0]
+  if (compactPairedHeader) {
+    if (scopes.length !== 2 || scopes.some(({ start, end }) => end - start !== 2)) return
+    const headings = scopes.map(({ start, end }) =>
+      leaves.slice(start, end).map((cell) => cell[0].text.trim())
+    )
+    if (headings[0][0] === headings[0][1] || headings[0].some((h, n) => h !== headings[1][n]))
+      return
+    const records = [lower, ...body]
+    // Two short records need independently observed vertical group fences in
+    // the same empty lane gap at all three lower baselines.
+    for (const { start } of scopes) {
+      const left = Math.max(
+        ...records
+          .flat()
+          .filter((i) => owner(i, oldCuts) < start)
+          .map((i) => i.rect[2])
+      )
+      const right = Math.min(
+        ...records
+          .flat()
+          .filter((i) => owner(i, oldCuts) >= start)
+          .map((i) => i.rect[0])
+      )
+      const rails = rules.filter((r) => r[0] === r[2] && r[0] > left && r[0] < right)
+      if (
+        !rails.some((r) =>
+          records.every((row) => {
+            const y = Math.min(...row.map((i) => i.baseline))
+            return rails.some((p) => Math.abs(p[0] - r[0]) <= 0.1 && p[1] < y && p[3] > y)
+          })
+        )
+      )
+        return
+    }
+  }
+  const split = (Math.max(...upper.map((i) => i.baseline)) + lowerY) / 2,
     bands = sourceBodyBands(body, frame, edges[1][1])
   if (
     !bands ||
@@ -405,7 +443,136 @@ export function recoverNativeTwoTierParentHeaderGrid(table, items, captions, rul
     ],
     completeSpans: true,
     ownedTokens: new Set(source),
-    cropRect: [crop[0], frame[1], crop[2], frame[3]],
+    cropRect: compactPairedHeader
+      ? [Math.min(crop[0], frame[0]), crop[1], Math.max(crop[2], frame[2]), crop[3]]
+      : [crop[0], frame[1], crop[2], frame[3]],
+    repair: 'native-body-records-recovered'
+  }
+}
+
+// The two printed tiers share a three-rule frame. Exact repeated count and
+// uncertainty lanes disambiguate the scope of the two angle-labelled children.
+function recoverPairedCountUncertaintyHeader(table, context) {
+  const { crop, frame, edges, source, height } = context
+  const model = table.structure?.objects
+    ?.filter((object) => object.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (model?.length !== 8) return
+  const cuts = [
+    frame[0] - 0.1,
+    ...model.slice(1).map((object, index) => crop[0] + (model[index].rect[2] + object.rect[0]) / 2),
+    frame[2] + 0.1
+  ]
+  if (cuts.some((x, n) => !Number.isFinite(x) || (n && x <= cuts[n - 1]))) return
+  const divider = edges[1][1]
+  const head = source.filter((item) => item.baseline < divider)
+  const rows = groupSourceRowsWithScripts(
+    source.filter((item) => item.baseline > divider),
+    height,
+    0.2
+  )
+  const tiers = groupSourceRowsWithScripts(head, height, 0.2)
+  if (
+    tiers?.length !== 2 ||
+    !rows ||
+    rows.length < 4 ||
+    !hasUniqueRecordTokens(source, [...tiers, ...rows])
+  )
+    return
+  const [upper, lower] = tiers
+  if (
+    upper.length !== 6 ||
+    Math.max(...upper.map((i) => i.baseline)) >= Math.min(...lower.map((i) => i.baseline)) ||
+    source.some((i) => Math.abs(i.height - height) > height * 0.1)
+  )
+    return
+  const lane = (items, column) =>
+    items.filter((i) => i.rect[0] >= cuts[column] && i.rect[2] <= cuts[column + 1])
+  const literal = (items) =>
+    [...items]
+      .sort((a, b) => a.rect[0] - b.rect[0])
+      .map((i) => i.text.replace(/\s+/gu, ''))
+      .join('')
+  const leafCells = cuts.slice(1).map((_, column) => lane(lower, column))
+  if (
+    !hasUniqueRecordTokens(
+      lower,
+      leafCells.filter((cell) => cell.length)
+    ) ||
+    leafCells[0].length !== 0 ||
+    [1, 6, 7].some(
+      (column) => leafCells[column].length !== 1 || !/^\p{L}+$/u.test(literal(leafCells[column]))
+    ) ||
+    [2, 4].some((column) => literal(leafCells[column]) !== '#') ||
+    [3, 5].some((column) => !/^〈\p{L}+〉$/u.test(literal(leafCells[column])))
+  )
+    return
+  const scalar = (v) => /^[−+-]?\d+(?:\.\d+)?$/u.test(v)
+  const uncertainty = (v) => /^[−+-]?\d+(?:\.\d+)?±\d+(?:\.\d+)?$/u.test(v)
+  if (
+    rows.some((row) => {
+      const fields = cuts.slice(1).map((_, column) => lane(row, column))
+      const values = fields.map(literal)
+      return (
+        !hasUniqueRecordTokens(row, fields) ||
+        fields[0].length !== 1 ||
+        !/\p{L}/u.test(values[0]) ||
+        [1, 6].some((column) => !scalar(values[column])) ||
+        [2, 4].some((column) => !/^\d+$/u.test(values[column])) ||
+        [3, 5, 7].some((column) => !uncertainty(values[column]))
+      )
+    })
+  )
+    return
+  const spans = []
+  const owned = []
+  for (const column of [0, 1, 2, 4, 6, 7]) {
+    const grouped = column === 2 || column === 4
+    const end = column + (grouped ? 2 : 1)
+    const label = upper.filter((i) => i.rect[0] >= cuts[column] && i.rect[2] <= cuts[end])
+    if (label.length !== 1 || !/\p{L}/u.test(label[0].text)) return
+    if (grouped) {
+      const [parent] = label
+      const children = [...leafCells[column], ...leafCells[column + 1]]
+      const childCenter =
+        (Math.min(...children.map((i) => i.rect[0])) +
+          Math.max(...children.map((i) => i.rect[2]))) /
+        2
+      const center = (parent.rect[0] + parent.rect[2]) / 2
+      if (
+        parent.rect[0] >= cuts[column + 1] ||
+        parent.rect[2] <= cuts[column + 1] ||
+        Math.abs(center - childCenter) > height * 0.8
+      )
+        return
+    }
+    owned.push(label)
+    spans.push({ row: 0, column, rowSpan: grouped ? 1 : 2, colSpan: grouped ? 2 : 1 })
+  }
+  if (!hasUniqueRecordTokens(upper, owned)) return
+  const baseline = tiers.map((tier) => Math.min(...tier.map((i) => i.baseline)))
+  if (baseline[1] - baseline[0] < height || baseline[1] - baseline[0] > height * 2) return
+  const split = (baseline[0] + baseline[1]) / 2
+  const body = sourceBodyBands(rows, frame, divider)
+  if (!body) return
+  const bounds = [
+    Math.min(frame[0] - 0.5, crop[0]),
+    Math.min(frame[1] - 0.5, ...upper.map((i) => i.rect[1])),
+    Math.max(frame[2] + 0.5, crop[2]),
+    Math.max(frame[3] + 0.5, crop[3])
+  ]
+  return {
+    rows: [
+      [cuts[0], bounds[1], cuts.at(-1), split],
+      [cuts[0], split, cuts.at(-1), divider],
+      ...body
+    ],
+    columns: cuts.slice(1).map((right, column) => [cuts[column], bounds[1], right, frame[3]]),
+    headerRows: [0, 1],
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    cropRect: bounds,
     repair: 'native-body-records-recovered'
   }
 }

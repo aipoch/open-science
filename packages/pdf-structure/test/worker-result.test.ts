@@ -1216,3 +1216,16 @@ it.each(['bottom-strip', 'native-marker'])(
     expect(await inspectScratch(root, false)).toBe(0)
   }
 )
+
+it('cleans the exact filename emitted for a ruled table thumbnail', async () => {
+  const originalBytes = await inspectScratch(root)
+  const result = join(root, 'thumbnails', 'p1-ruled-table-0.png')
+  const foreign = result + '.pending'
+  await writeFile(result, png)
+  expect(await inspectScratch(root)).toBe(originalBytes + png.length)
+  await writeFile(foreign, png)
+  await expect(inspectScratch(root)).rejects.toThrow('Unexpected PDF scratch')
+  await unlink(foreign)
+  expect(await inspectScratch(root, true)).toBe(originalBytes + png.length)
+  expect(await inspectScratch(root)).toBe(0)
+})

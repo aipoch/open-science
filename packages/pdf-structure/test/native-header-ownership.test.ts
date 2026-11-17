@@ -1472,6 +1472,46 @@ const scriptedWholeParentTiers = (): ReturnType<typeof JSON.parse> => {
   return f
 }
 
+it.each(['complete', 'missing group rail', 'different leaf', 'missing scalar'])(
+  'keeps the native short two-tier header and all scalar lanes: %s',
+  (change) => {
+    const f = wholeParentTiers(true)
+    f.tokens = f.tokens.filter((token: { baseline: number }) => token.baseline < 88)
+    f.context.sourceContent.items = f.context.sourceContent.items.slice(0, f.tokens.length)
+    for (const item of f.tokens) {
+      const column = /^Leaf (\d)$/.exec(item.text)
+      if (!column) continue
+      const text =
+        change === 'different leaf' && column[1] === '3'
+          ? 'Leaf C'
+          : Number(column[1]) % 2
+            ? 'Leaf A'
+            : 'Leaf B'
+      item.text = item.sourceItem.text = text
+      const source = f.context.sourceContent.items[item.sourceItem.index]
+      source.str = source.sourceItem.text = text
+    }
+    f.rules = [20, 50, 86].map((y) => [0, y, 250, y])
+    f.rules.push([50, 39, 50, 80], [150, 39, 150, change === 'missing group rail' ? 70 : 80])
+    f.table.cropRect = [0, 19, 250, 88]
+    if (change === 'missing scalar') f.tokens.pop()
+    const original = structuredClone(f)
+    const result = recoverTwoTier(f.table, f.tokens, f.captions, f.rules, f.context)
+    if (change === 'complete') {
+      expect(result?.rows).toHaveLength(4)
+      expect(result?.columns).toHaveLength(5)
+      expect(result?.cropRect).toEqual(f.table.cropRect)
+      expect(result?.spans).toEqual([
+        { row: 0, column: 0, rowSpan: 2, colSpan: 1 },
+        { row: 0, column: 1, rowSpan: 1, colSpan: 2 },
+        { row: 0, column: 3, rowSpan: 1, colSpan: 2 }
+      ])
+      expect(result?.ownedTokens.size).toBe(f.tokens.length - 1)
+    } else expect(result).toBeUndefined()
+    expect(f).toEqual(original)
+  }
+)
+
 it('retains a whole source parent expression with its adjacent native subscript', () => {
   const f = scriptedWholeParentTiers(),
     before = structuredClone(f)

@@ -208,3 +208,55 @@ it('accepts only an actual PNG with room for both native image ink and caption a
     geometry.nativeGroupedRasterCaptionPngSafe?.(evidence, new Uint8Array(), rect, bounds) ?? false
   ).toBe(false)
 })
+
+it('recovers painted chart tails without admitting taller caption advances', () => {
+  const f = nativeRasterCaption(),
+    { page, figure, context } = f,
+    old = context.operators
+  const raster = [OPS.save, OPS.transform, OPS.dependency, OPS.paintImageXObject, OPS.restore]
+  context.operators = {
+    fnArray: [...raster, ...raster, ...old.fnArray.slice(15)],
+    argsArray: [
+      null,
+      [220, 0, 0, 120, 40, 80],
+      ['image'],
+      ['image', 220, 120],
+      null,
+      null,
+      [10, 0, 0, 120, 280, 80],
+      ['peer'],
+      ['peer', 10, 120],
+      null,
+      ...old.argsArray.slice(15)
+    ]
+  }
+  page.graphicsBounds = context.graphicsBounds = [
+    {
+      kind: 'image',
+      operationIndex: 3,
+      imageHash: 'a'.repeat(64),
+      normalizedRect: [39 / page.width, 39 / page.height, 261 / page.width, 161 / page.height],
+      paintedNormalizedRect: [
+        40 / page.width,
+        40 / page.height,
+        260 / page.width,
+        160 / page.height
+      ]
+    },
+    {
+      kind: 'image',
+      operationIndex: 8,
+      normalizedRect: [279 / page.width, 39 / page.height, 291 / page.width, 161 / page.height]
+    }
+  ]
+  context.pageNumber = 1
+  figure.rect = [38, 38, 262, figure.caption.rect[1] - 0.5]
+  const adjacent = (): ReturnType<typeof JSON.parse> =>
+    geometry.nativeAdjacentRasterCaptionBottom(page, figure, context)
+  expect(adjacent()).toEqual({ bottom: 161.5, captionInkTop: 163, imageRect: [40, 40, 260, 160] })
+  page.graphicsBounds[0].operationIndex = 8
+  expect(adjacent()).toBeUndefined()
+  page.graphicsBounds[0].operationIndex = 3
+  context.glyphBounds[0].glyphs.find((g) => g.fontChar === 'F').bounds[3] = 0.9
+  expect(adjacent()).toBeUndefined()
+})

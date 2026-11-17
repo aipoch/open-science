@@ -373,7 +373,7 @@ function ordinaryAcademicHeading(source: string): string | undefined {
     .trim()
     .replace(/\s+/gu, ' ')
     .replace(/^(?:[A-Z]|\d+)(?:\.\d+)+\.?\s+/iu, '')
-  return /^(?:ethics statement|open science(?: statement)?|training details|additional results|implementation details|data availability|ethical considerations|ablation study|related work)$/iu.test(
+  return /^(?:ethics statement|open science(?: statement)?|training details|additional results|implementation details|data availability|ethical considerations|ablation study|related work|computation details|target simulations|(?:\d{1,3}\.?\s+)?limitations? and (?:outlook|future work))$/iu.test(
     heading
   )
     ? heading
@@ -390,14 +390,14 @@ function isOrdinaryScientificLabel(source: string): boolean {
   // Complete descriptive labels only; a containing organization or method
   // name cannot borrow an exemption from an ordinary word.
   if (
-    /^(?:commutative algebra|(?:date|chl) range|input sequence|atom attention encoder|physical validity constraints)$/iu.test(
+    /^(?:commutative algebra|(?:date|chl) range|input sequence|atom attention encoder|physical validity constraints|polari[sz]ation controller)$/iu.test(
       source
     )
   )
     return true
   // Publication labels and clinical table summaries are not proper names.
   if (
-    /^(?:open[ -]access|original (?:article|research)|research article|review article|systematic review|case report|brief report|short communication|editorial|letter to the editor|edited by|reviewed by|additional information|supplemental material|(?:competing interests|contributorship) statement)$/iu.test(
+    /^(?:open[ -]access|original (?:article|research)|research article|review article|systematic review|case report|brief report|short communication|editorial|letter to the editor|edited by|reviewed by|additional information|supplemental material|supplementary information|competing interests(?: statement)?|contributorship statement)$/iu.test(
       source
     ) ||
     /^(?:all grades?|total cycles?|physical symptoms?|human immunodeficiency virus|non-hispanic (?:black|white)|sex-based analys(?:is|es)|(?:sleep|aim trainer) score|AE class|intraoperative HR|limited context|yes|no|unclear|(?:high|low|unclear) risk)$/iu.test(

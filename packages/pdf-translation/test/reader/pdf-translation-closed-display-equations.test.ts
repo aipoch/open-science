@@ -3,6 +3,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
 import type { PdfLayoutTextItem } from '../../src/reader/layout.js'
+import type { PdfTranslationUnit } from '../../src/reader/source.js'
 
 function fixture(kind = 'script', fault = ''): PDFDocumentProxy {
   const item = (
@@ -540,4 +541,151 @@ it.each([
     result.source.units.find((u) => u.source.startsWith('A separate ordinary'))?.sourceOnly
   ).not.toBe(true)
   expect(result.coverage.excludedItemCount).toBe(0)
+})
+
+function derivativeFixture(fault: string): {
+  document: PDFDocumentProxy
+  ordinary: number
+  denominator: number
+  differential: number
+} {
+  const parts: PdfLayoutTextItem[] = []
+  const add = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'Math',
+    hasEOL = false
+  ): number => {
+    parts.push({
+      str,
+      width,
+      height: 10,
+      dir: 'ltr',
+      fontName,
+      transform: [10, 0, 0, 10, x, y],
+      hasEOL
+    })
+    return parts.length - 1
+  }
+  add('The preceding prose introduces the two equations.', 60, 700, 240, 'Body', true)
+  add('dψ', 120, 658, 11)
+  add('(', 131, 658, 3, 'Body')
+  add('x', 134, 658, 5)
+  add(')', 139, 658, 3, 'Body', true)
+  const denominator = add('dt', fault === 'off-center' ? 140 : 127, 644, 8)
+  add(fault === 'no-relation' ? '·' : ':=', 146, 651, 9, 'Body')
+  add('u', 158, 651, 5)
+  add('=', 166, 651, 8, 'Body')
+  add('0', 178, 651, 5, 'Body')
+  add(fault === 'no-number' ? 'Independent heading' : '(1)', 455, 651, 14, 'Body', true)
+  add('The next differential is defined as follows.', 60, 623, 210, 'Body', true)
+  add('x', 118, 577, 6)
+  add('=', 128, 577, 8, 'Body')
+  const differential = add('d', 142, 584, 4, 'Math', true)
+  add('dt', 140, 570, 8)
+  add('μ', 150, 577, 6)
+  add('(2)', 455, 577, 14, 'Body', true)
+  const ordinary = add('dt', 75, 450, 10, 'Body', true)
+  add('Other prose follows independently.', 75, 419, 220, 'Body', true)
+  if (fault === 'ambiguous-fraction') add('overlapping words', 128, 644, 85, 'Body', true)
+  const metrics = { ascent: 0.7, descent: -0.2, vertical: false }
+  const calls: [number, unknown[]][] = [
+    [
+      OPS.setGState,
+      [
+        [
+          ['CA', 1],
+          ['ca', 1]
+        ]
+      ]
+    ],
+    [OPS.setLineWidth, [0.4]],
+    ...(
+      (fault === 'no-bar'
+        ? []
+        : [
+            [120, 142, 654],
+            [140, 148, 580]
+          ]) as number[][]
+    ).map(([left, right, y]): [number, unknown[]] => [
+      OPS.constructPath,
+      [OPS.stroke, [new Float32Array([0, left, y, 1, right, y])], null]
+    ])
+  ]
+  if (fault === 'not-opaque')
+    calls[0][1] = [
+      [
+        ['CA', 0.5],
+        ['ca', 1]
+      ]
+    ]
+  if (fault === 'duplicate-key')
+    calls[0][1] = [
+      [
+        ['CA', 1],
+        ['CA', 1]
+      ]
+    ]
+  if (fault === 'other-key')
+    calls[0][1] = [
+      [
+        ['CA', 1],
+        ['BM', 1]
+      ]
+    ]
+  const document = {
+    numPages: 1,
+    fingerprints: ['anonymous-differential'],
+    getPage: async () => ({
+      getViewport: () => ({
+        width: 600,
+        height: 800,
+        rotation: 0,
+        transform: [1, 0, 0, -1, 0, 800]
+      }),
+      getTextContent: async () => ({ items: parts, styles: { Body: metrics, Math: metrics } }),
+      getOperatorList: async () => ({
+        fnArray: calls.map(([op]) => op),
+        argsArray: calls.map(([, args]) => args)
+      }),
+      commonObjs: {
+        get: () => ({
+          ...metrics,
+          missingFile: false,
+          isType3Font: false,
+          isInvalidPDFjsFont: false,
+          systemFontInfo: null
+        })
+      }
+    })
+  } as unknown as PDFDocumentProxy
+  return { document, ordinary, denominator, differential }
+}
+
+it.each([
+  'proved',
+  'not-opaque',
+  'duplicate-key',
+  'other-key',
+  'off-center',
+  'no-bar',
+  'no-relation',
+  'no-number',
+  'ambiguous-fraction'
+])('preserves only differentials proved by their native numbered displays: %s', async (fault) => {
+  const { document, ordinary, denominator, differential } = derivativeFixture(fault)
+  const { source } = await extractPdfTranslationSource({
+    document,
+    resourceRequestKey: 'anonymous',
+    signal: new AbortController().signal
+  })
+  const ownerOf = (index: number): PdfTranslationUnit | undefined =>
+    source.units.find((unit) =>
+      unit.fragments.some((fragment) => fragment.items.some((item) => item.index === index))
+    )
+  expect(ownerOf(ordinary)?.sourceOnly).not.toBe(true)
+  expect(ownerOf(denominator)?.sourceOnly).toBe(fault === 'proved' ? true : undefined)
+  if (fault === 'proved') expect(ownerOf(differential)?.sourceOnly).toBe(true)
 })

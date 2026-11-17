@@ -1,6 +1,6 @@
 import type { PDFPageProxy } from 'pdfjs-dist'
 import { nativeInkPageCurrent, nativeInkPageIdentity } from './native-ink-page-state.js'
-import { nativeOutlineBox } from './native-source-geometry.js'
+import { nativeOutlineBox, nativeRectangularPath } from './native-source-geometry.js'
 import { getPdfTranslationTextContent } from './text-content.js'
 
 type Content = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
@@ -113,14 +113,32 @@ export async function readNativeFormClippedText(
       mode: 0,
       inText: false,
       positioned: false,
-      valid: true
+      valid: true,
+      verticalPositioned: false
     }
     const stack: { kind: 'save' | 'form'; state: typeof state }[] = [],
       sources = content.items.flatMap((item, index) =>
         'str' in item && item.str.trim() ? [{ item, index }] : []
       ),
       matched = new Map<number, { hidden: boolean }[]>(),
-      uncertain = new Set<string>()
+      uncertain = new Set<string>(),
+      whollyClippedFonts = new Map<string, boolean>()
+    // The PDF reader can combine or divide the runs of a font when exposing text.
+    // A font is eligible only when every show on the page has proved clipped ink.
+    const exhaustiveShows = !snapshot.fnArray.some((op, index) => {
+      const args = snapshot.argsArray[index]
+      return (
+        op === OPS.showSpacedText ||
+        op === OPS.nextLineShowText ||
+        op === OPS.nextLineSetSpacingShowText ||
+        (op === OPS.setGState &&
+          (!Array.isArray(args?.[0]) ||
+            args[0].some((entry: unknown[]) => entry?.[0] === 'Font'))) ||
+        // A Type3 glyph may paint a nested operator list.
+        (op === OPS.showText &&
+          args?.[0]?.some((glyph: { operatorListId?: string }) => glyph?.operatorListId != null))
+      )
+    })
     let comparisons = 0
     const sourcesByText = new Map<string, typeof sources>()
     for (const source of sources) {
@@ -188,18 +206,47 @@ export async function readNativeFormClippedText(
       } else if (op === OPS.transform) {
         if (!axis(a)) state.valid = false
         else state.matrix = Util.transform(state.matrix, a)
+      } else if (
+        op === OPS.clip &&
+        state.clips.length &&
+        !state.inText &&
+        axis(state.matrix) &&
+        snapshot.fnArray[n + 1] === OPS.constructPath
+      ) {
+        const args = snapshot.argsArray[n + 1],
+          paths = args?.[1]
+        // Only the actual typed rectangle consumed by this clip can restrict
+        // inherited Form ink. The renderer's cached extent alone is insufficient.
+        const rectangle =
+          args?.[0] === OPS.endPath &&
+          Array.isArray(paths) &&
+          paths.length === 1 &&
+          ArrayBuffer.isView(paths[0])
+            ? nativeRectangularPath(paths)
+            : undefined
+        if (
+          rectangle &&
+          args?.[2]?.length === 4 &&
+          rectangle.every((value, index) => value === args[2][index])
+        ) {
+          const clip = bounds(rectangle, state.matrix)
+          if (clip.every(Number.isFinite)) state.clips = [...state.clips, clip]
+        }
       } else if (op === OPS.beginText) {
         if (state.inText) return
         state.inText = true
         state.positioned = false
+        state.verticalPositioned = false
         state.textMatrix = identity
       } else if (op === OPS.endText) {
         if (!state.inText) return
         state.inText = false
         state.positioned = false
+        state.verticalPositioned = false
       } else if (op === OPS.setTextMatrix) {
         const m = Array.from(a[0] ?? []) as number[]
         state.positioned = state.inText && axis(m)
+        state.verticalPositioned = state.positioned
         if (state.positioned) state.textMatrix = m
       } else if (op === OPS.moveText) {
         state.positioned =
@@ -208,6 +255,7 @@ export async function readNativeFormClippedText(
           state.textMatrix === identity &&
           a.length === 2 &&
           a.every(Number.isFinite)
+        state.verticalPositioned = state.positioned
         if (state.positioned) state.textMatrix = [1, 0, 0, 1, a[0], a[1]]
       } else if (op === OPS.setFont) {
         state.font = a[0]
@@ -231,6 +279,59 @@ export async function readNativeFormClippedText(
           key = state.font + '\n' + literal.trim(),
           positioned = state.positioned
         state.positioned = false
+        if (exhaustiveShows && state.font && whollyClippedFonts.get(state.font) !== false) {
+          const font = page.commonObjs.has(state.font) ? page.commonObjs.get(state.font) : undefined
+          const matrix = Util.transform(state.matrix, state.textMatrix)
+          // In an axis-aligned horizontal text object, successive shows can
+          // change x without changing either of these vertical ink bounds.
+          const clip =
+            state.valid &&
+            state.inText &&
+            state.verticalPositioned &&
+            axis(matrix) &&
+            state.fill === '#000000' &&
+            state.mode === 0 &&
+            Number.isFinite(state.size) &&
+            state.size > 0 &&
+            Number.isFinite(state.hScale) &&
+            state.hScale > 0 &&
+            Number.isFinite(state.rise) &&
+            font?.loadedName === state.font &&
+            font.missingFile === false &&
+            font.isInvalidPDFjsFont === false &&
+            font.isType3Font === false &&
+            font.vertical === false &&
+            !font.remeasure &&
+            !font.systemFontInfo &&
+            JSON.stringify(font.fontMatrix) === '[0.001,0,0,0.001,0,0]' &&
+            state.clips.some((clip) => {
+              return glyphs.every((glyph) => {
+                if (typeof glyph === 'number') return Number.isFinite(glyph)
+                if (
+                  !glyph ||
+                  typeof glyph.unicode !== 'string' ||
+                  typeof glyph.fontChar !== 'string' ||
+                  !glyph.fontChar ||
+                  !Number.isFinite(glyph.width) ||
+                  glyph.width < 0 ||
+                  glyph.accent != null ||
+                  glyph.vmetric != null ||
+                  glyph.operatorListId != null ||
+                  (glyph.unicode.trim() && glyph.isInFont !== true)
+                )
+                  return false
+                const key = `${font.loadedName}_path_${glyph.fontChar}`
+                if (!keys.has(key) || !page.commonObjs.has(key)) return false
+                const path = page.commonObjs.get(key)?.path,
+                  outline = nativeOutlineBox(path)
+                if (!outline) return !glyph.unicode.trim() && !path?.length
+                const y = matrix[5] + matrix[3] * state.rise,
+                  scale = matrix[3] * state.size
+                return y + outline[3] * scale < clip[1] - 1 || y + outline[1] * scale > clip[3] + 1
+              })
+            })
+          whollyClippedFonts.set(state.font, !!clip)
+        }
         if (!literal.trim()) continue
         if (
           !state.valid ||
@@ -379,9 +480,10 @@ export async function readNativeFormClippedText(
         .filter(({ item, index }) => {
           const occurrences = matched.get(index)
           return (
-            !uncertain.has(item.fontName + '\n' + item.str) &&
-            occurrences?.length === 1 &&
-            occurrences[0].hidden
+            whollyClippedFonts.get(item.fontName) === true ||
+            (!uncertain.has(item.fontName + '\n' + item.str) &&
+              occurrences?.length === 1 &&
+              occurrences[0].hidden)
           )
         })
         .map(({ index }) => index)

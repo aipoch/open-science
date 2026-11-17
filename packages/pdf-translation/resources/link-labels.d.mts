@@ -16,6 +16,14 @@ export function translatedPdfLinkFragment(
   offset: number
 ): { start: number; text: string } | null
 
+export function pdfBracketedReferenceBlocks(text: string): {
+  start: number
+  end: number
+  text: string
+  numbers: RegExpExecArray[]
+  key: string
+}[]
+
 export function translatedPdfBracketedReference(
   source: string,
   translation: string,

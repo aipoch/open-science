@@ -411,6 +411,12 @@ export async function applyCachedPdfFigureSources({
       const graphicAnchors = new Map<number, Rect[]>()
       const claims = new Map<string, (typeof elements)[number]>()
       for (const figure of elements) {
+        const pairedPanelTags =
+          figure.sourceItems?.length === 2 &&
+          figure.sourceItems
+            .map(({ text }) => text)
+            .sort()
+            .join(' ') === 'a b'
         if (
           figure.kind !== 'figure' ||
           !figure.sourceItems?.length ||
@@ -424,7 +430,8 @@ export async function applyCachedPdfFigureSources({
               issue.code !== 'native-raster-quad' &&
               issue.code !== 'native-vector-bar-chart' &&
               issue.code !== 'native-raster-horizontal-array' &&
-              issue.code !== 'native-disjoint-mixed-group'
+              issue.code !== 'native-disjoint-mixed-group' &&
+              !(pairedPanelTags && issue.code === 'native-raster-vector-strip')
           )
         )
           continue
