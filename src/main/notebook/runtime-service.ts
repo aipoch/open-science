@@ -590,7 +590,7 @@ class NotebookRuntimeService {
   ): Promise<NotebookMemoryPolicyState> {
     const policy = await this.getMemoryPolicy()
     // UI input cannot create sampler domains or silently substitute a host sample for WSL.
-    const state = await policy.getState()
+    const state = await policy.getState({ executionScope: request.executionScope })
     if (request.executionScope && request.executionScope !== state.executionScope) {
       throw new Error('The visible memory check no longer matches the current execution domain.')
     }

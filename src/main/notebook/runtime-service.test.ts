@@ -226,6 +226,22 @@ const lifecycleCallbackHarness = (
 }
 
 describe('notebook runtime service', () => {
+  it('reads memory state for the requested execution domain', async () => {
+    const service = new NotebookRuntimeService({
+      configRoot: '/tmp/notebook-scoped-state',
+      dataRoot: '/tmp/notebook-scoped-state',
+      projectId: 'project',
+      memoryPolicy: healthyNotebookMemoryPolicy()
+    })
+    try {
+      await expect(
+        service.getMemoryPolicyState({ executionScope: 'wsl:Ubuntu' })
+      ).resolves.toMatchObject({ executionScope: 'wsl:Ubuntu', status: 'healthy' })
+    } finally {
+      await service.dispose()
+    }
+  })
+
   it('holds session creation behind a folder policy commit and releases admission after failure', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
