@@ -936,7 +936,12 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
       ).catch((error) => {
         if (error.killed || error.code === 'ENOENT') throw error
       })
-      expect(await readFile(join(root, 'workload-started'), 'utf8')).toBe('started')
+      await vi.waitFor(
+        async () => {
+          await expect(readFile(join(root, 'workload-started'), 'utf8')).resolves.toBe('started')
+        },
+        { timeout: 10_000, interval: 50 }
+      )
       const restarted = new NotebookRuntimeService({
         memoryPolicy: healthyNotebookMemoryPolicy(),
         configRoot: root,
