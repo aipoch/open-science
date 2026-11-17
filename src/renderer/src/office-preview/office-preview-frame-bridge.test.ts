@@ -99,6 +99,31 @@ describe('Office preview frame bridge', () => {
       '*'
     )
 
+    const onGoto = vi.fn()
+    bridge.onGotoSlide(onGoto)
+    const goto = {
+      channel: 'open-science-office-preview',
+      version: 1,
+      type: 'goto-slide',
+      sessionId: 'session-1',
+      slideIndex: 3
+    }
+    messageListener?.({ source: parent, data: { ...goto, sessionId: 'other' } } as never)
+    expect(onGoto).not.toHaveBeenCalled()
+    messageListener?.({ source: parent, data: goto } as never)
+    expect(onGoto).toHaveBeenCalledWith(3)
+
+    bridge.reportSlideView({ slideIndex: 3, x: 1, y: 2, width: 30, height: 40 })
+    expect(parent.postMessage).toHaveBeenLastCalledWith(
+      {
+        channel: 'open-science-office-preview',
+        version: 1,
+        type: 'slide-view',
+        slideView: { sessionId: 'session-1', slideIndex: 3, x: 1, y: 2, width: 30, height: 40 }
+      },
+      '*'
+    )
+
     bridge.dispose()
     expect(runtimeWindow.removeEventListener).toHaveBeenCalledWith('message', expect.any(Function))
     expect(runtimeWindow.removeEventListener).toHaveBeenCalledWith(

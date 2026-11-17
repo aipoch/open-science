@@ -10,6 +10,7 @@ import type {
   OfficePreviewPhase,
   OfficePreviewRequestedExtension,
   OfficePreviewRuntimeState,
+  OfficePreviewSlideView,
   OfficePreviewSource
 } from '../../../../../../shared/office-preview'
 import {
@@ -155,13 +156,38 @@ type OfficePreviewFrame = {
 
 // Owns isolated iframe coordination; Office bytes and vendor libraries stay in the child runtime.
 // Managed sources use version leases; local files retain their OS fallback below.
+// Opens an in-memory edit revision instead of a stored file and reports where the slide sits.
+export type StagedOfficePreview = {
+  key: string
+  slideIndex: number
+  onSlideView: (view: OfficePreviewSlideView) => void
+}
+
+// Asks the open deck to show a slide. A new serial repeats the jump even for the same slide.
+export type OfficeSlideRequest = { slideIndex: number; serial: number }
+
 const RemoteOfficePreviewContent = ({
   item,
-  source
+  source,
+  staged,
+  slideRequest,
+  onSlideView
 }: {
   item: PreviewFileItem
   source: OfficePreviewSource
+  staged?: StagedOfficePreview
+  slideRequest?: OfficeSlideRequest
+  onSlideView?: (view: OfficePreviewSlideView) => void
 }): React.JSX.Element => {
+  const stagedKey = staged?.key
+  const stagedSlideRef = useRef(staged?.slideIndex ?? 0)
+  const onStagedSlideView = useEffectEvent((view: OfficePreviewSlideView): void => {
+    staged?.onSlideView(view)
+    onSlideView?.(view)
+  })
+  useEffect(() => {
+    stagedSlideRef.current = staged?.slideIndex ?? 0
+  }, [staged?.slideIndex])
   const { t, i18n } = useTranslation()
   const hostId = useId()
   const frameRef = useRef<HTMLIFrameElement | null>(null)
@@ -176,6 +202,7 @@ const RemoteOfficePreviewContent = ({
   const [frame, setFrame] = useState<OfficePreviewFrame | undefined>(undefined)
   const [frameLoadGeneration, setFrameLoadGeneration] = useState(0)
   const hasSourceIdentity =
+    stagedKey !== undefined ||
     source === 'compute-output' ||
     source === 'notebook-input' ||
     source === 'literature' ||
@@ -202,17 +229,19 @@ const RemoteOfficePreviewContent = ({
   useEffect(() => {
     if (!ownsLease || !hasSourceIdentity) return
     const sourceIdentity =
-      source === 'compute-output' ||
-      source === 'notebook-input' ||
-      source === 'literature' ||
-      source === 'local'
-        ? { source, path: item.path }
-        : {
-            source,
-            projectId: item.projectId!,
-            fileId: item.managedFileId!,
-            ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {})
-          }
+      stagedKey !== undefined
+        ? { source: 'staged-edit' as const, path: stagedKey }
+        : source === 'compute-output' ||
+            source === 'notebook-input' ||
+            source === 'literature' ||
+            source === 'local'
+          ? { source, path: item.path }
+          : {
+              source,
+              projectId: item.projectId!,
+              fileId: item.managedFileId!,
+              ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {})
+            }
 
     const requestId = createOfficePreviewRequestId(hostId)
     let active = true
@@ -304,7 +333,8 @@ const RemoteOfficePreviewContent = ({
     item.projectId,
     item.selectedVersionId,
     ownsLease,
-    source
+    source,
+    stagedKey
   ])
 
   useEffect(() => {
@@ -325,6 +355,11 @@ const RemoteOfficePreviewContent = ({
 
       if (event.data.type === 'state' && event.data.state.sessionId === frame.sessionId) {
         window.api.officePreview.reportState(frame.sessionId, event.data.state)
+      } else if (
+        event.data.type === 'slide-view' &&
+        event.data.slideView.sessionId === frame.sessionId
+      ) {
+        onStagedSlideView(event.data.slideView)
       } else if (
         event.data.type === 'context-menu' &&
         event.data.contextMenu.sessionId === frame.sessionId
@@ -395,6 +430,36 @@ const RemoteOfficePreviewContent = ({
     })
   }, [extension, frame, state.kind])
 
+  useEffect(() => {
+    if (!frame || stagedKey === undefined || state.kind !== 'ready') return
+    const message: OfficePreviewHostMessage = {
+      channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
+      version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
+      type: 'goto-slide',
+      sessionId: frame.sessionId,
+      slideIndex: stagedSlideRef.current
+    }
+    frameRef.current?.contentWindow?.postMessage(message, OFFICE_PREVIEW_RUNTIME_ORIGIN)
+  }, [frame, stagedKey, state.kind])
+
+  const requestedSlide = slideRequest?.slideIndex
+  const requestSerial = slideRequest?.serial
+  // A reopened frame must not replay a jump the user has since navigated away from.
+  const postedRequestRef = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (!frame || state.kind !== 'ready' || requestSerial === undefined) return
+    if (requestedSlide === undefined || postedRequestRef.current === requestSerial) return
+    postedRequestRef.current = requestSerial
+    const message: OfficePreviewHostMessage = {
+      channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
+      version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
+      type: 'goto-slide',
+      sessionId: frame.sessionId,
+      slideIndex: requestedSlide
+    }
+    frameRef.current?.contentWindow?.postMessage(message, OFFICE_PREVIEW_RUNTIME_ORIGIN)
+  }, [frame, requestSerial, requestedSlide, state.kind])
+
   const visibleState: OfficeHostState =
     ownsLease && !hasSourceIdentity ? { kind: 'error', error: 'FILE_READ_FAILED' } : state
 
@@ -463,14 +528,20 @@ const RemoteOfficePreviewContent = ({
 // Notebook reply links open original documents in the isolated Office renderer.
 export const OfficePreviewContent = ({
   item,
-  source = 'artifact'
+  source = 'artifact',
+  staged,
+  slideRequest,
+  onSlideView
 }: {
   item: PreviewFileItem
   source?: PreviewFileSource
+  staged?: StagedOfficePreview
+  slideRequest?: OfficeSlideRequest
+  onSlideView?: (view: OfficePreviewSlideView) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
-  if (source === 'local' && !item.fromNotebookDataLink) {
+  if (source === 'local' && !item.fromNotebookDataLink && !staged) {
     return (
       <PreviewFallbackCard
         icon={FileWarning}
@@ -492,7 +563,15 @@ export const OfficePreviewContent = ({
       />
     )
   }
-  return <RemoteOfficePreviewContent item={item} source={source} />
+  return (
+    <RemoteOfficePreviewContent
+      item={item}
+      source={source}
+      staged={staged}
+      slideRequest={slideRequest}
+      onSlideView={onSlideView}
+    />
+  )
 }
 
 export const OfficePreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => (

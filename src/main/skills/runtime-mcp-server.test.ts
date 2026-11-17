@@ -77,7 +77,9 @@ describe('Skill runtime MCP loader', () => {
     'compute-env-setup',
     'remote-compute-ssh',
     'literature-review',
-    'docx-generation'
+    'docx-generation',
+    'pdf-generation',
+    'pptx-generation'
   ])('loads the bundled %s package by its public name through Codex MCP', async (name) => {
     const root = await mkdtemp(join(tmpdir(), 'bundled-codex-skill-'))
     roots.push(root)

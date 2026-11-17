@@ -2414,18 +2414,27 @@ const WorkspaceMessageScrollerImpl = ({
               })
             }}
             size="icon-lg"
-            className="z-10 rounded-full border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3"
+            className="group/scroll-end z-10 rounded-full border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3"
           >
             {optimisticMessage || agentLoadingPhase !== 'hidden' || presentationRevealing ? (
-              <span aria-hidden="true" className="flex items-center gap-0.5">
-                {[0, 1, 2].map((index) => (
-                  <span
-                    key={index}
-                    className="size-1 rounded-full bg-current motion-safe:animate-[scroll-indicator-wave_1.2s_ease-in-out_infinite]"
-                    style={{ animationDelay: `${index * 120}ms` }}
-                  />
-                ))}
-              </span>
+              <>
+                <span
+                  aria-hidden="true"
+                  className="flex items-center gap-0.5 group-hover/scroll-end:hidden group-focus-visible/scroll-end:hidden"
+                >
+                  {[0, 1, 2].map((index) => (
+                    <span
+                      key={index}
+                      className="size-1 rounded-full bg-current motion-safe:animate-[scroll-indicator-wave_1.2s_ease-in-out_infinite]"
+                      style={{ animationDelay: `${index * 120}ms` }}
+                    />
+                  ))}
+                </span>
+                <ArrowDownIcon
+                  aria-hidden="true"
+                  className="hidden group-hover/scroll-end:block group-focus-visible/scroll-end:block"
+                />
+              </>
             ) : undefined}
           </MessageScrollerButton>
           <div

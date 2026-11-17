@@ -1,5 +1,23 @@
 import { expect, test } from '@playwright/test'
 
+test('Markdown footnotes do not leave an empty outer scroll region', async ({ page }) => {
+  await page.goto('/preview-edit-recovery.html?footnotes')
+  const preview = page.getByTestId('preview-file-content-surface')
+  const markdown = page.locator('.agent-markdown')
+  const footnote = markdown.locator('.footnotes li').last()
+  await expect(footnote).toContainText('Final footnote.')
+  expect(await markdown.evaluate((element) => element.clientHeight)).toBeGreaterThan(
+    await preview.evaluate((element) => element.clientHeight)
+  )
+  await footnote.scrollIntoViewIfNeeded()
+  await footnote.hover()
+  await page.mouse.wheel(0, 1200)
+  await expect
+    .poll(() => preview.evaluate((element) => element.scrollHeight - element.clientHeight))
+    .toBeLessThanOrEqual(1)
+  await expect(footnote).toBeInViewport()
+})
+
 test('conflict keeps native editor undo and offers complete draft copy', async ({
   page,
   context

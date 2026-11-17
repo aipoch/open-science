@@ -269,6 +269,7 @@
         "packages/environment/src/external-r-library.ts",
         "src/main/notebook/configured-shell-runtime.ts",
         "src/main/notebook/kernel-executor.ts",
+        "src/main/notebook/process-monitor.ts",
         "src/main/notebook/kernel-executable-read-root.ts",
         "src/main/notebook/local-rpc-server.ts",
         "src/main/notebook/managed-runtime-guard.ts",
@@ -522,6 +523,7 @@
         "e2e/transcript-capacity.spec.ts",
         "e2e/session-residency-capacity.spec.ts",
         "e2e/compute-execution-mode.spec.ts",
+        "e2e/compute-process-monitor.spec.ts",
         "e2e/find-overlay.spec.ts",
         "e2e/literature-client-sync.spec.ts",
         "e2e/journal-attributes.spec.ts",
@@ -1094,6 +1096,14 @@
     {
       "paths": ["test/docx-generation/*.py"],
       "tests": ["src/main/skills/docx-generation.test.ts"]
+    },
+    {
+      "paths": ["test/pdf-generation/*.py"],
+      "tests": ["src/main/skills/pdf-generation.test.ts"]
+    },
+    {
+      "paths": ["test/pptx-generation/*.py"],
+      "tests": ["src/main/skills/pptx-generation.test.ts"]
     }
   ]
 }

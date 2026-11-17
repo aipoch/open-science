@@ -226,6 +226,16 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     plan: options.plan,
     sideChat: options.sideChat,
     wslSetupSessions: options.wslSetupSessions,
+    pptx: options.pptx
+      ? {
+          handlerFor: (appSessionId, projectId) => ({
+            read: (input, signal) =>
+              options.pptx!.agent.read({ projectId, sessionId: appSessionId, signal }, input),
+            propose: (input, signal) =>
+              options.pptx!.agent.propose({ projectId, sessionId: appSessionId, signal }, input)
+          })
+        }
+      : undefined,
     literature: options.literature
       ? {
           isEnabled: options.literature.isEnabled,

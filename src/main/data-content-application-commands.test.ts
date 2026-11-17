@@ -202,6 +202,7 @@ const createDependencies = () => {
   const managedFileVersions = {
     inspect: vi.fn(async () => ({ ok: false })),
     saveTextEdit: vi.fn(async () => ({ ok: false })),
+    saveBinaryEdit: vi.fn(async () => ({ ok: false })),
     diffText: vi.fn(async () => ({ ok: false })),
     cancelDiff: vi.fn(() => ({ ok: true, value: { cancelled: false } }))
   }
@@ -335,6 +336,17 @@ const createDependencies = () => {
       close: vi.fn(),
       reportState: vi.fn(),
       dispose: vi.fn()
+    },
+    pptxEditCommands: {
+      open: vi.fn(),
+      apply: vi.fn(),
+      save: vi.fn(),
+      close: vi.fn()
+    },
+    pptxDraftCommands: {
+      get: vi.fn(),
+      accept: vi.fn(),
+      reject: vi.fn()
     },
     fileSaveCommands: {
       'file:artifact-save-progress': vi.fn(),
@@ -621,6 +633,7 @@ describe('Data and content application commands', () => {
         'uploads:transfer-status',
         'managed-file-versions:inspect',
         'managed-file-versions:save-text-edit',
+        'managed-file-versions:save-binary-edit',
         'managed-file-versions:diff-text',
         'managed-file-versions:cancel-diff',
         'artifacts:session-reproducibility',
@@ -646,7 +659,14 @@ describe('Data and content application commands', () => {
         'office-preview:open',
         'office-preview:attach-frame',
         'office-preview:close',
-        'office-preview:report-state'
+        'office-preview:report-state',
+        'pptx-edit:open',
+        'pptx-edit:apply',
+        'pptx-edit:save',
+        'pptx-edit:close',
+        'pptx-draft:get',
+        'pptx-draft:accept',
+        'pptx-draft:reject'
       ].map((name) => expect.objectContaining({ name }))
     )
   })
@@ -705,6 +725,48 @@ describe('Data and content application commands', () => {
         key: 'officePreviewReportState',
         args: ['session-1', { sessionId: 'session-1', phase: 'ready' }],
         owner: deps.dependencies.officePreviewCommands.reportState,
+        passInvocation: true
+      },
+      {
+        key: 'pptxEditOpen',
+        args: [{ source: 'upload', projectId: 'p', fileId: 'f', versionId: 'v' }],
+        owner: deps.dependencies.pptxEditCommands.open,
+        passInvocation: true
+      },
+      {
+        key: 'pptxEditApply',
+        args: [{ sessionId: 's', operations: [] }],
+        owner: deps.dependencies.pptxEditCommands.apply,
+        passInvocation: true
+      },
+      {
+        key: 'pptxEditSave',
+        args: [{ sessionId: 's', operations: [], expectedHeadVersionId: 'v', operationId: 'o' }],
+        owner: deps.dependencies.pptxEditCommands.save,
+        passInvocation: true
+      },
+      {
+        key: 'pptxEditClose',
+        args: ['s'],
+        owner: deps.dependencies.pptxEditCommands.close,
+        passInvocation: true
+      },
+      {
+        key: 'pptxDraftGet',
+        args: [{ source: 'upload', projectId: 'p', fileId: 'f' }],
+        owner: deps.dependencies.pptxDraftCommands.get,
+        passInvocation: true
+      },
+      {
+        key: 'pptxDraftAccept',
+        args: [{ identity: { source: 'upload', projectId: 'p', fileId: 'f' }, draftId: 'd' }],
+        owner: deps.dependencies.pptxDraftCommands.accept,
+        passInvocation: true
+      },
+      {
+        key: 'pptxDraftReject',
+        args: [{ identity: { source: 'upload', projectId: 'p', fileId: 'f' }, draftId: 'd' }],
+        owner: deps.dependencies.pptxDraftCommands.reject,
         passInvocation: true
       },
       {
@@ -837,6 +899,11 @@ describe('Data and content application commands', () => {
         key: 'managedFileSaveTextEdit',
         args: [request('save')],
         owner: deps.managedFileVersions.saveTextEdit
+      },
+      {
+        key: 'managedFileSaveBinaryEdit',
+        args: [request('save')],
+        owner: deps.managedFileVersions.saveBinaryEdit
       },
       {
         key: 'managedFileDiffText',

@@ -27,6 +27,7 @@ type AcquirePathPreviewRequest = ManagedPreviewPresentation & {
     | { source: 'notebook-input' }
     | { source: 'literature' }
     | { source: 'local' }
+    | { source: 'staged-edit' }
   )
 
 export type AcquireManagedPreviewRequest =

@@ -193,6 +193,7 @@ export type NotebookSessionExecutor<
   shutdown: () => Promise<{ reaped: boolean }>
   restart?: () => Promise<void>
   terminate?: (kind: 'python' | 'r' | 'repl', env: string) => Promise<void>
+  monitoredProcesses?: () => import('./process-monitor').MonitoredKernelProcess[]
   idleProcesses?: () => Array<{
     identity: object
     processKey: string
@@ -610,6 +611,10 @@ export class NotebookSessionAggregate<
 
   idleProcesses(): ReturnType<NonNullable<NotebookSessionExecutor['idleProcesses']>> {
     return this.executorValue.idleProcesses?.() ?? []
+  }
+
+  monitoredProcesses(): import('./process-monitor').MonitoredKernelProcess[] {
+    return this.executorValue.monitoredProcesses?.() ?? []
   }
 
   setKernelStatus(processKey: string, status: NotebookKernelMetadata['lastKnownStatus']): void {

@@ -4,10 +4,13 @@ import { join } from 'node:path'
 import { readFileWithinLimit, writeDurableJsonFile } from '@aipoch/durable-files'
 import { z } from 'zod'
 import type { FilmAuthoringCheckpoint, ResearchVideoSessionSource } from '@aipoch/research-film'
+import {
+  researchFilmModeSchema,
+  type ResearchFilmMode
+} from '../../shared/research-video-presentation'
 import { researchFilmReceiptSchema } from './stored-presentation'
 
-export const pendingFilmSchema = z.object({
-  version: z.literal(1),
+const pendingFilmFields = {
   id: z.string().uuid(),
   conversation: z.string().regex(/^[a-f0-9]{64}$/),
   source: z.string().regex(/^[a-f0-9]{64}$/),
@@ -18,27 +21,38 @@ export const pendingFilmSchema = z.object({
   completed: z.number().int().nonnegative().optional(),
   total: z.number().int().positive().optional(),
   built: researchFilmReceiptSchema.optional()
-})
+}
+export const pendingFilmSchema = z.discriminatedUnion('version', [
+  z.object({ ...pendingFilmFields, version: z.literal(1), mode: z.undefined().optional() }),
+  z.object({ ...pendingFilmFields, version: z.literal(2), mode: researchFilmModeSchema }).strict()
+])
 export type PendingFilm = z.infer<typeof pendingFilmSchema>
 export const PENDING_FILM_OWNER = 'pending-owner.json'
 const identity = z.string().min(1).max(512)
-export const pendingFilmOwnerSchema = z
-  .object({
-    version: z.literal(1),
-    id: z.string().uuid(),
-    projectId: identity,
-    sessionId: identity,
-    branchId: identity.optional()
-  })
-  .strict()
+const ownerFields = {
+  id: z.string().uuid(),
+  projectId: identity,
+  sessionId: identity,
+  branchId: identity.optional()
+}
+export const pendingFilmOwnerSchema = z.discriminatedUnion('version', [
+  z.object({ ...ownerFields, version: z.literal(1), mode: z.undefined().optional() }).strict(),
+  z.object({ ...ownerFields, version: z.literal(2), mode: researchFilmModeSchema }).strict()
+])
 
 export function savePendingFilmOwner(
   directory: string,
-  owner: Omit<z.infer<typeof pendingFilmOwnerSchema>, 'version'>
+  owner: {
+    id: string
+    projectId: string
+    sessionId: string
+    branchId?: string
+    mode?: ResearchFilmMode
+  }
 ): Promise<void> {
   return writeDurableJsonFile(
     join(directory, PENDING_FILM_OWNER),
-    JSON.stringify({ version: 1, ...owner })
+    JSON.stringify({ ...owner, version: 2, mode: owner.mode ?? 'research-explanation' })
   )
 }
 
