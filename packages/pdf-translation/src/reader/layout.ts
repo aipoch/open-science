@@ -193,14 +193,26 @@ const bounds = (items: Rect[]): Rect => ({
 function joinLines(left: string, right: string): string {
   if (!left) return right
   if (/[A-Za-z]-$/.test(left) && /^[a-z]/.test(right)) {
-    const prefix = left.match(/([A-Za-z]+)-$/)![1].toLowerCase()
-    // ponytail: English-only line-wrap heuristic; preserve the original line text alongside it.
-    return (
-      (['non', 'pre', 'post', 'well', 'self'].includes(prefix) ? left : left.slice(0, -1)) + right
-    )
+    // Match the complete English prefix at the hyphen.
+    const keepHyphen = /(?:^|[^A-Za-z])(?:non|pre|post|well|self)-$/i.test(left)
+    return (keepHyphen ? left : left.slice(0, -1)) + right
   }
   return left + ' ' + right
 }
+
+function endsWithCitationAuthor(text: string): boolean {
+  if (!text.endsWith(',')) return false
+  const last = text.length - 2
+  for (let index = last; index >= 0; index--) {
+    const character = text[index]
+    if (!/[A-Za-z\s.,'’-]/u.test(character)) return false
+    if (index < last && /[A-Za-z]/u.test(character)) return true
+  }
+  return false
+}
+
+const standaloneContactLine = /^[^\s@]+@[^\s@][^\s@.]*\.[^\s@]+$/u
+
 function lineOf(items: Item[]): Line {
   const font = Math.max(...items.map((i) => i.font))
   items.sort((a, b) => a.x - b.x || a.index - b.index)
@@ -586,7 +598,7 @@ function readingOrder(blocks: Block[], pageBlocks = blocks): Block[] {
         lanes.every((lane) => {
           const center = (lane[0].x + lane[0].right) / 2
           return (
-            /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(lane.at(-1)!.source) &&
+            standaloneContactLine.test(lane.at(-1)!.source) &&
             lane[0].font > lane[1].font * 1.05 &&
             lane.every(
               (b, index) =>
@@ -12591,7 +12603,7 @@ function extractPage(
         const yearCitationTail =
           /^\d{4}[a-z]?\)[.!?]$/u.test(line.text) &&
           b.source.lastIndexOf('(') > b.source.lastIndexOf(')') &&
-          /[A-Za-z][A-Za-z\s.,'’-]+,$/u.test(last.text) &&
+          endsWithCitationAuthor(last.text) &&
           (continuousBodyWrap(last, line, all, b.x, b.right) ||
             (() => {
               // Small caps can name the cited work without being a lowered
@@ -12980,7 +12992,7 @@ function extractPage(
             (row) =>
               row.baseline < page.height * 0.35 &&
               (/^(?:[A-Z][A-Za-z'.-]*\s+){1,4}[A-Z][A-Za-z'.-]*[∗*†‡]+$/u.test(row.text.trim()) ||
-                /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(row.text.trim()))
+                standaloneContactLine.test(row.text.trim()))
           ) ||
           // A raised leading affiliation index starts its own front-matter
           // row. Do not flow the authors and several institutions as one
