@@ -6262,6 +6262,54 @@ test.each([
 )
 
 test.each(
+  ['Listing 1: A numerical routine.', 'Algorithm 1 A numerical routine.'].flatMap((caption) =>
+    ['complete', 'missing-return', 'separate-native-row', 'comment-font', 'intervening-prose'].map(
+      (fault) => ({ caption, fault })
+    )
+  )
+)(
+  'preserves a closed captioned function with split native side comments: %j',
+  ({ caption, fault }) => {
+    const code = (text: string, x: number, y: number, width: number, end = true) => ({
+      ...item(text, x, y, width, 10, end),
+      fontName: 'code',
+      fontFamily: 'monospace'
+    })
+    const items: PdfLayoutPage['items'] = [
+      { ...item(caption, 72, 100, 340, 11), fontName: 'caption' },
+      code('def compute(values):', 72, 116, 210),
+      code('x = values.copy()', 92, 128, 160, false),
+      code('# Preserve the input.', 360, 128, 130),
+      code('y = norm(x)', 92, 152, 130),
+      code('return x, y', 92, 164, 110, false),
+      code('# Return both arrays.', 360, 164, 130),
+      {
+        ...item('The surrounding paragraph remains available for translation.', 72, 200, 440, 11),
+        fontName: 'caption'
+      }
+    ]
+    if (fault === 'missing-return') items[5].str = 'Unfinished example'
+    if (fault === 'separate-native-row') items[2].hasEOL = true
+    if (fault === 'comment-font') items[3].fontName = 'other-code'
+    if (fault === 'intervening-prose') items[4].str = 'This ordinary sentence explains the input.'
+    const result = extractDocument(document([page(items)]))
+    const body = result.units.filter((unit) =>
+      unit.items.some((key) => Number(key.split(':')[1]) > 0 && Number(key.split(':')[1]) < 7)
+    )
+    assert.equal(
+      body.every((unit) => unit.sourceOnly && unit.preserve === 'code'),
+      fault === 'complete'
+    )
+    assert.ok(result.units.some((unit) => unit.source.startsWith(caption) && !unit.sourceOnly))
+    assert.ok(
+      result.units.some((unit) => unit.source.startsWith('The surrounding') && !unit.sourceOnly)
+    )
+    assert.equal(new Set(result.units.flatMap((unit) => unit.items)).size, items.length)
+    assert.equal(result.units.flatMap((unit) => unit.items).length, items.length)
+  }
+)
+
+test.each(
   ['python', 'matlab'].flatMap((language) =>
     ['complete', 'missing-close', 'unknown-font', 'intervening-prose', 'irregular-gap'].map(
       (fault) => ({ language, fault })

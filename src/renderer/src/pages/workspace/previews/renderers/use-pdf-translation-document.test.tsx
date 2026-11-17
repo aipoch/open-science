@@ -1,3 +1,4 @@
+import { readPdfTranslationCases as readPackagePdfTranslationCases } from '../../../../../../../packages/pdf-translation/test/fixtures/read-cases'
 import { readPdfTranslationCases } from '../../../../../../../test/fixtures/pdf-translation/read-cases'
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs'
@@ -6236,24 +6237,43 @@ it.each([
   'changed-character',
   'moved-piece',
   'changed-width',
-  'duplicate-piece'
+  'duplicate-piece',
+  'staggered-same-ink',
+  'staggered-changed-ink',
+  'staggered-missing',
+  'staggered-duplicate',
+  'staggered-moved'
 ])(
   'verifies a split untouched neighboring run with complete geometry and rendered ink: %s',
   async (kind) => {
     const { createCanvas } = await import('@napi-rs/canvas')
+    const staggered = kind.startsWith('staggered-'),
+      moved = kind === 'moved-piece' || kind === 'staggered-moved'
     const f = fixture(),
       before = {
-        str: '1) (%)',
+        str: staggered ? '❳❳' : '1) (%)',
+        ...(staggered ? { height: 10 } : {}),
         fontName: 'native',
         transform: [10, 0, 0, 10, 100, 700],
-        width: 30
+        width: staggered ? 18.8 : 30
       },
-      first = { ...before, str: kind === 'changed-character' ? '2)' : '1)', width: 10 },
+      first = {
+        ...before,
+        str: staggered ? '❳' : kind === 'changed-character' ? '2)' : '1)',
+        width: 10
+      },
       last = {
         ...before,
-        str: '(%)',
-        width: kind === 'changed-width' ? 14 : 15,
-        transform: [10, 0, 0, 10, kind === 'moved-piece' ? 116 : 115, 700]
+        str: staggered ? '❳' : '(%)',
+        width: staggered ? 10 : kind === 'changed-width' ? 14 : 15,
+        transform: [
+          10,
+          0,
+          0,
+          10,
+          (staggered ? 108.8 : 115) + (moved ? 1 : 0),
+          staggered ? 698 : 700
+        ]
       },
       source = createPdfTranslationSource({
         ...f.results.source,
@@ -6275,7 +6295,12 @@ it.each([
             fragments: [
               {
                 pageNumber: 1,
-                rect: { x: 100 / 600, y: 90 / 800, width: 30 / 600, height: 10 / 800 },
+                rect: {
+                  x: 100 / 600,
+                  y: 90 / 800,
+                  width: before.width / 600,
+                  height: (staggered ? 14 : 10) / 800
+                },
                 items: [{ index: 1, text: before.str }]
               }
             ]
@@ -6285,9 +6310,10 @@ it.each([
     const originalText = {
       items: [{ ...f.item, str: 'cell' }, before],
       styles:
-        kind === 'neighbor-ink' || kind === 'invalid-font-metrics'
+        staggered || kind === 'neighbor-ink' || kind === 'invalid-font-metrics'
           ? {
               native: {
+                fontFamily: 'serif',
                 ascent: kind === 'invalid-font-metrics' ? NaN : 0.72,
                 descent: -0.18,
                 vertical: false
@@ -6295,10 +6321,17 @@ it.each([
             }
           : {}
     }
+    const targetText = {
+      items: [
+        f.item,
+        first,
+        ...(kind === 'staggered-missing' ? [] : [last]),
+        ...(['duplicate-piece', 'staggered-duplicate'].includes(kind) ? [last] : [])
+      ],
+      styles: staggered ? originalText.styles : {}
+    }
     f.originalPage.getTextContent.mockResolvedValue(originalText)
-    f.targetPage.getTextContent.mockResolvedValue({
-      items: [f.item, first, last, ...(kind === 'duplicate-piece' ? [last] : [])]
-    })
+    f.targetPage.getTextContent.mockResolvedValue(targetText)
     const createElement = document.createElement.bind(document),
       canvasFactory = vi
         .spyOn(document, 'createElement')
@@ -6321,7 +6354,12 @@ it.each([
               context.fillStyle = 'black'
               // Matching run bounds alone cannot detect movement of an inner glyph.
               if (kind !== 'blank-ink')
-                context.fillRect(kind === 'changed-ink' && changed ? 5 : 4, 4, 3, 3)
+                context.fillRect(
+                  ['changed-ink', 'staggered-changed-ink'].includes(kind) && changed ? 5 : 4,
+                  4,
+                  3,
+                  3
+                )
               if (changed && ['neighbor-ink', 'invalid-font-metrics'].includes(kind))
                 context.fillRect(4, 440 + transform[5], 3, 3)
             }
@@ -6329,7 +6367,11 @@ it.each([
           }
         ),
       originalRender = render(false),
-      targetRender = render(['changed-ink', 'neighbor-ink', 'invalid-font-metrics'].includes(kind))
+      targetRender = render(
+        ['changed-ink', 'staggered-changed-ink', 'neighbor-ink', 'invalid-font-metrics'].includes(
+          kind
+        )
+      )
     Object.assign(f.originalPage, { render: originalRender })
     Object.assign(f.targetPage, { render: targetRender })
     for (const page of [f.originalPage, f.targetPage])
@@ -6349,11 +6391,13 @@ it.each([
       )
       await waitFor(() =>
         expect(hook.result.current.state.status).toBe(
-          kind === 'same-ink' || kind === 'neighbor-ink' ? 'ready' : 'error'
+          ['same-ink', 'neighbor-ink', 'staggered-same-ink'].includes(kind) ? 'ready' : 'error'
         )
       )
       if (
         [
+          'staggered-same-ink',
+          'staggered-changed-ink',
           'same-ink',
           'neighbor-ink',
           'invalid-font-metrics',
@@ -7854,3 +7898,183 @@ it.each(['owned formula', 'printable glyph', 'moved glyph', 'other owner', 'dupl
     )
   }
 )
+
+describe('native mixed bullet literals', () => {
+  const sample = readPackagePdfTranslationCases<{
+    page: {
+      items: {
+        str: string
+        width: number
+        height: number
+        dir: string
+        transform: number[]
+        fontName: string
+        fontFamily: string
+        hasEOL?: boolean
+      }[]
+    }
+  }>('mixed-bullet-native.jsonl')[0]
+  const positive = '• 80% 的试验：替换为 [TOKEN]，例如 red fox → red [TOKEN]'
+  it.each([
+    'valid',
+    'changed',
+    'missing',
+    'duplicate',
+    'reordered',
+    'spaces',
+    'actual',
+    'actual-spaces',
+    'lost-type',
+    'restored',
+    'split-restored',
+    'split-fragment'
+  ])('reproves native ownership and retains only a failing owner: %s', async (fault) => {
+    const f = fixture(),
+      native = structuredClone(sample.page.items)
+    let translation = positive
+    if (fault === 'changed' || fault === 'split-fragment')
+      translation = positive.replace('red fox', 'blue fox')
+    if (fault === 'missing') translation = positive.replace(' → red [TOKEN]', '')
+    if (fault === 'duplicate') translation = positive + ' red fox → red [TOKEN]'
+    if (fault === 'reordered') translation = 'red fox → red [TOKEN] 然后 [TOKEN]'
+    if (fault === 'spaces') translation = positive.replace('red fox', 'redfox')
+    if (fault === 'lost-type') native[6].fontName = 'other'
+    const sourceData = {
+      resourceRequestKey: 'reader:mixed',
+      fingerprint: 'fp',
+      pages: [{ width: 600, height: 800 }],
+      units: [
+        {
+          id: 'bullet',
+          source: native
+            .slice(0, 8)
+            .map((i) => i.str)
+            .join(' '),
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.06, y: 0.11, width: 0.4, height: 0.06 },
+              items: native.slice(0, 8).map((item, index) => ({ index, text: item.str }))
+            }
+          ]
+        },
+        {
+          id: 'peer',
+          source: native
+            .slice(8)
+            .map((i) => i.str)
+            .join(' '),
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.06, y: 0.17, width: 0.6, height: 0.06 },
+              items: native.slice(8).map((item, index) => ({ index: index + 8, text: item.str }))
+            }
+          ]
+        }
+      ]
+    }
+    if (fault === 'split-restored' || fault === 'split-fragment') {
+      const head = {
+        pageNumber: 1,
+        rect: { x: 0.06, y: 0.11, width: 0.4, height: 0.02 },
+        items: native.slice(0, 1).map((item, index) => ({ index, text: item.str }))
+      }
+      const tail = {
+        pageNumber: 1,
+        rect: { x: 0.06, y: 0.13, width: 0.4, height: 0.04 },
+        items: native.slice(1, 8).map((item, index) => ({ index: index + 1, text: item.str }))
+      }
+      if (fault === 'split-restored')
+        sourceData.units.splice(
+          0,
+          1,
+          { id: 'bullet', source: native[0].str, fragments: [head] },
+          {
+            id: 'tail',
+            source: native
+              .slice(1, 8)
+              .map((i) => i.str)
+              .join(' '),
+            fragments: [tail]
+          }
+        )
+      else sourceData.units[0].fragments = [head, tail]
+    }
+    const source = createPdfTranslationSource(
+      fault === 'restored' || fault === 'split-restored'
+        ? JSON.parse(JSON.stringify(sourceData))
+        : sourceData
+    )
+    const results = {
+      source,
+      units: source.units.map((unit) => ({
+        id: unit.id,
+        translationSource: unit.source,
+        translation:
+          unit.id === 'peer'
+            ? '另一段译文'
+            : unit.id === 'tail'
+              ? '[TOKEN] 例如 blue fox → red [TOKEN]'
+              : translation
+      }))
+    }
+    f.originalPage.getTextContent.mockResolvedValue({
+      items: native,
+      styles: {
+        body: { fontFamily: 'serif' },
+        mono: { fontFamily: 'monospace' },
+        arrow: { fontFamily: 'serif' }
+      }
+    } as unknown as Awaited<ReturnType<typeof f.originalPage.getTextContent>>)
+    const generatePdf = vi.fn(async (input: PdfTranslationPdfRequest) => {
+      const targetItems = input.units
+        .filter((u) => u.source !== source.units.at(-1)!.source)
+        .flatMap((unit) => {
+          const owner = source.units.find((u) => u.source === unit.source)!
+          const indices = owner.fragments.flatMap((f) => f.items.map((i) => i.index))
+          if (unit.translation === unit.source) return indices.map((i) => native[i])
+          return [
+            {
+              str:
+                fault === 'actual'
+                  ? positive.replace('red fox', 'blue fox')
+                  : fault === 'actual-spaces'
+                    ? positive.replace('red fox', 'redfox')
+                    : unit.translation,
+              transform: [...native[indices[0]].transform],
+              width: 180
+            }
+          ]
+        })
+      f.targetPage.getTextContent.mockResolvedValue({
+        items: [
+          ...targetItems,
+          {
+            str: '另一段译文',
+            transform: [10, 0, 0, 10, 40, 640],
+            width: 60
+          }
+        ]
+      } as unknown as Awaited<ReturnType<typeof f.targetPage.getTextContent>>)
+      return { data: new Uint8Array([4, 5]), layoutFailures: [] }
+    })
+    vi.stubGlobal('api', { pdfTranslation: { generatePdf, cancelPdf: vi.fn(async () => {}) } })
+    const hook = renderHook(() =>
+      usePdfTranslationDocument(f.original, results, undefined, 'reader:mixed')
+    )
+    await waitFor(() => expect(hook.result.current.ready).toBeDefined())
+    const valid = fault === 'valid' || fault === 'restored'
+    expect(generatePdf).toHaveBeenCalledTimes(valid ? 1 : fault === 'split-restored' ? 3 : 2)
+    expect(hook.result.current.layoutFailures.bullet?.code).toBe(
+      valid ? undefined : 'validation-failed'
+    )
+    expect(hook.result.current.layoutFailures.peer).toBeUndefined()
+    if (fault === 'split-restored')
+      expect(hook.result.current.layoutFailures.tail?.code).toBe('validation-failed')
+    expect(
+      generatePdf.mock.calls.at(-1)![0].units.find((u) => u.source === source.units.at(-1)!.source)
+        ?.translation
+    ).toBe('另一段译文')
+  })
+})

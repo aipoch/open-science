@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Unbundled worker helper. */
 const identifiers = (text) => {
   const pattern =
-    /(?:max|min)[a-z\p{Script=Greek}]∈\[[A-Za-z\p{Script=Greek}\d]+\]|[A-Z]1\[[a-z\p{Script=Greek}][<>≤≥]\d+\]|(?:E\[[A-Za-z\p{Script=Greek}]\]){1,2}T|[A-Za-z\p{Script=Greek}][A-Za-z\p{Script=Greek}\d]*(?:(?:ˆ|\u0302)\s*[A-Za-z\p{Script=Greek}\d]*)?′{0,3}(?:[∈<>≤≥×−+-][A-Za-z\p{Script=Greek}\d]+|,[\p{Script=Greek}\d][A-Za-z\p{Script=Greek}\d]*|\.{3}[A-Za-z\p{Script=Greek}\d]+)*(?:\([A-Za-z\p{Script=Greek}\d−+-]+\)[A-Za-z]?)?/gu
+    /(?:max|min)[a-z\p{Script=Greek}]∈\[[A-Za-z\p{Script=Greek}\d]+\]|[A-Z]1\[[a-z\p{Script=Greek}][<>≤≥]\d+\]|(?:E\[[A-Za-z\p{Script=Greek}]\]){1,2}T|[A-Za-z\p{Script=Greek}][A-Za-z\p{Script=Greek}\d]*(?:(?:ˆ|\u0302)\s*[A-Za-z\p{Script=Greek}\d]*)?′{0,3}(?:[-∈<>≤≥×−+:][A-Za-z\p{Script=Greek}\d]+|,[\p{Script=Greek}\d][A-Za-z\p{Script=Greek}\d]*|\.{3}[A-Za-z\p{Script=Greek}\d]+)*(?:\([A-Za-z\p{Script=Greek}\d,−+-]+\)[A-Za-z]?)?/gu
   // TeX can extract the difference operator as U+2206, outside the Greek script.
   const result = [...text.matchAll(pattern), ...text.matchAll(/∆[a-z]{1,3}(?![A-Za-z\d_])/gu)]
   // A prose qualifier follows the variable, not its native lowered suffix:
@@ -53,7 +53,7 @@ const sameStyle = (a, b) => Math.abs(a.scale - b.scale) < 0.01 && Math.abs(a.ris
 // be proven; flat identifiers are not anchors.
 export const resolveNestedScriptGroups = (source, translation, markers) => {
   const pattern =
-      /(?<![A-Za-z\p{Script=Greek}\d⊥])(?:[A-Z]{1,4}(?:\p{Script=Greek}\([A-Za-z\d]+\))(?:,\p{Script=Greek}\([A-Za-z\d]+\))+|∂[A-Za-z\p{Script=Greek}ℓ`]\/∂[A-Za-z\p{Script=Greek}][A-Za-z\p{Script=Greek}\d]*(?:[−+-]\d+)?|[A-Za-z\p{Script=Greek}](?:[A-Za-z\p{Script=Greek}\d]{2,7}|[A-Za-z\p{Script=Greek}\d]⊥))(?![A-Za-z\p{Script=Greek}\d⊥])/gu,
+      /(?<![A-Za-z\p{Script=Greek}\d⊥])(?:[A-Za-z\p{Script=Greek}]′[A-Za-z\p{Script=Greek}\d]{1,4}|[A-Z]{1,4}(?:\p{Script=Greek}\([A-Za-z\d]+\))(?:,\p{Script=Greek}\([A-Za-z\d]+\))+|∂[A-Za-z\p{Script=Greek}ℓ`]\/∂[A-Za-z\p{Script=Greek}][A-Za-z\p{Script=Greek}\d]*(?:[−+-]\d+)?|[A-Za-z\p{Script=Greek}](?:[A-Za-z\p{Script=Greek}\d]{2,7}|[A-Za-z\p{Script=Greek}\d]⊥))(?![A-Za-z\p{Script=Greek}\d⊥])/gu,
     sourceGroups = [...source.matchAll(pattern)],
     targetGroups = [...translation.matchAll(pattern)],
     groups = []
@@ -569,7 +569,11 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
       offset !== end
     )
       continue
-    if (/^[A-Za-z\p{Script=Greek}\d]+⊥?$/u.test(label)) {
+    if (
+      /^(?:[A-Za-z\p{Script=Greek}\d]+⊥?|[A-Za-z\p{Script=Greek}]′[A-Za-z\p{Script=Greek}\d]{1,4})$/u.test(
+        label
+      )
+    ) {
       const productBoundary =
           /[\p{Script=Latin}\p{Script=Greek}\p{N}\p{M}_′″‴'⊥\u{1d400}-\u{1d7ff}]/u,
         completeProduct = (text, token) =>
@@ -654,7 +658,7 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
           !upper ||
           !lower ||
           !/^[A-Za-z\p{Script=Greek}]$/u.test(base.label) ||
-          !/^[A-Za-z\p{Script=Greek}\d]{1,4}$/u.test(upper.label) ||
+          !/^(?:[A-Za-z\p{Script=Greek}\d]{1,4}|′)$/u.test(upper.label) ||
           !/^(?:[A-Za-z\p{Script=Greek}\d]{1,4}|⊥)$/u.test(lower.label) ||
           !(base.scale >= 0.9 && base.scale <= 1.1 && Math.abs(base.rise) <= 0.01) ||
           ![upper, lower].every((part) => part.scale >= 0.5 && part.scale < 0.85) ||
@@ -698,7 +702,8 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
           targetOffset: to[from.indexOf(match)].index,
           label,
           sourceIndices: parts.flatMap((part) => part.sourceIndices),
-          baselineIndex: base.sourceIndices[0]
+          baselineIndex: base.sourceIndices[0],
+          ...(upper.label === '′' ? { nativeScriptGroup: true } : {})
         })
         continue
       }
@@ -842,7 +847,7 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
       marker.scale >= 0.9 ||
       !Number.isFinite(marker.rise) ||
       Math.abs(marker.rise) < 0.01 ||
-      (!/^[A-Za-z\p{Script=Greek}\d′∈<>≤≥×−+()[\],=.-]+[,.;:]*$/u.test(marker.label) &&
+      (!/^[A-Za-z\p{Script=Greek}\d′∈<>≤≥×−+()[\],:=.-]+[,.;:]*$/u.test(marker.label) &&
         !(marker.rise < 0 && /^[a-z] [a-z]$/u.test(marker.label))) ||
       source.slice(marker.sourceOffset, marker.sourceOffset + marker.label.length) !== marker.label
     )

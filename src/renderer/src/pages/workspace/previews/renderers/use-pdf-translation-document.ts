@@ -8,6 +8,8 @@ import {
   extractPdfTranslationSource,
   sameNativeMatrixBody,
   sameNativeFunctionDisplay,
+  nativeMixedBulletOwners,
+  nativeMixedBulletLiteralsMatch,
   resolveInlineFractions,
   pdfLinkLabelKey,
   pdfLinkLabelMatches,
@@ -761,6 +763,7 @@ async function verifiedSplitNativeRun(
   sourceStyle?: TextContent['styles'][string]
 ): Promise<number[] | undefined> {
   if (
+    ![before.width, ...before.transform].every(Number.isFinite) ||
     before.transform[0] <= 0 ||
     before.transform[3] <= 0 ||
     before.transform[1] !== 0 ||
@@ -772,30 +775,71 @@ async function verifiedSplitNativeRun(
   )
     return undefined
   const left = before.transform[4],
-    right = left + before.width,
-    pieces = target.items
+    right = left + before.width
+  const collect = (displaced: boolean): { item: TextItem; index: number }[] =>
+    target.items
       .flatMap((item, index) =>
         'str' in item &&
         item.str.trim() &&
+        (!displaced ||
+          (before.str.includes(item.str) &&
+            item.width > 0 &&
+            target.styles[item.fontName]?.fontFamily === sourceStyle!.fontFamily &&
+            target.styles[item.fontName]?.vertical === false &&
+            Math.abs(target.styles[item.fontName].ascent - sourceStyle!.ascent) < 0.001 &&
+            Math.abs(target.styles[item.fontName].descent - sourceStyle!.descent) < 0.001)) &&
         item.transform[4] >= left - 0.001 &&
         item.transform[4] + item.width <= right + 0.001 &&
-        item.transform.every((value, i) => i === 4 || Math.abs(value - before.transform[i]) < 0.001)
+        item.transform.every(
+          (value, i) =>
+            i === 4 ||
+            (i === 5 && displaced
+              ? Math.abs(value - before.transform[i]) < before.height * 0.3
+              : Math.abs(value - before.transform[i]) < 0.001)
+        )
           ? [{ item, index }]
           : []
       )
       .sort((a, b) => a.item.transform[4] - b.item.transform[4])
-  if (
-    pieces.length < 2 ||
-    textKey(pieces.map(({ item }) => item.str).join('')) !== textKey(before.str) ||
-    Math.abs(pieces[0].item.transform[4] - left) >= 0.001 ||
-    Math.abs(pieces.at(-1)!.item.transform[4] + pieces.at(-1)!.item.width - right) >= 0.001 ||
-    pieces.some(
-      ({ item }, i) =>
-        i > 0 &&
-        item.transform[4] < pieces[i - 1].item.transform[4] + pieces[i - 1].item.width - 0.001
+  const closed = (pieces: ReturnType<typeof collect>, displaced: boolean): boolean =>
+    pieces.length >= 2 &&
+    textKey(pieces.map(({ item }) => item.str).join('')) === textKey(before.str) &&
+    Math.abs(pieces[0].item.transform[4] - left) < 0.001 &&
+    Math.abs(pieces.at(-1)!.item.transform[4] + pieces.at(-1)!.item.width - right) < 0.001 &&
+    (displaced
+      ? Math.abs(pieces[0].item.transform[5] - before.transform[5]) < 0.001 &&
+        pieces.every(
+          ({ item }, index) =>
+            index === 0 || item.transform[4] > pieces[index - 1].item.transform[4]
+        )
+      : pieces.every(
+          ({ item }, index) =>
+            index === 0 ||
+            item.transform[4] >=
+              pieces[index - 1].item.transform[4] + pieces[index - 1].item.width - 0.001
+        ))
+  let repeatedSymbol = false,
+    pieces = collect(false)
+  if (!closed(pieces, false)) {
+    // Untouched diagram symbols may split with overlapping advances and native baseline offsets.
+    repeatedSymbol = /^([^\p{L}\p{N}\s])\1{1,7}$/u.test(before.str)
+    if (
+      !repeatedSymbol ||
+      !Number.isFinite(before.height) ||
+      before.height <= 0 ||
+      !sourceStyle ||
+      sourceStyle.vertical ||
+      !Number.isFinite(sourceStyle.ascent) ||
+      !Number.isFinite(sourceStyle.descent) ||
+      sourceStyle.ascent <= 0 ||
+      sourceStyle.ascent > 1.5 ||
+      sourceStyle.descent > 0 ||
+      sourceStyle.descent < -1
     )
-  )
-    return undefined
+      return undefined
+    pieces = collect(true)
+    if (!closed(pieces, true)) return undefined
+  }
   // The original font envelope includes this run's ink without borrowing the
   // neighboring row, whose prose may have been legitimately translated.
   const fontBounds =
@@ -814,11 +858,17 @@ async function verifiedSplitNativeRun(
       corners = [
         viewport.convertToViewportPoint(
           left,
-          before.transform[5] + before.transform[3] * fontBounds[0]
+          (repeatedSymbol
+            ? Math.min(before.transform[5], ...pieces.map(({ item }) => item.transform[5]))
+            : before.transform[5]) +
+            before.transform[3] * fontBounds[0]
         ),
         viewport.convertToViewportPoint(
           right,
-          before.transform[5] + before.transform[3] * fontBounds[1]
+          (repeatedSymbol
+            ? Math.max(before.transform[5], ...pieces.map(({ item }) => item.transform[5]))
+            : before.transform[5]) +
+            before.transform[3] * fontBounds[1]
         )
       ],
       x = Math.floor(Math.min(...corners.map(([x]) => x))) - 1,
@@ -1175,10 +1225,10 @@ export function usePdfTranslationDocument(
     retryUnitId?: string
     baseline?: Displayed
     bypassCache?: { original: PDFDocumentProxy; results: PdfTranslationResults }
-    originalPlacementOwner?: {
+    originalPlacementOwners?: {
       original: PDFDocumentProxy
       results: PdfTranslationResults
-      id: string
+      ids: ReadonlySet<string>
     }
     originalLinkOwners?: {
       original: PDFDocumentProxy
@@ -1312,11 +1362,12 @@ export function usePdfTranslationDocument(
         ? request.originalLinkOwners.byPage
         : []
     )
-    const retainedPlacementOwner =
-      request.originalPlacementOwner?.original === original &&
-      request.originalPlacementOwner.results === runResults
-        ? request.originalPlacementOwner.id
-        : undefined
+    const retainedPlacementOwners = new Set(
+      request.originalPlacementOwners?.original === original &&
+        request.originalPlacementOwners.results === runResults
+        ? request.originalPlacementOwners.ids
+        : []
+    )
     const retainedLinks = new Set(
       [...originalLinkOwners.values()].flatMap((owners) => [...owners.values()])
     )
@@ -1327,7 +1378,7 @@ export function usePdfTranslationDocument(
         .filter(
           (unit) =>
             retainedLinks.has(unit.id) ||
-            retainedPlacementOwner === unit.id ||
+            retainedPlacementOwners.has(unit.id) ||
             unit.fragments.some((fragment) => originalPages.has(fragment.pageNumber))
         )
         .map((unit) => unit.id)
@@ -1601,7 +1652,7 @@ export function usePdfTranslationDocument(
                 ...([...originalPages].find(([page]) =>
                   unit.fragments.some((fragment) => fragment.pageNumber === page)
                 )?.[1] ??
-                  (retainedLinks.has(unit.id) || retainedPlacementOwner === unit.id
+                  (retainedLinks.has(unit.id) || retainedPlacementOwners.has(unit.id)
                     ? { code: 'validation-failed', phase: 'verification' }
                     : { code: 'unsupported-layout', phase: 'generation' })),
                 pageNumbers: [...new Set(unit.fragments.map((fragment) => fragment.pageNumber))],
@@ -1646,7 +1697,7 @@ export function usePdfTranslationDocument(
             if (
               entry &&
               !retainedLinks.has(entry.unit.id) &&
-              entry.unit.id !== retainedPlacementOwner &&
+              !retainedPlacementOwners.has(entry.unit.id) &&
               !entry.unit.fragments.some((fragment) => originalPages.has(fragment.pageNumber))
             )
               nativeFailures[entry.unit.id] = failure
@@ -5030,8 +5081,10 @@ export function usePdfTranslationDocument(
             content: ReturnType<typeof projectText>,
             viewport: typeof target,
             owner?: string,
-            excluded?: ReadonlySet<number>
+            excluded?: ReadonlySet<number>,
+            semanticSpaces = false
           ): string => {
+            let previousEnd: number[] | undefined
             let value = ''
             const exact = viewport === target ? exactTargetOwners(content) : sourceRegionOwners
             for (const { index, str, points } of content) {
@@ -5066,10 +5119,36 @@ export function usePdfTranslationDocument(
                 }
                 owned.set(index, owner)
               }
+              if (semanticSpaces && previousEnd) {
+                const item = text.items[index]
+                const em =
+                  item && 'str' in item ? Math.hypot(item.transform[0], item.transform[1]) : 0
+                if (
+                  Math.abs(points[0][1] - previousEnd[1]) > em * 0.4 ||
+                  points[0][0] - previousEnd[0] > em * 0.12
+                )
+                  value += ' '
+              }
               value += str
+              previousEnd = points[1]
             }
             return value
           }
+          // Rebuild literal ownership from original native items on every read,
+          // including restored checkpoints. Snapshot text alone is never proof.
+          const mixedOwners = nativeMixedBulletOwners(
+            originalText.items,
+            originalText.styles,
+            new Set(
+              runResults.source.units
+                .filter((unit) => unit.sourceOnly || unit.preserve || unit.figure)
+                .flatMap((unit) =>
+                  unit.fragments
+                    .filter((f) => f.pageNumber === number)
+                    .flatMap((f) => f.items.map((item) => item.index))
+                )
+            )
+          )
           // Verify the complete target across its own ordered regions, rather than
           // requiring an entire cross-page paragraph to appear on every page.
           for (let i = 0; i < units.length; i++) {
@@ -5092,6 +5171,60 @@ export function usePdfTranslationDocument(
                 originalText ??= await getPdfTranslationTextContent(sourcePage)
                 sourceItems ??= projectText(originalText, source)
                 originalRegionText[i][f] = readRegion(rect, sourceItems, source)
+              }
+              if (!unchanged(i)) {
+                const indices = new Set(fragment.items.map((item) => item.index))
+                for (const mixed of mixedOwners) {
+                  if (!mixed.indices.some((index) => indices.has(index))) continue
+                  const claimed =
+                    new Set(fragment.items.map((claim) => claim.index)).size ===
+                      fragment.items.length &&
+                    !runResults.source.units.some(
+                      (other) =>
+                        other.id !== units[i].id &&
+                        other.fragments.some(
+                          (part) =>
+                            part.pageNumber === number &&
+                            part.items.some((claim) => mixed.indices.includes(claim.index))
+                        )
+                    ) &&
+                    !runResults.source.originalRegions?.some(
+                      (region) =>
+                        region.pageNumber === number &&
+                        mixed.indices.some((index) => {
+                          const item = originalText!.items[index]
+                          if (!item || !('str' in item)) return true
+                          const [x, y] = source.convertToViewportPoint(
+                            item.transform[4] + item.width / 2,
+                            item.transform[5]
+                          )
+                          return (
+                            x >= region.rect.x * source.width &&
+                            x <= (region.rect.x + region.rect.width) * source.width &&
+                            y >= region.rect.y * source.height &&
+                            y <= (region.rect.y + region.rect.height) * source.height
+                          )
+                        })
+                    ) &&
+                    fragment.items.every((claim) => {
+                      const native = originalText!.items[claim.index]
+                      return native && 'str' in native && native.str === claim.text
+                    })
+                  if (
+                    !mixed.indices.every((index) => indices.has(index)) ||
+                    !mixed.proved ||
+                    !claimed ||
+                    !nativeMixedBulletLiteralsMatch(
+                      mixed.literals,
+                      runSnapshot.units[i].translation
+                    ) ||
+                    !nativeMixedBulletLiteralsMatch(
+                      mixed.literals,
+                      readRegion(rect, targetItems, target, undefined, foreign, true)
+                    )
+                  )
+                    throw validationError('PDF literal example changed', i, f)
+                }
               }
               // No-op regions retain original glyphs, including line-end hyphens
               // removed by paragraph grouping. Compare the actual original region;
@@ -5327,23 +5460,28 @@ export function usePdfTranslationDocument(
           !useArtifact &&
           validating &&
           (validationDetails === 'PDF translation text or placement changed' ||
+            validationDetails === 'PDF literal example changed' ||
             retryOverlappingOwner) &&
           validationUnit &&
-          !retainedPlacementOwner &&
           !preservedIds.has(validationUnit) &&
           acceptedById.has(validationUnit) &&
-          units.some(
-            (unit, index) =>
-              unit.id !== validationUnit &&
-              unit.source !== runSnapshot.units[index].translation &&
-              unit.fragments.some((fragment) => fragment.pageNumber === failedPage)
-          )
+          (validationDetails === 'PDF literal example changed' ||
+            units.some(
+              (unit, index) =>
+                unit.id !== validationUnit &&
+                unit.source !== runSnapshot.units[index].translation &&
+                unit.fragments.some((fragment) => fragment.pageNumber === failedPage)
+            ))
         ) {
           // Keep every fragment of the exact failing owner, then verify the whole candidate again.
           setRequest({
             ...request,
             bypassCache: { original, results: runResults },
-            originalPlacementOwner: { original, results: runResults, id: validationUnit }
+            originalPlacementOwners: {
+              original,
+              results: runResults,
+              ids: new Set(retainedPlacementOwners).add(validationUnit)
+            }
           })
           return
         }
