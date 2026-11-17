@@ -72,6 +72,8 @@
     "packages/compute/src/hugging-face-bucket.test.ts",
     "packages/compute/src/hugging-face-jobs-http.ts",
     "packages/compute/src/ray-jobs-http.ts",
+    "packages/compute/src/ray-endpoint.ts",
+    "packages/compute/src/ray.ts",
     "packages/compute/src/ray-job-inputs.ts",
     "packages/compute/src/ray-job-inputs.test.ts",
     "packages/compute/src/ray-job-control.ts",
@@ -79,7 +81,7 @@
     "packages/compute/src/ray-job-outputs.ts",
     "packages/compute/src/ray-job-outputs.test.ts"
   ],
-  "interfacePaths": ["packages/compute/src/node.ts"],
+  "interfacePaths": ["packages/compute/src/node.ts", "packages/compute/src/ray.ts"],
   "consumerModules": ["compute_service"],
   "testFiles": {
     "owner": [

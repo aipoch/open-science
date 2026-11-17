@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { isRayBearerEndpoint, resolveRayJobsEndpoint } from '@aipoch/compute/node'
+import { isRayBearerEndpoint, resolveRayJobsEndpoint } from '@aipoch/compute/ray'
 import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 import {
   decodeRayTokenDocument,

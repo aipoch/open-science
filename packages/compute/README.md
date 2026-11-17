@@ -12,6 +12,7 @@ workflow is required. Node >=22.13 is supported; development and CI use Node 24.
 - `@aipoch/compute`: browser-safe domain types, host projections and connection-profile validation.
 - `@aipoch/compute/node`: execution scopes, controller factories, transport and protocol operations,
   validation and storage/connection contracts. CJS `require` and ESM `import` use the same implementation.
+- `@aipoch/compute/ray`: pure Ray Dashboard endpoint resolution and bearer-auth eligibility helpers.
 - Other subpaths are private. Import through the package name; do not import `src` or `dist`.
 
 The Node implementation uses `@huggingface/hub` for bucket transfers and `jszip` for Ray working
@@ -75,6 +76,12 @@ try {
 } finally {
   release() // idempotent; always release, including failed persistence/dispatch
 }
+```
+
+Ray credential stores can depend on the endpoint-only entry without loading the execution runtime:
+
+```ts
+import { isRayBearerEndpoint, resolveRayJobsEndpoint } from '@aipoch/compute/ray'
 ```
 
 `createQueue({ jobs, hosts, dispatch, publish, sessionPolicy })` owns admission serialization,

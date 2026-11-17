@@ -18,6 +18,10 @@
     "./node": {
       "types": "./dist/node.d.ts",
       "default": "./dist/node.js"
+    },
+    "./ray": {
+      "types": "./dist/ray.d.ts",
+      "default": "./dist/ray.js"
     }
   },
   "files": [

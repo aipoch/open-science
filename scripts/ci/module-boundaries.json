@@ -354,6 +354,7 @@
       "externalImports": [
         "@aipoch/compute",
         "@aipoch/compute/node",
+        "@aipoch/compute/ray",
         "@aipoch/diagnostics",
         "@aipoch/diagnostics/node",
         "node:crypto",
