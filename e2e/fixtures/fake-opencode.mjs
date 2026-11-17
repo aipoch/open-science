@@ -1402,7 +1402,9 @@ const createLongFilenameArtifacts = async (sessionId) => {
       stem + '.md',
       stem + '.docx',
       '研究'.repeat(30) + '.md',
-      'a'.repeat(252) + '.md'
+      'a'.repeat(252) + '.md',
+      'demo_chart.md',
+      'study_analysis_results.docx'
     ]) {
       const word = filename.endsWith('.docx')
       const stored = toolResult(
