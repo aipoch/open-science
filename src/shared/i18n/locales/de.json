@@ -8236,6 +8236,7 @@
     "Use HTTPS for a Lab server that is not on this computer.": "Verwenden Sie HTTPS für einen Lab-Server, der sich nicht auf diesem Computer befindet.",
     "Remove credentials from the Lab server address.": "Entfernen Sie Anmeldedaten aus der Lab-Serveradresse.",
     "Lab server address must not include query parameters or fragments.": "Die Lab-Serveradresse darf keine Abfrageparameter oder Fragmente enthalten.",
+    "Lab sign-in expired. Sign in again.": "Lab-Anmeldung abgelaufen. Bitte erneut anmelden.",
     "Lab sign-in was cancelled.": "Die Lab-Anmeldung wurde abgebrochen.",
     "The sign-in request expired. Start sign-in again.": "Die Anmeldeanfrage ist abgelaufen. Starten Sie die Anmeldung erneut.",
     "Lab sign-in failed. Try again.": "Die Lab-Anmeldung ist fehlgeschlagen. Versuchen Sie es erneut.",

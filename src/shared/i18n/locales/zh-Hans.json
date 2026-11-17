@@ -8067,6 +8067,7 @@
     "Use HTTPS for a Lab server that is not on this computer.": "对于不在这台电脑上的 Lab 服务器，请使用 HTTPS。",
     "Remove credentials from the Lab server address.": "请从 Lab 服务器地址中移除凭据。",
     "Lab server address must not include query parameters or fragments.": "Lab 服务器地址不得包含查询参数或片段。",
+    "Lab sign-in expired. Sign in again.": "Lab 登录已过期，请重新登录。",
     "Lab sign-in was cancelled.": "Lab 登录已取消。",
     "The sign-in request expired. Start sign-in again.": "登录请求已过期。请重新开始登录。",
     "Lab sign-in failed. Try again.": "Lab 登录失败。请重试。",

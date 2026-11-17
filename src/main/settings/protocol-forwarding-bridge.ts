@@ -72,6 +72,10 @@ export type ProtocolForwardingBridgeTarget = Readonly<{
     status: number,
     parsed: unknown
   ) => Readonly<{ code: string; message: string }> | undefined
+  /** Maps a host-only connection/credential failure to a stable local response. */
+  mapConnectionError?: (
+    error: unknown
+  ) => Readonly<{ status: number; code: string; message: string }> | undefined
   /** Stable message used when a host-only request fails before an upstream response exists. */
   privateCredentialsErrorMessage?: string
   adaptRequest?: (request: Record<string, unknown>) => Record<string, unknown>
@@ -199,6 +203,17 @@ export class ProtocolForwardingBridge {
     } catch (error) {
       // OAuth owners and network errors can contain account or credential details. ACP gets only
       // a stable failure; the auth owner is responsible for its own bounded diagnostics.
+      const mapped = privateCredentials ? this.target.mapConnectionError?.(error) : undefined
+      if (mapped) {
+        if (response.headersSent) {
+          response.destroy(error instanceof Error ? error : undefined)
+          return
+        }
+        json(response, mapped.status, {
+          error: { type: 'authentication_error', code: mapped.code, message: mapped.message }
+        })
+        return
+      }
       if (privateCredentials)
         throw new Error(
           this.target.privateCredentialsErrorMessage ?? 'Codex provider request failed.'

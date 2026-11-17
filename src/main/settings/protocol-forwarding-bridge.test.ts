@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bufferChatCompletionsToolNames } from '@aipoch/providers/protocol'
 
 import { adaptCodeBuddyChatCompletionsRequest } from './codebuddy-chat-request-adapter'
+import { LabApiError } from './lab-api'
 import {
   ProtocolForwardingBridge,
   type ProtocolForwardingBridgeTarget
@@ -586,6 +587,76 @@ describe('ProtocolForwardingBridge', () => {
     expect(response.status).toBe(200)
     expect(resolveConnection).toHaveBeenLastCalledWith(expect.any(AbortSignal), true)
     expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('maps a Lab unauthorized connection error to a terminal local response', async () => {
+    const target: ProtocolForwardingBridgeTarget = {
+      id: 'builtin-lab',
+      wire: 'chat-completions',
+      endpoint: 'https://lab.example.test/v1/chat/completions',
+      model: 'lab:research-default',
+      resolveConnection: async () => {
+        throw new LabApiError('unauthorized', 'refresh failed')
+      },
+      mapConnectionError: (error) =>
+        error instanceof LabApiError && error.code === 'unauthorized'
+          ? {
+              status: 401,
+              code: 'unauthorized',
+              message: 'Your Lab sign-in expired. Sign in again.'
+            }
+          : undefined,
+      privateCredentialsErrorMessage: 'The Lab request failed.'
+    }
+    const bridge = new ProtocolForwardingBridge([target], target.id)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(response.status).toBe(401)
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        type: 'authentication_error',
+        code: 'unauthorized',
+        message: 'Your Lab sign-in expired. Sign in again.'
+      }
+    })
+  })
+
+  it('keeps a non-auth Lab connection failure as a stable 502 without rethrowing', async () => {
+    const target: ProtocolForwardingBridgeTarget = {
+      id: 'builtin-lab',
+      wire: 'chat-completions',
+      endpoint: 'https://lab.example.test/v1/chat/completions',
+      model: 'lab:research-default',
+      resolveConnection: async () => {
+        throw new Error('secret network diagnostic')
+      },
+      privateCredentialsErrorMessage: 'The Lab request failed.'
+    }
+    const bridge = new ProtocolForwardingBridge([target], target.id)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(response.status).toBe(502)
+    await expect(response.json()).resolves.toEqual({
+      error: { type: 'api_error', message: 'The Lab request failed.' }
+    })
   })
 
   it('labels a bounded fallback error as JSON on the first response and replay', async () => {

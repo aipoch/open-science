@@ -8563,6 +8563,7 @@
     "Use HTTPS for a Lab server that is not on this computer.": "Используйте HTTPS для сервера Lab, который находится не на этом компьютере.",
     "Remove credentials from the Lab server address.": "Удалите учётные данные из адреса сервера Lab.",
     "Lab server address must not include query parameters or fragments.": "Адрес сервера Lab не должен содержать параметры запроса или фрагменты.",
+    "Lab sign-in expired. Sign in again.": "Срок действия входа в Lab истёк. Войдите снова.",
     "Lab sign-in was cancelled.": "Вход в Lab отменён.",
     "The sign-in request expired. Start sign-in again.": "Запрос на вход истёк. Начните вход снова.",
     "Lab sign-in failed. Try again.": "Не удалось войти в Lab. Повторите попытку.",

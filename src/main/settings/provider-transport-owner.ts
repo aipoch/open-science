@@ -7,6 +7,7 @@ import {
   preferredEndpoint
 } from '../../shared/settings'
 import { isLabDeploymentUrl, labModelWireId, mapLabGatewayError } from '../../shared/lab'
+import { LabApiError } from './lab-api'
 
 import type {
   ProviderFailureObservation,
@@ -1016,7 +1017,15 @@ class ProviderTransportOwner {
         key: await prepared.resolveCredential(forceRefresh)
       }),
       refreshOnUnauthorized: true,
-      terminalUpstreamStatuses: [502, 503],
+      terminalUpstreamStatuses: [401, 502, 503],
+      mapConnectionError: (error) =>
+        error instanceof LabApiError && error.code === 'unauthorized'
+          ? {
+              status: 401,
+              code: 'unauthorized',
+              message: 'Your Lab sign-in expired. Sign in again.'
+            }
+          : undefined,
       mapUpstreamError: mapLabGatewayError,
       privateCredentialsErrorMessage: 'The Lab request failed.',
       ...extra

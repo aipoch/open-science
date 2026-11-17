@@ -8413,6 +8413,7 @@
     "Use HTTPS for a Lab server that is not on this computer.": "Use HTTPS para un servidor de Lab que no esté en este equipo.",
     "Remove credentials from the Lab server address.": "Quite las credenciales de la dirección del servidor de Lab.",
     "Lab server address must not include query parameters or fragments.": "La dirección del servidor de Lab no debe incluir parámetros de consulta ni fragmentos.",
+    "Lab sign-in expired. Sign in again.": "La sesión de Lab ha caducado. Vuelva a iniciar sesión.",
     "Lab sign-in was cancelled.": "Se canceló el inicio de sesión de Lab.",
     "The sign-in request expired. Start sign-in again.": "La solicitud de inicio de sesión caducó. Inicie sesión de nuevo.",
     "Lab sign-in failed. Try again.": "No se pudo iniciar sesión de Lab. Inténtelo de nuevo.",
