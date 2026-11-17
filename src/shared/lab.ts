@@ -437,6 +437,14 @@ export const mapLabGatewayError = (
   const record = isRecord(parsed) ? parsed : undefined
   const errorRecord = record && isRecord(record.error) ? record.error : undefined
   const code = typeof errorRecord?.code === 'string' ? errorRecord.code : undefined
+  // Upstream credential failures can arrive as 401/403 from the gateway. Keep the Lab sign-in
+  // fallback for a 401 without an upstream-specific code, but don't mislabel a channel credential.
+  if (code === 'authentication_error' || code === 'invalid_api_key') {
+    return {
+      code,
+      message: 'The upstream credential is invalid. Check the Lab channel configuration.'
+    }
+  }
   if (status === 401) {
     return { code: 'unauthorized', message: 'Your Lab sign-in expired. Sign in again.' }
   }
@@ -456,9 +464,24 @@ export const mapLabGatewayError = (
     case 'MODEL_NOT_AVAILABLE':
     case 'MODEL_NOT_CONFIGURED':
       return { code, message: 'This Lab model is not available right now.' }
+    case 'model_not_found':
+      return {
+        code,
+        message:
+          'The model has no available upstream channel right now (it may not be published or its channel may be disabled).'
+      }
+    case 'insufficient_quota':
+      return { code, message: 'The upstream subscription or quota is exhausted.' }
+    case 'context_length_exceeded':
+      return { code, message: 'The context exceeds the model context window.' }
     case 'RATE_LIMITED':
     case 'UPSTREAM_RATE_LIMITED':
       return { code, message: 'Too many Lab requests. Try again in a moment.' }
+    case 'UPSTREAM_ERROR':
+      return {
+        code,
+        message: 'The Lab server could not reach the model provider. Check the Lab channel status.'
+      }
     default:
       return undefined
   }

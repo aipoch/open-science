@@ -1016,6 +1016,7 @@ class ProviderTransportOwner {
         key: await prepared.resolveCredential(forceRefresh)
       }),
       refreshOnUnauthorized: true,
+      terminalUpstreamStatuses: [502, 503],
       mapUpstreamError: mapLabGatewayError,
       privateCredentialsErrorMessage: 'The Lab request failed.',
       ...extra

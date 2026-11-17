@@ -473,6 +473,121 @@ describe('ProtocolForwardingBridge', () => {
     })
   })
 
+  it('turns a declared terminal Lab upstream status into a local 400', async () => {
+    const target: ProtocolForwardingBridgeTarget = {
+      id: 'builtin-lab',
+      wire: 'chat-completions',
+      endpoint: 'https://lab.example.test/v1/chat/completions',
+      model: 'lab:research-default',
+      resolveConnection: async () => ({
+        endpoint: 'https://lab.example.test/v1/chat/completions',
+        key: 'lab-access-token'
+      }),
+      terminalUpstreamStatuses: [502, 503],
+      mapUpstreamError: () => ({
+        code: 'UPSTREAM_ERROR',
+        message: 'The Lab server could not reach the model provider.'
+      })
+    }
+    const bridge = new ProtocolForwardingBridge(
+      [target],
+      target.id,
+      vi.fn(async () => Response.json({ error: { code: 'UPSTREAM_ERROR' } }, { status: 503 }))
+    )
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(response.status).toBe(400)
+    expect(response.headers.get('x-open-science-upstream-status')).toBe('503')
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'UPSTREAM_ERROR',
+        message: 'The Lab server could not reach the model provider.'
+      }
+    })
+  })
+
+  it('leaves an undeclared upstream status unchanged for other providers', async () => {
+    const target: ProtocolForwardingBridgeTarget = {
+      id: 'custom-provider',
+      wire: 'chat-completions',
+      endpoint: 'https://provider.example.test/v1/chat/completions',
+      model: 'model-a',
+      resolveConnection: async () => ({
+        endpoint: 'https://provider.example.test/v1/chat/completions',
+        key: 'provider-access-token'
+      })
+    }
+    const bridge = new ProtocolForwardingBridge(
+      [target],
+      target.id,
+      vi.fn(async () =>
+        Response.json({ error: { message: 'temporary upstream failure' } }, { status: 503 })
+      )
+    )
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(response.status).toBe(503)
+    expect(response.headers.get('x-open-science-upstream-status')).toBe('503')
+  })
+
+  it('still refreshes a host-owned credential after one upstream 401', async () => {
+    const resolveConnection = vi
+      .fn()
+      .mockResolvedValueOnce({
+        endpoint: 'https://provider.example.test/v1/chat/completions',
+        key: 'first-token'
+      })
+      .mockResolvedValueOnce({
+        endpoint: 'https://provider.example.test/v1/chat/completions',
+        key: 'refreshed-token'
+      })
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ error: { message: 'expired' } }, { status: 401 }))
+      .mockResolvedValueOnce(Response.json({ ok: true }, { status: 200 }))
+    const target: ProtocolForwardingBridgeTarget = {
+      id: 'lab',
+      wire: 'chat-completions',
+      endpoint: 'https://provider.example.test/v1/chat/completions',
+      model: 'model-a',
+      resolveConnection,
+      refreshOnUnauthorized: true
+    }
+    const bridge = new ProtocolForwardingBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(response.status).toBe(200)
+    expect(resolveConnection).toHaveBeenLastCalledWith(expect.any(AbortSignal), true)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('labels a bounded fallback error as JSON on the first response and replay', async () => {
     const fetchImpl = vi.fn(
       async () =>

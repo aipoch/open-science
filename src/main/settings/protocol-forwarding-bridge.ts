@@ -65,6 +65,8 @@ export type ProtocolForwardingBridgeTarget = Readonly<{
   >
   /** Retry once with a refreshed host credential after an upstream 401 (Lab only). */
   refreshOnUnauthorized?: boolean
+  /** Upstream statuses to expose as terminal local 400s so ACP runtimes do not retry them. */
+  terminalUpstreamStatuses?: readonly number[]
   /** Maps a host-only upstream failure to the token-free code/message shown to the caller. */
   mapUpstreamError?: (
     status: number,
@@ -332,8 +334,10 @@ export class ProtocolForwardingBridge {
           }
         }
       }
+      const terminal = target.terminalUpstreamStatuses?.includes(upstream.status) === true
+      const clientStatus = terminal ? 400 : upstream.status >= 400 ? upstream.status : 502
       response.setHeader('x-open-science-upstream-status', String(upstream.status))
-      json(response, upstream.status >= 400 ? upstream.status : 502, { error: { code, message } })
+      json(response, clientStatus, { error: { code, message } })
       return
     }
     const headers = connection

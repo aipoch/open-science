@@ -9,6 +9,7 @@ import {
   labModelWireId,
   labProviderApiEndpoints,
   labProtocolsToEndpoints,
+  mapLabGatewayError,
   readLabModelCapabilities,
   readLabUsage
 } from './lab'
@@ -160,6 +161,43 @@ describe('readLabUsage', () => {
       fetchedAt: '2026-11-16T08:40:00Z',
       stale: false
     })
+  })
+
+  it.each([
+    [
+      404,
+      'model_not_found',
+      'The model has no available upstream channel right now (it may not be published or its channel may be disabled).'
+    ],
+    [402, 'insufficient_quota', 'The upstream subscription or quota is exhausted.'],
+    [400, 'context_length_exceeded', 'The context exceeds the model context window.'],
+    [
+      401,
+      'authentication_error',
+      'The upstream credential is invalid. Check the Lab channel configuration.'
+    ],
+    [
+      403,
+      'invalid_api_key',
+      'The upstream credential is invalid. Check the Lab channel configuration.'
+    ],
+    [429, 'UPSTREAM_RATE_LIMITED', 'Too many Lab requests. Try again in a moment.'],
+    [
+      502,
+      'UPSTREAM_ERROR',
+      'The Lab server could not reach the model provider. Check the Lab channel status.'
+    ]
+  ] as const)('maps Lab gateway code %s to an actionable error', (status, code, message) => {
+    expect(mapLabGatewayError(status, { error: { code } })).toEqual({ code, message })
+  })
+
+  it('keeps the Lab sign-in fallback and leaves unknown codes unmapped', () => {
+    expect(mapLabGatewayError(401, { error: { message: 'expired' } })).toEqual({
+      code: 'unauthorized',
+      message: 'Your Lab sign-in expired. Sign in again.'
+    })
+    expect(mapLabGatewayError(502, { error: { code: 'UNKNOWN_CODE' } })).toBeUndefined()
+    expect(mapLabGatewayError(502, 'not-an-object')).toBeUndefined()
   })
 
   it('preserves unavailable responses and drops malformed nested values', () => {
