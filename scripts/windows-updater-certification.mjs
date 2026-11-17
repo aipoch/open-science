@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve, win32 } from 'node:path'
@@ -40,6 +41,36 @@ import {
 
 const UPDATE_TIMEOUT_MS = 180_000
 const SMOKE_ROOT_PREFIX = 'open-science-installer-smoke-updater-'
+const WINDOWS_SIGNING_PUBLISHER_DN = 'CN=AIPOCH PTE. LTD., O=AIPOCH PTE. LTD., L=Singapore, C=SG'
+const compileWindowsInstallPublication = createRequire(import.meta.url)(
+  '../build/compile-windows-install-publication.cjs'
+)
+
+const buildWindowsUninstallHelper = (destination) => {
+  compileWindowsInstallPublication.uninstallHelper(destination)
+  return destination
+}
+
+const sha512Base64 = async (path) =>
+  createHash('sha512')
+    .update(await readFile(path))
+    .digest('base64')
+
+const verifyCachedInstaller = async (source, cached) => {
+  const [sourceHash, cachedHash] = await Promise.all([sha512Base64(source), sha512Base64(cached)])
+  if (sourceHash !== cachedHash) {
+    throw new Error(
+      `The previous NSIS install retained an unexpected installer cache. Expected ${sourceHash}, found ${cachedHash}.`
+    )
+  }
+  return sourceHash
+}
+
+const normalizeLegacyPublisherName = (value) => {
+  const names = Array.isArray(value) ? value : [value]
+  if (!names.some((name) => name === 'AIPOCH PTE. LTD.')) return undefined
+  return names.map((name) => (name === 'AIPOCH PTE. LTD.' ? WINDOWS_SIGNING_PUBLISHER_DN : name))
+}
 
 const singleFile = async (directory, pattern, description) => {
   const matches = (await readdir(directory))
@@ -87,12 +118,14 @@ const buildLocalUpdaterConfig = (source, url) => {
   ) {
     throw new Error('Installed app-update.yml has an unsafe updaterCacheDirName.')
   }
+  const publisherName = normalizeLegacyPublisherName(parsed.publisherName)
   const config = {
     ...parsed,
     provider: 'generic',
     url,
     channel: 'latest',
-    useMultipleRangeRequest: false
+    useMultipleRangeRequest: false,
+    ...(publisherName ? { publisherName } : {})
   }
   return { source: dump(config, { lineWidth: -1 }), updaterCacheDirName }
 }
@@ -803,6 +836,7 @@ const main = async () => {
         'The previous NSIS install did not retain its installer for differential use.'
       )
     }
+    const previousInstallerSha512 = await verifyCachedInstaller(previousInstaller, cachedInstaller)
 
     const installerBytes = (await stat(currentInstaller)).size
     const persistObservation = async (ownedEvidence) => {
@@ -814,7 +848,8 @@ const main = async () => {
         installerBytes,
         ...assetServer.metrics,
         versionedFeed: true,
-        previousInstallerCacheVerified: true
+        previousInstallerCacheVerified: true,
+        previousInstallerSha512
       })
       if (ownedEvidence)
         observation.ownedProcessRecovery = { ...ownedEvidence, processTreeReaped: false }
@@ -942,21 +977,15 @@ const main = async () => {
   if (installed)
     await cleanup(async () => {
       // Surface the real uninstall guard's reason without leaving an unattended NSIS message box.
-      await runProcess(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-File',
-          resolve('build/windows-update-handoff-uninstall.ps1'),
-          '-InstallPath',
-          installDirectory
-        ],
-        { env }
+      // Compile the helper from the repository source so certification does not depend on a
+      // pre-existing out/windows-installer directory or the caller's current working directory.
+      const uninstallHelper = buildWindowsUninstallHelper(
+        join(root, 'windows-uninstall-helper.exe')
       )
-      await uninstallAndVerify(installDirectory, env)
+      await runProcess(uninstallHelper, ['update-handoff', '--install-path', installDirectory], {
+        env
+      })
+      await uninstallAndVerify(installDirectory, env, { processRoot: root })
     })
   // NSIS can leave its Un_A helper in this fixture's Temp after the installation and uninstall
   // have finished. Reap only executables inside our owned root before removing their files.
@@ -980,6 +1009,7 @@ if (invokedAsScript) {
 export {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
+  buildWindowsUninstallHelper,
   classifyUpdaterDownloadStatus,
   certifyForeignProcessRecovery,
   invokeWebRpc,
@@ -989,5 +1019,7 @@ export {
   parseArguments,
   parseSingleRange,
   rewriteFeedPaths,
+  sha512Base64,
+  verifyCachedInstaller,
   startAssetServer
 }
