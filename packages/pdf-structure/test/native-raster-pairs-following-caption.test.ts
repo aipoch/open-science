@@ -143,3 +143,67 @@ it.each([
     )
   expect(associatePreviousPageRasterFigure(source, pages, captions, tables, owned)).toEqual([])
 })
+
+it.each(['complete', 'missing description', 'foreign text', 'table overlap', 'duplicate paint'])(
+  'binds both separate chart stacks to their own native captions: %s',
+  (mode): void => {
+    const captions = [40, 325].map((x, i) => ({
+      page: 1,
+      rect: [x, 338, x + 245, 348],
+      lines: [`Figure ${i + 1}. The top panel and bottom panel show separate trials.`]
+    }))
+    const rectangles = [
+      [45, 80, 270, 195],
+      [45, 215, 270, 328],
+      [330, 80, 555, 195],
+      [330, 215, 555, 328]
+    ]
+    const page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      renderRotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: rectangles.map((r, operationIndex) => ({
+        kind: 'image',
+        operationIndex,
+        imageHash: `anonymous-${operationIndex}`,
+        normalizedRect: r.map((v, i) => v / (i % 2 ? 800 : 600)),
+        paintedNormalizedRect: r.map((v, i) => v / (i % 2 ? 800 : 600))
+      })),
+      lines: captions.map((caption) => ({
+        text: caption.lines[0],
+        x: caption.rect[0],
+        y: caption.rect[1],
+        width: 245,
+        height: 10,
+        fontSize: 10
+      }))
+    }
+    if (mode === 'missing description') page.lines[1].text = 'Figure 2. Separate chart.'
+    if (mode === 'foreign text')
+      page.lines.push({
+        text: 'An independent note.',
+        x: 330,
+        y: 198,
+        width: 125,
+        height: 10,
+        fontSize: 10
+      })
+    if (mode === 'duplicate paint') page.graphicsBounds[1].operationIndex = 0
+    const tables = mode === 'table overlap' ? [[340, 85, 430, 145]] : []
+    const output = captions.map((caption, n) =>
+      nativeCaptionedAlignedRasterPair(page, caption, captions, tables, [rectangles[n ? 1 : 3]])
+    )
+    if (mode === 'complete') {
+      expect(output.map((matched) => matched?.rect)).toEqual([
+        [45, 80, 270, 328],
+        [330, 80, 555, 328]
+      ])
+      expect(output.map((matched) => matched?.caption)).toEqual(captions)
+    } else {
+      expect(output).toEqual([undefined, undefined])
+    }
+  }
+)

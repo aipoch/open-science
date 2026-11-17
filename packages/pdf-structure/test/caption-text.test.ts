@@ -882,6 +882,14 @@ it('excludes a table reference wrapped after an explicit preceding prose referen
   }
   const before = { ...title, text: '[12] using extinction coefficients as listed in', y: 308 }
   expect(findCaptionCandidates([{ pageNumber: 1, lines: [before, title] }])).toEqual([])
+  const wrappedReference = {
+    ...title,
+    text: 'Table 2 throughout the assessment. The final criterion remains unchanged.'
+  }
+  expect(findCaptionCandidates([{ pageNumber: 1, lines: [before, wrappedReference] }])).toEqual([])
+  expect(
+    findCaptionCandidates([{ pageNumber: 1, lines: [{ ...before, y: 260 }, wrappedReference] }])
+  ).toHaveLength(1)
   const splitArabicReference = {
     ...title,
     text: 'Table 1. Two out of 37 trainees did not participate in the guided training.'
@@ -1012,6 +1020,65 @@ it('places a delayed native subscript beside its source anchor before following 
     expect(joinPdfSmallCapsLine([...items.slice(0, 3), marker])).toBe(
       items.map((i) => i.str).join('')
     )
+})
+
+it('keeps a wrapped how-clause with its reporting paragraph instead of duplicating a figure', () => {
+  const row = (text: string, y: number, x = 70, width = 460): CaptionLine => ({
+      text,
+      x,
+      y,
+      width,
+      height: 10,
+      fontSize: 10
+    }),
+    genuine = row('Figure 1: Numerical convergence under different conditions.', 275),
+    previous = row('To compare the behavior across conditions, we show in', 420, 85, 445),
+    wrapped = row(
+      'Figure 1 how the error changes with increasing sample sizes across multiple independent trials.',
+      432
+    ),
+    following = row(
+      'The observed rates also vary with the amount of data collected in each experimental setting.',
+      444
+    ),
+    page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: [
+        {
+          kind: 'path',
+          operationIndex: 2,
+          normalizedRect: [70 / 600, 100 / 800, 530 / 600, 266 / 800]
+        }
+      ],
+      lines: [genuine, previous, wrapped, following]
+    }
+
+  expect(findCaptionCandidates([page]).map((c: { lines: string[] }) => c.lines[0])).toEqual([
+    genuine.text
+  ])
+  for (const lines of [
+    [
+      genuine,
+      { ...previous, text: 'The experiment repeated all measurements.' },
+      wrapped,
+      following
+    ],
+    [genuine, previous, wrapped, { ...following, y: 463 }],
+    [
+      genuine,
+      previous,
+      {
+        ...wrapped,
+        text: 'Figure 1: How the error changes with increasing sample sizes across multiple independent trials.'
+      },
+      following
+    ]
+  ])
+    expect(findCaptionCandidates([{ ...page, lines }])).toHaveLength(2)
 })
 
 it('excludes a figure reference continuing a double-spaced manuscript paragraph', () => {
@@ -2828,3 +2895,105 @@ it.each([
 ])('keeps finite figure references distinct from noun titles: %s', (text, expected) => {
   expect(captionKind(text)).toBe(expected)
 })
+
+it('keeps a wrapped observation in body text when it starts with a figure reference', () => {
+  const row = (text: string, y: number): CaptionLine => ({
+    text,
+    x: 320,
+    y,
+    width: 220,
+    height: 9,
+    fontSize: 9
+  })
+  const previous = row('Both measurements are repeated for each trial. From', 300)
+  const reference = row('Figure 2 we observe that the signal is more stable', 311)
+  const following = row('when the two samples are measured under identical conditions.', 322)
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [],
+    lines: [previous, reference, following]
+  }
+  expect(findCaptionCandidates([page])).toEqual([])
+
+  const genuine = row('Figure 2: Signal measurements under identical conditions.', 280)
+  expect(findCaptionCandidates([{ ...page, lines: [genuine, ...page.lines] }])).toHaveLength(1)
+  for (const lines of [
+    [{ ...previous, text: 'Both measurements are repeated for each trial.' }, reference, following],
+    [previous, reference, { ...following, y: 345 }],
+    [
+      previous,
+      { ...reference, text: 'Figure 2: We observe that the signal is more stable' },
+      following
+    ]
+  ]) {
+    expect(findCaptionCandidates([{ ...page, lines }])).toHaveLength(1)
+  }
+})
+
+it.each([false, true])(
+  'keeps the complete hanging caption of a raster panel group (%s)',
+  (multirow) => {
+    const row = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontSize = 10
+    ): CaptionLine => ({ text, x, y, width, height: fontSize, fontSize })
+    const width = 600
+    const height = 800
+    const imagePanel = (x: number, top: number, bottom: number): object => ({
+      kind: 'image',
+      normalizedRect: [x / width, top / height, (x + 142) / width, bottom / height]
+    })
+    const images = multirow
+      ? [
+          ...[60, 132, 204, 276].map((x) => ({
+            kind: 'image',
+            normalizedRect: [x / width, 115 / height, (x + 69) / width, 200 / height]
+          })),
+          ...[60, 132, 204, 276].map((x) => ({
+            kind: 'image',
+            normalizedRect: [x / width, 175 / height, (x + 69) / width, 255 / height]
+          }))
+        ]
+      : [imagePanel(60, 175, 255), imagePanel(207, 175, 255)]
+    const keys = row(multirow ? '(e) (f) (g) (h)' : '(a) (b)', 100, 255, 208, 8)
+    const topRows = multirow
+      ? [
+          row('Fig. 3. Results by task. (a) First result. (b) Second result under', 60, 272, 290),
+          row('time. (c) Third result vs. time. (d) Fourth result vs.', 80, 283, 250),
+          row('time. (e) Fifth result vs. time. (f) Sixth result. (g) Seventh', 80, 294, 270),
+          row('result. (h) Repeat of the first measurement.', 80, 305, 201)
+        ]
+      : [
+          row('Fig. 3. Results by task. (a) First result from', 60, 272, 290),
+          row('the instrument. (b) Result from the reference.', 80, 283, 208.5)
+        ]
+    const last = topRows.at(-1)!
+    const body = row('the same method to the next independent experiment.', 60, last.y + 24, 275)
+    const page = {
+      pageNumber: 1,
+      width,
+      height,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: images,
+      lines: [keys, ...topRows, body]
+    }
+    const summarize = (candidatePage: typeof page): string[] =>
+      findCaptionCandidates([candidatePage]).flatMap(
+        (candidate: { lines: string[] }) => candidate.lines
+      )
+
+    expect(summarize(page)).toEqual(topRows.map(({ text }) => text))
+    const interrupted = { ...last, y: last.y + 9 }
+    expect(
+      summarize({ ...page, lines: [keys, ...topRows.slice(0, -1), interrupted, body] })
+    ).not.toContain(last.text)
+  }
+)

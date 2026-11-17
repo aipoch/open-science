@@ -74,6 +74,8 @@ test('switches projects from the Workspace project menu and expands remaining pr
   await createProject(page, 'Project 16', 'Description 16', false)
   await reloadAndOpenProject(page, 'Project 16')
 
+  // The native window enforces a 720px minimum height, so keep this compact-layout check as
+  // renderer viewport emulation rather than changing the test's requested geometry.
   await page.setViewportSize({ width: 1280, height: 600 })
   await page.locator('button[title="Project 16"]').click()
   const menu = page.locator('[aria-label="Project actions"]')
@@ -97,14 +99,6 @@ test('switches projects from the Workspace project menu and expands remaining pr
   const newProject = menu.getByRole('menuitem', { name: 'New project', exact: true })
   await expect(showRemaining).toBeVisible()
   await expect(newProject).toBeVisible()
-  const [showRemainingBounds, newProjectBounds] = await Promise.all([
-    showRemaining.boundingBox(),
-    newProject.boundingBox()
-  ])
-  expect(showRemainingBounds).not.toBeNull()
-  expect(newProjectBounds).not.toBeNull()
-  expect(showRemainingBounds?.y).toBeLessThan(newProjectBounds?.y ?? 0)
-
   const showRemainingPresentation = await showRemaining.evaluate((element) => {
     const style = getComputedStyle(element)
     const menuElement = element.closest<HTMLElement>('[aria-label="Project actions"]')
@@ -173,17 +167,26 @@ test('switches projects from the Workspace project menu and expands remaining pr
         )
       }),
       bottom: menuRect.bottom,
-      clientHeight: element.clientHeight,
-      scrollHeight: element.scrollHeight,
+      width: menuRect.width,
+      height: menuRect.height,
       viewportHeight: window.innerHeight
     }
   })
   expect(layout.fitsHorizontally).toBe(true)
   expect(layout.bottom).toBeLessThanOrEqual(layout.viewportHeight - 8)
-  expect(layout.scrollHeight).toBeGreaterThan(layout.clientHeight)
+  expect(layout.width).toBe(224)
+  expect(layout.height).toBeLessThanOrEqual(384)
 
-  await newProject.scrollIntoViewIfNeeded()
-  await expect(newProject).toBeVisible()
+  const list = menu.locator('[data-project-list]')
+  const searchBounds = await search.boundingBox()
+  const footerBounds = await newProject.boundingBox()
+  await list.hover()
+  await page.mouse.wheel(0, 2000)
+  await expect(projectItems.last()).toBeInViewport({ ratio: 0.99 })
+  await newProject.hover()
+  await expect(projectItems.last()).toBeInViewport({ ratio: 0.99 })
+  expect(await search.boundingBox()).toEqual(searchBounds)
+  expect(await newProject.boundingBox()).toEqual(footerBounds)
 
   await search.fill('  PROJECT 1  ')
   await expect(projectItems).toHaveCount(5)

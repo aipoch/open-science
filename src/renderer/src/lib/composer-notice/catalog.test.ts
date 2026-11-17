@@ -201,3 +201,21 @@ it.each<[FailureReason, NoticeActionId, readonly NoticeActionId[]]>([
     })
   ).toMatchObject({ primaryAction, secondaryActions })
 })
+
+it('explains missing image support without suggesting credential failures', () => {
+  expect(
+    noticePresentation({
+      category: 'configuration',
+      reason: 'configuration/vision-model',
+      diagnostics: {}
+    })
+  ).toEqual({
+    level: 'warning',
+    titleKey: 'Image support is not configured',
+    descriptionKey:
+      "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support.",
+    primaryAction: 'open-provider-settings',
+    secondaryActions: [],
+    feedback: 'none'
+  })
+})

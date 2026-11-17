@@ -509,3 +509,186 @@ it.each([false, true])(
     ).toBe(true)
   }
 )
+
+it.each([true, false])(
+  'keeps a centered section title only with its native rules (%s)',
+  (ruled) => {
+    const rows = [0, 30, 60].map((y) => ({ rect: [0, y, 400, y + 30] }))
+    const baseCells = rows.flatMap(({ rect }, row) =>
+      [0, 100, 200, 300].map((x, column) => ({
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [x, rect[1], x + 100, rect[3]]
+      }))
+    )
+    const token = (
+      text: string,
+      rect: number[]
+    ): { text: string; rect: number[]; horizontal: boolean; baseline: number; height: number } => ({
+      text,
+      rect,
+      horizontal: true,
+      baseline: rect[3],
+      height: rect[3] - rect[1]
+    })
+    const issues = new Set<string>()
+    const cells = resolveTableCellMerges({
+      proposals: [
+        { origin: 'model-span', sectionHeader: true, slots: baseCells.filter((c) => c.row === 1) },
+        { origin: 'model-span', slots: baseCells.filter((c) => c.row < 2 && c.column === 0) }
+      ],
+      baseCells,
+      items: [
+        token('Baseline', [18, 12, 65, 22]),
+        token('12', [130, 12, 144, 22]),
+        token('14', [235, 12, 249, 22]),
+        token('Further measurements', [130, 36, 270, 54]),
+        token('42', [130, 70, 144, 80]),
+        token('44', [235, 70, 249, 80])
+      ],
+      rows,
+      headerRows: [],
+      headerRuns: new Map(),
+      rules: ruled
+        ? [
+            [0, 30, 400, 30],
+            [0, 60, 400, 60]
+          ]
+        : [[0, 30, 400, 30]],
+      populatedColumns: new Set([0, 1, 2, 3]),
+      issues,
+      repairs: []
+    })
+    expect(cells.find((c) => c.row === 0 && c.column === 0)).toMatchObject({
+      rowSpan: 1,
+      colSpan: 1
+    })
+    expect(cells.find((c) => c.row === 1 && c.column === 0)).toMatchObject({
+      rowSpan: 1,
+      colSpan: ruled ? 4 : 1
+    })
+    expect(issues.has('conflicting-spanning-cells')).toBe(!ruled)
+  }
+)
+
+it.each(['shared stub', 'divided stub', 'unaligned text', 'missing parent'])(
+  'uses native header tiers to verify a modeled two-line stub with %s',
+  (kind) => {
+    const rows = [0, 15, 30].map((top) => ({ rect: [0, top, 300, top + 15] }))
+    const baseCells = rows.flatMap(({ rect }, row) =>
+      [0, 60, 120, 180, 240].map((x, column) => ({
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [x, rect[1], x + 60, rect[3]]
+      }))
+    )
+    const proposals = [
+      { origin: 'model-span', slots: baseCells.filter((c) => c.row < 2 && c.column === 0) },
+      {
+        origin: 'model-span',
+        slots: baseCells.filter((c) => c.row === 0 && [1, 2].includes(c.column))
+      },
+      {
+        origin: 'model-span',
+        slots: baseCells.filter((c) => c.row === 0 && [3, 4].includes(c.column))
+      }
+    ]
+    if (kind === 'missing parent') proposals.pop()
+    const rules = [
+      [0, 0, 300, 0],
+      [0, 30, 300, 30]
+    ]
+    if (kind === 'divided stub') rules.push([0, 15, 60, 15])
+    const issues = new Set<string>()
+    const result = resolveTableCellMerges({
+      proposals,
+      baseCells,
+      items: [
+        token('Training', [6, 2, 54, 14]),
+        token('regime', kind === 'unaligned text' ? [5, 17, 35, 29] : [12, 17, 48, 29]),
+        token('Development data', [68, 2, 172, 14]),
+        token('Evaluation data', [188, 2, 292, 14]),
+        ...[1, 2, 3, 4].map((column) =>
+          token(column % 2 ? 'Length' : 'Width', [column * 60 + 12, 17, column * 60 + 48, 29])
+        )
+      ],
+      rows,
+      headerRows: [0, 1],
+      headerRuns: new Map(),
+      rules,
+      populatedColumns: new Set([0, 1, 2, 3, 4]),
+      issues,
+      repairs: []
+    })
+    expect(result[0]).toMatchObject({ row: 0, column: 0, rowSpan: kind === 'shared stub' ? 2 : 1 })
+    expect(result.some((cell) => cell.row === 1 && cell.column === 0)).toBe(kind !== 'shared stub')
+    if (kind === 'shared stub') expect(issues.has('span-conflicts-with-source-rows')).toBe(false)
+  }
+)
+
+it.each([true, false])(
+  'resolves two competing numeric stubs only with a native full-width group rule (%s)',
+  (withDivider) => {
+    const rows = Array.from({ length: 7 }, (_, row) => ({
+      rect: [0, row * 20, 180, (row + 1) * 20],
+      origin: 'model-grid'
+    }))
+    const cells = rows.flatMap(({ rect }, row) =>
+      [0, 1, 2].map((column) => ({
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [column * 60, rect[1], (column + 1) * 60, rect[3]],
+        origin: 'model-grid'
+      }))
+    )
+    const items = [
+      token('α', [8, 5, 16, 15]),
+      token('Count', [66, 5, 95, 15]),
+      token('Score', [130, 5, 164, 15]),
+      token('2', [8, 45, 16, 55]),
+      token('3', [8, 105, 16, 115]),
+      ...rows
+        .slice(1)
+        .flatMap(({ rect }, index) => [
+          token(String(6 - index), [72, rect[1] + 5, 81, rect[1] + 15]),
+          token(`${24 + index}.5`, [133, rect[1] + 5, 159, rect[1] + 15])
+        ])
+    ]
+    const issues = new Set<string>()
+    const result = resolveTableCellMerges({
+      proposals: [
+        [1, 4],
+        [4, 6]
+      ].map(([start, end]) => ({
+        origin: 'model-span',
+        slots: cells.filter((c) => c.column === 0 && c.row >= start && c.row <= end)
+      })),
+      baseCells: cells,
+      items,
+      rows,
+      headerRows: [0],
+      headerRuns: new Map(),
+      rules: (withDivider ? [0, 20, 80, 140] : [0, 20, 140]).map((y) => [0, y, 180, y]),
+      populatedColumns: new Set([0, 1, 2]),
+      issues,
+      repairs: []
+    })
+    const merged = result.filter((c: { rowSpan: number }) => c.rowSpan > 1)
+    if (withDivider) {
+      expect(merged).toMatchObject([
+        { row: 1, rowSpan: 3, column: 0, colSpan: 1 },
+        { row: 4, rowSpan: 3, column: 0, colSpan: 1 }
+      ])
+      expect(issues).toEqual(new Set())
+    } else {
+      expect(merged).toEqual([])
+      expect(issues).toContain('conflicting-spanning-cells')
+    }
+  }
+)

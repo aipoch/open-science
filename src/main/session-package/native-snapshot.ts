@@ -1,4 +1,9 @@
-import { packageResearchFilmsSchema, researchFilmStorageKeys } from './research-films-contract'
+import {
+  packageResearchFilmsSchema,
+  researchFilmStorageKeys,
+  packageOperationReplayFilmsSchema,
+  packageFilms
+} from './research-films-contract'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import {
   indexPortableEvidence,
@@ -295,6 +300,8 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
   if ('logEvidence' in value) portableEvidenceSchema.parse(value.logEvidence)
   if ('researchFilms' in value && value.researchFilms !== undefined)
     packageResearchFilmsSchema.parse(value.researchFilms)
+  if ('operationReplayFilms' in value && value.operationReplayFilms !== undefined)
+    packageOperationReplayFilmsSchema.parse(value.operationReplayFilms)
   if ('literature' in value && value.literature !== undefined)
     packageLiteratureSchema.parse(value.literature)
   const tables = value.tables as Record<string, unknown>
@@ -332,7 +339,7 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
 }
 
 export const nativeStorageKeys = (records: PackageRecords): string[] => [
-  ...researchFilmStorageKeys(records.researchFilms),
+  ...researchFilmStorageKeys(packageFilms(records)),
   ...new Set(
     Object.values(records.tables).flatMap((rows) =>
       rows.flatMap((row) =>
@@ -421,7 +428,11 @@ export const sessionFileVersionIds = (session: PersistedChatSession): string[] =
   for (const message of session.conversationGraph?.messages ?? session.messages) {
     for (const binding of message.pdfContext?.bindings ?? []) ids.add(binding.sourceVersionId)
     for (const annotation of message.annotations ?? []) {
-      if (annotation.kind === 'pdf' || annotation.kind === 'image-point')
+      if (
+        annotation.kind === 'pdf' ||
+        annotation.kind === 'image-point' ||
+        annotation.kind === 'pptx-slide'
+      )
         ids.add(annotation.source.versionId)
       else if (annotation.source.kind === 'project-file') {
         const identity = resolveManagedProjectFileAnnotationIdentity(annotation.source)

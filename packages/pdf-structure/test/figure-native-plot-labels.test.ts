@@ -99,6 +99,57 @@ const input = (): ReturnType<typeof JSON.parse> => ({
     [343, 83, 357, 83]
   ]
 })
+it.each([
+  'complete',
+  'open-frame',
+  'stale-axis',
+  'foreign-table',
+  'crossing-path',
+  'missing-paint',
+  'malformed-paint'
+])('recovers horizontally clipped vector rails with a native axis column: %s', (change) => {
+  const caption = { page: 1, lines: ['Fig. 1. Synthetic plot.'], rect: [200, 255, 390, 265] }
+  const old = [204, 99, 383, 237]
+  const frame = [200, 100, 400, 220]
+  const paint = (rect: number[], operationIndex: number): ReturnType<typeof JSON.parse> => ({
+    kind: 'path',
+    operationIndex,
+    normalizedRect: rect.map((v, i) => v / (i % 2 ? 800 : 600))
+  })
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 200, y: 255, width: 190, height: 10, fontSize: 10 }],
+    graphicsBounds: [paint([198, 98, 405, 223], 1), paint([198, 150, 405, 154], 2)]
+  }
+  const [l, t, r, b] = frame
+  const rules = [
+    [l, t, r, t],
+    [l, b, r, b],
+    [l, t, l, b],
+    [r, t, r, b],
+    [l, 152, r, 152]
+  ]
+  const tokens = [
+    ...Array.from({ length: 5 }, (_, i) =>
+      token(String(i + 1), [190, 103 + i * 27, 196, 109 + i * 27], true, 6)
+    ),
+    token('Axis title', [180, 134, 185, 175], false, 6)
+  ].map((run, index) => ({ ...run, sourceItem: { pageNumber: 1, index, text: run.text } }))
+  const tables = change === 'foreign-table' ? [[175, 132, 187, 180]] : []
+  if (change === 'open-frame') rules.splice(3, 1)
+  if (change === 'stale-axis') tokens[5].sourceItem.text = 'Unrelated title'
+  if (change === 'crossing-path') page.graphicsBounds.push(paint([376, 100, 440, 220], 3))
+  if (change === 'missing-paint') page.graphicsBounds.length = 0
+  if (change === 'malformed-paint') page.graphicsBounds[0].paintedNormalizedRect = [NaN, 0, 1, 1]
+  const figure = { rect: old, caption }
+  const result = nativeAttachedPlotLabels(page, figure, [caption], tables, rules, tokens)
+  expect(result.rect).toEqual(change === 'complete' ? [180, 99, 400, 237] : old)
+  expect(result.sourceItems).toBeUndefined()
+})
+
 it('recovers fragmented rotated axis and the complete keyed common legend', () => {
   const f = input()
   expect(nativeAttachedPlotLabels(f.page, f.figure, [], [], f.rules, f.tokens).rect).toEqual([

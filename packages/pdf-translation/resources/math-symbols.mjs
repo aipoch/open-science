@@ -1,8 +1,19 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Unbundled worker helper. */
 // CMSY's legacy slot 107 is a norm delimiter, although PDFium may report k.
 // Require that specific font and narrow, tall ink; prose/italic k stays a letter.
-export const nativeMathSymbolText = (object, fontName) => {
+export const nativeMathSymbolText = (object, fontName, expectsPlanckSymbol = false) => {
   const [left, bottom, right, top] = object.bounds
+  // PDFium can expose the tall MSBM10 Planck-constant glyph as its tilde slot.
+  // Require the reader's exact symbol to distinguish it from a literal tilde.
+  if (
+    expectsPlanckSymbol &&
+    object.text.trim() === '~' &&
+    /^(?:[A-Z]{6}\+)?MSBM10$/u.test(fontName) &&
+    right > left &&
+    top - bottom > (right - left) * 1.35 &&
+    top - bottom < (right - left) * 1.55
+  )
+    return object.text.replace('~', 'ℏ')
   // CMSY slots 104/105 are left/right angle delimiters. PDFium may expose
   // their legacy h/i codes. Admit only an isolated glyph in that exact font,
   // with the narrow, tall delimiter ink; ordinary Latin/italic letters stay literal.

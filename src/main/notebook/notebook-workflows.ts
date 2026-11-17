@@ -1,5 +1,10 @@
 import type { ReplayRunIndex } from '../../shared/replay'
 import type {
+  NotebookProcessMonitorSnapshot,
+  NotebookProcessMonitorRequest,
+  TerminateNotebookProcessRequest
+} from '../../shared/notebook-process-monitor'
+import type {
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
   ExecuteNotebookCodeRequest,
@@ -50,6 +55,10 @@ type FinishNotebookCodeCellResult = {
 type NotebookShutdownResult = { sessionId: string; status: 'shutdown' }
 
 type NotebookCommandRuntime = {
+  getProcessMonitor?: (
+    request?: NotebookProcessMonitorRequest
+  ) => Promise<NotebookProcessMonitorSnapshot>
+  terminateMonitoredProcess?: (request: TerminateNotebookProcessRequest) => Promise<void>
   runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]>
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
   getProjectActivity(request: NotebookProjectActivityRequest): NotebookProjectActivity
@@ -74,6 +83,8 @@ type NotebookCommandRuntime = {
 }
 
 type NotebookCommandWorkflows = {
+  processMonitor(request?: NotebookProcessMonitorRequest): Promise<NotebookProcessMonitorSnapshot>
+  terminateMonitoredProcess(request: TerminateNotebookProcessRequest): Promise<void>
   runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]>
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
   projectActivity(request: NotebookProjectActivityRequest): Promise<NotebookProjectActivity>
@@ -123,6 +134,15 @@ const withoutTrustedTurnContext = <
 const createNotebookCommandWorkflows = (
   runtime: NotebookCommandRuntime
 ): NotebookCommandWorkflows => ({
+  processMonitor: (request) =>
+    runtime.getProcessMonitor?.(request) ??
+    Promise.reject(new Error('Process monitoring is unavailable.')),
+  terminateMonitoredProcess: (request) =>
+    withDataRootWrite(
+      () =>
+        runtime.terminateMonitoredProcess?.(request) ??
+        Promise.reject(new Error('Process termination is unavailable.'))
+    ),
   // These projections can initialize a previously unseen Notebook session and persist run.json,
   // so they share the same data-root admission as explicit mutation commands.
   runIndex: (request) => runtime.runIndex(request),

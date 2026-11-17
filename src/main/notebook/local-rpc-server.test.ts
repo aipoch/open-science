@@ -5892,3 +5892,53 @@ it('rejects research generation through a conversation Artifact capability', asy
     await server.close()
   }
 })
+
+describe('manual kernel feedback transport', () => {
+  it('uses the authenticated session for feedback on success and failure', async () => {
+    const event = {
+      id: 'event',
+      instanceId: 'kernel',
+      projectId: 'p1',
+      sessionId: 's1',
+      kind: 'python',
+      requestedAt: 1,
+      comment: 'Use smaller batches',
+      status: 'stopped'
+    }
+    const state = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockRejectedValueOnce(new Error('Kernel stopped'))
+    const manualKernelTerminations = vi.fn(() => [event])
+    const server = new NotebookLocalRpcServer({ state, manualKernelTerminations } as never, {
+      transport: 'tcp'
+    })
+    try {
+      const connection = await server.issueSessionConnection('s1', 'p1', 'root')
+      for (const expected of [200, 500]) {
+        const response = await fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'state',
+              params: { sessionId: 's1', projectId: 'p1', workspaceCwd: '/workspace' }
+            })
+          },
+          'manual kernel feedback test'
+        )
+        const body = await response.json()
+        expect(response.status, JSON.stringify(body)).toBe(expected)
+        expect(body).toMatchObject({ manualKernelTerminations: [event] })
+      }
+      expect(manualKernelTerminations).toHaveBeenCalledWith('p1', 's1')
+      expect(manualKernelTerminations).not.toHaveBeenCalledWith('forged', 'forged')
+    } finally {
+      await server.close()
+    }
+  })
+})

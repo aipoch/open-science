@@ -178,7 +178,31 @@ const bindRuntimeToolSchema = {
 
 const userChoiceOptionSchema = z.object({
   label: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS).regex(/\S/),
-  description: z.string().trim().min(1).max(MAX_ELICITATION_MESSAGE_CHARS).optional()
+  description: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_ELICITATION_MESSAGE_CHARS)
+    .optional()
+    .describe('Additional context when the label alone is unclear.'),
+  pros: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_ELICITATION_MESSAGE_CHARS)
+    .optional()
+    .describe(
+      "One concrete advantage of choosing this option for the user's task. Omit if not applicable."
+    ),
+  cons: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_ELICITATION_MESSAGE_CHARS)
+    .optional()
+    .describe(
+      'One concrete cost, limitation, or prerequisite of choosing this option. Omit if not applicable.'
+    )
 })
 
 const userChoiceQuestionSchema = z.object({
@@ -333,6 +357,7 @@ type RpcRequest = {
 }
 
 type RpcResponse = {
+  manualKernelTerminations?: import('../../shared/notebook-process-monitor').ManualKernelTermination[]
   result?: unknown
   error?: unknown
 }
@@ -448,6 +473,8 @@ const createNotebookMcpEnvironmentFromProcess = (
 }
 
 // Sends a tool request to the app-local notebook RPC server and returns its raw result payload.
+const terminationNotices = new WeakMap<object, string>()
+
 const callNotebookRpc = async (
   environment: NotebookMcpEnvironment,
   method: string,
@@ -485,6 +512,10 @@ const callNotebookRpc = async (
   )
 
   const payload = (await response.json()) as RpcResponse
+  const terminationNotice = payload.manualKernelTerminations?.length
+    ? 'User manually requested kernel termination. Comments are user-provided feedback. Account for this before recreating kernels.\n' +
+      JSON.stringify(payload.manualKernelTerminations)
+    : undefined
 
   if (!response.ok || payload.error) {
     const message =
@@ -494,9 +525,11 @@ const callNotebookRpc = async (
           ? payload.error
           : JSON.stringify(payload.error)
     const guidance = notebookRpcErrorGuidance(response.status, payload.error)
-    throw new Error(guidance ? `${message}\n${guidance}` : message)
+    throw new Error([message, guidance, terminationNotice].filter(Boolean).join('\n'))
   }
 
+  if (terminationNotice && payload.result && typeof payload.result === 'object')
+    terminationNotices.set(payload.result, terminationNotice)
   return payload.result
 }
 
@@ -803,7 +836,9 @@ const compactExecutionOutputs = (
 const BUNDLED_KERNEL_SKILL_PSEUDO_MODULES = new Map([
   ['figure_style', 'figure-style'],
   ['figure_composer', 'figure-composer'],
-  ['paper_narrative', 'paper-narrative']
+  ['paper_narrative', 'paper-narrative'],
+  ['pdf_generation', 'pdf-generation'],
+  ['pptx_generation', 'pptx-generation']
 ])
 
 // Projects one immediate execution result for the next model step. Code, roots, provenance, and
@@ -1181,6 +1216,8 @@ const buildNotebookToolContent = (
       text: serializeNotebookToolResult(result, definition.resultLimitChars)
     }
   ]
+  const terminationNotice = raw && typeof raw === 'object' ? terminationNotices.get(raw) : undefined
+  if (terminationNotice) content.push({ type: 'text', text: terminationNotice })
   const rawRecord = asRecord(raw)
   if (!definition.includeViewImages || rawRecord?.status !== 'completed') return content
   if (rawRecord.viewImageError === 'evidence-unavailable') {
@@ -1616,7 +1653,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'ask_user_question',
     title: 'Ask the user to choose',
     description:
-      '1-3 questions, 2-16 uniquely labeled options each; kind sets single/multi choice. Never list options or "Other" in text; the UI adds custom, let-agent-decide and Skip. Multi-select answer: JSON label array. "pending": end the turn; answers arrive next message.',
+      '1-3 questions, 2-16 uniquely labeled options each; kind sets single/multi choice. Never list options or "Other" in text; the UI adds custom, let-agent-decide and Skip. Multi-select answer: JSON label array. "pending": end the turn; answers arrive next message. Include pros and/or cons only for meaningful trade-offs. Use the user\'s language and omit unsupported claims.',
     method: 'requestUserInput',
     inputSchema: requestUserInputToolSchema,
     mapResult: compactUserChoiceResult,

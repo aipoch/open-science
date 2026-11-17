@@ -6,7 +6,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useSettingsStore } from '@/stores/settings-store'
 import { i18next } from '@/i18n'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
-import type { ResearchVideoPresentationStatus } from '../../../shared/research-video-presentation'
+import type {
+  ResearchVideoStatusRequest,
+  ResearchVideoPresentationStatus
+} from '../../../shared/research-video-presentation'
 import { ResearchVideoButton } from './research-video-button'
 const { openPreview, removePreview } = vi.hoisted(() => ({
   openPreview: vi.fn(),
@@ -23,7 +26,9 @@ let status: ResearchVideoPresentationStatus
 const request = { projectId: 'p', sessionId: 'imported', branchId: 'branch' }
 const api = {
   researchVideo: {
-    status: vi.fn(async () => status),
+    status: vi.fn<(scope?: ResearchVideoStatusRequest) => Promise<ResearchVideoPresentationStatus>>(
+      async () => status
+    ),
     start: vi.fn(
       async (): Promise<ResearchVideoPresentationStatus> =>
         (status = { progress: { phase: 'writing', startedAt: Date.now() } })
@@ -49,6 +54,7 @@ const click = async (name: string): Promise<void> => {
 beforeEach(async () => {
   vi.useFakeTimers()
   vi.clearAllMocks()
+  api.researchVideo.status.mockImplementation(async () => status)
   await i18next.changeLanguage('en')
   status = {}
   snapshot = {
@@ -74,9 +80,10 @@ afterEach(async () => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
 })
-it('starts directly from the session button without a chat or fork API, and supports cancellation', async () => {
+it('chooses a mode before starting without a chat or fork API, and supports cancellation', async () => {
   expect(api.researchVideo.start).not.toHaveBeenCalled()
   await click('Generate research film')
+  await click('Start generation')
   expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith(request)
   expect(document.body.textContent).toContain('Writing research film…')
   await click('Run in background')
@@ -92,7 +99,7 @@ it('starts directly from the session button without a chat or fork API, and supp
 it('continues a checkpoint without waiting for the narration model', async () => {
   status = { canResume: true, preflightError: 'Runtime unavailable' }
   snapshot = { ...snapshot, availability: 'notInstalled' }
-  await act(async () => vi.advanceTimersByTimeAsync(750))
+  await act(async () => vi.advanceTimersByTimeAsync(30_000))
   await click('Generate research film')
   api.localModels.getSnapshot.mockClear()
   await click('Continue generation')
@@ -171,29 +178,32 @@ it('opens Film after a status RPC never returns without stacking requests', asyn
       })
   )
   await act(async () => root.render(<ResearchVideoButton {...request} sessionId="stalled" />))
-  const calls = api.researchVideo.status.mock.calls.length
+  const stalledModeCalls = (): number =>
+    api.researchVideo.status.mock.calls.filter(([scope]) => scope?.mode !== 'operation-replay')
+      .length
+  const calls = stalledModeCalls()
   await act(async () => vi.advanceTimersByTimeAsync(120_000))
   expect(container.querySelector('button')?.disabled).toBe(false)
   await click('Generate research film')
   expect(document.querySelector('[role="alert"]')).not.toBeNull()
-  expect(api.researchVideo.status).toHaveBeenCalledTimes(calls)
+  expect(stalledModeCalls()).toBe(calls)
   expect(api.researchVideo.start).not.toHaveBeenCalled()
   await act(async () => resolveStatus({}))
-  await click('Generate research film')
+  await click('Start generation')
   expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith({
     ...request,
     sessionId: 'stalled'
   })
 })
 
-it('keeps the trigger loading after a status failure until a retry succeeds', async () => {
+it('allows opening a failed status read and backs off until a retry succeeds', async () => {
   api.researchVideo.status.mockRejectedValueOnce(new Error('temporary status failure'))
 
   await act(async () => root.render(<ResearchVideoButton {...request} sessionId="retry" />))
 
   const trigger = container.querySelector('button')!
-  expect(trigger.textContent).toBe('Loading…')
-  expect(trigger.disabled).toBe(true)
+  expect(trigger.textContent).toBe('Generate research film')
+  expect(trigger.disabled).toBe(false)
 
   status = {
     result: {
@@ -204,7 +214,7 @@ it('keeps the trigger loading after a status failure until a retry succeeds', as
       sourcePath: '/saved.zip'
     }
   }
-  await act(async () => vi.advanceTimersByTimeAsync(750))
+  await act(async () => vi.advanceTimersByTimeAsync(5_000))
 
   expect(trigger.textContent).toBe('View research film')
   expect(trigger.disabled).toBe(false)
@@ -212,16 +222,19 @@ it('keeps the trigger loading after a status failure until a retry succeeds', as
 
 it('explains a blocked source and enables generation when a completed reply becomes available', async () => {
   status = { generationBlock: 'awaiting-reply' }
-  await act(async () => vi.advanceTimersByTimeAsync(750))
+  await act(async () => vi.advanceTimersByTimeAsync(30_000))
   const trigger = container.querySelector('button')!
-  expect(trigger.disabled).toBe(true)
-  expect(trigger.title).toBe('Wait for a completed response before generating.')
+  expect(trigger.disabled).toBe(false)
   await act(async () => trigger.click())
+  expect(document.body.textContent).toContain('Wait for a completed response before generating.')
+  expect(
+    [...document.querySelectorAll('button')].find((b) => b.textContent === 'Start generation')
+  ).toBeUndefined()
   expect(api.researchVideo.start).not.toHaveBeenCalled()
   status = {}
-  await act(async () => vi.advanceTimersByTimeAsync(750))
+  await act(async () => vi.advanceTimersByTimeAsync(5_000))
   expect(trigger.disabled).toBe(false)
-  await click('Generate research film')
+  await click('Start generation')
   expect(api.researchVideo.start).toHaveBeenCalledOnce()
 })
 
@@ -236,7 +249,7 @@ it('keeps saved playback available while blocking regeneration during a live res
       sourcePath: '/saved.zip'
     }
   }
-  await act(async () => vi.advanceTimersByTimeAsync(750))
+  await act(async () => vi.advanceTimersByTimeAsync(30_000))
   await click('View research film')
   expect(document.body.textContent).toContain(
     'Wait for the current response to finish before generating.'
@@ -249,9 +262,58 @@ it('keeps saved playback available while blocking regeneration during a live res
   expect(openPreview).toHaveBeenCalledWith(expect.objectContaining({ path: '/saved.html' }))
   expect(api.researchVideo.start).not.toHaveBeenCalled()
 })
+it('hides the previous replay during regeneration and plays the new result on completion', async () => {
+  const previous = {
+    id: 'previous',
+    title: 'Previous operation replay',
+    duration: 10,
+    playerPath: '/previous.html',
+    sourcePath: '/previous.zip'
+  }
+  status = { result: previous }
+  await act(async () => vi.advanceTimersByTimeAsync(30_000))
+  await click('View research film')
+  await click('Operation replay')
+  expect(document.querySelector('[aria-label="Research film ready"]')?.textContent).toContain(
+    previous.title
+  )
+  api.researchVideo.start.mockImplementationOnce(
+    async () =>
+      (status = {
+        result: previous,
+        progress: { phase: 'writing', startedAt: Date.now() }
+      })
+  )
+  await click('Generate again')
+  await click('Start generation')
+  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith({
+    ...request,
+    mode: 'operation-replay'
+  })
+  expect(document.body.textContent).toContain('Writing research film…')
+  expect(document.querySelector('[aria-label="Research film ready"]')).toBeNull()
+  await click('Run in background')
+  await click('View generation progress')
+  expect(document.querySelector('[aria-label="Research film ready"]')).toBeNull()
+
+  status = {
+    result: { ...previous, id: 'new', title: 'New operation replay', playerPath: '/new.html' },
+    progress: { phase: 'completed', startedAt: Date.now() }
+  }
+  await act(async () => vi.advanceTimersByTimeAsync(750))
+  expect(document.querySelector('[aria-label="Research film ready"]')?.textContent).toContain(
+    'New operation replay'
+  )
+  await click('Play research film')
+  expect(openPreview).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ path: '/new.html' })
+  )
+})
+
 it('submits the installation and film as one scoped request and restores progress on return', async () => {
   snapshot = { ...snapshot, availability: 'notInstalled', installedRevision: undefined }
   await click('Generate research film')
+  await click('Start generation')
   expect(api.researchVideo.start).not.toHaveBeenCalled()
   const download = { narrationDownload: { ...snapshot, availability: 'installing' as const } }
   api.researchVideo.start.mockImplementationOnce(async () => (status = download))
@@ -281,7 +343,7 @@ it('reopens a persisted player and stops polling after leaving the session', asy
       sourcePath: '/data/sources.zip'
     }
   }
-  await act(async () => vi.advanceTimersByTimeAsync(750))
+  await act(async () => vi.advanceTimersByTimeAsync(30_000))
   expect(container.querySelectorAll('button')).toHaveLength(1)
   await click('View research film')
   await click('Play research film')
@@ -302,6 +364,7 @@ it('reopens a persisted player and stops polling after leaving the session', asy
 
 it('allows the shared dialog close control to hide progress without cancelling generation', async () => {
   await click('Generate research film')
+  await click('Start generation')
   const close = document.querySelector<HTMLButtonElement>(
     '[role="dialog"] button[aria-label="Close"]'
   )
@@ -366,7 +429,7 @@ it('requires confirmation and permits cancellation before starting a replacement
       sourcePath: '/data/existing.zip'
     }
   }
-  await act(async () => vi.advanceTimersByTimeAsync(750))
+  await act(async () => vi.advanceTimersByTimeAsync(30_000))
   await click('View research film')
   expect(api.researchVideo.start).not.toHaveBeenCalled()
   await click('Generate again')
@@ -390,6 +453,7 @@ it('requires confirmation and permits cancellation before starting a replacement
 it('requires installation consent for a transferred narration revision', async () => {
   snapshot = { ...snapshot, installedRevision: 'other-platform', updateAvailable: true }
   await click('Generate research film')
+  await click('Start generation')
   expect(api.researchVideo.start).not.toHaveBeenCalled()
   await click('Install and generate')
   expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith({
@@ -408,7 +472,7 @@ it('requires inline confirmation to delete a film and closes its preview after d
       sourcePath: '/film.zip'
     }
   }
-  await act(async () => vi.advanceTimersByTimeAsync(750))
+  await act(async () => vi.advanceTimersByTimeAsync(30_000))
   await click('View research film')
   const openMenu = async (): Promise<void> => {
     const trigger = document.querySelector('[aria-label="More actions"]')!
@@ -438,12 +502,17 @@ it.each(['failed', 'cancelled'] as const)(
   'freezes elapsed time after %s, including reopening',
   async (phase) => {
     await click('Generate research film')
+    await click('Start generation')
     const startedAt = status.progress!.startedAt
     await act(async () => vi.advanceTimersByTimeAsync(3000))
     expect(document.body.textContent).toContain('Elapsed: 3 s')
-    status = { progress: { phase, startedAt, endedAt: startedAt + 3000 } }
+    status = { filmStep: 2, progress: { phase, startedAt, endedAt: startedAt + 3000 } }
     await act(async () => vi.advanceTimersByTimeAsync(5000))
     expect(document.body.textContent).toContain('Elapsed: 3 s')
+    expect(document.body.textContent).toContain(
+      phase === 'failed' ? 'Research video failed' : 'Research video cancelled'
+    )
+    expect(document.body.textContent).not.toContain('Writing research film…')
     await act(async () => root.render(<ResearchVideoProgressLine progress={status.progress!} />))
     await act(async () => vi.advanceTimersByTimeAsync(5000))
     expect(document.body.textContent).toContain('Elapsed: 3 s')
@@ -462,7 +531,9 @@ it('blocks known failures before narration download and rechecks when the entry 
   expect(api.localModels.install).not.toHaveBeenCalled()
   expect(api.researchVideo.start).not.toHaveBeenCalled()
   status = {}
+  await click('Close')
   await click('Generate research film')
+  await click('Start generation')
   expect(document.body.textContent).toContain('Install and generate')
   api.researchVideo.start.mockResolvedValueOnce({ preflightError: 'Model unavailable' })
   await click('Install and generate')
@@ -502,4 +573,96 @@ it('still plays an existing film when generation preflight is blocked', async ()
   await click('Play research film')
   expect(openPreview).toHaveBeenCalledOnce()
   expect(api.researchVideo.start).not.toHaveBeenCalled()
+})
+
+it('allows replay selection when explanation is blocked without starting on selection', async () => {
+  status = { generationBlock: 'empty' }
+  api.researchVideo.status.mockImplementation(async (scope?: { mode?: string }) =>
+    scope?.mode === 'operation-replay' && !status.progress ? {} : status
+  )
+  await act(async () => vi.advanceTimersByTimeAsync(30_000))
+  await click('Generate research film')
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+  expect(api.localModels.getSnapshot).not.toHaveBeenCalled()
+  expect(document.querySelector('[aria-label="Film mode"]')).not.toBeNull()
+  expect(api.researchVideo.status).toHaveBeenCalledWith({ ...request, mode: 'operation-replay' })
+  const dialog = document.querySelector('[role="dialog"]')
+  expect(dialog).not.toBeNull()
+  const readsBeforeSelection = api.researchVideo.status.mock.calls.length
+  await click('Operation replay')
+  expect(document.querySelector('[role="dialog"]')).toBe(dialog)
+  expect(api.researchVideo.status).toHaveBeenCalledTimes(readsBeforeSelection)
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+  await click('Start generation')
+  expect(api.researchVideo.status).toHaveBeenCalledWith({
+    ...request,
+    mode: 'operation-replay',
+    checkReadiness: true
+  })
+  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith({
+    ...request,
+    mode: 'operation-replay'
+  })
+  await click('Cancel')
+  expect(api.researchVideo.cancel).toHaveBeenCalledWith({ ...request, mode: 'operation-replay' })
+  api.researchVideo.status.mockImplementation(async () => status)
+})
+
+it('backs off idle reads and immediately resumes polling for generation', async () => {
+  api.researchVideo.status.mockClear()
+  await act(async () => vi.advanceTimersByTimeAsync(29_999))
+  expect(api.researchVideo.status).not.toHaveBeenCalled()
+  await click('Generate research film')
+  await click('Start generation')
+  api.researchVideo.status.mockClear()
+  await act(async () => vi.advanceTimersByTimeAsync(750))
+  expect(api.researchVideo.status).toHaveBeenCalled()
+})
+
+it('backs off failed status reads, preserves the player, and clears read errors on recovery', async () => {
+  status = {
+    result: {
+      id: 'saved',
+      title: 'Saved film',
+      duration: 12,
+      playerPath: '/saved.html',
+      sourcePath: '/sources.zip'
+    }
+  }
+  await act(async () => vi.advanceTimersByTimeAsync(30_000))
+  await click('View research film')
+  api.researchVideo.status.mockRejectedValue(new Error('Film status connection lost'))
+  await act(async () => vi.advanceTimersByTimeAsync(5_000))
+  expect(document.body.textContent).toContain('Film status connection lost')
+  expect(document.body.textContent).toContain('Saved film')
+  api.researchVideo.status.mockClear()
+  await act(async () => vi.advanceTimersByTimeAsync(4_999))
+  expect(api.researchVideo.status).not.toHaveBeenCalled()
+  await act(async () => vi.advanceTimersByTimeAsync(1))
+  expect(api.researchVideo.status).toHaveBeenCalledTimes(2)
+  api.researchVideo.status.mockClear()
+  await act(async () => vi.advanceTimersByTimeAsync(9_999))
+  expect(api.researchVideo.status).not.toHaveBeenCalled()
+  api.researchVideo.status.mockImplementation(async () => status)
+  await act(async () => vi.advanceTimersByTimeAsync(1))
+  expect(document.body.textContent).not.toContain('Film status connection lost')
+  expect(document.body.textContent).toContain('Saved film')
+})
+
+it('clears a recovered dialog readiness read without clearing a generation failure', async () => {
+  api.researchVideo.status.mockImplementation(async (scope) => {
+    if (scope?.checkReadiness) throw new Error('Readiness connection lost')
+    return status
+  })
+  await click('Generate research film')
+  expect(document.body.textContent).toContain('Readiness connection lost')
+  api.researchVideo.status.mockImplementation(async () => status)
+  await act(async () => vi.advanceTimersByTimeAsync(5_000))
+  expect(document.body.textContent).not.toContain('Readiness connection lost')
+
+  api.researchVideo.start.mockRejectedValueOnce(new Error('Generation request failed'))
+  await click('Start generation')
+  expect(document.body.textContent).toContain('Generation request failed')
+  await act(async () => vi.advanceTimersByTimeAsync(5_000))
+  expect(document.body.textContent).toContain('Generation request failed')
 })

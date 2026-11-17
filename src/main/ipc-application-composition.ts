@@ -38,6 +38,7 @@ import { composeDesktopUtilities } from './composition/desktop-utilities'
 import { composeDocumentReading } from './composition/document-reading'
 import { composeHandoff, composeStorageHandoff } from './composition/handoff'
 import { composeManagedFiles } from './composition/managed-files'
+import { toPptxDraftChangedEvent } from './pptx-edit/draft-summary'
 import { composeNotebookBridge } from './composition/notebook-bridge'
 import { composeNotebookRuntime } from './composition/notebook-runtime'
 import { composeNotebookSurfaces } from './composition/notebook-surfaces'
@@ -320,6 +321,9 @@ export const createApplicationModules = async (
     // Catalog access begins after composition, sharing the application's sole Literature owner.
     readLiteratureItems: (itemIds) => researchCatalog.literatureCatalog.getMany(itemIds)
   })
+  managedFiles.pptxDrafts.subscribe((event) =>
+    applicationEvents.publish('pptx-draft:changed', toPptxDraftChangedEvent(event))
+  )
   const sessionAuthority = await composeSessionAuthority({
     uploadRepository: uploadStorage.uploadRepository,
     managedFileVersionService: uploadStorage.managedFileVersionService,
@@ -363,6 +367,7 @@ export const createApplicationModules = async (
     runner: optimizationRunner
   })
   const researchFilm = await composeResearchFilm({
+    previewResources: managedFiles.previewResources,
     ...settingsBootstrap,
     ...sessionFoundation,
     ...sessionAuthority,

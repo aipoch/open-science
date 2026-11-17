@@ -3,6 +3,13 @@ import { useState, type JSX } from 'react'
 import { createRoot } from 'react-dom/client'
 import { initI18n } from '@/i18n'
 import { WorkspaceRunMarks } from '@/pages/workspace/WorkspaceRunMarks'
+import {
+  MessageScrollerProvider,
+  MessageScroller,
+  MessageScrollerViewport,
+  MessageScrollerContent,
+  MessageScrollerItem
+} from '@/components/ui/message-scroller'
 import type { WorkspaceConversationTimelineItem } from '@/pages/workspace/workspace-conversation-timeline'
 
 initI18n('en')
@@ -41,38 +48,41 @@ export function App(): JSX.Element {
         <header className="border-b border-border-200 px-10 py-5 text-sm font-semibold">
           Comparing RNA families
         </header>
-        <div className="relative min-h-0 flex-1 ps-8">
-          <div
-            ref={setViewport}
-            role="region"
-            aria-label="Conversation"
-            className="h-full overflow-y-auto"
-          >
-            <div className="mx-auto max-w-3xl px-12 pb-96">
-              {items.map(
-                (item) =>
-                  item.type === 'message' && (
-                    <article
-                      key={item.id}
-                      data-message-id={item.id}
-                      className={item.message.role === 'user' ? 'pt-8' : 'h-72 pt-6'}
-                    >
-                      <p
-                        className={
-                          item.message.role === 'user'
-                            ? 'ms-auto w-fit max-w-[90%] rounded-2xl bg-bg-300 px-4 py-3 text-[15px]'
-                            : 'text-[15px] leading-7'
-                        }
+        <MessageScrollerProvider autoScroll={false} defaultScrollPosition="start">
+          <MessageScroller className="relative min-h-0 flex-1 ps-8">
+            <MessageScrollerViewport
+              ref={setViewport}
+              role="region"
+              aria-label="Conversation"
+              className="h-full overflow-y-auto"
+            >
+              <MessageScrollerContent className="mx-auto max-w-3xl gap-0 px-12 pb-96">
+                {items.map(
+                  (item) =>
+                    item.type === 'message' && (
+                      <MessageScrollerItem
+                        key={item.id}
+                        messageId={item.id}
+                        disableContainment
+                        className={item.message.role === 'user' ? 'pt-8' : 'h-72 pt-6'}
                       >
-                        {item.message.content}
-                      </p>
-                    </article>
-                  )
-              )}
-            </div>
-          </div>
-          <WorkspaceRunMarks items={items} viewport={viewport} />
-        </div>
+                        <p
+                          className={
+                            item.message.role === 'user'
+                              ? 'ms-auto w-fit max-w-[90%] rounded-2xl bg-bg-300 px-4 py-3 text-[15px]'
+                              : 'text-[15px] leading-7'
+                          }
+                        >
+                          {item.message.content}
+                        </p>
+                      </MessageScrollerItem>
+                    )
+                )}
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <WorkspaceRunMarks items={items} viewport={viewport} />
+          </MessageScroller>
+        </MessageScrollerProvider>
         <footer className="mx-12 mb-6 rounded-2xl border border-border-200 bg-bg-000 p-5 text-sm text-text-200">
           Ask a follow-up about the annotations…
         </footer>

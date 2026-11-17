@@ -841,6 +841,47 @@ const inlineThinkingModelOptions = () => {
   ]
 }
 
+// Only the provider is deterministic; the MCP bridge, runtimes, monitor and cleanup are real.
+const verifyComputeMonitor = async (sessionId, feedback = false) =>
+  withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    if (feedback) {
+      const response = await client.callTool({ name: 'notebook_state', arguments: {} })
+      const text = response.content
+        .filter((block) => block.type === 'text')
+        .map((block) => block.text)
+        .join('\n')
+      if (!text.includes('Use smaller batches') || !text.includes('"status":"stopped"'))
+        throw new Error(`Missing settled user stop feedback: ${text}`)
+      return 'Compute stop feedback received: Use smaller batches; stopped.'
+    }
+    const call = async (name, args = {}) =>
+      toolResult(
+        name,
+        await client.callTool({ name, arguments: args }, undefined, { timeout: 120_000 })
+      )
+    const listed = await call('list_notebook_runtimes')
+    for (const language of ['python', 'r']) {
+      const runtime = listed.runtimes.find((row) => row.language === language && row.runnable)
+      if (!runtime) continue
+      await call('notebook_bind_runtime', { language, runtimeId: runtime.runtimeId })
+      const result = await call('notebook_execute', {
+        language,
+        code:
+          language === 'r'
+            ? '# Compute monitor preview\n'.repeat(40) +
+              'monitor_values <- c(19, 23); print(sum(monitor_values))'
+            : 'monitor_values = [19, 23]\nprint(sum(monitor_values))'
+      })
+      if (result.status !== 'completed' || !result.stdout?.includes('42'))
+        throw new Error(`Compute ${language} failed: ${JSON.stringify(result)}`)
+    }
+    await call('repl_execute', {
+      code: "var monitorValues = [19, 23]; console.log('monitor REPL', monitorValues)"
+    })
+    await call('bash_execute', { command: "printf 'monitor shell\\n'" })
+    return 'Compute kernels ready.'
+  })
+
 const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     const initial = toolResult(
@@ -1402,7 +1443,9 @@ const createLongFilenameArtifacts = async (sessionId) => {
       stem + '.md',
       stem + '.docx',
       '研究'.repeat(30) + '.md',
-      'a'.repeat(252) + '.md'
+      'a'.repeat(252) + '.md',
+      'demo_chart.md',
+      'study_analysis_results.docx'
     ]) {
       const word = filename.endsWith('.docx')
       const stored = toolResult(
@@ -2990,6 +3033,35 @@ if (process.argv.includes('--version')) {
           )
         } else if (prompt.includes('Verify Windows REPL lifecycle.')) {
           reply = await verifyWindowsReplLifecycle(context.params.sessionId)
+        } else if (prompt.includes('Start busy Compute kernel.')) {
+          reply = await withMcpClient(
+            context.params.sessionId,
+            'open-science-notebook',
+            async (client) => {
+              const response = await client.callTool(
+                {
+                  name: 'bash_execute',
+                  arguments: { command: "printf 'busy monitor kernel\\n'; sleep 120" }
+                },
+                undefined,
+                { timeout: 150_000 }
+              )
+              const text = response.content
+                .filter((block) => block.type === 'text')
+                .map((block) => block.text)
+                .join('\n')
+              if (
+                !text.includes('Use smaller batches') ||
+                !text.includes('User manually requested kernel termination.')
+              )
+                throw new Error(`Missing in-flight stop feedback: ${text}`)
+              return 'Compute running stop feedback received.'
+            }
+          )
+        } else if (prompt.includes('Start Compute monitor kernels.')) {
+          reply = await verifyComputeMonitor(context.params.sessionId)
+        } else if (prompt.includes('Read Compute stop feedback.')) {
+          reply = await verifyComputeMonitor(context.params.sessionId, true)
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)
         } else if (prompt.includes(PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT)) {

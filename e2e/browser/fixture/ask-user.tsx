@@ -29,7 +29,17 @@ document.documentElement.classList.toggle('dark', search.has('dark'))
 const kind = search.has('single') ? 'single-select' : 'multi-select'
 const options = Array.from({ length: 16 }, (_, index) => ({
   label: `Option ${index + 1}`,
-  description: `Research category ${index + 1}`
+  description: `Research category ${index + 1}`,
+  ...(search.has('tradeoffs') && index < 2
+    ? {
+        pros: `Editable source for research category ${index + 1}, shared with collaborators in the project storage bucket.`
+      }
+    : {}),
+  ...(search.has('tradeoffs') && (index === 0 || index === 2)
+    ? {
+        cons: `Execution environment for research category ${index + 1} requires separate setup and deployment permissions.`
+      }
+    : {})
 }))
 const questions: AgentUserChoicePrompt[] = [
   {

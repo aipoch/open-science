@@ -47,6 +47,71 @@ it('recovers a complete captioned numeric inventory with only a divider and cont
     ).toBeUndefined()
   }
 })
+it('recovers a captioned grid of marked records with a physically empty stub header', () => {
+  const token = (
+      text: string,
+      x: number,
+      y: number,
+      width = 8
+    ): { text: string; rect: number[]; baseline: number; height: number; horizontal: boolean } => ({
+      text,
+      rect: [x, y - 10, x + width, y],
+      baseline: y,
+      height: 10,
+      horizontal: true
+    }),
+    caption = { lines: ['Table 1: Available formats.'], rect: [10, 114, 220, 126] },
+    rules = [
+      [10, 32, 220, 32],
+      [80, 19, 80, 113]
+    ],
+    header = [
+      token('Marks', 96, 27, 24),
+      token('Bounds', 128, 27, 28),
+      token('Count', 164, 27, 23),
+      token('Format', 194, 27, 23)
+    ],
+    body = Array.from({ length: 6 }, (_, row) => {
+      const y = 44 + row * 13
+      return [
+        token(`Type ${row + 1}`, 18, y, 34),
+        token('✓', 106, y),
+        token(row === 1 ? '✗' : '✓', 140, y),
+        token('12k', 170, y, 14),
+        token('PNG', 201, y, 15)
+      ]
+    }),
+    items = [...header, ...body.flat()],
+    plan = findCaptionedNativePartialRuleTable(caption, items, rules)
+
+  expect(plan.groups).toHaveLength(7)
+  expect(plan.columns).toHaveLength(5)
+  expect(plan.headerCells.map((cell: { text: string }) => cell.text)).toEqual([
+    '',
+    'Marks',
+    'Bounds',
+    'Count',
+    'Format'
+  ])
+  expect(plan.consumed).toEqual(items)
+  expect(plan.bodyRecords[1]).toEqual(body[1])
+  expect(findCaptionedNativePartialRuleTable(caption, items, rules.slice(0, 1))).toBeUndefined()
+  expect(findCaptionedNativePartialRuleTable(caption, items, rules.slice(1))).toBeUndefined()
+  expect(
+    findCaptionedNativePartialRuleTable(caption, items, [
+      rules[0],
+      [80, 19, 80, 48],
+      [80, 65, 80, 113]
+    ])
+  ).toBeUndefined()
+  expect(
+    findCaptionedNativePartialRuleTable(
+      caption,
+      items.filter((item) => item.text !== '✗'),
+      rules
+    )
+  ).toBeUndefined()
+})
 const fixture = (): ReturnType<typeof JSON.parse> => {
   const cuts = [0, 25, 55, 90, 130, 170],
     faces = [20, 46, 60, 74, 88, 102],

@@ -12,6 +12,7 @@ import {
 } from './animation-authoring.js'
 import type { ResearchVideoSessionSource } from './source.js'
 import { researchFilmResources } from './resources.js'
+import { parseReplayCase, REPLAY_AUTHORING_PROMPT, REPLAY_RUNTIME_VERSION } from './replay-case.js'
 import {
   writeWithResearchFilmCorrection,
   type FilmAuthoringCheckpoint,
@@ -19,6 +20,11 @@ import {
 } from './authoring-correction.js'
 
 export type ResearchFilmAuthor = {
+  writeReplay?(
+    source: ResearchVideoSessionSource,
+    signal: AbortSignal,
+    correction?: Correction
+  ): Promise<string>
   writeScreenplay(
     source: ResearchVideoSessionSource,
     signal: AbortSignal,
@@ -42,6 +48,26 @@ export function createResearchFilmAuthor(
   ) => Promise<string>
 ): ResearchFilmAuthor {
   return {
+    writeReplay: (source, signal, correction) =>
+      infer(
+        source,
+        REPLAY_AUTHORING_PROMPT,
+        {
+          source: {
+            ...source,
+            messages: [],
+            replay: source.replay && {
+              ...source.replay,
+              events: source.replay.events.map((event, index) => ({
+                ...event,
+                position: index + 1
+              }))
+            }
+          },
+          correction
+        },
+        signal
+      ),
     writeScreenplay: (source, signal, correction) =>
       infer(
         source,
@@ -120,6 +146,19 @@ export async function authorResearchFilmSource(options: {
 }): Promise<{ specPath: string; title: string }> {
   const { source, directory, author, signal } = options
   signal.throwIfAborted()
+  if (source.provenance.mode === 'operation-replay') {
+    if (!author.writeReplay) throw new Error('Operation replay authoring is unavailable.')
+    const spec = await writeWithResearchFilmCorrection(
+      (correction) => author.writeReplay!(source, signal, correction),
+      (output) => parseReplayCase(output, source),
+      signal,
+      options.checkpoint,
+      `${REPLAY_RUNTIME_VERSION}:case`
+    )
+    const specPath = join(directory, 'video.json')
+    await writeFile(specPath, JSON.stringify(spec), { flag: 'wx', mode: 0o600, signal })
+    return { specPath, title: spec.title }
+  }
   const filesDirectory = join(directory, 'files')
   // Inspect host storage outside model correction. Only staged, portable asset names reach prompts.
   const entries = await readdir(filesDirectory, { recursive: true, withFileTypes: true }).catch(
@@ -206,6 +245,7 @@ export async function generateResearchFilm(
   const result = await options.generate(
     {
       specPath,
+      mode: options.source.provenance.mode,
       retainNarration: Boolean(options.checkpoint),
       modelDirectory: options.modelDirectory,
       engineDirectory: options.engineDirectory,

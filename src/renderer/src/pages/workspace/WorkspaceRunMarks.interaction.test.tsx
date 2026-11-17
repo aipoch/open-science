@@ -14,6 +14,14 @@ import {
 } from './workspace-run-marks'
 import { WorkspaceRunMarks } from './WorkspaceRunMarks'
 
+const { stopAutoScroll, scrollToMessage } = vi.hoisted(() => ({
+  stopAutoScroll: vi.fn(),
+  scrollToMessage: vi.fn(() => true)
+}))
+vi.mock('@/components/ui/message-scroller', () => ({
+  useMessageScroller: () => ({ stopAutoScroll, scrollToMessage })
+}))
+
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
   id: 'message-1',
   role: 'user',
@@ -195,6 +203,8 @@ describe('WorkspaceRunMarks interaction', () => {
   let panel: HTMLElement | undefined
 
   beforeEach(() => {
+    stopAutoScroll.mockClear()
+    scrollToMessage.mockClear()
     viewport = document.createElement('div')
     viewport.getBoundingClientRect = () => createRect(100)
     Object.defineProperties(viewport, {
@@ -322,7 +332,7 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(reads.map((read) => read.mock.calls.length)).toEqual(items.map(() => 1))
   })
 
-  it('keeps visible marks dark at rest while hover tapers mark lengths independently', () => {
+  it('keeps visible marks dark at rest while hover tapers mark lengths independently', async () => {
     const items = [0, 1, 2, 3, 4].map((index) => {
       const messageId = `prompt-${index}`
       appendMessageTarget(viewport, messageId, 120 + index * 100)
@@ -349,9 +359,12 @@ describe('WorkspaceRunMarks interaction', () => {
 
     fireEvent.pointerLeave(buttons[2]!)
     fireEvent.pointerLeave(screen.getByRole('list'))
-    expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-[0.4]'))).toBe(
-      true
-    )
+    expect(indicators[2]?.classList.contains('scale-x-100')).toBe(true)
+    await waitFor(() => {
+      expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-[0.4]'))).toBe(
+        true
+      )
+    })
   })
 
   it('coalesces fractional pointer positions and cancels a pending wave on dismissal', async () => {
@@ -569,7 +582,7 @@ describe('WorkspaceRunMarks interaction', () => {
   })
 
   it.each(['mark', 'preview'])(
-    'scrolls from the %s to the selected run with a clamped offset',
+    'delegates navigation from the %s to the scroller after releasing following',
     (source) => {
       appendMessageTarget(viewport, 'prompt-1', 120)
       appendMessageTarget(viewport, 'prompt-2', 1_100)
@@ -595,7 +608,14 @@ describe('WorkspaceRunMarks interaction', () => {
       fireEvent.click(source === 'preview' ? preview : mark)
       expect(queryPreview()).toBeNull()
       if (source === 'preview') expect(document.activeElement).toBe(mark)
-      expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' })
+      expect(stopAutoScroll.mock.invocationCallOrder[0]).toBeLessThan(
+        scrollToMessage.mock.invocationCallOrder[0]!
+      )
+      expect(scrollToMessage).toHaveBeenCalledWith('prompt-2', {
+        align: 'start',
+        scrollMargin: 8,
+        behavior: 'instant'
+      })
     }
   )
 
@@ -683,7 +703,11 @@ describe('WorkspaceRunMarks interaction', () => {
       vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList)
       fireEvent.focus(screen.getAllByRole('button')[1]!)
       fireEvent.click(source === 'preview' ? getPreview() : screen.getAllByRole('button')[1]!)
-      expect(viewport.scrollTo).toHaveBeenCalledWith({ top: 192, behavior: 'auto' })
+      expect(scrollToMessage).toHaveBeenCalledWith('prompt-1', {
+        align: 'start',
+        scrollMargin: 8,
+        behavior: 'instant'
+      })
       fireEvent.focus(screen.getAllByRole('button')[0]!)
       rerender(
         <WorkspaceRunMarks
@@ -702,6 +726,92 @@ describe('WorkspaceRunMarks interaction', () => {
       expect(queryPreview()).toBeNull()
     }
   )
+
+  it('scrolls to a target after the reveal callback mounts it', async () => {
+    const items = Array.from({ length: 4 }, (_, index) =>
+      createMessageItem({ id: `prompt-${index}` }, index)
+    )
+    const scrollTo = vi.fn()
+    viewport.scrollTo = scrollTo
+    const reveal = vi.fn()
+    const { rerender } = render(
+      <WorkspaceRunMarks items={items} viewport={viewport} onRevealMessage={reveal} />
+    )
+
+    expect(viewport.querySelector('[data-message-id="prompt-1"]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Go to run 2/u }))
+    expect(reveal).toHaveBeenCalledWith('prompt-1')
+    expect(scrollTo).not.toHaveBeenCalled()
+
+    appendMessageTarget(viewport, 'prompt-1', 600)
+    await act(async () =>
+      rerender(
+        <WorkspaceRunMarks items={[...items]} viewport={viewport} onRevealMessage={reveal} />
+      )
+    )
+
+    await waitFor(() => {
+      expect(scrollToMessage).toHaveBeenCalledWith('prompt-1', {
+        align: 'start',
+        scrollMargin: 8,
+        behavior: 'instant'
+      })
+    })
+  })
+
+  it('replaces a pending reveal before either target mounts, ignoring the stale completion', async () => {
+    const items = Array.from({ length: 4 }, (_, index) =>
+      createMessageItem({ id: `prompt-${index}` }, index)
+    )
+    const reveal = vi.fn()
+    const { rerender } = render(
+      <WorkspaceRunMarks items={items} viewport={viewport} onRevealMessage={reveal} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Go to run 2/u }))
+    expect(reveal).toHaveBeenLastCalledWith('prompt-1')
+    expect(scrollToMessage).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /Go to run 3/u }))
+    expect(reveal).toHaveBeenLastCalledWith('prompt-2')
+    expect(scrollToMessage).not.toHaveBeenCalled()
+
+    // Complete the superseded reveal first while the latest target is still unmounted.
+    appendMessageTarget(viewport, 'prompt-1', 300)
+    rerender(<WorkspaceRunMarks items={[...items]} viewport={viewport} onRevealMessage={reveal} />)
+    expect(scrollToMessage).not.toHaveBeenCalled()
+
+    appendMessageTarget(viewport, 'prompt-2', 600)
+    rerender(<WorkspaceRunMarks items={[...items]} viewport={viewport} onRevealMessage={reveal} />)
+    await waitFor(() => expect(scrollToMessage).toHaveBeenCalledTimes(1))
+    expect(scrollToMessage).toHaveBeenLastCalledWith('prompt-2', {
+      align: 'start',
+      scrollMargin: 8,
+      behavior: 'instant'
+    })
+    rerender(<WorkspaceRunMarks items={[...items]} viewport={viewport} onRevealMessage={reveal} />)
+    expect(scrollToMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries when the mounted target is not registered by the scroller yet', async () => {
+    const items = Array.from({ length: 4 }, (_, index) =>
+      createMessageItem({ id: `prompt-${index}` }, index)
+    )
+    appendMessageTarget(viewport, 'prompt-1', 600)
+    scrollToMessage.mockReturnValueOnce(false).mockReturnValue(true)
+    render(<WorkspaceRunMarks items={items} viewport={viewport} onRevealMessage={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Go to run 2/u }))
+    await act(async () => {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    })
+
+    expect(scrollToMessage.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(scrollToMessage).toHaveBeenLastCalledWith('prompt-1', {
+      align: 'start',
+      scrollMargin: 8,
+      behavior: 'instant'
+    })
+  })
 
   it('tracks the last mark above the viewport reading boundary', () => {
     appendMessageTarget(viewport, 'prompt-1', 80)
