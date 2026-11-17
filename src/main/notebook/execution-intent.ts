@@ -33,6 +33,14 @@ export class NotebookExecutionIntent {
     this.userPreparationPending = true
   }
 
+  // Only the first request of this user-prepared context requests a fresh sample. A later request
+  // uses the ordinary cache/backoff behavior, and final dispatch still checks sample freshness.
+  consumeUserExecutionPreparation(): boolean {
+    const pending = this.userPreparationPending
+    this.userPreparationPending = false
+    return pending
+  }
+
   commitUserExecution(): void {
     this.userPreparationPending = false
   }

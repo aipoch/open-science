@@ -91,6 +91,7 @@ export class NotebookExecutionAdmissionError extends Error {
 export const createNotebookExecutionAdmission = (options: {
   policy: () => Promise<NotebookMemoryPolicyPort>
   executionScope?: string
+  force?: boolean
   signal?: AbortSignal
   assertHostCurrent?: (boundary: NotebookExecutionBoundary) => void
   onRejected?: (state: MemoryPolicyObservation) => void
@@ -117,7 +118,8 @@ export const createNotebookExecutionAdmission = (options: {
         policy = await options.policy()
         state = await policy.getState({
           signal: options.signal,
-          executionScope: options.executionScope
+          executionScope: options.executionScope,
+          force: options.force === true
         })
       } catch (error) {
         options.signal?.throwIfAborted()

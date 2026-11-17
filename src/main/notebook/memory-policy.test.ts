@@ -160,6 +160,29 @@ describe('MemoryPolicyService', () => {
     await expect(shared).resolves.toMatchObject({ status: 'healthy' })
   })
 
+  it('resamples after a failure only for an explicit forced check', async () => {
+    const observe = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary native failure'))
+      .mockResolvedValueOnce(sample())
+    const service = new MemoryPolicyService({ adapter: adapter(observe), now: () => 1000 })
+
+    await expect(service.getState()).resolves.toMatchObject({
+      status: 'unavailable',
+      reason: { code: 'sample-failed' }
+    })
+    await expect(service.getState()).resolves.toMatchObject({
+      status: 'unavailable',
+      reason: { code: 'sample-failed', retryAfterMs: 30_000 }
+    })
+    expect(observe).toHaveBeenCalledOnce()
+    await expect(service.getState({ force: true })).resolves.toMatchObject({
+      status: 'healthy'
+    })
+    expect(observe).toHaveBeenCalledTimes(2)
+    service.dispose()
+  })
+
   it('preserves policy truth and later observers when a notification subscriber throws', async () => {
     let current = sample()
     const service = new MemoryPolicyService({
