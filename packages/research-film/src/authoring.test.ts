@@ -34,6 +34,13 @@ const spec = {
         { type: 'title', text: 'Evidence' },
         { type: 'animation', script: 'anims/hook.js', size: 'band' }
       ]
+    },
+    {
+      id: 'outro',
+      role: 'outro',
+      msg: 0,
+      lines: [{ caption: 'Made with Open-Science.' }],
+      panels: [{ type: 'end_card' }]
     }
   ]
 }
@@ -43,7 +50,7 @@ it('uses the default comparison reveal for malformed timing while preserving con
       JSON.stringify({
         ...spec,
         scenes: [
-          ...spec.scenes,
+          spec.scenes[0],
           {
             ...spec.scenes[0],
             id: 'result',
@@ -68,7 +75,7 @@ it('uses the default comparison reveal for malformed timing while preserving con
 it('preserves a long verdict and gives its remaining pages time before the next narration', () => {
   const text = 'The measured difference remains uncertain. '.repeat(8) + '不能据此得出因果结论。'
   const scenes = [
-    ...spec.scenes,
+    spec.scenes[0],
     {
       ...spec.scenes[0],
       id: 'result',
@@ -145,12 +152,14 @@ it.each([false, true])(
   }
 )
 
-it.each(['truncated', 'paths', 'assets', 'missing-file'])(
+it.each(['truncated', 'paths', 'assets', 'missing-file', 'missing-outro', 'missing-card'])(
   'repairs %s screenplay output before animation authoring',
   async (failure) => {
     const directory = await mkdtemp(join(tmpdir(), 'film-authoring-'))
     try {
       const invalid = structuredClone(spec)
+      if (failure === 'missing-outro') invalid.scenes.pop()
+      if (failure === 'missing-card') invalid.scenes[1].panels = [{ type: 'title', text: 'End' }]
       if (failure === 'paths') invalid.scenes[0].panels[1].script = '../escape.js'
       if (failure === 'assets')
         Object.assign(invalid, { libs: ['https://example.test/library.js'] })

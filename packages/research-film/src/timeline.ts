@@ -302,6 +302,20 @@ export function buildVideoTimeline(
           .map((q) => q.t_out!)
       )
     scheduleVerdictReading(resolved)
+    const card = resolved.panels.at(-1)
+    if (scene.role === 'outro' && index === spec.scenes.length - 1 && card?.type === 'end_card') {
+      // The logo, tagline and byline reveal over 4.1 seconds. Reserve their own
+      // space and leave a settled frame before the final fade, even with short voice.
+      const content = resolved.panels.slice(0, -1)
+      if (content.length) {
+        const handoff = Math.max(card.t_in, ...content.map((panel) => panel.t_out ?? resolved.dur))
+        card.t_in = handoff
+        for (const panel of content) panel.t_out ??= handoff
+      }
+      card.occ_from = card.t_in
+      card.t_out = null
+      resolved.dur = round(Math.max(resolved.dur, card.t_in + 5))
+    }
     scenes.push(resolved)
     start += resolved.dur
   }
