@@ -2049,14 +2049,14 @@ describe('SettingsPage layout', () => {
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
     )
     const refresh = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Refresh from vendor'
+      (button) => button.textContent?.trim() === 'Refresh model list'
     )
     await act(async () => refresh?.click())
 
     expect(refreshProviderModels).toHaveBeenCalledWith(provider.id)
-    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
-      'Could not refresh models from the vendor.'
-    )
+    const alertText = document.body.querySelector('[role="alert"]')?.textContent ?? ''
+    expect(alertText).toContain('Model refresh failed. The previous list is kept.')
+    expect(alertText).toContain('Could not connect to the model catalog. Check your network.')
   })
 
   it('opens Usage as a standalone history-driven settings panel', async () => {

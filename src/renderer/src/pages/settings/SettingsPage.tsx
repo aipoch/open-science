@@ -596,7 +596,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [providerBase, setProviderBase] = useState<ProviderView>()
   const [isSaving, setIsSaving] = useState(false)
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
-  const [catalogPreview, setCatalogPreview] = useState<{ signature: string; result: RefreshProviderModelsResult }>()
+  const [catalogPreview, setCatalogPreview] = useState<{
+    signature: string
+    result: RefreshProviderModelsResult
+  }>()
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
@@ -1075,8 +1078,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // loads). A create pre-selects the official vendor matching the active agent framework. Also
   // clears any stale status message on entry.
   const modelViewKey = modelView.kind === 'edit' ? `edit:${modelView.providerId}` : modelView.kind
-  const catalogSignature = JSON.stringify([modelViewKey, providerBase?.configRevision ?? 0, formValue])
-  const visibleCatalogPreview = catalogPreview?.signature === catalogSignature ? catalogPreview.result : undefined
+  const catalogSignature = JSON.stringify([
+    modelViewKey,
+    providerBase?.configRevision ?? 0,
+    formValue
+  ])
+  const visibleCatalogPreview =
+    catalogPreview?.signature === catalogSignature ? catalogPreview.result : undefined
   const [seededModelView, setSeededModelView] = useState<string | undefined>(modelViewKey)
   if (open && modelViewKey !== seededModelView) {
     setSeededModelView(modelViewKey)
@@ -1247,20 +1255,55 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     }
   }
 
-  // Refresh the exact form snapshot; stale responses must never replace a newly edited draft.
+  // Refresh a saved provider in place when the form is unchanged. Unsaved edits still use a draft
+  // snapshot so a failed or cancelled refresh cannot write over the provider being edited.
   const handleRefreshModels = async (): Promise<void> => {
     const generation = ++formOperationGeneration.current
     setIsRefreshingModels(true)
+    const refreshSavedProvider =
+      modelView.kind === 'edit' && Boolean(editingProvider?.id) && !providerFormDirty
     try {
-      const result = await refreshProviderModels({
-        providerId: editingProvider?.id,
-        expectedConfigRevision: providerBase?.configRevision,
-        draft: { ...toUpsertRequest(formValue, editingProvider?.id), catalogDraftToken: visibleCatalogPreview?.draftToken }
-      })
+      const result = await refreshProviderModels(
+        refreshSavedProvider
+          ? editingProvider!.id
+          : {
+              providerId: editingProvider?.id,
+              expectedConfigRevision: providerBase?.configRevision,
+              draft: {
+                ...toUpsertRequest(formValue, editingProvider?.id),
+                catalogDraftToken: visibleCatalogPreview?.draftToken
+              }
+            }
+      )
       if (generation !== formOperationGeneration.current) return
-      setCatalogPreview({ signature: catalogSignature, result: result.ok ? result : { ...visibleCatalogPreview, ...result, catalog: result.catalog ?? visibleCatalogPreview?.catalog, draftToken: result.draftToken ?? visibleCatalogPreview?.draftToken } })
+      if (refreshSavedProvider && result.ok) {
+        const refreshedProvider = useSettingsStore
+          .getState()
+          .providers.find((provider) => provider.id === editingProvider!.id)
+        if (refreshedProvider) {
+          setProviderBase(refreshedProvider)
+          setProviderDraftBaseline(toFormValue(refreshedProvider))
+        }
+        setCatalogPreview(undefined)
+      } else {
+        setCatalogPreview({
+          signature: catalogSignature,
+          result: result.ok
+            ? result
+            : {
+                ...visibleCatalogPreview,
+                ...result,
+                catalog: result.catalog ?? visibleCatalogPreview?.catalog,
+                draftToken: result.draftToken ?? visibleCatalogPreview?.draftToken
+              }
+        })
+      }
     } catch {
-      if (generation === formOperationGeneration.current) setCatalogPreview({ signature: catalogSignature, result: { ...visibleCatalogPreview, ok: false, category: 'network', code: 'network' } })
+      if (generation === formOperationGeneration.current)
+        setCatalogPreview({
+          signature: catalogSignature,
+          result: { ...visibleCatalogPreview, ok: false, category: 'network', code: 'network' }
+        })
     } finally {
       if (generation === formOperationGeneration.current) setIsRefreshingModels(false)
     }
@@ -1969,9 +2012,23 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                               : undefined
                           }
                           onRefreshModels={() => void handleRefreshModels()}
-                          modelCatalog={visibleCatalogPreview?.catalog ?? (editingProvider?.vendorId === formValue.vendorId && editingProvider?.region === formValue.region ? editingProvider?.modelCatalog : undefined)}
-                          modelCatalogStatus={visibleCatalogPreview?.catalogStatus ?? editingProvider?.modelCatalogStatus}
-                          catalogError={visibleCatalogPreview && !visibleCatalogPreview.ok ? modelCatalogErrorMessage(visibleCatalogPreview.code, t) : undefined}
+                          modelCatalog={
+                            visibleCatalogPreview?.catalog ??
+                            (editingProvider?.vendorId === formValue.vendorId &&
+                            editingProvider?.region === formValue.region
+                              ? editingProvider?.modelCatalog
+                              : undefined)
+                          }
+                          modelCatalogStatus={
+                            visibleCatalogPreview?.catalogStatus ??
+                            editingProvider?.modelCatalogStatus
+                          }
+                          catalogNeedsSave={Boolean(visibleCatalogPreview?.ok)}
+                          catalogError={
+                            visibleCatalogPreview && !visibleCatalogPreview.ok
+                              ? modelCatalogErrorMessage(visibleCatalogPreview.code, t)
+                              : undefined
+                          }
                           isRefreshingModels={isRefreshingModels}
                           disabled={isSaving}
                           encryptionAvailable={encryptionAvailable}
