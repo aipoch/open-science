@@ -42,11 +42,12 @@ const PKGS = join(OUT, 'pkgs')
 const CHANNEL = 'conda-forge'
 const MANIFEST_SCHEMA = 1
 
-// Curated interpreter versions we publish a pack for. Single source of truth — edit here to add/drop a
-// version (then re-run the stage-runtime-bundle workflow to publish the new matrix).
+// Interpreter versions required by the current managed runtime and historical released clients.
+// Keep this matrix limited to the selected default lines; add a version only with an explicit
+// release decision and compatibility plan.
 export const VERSIONS = {
-  python: ['3.11', '3.12', '3.13'],
-  r: ['4.3', '4.4']
+  python: ['3.12'],
+  r: ['4.4']
 }
 
 // The minimal kernel-protocol floor for a (language, version), version-pinned. Python: matplotlib
