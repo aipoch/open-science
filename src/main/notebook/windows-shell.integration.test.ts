@@ -894,7 +894,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
     }
   )
 
-  it('allows updating after the application exits during shell identity capture', async () => {
+  it('allows updating after the application exits during hosted shell launch', async () => {
     const root = await mkdtemp(join(tmpdir(), 'shell-interrupted-owner-'))
     const controller = join(
       process.cwd(),
@@ -909,6 +909,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         platform: 'node',
         format: 'cjs',
         packages: 'external',
+        define: { 'import.meta.url': '__filename' },
         logLevel: 'silent'
       })
       await promisify(execFile)(
@@ -934,7 +935,14 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           timeout: 20_000
         }
       ).catch((error) => {
-        if (error.killed || error.code === 'ENOENT') throw error
+        if (
+          error.killed ||
+          error.code !== 1 ||
+          error.signal !== null ||
+          error.stdout !== '' ||
+          error.stderr !== ''
+        )
+          throw error
       })
       await vi.waitFor(
         async () => {
