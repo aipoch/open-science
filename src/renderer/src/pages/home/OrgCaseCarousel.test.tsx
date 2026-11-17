@@ -309,4 +309,84 @@ describe('UseCaseCarousel organization cases source', () => {
     fireEvent.click(within(detailsRegion).getByRole('button', { name: 'Back to list' }))
     expect(screen.queryByRole('region', { name: 'Organization case details' })).toBeNull()
   })
+
+  it('deduplicates debounced Marketplace search, clears query on org switch, guards double-import, and closes details before Lab Settings', async () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({ openSettingsToPanel })
+
+    let resolveImport: ((value: { status: 'handed-off'; caseId: string }) => void) | undefined
+    const orgCaseImport = vi.fn(
+      () =>
+        new Promise<{ status: 'handed-off'; caseId: string }>((resolve) => {
+          resolveImport = resolve
+        })
+    )
+    const orgCasesList = vi.fn(async () => ({
+      ok: true as const,
+      page: { items: [makeOrgCase()], total: 1, page: 1, page_size: 20 }
+    }))
+    const orgCaseDetail = vi.fn(async () => ({
+      ok: false as const,
+      errorCode: 'forbidden' as const
+    }))
+
+    setupWindowApi({ orgCasesList, orgCaseDetail, orgCaseImport })
+
+    render(<UseCaseCarousel variant="marketplace" />)
+    fireEvent.click(screen.getByTestId('use-case-source-organization'))
+    await waitFor(() => expect(orgCasesList).toHaveBeenCalledTimes(1))
+
+    // Debounced Marketplace search should fire once (not duplicated by OrgCaseSectionContent).
+    const searchInput = screen.getByRole('textbox', { name: 'Search organization cases' })
+    fireEvent.change(searchInput, { target: { value: 'RNA' } })
+    await waitFor(() =>
+      expect(orgCasesList).toHaveBeenCalledWith({ q: 'RNA', page: 1, pageSize: 20 })
+    )
+    expect(orgCasesList).toHaveBeenCalledTimes(2)
+
+    // Rapid double-click on Import should only invoke orgCaseImport once while active.
+    const importBtn = screen.getByRole('button', { name: 'Import' })
+    fireEvent.click(importBtn)
+    fireEvent.click(importBtn)
+    await waitFor(() => expect(orgCaseImport).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      resolveImport?.({ status: 'handed-off', caseId: 'case_1' })
+    })
+
+    // Opening details with forbidden detail error shows Open Lab Settings and closes dialog on click.
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+    const dialog = await screen.findByRole('dialog')
+    const settingsBtn = await within(dialog).findByRole('button', { name: 'Open Lab Settings' })
+    fireEvent.click(settingsBtn)
+    expect(openSettingsToPanel).toHaveBeenCalledWith('lab')
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    // Switching organization resets stale search query text.
+    await act(async () => {
+      useSettingsStore.setState({
+        lab: {
+          state: 'authenticated',
+          serverUrl: 'https://lab.example.com',
+          accountName: 'Alice',
+          orgId: 'org_2'
+        } as LabView
+      })
+    })
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('textbox', { name: 'Search organization cases' }) as HTMLInputElement)
+          .value
+      ).toBe('')
+    )
+  })
+
+  it('keeps home carousel header visible when Lab is signedOut or expired even without official items', () => {
+    useSettingsStore.setState({
+      lab: { state: 'expired', serverUrl: 'https://lab.example.com' } as LabView
+    })
+    setupWindowApi({ useCaseCatalog: vi.fn(async () => []) })
+
+    render(<UseCaseCarousel variant="home" />)
+    expect(screen.getByTestId('use-case-source-organization')).toBeTruthy()
+  })
 })

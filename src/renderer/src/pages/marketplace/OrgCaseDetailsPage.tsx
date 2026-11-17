@@ -21,6 +21,7 @@ export const OrgCaseDetailsPage = ({
   download,
   downloadError,
   importBusy,
+  importDisabled = false,
   onBack,
   onLoadDetail,
   onImport,
@@ -36,6 +37,7 @@ export const OrgCaseDetailsPage = ({
   download: OrgCaseDownloadSnapshot | null
   downloadError: OrgCaseErrorCode | null
   importBusy: boolean
+  importDisabled?: boolean
   onBack: () => void
   onLoadDetail: (caseId: string) => void
   onImport: (caseId: string) => void
@@ -44,6 +46,7 @@ export const OrgCaseDetailsPage = ({
   onOpenLabSettings: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const backRef = useRef<HTMLButtonElement>(null)
   const autoRequestedCaseIdRef = useRef<string | null>(null)
   const onLoadDetailRef = useRef(onLoadDetail)
 
@@ -52,11 +55,17 @@ export const OrgCaseDetailsPage = ({
   }, [onLoadDetail])
 
   useEffect(() => {
-    if (detail || detailLoading || detailError || autoRequestedCaseIdRef.current === caseId) {
+    backRef.current?.focus({ preventScroll: true })
+  }, [caseId])
+
+  useEffect(() => {
+    if (detail || detailError || autoRequestedCaseIdRef.current === caseId) {
       return
     }
     autoRequestedCaseIdRef.current = caseId
-    onLoadDetailRef.current(caseId)
+    if (!detailLoading) {
+      onLoadDetailRef.current(caseId)
+    }
   }, [caseId, detail, detailError, detailLoading])
 
   const active = detail ?? item
@@ -77,7 +86,14 @@ export const OrgCaseDetailsPage = ({
       className="flex h-full flex-col overflow-hidden"
     >
       <div className="flex items-center justify-between gap-3 border-b border-border/80 px-5 py-3">
-        <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={onBack}>
+        <Button
+          ref={backRef}
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="gap-1.5"
+          onClick={onBack}
+        >
           <ArrowLeft className="h-4 w-4" />
           {t('Back to list')}
         </Button>
@@ -94,7 +110,12 @@ export const OrgCaseDetailsPage = ({
               {t('Cancel')}
             </Button>
           ) : (
-            <Button type="button" size="sm" disabled={importBusy} onClick={() => onImport(caseId)}>
+            <Button
+              type="button"
+              size="sm"
+              disabled={importBusy || importDisabled}
+              onClick={() => onImport(caseId)}
+            >
               <Download className="mr-1.5 h-3.5 w-3.5" />
               {t('Import')}
             </Button>

@@ -13,11 +13,13 @@ import { useOrgCaseSearchActions, useOrgCaseStore } from './org-cases-store'
 export const OrgCaseSectionContent = ({
   variant,
   showInlineToolbar = variant === 'home',
+  importDisabled = false,
   onOpenDetails
 }: {
   variant: 'home' | 'marketplace'
   showInlineToolbar?: boolean
-  onOpenDetails: (caseId: string) => void
+  importDisabled?: boolean
+  onOpenDetails: (caseId: string, opener?: HTMLElement | null) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const lab = useSettingsStore((state) => state.lab)
@@ -36,7 +38,8 @@ export const OrgCaseSectionContent = ({
   const cancelImport = useOrgCaseStore((state) => state.cancelImport)
   const dismissDownloadError = useOrgCaseStore((state) => state.dismissDownloadError)
 
-  const { query, committedQuery, setQuery, submitSearch, refresh } = useOrgCaseSearchActions(true)
+  const { query, committedQuery, setQuery, submitSearch, refresh } =
+    useOrgCaseSearchActions(showInlineToolbar)
 
   const labGuardError = resolveOrgCaseLabError(lab)
   const activeError = labGuardError ?? listError
@@ -163,6 +166,7 @@ export const OrgCaseSectionContent = ({
                 download={download}
                 downloadError={downloadError?.caseId === item.id ? downloadError.errorCode : null}
                 importBusy={Boolean(download && download.caseId !== item.id)}
+                importDisabled={importDisabled}
                 onExplore={onOpenDetails}
                 onImport={(caseId) => {
                   void importCase(caseId)
@@ -176,7 +180,7 @@ export const OrgCaseSectionContent = ({
             ))}
           </div>
 
-          {variant === 'marketplace' ? (
+          {variant === 'marketplace' || hasMore ? (
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
               <p className="text-xs text-muted-foreground">
                 {t('Showing {{shown}} of {{total}} organization cases', {

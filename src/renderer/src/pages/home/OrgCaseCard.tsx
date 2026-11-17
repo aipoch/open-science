@@ -70,6 +70,7 @@ export const OrgCaseCard = ({
   download,
   downloadError,
   importBusy,
+  importDisabled = false,
   onExplore,
   onImport,
   onCancelImport,
@@ -81,7 +82,8 @@ export const OrgCaseCard = ({
   download: OrgCaseDownloadSnapshot | null
   downloadError: OrgCaseErrorCode | null
   importBusy: boolean
-  onExplore: (caseId: string) => void
+  importDisabled?: boolean
+  onExplore: (caseId: string, opener?: HTMLElement | null) => void
   onImport: (caseId: string) => void
   onCancelImport: (caseId: string) => void
   onDismissError: () => void
@@ -112,19 +114,26 @@ export const OrgCaseCard = ({
 
   const handleCopyCode = (event: React.MouseEvent): void => {
     event.stopPropagation()
-    void navigator.clipboard?.writeText(item.code).catch(() => undefined)
-    setCopied(true)
-    if (copyTimerRef.current !== null) {
-      window.clearTimeout(copyTimerRef.current)
-    }
-    copyTimerRef.current = window.setTimeout(() => {
-      copyTimerRef.current = null
-      setCopied(false)
-    }, 1500)
+    const writeText = navigator.clipboard?.writeText
+    if (!writeText) return
+    void writeText
+      .call(navigator.clipboard, item.code)
+      .then(() => {
+        setCopied(true)
+        if (copyTimerRef.current !== null) {
+          window.clearTimeout(copyTimerRef.current)
+        }
+        copyTimerRef.current = window.setTimeout(() => {
+          copyTimerRef.current = null
+          setCopied(false)
+        }, 1500)
+      })
+      .catch(() => undefined)
   }
 
   return (
-    <div
+    <article
+      aria-label={item.name}
       data-testid={`org-case-card-${item.id}`}
       className={cn(
         'group flex flex-col justify-between rounded-xl border border-border/80 bg-card p-3.5 text-left transition-colors hover:border-border',
@@ -154,7 +163,7 @@ export const OrgCaseCard = ({
 
         <button
           type="button"
-          onClick={() => onExplore(item.id)}
+          onClick={(event) => onExplore(item.id, event.currentTarget)}
           className="block w-full space-y-1 text-left focus-visible:outline-none"
         >
           <h4 className="line-clamp-1 text-sm font-medium text-foreground group-hover:underline">
@@ -230,7 +239,7 @@ export const OrgCaseCard = ({
               variant="ghost"
               size="sm"
               className="h-7 px-2.5 text-xs"
-              onClick={() => onExplore(item.id)}
+              onClick={(event) => onExplore(item.id, event.currentTarget)}
             >
               {t('Details')}
             </Button>
@@ -239,7 +248,7 @@ export const OrgCaseCard = ({
               variant="secondary"
               size="sm"
               className="h-7 px-2.5 text-xs"
-              disabled={importBusy}
+              disabled={importBusy || importDisabled}
               onClick={() => onImport(item.id)}
             >
               <Download className="mr-1.5 h-3.5 w-3.5" />
@@ -248,6 +257,6 @@ export const OrgCaseCard = ({
           </div>
         )}
       </div>
-    </div>
+    </article>
   )
 }

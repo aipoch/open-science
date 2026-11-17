@@ -549,4 +549,175 @@ describe('OrgCaseService', () => {
     })
     await vi.waitFor(async () => expect(await readdir(tempRoot)).toEqual([]))
   })
+
+  it('handles empty response.url without redirect, rejects redirects/bad expires_at, and maps 403/404/503', async () => {
+    const content = Buffer.from('package-bytes-without-response-url')
+    const enqueuePackageFile = vi.fn(async (destPath: string, onReleased?: () => void) => {
+      expect(existsSync(destPath)).toBe(true)
+      onReleased?.()
+      return true
+    })
+
+    const service = new OrgCaseService({
+      getLabView: () => ({
+        state: 'authenticated',
+        serverUrl: 'https://lab.example.com',
+        accountName: 'Alice',
+        orgId: 'org_1'
+      }),
+      listLabCases: vi
+        .fn()
+        .mockRejectedValueOnce(
+          Object.assign(new Error('Forbidden'), { status: 403, reason: 'ROLE_REQUIRED' })
+        ),
+      getLabCase: vi.fn(),
+      getLabCaseDownload: vi
+        .fn()
+        .mockResolvedValueOnce({
+          url: 'https://storage.example.test/no-url.science',
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+          size_bytes: content.byteLength,
+          sha256: sha256Hex(content),
+          name: 'Empty Response URL',
+          code: '7Q2M9X4B'
+        })
+        .mockResolvedValueOnce({
+          url: 'https://storage.example.test/redirect.science',
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+          size_bytes: content.byteLength,
+          sha256: sha256Hex(content),
+          name: 'Redirected',
+          code: '7Q2M9X4B'
+        })
+        .mockResolvedValueOnce({
+          url: 'https://storage.example.test/bad-expiry.science',
+          expires_at: 'not-a-timestamp',
+          size_bytes: content.byteLength,
+          sha256: sha256Hex(content),
+          name: 'Invalid Expiry',
+          code: '7Q2M9X4B'
+        })
+        .mockResolvedValueOnce({
+          url: 'https://storage.example.test/missing.science',
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+          size_bytes: content.byteLength,
+          sha256: sha256Hex(content),
+          name: 'Missing Object',
+          code: '7Q2M9X4B'
+        })
+        .mockResolvedValueOnce({
+          url: 'https://storage.example.test/down.science',
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+          size_bytes: content.byteLength,
+          sha256: sha256Hex(content),
+          name: 'Storage Down',
+          code: '7Q2M9X4B'
+        }),
+      enqueuePackageFile,
+      assertCapacity: vi.fn(async () => undefined),
+      downloadFetch: vi
+        .fn()
+        .mockResolvedValueOnce(new Response(content, { status: 200 }))
+        .mockResolvedValueOnce(
+          (() => {
+            const res = new Response(content, { status: 200 })
+            Object.defineProperty(res, 'redirected', { value: true })
+            return res
+          })()
+        )
+        .mockResolvedValueOnce(
+          responseWithUrl('https://storage.example.test/missing.science', '', { status: 404 })
+        )
+        .mockResolvedValueOnce(
+          responseWithUrl('https://storage.example.test/down.science', '', { status: 503 })
+        ),
+      tempRootDir: tempRoot
+    })
+
+    await expect(service.listCases({ page: 1 })).resolves.toEqual({
+      ok: false,
+      errorCode: 'forbidden'
+    })
+    await expect(service.importCase('case_empty_url')).resolves.toEqual({
+      status: 'handed-off',
+      caseId: 'case_empty_url'
+    })
+    await expect(service.importCase('case_redirect')).resolves.toEqual({
+      status: 'failed',
+      caseId: 'case_redirect',
+      errorCode: 'invalid-response'
+    })
+    await expect(service.importCase('case_bad_expiry')).resolves.toEqual({
+      status: 'failed',
+      caseId: 'case_bad_expiry',
+      errorCode: 'invalid-response'
+    })
+    await expect(service.importCase('case_404')).resolves.toEqual({
+      status: 'failed',
+      caseId: 'case_404',
+      errorCode: 'not-found'
+    })
+    await expect(service.importCase('case_503')).resolves.toEqual({
+      status: 'failed',
+      caseId: 'case_503',
+      errorCode: 'storage-unavailable'
+    })
+    expect(enqueuePackageFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels queued package file and preserves expired state when session changes during handoff', async () => {
+    let view: LabView = {
+      state: 'authenticated',
+      serverUrl: 'https://lab.example.com',
+      accountName: 'Alice',
+      orgId: 'org_1'
+    }
+    const content = Buffer.from('handoff-race')
+    let releaseEnqueue: (() => void) | undefined
+    let queuedPath: string | undefined
+    const cancelQueuedFile = vi.fn(async () => undefined)
+
+    const service = new OrgCaseService({
+      getLabView: () => view,
+      listLabCases: vi.fn(),
+      getLabCase: vi.fn(),
+      getLabCaseDownload: vi.fn(async () => ({
+        url: 'https://storage.example.test/race.science',
+        expires_at: new Date(Date.now() + 300_000).toISOString(),
+        size_bytes: content.byteLength,
+        sha256: sha256Hex(content),
+        name: 'Handoff Race',
+        code: '7Q2M9X4B'
+      })),
+      enqueuePackageFile: vi.fn(
+        (destPath) =>
+          new Promise<boolean>((resolve) => {
+            queuedPath = destPath
+            releaseEnqueue = () => resolve(true)
+          })
+      ),
+      cancelQueuedFile,
+      assertCapacity: vi.fn(async () => undefined),
+      download: vi.fn(async (_url, dest) => {
+        await writeFile(dest, content)
+        return dest
+      }),
+      tempRootDir: tempRoot
+    })
+
+    const importing = service.importCase('case_race')
+    await vi.waitFor(() => expect(releaseEnqueue).toBeTypeOf('function'))
+
+    view = { state: 'expired', serverUrl: 'https://lab.example.com' }
+    service.handleLabViewChanged(view)
+    releaseEnqueue?.()
+
+    await expect(importing).resolves.toEqual({
+      status: 'failed',
+      caseId: 'case_race',
+      errorCode: 'expired'
+    })
+    expect(cancelQueuedFile).toHaveBeenCalledWith(queuedPath)
+    expect(await readdir(tempRoot)).toEqual([])
+  })
 })

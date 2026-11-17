@@ -8633,6 +8633,8 @@
     "Your Lab account is disabled. Contact your Lab administrator for access.": "Ваша учётная запись Lab отключена. Обратитесь к администратору Lab для получения доступа.",
     "No Lab organization assigned": "Организация Lab не назначена",
     "Join an organization in Lab before browsing or importing shared cases.": "Присоединитесь к организации в Lab, прежде чем просматривать или импортировать общие кейсы.",
+    "Permission denied": "Доступ запрещён",
+    "Your Lab role does not have permission to access organization cases.": "У вашей роли Lab нет прав для доступа к кейсам организации.",
     "Too many requests": "Слишком много запросов",
     "Please wait a moment before searching or downloading again.": "Подождите немного, прежде чем повторить поиск или загрузку.",
     "Download link expired": "Срок действия ссылки истёк",

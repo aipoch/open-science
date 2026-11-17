@@ -62,6 +62,7 @@ type OrgCaseStoreState = {
 }
 
 function createEmptyOrgData(): {
+  query: string
   committedQuery: string
   items: OrgCaseItem[]
   total: number
@@ -79,6 +80,7 @@ function createEmptyOrgData(): {
   downloadError: { caseId: string; errorCode: OrgCaseErrorCode } | null
 } {
   return {
+    query: '',
     committedQuery: '',
     items: [] as OrgCaseItem[],
     total: 0,
@@ -103,7 +105,6 @@ export const useOrgCaseStore = create<OrgCaseStoreState>((set, get) => ({
   epoch: 0,
   listRequestSeq: 0,
   detailRequestSeq: 0,
-  query: '',
   ...createEmptyOrgData(),
 
   setSource: (source) => {
@@ -298,6 +299,7 @@ export const useOrgCaseStore = create<OrgCaseStoreState>((set, get) => ({
   importCase: async (caseId, onHandedOff) => {
     const orgCaseImport = window.api?.sessions?.orgCaseImport
     if (!orgCaseImport) return
+    if (get().download) return
     const epoch = get().epoch
     const existingItem = get().detailById[caseId] ?? get().items.find((item) => item.id === caseId)
     set({
@@ -352,7 +354,6 @@ export const useOrgCaseStore = create<OrgCaseStoreState>((set, get) => ({
       epoch: 0,
       listRequestSeq: 0,
       detailRequestSeq: 0,
-      query: '',
       ...createEmptyOrgData()
     })
   }

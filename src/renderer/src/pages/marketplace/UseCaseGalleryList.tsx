@@ -20,6 +20,7 @@ import { useOrgCaseSearchActions, useOrgCaseStore } from '../home/org-cases-stor
 import { ResourceCatalogHeader, ResourceCatalogToolbar } from './ResourceCenterModeTabs'
 import { useNoticeCountdown } from '@/components/use-notice-countdown'
 import { cn } from '@/lib/utils'
+import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
 import type { MarketplaceListSnapshot } from '@/stores/navigation-store'
 import type { UseCase } from '../../../../shared/use-cases'
 import { USE_CASE_BATCH_SIZE } from '../home/use-case-gallery-store'
@@ -74,7 +75,7 @@ export const UseCaseGalleryList = ({
   refreshCompletion: number | null
   onResetRefreshCompletion: () => void
   onRefresh: () => void
-  onOpenOrgCase?: (caseId: string) => void
+  onOpenOrgCase?: (caseId: string, opener?: HTMLElement | null) => void
   onOpenMarketplace?: (snapshot: MarketplaceListSnapshot) => void
   onFiltersChange?: (snapshot: MarketplaceListSnapshot) => void
   initialState?: MarketplaceListSnapshot
@@ -378,7 +379,8 @@ export const UseCaseGalleryList = ({
           <OrgCaseSectionContent
             variant="marketplace"
             showInlineToolbar={false}
-            onOpenDetails={(caseId) => onOpenOrgCase?.(caseId)}
+            importDisabled={!sessionPackageImportAvailable()}
+            onOpenDetails={(caseId, opener) => onOpenOrgCase?.(caseId, opener)}
           />
         ) : (
           <>

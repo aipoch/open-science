@@ -823,10 +823,15 @@ export const createApplicationModules = async (
         onReleased,
         validateBeforeTarget
       ),
+    cancelQueuedFile: (path) =>
+      sessionPackageSurfaces.sessionPackageDesktop.cancelReceivedFile(path),
     publishDownloadChanged: (snapshot) =>
       applicationEvents.publish('sessions:org-case-download-changed', snapshot),
     downloadFetch: netFetchStandard
   })
+  const unregisterOrgTransferCheck = sessionPackageSurfaces.registerExternalTransferCheck?.(() =>
+    orgCases.hasActiveDownload()
+  )
   const unsubscribeOrgCasesLabSync = applicationEvents.subscribe?.((event) => {
     if (event.channel === 'settings:changed') {
       orgCases.handleLabViewChanged(event.payload.lab)
@@ -836,6 +841,7 @@ export const createApplicationModules = async (
     name: 'org-cases',
     capability: cases,
     dispose: () => {
+      unregisterOrgTransferCheck?.()
       unsubscribeOrgCasesLabSync?.()
       cases.dispose()
     }

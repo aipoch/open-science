@@ -76,7 +76,8 @@ export class LabAccountOwner {
   private initializePromise: Promise<void> | undefined
   private initialized = false
   private access: { token: string; expiresAt: number; serverUrl: string } | undefined
-  private refreshPromise: Promise<string> | undefined
+  private refreshState:
+    { promise: Promise<string>; generation: number; serverUrl: string } | undefined
   private refreshGeneration = 0
   private loginAttempt = 0
   private activeLoginAttempt: number | undefined
@@ -358,25 +359,26 @@ export class LabAccountOwner {
   async logout(): Promise<LabView> {
     const document = await this.credentials.readDocument()
     const serverUrl = document.serverUrl
+    let token: string | undefined
     if (serverUrl) {
-      try {
-        const token = await this.getAccessToken(false, serverUrl)
-        await this.api.logout(serverUrl, token)
-      } catch {
-        // A failed server logout must never block local cleanup.
-      }
+      token = await this.getAccessToken(false, serverUrl).catch(() => undefined)
     }
     await this.oauth.cancelLogin().catch(() => undefined)
     await this.credentials.clearSession().catch(() => undefined)
     this.access = undefined
+    this.refreshState = undefined
     this.refreshGeneration += 1
     this.loginAttempt += 1
     this.activeLoginAttempt = undefined
     await this.removeProviderRecord()
-    return this.publish({
+    const view = this.publish({
       state: serverUrl ? 'signedOut' : 'unconfigured',
       ...(serverUrl ? { serverUrl } : {})
     })
+    if (serverUrl && token) {
+      await this.api.logout(serverUrl, token).catch(() => undefined)
+    }
+    return view
   }
 
   // Resolves a live bearer token for the provider bridges. Refreshes are strictly single-flight and
@@ -438,7 +440,26 @@ export class LabAccountOwner {
       if (this.refreshGeneration !== startGeneration || this.view.serverUrl !== expectedServerUrl) {
         throw new LabApiError('cancelled', 'The Lab session changed.')
       }
-      return await execute(expectedServerUrl, refreshed)
+      try {
+        return await execute(expectedServerUrl, refreshed)
+      } catch (retryError) {
+        if (
+          signal?.aborted ||
+          (retryError instanceof LabApiError && retryError.code === 'cancelled')
+        ) {
+          throw new LabApiError('cancelled', 'The Lab request was cancelled.')
+        }
+        if (
+          this.refreshGeneration !== startGeneration ||
+          this.view.serverUrl !== expectedServerUrl
+        ) {
+          throw new LabApiError('cancelled', 'The Lab session changed.')
+        }
+        if (retryError instanceof LabApiError && retryError.code === 'unauthorized') {
+          this.expire('unauthorized', startGeneration)
+        }
+        throw retryError
+      }
     }
   }
 
@@ -479,14 +500,20 @@ export class LabAccountOwner {
       cached.expiresAt - this.now() > 60_000
     )
       return cached.token
-    if (this.refreshPromise) return this.refreshPromise
     const generation = this.refreshGeneration
+    if (
+      this.refreshState &&
+      this.refreshState.generation === generation &&
+      this.refreshState.serverUrl === expected
+    ) {
+      return this.refreshState.promise
+    }
     const pending = this.refreshAccessToken(generation, expected)
-    this.refreshPromise = pending
+    this.refreshState = { promise: pending, generation, serverUrl: expected }
     try {
       return await pending
     } finally {
-      if (isCurrentInFlight(this.refreshPromise, pending)) this.refreshPromise = undefined
+      if (isCurrentInFlight(this.refreshState?.promise, pending)) this.refreshState = undefined
     }
   }
 

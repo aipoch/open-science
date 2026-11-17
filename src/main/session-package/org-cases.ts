@@ -41,6 +41,7 @@ export type OrgCaseServiceOptions = {
     onReleased?: () => void,
     validateBeforeTarget?: boolean
   ) => Promise<boolean>
+  cancelQueuedFile?: (path: string) => Promise<void> | void
   publishDownloadChanged?: (snapshot: OrgCaseDownloadSnapshot | null) => void
   downloadFetch?: typeof fetch
   download?: typeof resilientDownload
@@ -61,8 +62,10 @@ class OrgCaseFailure extends Error {
 
 type ActiveDownload = {
   caseId: string
+  serverUrl?: string
   epoch: number
   controller: AbortController
+  userCancelled?: boolean
   tempDir?: string
   handedOff: boolean
   name: string
@@ -120,7 +123,7 @@ function buildSafePackageFilename(name: string, code: string, caseId: string): s
 }
 
 function createAnonymousDownloadFetch(baseFetch: typeof fetch): typeof fetch {
-  return (input, init) => {
+  return async (input, init) => {
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     const headers = new Headers(input instanceof Request ? input.headers : undefined)
@@ -129,12 +132,26 @@ function createAnonymousDownloadFetch(baseFetch: typeof fetch): typeof fetch {
     }
     headers.delete('authorization')
     headers.delete('cookie')
-    return baseFetch(url, {
+    const response = await baseFetch(url, {
       ...init,
       headers,
       credentials: 'omit',
       redirect: 'error'
     })
+    if (response.redirected || (response.status >= 300 && response.status < 400)) {
+      throw new DownloadSourceError('Presigned download must not redirect')
+    }
+    if (!response.url) {
+      try {
+        Object.defineProperty(response, 'url', {
+          value: url,
+          configurable: true
+        })
+      } catch {
+        // Ignore read-only URL properties on custom Response objects.
+      }
+    }
+    return response
   }
 }
 
@@ -171,6 +188,7 @@ export class OrgCaseService {
       return { ok: false, errorCode: mapAuthUnavailableCode(view) }
     }
 
+    const startServerUrl = view.serverUrl
     this.activeListController?.abort()
     const controller = new AbortController()
     this.activeListController = controller
@@ -178,11 +196,29 @@ export class OrgCaseService {
 
     try {
       const page = await this.options.listLabCases(query, controller.signal)
+      this.syncConnectionState()
+      const currentView = this.options.getLabView()
+      if (
+        !this.disposed &&
+        currentView.state === 'expired' &&
+        currentView.serverUrl === startServerUrl
+      ) {
+        return { ok: false, errorCode: 'expired' }
+      }
       if (this.disposed || epoch !== this.connectionEpoch || controller.signal.aborted) {
         return { ok: false, errorCode: 'cancelled' }
       }
       return { ok: true, page }
     } catch (error) {
+      this.syncConnectionState()
+      const currentView = this.options.getLabView()
+      if (
+        !this.disposed &&
+        currentView.state === 'expired' &&
+        currentView.serverUrl === startServerUrl
+      ) {
+        return { ok: false, errorCode: 'expired' }
+      }
       if (this.disposed || epoch !== this.connectionEpoch || controller.signal.aborted) {
         return { ok: false, errorCode: 'cancelled' }
       }
@@ -206,17 +242,36 @@ export class OrgCaseService {
       return { ok: false, errorCode: mapAuthUnavailableCode(view) }
     }
 
+    const startServerUrl = view.serverUrl
     const controller = new AbortController()
     this.detailControllers.add(controller)
     const epoch = this.connectionEpoch
 
     try {
       const detail = await this.options.getLabCase(caseId, controller.signal)
+      this.syncConnectionState()
+      const currentView = this.options.getLabView()
+      if (
+        !this.disposed &&
+        currentView.state === 'expired' &&
+        currentView.serverUrl === startServerUrl
+      ) {
+        return { ok: false, errorCode: 'expired' }
+      }
       if (this.disposed || epoch !== this.connectionEpoch || controller.signal.aborted) {
         return { ok: false, errorCode: 'cancelled' }
       }
       return { ok: true, case: detail }
     } catch (error) {
+      this.syncConnectionState()
+      const currentView = this.options.getLabView()
+      if (
+        !this.disposed &&
+        currentView.state === 'expired' &&
+        currentView.serverUrl === startServerUrl
+      ) {
+        return { ok: false, errorCode: 'expired' }
+      }
       if (this.disposed || epoch !== this.connectionEpoch || controller.signal.aborted) {
         return { ok: false, errorCode: 'cancelled' }
       }
@@ -246,6 +301,7 @@ export class OrgCaseService {
     const controller = new AbortController()
     const run: ActiveDownload = {
       caseId,
+      serverUrl: view.serverUrl,
       epoch,
       controller,
       handedOff: false,
@@ -286,7 +342,10 @@ export class OrgCaseService {
 
       const now = this.options.now ?? Date.now
       const expiresAtMs = Date.parse(ticket.expires_at)
-      if (Number.isFinite(expiresAtMs) && now() >= expiresAtMs) {
+      if (!Number.isFinite(expiresAtMs)) {
+        throw new OrgCaseFailure('invalid-response')
+      }
+      if (now() >= expiresAtMs) {
         throw new OrgCaseFailure('url-expired')
       }
 
@@ -381,6 +440,13 @@ export class OrgCaseService {
         throw new OrgCaseFailure('import-busy')
       }
 
+      this.syncConnectionState()
+      if (this.disposed || run.epoch !== this.connectionEpoch || run.controller.signal.aborted) {
+        await this.options.cancelQueuedFile?.(destPath)
+        releaseTempDir()
+        throw new OrgCaseFailure('cancelled')
+      }
+
       run.handedOff = true
       if (this.activeDownload === run) {
         this.activeDownload = null
@@ -445,6 +511,7 @@ export class OrgCaseService {
     const active = this.activeDownload
     if (!active) return { cancelled: false }
     if (caseId && active.caseId !== caseId) return { cancelled: false }
+    active.userCancelled = true
     active.controller.abort()
     return { cancelled: true }
   }
@@ -503,14 +570,17 @@ export class OrgCaseService {
     const reason = labError.reason?.toUpperCase()
     if (reason === 'STORAGE_NOT_CONFIGURED') return 'storage-not-configured'
     if (reason === 'STORAGE_UNAVAILABLE') return 'storage-unavailable'
-    if (reason === 'CASE_NOT_FOUND') return 'not-found'
+    if (reason === 'CASE_NOT_FOUND' || reason === 'INVALID_ID') return 'not-found'
     if (reason === 'NO_ORGANIZATION') return 'no-organization'
+    if (reason === 'ROLE_REQUIRED') return 'forbidden'
     if (reason === 'LICENSE_INACTIVE') return 'license-inactive'
     if (reason === 'SEAT_REQUIRED') return 'seat-required'
     if (reason === 'ORG_INACTIVE') return 'org-inactive'
     if (reason === 'ACCOUNT_DISABLED') return 'account-disabled'
     if (reason === 'UNAUTHENTICATED' || reason === 'SESSION_INVALID') return 'expired'
 
+    if (labError.status === 400) return 'invalid-response'
+    if (labError.status === 403) return 'forbidden'
     if (labError.status === 404) return 'not-found'
     if (labError.status === 429) return 'rate-limited'
     if (labError.status === 503) return 'storage-unavailable'
@@ -522,6 +592,7 @@ export class OrgCaseService {
     }
 
     switch (labError.code) {
+      case 'forbidden':
       case 'license-inactive':
       case 'seat-required':
       case 'org-inactive':
@@ -542,6 +613,16 @@ export class OrgCaseService {
     run: ActiveDownload,
     ticket?: OrgCaseDownloadTicket
   ): OrgCaseErrorCode {
+    this.syncConnectionState()
+    const currentView = this.options.getLabView()
+    if (
+      !this.disposed &&
+      !run.userCancelled &&
+      currentView.state === 'expired' &&
+      currentView.serverUrl === run.serverUrl
+    ) {
+      return 'expired'
+    }
     if (this.disposed || run.epoch !== this.connectionEpoch || run.controller.signal.aborted) {
       return 'cancelled'
     }
@@ -551,10 +632,19 @@ export class OrgCaseService {
     if (isAbortError(error)) return 'cancelled'
 
     if (error instanceof DownloadSourceError) {
+      if (/redirect|origin/i.test(error.message)) {
+        return 'invalid-response'
+      }
       const now = this.options.now ?? Date.now
       const expiresAtMs = ticket ? Date.parse(ticket.expires_at) : Number.NaN
       if ((Number.isFinite(expiresAtMs) && now() >= expiresAtMs) || /\b403\b/.test(error.message)) {
         return 'url-expired'
+      }
+      if (/\b404\b/.test(error.message)) {
+        return 'not-found'
+      }
+      if (/\b5\d\d\b/.test(error.message)) {
+        return 'storage-unavailable'
       }
       if (/checksum|sha-?256|size|content-length/i.test(error.message)) {
         return 'verification-failed'

@@ -342,6 +342,9 @@ export class LabApi {
     const url = new URL(`${serverUrl}/api/cases`)
     const normalizedQuery = normalizeOrgCaseSearchQuery(query.q)
     if (normalizedQuery) {
+      if (normalizedQuery.includes('\0')) {
+        throw new LabApiError('invalid-response', 'Search query must not contain NUL characters.')
+      }
       if (Array.from(normalizedQuery).length > ORG_CASE_MAX_QUERY_LENGTH) {
         throw new LabApiError('invalid-response', 'Search query exceeds maximum length.')
       }

@@ -8481,6 +8481,8 @@
     "Your Lab account is disabled. Contact your Lab administrator for access.": "Su cuenta de Lab está deshabilitada. Comuníquese con su administrador de Lab para obtener acceso.",
     "No Lab organization assigned": "Sin organización de Lab asignada",
     "Join an organization in Lab before browsing or importing shared cases.": "Únase a una organización en Lab antes de explorar o importar casos compartidos.",
+    "Permission denied": "Permiso denegado",
+    "Your Lab role does not have permission to access organization cases.": "Su rol de Lab no tiene permiso para acceder a los casos de la organización.",
     "Too many requests": "Demasiadas solicitudes",
     "Please wait a moment before searching or downloading again.": "Espere un momento antes de volver a buscar o descargar.",
     "Download link expired": "El enlace de descarga caducó",

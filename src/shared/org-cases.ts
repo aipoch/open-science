@@ -49,6 +49,9 @@ export const orgCaseIdSchema = z.string().regex(ORG_CASE_ID_REGEX)
 export const listOrgCasesQuerySchema = z.object({
   q: z
     .string()
+    .refine((value) => !value.includes('\0'), {
+      message: 'Search query must not contain NUL characters.'
+    })
     .refine((value) => Array.from(value.trim()).length <= ORG_CASE_MAX_QUERY_LENGTH, {
       message: `Search query must be at most ${ORG_CASE_MAX_QUERY_LENGTH} characters.`
     })
@@ -112,7 +115,9 @@ export const orgCaseDownloadTicketSchema = z.object({
   url: z.string().refine(isAllowedOrgCaseDownloadUrl, {
     message: 'Download URL must use https (or localhost http for development).'
   }),
-  expires_at: z.string().min(1),
+  expires_at: z.string().refine((value) => Number.isFinite(Date.parse(value)), {
+    message: 'Download ticket expiration must be a valid ISO timestamp.'
+  }),
   size_bytes: z.number().int().positive(),
   sha256: z
     .string()
@@ -129,6 +134,7 @@ export const orgCaseErrorCodeSchema = z.enum([
   'storage-not-configured',
   'storage-unavailable',
   'not-found',
+  'forbidden',
   'license-inactive',
   'seat-required',
   'org-inactive',

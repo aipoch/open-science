@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Download, X } from 'lucide-react'
+import { Download, LoaderCircle, X } from 'lucide-react'
 import type {
   OrgCaseDetail,
   OrgCaseDownloadSnapshot,
@@ -9,12 +9,23 @@ import type {
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import * as Dialog from '@/components/ui/dialog'
+import {
+  dialogBodyClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
+import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { describeOrgCaseError, formatOrgCaseDownloadLabel } from './org-case-errors'
 import { OrgCaseDetailsContent } from './OrgCaseDetailsContent'
 
 export const OrgCaseDetailsDialog = ({
   open,
   onOpenChange,
+  caseId,
   item,
   detail,
   detailLoading,
@@ -22,6 +33,8 @@ export const OrgCaseDetailsDialog = ({
   download,
   downloadError,
   importBusy,
+  importDisabled = false,
+  onRestoreFocus,
   onRetryDetail,
   onImport,
   onCancelImport,
@@ -30,6 +43,7 @@ export const OrgCaseDetailsDialog = ({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  caseId?: string
   item: OrgCaseItem | null
   detail?: OrgCaseDetail | null
   detailLoading?: boolean
@@ -37,6 +51,8 @@ export const OrgCaseDetailsDialog = ({
   download: OrgCaseDownloadSnapshot | null
   downloadError: OrgCaseErrorCode | null
   importBusy: boolean
+  importDisabled?: boolean
+  onRestoreFocus?: () => void
   onRetryDetail: () => void
   onImport: (caseId: string) => void
   onCancelImport: (caseId: string) => void
@@ -44,10 +60,13 @@ export const OrgCaseDetailsDialog = ({
   onOpenLabSettings: () => void
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
+  const importDialogOpen = usePackageOperationStore((state) => state.open)
 
-  if (!item) return null
+  const targetId = detail?.id ?? item?.id ?? caseId
+  if (!targetId) return null
 
-  const isDownloading = download?.caseId === item.id
+  const activeItem = detail ?? item
+  const isDownloading = download?.caseId === targetId
   const progressPercent =
     isDownloading && download.totalBytes && download.totalBytes > 0
       ? Math.min(
@@ -55,22 +74,35 @@ export const OrgCaseDetailsDialog = ({
           Math.max(0, Math.round((download.completedBytes / download.totalBytes) * 100))
         )
       : 0
+  const detailErrorPresentation =
+    !activeItem && detailError ? describeOrgCaseError(detailError, t) : null
   const downloadErrorPresentation = downloadError ? describeOrgCaseError(downloadError, t) : null
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/45 backdrop-blur-[2px]" />
+        <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
           aria-label={t('Organization case details')}
-          className="fixed left-1/2 top-1/2 flex max-h-[85vh] w-[min(92vw,42rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border bg-bg-000 shadow-xl focus:outline-none"
+          onInteractOutside={(event) => {
+            const fromDialog =
+              event.target instanceof Element && event.target.closest('[role="dialog"]')
+            if (importDialogOpen || isDownloading || fromDialog) event.preventDefault()
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            if (!usePackageOperationStore.getState().open) {
+              onRestoreFocus?.()
+            }
+          }}
+          className={dialogPanelClassName('flex w-[min(92vw,42rem)] flex-col overflow-hidden p-0')}
         >
-          <div className="flex items-start justify-between gap-4 border-b border-border/80 px-5 py-4">
-            <div className="min-w-0 space-y-1">
-              <Dialog.Title className="truncate text-base font-semibold text-foreground">
-                {detail?.name ?? item.name}
+          <div className={dialogHeaderClassName}>
+            <div className="min-w-0">
+              <Dialog.Title className={dialogTitleClassName}>
+                {activeItem?.name ?? t('Organization case details')}
               </Dialog.Title>
-              <Dialog.Description className="text-xs text-muted-foreground">
+              <Dialog.Description className={dialogDescriptionClassName}>
                 {t('Organization case details and package summary')}
               </Dialog.Description>
             </div>
@@ -81,15 +113,36 @@ export const OrgCaseDetailsDialog = ({
             </Dialog.Close>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-            <OrgCaseDetailsContent
-              item={item}
-              detail={detail}
-              detailLoading={detailLoading}
-              detailError={detailError}
-              onRetryDetail={onRetryDetail}
-              onOpenLabSettings={onOpenLabSettings}
-            />
+          <div className={`${dialogBodyClassName} flex-1 space-y-4 overflow-y-auto`}>
+            {activeItem ? (
+              <OrgCaseDetailsContent
+                item={activeItem}
+                detail={detail}
+                detailLoading={detailLoading}
+                detailError={detailError}
+                onRetryDetail={onRetryDetail}
+                onOpenLabSettings={onOpenLabSettings}
+              />
+            ) : detailErrorPresentation ? (
+              <ErrorNotice
+                inline
+                level={detailErrorPresentation.level}
+                title={detailErrorPresentation.title}
+                description={detailErrorPresentation.description}
+                primaryButton={
+                  detailErrorPresentation.canOpenLabSettings
+                    ? { label: t('Open Lab Settings'), onClick: onOpenLabSettings }
+                    : detailErrorPresentation.canRetry
+                      ? { label: t('Retry'), onClick: onRetryDetail }
+                      : undefined
+                }
+              />
+            ) : (
+              <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+                <span>{t('Refreshing case details…')}</span>
+              </div>
+            )}
 
             {downloadErrorPresentation ? (
               <ErrorNotice
@@ -102,7 +155,7 @@ export const OrgCaseDetailsDialog = ({
                   downloadErrorPresentation.canOpenLabSettings
                     ? { label: t('Open Lab Settings'), onClick: onOpenLabSettings }
                     : downloadErrorPresentation.canRetry
-                      ? { label: t('Retry'), onClick: () => onImport(item.id) }
+                      ? { label: t('Retry'), onClick: () => onImport(targetId) }
                       : undefined
                 }
               />
@@ -128,21 +181,31 @@ export const OrgCaseDetailsDialog = ({
             ) : null}
           </div>
 
-          <div className="flex items-center justify-end gap-2 border-t border-border/80 px-5 py-3">
+          <div className={dialogFooterClassName}>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {t('Close')}
             </Button>
-            {isDownloading ? (
-              <Button type="button" variant="destructive" onClick={() => onCancelImport(item.id)}>
-                <X className="mr-1.5 h-4 w-4" />
-                {t('Cancel')}
-              </Button>
-            ) : (
-              <Button type="button" disabled={importBusy} onClick={() => onImport(item.id)}>
-                <Download className="mr-1.5 h-4 w-4" />
-                {t('Import')}
-              </Button>
-            )}
+            {activeItem ? (
+              isDownloading ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => onCancelImport(targetId)}
+                >
+                  <X className="mr-1.5 h-4 w-4" />
+                  {t('Cancel')}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  disabled={importBusy || importDisabled}
+                  onClick={() => onImport(targetId)}
+                >
+                  <Download className="mr-1.5 h-4 w-4" />
+                  {t('Import')}
+                </Button>
+              )
+            ) : null}
           </div>
         </Dialog.Content>
       </Dialog.Portal>

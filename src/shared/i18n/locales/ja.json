@@ -8131,6 +8131,8 @@
     "Your Lab account is disabled. Contact your Lab administrator for access.": "ご利用の Lab アカウントは無効になっています。アクセスについては Lab 管理者にお問い合わせください。",
     "No Lab organization assigned": "Lab 組織が割り当てられていません",
     "Join an organization in Lab before browsing or importing shared cases.": "共有ケースを参照またはインポートする前に、Lab で組織に参加してください。",
+    "Permission denied": "権限がありません",
+    "Your Lab role does not have permission to access organization cases.": "現在の Lab ロールには組織ケースへアクセスする権限がありません。",
     "Too many requests": "リクエストが多すぎます",
     "Please wait a moment before searching or downloading again.": "しばらく待ってから、もう一度検索またはダウンロードをお試しください。",
     "Download link expired": "ダウンロードリンクの有効期限切れ",

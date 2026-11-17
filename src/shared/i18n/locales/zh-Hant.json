@@ -8131,6 +8131,8 @@
     "Your Lab account is disabled. Contact your Lab administrator for access.": "您的 Lab 帳戶已停用，請聯絡您的 Lab 管理員以取得存取權限。",
     "No Lab organization assigned": "未指派 Lab 機構",
     "Join an organization in Lab before browsing or importing shared cases.": "請先在 Lab 中加入機構，再瀏覽或匯入分享的案例。",
+    "Permission denied": "權限不足",
+    "Your Lab role does not have permission to access organization cases.": "您目前的 Lab 角色沒有權限存取機構案例。",
     "Too many requests": "要求過於頻繁",
     "Please wait a moment before searching or downloading again.": "請稍候片刻後再嘗試搜尋或下載。",
     "Download link expired": "下載連結已過期",

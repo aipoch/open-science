@@ -1113,4 +1113,111 @@ describe('Lab account owner', () => {
       undefined
     )
   })
+
+  it('marks the session expired if a retried org-case request still returns 401', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const credentials = new LabCredentialStore(dir)
+    await seedSession(credentials)
+    const api = createApi()
+    api.refreshToken.mockResolvedValue({
+      accessToken: 'at_refreshed',
+      refreshToken: 'rt_refreshed',
+      expiresIn: 900,
+      tokenExpiresAt: Date.now() + 900_000
+    })
+    const listCases = vi
+      .fn()
+      .mockRejectedValue(new LabApiError('unauthorized', 'still expired', 401, 'SESSION_INVALID'))
+    Object.assign(api, { listCases })
+    const { owner } = await createOwner(dir, api)
+    await owner.check()
+
+    await expect(owner.listCases({ page: 1 })).rejects.toMatchObject({ status: 401 })
+    expect(owner.getView().state).toBe('expired')
+  })
+
+  it('clears local session state before awaiting api.logout', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const credentials = new LabCredentialStore(dir)
+    await seedSession(credentials)
+    let resolveLogout: (() => void) | undefined
+    const api = createApi()
+    api.logout.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveLogout = resolve
+        })
+    )
+    const { owner, repository } = await createOwner(dir, api)
+    await owner.check()
+    expect(owner.getView().state).toBe('authenticated')
+
+    const logoutPromise = owner.logout()
+    await vi.waitFor(() => expect(resolveLogout).toBeTypeOf('function'))
+    // Session and view must already be cleared before remote logout finishes.
+    expect(owner.getView().state).toBe('signedOut')
+    expect((await repository.getSettings()).providers.some((p) => p.id === LAB_PROVIDER_ID)).toBe(
+      false
+    )
+
+    resolveLogout?.()
+    await logoutPromise
+    expect((await credentials.readCredentialSnapshot()).session).toBeUndefined()
+  })
+
+  it('does not share an in-flight refresh promise across server switches', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const credentials = new LabCredentialStore(dir)
+    await seedSession(credentials)
+    let resolveFirstRefresh:
+      | ((value: {
+          accessToken: string
+          refreshToken: string
+          expiresIn: number
+          tokenExpiresAt: number
+        }) => void)
+      | undefined
+    const api = createApi()
+    api.refreshToken
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstRefresh = resolve
+          })
+      )
+      .mockResolvedValueOnce({
+        accessToken: 'at_second_server',
+        refreshToken: 'rt_second_server',
+        expiresIn: 900,
+        tokenExpiresAt: Date.now() + 900_000
+      })
+
+    const { owner } = await createOwner(dir, api)
+    await owner.check()
+    const firstRefresh = owner.getAccessToken(true, SERVER)
+    await vi.waitFor(() => expect(resolveFirstRefresh).toBeTypeOf('function'))
+
+    const secondServer = 'https://lab-two.example.com'
+    await owner.setServerUrl(secondServer)
+    await credentials.saveSession(
+      {
+        accessToken: 'at_2',
+        refreshToken: 'rt_2',
+        tokenExpiresAt: Date.now() + 3_600_000
+      },
+      secondServer
+    )
+    await expect(owner.getAccessToken(true, secondServer)).resolves.toBe('at_second_server')
+
+    resolveFirstRefresh?.({
+      accessToken: 'at_stale_server',
+      refreshToken: 'rt_stale_server',
+      expiresIn: 900,
+      tokenExpiresAt: Date.now() + 900_000
+    })
+    await expect(firstRefresh).rejects.toMatchObject({ code: 'unauthorized' })
+  })
 })

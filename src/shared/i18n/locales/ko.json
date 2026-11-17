@@ -8129,6 +8129,8 @@
     "Your Lab account is disabled. Contact your Lab administrator for access.": "Lab 계정이 비활성화되었습니다. 액세스 권한은 Lab 관리자에게 문의하세요.",
     "No Lab organization assigned": "할당된 Lab 조직이 없습니다",
     "Join an organization in Lab before browsing or importing shared cases.": "공유된 케이스를 찾아보거나 가져오기 전에 Lab에서 조직에 가입하세요.",
+    "Permission denied": "권한이 거부되었습니다",
+    "Your Lab role does not have permission to access organization cases.": "현재 Lab 역할에 조직 케이스에 액세스할 권한이 없습니다.",
     "Too many requests": "요청이 너무 많습니다",
     "Please wait a moment before searching or downloading again.": "잠시 기다린 후 다시 검색하거나 다운로드하세요.",
     "Download link expired": "다운로드 링크가 만료되었습니다",

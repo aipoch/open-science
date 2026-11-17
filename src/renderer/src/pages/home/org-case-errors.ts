@@ -138,6 +138,14 @@ export function describeOrgCaseError(
         canOpenLabSettings: true,
         canRetry: false
       }
+    case 'forbidden':
+      return {
+        level: 'error',
+        title: t('Permission denied'),
+        description: t('Your Lab role does not have permission to access organization cases.'),
+        canOpenLabSettings: true,
+        canRetry: false
+      }
     case 'rate-limited':
       return {
         level: 'warning',
