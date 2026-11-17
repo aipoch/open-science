@@ -1712,7 +1712,11 @@ class NotebookLocalRpcServer {
           nextIntent
         )
       },
-      release: () => void revoke().catch(() => undefined),
+      release: () => {
+        // Session credential replacement must not revoke the Attempt's refreshed credentials.
+        ownedTokens.delete(token)
+        this.revokeSessionCapability(token, true)
+      },
       revoke
     }
     return intent ? withNotebookExecutionIntent(result, intent) : result
