@@ -883,9 +883,6 @@
       "src/main/notebook/python-lifecycle.windows.integration.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "notebook_network_sandbox",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }
