@@ -8259,8 +8259,6 @@
     "List": "リスト",
     "Citation graph": "引用グラフ",
     "Citation source": "引用データの取得元",
-    "OpenCitations": "OpenCitations",
-    "OpenCitations Index (fallback)": "OpenCitations Index（代替）",
     "OpenCitations Index merges records that share an identifier. Relationships and counts may differ from SKG-IF.": "OpenCitations Indexは識別子を共有するレコードを統合します。関係や件数がSKG-IFと異なる場合があります。",
     "{{source}} is limiting requests. Try again later.": "{{source}} がリクエストを制限しています。しばらくしてから再試行してください。",
     "{{source}} rejected the request. Try again later.": "{{source}} がリクエストを拒否しました。しばらくしてから再試行してください。",
@@ -8293,6 +8291,8 @@
     "Select a paper to view its details.": "論文を選択して詳細を表示します。",
     "Set as center": "中心に設定",
     "Add to Inbox": "受信箱に追加",
-    "Loaded 5 pages for this direction (up to 100 relationships). Explore the other direction or another paper.": "この方向の5ページを読み込みました（最大100件の関係）。逆方向または別の論文を探索してください。"
+    "Loaded 5 pages for this direction (up to 100 relationships). Explore the other direction or another paper.": "この方向の5ページを読み込みました（最大100件の関係）。逆方向または別の論文を探索してください。",
+    "OpenCitations · SKG-IF": "OpenCitations",
+    "OpenCitations · Index v2": "OpenCitations Index（代替）"
   }
 }

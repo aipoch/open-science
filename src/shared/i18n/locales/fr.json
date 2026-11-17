@@ -8611,8 +8611,6 @@
     "List": "Liste",
     "Citation graph": "Graphe de citations",
     "Citation source": "Source des citations",
-    "OpenCitations": "OpenCitations",
-    "OpenCitations Index (fallback)": "OpenCitations Index (solution de repli)",
     "OpenCitations Index merges records that share an identifier. Relationships and counts may differ from SKG-IF.": "OpenCitations Index fusionne les notices qui partagent un identifiant. Les relations et les nombres peuvent différer de SKG-IF.",
     "{{source}} is limiting requests. Try again later.": "{{source}} limite les requêtes. Réessayez plus tard.",
     "{{source}} rejected the request. Try again later.": "{{source}} a rejeté la requête. Réessayez plus tard.",
@@ -8645,6 +8643,8 @@
     "Select a paper to view its details.": "Sélectionnez une publication pour voir ses détails.",
     "Set as center": "Définir comme centre",
     "Add to Inbox": "Ajouter à la boîte de réception",
-    "Loaded 5 pages for this direction (up to 100 relationships). Explore the other direction or another paper.": "5 pages ont été chargées dans ce sens (jusqu’à 100 relations). Explorez l’autre sens ou une autre publication."
+    "Loaded 5 pages for this direction (up to 100 relationships). Explore the other direction or another paper.": "5 pages ont été chargées dans ce sens (jusqu’à 100 relations). Explorez l’autre sens ou une autre publication.",
+    "OpenCitations · SKG-IF": "OpenCitations",
+    "OpenCitations · Index v2": "OpenCitations Index (solution de repli)"
   }
 }

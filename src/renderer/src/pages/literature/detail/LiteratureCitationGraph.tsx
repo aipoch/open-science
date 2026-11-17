@@ -302,8 +302,8 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
       ? t('Europe PMC')
       : props.source?.provider === 'opencitations'
         ? props.source.opencitationsMode === 'index'
-          ? t('OpenCitations Index (fallback)')
-          : t('OpenCitations')
+          ? t('OpenCitations · Index v2')
+          : t('OpenCitations · SKG-IF')
         : t('Europe PMC')
   const directionLabel = (filter: CitationGraphFilter): string =>
     filter === 'all' ? t('All') : filter === 'references' ? t('References') : t('Cited by')

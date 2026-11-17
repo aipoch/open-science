@@ -1800,7 +1800,7 @@ it('rejects a foreign provider on the first page before a graph seed is establis
 
 it.each([
   ['Europe PMC', 'europe-pmc'],
-  ['OpenCitations', 'opencitations']
+  ['OpenCitations · SKG-IF', 'opencitations']
 ] as const)(
   'keeps a %s graph pinned during pagination failures and rejects a response from another source',
   async (name, provider) => {
@@ -1910,7 +1910,7 @@ it('rejects a different OpenCitations mode during Index graph paging and retries
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await screen.findByText('Citation discovery is temporarily unavailable. Try again.')
   expect(screen.queryByRole('button', { name: 'Select Index next page' })).toBeNull()
-  expect(screen.getByText('Source: OpenCitations Index (fallback)')).toBeTruthy()
+  expect(screen.getByText('Source: OpenCitations · Index v2')).toBeTruthy()
   wrongMode = false
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
   await screen.findByRole('button', { name: 'Select Index next page' })

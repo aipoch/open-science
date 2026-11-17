@@ -495,8 +495,8 @@ test('retries a failed Europe PMC lookup without exposing a removed source or cr
   await source.click()
   await expect(page.getByRole('option')).toHaveText([
     'Europe PMC',
-    'OpenCitations',
-    'OpenCitations Index (fallback)'
+    'OpenCitations · SKG-IF',
+    'OpenCitations · Index v2'
   ])
   await page.keyboard.press('Escape')
   await expect(source).toBeFocused()

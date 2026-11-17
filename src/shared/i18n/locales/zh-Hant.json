@@ -8259,8 +8259,6 @@
     "List": "清單",
     "Citation graph": "引用圖譜",
     "Citation source": "引用資料來源",
-    "OpenCitations": "OpenCitations",
-    "OpenCitations Index (fallback)": "OpenCitations Index（備用）",
     "OpenCitations Index merges records that share an identifier. Relationships and counts may differ from SKG-IF.": "OpenCitations Index 會合併共用識別碼的紀錄，關係和數量可能與 SKG-IF 不同。",
     "{{source}} is limiting requests. Try again later.": "{{source}} 正在限制請求，請稍後重試。",
     "{{source}} rejected the request. Try again later.": "{{source}} 拒絕了請求，請稍後重試。",
@@ -8293,6 +8291,8 @@
     "Select a paper to view its details.": "選取文獻以查看詳細資料。",
     "Set as center": "以此論文為中心",
     "Add to Inbox": "新增至收件匣",
-    "Loaded 5 pages for this direction (up to 100 relationships). Explore the other direction or another paper.": "已載入此方向的5頁結果（最多100條關係）。可繼續探索另一方向或其他論文。"
+    "Loaded 5 pages for this direction (up to 100 relationships). Explore the other direction or another paper.": "已載入此方向的5頁結果（最多100條關係）。可繼續探索另一方向或其他論文。",
+    "OpenCitations · SKG-IF": "OpenCitations",
+    "OpenCitations · Index v2": "OpenCitations Index（備用）"
   }
 }

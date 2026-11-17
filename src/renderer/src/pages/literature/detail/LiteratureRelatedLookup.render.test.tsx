@@ -454,13 +454,13 @@ const chooseSource = (name: string): void => {
 
 function renderIndexLookup(element: Parameters<typeof render>[0]): ReturnType<typeof render> {
   const view = render(element)
-  chooseSource('OpenCitations Index (fallback)')
+  chooseSource('OpenCitations · Index v2')
   return view
 }
 
 it.each([
   ['Europe PMC', 'europe-pmc'],
-  ['OpenCitations', 'opencitations']
+  ['OpenCitations · SKG-IF', 'opencitations']
 ] as const)(
   'shows the selected %s source while list and graph requests are pending',
   async (name, provider) => {
@@ -490,7 +490,7 @@ it.each([
     renderIndexLookup(
       <LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />
     )
-    expect(screen.getByText('Source: OpenCitations Index (fallback)')).toBeTruthy()
+    expect(screen.getByText('Source: OpenCitations · Index v2')).toBeTruthy()
     await waitFor(() => expect(related).toHaveBeenCalledTimes(1))
     chooseSource(name)
     await waitFor(() => expect(related).toHaveBeenCalledTimes(2))
@@ -601,8 +601,8 @@ it('keeps the default Europe PMC source after unavailable results across list an
   fireEvent.click(screen.getByRole('combobox', { name: 'Citation source' }))
   expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
     'Europe PMC',
-    'OpenCitations',
-    'OpenCitations Index (fallback)'
+    'OpenCitations · SKG-IF',
+    'OpenCitations · Index v2'
   ])
   fireEvent.keyDown(screen.getByRole('option', { name: 'Europe PMC' }), { key: 'Escape' })
   fireEvent.click(screen.getByRole('button', { name: 'Citation graph' }))
@@ -614,7 +614,7 @@ it('keeps the default Europe PMC source after unavailable results across list an
 
 it.each([
   ['Europe PMC', 'europe-pmc', 'EP', epResult],
-  ['OpenCitations', 'opencitations', 'OC', ocResult]
+  ['OpenCitations · SKG-IF', 'opencitations', 'OC', ocResult]
 ] as const)(
   'switches %s with fresh list and graph caches, blocks switching during save and ignores the old source response',
   async (name, provider, prefix, providerResult) => {
@@ -668,14 +668,14 @@ it.each([
     )
     fireEvent.click(screen.getByRole('button', { name: 'Set as center' }))
     await screen.findByRole('button', { name: `Select ${prefix} descendant` })
-    chooseSource('OpenCitations Index (fallback)')
+    chooseSource('OpenCitations · Index v2')
     await screen.findByRole('button', { name: 'Select Paper b' })
     expect(screen.queryByRole('button', { name: 'Back' })).toBeNull()
     expect(screen.queryByRole('button', { name: `Select ${prefix} neighbor` })).toBeNull()
     expect(screen.queryByText('In Inbox')).toBeNull()
     expect(
       screen
-        .getAllByText('Source: OpenCitations Index (fallback)')
+        .getAllByText('Source: OpenCitations · Index v2')
         .filter((element) => !element.closest('[hidden]'))
     ).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: 'List' }))
@@ -690,8 +690,8 @@ it.each([
 
 it.each([
   ['Europe PMC', 'europe-pmc', undefined, 'EP', epResult],
-  ['OpenCitations', 'opencitations', 'skg-if', 'OC', ocResult],
-  ['OpenCitations Index (fallback)', 'opencitations', 'index', 'OC', ocResult]
+  ['OpenCitations · SKG-IF', 'opencitations', 'skg-if', 'OC', ocResult],
+  ['OpenCitations · Index v2', 'opencitations', 'index', 'OC', ocResult]
 ] as const)(
   'loads the graph while the first %s list request is still pending',
   async (name, provider, mode, prefix, providerResult) => {
@@ -761,8 +761,8 @@ it('keeps a loaded graph usable when its pending list request rejects', async ()
 })
 
 it.each([
-  ['OpenCitations', 'skg-if'],
-  ['OpenCitations Index (fallback)', 'index']
+  ['OpenCitations · SKG-IF', 'skg-if'],
+  ['OpenCitations · Index v2', 'index']
 ] as const)(
   'stages %s provenance from both list selections and an unsaved graph center',
   async (name, mode) => {
@@ -827,7 +827,7 @@ it.each([
   )
   render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
   await screen.findByText('EP neighbor')
-  chooseSource('OpenCitations')
+  chooseSource('OpenCitations · SKG-IF')
   await screen.findByText(message)
   expect(screen.queryByRole('button', { name: 'Configure API key' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Configure API key' })).toBeNull()
@@ -854,7 +854,7 @@ it('switches from SKG-IF to Index with fresh list pages and graph centers while 
   })
   render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
   await screen.findByText('EP neighbor')
-  chooseSource('OpenCitations')
+  chooseSource('OpenCitations · SKG-IF')
   await screen.findByText('OC neighbor')
   expect(screen.queryByText(indexNotice)).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Citation graph' }))
@@ -870,7 +870,7 @@ it('switches from SKG-IF to Index with fresh list pages and graph centers while 
   fireEvent.click(screen.getByRole('button', { name: 'Citation graph' }))
   await screen.findByRole('button', { name: 'Select OC descendant' })
   const before = related.mock.calls.length
-  chooseSource('OpenCitations Index (fallback)')
+  chooseSource('OpenCitations · Index v2')
   await screen.findByRole('button', { name: 'Select OC neighbor' })
   expect(screen.getByRole('button', { name: 'Citation graph' }).getAttribute('aria-pressed')).toBe(
     'true'
@@ -901,7 +901,7 @@ it('switches from SKG-IF to Index with fresh list pages and graph centers while 
   expect(screen.getByText(indexNotice)).toBeTruthy()
   expect(
     screen
-      .getAllByText('Source: OpenCitations Index (fallback)')
+      .getAllByText('Source: OpenCitations · Index v2')
       .filter((element) => !element.closest('[hidden]'))
   ).toHaveLength(1)
   expect(
@@ -927,10 +927,10 @@ it.each([undefined, 'skg-if'] as const)(
     )
     render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
     await screen.findByText('EP neighbor')
-    chooseSource('OpenCitations Index (fallback)')
+    chooseSource('OpenCitations · Index v2')
     await screen.findByText('Citation discovery is temporarily unavailable. Try again.')
     expect(screen.queryByText('OC neighbor')).toBeNull()
-    expect(screen.getByText('Source: OpenCitations Index (fallback)')).toBeTruthy()
+    expect(screen.getByText('Source: OpenCitations · Index v2')).toBeTruthy()
     expect(transact).not.toHaveBeenCalled()
     wrong = false
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))

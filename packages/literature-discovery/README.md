@@ -78,7 +78,8 @@ JSON-LD search envelope; a failed Meta batch remains an error. Both paths share 
 and require no API credentials.
 
 Callers may explicitly select `opencitationsMode: 'index'` with `provider: 'opencitations'`
-for the official Index v2 API and Meta identity/metadata endpoints. This manual alternative never
+for the official Index v2 API and Meta identity/metadata endpoints. The UI labels the two modes
+`OpenCitations · SKG-IF` and `OpenCitations · Index v2`; Index is an explicit mode, not an automatic fallback. This manual alternative never
 starts automatically after SKG-IF fails. The mode remains fixed on the resolution token; omitting
 the mode in later requests inherits it, while an explicit mismatch expires the request. Index
 and SKG-IF coverage and counts can differ and are not interchangeable observations.

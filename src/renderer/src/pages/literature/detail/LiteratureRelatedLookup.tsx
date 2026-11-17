@@ -122,9 +122,9 @@ function LiteratureRelatedSession(
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="europe-pmc">{t('Europe PMC')}</SelectItem>
-            <SelectItem value="opencitations">{t('OpenCitations')}</SelectItem>
+            <SelectItem value="opencitations">{t('OpenCitations · SKG-IF')}</SelectItem>
             <SelectItem value="opencitations-index">
-              {t('OpenCitations Index (fallback)')}
+              {t('OpenCitations · Index v2')}
             </SelectItem>
           </SelectContent>
         </Select>
@@ -220,8 +220,8 @@ function LiteratureRelatedList({
       ? t('Europe PMC')
       : actualProvider === 'opencitations'
         ? source?.opencitationsMode === 'index'
-          ? t('OpenCitations Index (fallback)')
-          : t('OpenCitations')
+          ? t('OpenCitations · Index v2')
+          : t('OpenCitations · SKG-IF')
         : t('Europe PMC')
   const [direction, setDirection] = useState(initialDirection)
   const [result, setResult] = useState<LiteratureRelatedResult>()
