@@ -152,7 +152,7 @@ type WorkspaceSidebarProps = {
   sidebarToggleButtonRef?: React.Ref<HTMLButtonElement>
   mobileMode?: boolean
   isMobileOpen?: boolean
-  onMobileClose?: () => void
+  onMobileClose?: () => HTMLElement | null | void
 }
 
 type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
@@ -1507,6 +1507,7 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
   const { t } = useTranslation()
   const [film, setFilm] = useState<ResearchVideoPresentationRequest>()
   const filmInvocation = useRef(0)
+  const filmReturnFocus = useRef<HTMLElement | null>(null)
   const mounted = useRef(true)
   const pendingOpen = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const cancelPendingOpen = useCallback(() => {
@@ -1565,6 +1566,10 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
       onOpenResearchFilm: isDesktopRenderer()
         ? async (session) => {
             const revision = ++filmInvocation.current
+            const sidebar = latestProps.current
+            filmReturnFocus.current = sidebar.mobileMode
+              ? (sidebar.onMobileClose?.() ?? null)
+              : document.getElementById(sessionButtonId(session.id, false))
             const request = { projectId: session.projectId, sessionId: session.id }
             const source =
               session.contentLoaded === false ? await window.api.sessions.loadOne(request) : session
@@ -1641,7 +1646,8 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
           {...film}
           onDismiss={() => {
             setFilm(undefined)
-            document.getElementById(sessionButtonId(film.sessionId, props.mobileMode))?.focus()
+            filmReturnFocus.current?.focus()
+            filmReturnFocus.current = null
           }}
         />
       )}
