@@ -18,6 +18,7 @@ import {
   type LiteratureCatalogCommand
 } from '@aipoch/literature-library/contracts'
 import { createRoot } from 'react-dom/client'
+import { citationGraphResult } from './citation-graph-data'
 
 initI18n('en')
 const params = new URLSearchParams(location.search)
@@ -41,7 +42,12 @@ Object.assign(window, {
     completeLookup: (index: number): void => pendingLinkLookups[index]()
   }
 })
-let requiresCitationKey = new URLSearchParams(location.search).has('citation-key')
+let citationUnavailable = params.has('citation-unavailable')
+Object.assign(window, {
+  recoverCitationSource: (): void => {
+    citationUnavailable = false
+  }
+})
 const parent = {
   id: 'parent',
   revision: 1,
@@ -197,17 +203,24 @@ window.api = {
     },
     related: async (request: LiteratureRelatedRequest) => {
       fileRequests.push(request)
+      if (params.has('citation-graph'))
+        return citationGraphResult(
+          request,
+          params.has('empty-references'),
+          params.has('mutual-paper')
+        )
       if (new URLSearchParams(location.search).has('citation-loading'))
         await new Promise<void>((resolve) =>
           Object.assign(window, { finishCitationLookup: resolve })
         )
-      if (requiresCitationKey)
+      if (citationUnavailable)
         return {
           itemId: fileItem.id,
           metadataRevision: fileItem.metadataRevision,
           direction: request.direction,
           state: 'unavailable',
-          issue: 'rate-limited',
+          provider: 'europe-pmc',
+          issue: 'unavailable',
           records: []
         }
       return {
@@ -215,11 +228,13 @@ window.api = {
         metadataRevision: fileItem.metadataRevision,
         direction: request.direction,
         state: 'ready',
+        provider: 'europe-pmc',
+        seed: { paperId: 'europe-pmc:MED:31020319', item: fileItem.item },
         nextOffset: request.offset === 0 ? 20 : undefined,
         resolutionToken: '00000000-0000-4000-8000-000000000000',
         records: [
           {
-            paperId: (request.offset ? 'b' : 'a').repeat(40),
+            paperId: `europe-pmc:MED:${request.offset ? '100300' : request.direction === 'references' ? '100100' : '100200'}`,
             item: literatureItemInputSchema.parse({
               itemType: 'journalArticle',
               title: request.offset
@@ -228,9 +243,9 @@ window.api = {
                   ? 'A foundational reference'
                   : 'A follow-up study',
               issuedYear: 2025,
-              abstract: 'An example abstract from Semantic Scholar.',
+              abstract: 'An example abstract from Europe PMC.',
               containerTitle: 'Example Journal',
-              url: 'https://www.semanticscholar.org/paper/' + 'a'.repeat(40)
+              url: 'https://europepmc.org/article/MED/100100'
             })
           }
         ]
@@ -366,12 +381,7 @@ useProjectStore.setState({ projects: [], isLoaded: true })
 useTagStore.setState({ status: 'ready', revision: 1, tags: [], assignments: [] })
 useSettingsStore.setState({
   encryptionAvailable: true,
-  connectorsLoaded: true,
-  semanticScholar: { hasApiKey: false },
-  setSemanticScholarCredential: async () => {
-    requiresCitationKey = false
-    useSettingsStore.setState({ semanticScholar: { hasApiKey: true } })
-  }
+  connectorsLoaded: true
 })
 createRoot(document.getElementById('root')!).render(
   <LiteratureRendererProvider host={literatureRendererHost}>

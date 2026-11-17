@@ -14,42 +14,215 @@ import { Tabs } from 'radix-ui'
 import { BookOpen, Quote, Info, LoaderCircle } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem
+} from '@/components/ui/select'
 import { ErrorNotice } from '@/components/error-notice'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
-import { isDesktopRenderer } from '@/lib/interface-scale'
 import { useLiteratureHost } from '../renderer-host'
-import { MaskedPasswordField } from '../../settings/MaskedPasswordField'
+import { LiteratureCitationGraph } from './LiteratureCitationGraph'
+import {
+  useCitationSource,
+  type CitationProviderChoice,
+  type CitationSourceState
+} from './useCitationSource'
+import { citationRecordProvider } from './citation-graph'
+import type { ScheduleRequest } from './useCitationGraphController'
 
-export function LiteratureRelatedLookup({
+export function LiteratureRelatedLookup(
+  props: React.ComponentProps<typeof LiteratureRelatedList>
+): React.JSX.Element {
+  const [provider, setProvider] = useState<CitationProviderChoice>('europe-pmc')
+  const [view, setView] = useState<'list' | 'graph'>('list')
+  return (
+    <LiteratureRelatedSession
+      key={`${props.item.id}:${props.item.metadataRevision}:${provider}`}
+      {...props}
+      provider={provider}
+      onProviderChange={setProvider}
+      view={view}
+      onViewChange={setView}
+    />
+  )
+}
+
+function LiteratureRelatedSession(
+  props: React.ComponentProps<typeof LiteratureRelatedList> & {
+    provider: CitationProviderChoice
+    onProviderChange(provider: CitationProviderChoice): void
+    view: 'list' | 'graph'
+    onViewChange(view: 'list' | 'graph'): void
+  }
+): React.JSX.Element {
+  const { t } = useTranslation()
+  const { view, onViewChange: setView } = props
+  const { source, requestRelated } = useCitationSource(props.provider)
+  const [graphOpened, setGraphOpened] = useState(view === 'graph')
+  const [referenceInvalidated, setReferenceInvalidated] = useState(false)
+  const invalidatedReference = useRef(false)
+  const isReferenceInvalidated = useCallback(() => invalidatedReference.current, [])
+  const invalidateReference = useCallback(() => {
+    invalidatedReference.current = true
+    setReferenceInvalidated(true)
+  }, [])
+  const [saving, setSaving] = useState(false)
+  const { onSavingChange } = props
+  const handleSavingChange = useCallback(
+    (value: boolean) => {
+      setSaving(value)
+      onSavingChange?.(value)
+    },
+    [onSavingChange]
+  )
+  return (
+    <div
+      data-citation-graph-active={view === 'graph' ? '' : undefined}
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+    >
+      <div
+        className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border-300 px-5 py-2"
+        role="group"
+        aria-label={t('Citation discovery view')}
+      >
+        <Button
+          size="sm"
+          variant={view === 'list' ? 'secondary' : 'ghost'}
+          aria-pressed={view === 'list'}
+          disabled={saving}
+          onClick={() => setView('list')}
+        >
+          {t('List')}
+        </Button>
+        <Button
+          size="sm"
+          variant={view === 'graph' ? 'secondary' : 'ghost'}
+          aria-pressed={view === 'graph'}
+          disabled={saving}
+          onClick={() => {
+            setGraphOpened(true)
+            setView('graph')
+          }}
+        >
+          {t('Citation graph')}
+        </Button>
+        <Select
+          value={props.provider}
+          disabled={saving || referenceInvalidated}
+          onValueChange={(value) => {
+            if (!saving && !invalidatedReference.current)
+              props.onProviderChange(value as CitationProviderChoice)
+          }}
+        >
+          <SelectTrigger aria-label={t('Citation source')} className="ml-auto w-auto max-w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="europe-pmc">{t('Europe PMC')}</SelectItem>
+            <SelectItem value="opencitations">{t('OpenCitations')}</SelectItem>
+            <SelectItem value="opencitations-index">
+              {t('OpenCitations Index (fallback)')}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {source.opencitationsMode === 'index' ? (
+        <p
+          role="status"
+          className="shrink-0 border-b border-border-300 px-5 py-2 text-xs text-muted-foreground"
+        >
+          {t(
+            'OpenCitations Index merges records that share an identifier. Relationships and counts may differ from SKG-IF.'
+          )}
+        </p>
+      ) : null}
+      {referenceInvalidated ? (
+        <ErrorNotice
+          inline
+          role="alert"
+          className="mx-5 mt-3"
+          description={t('This reference changed. Reopen its details and try again.')}
+        />
+      ) : null}
+      <div
+        hidden={view !== 'list'}
+        style={{ display: view === 'list' ? undefined : 'none' }}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <LiteratureRelatedList
+          {...props}
+          source={source}
+          requestRelated={requestRelated}
+          referenceInvalidated={referenceInvalidated}
+          isReferenceInvalidated={isReferenceInvalidated}
+          onReferenceChanged={invalidateReference}
+          onSavingChange={handleSavingChange}
+        />
+      </div>
+      {graphOpened ? (
+        <div
+          hidden={view !== 'graph'}
+          style={{ display: view === 'graph' ? undefined : 'none' }}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <LiteratureCitationGraph
+            key={`${props.item.id}:${props.item.metadataRevision}`}
+            item={props.item}
+            provider={props.provider}
+            source={source}
+            requestRelated={requestRelated}
+            onSaved={props.onSaved}
+            onOpenInbox={props.onOpenInbox}
+            onSavingChange={handleSavingChange}
+            disabled={referenceInvalidated}
+            onReferenceChanged={invalidateReference}
+            referenceInvalidated={referenceInvalidated}
+            isReferenceInvalidated={isReferenceInvalidated}
+            visible={view === 'graph'}
+          />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function LiteratureRelatedList({
   item,
   initialDirection,
   onSaved,
   onSavingChange,
   onOpenInbox,
-  credentialsOpen = false,
-  credentialFormId,
-  onOpenCredentials,
-  onCloseCredentials
+  referenceInvalidated = false,
+  isReferenceInvalidated,
+  onReferenceChanged,
+  source,
+  requestRelated
 }: {
   item: LiteratureItemView
   initialDirection: LiteratureRelatedRequest['direction']
   onSaved(): void
   onSavingChange?: (saving: boolean) => void
   onOpenInbox?: () => void
-  credentialsOpen?: boolean
-  credentialFormId?: string
-  onOpenCredentials?: () => void
-  onCloseCredentials?: () => void
+  referenceInvalidated?: boolean
+  isReferenceInvalidated?: () => boolean
+  onReferenceChanged?: () => void
+  source?: CitationSourceState
+  requestRelated?: ScheduleRequest
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const { api, useSettingsStore } = useLiteratureHost()
-  const hasApiKey = useSettingsStore((state) => state.semanticScholar?.hasApiKey)
-  const loadConnectors = useSettingsStore((state) => state.loadConnectors)
-  useEffect(() => {
-    // Unknown credential status must not be presented as a missing key.
-    void loadConnectors().catch(() => undefined)
-  }, [loadConnectors])
-  const showCredentialHint = hasApiKey === false && !credentialsOpen && onOpenCredentials
+  const { api } = useLiteratureHost()
+  const actualProvider = source?.provider
+  const sourceName =
+    actualProvider === 'europe-pmc'
+      ? t('Europe PMC')
+      : actualProvider === 'opencitations'
+        ? source?.opencitationsMode === 'index'
+          ? t('OpenCitations Index (fallback)')
+          : t('OpenCitations')
+        : t('Europe PMC')
   const [direction, setDirection] = useState(initialDirection)
   const [result, setResult] = useState<LiteratureRelatedResult>()
   const [loadError, setLoadError] = useState<LiteratureRelatedResult>()
@@ -68,14 +241,27 @@ export function LiteratureRelatedLookup({
   const generation = useRef(0)
   const inFlight = useRef(false)
   const savingRef = useRef(false)
-  useEffect(() => () => onSavingChange?.(false), [onSavingChange])
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      onSavingChange?.(false)
+    }
+  }, [onSavingChange])
   const lookup = useCallback(
     async (
       nextDirection: LiteratureRelatedRequest['direction'],
       nextOffset = 0,
       token?: string
     ): Promise<void> => {
-      if (inFlight.current || savingRef.current) return
+      if (
+        inFlight.current ||
+        savingRef.current ||
+        referenceInvalidated ||
+        isReferenceInvalidated?.()
+      )
+        return
       const current = ++generation.current
       inFlight.current = true
       setBusyVisible(false)
@@ -89,13 +275,16 @@ export function LiteratureRelatedLookup({
       setDirection(nextDirection)
       try {
         const response = literatureRelatedResultSchema.parse(
-          await api.literature.related({
-            itemId: item.id,
-            expectedMetadataRevision: item.metadataRevision,
-            direction: nextDirection,
-            offset: nextOffset,
-            resolutionToken: token
-          })
+          await (requestRelated ?? ((request) => api.literature.related(request)))(
+            {
+              itemId: item.id,
+              expectedMetadataRevision: item.metadataRevision,
+              direction: nextDirection,
+              offset: nextOffset,
+              resolutionToken: token
+            },
+            () => mounted.current && current === generation.current && !isReferenceInvalidated?.()
+          )
         )
         if (
           response.itemId !== item.id ||
@@ -104,6 +293,7 @@ export function LiteratureRelatedLookup({
         )
           throw new Error('Citation discovery identity mismatch.')
         if (current === generation.current) {
+          if (response.issue === 'reference-changed') onReferenceChanged?.()
           if (nextOffset && response.state === 'unavailable') setLoadError(response)
           else
             setResult((previous) =>
@@ -138,7 +328,15 @@ export function LiteratureRelatedLookup({
         }
       }
     },
-    [api, item.id, item.metadataRevision]
+    [
+      api,
+      requestRelated,
+      item.id,
+      item.metadataRevision,
+      onReferenceChanged,
+      referenceInvalidated,
+      isReferenceInvalidated
+    ]
   )
   useEffect(() => {
     let active = true
@@ -154,14 +352,21 @@ export function LiteratureRelatedLookup({
     }
   }, [lookup, initialDirection])
   const save = async (): Promise<void> => {
-    if (savingRef.current || inFlight.current || !result) return
+    if (
+      savingRef.current ||
+      inFlight.current ||
+      !result ||
+      referenceInvalidated ||
+      isReferenceInvalidated?.()
+    )
+      return
     savingRef.current = true
     setSaving(true)
     onSavingChange?.(true)
     const current = generation.current
     try {
       for (const entry of result.records.filter((entry) => selected.has(entry.paperId))) {
-        if (current !== generation.current) break
+        if (current !== generation.current || isReferenceInvalidated?.()) break
         let receipt: LiteratureCatalogReceipt | 'failed'
         try {
           receipt = await api.literature.transact({
@@ -169,10 +374,19 @@ export function LiteratureRelatedLookup({
             candidate: {
               item: entry.item,
               source: {
-                provider: 'semantic-scholar',
+                provider: citationRecordProvider(entry.paperId),
                 externalId: entry.paperId,
                 sourceUrl: entry.item.url,
-                rawMetadata: { seedItemId: item.id, seedPaperId: result.seed?.paperId, direction }
+                rawMetadata: {
+                  rootItemId: item.id,
+                  rootMetadataRevision: item.metadataRevision,
+                  seedItemId: item.id,
+                  seedPaperId: result.seed?.paperId,
+                  ...(citationRecordProvider(entry.paperId) === 'opencitations'
+                    ? { lookupMode: result.opencitationsMode ?? 'skg-if' }
+                    : {}),
+                  direction
+                }
               },
               origin: { kind: 'manual-discovery' }
             }
@@ -193,7 +407,7 @@ export function LiteratureRelatedLookup({
       onSaved()
     } finally {
       savingRef.current = false
-      if (current === generation.current) {
+      if (mounted.current) {
         setSaving(false)
         onSavingChange?.(false)
       }
@@ -208,21 +422,14 @@ export function LiteratureRelatedLookup({
           ? t('Previously dismissed; review it in Inbox.')
           : t('In Inbox')
   const issue = loadError?.issue ?? result?.issue
-  const invalidated = issue === 'expired' || issue === 'reference-changed'
-  const credentialAction =
-    !showCredentialHint &&
-    !credentialsOpen &&
-    onOpenCredentials &&
-    (issue === 'rate-limited' || issue === 'authentication')
-      ? { label: t('Configure API key'), onClick: onOpenCredentials }
-      : undefined
+  const invalidated = referenceInvalidated || issue === 'expired' || issue === 'reference-changed'
   const errorMessage =
     issue === 'rate-limited'
-      ? t('Semantic Scholar is rate limiting requests. Try again later or add an API key above.')
+      ? t('{{source}} is limiting requests. Try again later.', { source: sourceName })
       : issue === 'authentication'
-        ? t('Semantic Scholar rejected the API key. Update it above.')
+        ? t('{{source}} rejected the request. Try again later.', { source: sourceName })
         : issue === 'no-match'
-          ? t('No matching paper was found in Semantic Scholar.')
+          ? t('No matching paper was found in {{source}}.', { source: sourceName })
           : issue === 'reference-changed'
             ? t('This reference changed. Reopen its details and try again.')
             : issue === 'expired'
@@ -242,7 +449,7 @@ export function LiteratureRelatedLookup({
       }}
       className="flex min-h-0 flex-1 flex-col"
     >
-      <div className="flex items-center justify-between gap-2 border-b border-border-300 px-5">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-300 px-5">
         <Tabs.List className="flex gap-5" aria-label={t('Citation discovery')}>
           {(['references', 'citations'] as const).map((value) => {
             const Icon = value === 'references' ? BookOpen : Quote
@@ -250,7 +457,7 @@ export function LiteratureRelatedLookup({
               <Tabs.Trigger
                 key={value}
                 value={value}
-                disabled={busy || saving || credentialsOpen}
+                disabled={busy || saving || referenceInvalidated}
                 className="flex items-center gap-2 whitespace-nowrap border-b-2 border-transparent py-3 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none data-[state=active]:border-primary data-[state=active]:text-primary"
               >
                 <Icon className="size-4" aria-hidden="true" />
@@ -265,59 +472,20 @@ export function LiteratureRelatedLookup({
               <button
                 type="button"
                 aria-label={t(
-                  'Source: Semantic Scholar. Coverage may be incomplete. Selected references go to Inbox for review.'
+                  'Coverage may be incomplete. Selected references go to Inbox for review.'
                 )}
                 className="flex shrink-0 items-center gap-1 rounded text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <span className="hidden sm:inline">{t('Semantic Scholar')}</span>
+                <span>{t('Source: {{source}}', { source: sourceName })}</span>
                 <Info className="size-3.5" aria-hidden="true" />
               </button>
             </TooltipTrigger>
             <TooltipContent className="max-w-64">
-              {t(
-                'Source: Semantic Scholar. Coverage may be incomplete. Selected references go to Inbox for review.'
-              )}
+              {t('Coverage may be incomplete. Selected references go to Inbox for review.')}
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
       </div>
-      {showCredentialHint ? (
-        <div
-          data-slot="citation-key-hint"
-          className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border-300 bg-muted/30 px-5 py-2"
-        >
-          <p className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Info className="size-3.5 shrink-0" aria-hidden="true" />
-            {t('An API key is optional but recommended.')}
-          </p>
-          <Button
-            variant="link"
-            size="sm"
-            className="h-auto p-0 text-xs"
-            disabled={saving}
-            onClick={onOpenCredentials}
-          >
-            {t('Configure API key')}
-          </Button>
-        </div>
-      ) : null}
-      {credentialsOpen && onCloseCredentials ? (
-        <SemanticScholarCredentialForm
-          id={credentialFormId}
-          disabled={busy || saving}
-          onCancel={onCloseCredentials}
-          onSaved={() => {
-            onCloseCredentials()
-            if (loadError)
-              void lookup(
-                direction,
-                invalidated ? 0 : result?.nextOffset,
-                invalidated ? undefined : result?.resolutionToken
-              )
-            else if (result?.state === 'unavailable') void lookup(direction)
-          }}
-        />
-      ) : null}
       <Tabs.Content
         forceMount
         value={direction}
@@ -363,36 +531,13 @@ export function LiteratureRelatedLookup({
           <ErrorNotice
             role="alert"
             description={errorMessage}
-            secondaryButton={credentialAction}
             primaryButton={{
               label: t('Retry'),
-              disabled: busy || saving,
+              disabled: busy || saving || referenceInvalidated,
               loading: busy && busyVisible,
               onClick: () => void lookup(direction, 0)
             }}
           />
-        ) : result?.state === 'match-required' && result.seed ? (
-          <div className="space-y-4">
-            <h3 className="font-medium">{t('Is this the same paper?')}</h3>
-            <p className="text-sm text-muted-foreground">
-              {t(
-                'Confirm this title match before looking up citation relationships. Your saved metadata will not change.'
-              )}
-            </p>
-            <p className="text-sm">{item.item.title}</p>
-            <div className="rounded-lg border border-border-300 p-4">
-              <p className="font-medium">{result.seed.item.title}</p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {[fullCreatorLabel(result.seed.item), publicationSummary(result.seed.item)]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </p>
-              <ExternalTextLink href={result.seed.item.url}>{t('View source')}</ExternalTextLink>
-            </div>
-            <Button onClick={() => void lookup(direction, 0, result.resolutionToken)}>
-              {t('Same paper, show relationships')}
-            </Button>
-          </div>
         ) : result?.records.length ? (
           <ul className="divide-y divide-border-300">
             {result.records.map((entry) => {
@@ -446,12 +591,18 @@ export function LiteratureRelatedLookup({
           </ul>
         ) : result?.state === 'ready' ? (
           <p className="text-sm text-muted-foreground">
-            {t('No citation relationships were returned for this page.')}
+            {t(
+              '{{source}} did not provide relationships for this page; the paper may still have references or citations.',
+              { source: sourceName }
+            )}
           </p>
         ) : null}
         {!busy && result?.omitted ? (
           <p className="mt-3 text-xs text-muted-foreground">
-            {t('Some relationships have no identifiable paper and cannot be added.')}
+            {t(
+              'Some relationships could not be matched to a record in {{source}} and are not shown.',
+              { source: sourceName }
+            )}
           </p>
         ) : null}
         {loadError ? (
@@ -460,10 +611,9 @@ export function LiteratureRelatedLookup({
               inline
               role="alert"
               description={errorMessage}
-              secondaryButton={credentialAction}
               primaryButton={{
                 label: t('Retry'),
-                disabled: busy || saving,
+                disabled: busy || saving || referenceInvalidated,
                 loading: busy,
                 onClick: () =>
                   void lookup(
@@ -508,125 +658,5 @@ export function LiteratureRelatedLookup({
         </div>
       ) : null}
     </Tabs.Root>
-  )
-}
-
-function SemanticScholarCredentialForm({
-  id,
-  disabled,
-  onCancel,
-  onSaved
-}: {
-  id?: string
-  disabled: boolean
-  onCancel(): void
-  onSaved(): void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  const { useSettingsStore } = useLiteratureHost()
-  const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
-  const saveCredential = useSettingsStore((state) => state.setSemanticScholarCredential)
-  const [key, setKey] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(false)
-  const active = useRef(true)
-  const submitting = useRef(false)
-  useEffect(() => {
-    active.current = true
-    return () => {
-      active.current = false
-    }
-  }, [])
-  const submit = async (): Promise<void> => {
-    if (
-      !isDesktopRenderer() ||
-      submitting.current ||
-      disabled ||
-      !key.trim() ||
-      !encryptionAvailable
-    )
-      return
-    submitting.current = true
-    setBusy(true)
-    setError(false)
-    try {
-      await saveCredential({ apiKey: key.trim() })
-      if (active.current) {
-        setKey('')
-        onSaved()
-      }
-    } catch {
-      if (active.current) setError(true)
-    } finally {
-      submitting.current = false
-      if (active.current) setBusy(false)
-    }
-  }
-  if (!isDesktopRenderer()) {
-    return (
-      <div
-        id={id}
-        role="region"
-        aria-label={t('Semantic Scholar settings')}
-        className="flex shrink-0 items-center justify-between gap-3 border-b border-border-300 bg-muted/30 px-5 py-3"
-      >
-        <p className="text-xs text-muted-foreground">
-          {t('This credential can only be configured in the local desktop app.')}
-        </p>
-        <Button type="button" variant="ghost" size="sm" autoFocus onClick={onCancel}>
-          {t('Cancel')}
-        </Button>
-      </div>
-    )
-  }
-  return (
-    <form
-      id={id}
-      aria-label={t('Semantic Scholar settings')}
-      className="shrink-0 space-y-2 border-b border-border-300 bg-muted/30 px-5 py-3"
-      onSubmit={(event) => {
-        event.preventDefault()
-        void submit()
-      }}
-    >
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <span className="font-medium">{t('API key')}</span>
-        <ExternalTextLink href="https://www.semanticscholar.org/product/api">
-          {t('Get an API key')}
-        </ExternalTextLink>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <MaskedPasswordField
-          aria-label={t('API key')}
-          autoFocus
-          value={key}
-          onChange={setKey}
-          placeholder={t('Paste an API key')}
-          disabled={busy}
-          className="min-w-40 flex-1"
-        />
-        <Button
-          type="submit"
-          size="sm"
-          disabled={busy || disabled || !key.trim() || !encryptionAvailable}
-        >
-          {busy ? t('Saving…') : t('Save key')}
-        </Button>
-        <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onCancel}>
-          {t('Cancel')}
-        </Button>
-      </div>
-      {!encryptionAvailable || error ? (
-        <ErrorNotice
-          inline
-          role="alert"
-          description={
-            !encryptionAvailable
-              ? t('Secure key storage is unavailable. Unlock the system keychain and try again.')
-              : t('Could not save the Semantic Scholar API key.')
-          }
-        />
-      ) : null}
-    </form>
   )
 }

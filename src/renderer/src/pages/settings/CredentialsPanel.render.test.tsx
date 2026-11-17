@@ -45,8 +45,23 @@ afterEach(() => {
 })
 
 describe('CredentialsPanel', () => {
+  it('does not offer the removed citation-service credential', async () => {
+    await act(async () =>
+      root.render(
+        <CredentialsPanel
+          view={{ kind: 'list' }}
+          onNavigate={vi.fn()}
+          onOpenConnector={vi.fn()}
+          onOpenProvider={vi.fn()}
+        />
+      )
+    )
+    expect(screen.queryByText('Semantic Scholar')).toBeNull()
+    expect(screen.getByText('OpenAlex')).toBeTruthy()
+    expect(screen.getByText('Literature access')).toBeTruthy()
+  })
+
   it.each([
-    ['semantic-scholar', 'https://www.semanticscholar.org/product/api'],
     ['openalex', 'https://openalex.org/settings/api'],
     ['literature', 'https://account.ncbi.nlm.nih.gov/settings/']
   ] as const)('links to the official key page for %s', async (serviceId, href) => {
@@ -592,7 +607,7 @@ describe('CredentialsPanel', () => {
     const desktopOnlyButtons = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('button')
     ).filter((button) => button.textContent === 'Desktop only')
-    expect(desktopOnlyButtons).toHaveLength(3)
+    expect(desktopOnlyButtons).toHaveLength(2)
     expect(desktopOnlyButtons.every((button) => button.disabled)).toBe(true)
     expect(
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(

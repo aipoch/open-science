@@ -828,7 +828,6 @@ describe('preload bridge — public surface inventory', () => {
       'settings.setPromptOptimizationModel',
       'settings.setReasoningEffort',
       'settings.setReviewerModel',
-      'settings.setSemanticScholarCredential',
       'settings.setSessionDetailsModel',
       'settings.setShowNotificationContent',
       'settings.setSkillEnabled',

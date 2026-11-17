@@ -412,7 +412,6 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.setPromptOptimizationModel': 'settings:set-prompt-optimization-model',
   'settings.setReasoningEffort': 'settings:set-reasoning-effort',
   'settings.setReviewerModel': 'settings:set-reviewer-model',
-  'settings.setSemanticScholarCredential': 'settings:set-semantic-scholar-credential',
   'settings.setSessionDetailsModel': 'settings:set-session-details-model',
   'settings.setShowNotificationContent': 'settings:set-show-notification-content',
   'settings.setSkillEnabled': 'settings:set-skill-enabled',

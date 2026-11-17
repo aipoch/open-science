@@ -130,20 +130,58 @@ describe('Literature command workflows', () => {
     expect(withDataRootWrite).not.toHaveBeenCalled()
     expect(broadcastToRenderers).not.toHaveBeenCalled()
   })
-  it('forwards citation relationship queries and caller cancellation without publishing changes', async () => {
-    const run = vi.fn().mockResolvedValue({ records: [] })
+  it.each([false, 'europe-pmc', 'opencitations'] as const)(
+    'forwards citation relationship queries and caller cancellation without publishing changes (temporary center: %s)',
+    async (temporary) => {
+      const run = vi.fn().mockResolvedValue({ records: [] })
+      const owner = createLiteratureCommandOwner({
+        literatureRelatedFinder: { run }
+      } as unknown as Services)
+      const request = {
+        itemId: 'paper',
+        expectedMetadataRevision: 1,
+        direction: 'references' as const,
+        offset: 0,
+        ...(temporary
+          ? {
+              provider: temporary,
+              seedPaperId:
+                temporary === 'opencitations'
+                  ? 'opencitations:br/06180349574'
+                  : 'europe-pmc:MED:10647931',
+              resolutionToken: '00000000-0000-4000-8000-000000000001'
+            }
+          : {})
+      }
+      const signal = new AbortController().signal
+      await owner.related(request, signal)
+      expect(run).toHaveBeenCalledWith(request, signal)
+      expect(withDataRootWrite).not.toHaveBeenCalled()
+      expect(broadcastToRenderers).not.toHaveBeenCalled()
+    }
+  )
+  it('preserves the Index mode and cancellation across the citation command boundary', async () => {
+    const run = vi
+      .fn()
+      .mockResolvedValue({ records: [], provider: 'opencitations', opencitationsMode: 'index' })
     const owner = createLiteratureCommandOwner({
       literatureRelatedFinder: { run }
     } as unknown as Services)
     const request = {
       itemId: 'paper',
       expectedMetadataRevision: 1,
-      direction: 'references' as const,
-      offset: 0
+      direction: 'citations' as const,
+      provider: 'opencitations' as const,
+      opencitationsMode: 'index' as const,
+      seedPaperId: 'opencitations:br/062203052290',
+      resolutionToken: '00000000-0000-4000-8000-000000000001',
+      offset: 20
     }
     const signal = new AbortController().signal
-    await owner.related(request, signal)
-    expect(run).toHaveBeenCalledWith(request, signal)
+    await expect(owner.related(request, signal)).resolves.toMatchObject({
+      opencitationsMode: 'index'
+    })
+    expect(run).toHaveBeenCalledExactlyOnceWith(request, signal)
     expect(withDataRootWrite).not.toHaveBeenCalled()
     expect(broadcastToRenderers).not.toHaveBeenCalled()
   })

@@ -1,6 +1,8 @@
 {
   "schemaVersion": 1,
-  "alwaysLanes": ["policy"],
+  "alwaysLanes": [
+    "policy"
+  ],
   "laneOrder": [
     "policy",
     "docs",
@@ -141,50 +143,86 @@
         ".github/CODEOWNERS",
         "CODEOWNERS"
       ],
-      "capabilities": ["ci_integrity_surface"]
+      "capabilities": [
+        "ci_integrity_surface"
+      ]
     },
     {
       "id": "documentation",
       "role": "owner",
-      "paths": ["**/*.md", "docs/**", "LICENSE", ".gitignore"],
-      "capabilities": ["documentation"]
+      "paths": [
+        "**/*.md",
+        "docs/**",
+        "LICENSE",
+        ".gitignore"
+      ],
+      "capabilities": [
+        "documentation"
+      ]
     },
     {
       "id": "german_readme_glossary",
       "role": "overlay",
-      "paths": ["docs/de/README.md"],
-      "capabilities": ["i18n_catalog"]
+      "paths": [
+        "docs/de/README.md"
+      ],
+      "capabilities": [
+        "i18n_catalog"
+      ]
     },
     {
       "id": "issue_template",
       "role": "owner",
-      "paths": [".github/ISSUE_TEMPLATE/*.yml", ".github/ISSUE_TEMPLATE/*.yaml"],
-      "capabilities": ["issue_template"]
+      "paths": [
+        ".github/ISSUE_TEMPLATE/*.yml",
+        ".github/ISSUE_TEMPLATE/*.yaml"
+      ],
+      "capabilities": [
+        "issue_template"
+      ]
     },
     {
       "id": "native_runtime_packages",
       "role": "owner",
-      "paths": ["packages/process-tree-native/**", "packages/safe-file-publisher-native/**"],
-      "capabilities": ["notebook_network_sandbox", "windows_sensitive"]
+      "paths": [
+        "packages/process-tree-native/**",
+        "packages/safe-file-publisher-native/**"
+      ],
+      "capabilities": [
+        "notebook_network_sandbox",
+        "windows_sensitive"
+      ]
     },
     {
       "id": "notebook_network_sandbox",
       "role": "owner",
-      "paths": ["packages/notebook-network-sandbox/**"],
-      "capabilities": ["notebook_network_sandbox"]
+      "paths": [
+        "packages/notebook-network-sandbox/**"
+      ],
+      "capabilities": [
+        "notebook_network_sandbox"
+      ]
     },
     {
       "id": "shared_contract",
       "role": "owner",
       "fallbackOwner": true,
-      "paths": ["src/shared/**"],
-      "capabilities": ["shared_contract"]
+      "paths": [
+        "src/shared/**"
+      ],
+      "capabilities": [
+        "shared_contract"
+      ]
     },
     {
       "id": "preload_contract",
       "role": "owner",
-      "paths": ["src/preload/**"],
-      "capabilities": ["preload_contract"]
+      "paths": [
+        "src/preload/**"
+      ],
+      "capabilities": [
+        "preload_contract"
+      ]
     },
     {
       "id": "main_runtime",
@@ -197,7 +235,9 @@
         "packages/notebook-analysis/**",
         "packages/environment/**"
       ],
-      "capabilities": ["main_runtime"]
+      "capabilities": [
+        "main_runtime"
+      ]
     },
     {
       "id": "windows_sensitive",
@@ -387,14 +427,20 @@
         "src/main/harness-acp/tool-receipts.ts",
         "src/main/harness-acp/storage-cleanup.ts"
       ],
-      "capabilities": ["windows_sensitive"]
+      "capabilities": [
+        "windows_sensitive"
+      ]
     },
     {
       "id": "renderer_view",
       "role": "owner",
       "fallbackOwner": true,
-      "paths": ["src/renderer/**"],
-      "capabilities": ["renderer_view"]
+      "paths": [
+        "src/renderer/**"
+      ],
+      "capabilities": [
+        "renderer_view"
+      ]
     },
     {
       "id": "renderer_state",
@@ -405,19 +451,30 @@
         "src/renderer/src/navigation/**",
         "src/renderer/src/pages/workspace/**"
       ],
-      "capabilities": ["renderer_state"]
+      "capabilities": [
+        "renderer_state"
+      ]
     },
     {
       "id": "cli_sdk",
       "role": "owner",
-      "paths": ["cli/**", "packages/open-science/**"],
-      "capabilities": ["cli_sdk"]
+      "paths": [
+        "cli/**",
+        "packages/open-science/**"
+      ],
+      "capabilities": [
+        "cli_sdk"
+      ]
     },
     {
       "id": "settings_ipc",
       "role": "overlay",
-      "paths": ["src/main/settings/ipc.ts"],
-      "capabilities": ["settings_ipc"]
+      "paths": [
+        "src/main/settings/ipc.ts"
+      ],
+      "capabilities": [
+        "settings_ipc"
+      ]
     },
     {
       "id": "default_env_staging",
@@ -428,7 +485,9 @@
         "scripts/verify-runtime-bundle.mjs",
         "scripts/verify-runtime-bundle.test.ts"
       ],
-      "capabilities": ["runtime_bundle"]
+      "capabilities": [
+        "runtime_bundle"
+      ]
     },
     {
       "id": "runtime_bundle",
@@ -439,14 +498,20 @@
         "scripts/verify-runtime-bundle.mjs",
         ".github/workflows/stage-runtime-bundle.yml"
       ],
-      "capabilities": ["runtime_bundle"]
+      "capabilities": [
+        "runtime_bundle"
+      ]
     },
     {
       "id": "renderer_browser_e2e",
       "role": "owner",
-      "paths": ["e2e/browser/**"],
+      "paths": [
+        "e2e/browser/**"
+      ],
       "runner": "playwright",
-      "capabilities": ["renderer_browser_e2e"]
+      "capabilities": [
+        "renderer_browser_e2e"
+      ]
     },
     {
       "id": "desktop_e2e_journeys",
@@ -466,7 +531,10 @@
         "e2e/specialist-marketplace-redirect.spec.ts",
         "e2e/fixtures/localized-settings.ts"
       ],
-      "capabilities": ["desktop_e2e_source", "e2e_functional"]
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_functional"
+      ]
     },
     {
       "id": "desktop_e2e_workspace",
@@ -484,7 +552,10 @@
         "e2e/office-spreadsheet-search.spec.ts",
         "e2e/fixtures/pptx.ts"
       ],
-      "capabilities": ["desktop_e2e_source", "e2e_workspace"]
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_workspace"
+      ]
     },
     {
       "id": "desktop_e2e_regressions",
@@ -579,7 +650,10 @@
         "e2e/fixtures/session-outcome-fault.ts",
         "e2e/fixtures/settings-error-transport.ts"
       ],
-      "capabilities": ["desktop_e2e_source", "e2e_regressions"]
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_regressions"
+      ]
     },
     {
       "id": "desktop_e2e_delegation",
@@ -592,28 +666,48 @@
         "e2e/delegation-cold-recovery.spec.ts",
         "e2e/fixtures/session-revision-retry.ts"
       ],
-      "capabilities": ["desktop_e2e_source", "e2e_delegation"]
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_delegation"
+      ]
     },
     {
       "id": "desktop_e2e_accessibility",
       "role": "owner",
       "runner": "playwright",
-      "paths": ["e2e/accessibility.spec.ts"],
-      "capabilities": ["desktop_e2e_source", "e2e_accessibility"]
+      "paths": [
+        "e2e/accessibility.spec.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_accessibility"
+      ]
     },
     {
       "id": "desktop_e2e_visual",
       "role": "owner",
       "runner": "playwright",
-      "paths": ["e2e/visual-regression.spec.ts", "e2e/visual-regression.spec.ts-snapshots/*.png"],
-      "capabilities": ["desktop_e2e_source", "e2e_visual"]
+      "paths": [
+        "e2e/visual-regression.spec.ts",
+        "e2e/visual-regression.spec.ts-snapshots/*.png"
+      ],
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_visual"
+      ]
     },
     {
       "id": "desktop_e2e_presentation_fixtures",
       "role": "owner",
       "runner": "playwright",
-      "paths": ["e2e/fixtures/viewport.ts"],
-      "capabilities": ["desktop_e2e_source", "e2e_accessibility", "e2e_visual"]
+      "paths": [
+        "e2e/fixtures/viewport.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_accessibility",
+        "e2e_visual"
+      ]
     },
     {
       "id": "desktop_e2e_shared_harness",
@@ -642,7 +736,10 @@
         "e2e/fixtures/session-outcome-preload.cjs",
         "e2e/fixtures/settings-preferences.ts"
       ],
-      "capabilities": ["desktop_e2e_source", "desktop_e2e_all"]
+      "capabilities": [
+        "desktop_e2e_source",
+        "desktop_e2e_all"
+      ]
     },
     {
       "id": "desktop_e2e_without_pr_executor",
@@ -653,7 +750,9 @@
         "e2e/runtime-performance.spec.ts",
         "e2e/startup-performance.spec.ts"
       ],
-      "capabilities": ["desktop_e2e_source"]
+      "capabilities": [
+        "desktop_e2e_source"
+      ]
     },
     {
       "id": "windows_notebook_mutation",
@@ -663,7 +762,9 @@
         "e2e/fixtures/fake-micromamba.rs",
         "e2e/fixtures/run-notebook-lifecycle-windows.ps1"
       ],
-      "capabilities": ["windows_notebook_mutation"]
+      "capabilities": [
+        "windows_notebook_mutation"
+      ]
     },
     {
       "id": "desktop_e2e_smoke",
@@ -674,13 +775,20 @@
         "e2e/window-presentation.spec.ts",
         "e2e/fixtures/localized-settings.ts"
       ],
-      "capabilities": ["e2e_smoke"]
+      "capabilities": [
+        "e2e_smoke"
+      ]
     },
     {
       "id": "desktop_e2e_windows_journeys",
       "role": "overlay",
-      "paths": ["e2e/electron-foundation.spec.ts", "e2e/windows-window-system.spec.ts"],
-      "capabilities": ["e2e_windows_functional"]
+      "paths": [
+        "e2e/electron-foundation.spec.ts",
+        "e2e/windows-window-system.spec.ts"
+      ],
+      "capabilities": [
+        "e2e_windows_functional"
+      ]
     },
     {
       "id": "desktop_e2e_windows_workspace",
@@ -691,7 +799,9 @@
         "e2e/markdown-publication-policy.spec.ts",
         "e2e/fixtures/pptx.ts"
       ],
-      "capabilities": ["e2e_windows_workspace"]
+      "capabilities": [
+        "e2e_windows_workspace"
+      ]
     },
     {
       "id": "desktop_e2e_browser_fixtures",
@@ -701,7 +811,9 @@
         "e2e/fixtures/settings-preferences.ts",
         "e2e/fixtures/scroll-geometry.ts"
       ],
-      "capabilities": ["renderer_browser_e2e"]
+      "capabilities": [
+        "renderer_browser_e2e"
+      ]
     },
     {
       "id": "desktop_e2e_reader_electron_app",
@@ -715,18 +827,24 @@
         "scripts/electron-app-fixture.test.ts",
         "scripts/electron-fixture-teardown.test.ts"
       ],
-      "capabilities": ["desktop_e2e_unit_readers"]
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
     },
     {
       "id": "desktop_e2e_reader_local_service_cleanup",
       "role": "overlay",
-      "paths": ["e2e/fixtures/local-service-cleanup.ts"],
+      "paths": [
+        "e2e/fixtures/local-service-cleanup.ts"
+      ],
       "tests": [
         "scripts/electron-app-fixture.test.ts",
         "scripts/electron-fixture-teardown.test.ts",
         "scripts/local-service-cleanup.test.ts"
       ],
-      "capabilities": ["desktop_e2e_unit_readers"]
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
     },
     {
       "id": "desktop_e2e_reader_preload",
@@ -739,8 +857,12 @@
         "e2e/fixtures/mock-credential-identity.cjs",
         "e2e/fixtures/mock-credential-identity.sh"
       ],
-      "tests": ["scripts/electron-app-fixture.test.ts"],
-      "capabilities": ["desktop_e2e_unit_readers"]
+      "tests": [
+        "scripts/electron-app-fixture.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
     },
     {
       "id": "desktop_e2e_reader_native_quit",
@@ -753,43 +875,78 @@
         "e2e/fixtures/session-outcome-preload.cjs",
         "e2e/fixtures/mock-node-credentials.cjs"
       ],
-      "tests": ["scripts/native-quit-dialog.test.ts"],
-      "capabilities": ["desktop_e2e_unit_readers"]
+      "tests": [
+        "scripts/native-quit-dialog.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
     },
     {
       "id": "desktop_e2e_reader_renderer_failure_gate",
       "role": "overlay",
-      "paths": ["e2e/fixtures/renderer-failure-gate.ts"],
-      "tests": ["scripts/electron-app-fixture.test.ts", "test/renderer-failure-gate.test.ts"],
-      "capabilities": ["desktop_e2e_unit_readers"]
+      "paths": [
+        "e2e/fixtures/renderer-failure-gate.ts"
+      ],
+      "tests": [
+        "scripts/electron-app-fixture.test.ts",
+        "test/renderer-failure-gate.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
     },
     {
       "id": "desktop_e2e_reader_brand_storage",
       "role": "overlay",
-      "paths": ["e2e/fixtures/brand-storage-data.ts"],
-      "tests": ["src/main/storage/brand-location.test.ts"],
-      "capabilities": ["desktop_e2e_unit_readers"]
+      "paths": [
+        "e2e/fixtures/brand-storage-data.ts"
+      ],
+      "tests": [
+        "src/main/storage/brand-location.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
     },
     {
       "id": "desktop_e2e_reader_session_outcome",
       "role": "overlay",
-      "paths": ["e2e/fixtures/session-outcome-preload.cjs"],
-      "tests": ["test/config/playwright.config.test.ts"],
-      "capabilities": ["desktop_e2e_unit_readers"]
+      "paths": [
+        "e2e/fixtures/session-outcome-preload.cjs"
+      ],
+      "tests": [
+        "test/config/playwright.config.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
     },
     {
       "id": "desktop_e2e_reader_session_revision",
       "role": "overlay",
-      "paths": ["e2e/fixtures/session-revision-retry.ts"],
-      "tests": ["scripts/electron-session-revision-retry.test.ts"],
-      "capabilities": ["desktop_e2e_unit_readers"]
+      "paths": [
+        "e2e/fixtures/session-revision-retry.ts"
+      ],
+      "tests": [
+        "scripts/electron-session-revision-retry.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
     },
     {
       "id": "desktop_e2e_reader_visual_baseline",
       "role": "overlay",
-      "paths": ["e2e/visual-regression.spec.ts-snapshots/home-empty-darwin.png"],
-      "tests": ["src/main/uploads/attachment-media.sharp.test.ts"],
-      "capabilities": ["desktop_e2e_unit_readers"]
+      "paths": [
+        "e2e/visual-regression.spec.ts-snapshots/home-empty-darwin.png"
+      ],
+      "tests": [
+        "src/main/uploads/attachment-media.sharp.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
     },
     {
       "id": "critical_desktop_runtime",
@@ -846,7 +1003,10 @@
         "packages/notebook-code-risk/**",
         "packages/notebook-analysis/**"
       ],
-      "capabilities": ["e2e_regressions", "e2e_delegation"]
+      "capabilities": [
+        "e2e_regressions",
+        "e2e_delegation"
+      ]
     },
     {
       "id": "specialist_recovery",
@@ -859,13 +1019,953 @@
         "src/main/composition/agent-completion.ts",
         "src/main/session-persistence/claude-replay.ts"
       ],
-      "capabilities": ["specialist_recovery"]
+      "capabilities": [
+        "specialist_recovery"
+      ]
+    },
+    {
+      "id": "global_gate_input",
+      "role": "global",
+      "paths": [
+        "package*.json",
+        "patches/**",
+        ".nvmrc",
+        "tsconfig*.json",
+        "vitest.config.*",
+        "electron.vite.config.*",
+        "vite.web.config.*",
+        "playwright.config.*",
+        "electron-builder.yml",
+        "scripts/ci/**",
+        ".github/workflows/pr-gate.yml",
+        "e2e/playwright.*.config.ts",
+        "e2e/vite.browser-test.config.ts",
+        "e2e/accessibility-reporter.ts",
+        "e2e/windows-shard-reporter.ts",
+        "test/config/**",
+        ".github/actions/source-regression/**",
+        ".github/workflows/source-regression.yml",
+        "scripts/backend-dependencies.mjs",
+        "scripts/agent-harness-acceptance.mjs",
+        "scripts/check-agent-harness-package.mjs",
+        "scripts/fixtures/agent-harness/**",
+        "scripts/package-verification-plan.mjs",
+        "scripts/package-verification-plan.test.ts",
+        "scripts/build-backend.mjs",
+        "scripts/windows-signing-policy.mjs",
+        "scripts/windows-signing-policy.test.ts",
+        "scripts/wsl2-build-flags.mjs",
+        "scripts/wsl2-build-flags.d.mts",
+        "scripts/windows-signing-policy.mjs",
+        "scripts/windows-signing-policy.test.ts",
+        "scripts/stage-backend.mjs",
+        "scripts/stage-npm-release.mjs",
+        "scripts/stage-npm-release.test.ts",
+        "scripts/pack-npm-release.mjs",
+        "scripts/pack-npm-release.test.ts",
+        "scripts/publish-npm-release.mjs",
+        "scripts/publish-npm-release.test.ts",
+        "scripts/npm-runtime-workflow.test.ts",
+        "scripts/extract-runtime-desktop.mjs",
+        "scripts/verify-runtime-signatures.mjs",
+        "scripts/verify-runtime-signatures.ps1",
+        "scripts/windows-signing-policy.mjs",
+        "scripts/windows-signing-policy.d.mts",
+        "scripts/windows-signing-policy.test.ts",
+        "scripts/test-npm-installed.mjs",
+        "scripts/runtime-archives.mjs",
+        "scripts/runtime-archives.test.ts",
+        "scripts/linux-cli-packages.mjs",
+        "scripts/linux-cli-packages.test.ts",
+        "scripts/publish-linux-cli-packages.mjs",
+        "scripts/publish-linux-cli-packages.test.ts",
+        "scripts/test-linux-cli-package.mjs",
+        "scripts/test-runtime-archive.mjs",
+        "scripts/test-backend-installed.mjs",
+        "scripts/stage-node-runtime.mjs",
+        "build/node-runtime.json",
+        "build/macos-service-launcher.c"
+      ],
+      "mode": "full",
+      "capabilities": []
+    },
+    {
+      "id": "ci_integrity_surface",
+      "role": "owner",
+      "paths": [
+        ".github/workflows/**",
+        ".github/actions/**",
+        ".github/dependabot.yml",
+        ".github/CODEOWNERS",
+        "CODEOWNERS"
+      ],
+      "capabilities": [
+        "ci_integrity_surface"
+      ]
+    },
+    {
+      "id": "documentation",
+      "role": "owner",
+      "paths": [
+        "**/*.md",
+        "docs/**",
+        "LICENSE",
+        ".gitignore"
+      ],
+      "capabilities": [
+        "documentation"
+      ]
+    },
+    {
+      "id": "issue_template",
+      "role": "owner",
+      "paths": [
+        ".github/ISSUE_TEMPLATE/*.yml",
+        ".github/ISSUE_TEMPLATE/*.yaml"
+      ],
+      "capabilities": [
+        "issue_template"
+      ]
+    },
+    {
+      "id": "native_runtime_packages",
+      "role": "owner",
+      "paths": [
+        "packages/process-tree-native/**",
+        "packages/safe-file-publisher-native/**"
+      ],
+      "capabilities": [
+        "notebook_network_sandbox",
+        "windows_sensitive"
+      ]
+    },
+    {
+      "id": "notebook_network_sandbox",
+      "role": "owner",
+      "paths": [
+        "packages/notebook-network-sandbox/**"
+      ],
+      "capabilities": [
+        "notebook_network_sandbox"
+      ]
+    },
+    {
+      "id": "shared_contract",
+      "role": "owner",
+      "fallbackOwner": true,
+      "paths": [
+        "src/shared/**"
+      ],
+      "capabilities": [
+        "shared_contract"
+      ]
+    },
+    {
+      "id": "preload_contract",
+      "role": "owner",
+      "paths": [
+        "src/preload/**"
+      ],
+      "capabilities": [
+        "preload_contract"
+      ]
+    },
+    {
+      "id": "main_runtime",
+      "role": "owner",
+      "fallbackOwner": true,
+      "paths": [
+        "src/main/**",
+        "packages/notebook-syntax/**",
+        "packages/notebook-code-risk/**",
+        "packages/notebook-analysis/**",
+        "packages/environment/**"
+      ],
+      "capabilities": [
+        "main_runtime"
+      ]
+    },
+    {
+      "id": "windows_sensitive",
+      "role": "overlay",
+      "paths": [
+        "src/main/**/*windows*.ts",
+        "src/main/**/*powershell*.ts",
+        "src/main/**/*path*.ts",
+        "src/main/**/*acl*.ts",
+        "src/main/research-video/export-electron.ts",
+        "packages/research-film/src/ffmpeg.ts",
+        "src/main/window-shortcuts.ts",
+        "src/main/acp/agent-process.ts",
+        "src/main/acp/claude-executable.ts",
+        "src/main/acp/permission-broker.ts",
+        "src/main/acp/restricted-runtime-profile.ts",
+        "src/main/acp/runtime.ts",
+        "src/main/acp/session-capability-owner.ts",
+        "src/main/acp/filesystem.ts",
+        "src/main/agent-framework/codebuddy.ts",
+        "src/main/agent-framework/codex.ts",
+        "src/main/agent-framework/opencode.ts",
+        "src/main/agent-framework/types.ts",
+        "src/main/app-lifecycle.ts",
+        "packages/reproducibility/**",
+        "src/main/artifacts/artifact-reproducibility-export.ts",
+        "src/main/artifacts/durability.ts",
+        "src/main/cli-install/launcher.ts",
+        "src/main/composition/notebook-bridge.ts",
+        "src/main/composition/settings-effects.ts",
+        "src/main/composition/settings-bootstrap.ts",
+        "src/main/compute/compute-account-hf.ts",
+        "src/main/compute/connection-adapters.ts",
+        "src/main/compute/credential-vault.ts",
+        "src/main/compute/kubernetes-job-files.ts",
+        "src/main/compute/kubernetes-kubeconfig.ts",
+        "src/main/compute/modal-account-auth.ts",
+        "src/main/compute/modal-sdk.ts",
+        "src/main/connectors/mcp-stdio-launch.ts",
+        "packages/compute/src/scp-runner.ts",
+        "packages/compute/src/ssh-runner.ts",
+        "src/main/crash-diagnostics.ts",
+        "src/main/credential-identity/**",
+        "src/main/delegation/process-ownership.ts",
+        "src/main/immutable-input-authority.ts",
+        "src/main/index.ts",
+        "src/main/ipc.ts",
+        "src/main/legacy-service-termination.ts",
+        "src/main/lifecycle-shutdown.ts",
+        "src/main/session-package/materialize.ts",
+        "src/main/literature/pdf-structure/engine.ts",
+        "src/main/local-rpc-transport.ts",
+        "packages/notebook-code-risk/src/index.ts",
+        "src/main/notebook/runtime-service.ts",
+        "src/shared/tool-detail-sanitizer.ts",
+        "packages/notebook-analysis/src/dependency-analysis-python.ts",
+        "packages/notebook-analysis/src/dependency-analysis-repl.ts",
+        "packages/notebook-analysis/src/dependency-projection.ts",
+        "src/main/notebook/working-file-observer.ts",
+        "src/main/notebook/conditional-restore-script.ts",
+        "src/main/notebook/environment-resources.ts",
+        "packages/environment/src/environment-discovery.ts",
+        "packages/environment/src/environment-lock.ts",
+        "packages/environment/src/environment-state-tracker.ts",
+        "src/main/notebook/environment-resources.ts",
+        "src/main/notebook/execution-owner.ts",
+        "packages/environment/src/external-r-library.ts",
+        "src/main/notebook/configured-shell-runtime.ts",
+        "src/main/notebook/kernel-executor.ts",
+        "src/main/notebook/kernel-executable-read-root.ts",
+        "src/main/notebook/local-rpc-server.ts",
+        "src/main/notebook/managed-runtime-guard.ts",
+        "src/main/notebook/mcp-server.ts",
+        "packages/environment/src/micromamba-cache-recovery.ts",
+        "packages/environment/src/micromamba-cache.ts",
+        "packages/environment/src/micromamba.ts",
+        "packages/environment/src/native-lock-restoration.ts",
+        "src/main/notebook/network-sandbox-owner.ts",
+        "src/main/notebook/package-listing.ts",
+        "packages/environment/src/package-manager.ts",
+        "src/main/notebook/package-process-sandbox.ts",
+        "packages/environment/src/pip-install-evidence.ts",
+        "packages/environment/src/pip-install-evidence.test.ts",
+        "packages/environment/src/pip-wheel-evidence.ts",
+        "packages/environment/src/pip-wheel-evidence.test.ts",
+        "packages/environment/src/process-environment.ts",
+        "packages/environment/src/provisioner-runtime.ts",
+        "packages/environment/src/provisioner.ts",
+        "packages/environment/src/restored-environment-verification.ts",
+        "packages/environment/src/python-command.ts",
+        "packages/environment/src/r-command.ts",
+        "src/main/notebook/runtime-workflows.ts",
+        "src/main/notebook/shell-cell-session.ts",
+        "src/main/notebook/shell-npm-environment.ts",
+        "src/main/notebook/shell-process.ts",
+        "src/main/notebook/shell-runtime.ts",
+        "src/main/notebook/shell-search-scope.ts",
+        "src/main/notebook/venv-overlay.ts",
+        "src/main/notifications/desktop-attention.ts",
+        "src/main/notifications/desktop-badge.ts",
+        "src/main/permission-grants/capability.ts",
+        "src/main/process-birth-identity.ts",
+        "src/main/process-tree.ts",
+        "src/main/runtime-entry-identity.ts",
+        "src/main/runtime-ownership.ts",
+        "src/main/remote-access/pinggy.ts",
+        "src/main/remote-access/remoteit.ts",
+        "src/main/session-diagnostics/environment.ts",
+        "src/main/session-diagnostics/projection.ts",
+        "src/main/settings/agent-runtime-manager.ts",
+        "src/main/settings/application-commands.ts",
+        "src/main/settings/claude-cli-process.ts",
+        "src/main/settings/claude-detect.ts",
+        "src/main/settings/claude-install.ts",
+        "src/main/settings/codebuddy-detect.ts",
+        "src/main/settings/codex-auth.ts",
+        "src/main/settings/codex-detect.ts",
+        "src/main/settings/document-codec.ts",
+        "src/main/settings/environment-check.ts",
+        "src/main/settings/ipc.ts",
+        "src/main/settings/managed-claude.ts",
+        "src/main/settings/managed-codebuddy.ts",
+        "src/main/settings/managed-codex.ts",
+        "src/main/settings/managed-opencode.ts",
+        "src/main/settings/notebook-runtime-settings.ts",
+        "src/main/settings/opencode-detect.ts",
+        "src/main/settings/opencode-install.ts",
+        "src/main/settings/preferences.ts",
+        "src/main/settings/process-tree.ts",
+        "src/main/settings/service.ts",
+        "src/main/skills/catalog.ts",
+        "src/main/skills/registered-helper-catalog.ts",
+        "src/main/skills/helper-validation.ts",
+        "src/main/settings/workflows/local-shell.ts",
+        "src/main/storage-root.ts",
+        "src/main/storage/**",
+        "src/main/tray.ts",
+        "src/main/window-shortcuts.ts",
+        "src/main/update/channel-certification.ts",
+        "src/main/update/create-strategy.ts",
+        "src/main/update/electron-updater-strategy.ts",
+        "src/main/wsl/**",
+        "src/main/session-persistence/**",
+        "src/main/file-save.ts",
+        "src/main/specialist/repository.ts",
+        "src/preload/**/*windows*.ts",
+        "src/preload/**/*powershell*.ts",
+        "src/preload/**/*path*.ts",
+        "src/preload/**/*acl*.ts",
+        "src/preload/renderer-api.d.ts",
+        "src/shared/local-fs.ts",
+        "src/shared/notebook.ts",
+        "src/shared/notebook-network.ts",
+        "src/shared/renderer-contract-catalog.ts",
+        "src/shared/renderer-contracts/**",
+        "src/shared/settings.ts",
+        "src/shared/update.ts",
+        "src/shared/web-api-map.generated.ts",
+        "src/shared/wsl-setup.ts",
+        "src/main/delegation/production-framework-runtime.ts",
+        "src/main/desktop-connection.ts",
+        "src/main/backend-startup-log-retention.ts",
+        "src/main/desktop-runtime-launcher.ts",
+        "src/main/node-entry.ts",
+        "src/main/notebook/code-risk-adapter.ts",
+        "packages/notebook-syntax/src/powershell.ts",
+        "packages/notebook-analysis/src/*path*.ts",
+        "src/main/notebook/environment-production.ts",
+        "src/main/notebook/environment-resources.ts",
+        "src/main/notebook/environment-runner.ts",
+        "packages/environment/src/micromamba-cache-powershell.test.ts",
+        "packages/environment/src/micromamba-cache-acl.integration.test.ts",
+        "src/main/composition/session-foundation.ts",
+        "src/main/system-boot-identity.ts",
+        "src/main/update/installation-artifact.ts",
+        "src/main/update/installation-executor.ts",
+        "src/main/update/installation-occupancy.ts",
+        "src/main/update/installation-protection.ts",
+        "src/main/update/installation-reboot-recovery.ts",
+        "src/main/update/verification-process.ts",
+        "src/main/agent-framework/harness.ts",
+        "src/main/harness-acp/tool-receipts.ts",
+        "src/main/harness-acp/storage-cleanup.ts"
+      ],
+      "capabilities": [
+        "windows_sensitive"
+      ]
+    },
+    {
+      "id": "renderer_view",
+      "role": "owner",
+      "fallbackOwner": true,
+      "paths": [
+        "src/renderer/**"
+      ],
+      "capabilities": [
+        "renderer_view"
+      ]
+    },
+    {
+      "id": "renderer_state",
+      "role": "overlay",
+      "paths": [
+        "src/renderer/src/stores/**",
+        "src/renderer/src/hooks/**",
+        "src/renderer/src/navigation/**",
+        "src/renderer/src/pages/workspace/**"
+      ],
+      "capabilities": [
+        "renderer_state"
+      ]
+    },
+    {
+      "id": "cli_sdk",
+      "role": "owner",
+      "paths": [
+        "cli/**",
+        "packages/open-science/**"
+      ],
+      "capabilities": [
+        "cli_sdk"
+      ]
+    },
+    {
+      "id": "settings_ipc",
+      "role": "overlay",
+      "paths": [
+        "src/main/settings/ipc.ts"
+      ],
+      "capabilities": [
+        "settings_ipc"
+      ]
+    },
+    {
+      "id": "default_env_staging",
+      "role": "owner",
+      "paths": [
+        "scripts/stage-default-envs.mjs",
+        "scripts/stage-default-envs.test.ts",
+        "scripts/verify-runtime-bundle.mjs",
+        "scripts/verify-runtime-bundle.test.ts"
+      ],
+      "capabilities": [
+        "runtime_bundle"
+      ]
+    },
+    {
+      "id": "runtime_bundle",
+      "role": "overlay",
+      "paths": [
+        "packages/environment/src/runtime-paths.ts",
+        "scripts/stage-default-envs.mjs",
+        "scripts/verify-runtime-bundle.mjs",
+        ".github/workflows/stage-runtime-bundle.yml"
+      ],
+      "capabilities": [
+        "runtime_bundle"
+      ]
+    },
+    {
+      "id": "renderer_browser_e2e",
+      "role": "owner",
+      "paths": [
+        "e2e/browser/**"
+      ],
+      "runner": "playwright",
+      "capabilities": [
+        "renderer_browser_e2e"
+      ]
+    },
+    {
+      "id": "desktop_e2e_journeys",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/brand-storage.spec.ts",
+        "e2e/electron-foundation.spec.ts",
+        "e2e/settings-persistence.spec.ts",
+        "e2e/windows-window-system.spec.ts",
+        "e2e/wsl-setup-conversation.spec.ts",
+        "e2e/session-package.spec.ts",
+        "e2e/home-use-cases.spec.ts",
+        "e2e/session-package-drop.spec.ts",
+        "e2e/session-fork.spec.ts",
+        "e2e/session-diagnostics.spec.ts",
+        "e2e/specialist-marketplace-redirect.spec.ts",
+        "e2e/fixtures/localized-settings.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_functional"
+      ]
+    },
+    {
+      "id": "desktop_e2e_workspace",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/launch-environment.spec.ts",
+        "e2e/message-tool-layout-stability.spec.ts",
+        "e2e/message-tool-collapse-scroll.spec.ts",
+        "e2e/workspace-project-switcher.spec.ts",
+        "e2e/workspace-conversation.spec.ts",
+        "e2e/workspace-files.spec.ts",
+        "e2e/markdown-publication-policy.spec.ts",
+        "e2e/office-spreadsheet-search.spec.ts",
+        "e2e/fixtures/pptx.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_workspace"
+      ]
+    },
+    {
+      "id": "desktop_e2e_regressions",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/opencode-first-turn-stop.spec.ts",
+        "e2e/session-storage-recovery.spec.ts",
+        "e2e/desktop-composer-draft-restart.spec.ts",
+        "e2e/desktop-runtime-lifetime.spec.ts",
+        "e2e/local-service-lifecycle.spec.ts",
+        "e2e/desktop-runtime-backpressure.spec.ts",
+        "e2e/desktop-runtime-event-delivery.spec.ts",
+        "e2e/desktop-runtime-recovery.spec.ts",
+        "e2e/desktop-runtime-restart.spec.ts",
+        "e2e/desktop-runtime-preview-recovery.spec.ts",
+        "e2e/desktop-runtime-stop.spec.ts",
+        "e2e/pdf-annotations.spec.ts",
+        "e2e/pdf-translation-pair.spec.ts",
+        "e2e/pdf-translation-preparation.spec.ts",
+        "e2e/pdf-translation-recovery.spec.ts",
+        "e2e/pdf-notebook-capacity.spec.ts",
+        "e2e/background-result-delivery.spec.ts",
+        "e2e/renderer-startup-dependencies.spec.ts",
+        "e2e/interaction-restart.spec.ts",
+        "e2e/interrupted-turn-recovery.spec.ts",
+        "e2e/resume-agent-recovery.spec.ts",
+        "e2e/specialist-switch-recovery.spec.ts",
+        "e2e/session-plan-recovery.spec.ts",
+        "e2e/auto-review-stop-resume.spec.ts",
+        "e2e/provider-connection-validation.spec.ts",
+        "e2e/global-search.spec.ts",
+        "e2e/search-file-navigation.spec.ts",
+        "e2e/transcript-capacity.spec.ts",
+        "e2e/session-residency-capacity.spec.ts",
+        "e2e/compute-execution-mode.spec.ts",
+        "e2e/find-overlay.spec.ts",
+        "e2e/literature-client-sync.spec.ts",
+        "e2e/literature-citation-graph.spec.ts",
+        "e2e/literature-citation-graph-live.spec.ts",
+        "e2e/journal-attributes.spec.ts",
+        "e2e/literature-smart-collections.spec.ts",
+        "e2e/session-client-consistency.spec.ts",
+        "e2e/runtime-writer-browser.spec.ts",
+        "e2e/mermaid-block.spec.ts",
+        "e2e/highlight-style-isolation.spec.ts",
+        "e2e/message-queue-presentation-gate.spec.ts",
+        "e2e/mobile-message-handoff.spec.ts",
+        "e2e/message-scroll-anchor.spec.ts",
+        "e2e/message-scroll-reanchor.spec.ts",
+        "e2e/message-scroll-release.spec.ts",
+        "e2e/message-tool-order.spec.ts",
+        "e2e/preview-context-menu.spec.ts",
+        "e2e/source-preview-storage.spec.ts",
+        "e2e/reproducibility-preview.spec.ts",
+        "e2e/skill-permission-card.spec.ts",
+        "e2e/window-presentation.spec.ts",
+        "e2e/ux-quality.spec.ts",
+        "e2e/side-chat-admission.spec.ts",
+        "e2e/artifact-task-lifecycle.spec.ts",
+        "e2e/artifact-resume-finalization.spec.ts",
+        "e2e/replay-stage.spec.ts",
+        "e2e/session-replay.spec.ts",
+        "e2e/session-replay-concurrency.spec.ts",
+        "e2e/session-replay-navigation.spec.ts",
+        "e2e/session-replay-notebook.spec.ts",
+        "e2e/session-turn-outcome.spec.ts",
+        "e2e/pdf-translation-editions.spec.ts",
+        "e2e/pdf-workspace-translation.spec.ts",
+        "e2e/pdf-translation-local.spec.ts",
+        "e2e/pdf-translation-performance.spec.ts",
+        "e2e/runtime-approval.spec.ts",
+        "e2e/network-destination-approval.spec.ts",
+        "e2e/pi-harness.spec.ts",
+        "e2e/builtin-harness.spec.ts",
+        "e2e/session-wait-status.spec.ts",
+        "e2e/settings-error-transport.spec.ts",
+        "e2e/desktop-runtime-startup.spec.ts",
+        "e2e/desktop-runtime-native-relaunch.spec.ts",
+        "e2e/runtime-update-ui-acceptance.spec.ts",
+        "e2e/fixtures/library.ts",
+        "e2e/fixtures/citation-graph-electron.mjs",
+        "e2e/fixtures/citation-graph-interactions.ts",
+        "e2e/fixtures/relaunch-observer.cjs",
+        "e2e/fixtures/runtime-relaunch-stall.cjs",
+        "e2e/fixtures/replay-stage/**",
+        "e2e/fixtures/reproducibility-preview/**",
+        "e2e/fixtures/session-outcome-fault.ts",
+        "e2e/fixtures/settings-error-transport.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_regressions"
+      ]
+    },
+    {
+      "id": "desktop_e2e_delegation",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/subagent-model-release-gate.spec.ts",
+        "e2e/subagent-release-gate.spec.ts",
+        "e2e/delegation-resume.spec.ts",
+        "e2e/delegation-cold-recovery.spec.ts",
+        "e2e/fixtures/session-revision-retry.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_delegation"
+      ]
+    },
+    {
+      "id": "desktop_e2e_accessibility",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/accessibility.spec.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_accessibility"
+      ]
+    },
+    {
+      "id": "desktop_e2e_visual",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/visual-regression.spec.ts",
+        "e2e/visual-regression.spec.ts-snapshots/*.png"
+      ],
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_visual"
+      ]
+    },
+    {
+      "id": "desktop_e2e_presentation_fixtures",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/fixtures/viewport.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_source",
+        "e2e_accessibility",
+        "e2e_visual"
+      ]
+    },
+    {
+      "id": "desktop_e2e_shared_harness",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/certification/helpers.ts",
+        "e2e/fixtures/brand-storage-data.ts",
+        "e2e/fixtures/conversation.ts",
+        "e2e/fixtures/electron-app.ts",
+        "e2e/fixtures/local-service-cleanup.ts",
+        "e2e/fixtures/fake-opencode.mjs",
+        "e2e/fixtures/fake-remoteit.cjs",
+        "e2e/fixtures/mock-credential-identity.cjs",
+        "e2e/fixtures/mock-credential-identity.sh",
+        "e2e/fixtures/mock-node-credentials.cjs",
+        "e2e/fixtures/mock-node-secret.sh",
+        "e2e/fixtures/native-quit-dialog.ts",
+        "e2e/fixtures/node-runtime-child-preload.cjs",
+        "e2e/fixtures/node-runtime-preload.cjs",
+        "e2e/fixtures/use-case-download-preload.cjs",
+        "e2e/fixtures/project.ts",
+        "e2e/fixtures/renderer-failure-gate.ts",
+        "e2e/fixtures/research-analysis.mjs",
+        "e2e/fixtures/sanitized-performance.png",
+        "e2e/fixtures/session-outcome-preload.cjs",
+        "e2e/fixtures/settings-preferences.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_source",
+        "desktop_e2e_all"
+      ]
+    },
+    {
+      "id": "desktop_e2e_without_pr_executor",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/certification/*.spec.ts",
+        "e2e/runtime-performance.spec.ts",
+        "e2e/startup-performance.spec.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_source"
+      ]
+    },
+    {
+      "id": "windows_notebook_mutation",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/fixtures/fake-micromamba.rs",
+        "e2e/fixtures/run-notebook-lifecycle-windows.ps1"
+      ],
+      "capabilities": [
+        "windows_notebook_mutation"
+      ]
+    },
+    {
+      "id": "desktop_e2e_smoke",
+      "role": "overlay",
+      "paths": [
+        "e2e/electron-foundation.spec.ts",
+        "e2e/settings-persistence.spec.ts",
+        "e2e/window-presentation.spec.ts",
+        "e2e/fixtures/localized-settings.ts"
+      ],
+      "capabilities": [
+        "e2e_smoke"
+      ]
+    },
+    {
+      "id": "desktop_e2e_windows_journeys",
+      "role": "overlay",
+      "paths": [
+        "e2e/electron-foundation.spec.ts",
+        "e2e/windows-window-system.spec.ts"
+      ],
+      "capabilities": [
+        "e2e_windows_functional"
+      ]
+    },
+    {
+      "id": "desktop_e2e_windows_workspace",
+      "role": "overlay",
+      "paths": [
+        "e2e/workspace-conversation.spec.ts",
+        "e2e/workspace-files.spec.ts",
+        "e2e/markdown-publication-policy.spec.ts",
+        "e2e/fixtures/pptx.ts"
+      ],
+      "capabilities": [
+        "e2e_windows_workspace"
+      ]
+    },
+    {
+      "id": "desktop_e2e_browser_fixtures",
+      "role": "overlay",
+      "paths": [
+        "e2e/fixtures/localized-settings.ts",
+        "e2e/fixtures/settings-preferences.ts",
+        "e2e/fixtures/citation-graph-interactions.ts"
+      ],
+      "capabilities": [
+        "renderer_browser_e2e"
+      ]
+    },
+    {
+      "id": "desktop_e2e_reader_electron_app",
+      "role": "overlay",
+      "paths": [
+        "e2e/fixtures/electron-app.ts",
+        "e2e/fixtures/brand-storage-data.ts",
+        "e2e/fixtures/native-quit-dialog.ts"
+      ],
+      "tests": [
+        "scripts/electron-app-fixture.test.ts",
+        "scripts/electron-fixture-teardown.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
+    },
+    {
+      "id": "desktop_e2e_reader_local_service_cleanup",
+      "role": "overlay",
+      "paths": [
+        "e2e/fixtures/local-service-cleanup.ts"
+      ],
+      "tests": [
+        "scripts/electron-app-fixture.test.ts",
+        "scripts/electron-fixture-teardown.test.ts",
+        "scripts/local-service-cleanup.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
+    },
+    {
+      "id": "desktop_e2e_reader_preload",
+      "role": "overlay",
+      "paths": [
+        "e2e/fixtures/node-runtime-preload.cjs",
+        "e2e/fixtures/use-case-download-preload.cjs",
+        "e2e/fixtures/session-outcome-preload.cjs",
+        "e2e/fixtures/mock-node-credentials.cjs",
+        "e2e/fixtures/mock-credential-identity.cjs",
+        "e2e/fixtures/mock-credential-identity.sh"
+      ],
+      "tests": [
+        "scripts/electron-app-fixture.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
+    },
+    {
+      "id": "desktop_e2e_reader_native_quit",
+      "role": "overlay",
+      "paths": [
+        "e2e/fixtures/native-quit-dialog.ts",
+        "e2e/fixtures/node-runtime-preload.cjs",
+        "e2e/fixtures/use-case-download-preload.cjs",
+        "e2e/fixtures/node-runtime-child-preload.cjs",
+        "e2e/fixtures/session-outcome-preload.cjs",
+        "e2e/fixtures/mock-node-credentials.cjs"
+      ],
+      "tests": [
+        "scripts/native-quit-dialog.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
+    },
+    {
+      "id": "desktop_e2e_reader_renderer_failure_gate",
+      "role": "overlay",
+      "paths": [
+        "e2e/fixtures/renderer-failure-gate.ts"
+      ],
+      "tests": [
+        "scripts/electron-app-fixture.test.ts",
+        "test/renderer-failure-gate.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
+    },
+    {
+      "id": "desktop_e2e_reader_brand_storage",
+      "role": "overlay",
+      "paths": [
+        "e2e/fixtures/brand-storage-data.ts"
+      ],
+      "tests": [
+        "src/main/storage/brand-location.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
+    },
+    {
+      "id": "desktop_e2e_reader_session_outcome",
+      "role": "overlay",
+      "paths": [
+        "e2e/fixtures/session-outcome-preload.cjs"
+      ],
+      "tests": [
+        "test/config/playwright.config.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
+    },
+    {
+      "id": "desktop_e2e_reader_session_revision",
+      "role": "overlay",
+      "paths": [
+        "e2e/fixtures/session-revision-retry.ts"
+      ],
+      "tests": [
+        "scripts/electron-session-revision-retry.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
+    },
+    {
+      "id": "desktop_e2e_reader_visual_baseline",
+      "role": "overlay",
+      "paths": [
+        "e2e/visual-regression.spec.ts-snapshots/home-empty-darwin.png"
+      ],
+      "tests": [
+        "src/main/uploads/attachment-media.sharp.test.ts"
+      ],
+      "capabilities": [
+        "desktop_e2e_unit_readers"
+      ]
+    },
+    {
+      "id": "critical_desktop_runtime",
+      "role": "overlay",
+      "paths": [
+        "src/main/acp/**",
+        "src/main/agent-framework/**",
+        "src/main/delegation/**",
+        "src/main/session*/**",
+        "src/main/permission*/**",
+        "src/main/artifacts/**",
+        "src/main/uploads/**",
+        "src/main/project*/**",
+        "src/main/compute/**",
+        "src/main/notebook/**",
+        "src/main/settings/**",
+        "src/main/skills/**",
+        "src/main/specialist/**",
+        "src/main/reviewer/**",
+        "src/main/side-chat/**",
+        "src/main/storage/**",
+        "src/main/database/**",
+        "src/main/local-fs/**",
+        "src/main/ipc-surfaces/**",
+        "src/main/connectors/*.ts",
+        "src/main/*runtime*.ts",
+        "src/main/*lifecycle*.ts",
+        "src/main/*window*.ts",
+        "src/main/second-instance-router.ts",
+        "src/main/ipc.ts",
+        "src/main/index.ts",
+        "src/main/*.ts",
+        "src/main/agents/**",
+        "src/main/archive/**",
+        "src/main/background-result-delivery/**",
+        "src/main/cli-install/**",
+        "src/main/diagnostics/**",
+        "src/main/host-sdk/**",
+        "src/main/literature/**",
+        "src/main/local-models/**",
+        "src/main/managed-file-versions/**",
+        "src/main/memory/**",
+        "src/main/net/**",
+        "src/main/notifications/**",
+        "src/main/office-preview/**",
+        "src/main/remote-access/**",
+        "src/main/session-package/**",
+        "src/main/session-plan/**",
+        "src/main/tasks/**",
+        "src/main/update/**",
+        "src/main/web-service/**",
+        "src/main/wsl/**",
+        "packages/notebook-syntax/**",
+        "packages/notebook-code-risk/**",
+        "packages/notebook-analysis/**"
+      ],
+      "capabilities": [
+        "e2e_regressions",
+        "e2e_delegation"
+      ]
+    },
+    {
+      "id": "specialist_recovery",
+      "role": "overlay",
+      "paths": [
+        "src/main/acp/**",
+        "src/main/agents/**",
+        "src/main/specialist/**",
+        "src/main/agent-framework/claude-code.ts",
+        "src/main/composition/agent-completion.ts",
+        "src/main/session-persistence/claude-replay.ts"
+      ],
+      "capabilities": [
+        "specialist_recovery"
+      ]
     }
   ],
   "capabilities": {
     "specialist_recovery": {
       "consumers": [],
-      "lanes": ["windows_runtime"]
+      "lanes": [
+        "windows_runtime"
+      ]
     },
     "ci_integrity_surface": {
       "consumers": [],
@@ -873,10 +1973,17 @@
     },
     "documentation": {
       "consumers": [],
-      "lanes": ["docs"]
+      "lanes": [
+        "docs"
+      ]
     },
     "shared_contract": {
-      "consumers": ["preload_adapter", "i18n_catalog", "e2e_regressions", "e2e_delegation"],
+      "consumers": [
+        "preload_adapter",
+        "i18n_catalog",
+        "e2e_regressions",
+        "e2e_delegation"
+      ],
       "lanes": [
         "format",
         "lint",
@@ -887,7 +1994,10 @@
       ]
     },
     "preload_contract": {
-      "consumers": ["e2e_regressions", "e2e_delegation"],
+      "consumers": [
+        "e2e_regressions",
+        "e2e_delegation"
+      ],
       "lanes": [
         "format",
         "lint",
@@ -899,11 +2009,23 @@
       ]
     },
     "main_runtime": {
-      "consumers": ["renderer_runtime", "i18n_catalog"],
-      "lanes": ["format", "lint", "typecheck_node", "interface_contracts", "unit_macos"]
+      "consumers": [
+        "renderer_runtime",
+        "i18n_catalog"
+      ],
+      "lanes": [
+        "format",
+        "lint",
+        "typecheck_node",
+        "interface_contracts",
+        "unit_macos"
+      ]
     },
     "notebook_network_sandbox": {
-      "consumers": ["e2e_regressions", "e2e_delegation"],
+      "consumers": [
+        "e2e_regressions",
+        "e2e_delegation"
+      ],
       "lanes": [
         "format",
         "lint",
@@ -917,8 +2039,15 @@
       ]
     },
     "renderer_runtime": {
-      "consumers": ["e2e_functional", "e2e_workspace"],
-      "lanes": ["typecheck_web", "unit_macos", "build"]
+      "consumers": [
+        "e2e_functional",
+        "e2e_workspace"
+      ],
+      "lanes": [
+        "typecheck_web",
+        "unit_macos",
+        "build"
+      ]
     },
     "windows_sensitive": {
       "consumers": [],
@@ -937,31 +2066,59 @@
         "i18n_catalog",
         "e2e_regressions"
       ],
-      "lanes": ["format", "lint", "typecheck_web", "unit_macos", "build"]
+      "lanes": [
+        "format",
+        "lint",
+        "typecheck_web",
+        "unit_macos",
+        "build"
+      ]
     },
     "i18n_catalog": {
       "consumers": [],
-      "lanes": ["i18n"]
+      "lanes": [
+        "i18n"
+      ]
     },
     "runtime_bundle": {
       "consumers": [],
-      "lanes": ["runtime_bundle"]
+      "lanes": [
+        "runtime_bundle"
+      ]
     },
     "renderer_state": {
-      "consumers": ["e2e_workspace", "e2e_regressions", "e2e_delegation"],
+      "consumers": [
+        "e2e_workspace",
+        "e2e_regressions",
+        "e2e_delegation"
+      ],
       "lanes": []
     },
     "cli_sdk": {
       "consumers": [],
-      "lanes": ["format", "lint", "cli_sdk"]
+      "lanes": [
+        "format",
+        "lint",
+        "cli_sdk"
+      ]
     },
     "settings_ipc": {
-      "consumers": ["preload_adapter"],
-      "lanes": ["typecheck_node", "interface_contracts"]
+      "consumers": [
+        "preload_adapter"
+      ],
+      "lanes": [
+        "typecheck_node",
+        "interface_contracts"
+      ]
     },
     "preload_adapter": {
-      "consumers": ["renderer_settings"],
-      "lanes": ["typecheck_web", "build"]
+      "consumers": [
+        "renderer_settings"
+      ],
+      "lanes": [
+        "typecheck_web",
+        "build"
+      ]
     },
     "renderer_settings": {
       "consumers": [
@@ -972,35 +2129,53 @@
         "e2e_regressions",
         "e2e_delegation"
       ],
-      "lanes": ["unit_macos"]
+      "lanes": [
+        "unit_macos"
+      ]
     },
     "e2e_functional": {
       "consumers": [],
-      "lanes": ["e2e_functional_macos"]
+      "lanes": [
+        "e2e_functional_macos"
+      ]
     },
     "e2e_workspace": {
       "consumers": [],
-      "lanes": ["e2e_workspace_macos"]
+      "lanes": [
+        "e2e_workspace_macos"
+      ]
     },
     "e2e_accessibility": {
       "consumers": [],
-      "lanes": ["e2e_accessibility_macos"]
+      "lanes": [
+        "e2e_accessibility_macos"
+      ]
     },
     "e2e_visual": {
       "consumers": [],
-      "lanes": ["e2e_visual_macos"]
+      "lanes": [
+        "e2e_visual_macos"
+      ]
     },
     "e2e_regressions": {
       "consumers": [],
-      "lanes": ["e2e_regressions_macos"]
+      "lanes": [
+        "e2e_regressions_macos"
+      ]
     },
     "e2e_delegation": {
       "consumers": [],
-      "lanes": ["e2e_delegation_macos"]
+      "lanes": [
+        "e2e_delegation_macos"
+      ]
     },
     "desktop_e2e_source": {
       "consumers": [],
-      "lanes": ["format", "lint", "typecheck_node"]
+      "lanes": [
+        "format",
+        "lint",
+        "typecheck_node"
+      ]
     },
     "desktop_e2e_all": {
       "consumers": [
@@ -1018,19 +2193,27 @@
     },
     "e2e_smoke": {
       "consumers": [],
-      "lanes": ["e2e_smoke_macos"]
+      "lanes": [
+        "e2e_smoke_macos"
+      ]
     },
     "e2e_windows_functional": {
       "consumers": [],
-      "lanes": ["e2e_functional_windows"]
+      "lanes": [
+        "e2e_functional_windows"
+      ]
     },
     "e2e_windows_workspace": {
       "consumers": [],
-      "lanes": ["e2e_workspace_windows"]
+      "lanes": [
+        "e2e_workspace_windows"
+      ]
     },
     "desktop_e2e_unit_readers": {
       "consumers": [],
-      "lanes": ["unit_macos"]
+      "lanes": [
+        "unit_macos"
+      ]
     },
     "windows_notebook_mutation": {
       "consumers": [],
@@ -1049,12 +2232,18 @@
     },
     "issue_template": {
       "consumers": [],
-      "lanes": ["docs", "format"]
+      "lanes": [
+        "docs",
+        "format"
+      ]
     }
   },
   "testFixtureSuites": [
     {
-      "paths": ["test/fixtures/pdf-translation/*.json", "test/fixtures/pdf-translation/*.jsonl"],
+      "paths": [
+        "test/fixtures/pdf-translation/*.json",
+        "test/fixtures/pdf-translation/*.jsonl"
+      ],
       "tests": [
         "src/main/literature/pdf-translation/*.test.ts",
         "src/renderer/src/pages/workspace/previews/renderers/*pdf-translation*.test.ts",
@@ -1067,20 +2256,36 @@
       ]
     },
     {
-      "paths": ["test/fixtures/nbformat.v4.5.schema.json"],
-      "tests": ["src/main/notebook/ipynb-export.test.ts"]
+      "paths": [
+        "test/fixtures/nbformat.v4.5.schema.json"
+      ],
+      "tests": [
+        "src/main/notebook/ipynb-export.test.ts"
+      ]
     },
     {
-      "paths": ["test/fixtures/reviewer-model-evaluation.json"],
-      "tests": ["scripts/reviewer-model-evaluation.test.mjs"]
+      "paths": [
+        "test/fixtures/reviewer-model-evaluation.json"
+      ],
+      "tests": [
+        "scripts/reviewer-model-evaluation.test.mjs"
+      ]
     },
     {
-      "paths": ["test/fixtures/shadcn-patch-history.json"],
-      "tests": ["scripts/dependency-patches.test.ts"]
+      "paths": [
+        "test/fixtures/shadcn-patch-history.json"
+      ],
+      "tests": [
+        "scripts/dependency-patches.test.ts"
+      ]
     },
     {
-      "paths": ["test/fixtures/pdf-figure-selections/*.json"],
-      "tests": ["src/renderer/src/pages/workspace/previews/renderers/pdf-figure-selections.test.ts"]
+      "paths": [
+        "test/fixtures/pdf-figure-selections/*.json"
+      ],
+      "tests": [
+        "src/renderer/src/pages/workspace/previews/renderers/pdf-figure-selections.test.ts"
+      ]
     },
     {
       "paths": [
@@ -1094,16 +2299,95 @@
       ]
     },
     {
-      "paths": ["test/docx-generation/*.py"],
-      "tests": ["src/main/skills/docx-generation.test.ts"]
+      "paths": [
+        "test/docx-generation/*.py"
+      ],
+      "tests": [
+        "src/main/skills/docx-generation.test.ts"
+      ]
     },
     {
-      "paths": ["test/pdf-generation/*.py"],
-      "tests": ["src/main/skills/pdf-generation.test.ts"]
+      "paths": [
+        "test/pdf-generation/*.py"
+      ],
+      "tests": [
+        "src/main/skills/pdf-generation.test.ts"
+      ]
     },
     {
-      "paths": ["test/pptx-generation/*.py"],
-      "tests": ["src/main/skills/pptx-generation.test.ts"]
+      "paths": [
+        "test/pptx-generation/*.py"
+      ],
+      "tests": [
+        "src/main/skills/pptx-generation.test.ts"
+      ]
+    },
+    {
+      "paths": [
+        "test/fixtures/pdf-translation/*.json",
+        "test/fixtures/pdf-translation/*.jsonl"
+      ],
+      "tests": [
+        "src/main/literature/pdf-translation/*.test.ts",
+        "src/renderer/src/pages/workspace/previews/renderers/*pdf-translation*.test.ts",
+        "src/renderer/src/pages/workspace/previews/renderers/*pdf-translation*.test.tsx",
+        "src/shared/pdf-translation*.test.ts",
+        "test/pdf-translation-native-verification.test.ts",
+        "packages/pdf-translation/test/*.test.ts",
+        "packages/pdf-translation/test/reader/*.test.ts",
+        "scripts/pdf-package-fixtures.test.ts"
+      ]
+    },
+    {
+      "paths": [
+        "test/fixtures/nbformat.v4.5.schema.json"
+      ],
+      "tests": [
+        "src/main/notebook/ipynb-export.test.ts"
+      ]
+    },
+    {
+      "paths": [
+        "test/fixtures/reviewer-model-evaluation.json"
+      ],
+      "tests": [
+        "scripts/reviewer-model-evaluation.test.mjs"
+      ]
+    },
+    {
+      "paths": [
+        "test/fixtures/shadcn-patch-history.json"
+      ],
+      "tests": [
+        "scripts/dependency-patches.test.ts"
+      ]
+    },
+    {
+      "paths": [
+        "test/fixtures/pdf-figure-selections/*.json"
+      ],
+      "tests": [
+        "src/renderer/src/pages/workspace/previews/renderers/pdf-figure-selections.test.ts"
+      ]
+    },
+    {
+      "paths": [
+        "test/fixtures/docx-table-styles.ts",
+        "test/fixtures/docx-report.md",
+        "test/fixtures/docx-report.docx"
+      ],
+      "tests": [
+        "src/renderer/src/pages/workspace/previews/docx-table-styles.test.ts",
+        "src/main/skills/docx-generation.test.ts"
+      ]
+    },
+    {
+      "paths": [
+        "test/docx-generation/*.py"
+      ],
+      "tests": [
+        "src/main/skills/docx-generation.test.ts"
+      ]
     }
   ]
 }
