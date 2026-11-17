@@ -283,9 +283,13 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
-  provider.modelCatalog = decodeModelCatalog(value.modelCatalog)
-  provider.modelCatalogStatus = decodeModelCatalogStatus(value.modelCatalogStatus)
-  provider.catalogParameters = decodeCatalogParameters(value.catalogParameters)
+  const modelCatalog = decodeModelCatalog(value.modelCatalog)
+  const modelCatalogStatus = decodeModelCatalogStatus(value.modelCatalogStatus)
+  const catalogParameters = decodeCatalogParameters(value.catalogParameters)
+  // 缺失的目录字段保持缺失，避免重复保存被误判为供应商配置变更。
+  if (modelCatalog !== undefined) provider.modelCatalog = modelCatalog
+  if (modelCatalogStatus !== undefined) provider.modelCatalogStatus = modelCatalogStatus
+  if (catalogParameters !== undefined) provider.catalogParameters = catalogParameters
   if (keyRef) provider.keyRef = keyRef
   if (keyMask) provider.keyMask = keyMask
   if (accountEmail && type === 'xai-subscription') provider.accountEmail = accountEmail
