@@ -14,7 +14,10 @@ import {
   installationChannelFor,
   usesSupervisedInstall
 } from './update/channel-certification'
-import { verifyDesktopRecoveryReadiness } from './desktop-recovery-readiness'
+import {
+  DESKTOP_RECOVERY_READINESS_TIMEOUT_MS,
+  verifyDesktopRecoveryReadiness
+} from './desktop-recovery-readiness'
 import {
   acknowledgeWindowsUpdateReady,
   cleanupWindowsUpdateHandoffs,
@@ -2073,7 +2076,12 @@ async function startDesktop(): Promise<void> {
         'The original data is not ready.',
         undefined,
         async () => {
-          await verifyDesktopRecoveryReadiness(client!, preservedStartupOptions!, 60_000, true)
+          await verifyDesktopRecoveryReadiness(
+            client!,
+            preservedStartupOptions!,
+            DESKTOP_RECOVERY_READINESS_TIMEOUT_MS,
+            true
+          )
           await completeVerifiedStartup?.()
           publishRuntimeStartup({ phase: 'ready' })
         }

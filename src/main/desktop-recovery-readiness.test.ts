@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { verifyDesktopRecoveryReadiness } from './desktop-recovery-readiness'
+import {
+  DESKTOP_RECOVERY_READINESS_TIMEOUT_MS,
+  verifyDesktopRecoveryReadiness
+} from './desktop-recovery-readiness'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import type { ListSessionSummariesResult } from '../shared/session-persistence'
 const config = {
@@ -77,6 +80,27 @@ it('waits through migration and starting before reading original data', async ()
     'sessions:list',
     'projects:list'
   ])
+})
+
+it('allows a slow startup to finish within the default recovery deadline', async () => {
+  vi.useFakeTimers()
+  expect(DESKTOP_RECOVERY_READINESS_TIMEOUT_MS).toBeGreaterThan(60_000)
+  let phase = 'starting'
+  const client = {
+    startupState: () => ({ phase }),
+    runtimeInfo: () => ({ startupOptions: config }),
+    invokeHost: async (name: string) =>
+      name === 'storage:get-status'
+        ? { dataRoot: config.dataRoot, dataRootMissing: false }
+        : name === 'sessions:list'
+          ? catalog
+          : []
+  } as unknown as DesktopRuntimeClient
+  const result = verifyDesktopRecoveryReadiness(client, config)
+  await vi.advanceTimersByTimeAsync(60_000)
+  phase = 'ready'
+  await vi.advanceTimersByTimeAsync(100)
+  await expect(result).resolves.toBeUndefined()
 })
 
 it.each(['blocked', 'starting'])('refuses %s without reading original data', async (phase) => {

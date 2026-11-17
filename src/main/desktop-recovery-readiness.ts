@@ -3,11 +3,13 @@ import type { RuntimeStartupOptions } from './desktop-runtime-info'
 import type { ListSessionSummariesResult } from '../shared/session-persistence'
 import type { StorageStatus } from '../shared/storage'
 
+export const DESKTOP_RECOVERY_READINESS_TIMEOUT_MS = 120_000
+
 /** Proves the replacement serves the reviewed profile and can read its work before success. */
 export async function verifyDesktopRecoveryReadiness(
   client: DesktopRuntimeClient,
   config: RuntimeStartupOptions,
-  timeoutMs = 60_000,
+  timeoutMs = DESKTOP_RECOVERY_READINESS_TIMEOUT_MS,
   retryStartup = false
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
