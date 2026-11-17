@@ -54,7 +54,8 @@ type RawComputeService = Pick<
   | 'cancelJob'
   | 'setSessionConcurrencyLimit'
   | 'getSessionConcurrencyStatus'
->
+> &
+  Partial<Pick<ComputeService, 'listExternalTargets'>>
 
 // The only Compute facade exposed to Agent RPC. Global ComputeService remains unrestricted for
 // Settings and internal runtimes; every Agent provider operation passes through Session admission.
@@ -72,6 +73,7 @@ export class AgentComputeService {
   private targets(
     mode: NonNullable<ReturnType<typeof externalComputeMode>>
   ): Promise<ExternalComputeTarget[]> {
+    if (this.compute.listExternalTargets) return this.compute.listExternalTargets(mode)
     switch (mode) {
       case 'kubernetes':
         return this.compute.listKubernetesTargets()

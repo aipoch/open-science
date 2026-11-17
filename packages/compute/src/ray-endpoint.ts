@@ -21,6 +21,11 @@ export function parseRayDashboardEndpoint(endpoint: string): URL {
   return base
 }
 
+/** Normalize an explicitly supplied Dashboard endpoint without reading process state. */
+export function normalizeRayDashboardEndpoint(address: string): string {
+  return parseRayDashboardEndpoint(address.trim()).href.replace(/\/+$/, '')
+}
+
 /** Resolve once for approval; use the pinned endpoint for subsequent requests. */
 export function resolveRayJobsEndpoint(explicit?: string, saved?: string): string {
   const address =
@@ -28,7 +33,7 @@ export function resolveRayJobsEndpoint(explicit?: string, saved?: string): strin
     saved?.trim() ||
     process.env.RAY_DASHBOARD_URL?.trim() ||
     'http://127.0.0.1:8265'
-  return parseRayDashboardEndpoint(address).href.replace(/\/+$/, '')
+  return normalizeRayDashboardEndpoint(address)
 }
 
 function allowsBearer(base: URL): boolean {

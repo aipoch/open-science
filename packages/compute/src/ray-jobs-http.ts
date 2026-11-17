@@ -3,8 +3,6 @@ import { request as httpsRequest } from 'node:https'
 import { Readable } from 'node:stream'
 import { isRayBearerEndpoint, parseRayDashboardEndpoint } from './ray-endpoint'
 
-export { isRayBearerEndpoint, resolveRayJobsEndpoint } from './ray-endpoint'
-
 export interface RayJobsTarget {
   endpoint: string
   fetch?: typeof fetch

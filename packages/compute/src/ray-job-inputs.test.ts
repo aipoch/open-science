@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveRayJobsEndpoint } from './ray'
+import { normalizeRayDashboardEndpoint } from './ray-endpoint'
 import JSZip from 'jszip'
 import { expect, it, vi } from 'vitest'
 import { prepareRayJobInputs, uploadRayWorkingDirectory } from './ray-job-inputs'
@@ -69,6 +70,18 @@ it('pins the explicitly selected Dashboard ahead of saved and environment settin
     expect(() => resolveRayJobsEndpoint('https://user:secret@lab.example')).toThrow(
       'Invalid Ray Dashboard'
     )
+  } finally {
+    vi.unstubAllEnvs()
+  }
+})
+
+it('normalizes an explicit Dashboard without applying environment defaults', () => {
+  vi.stubEnv('RAY_DASHBOARD_URL', 'http://localhost:9000/')
+  try {
+    expect(normalizeRayDashboardEndpoint('https://lab.example/gateway/')).toBe(
+      'https://lab.example/gateway'
+    )
+    expect(() => normalizeRayDashboardEndpoint('')).toThrow('Invalid Ray Dashboard')
   } finally {
     vi.unstubAllEnvs()
   }

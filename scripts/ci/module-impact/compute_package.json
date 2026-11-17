@@ -81,7 +81,11 @@
     "packages/compute/src/ray-job-outputs.ts",
     "packages/compute/src/ray-job-outputs.test.ts"
   ],
-  "interfacePaths": ["packages/compute/src/node.ts", "packages/compute/src/ray.ts"],
+  "interfacePaths": [
+    "packages/compute/src/node.ts",
+    "packages/compute/src/ray.ts",
+    "packages/compute/src/ray-endpoint.ts"
+  ],
   "consumerModules": ["compute_service"],
   "testFiles": {
     "owner": [
