@@ -474,6 +474,12 @@ export const mapLabGatewayError = (
       return { code, message: 'The upstream subscription or quota is exhausted.' }
     case 'context_length_exceeded':
       return { code, message: 'The context exceeds the model context window.' }
+    case 'UPSTREAM_TOKEN_INVALID':
+      return {
+        code,
+        message:
+          'This model key is invalid or out of quota. Ask an admin to top it up, then enable it.'
+      }
     case 'RATE_LIMITED':
     case 'UPSTREAM_RATE_LIMITED':
       return { code, message: 'Too many Lab requests. Try again in a moment.' }

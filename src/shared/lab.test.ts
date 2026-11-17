@@ -172,6 +172,11 @@ describe('readLabUsage', () => {
     [402, 'insufficient_quota', 'The upstream subscription or quota is exhausted.'],
     [400, 'context_length_exceeded', 'The context exceeds the model context window.'],
     [
+      402,
+      'UPSTREAM_TOKEN_INVALID',
+      'This model key is invalid or out of quota. Ask an admin to top it up, then enable it.'
+    ],
+    [
       401,
       'authentication_error',
       'The upstream credential is invalid. Check the Lab channel configuration.'
