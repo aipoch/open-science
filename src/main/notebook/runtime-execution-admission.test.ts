@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { NotebookRuntimeService } from './runtime-service'
 import type { NotebookExecutionRequest } from './execution-contract'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
-import { withNotebookExecutionIntent } from './execution-intent'
+import { withNotebookExecutionIntent, withNotebookUserOperation } from './execution-intent'
 
 let root: string | undefined
 let runtime: NotebookRuntimeService | undefined
@@ -42,7 +42,8 @@ it('forces a fresh check for a prepared user continuation but not for an inherit
   })
   const scope = { projectId: 'project', sessionId: 'session', workspaceCwd: root }
   const intent = runtime.createExecutionIntent(scope)
-  intent.prepareUserExecution()
+  intent.prepareUserExecution(() => undefined)
+  intent.commitUserExecution()
   await runtime.executeControl(
     withNotebookExecutionIntent({ ...scope, code: 'globalThis.continued = 1' }, intent)
   )
@@ -122,7 +123,8 @@ it('recovers a failed sample for one prepared continuation without forcing the n
     )
   ).rejects.toMatchObject({ code: 'NOTEBOOK_MEMORY_UNAVAILABLE' })
   const intent = runtime.createExecutionIntent(scope)
-  intent.prepareUserExecution()
+  intent.prepareUserExecution(() => undefined)
+  intent.commitUserExecution()
   await expect(
     runtime.executeControl(
       withNotebookExecutionIntent({ ...scope, code: 'globalThis.recovered = 1' }, intent)
@@ -149,6 +151,106 @@ it('recovers a failed sample for one prepared continuation without forcing the n
       .filter(({ signal }) => signal !== first?.signal && signal !== last?.signal)
       .every(({ force }) => !force)
   ).toBe(true)
+})
+
+it('keeps ordinary and abandoned preparations from granting a forced sample', async () => {
+  root = await mkdtemp(join(tmpdir(), 'runtime-no-user-recheck-'))
+  const policy = healthyNotebookMemoryPolicy()
+  const getState = vi.fn(policy.getState)
+  runtime = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectId: 'project',
+    memoryPolicy: { ...policy, getState }
+  })
+  const scope = { projectId: 'project', sessionId: 'session', workspaceCwd: root }
+  const intent = runtime.createExecutionIntent(scope)
+  intent.prepareUserExecution()
+  intent.commitUserExecution()
+  await runtime.executeControl(withNotebookExecutionIntent({ ...scope, code: '1' }, intent))
+  expect(getState.mock.calls.some(([request]) => request?.force)).toBe(false)
+
+  const abandoned = runtime.createExecutionIntent(scope)
+  abandoned.prepareUserExecution(() => undefined)
+  abandoned.abandonUserExecution()
+  expect(abandoned.consumeUserMemoryRecheck()).toBeUndefined()
+  expect(() => abandoned.assertExecutable()).toThrow('Execution was not started')
+})
+
+it('checks the trusted continuation lease again after asynchronous sampling', async () => {
+  root = await mkdtemp(join(tmpdir(), 'runtime-expired-user-recheck-'))
+  let current = true
+  const policy = healthyNotebookMemoryPolicy()
+  runtime = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectId: 'project',
+    memoryPolicy: {
+      ...policy,
+      getState: async (request) => {
+        if (request?.force) current = false
+        return policy.getState(request)
+      }
+    }
+  })
+  const scope = { projectId: 'project', sessionId: 'session', workspaceCwd: root }
+  const intent = runtime.createExecutionIntent(scope)
+  intent.prepareUserExecution(() => {
+    if (!current) throw new Error('Human execution lease expired')
+  })
+  intent.commitUserExecution()
+  await expect(
+    runtime.executeControl(withNotebookExecutionIntent({ ...scope, code: '1' }, intent))
+  ).rejects.toThrow('Human execution lease expired')
+  expect((await runtime.state(scope)).runs).toEqual([])
+})
+
+it('forces terminal sampling only with the Main-owned user marker and preserves the live kernel', async () => {
+  root = await mkdtemp(join(tmpdir(), 'runtime-terminal-user-recheck-'))
+  const policy = healthyNotebookMemoryPolicy()
+  const getState = vi.fn(policy.getState)
+  const identity = {}
+  const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+    status: 'completed' as const,
+    stdout: '',
+    stderr: '',
+    traceback: '',
+    cwdAfter: request.cwd,
+    outputs: []
+  }))
+  runtime = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectId: 'project',
+    memoryPolicy: { ...policy, getState },
+    executorFactory: () => ({
+      execute,
+      shutdown: async () => ({ reaped: true }),
+      idleProcesses: () => [
+        { identity, processKey: 'python:default-python', release: async () => true }
+      ]
+    })
+  })
+  const request = {
+    sessionId: 'session',
+    workspaceCwd: root,
+    source: 'user' as const,
+    language: 'python' as const,
+    code: '1'
+  }
+  expect((await runtime.execute(request)).status).toBe('completed')
+  getState.mockClear()
+  const terminal = { ...request, inputKind: 'terminal' as const }
+  expect((await runtime.execute(terminal)).status).toBe('completed')
+  expect(getState.mock.calls.some(([options]) => options?.force)).toBe(false)
+  getState.mockClear()
+  const assertCurrent = vi.fn()
+  expect(
+    (await runtime.execute(withNotebookUserOperation(terminal, { assertCurrent }))).status
+  ).toBe('completed')
+  expect(getState.mock.calls.some(([options]) => options?.force)).toBe(true)
+  expect(assertCurrent).toHaveBeenCalled()
+  expect(execute).toHaveBeenCalledTimes(3)
 })
 
 it('rejects pressure before accepting a REPL execution while history remains readable', async () => {

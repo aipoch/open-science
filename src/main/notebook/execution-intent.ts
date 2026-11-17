@@ -13,6 +13,7 @@ export class NotebookExecutionIntent {
   declare readonly [notebookExecutionIntentReference]: true
   private refusal?: Readonly<{ id: string; reason: string }>
   private userPreparationPending = false
+  private userMemoryRecheck?: () => void
   private readonly branches = new Map<
     string,
     { onViolation?: () => void; providerStopRequested: boolean; cancellation: AbortController }
@@ -29,16 +30,17 @@ export class NotebookExecutionIntent {
     return this.refusal.id
   }
 
-  prepareUserExecution(): void {
+  prepareUserExecution(assertUserCurrent?: () => void): void {
     this.userPreparationPending = true
+    this.userMemoryRecheck = assertUserCurrent
   }
 
-  // Only the first request of this user-prepared context requests a fresh sample. A later request
-  // uses the ordinary cache/backoff behavior, and final dispatch still checks sample freshness.
-  consumeUserExecutionPreparation(): boolean {
-    const pending = this.userPreparationPending
-    this.userPreparationPending = false
-    return pending
+  // Provider dispatch commits preparation before tools run. Keep the one-shot human recheck
+  // separate so neither a Task preparation nor a later Agent call gains a cache bypass.
+  consumeUserMemoryRecheck(): (() => void) | undefined {
+    const assertCurrent = this.userMemoryRecheck
+    this.userMemoryRecheck = undefined
+    return assertCurrent
   }
 
   commitUserExecution(): void {
@@ -46,6 +48,7 @@ export class NotebookExecutionIntent {
   }
 
   abandonUserExecution(): void {
+    this.userMemoryRecheck = undefined
     if (!this.userPreparationPending) return
     this.userPreparationPending = false
     this.block('user-execution-preparation-not-committed')

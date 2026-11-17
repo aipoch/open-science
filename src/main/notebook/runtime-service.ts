@@ -27,6 +27,7 @@ import {
 import {
   NotebookExecutionIntentOwner,
   notebookExecutionIntent,
+  notebookUserOperation,
   type NotebookExecutionIntent,
   type NotebookExecutionIntentScope,
   type NotebookExecutionContinuation
@@ -701,13 +702,18 @@ class NotebookRuntimeService {
         }
       }
     }
+    const assertUserCurrent =
+      request.source === 'user' && request.inputKind === 'terminal'
+        ? notebookUserOperation(request)?.assertCurrent
+        : intent?.consumeUserMemoryRecheck()
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       const admission = createNotebookExecutionAdmission({
         policy: () => this.getMemoryPolicy(),
         signal: signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
         executionScope,
-        force: intent?.consumeUserExecutionPreparation(),
+        force: Boolean(assertUserCurrent),
         assertHostCurrent: (boundary) => {
+          assertUserCurrent?.()
           intent?.assertExecutable()
           assertHostCurrent?.(boundary)
         },

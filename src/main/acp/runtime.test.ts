@@ -33826,6 +33826,7 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
     }
   })
   let pressured = false
+  const forcedSamples: boolean[] = []
   let refusalId: string | undefined
   const healthy = healthyNotebookMemoryPolicy()
   const service = new NotebookRuntimeService({
@@ -33833,15 +33834,17 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
     dataRoot: root,
     projectId: 'project',
     memoryPolicy: {
-      getState: async () =>
-        pressured
+      getState: async (request) => {
+        if (request?.signal) forcedSamples.push(request.force === true)
+        return pressured
           ? {
               status: 'pressured',
               source: 'test',
               executionScope: 'test:host',
               reason: { code: 'low-memory' }
             }
-          : healthy.getState(),
+          : healthy.getState()
+      },
       currentState: () =>
         pressured
           ? {
@@ -33925,6 +33928,7 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
     }
     pressured = true
     expect(await run(old)).toContain('NOTEBOOK_MEMORY_PRESSURE')
+    expect(forcedSamples).not.toContain(true)
     pressured = false
     await runtime.sendPrompt(
       withNotebookUserOperation(
@@ -33980,6 +33984,10 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
     )
     expect(agent.resumedSessions).toHaveLength(4)
     expect(await run(old)).toContain('Invalid notebook RPC token')
+    pressured = true
+    expect(await run(current!)).toContain('NOTEBOOK_MEMORY_PRESSURE')
+    expect(forcedSamples.at(-1)).toBe(true)
+    pressured = false
     const oldIntent = notebookExecutionIntent(first)!
     // Even after a human has granted I1, the same old Task root keeps I0.
     await task.prompt(taskRequest)

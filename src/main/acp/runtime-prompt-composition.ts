@@ -465,7 +465,7 @@ const composeAcpRuntimePromptOwners = (
           if (current?.refusalId && !operation.refusalId) intent = current
           else {
             intent = notebook.createExecutionIntent(scope)
-            intent.prepareUserExecution()
+            intent.prepareUserExecution(operation.refusalId ? operation.assertCurrent : undefined)
           }
         } else if (!intent) {
           const origin =
