@@ -1,5 +1,5 @@
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
-import { spawnClaudeCli, waitForAbortableOperation } from './claude-cli-process'
+import { runClaudeCli } from './claude-cli-process'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { augmentedPathEnv } from './shell-path'
 
@@ -90,51 +90,21 @@ const extractSetupToken = (output: string): string | undefined => {
 const runSetupTokenLogin = async (
   claudePath: string,
   configDir: string,
-  signal: AbortSignal
-): Promise<{ token?: string; message?: string }> =>
-  waitForAbortableOperation(
-    new Promise<{ token?: string; message?: string }>((resolve, reject) => {
-      // This flow's whole point is to pop the browser, so strip any inherited signals that could tell
-      // the CLI to suppress it (NO_BROWSER from a codex spawn context, CI from a headless launcher).
-      // Without the browser there is no fallback URL on stdout, so the login would hang to timeout.
-      const env: NodeJS.ProcessEnv = {
-        ...augmentedPathEnv(process.env),
-        CLAUDE_CONFIG_DIR: configDir
-      }
-      delete env.NO_BROWSER
-      delete env.CI
-
-      const proc = spawnClaudeCli(resolveClaudeExecutableForSpawn(claudePath), ['setup-token'], {
-        env,
-        signal: signal as AbortSignal
-      })
-
-      let stdout = ''
-      let stderr = ''
-
-      proc.stdout?.on('data', (chunk) => {
-        stdout += chunk.toString()
-      })
-      proc.stderr?.on('data', (chunk) => {
-        stderr += chunk.toString()
-      })
-
-      proc.on('error', reject)
-      proc.on('close', (code) => {
-        const token = extractSetupToken(stdout)
-        if (code === 0 && token) {
-          resolve({ token })
-        } else if (token) {
-          // Some CLI builds print the token then exit non-zero on a follow-up step; if we got a token
-          // we still treat it as a success candidate (the service re-probes before marking verified).
-          resolve({ token })
-        } else {
-          resolve({ message: stderr.trim() || `setup-token exited with code ${code}` })
-        }
-      })
-    }),
-    signal
+  signal: AbortSignal,
+  timeoutMs: number
+): Promise<{ token?: string; message?: string }> => {
+  const env: NodeJS.ProcessEnv = { ...augmentedPathEnv(process.env), CLAUDE_CONFIG_DIR: configDir }
+  delete env.NO_BROWSER
+  delete env.CI
+  const { stdout, stderr, code } = await runClaudeCli(
+    resolveClaudeExecutableForSpawn(claudePath),
+    ['setup-token'],
+    { env, signal, timeoutMs, preserveChildrenOnExit: true }
   )
+  const token = extractSetupToken(stdout)
+  // Some CLI builds print the token before failing a follow-up step. Re-probe before trusting it.
+  return token ? { token } : { message: stderr.trim() || `setup-token exited with code ${code}` }
+}
 
 // The single long-lived-OAuth-token auth flow. Storage is delegated to the host so the controller
 // stays pure and unit-testable (mirroring how CodexAuthController takes openSession).
@@ -222,7 +192,12 @@ export class ClaudeIsolatedAuthController {
         }
       }
 
-      const result = await runSetupTokenLogin(claudePath, this.configDir, abort.signal)
+      const result = await runSetupTokenLogin(
+        claudePath,
+        this.configDir,
+        abort.signal,
+        this.loginTimeoutMs
+      )
 
       if (abort.signal.aborted) {
         return {

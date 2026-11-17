@@ -4,7 +4,11 @@ import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { CodexSubscriptionTransport } from '../../shared/settings'
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import {
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
+  terminateProcessTree
+} from '../process-tree'
 import {
   createCodexAuthEnvironment,
   resolveCodexHarnessEndpoint,
@@ -114,9 +118,10 @@ const refreshWithCodex = async (
     '-c',
     'cli_auth_credentials_store="file"'
   ]
+  const ownership = createPosixProcessTreeOwnership(env)
   const child = spawnCodexWithInstallAdmission([options.nativePath], () =>
     spawn(command, args, {
-      env,
+      env: ownership.env,
       cwd: home,
       shell,
       stdio: 'pipe',
@@ -124,7 +129,7 @@ const refreshWithCodex = async (
       windowsHide: true
     })
   )
-  if (process.platform !== 'win32') registerOwnedPosixProcessGroup(child)
+  if (process.platform !== 'win32') trackOwnedPosixProcessTree(child, ownership.token)
   child.stderr.resume()
   let buffer = ''
   try {

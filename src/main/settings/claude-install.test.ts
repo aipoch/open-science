@@ -769,3 +769,21 @@ describe('claude-install: run redirects npm prefix only when needed', () => {
     expect(args().includes('--prefix')).toBe(false)
   })
 })
+
+it('does not report successful installation when process tree cleanup is unconfirmed', async () => {
+  const child = new FakeChild()
+  const onCleanupFailure = vi.fn()
+  terminateProcessTree.mockResolvedValue({ reaped: false })
+  const pending = runInstall({
+    source: 'npm',
+    installId: 'success-cleanup',
+    onEvent: () => {},
+    onCleanupFailure,
+    npmPrefixWritable: async () => true,
+    spawnImpl: () => child as never
+  })
+  await vi.waitFor(() => expect(child.listenerCount('exit')).toBe(1))
+  child.emit('exit', 0)
+  expect(await pending).toMatchObject({ ok: false, error: expect.stringContaining('cleanup') })
+  expect(onCleanupFailure).toHaveBeenCalledOnce()
+})

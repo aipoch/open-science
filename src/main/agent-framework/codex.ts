@@ -40,7 +40,7 @@ import { codexStorageDir, codexSubscriptionStorageDir } from '../settings/codex-
 import { CODEX_VERSION, spawnCodexWithInstallAdmission } from '../settings/managed-codex'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { clearSystemProxyEnvironment } from '../settings/system-proxy'
-import { registerOwnedPosixProcessGroup } from '../process-tree'
+import { createPosixProcessTreeOwnership, trackOwnedPosixProcessTree } from '../process-tree'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
 import { modelFacingAppMcpToolName } from './app-mcp-names'
 import {
@@ -513,12 +513,16 @@ export const createCodexFramework = ({
         ? `"${input.executablePath}"`
         : input.executablePath
     const args = isJavaScript ? [input.executablePath, ...input.args] : input.args
+    const ownership = createPosixProcessTreeOwnership(
+      buildSpawnEnvironment(input, sourceEnv),
+      platform
+    )
 
     const child = spawnCodexWithInstallAdmission(
       [input.executablePath, ...(input.env.CODEX_PATH ? [input.env.CODEX_PATH] : [])],
       () =>
         (input.spawnProcess ?? spawnProcess)(command, args, {
-          env: buildSpawnEnvironment(input, sourceEnv),
+          env: ownership.env,
           stdio: 'pipe',
           // Keep a terminal/dev-runner SIGINT aimed at the Electron application's foreground process
           // group from killing Codex before the app's awaited ACP teardown can mark and reap it. Piped
@@ -530,7 +534,7 @@ export const createCodexFramework = ({
           shell: needsShell
         })
     )
-    if (platform !== 'win32') registerOwnedPosixProcessGroup(child)
+    if (platform !== 'win32') trackOwnedPosixProcessTree(child, ownership.token)
     return child
   },
 
