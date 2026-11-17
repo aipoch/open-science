@@ -172,6 +172,24 @@ describe.skipIf(process.platform !== 'win32')('Windows runtime cache uninstaller
     expect(() => runUninstaller(fixture)).not.toThrow()
   })
 
+  it('removes a cache when the configured runtime root is behind a junction', () => {
+    const fixture = makeFixture()
+    const aliasDataRoot = join(fixture.sandbox, 'data-alias')
+    symlinkSync(join(fixture.sandbox, 'data'), aliasDataRoot, 'junction')
+    writeFileSync(
+      join(fixture.env.USERPROFILE!, '.open-science', 'settings.json'),
+      `${JSON.stringify({ dataRoot: aliasDataRoot })}\n`
+    )
+    writeParentMarker(fixture)
+    writeCache(fixture)
+
+    runUninstaller(fixture)
+
+    expect(existsSync(fixture.cachePath)).toBe(false)
+    expect(existsSync(fixture.managedParent)).toBe(false)
+    expect(existsSync(fixture.runtimeRoot)).toBe(true)
+  })
+
   it('retries removal of a marker-only managed parent left by an interrupted cleanup', () => {
     const fixture = makeFixture()
     writeParentMarker(fixture)

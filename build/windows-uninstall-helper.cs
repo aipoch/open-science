@@ -237,10 +237,6 @@ public static class UninstallHelper {
   // Same policy as micromamba-cache.ts and scripts/windows-reset/reset-open-science.ps1; the
   // parity test in scripts/windows-data-reset.test.ts runs both against the same fixtures.
 
-  internal static string CanonicalPath(string path) {
-    return Path.GetFullPath(path);
-  }
-
   static bool PathExists(string path) {
     return File.Exists(path) || Directory.Exists(path);
   }
@@ -411,7 +407,7 @@ public static class UninstallHelper {
 
     foreach (var root in roots) {
       try {
-        var canonicalRoot = CanonicalPath(root);
+        var canonicalRoot = InstallDirectory.CanonicalPath(root);
         var drive = Path.GetPathRoot(canonicalRoot);
         var leaf = CacheLeaf(canonicalRoot, userIdentity);
         var compactLeaf = CompactCacheLeaf(canonicalRoot, userIdentity);
