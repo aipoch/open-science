@@ -292,3 +292,33 @@ it
     }
   }
 )
+
+it.skipIf(process.platform !== 'win32')(
+  'starts Node from the minimal Pi smoke environment through the owned Windows launcher',
+  async () => {
+    const actual =
+      await vi.importActual<typeof import('../process-tree-windows')>('../process-tree-windows')
+    const jobName = `Local\\OpenScience.Delegation.${crypto.randomUUID()}`
+    // Node aborts at startup without SYSTEMROOT, which this environment deliberately omits.
+    const child = actual.spawnWindowsOwnedProcess(
+      jobName,
+      process.execPath,
+      ['-e', 'require("node:crypto").randomUUID()'],
+      {
+        cwd: tmpdir(),
+        env: { PATH: process.env.PATH, HOME: tmpdir(), PI_OFFLINE: '1' },
+        stdio: 'pipe'
+      }
+    )
+    try {
+      await expect(
+        new Promise((resolve, reject) => {
+          child.once('error', reject)
+          child.once('exit', resolve)
+        })
+      ).resolves.toBe(0)
+    } finally {
+      await actual.reapWindowsOwnedJob(jobName)
+    }
+  }
+)

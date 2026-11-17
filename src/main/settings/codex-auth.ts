@@ -10,9 +10,11 @@ import * as acp from '@agentclientprotocol/sdk'
 import type { CodexSubscriptionTransport } from '../../shared/settings'
 import {
   createPosixProcessTreeOwnership,
+  registerProcessTreeOwnership,
   trackOwnedPosixProcessTree,
   terminateProcessTree
 } from '../process-tree'
+import { reapWindowsOwnedJob, spawnWindowsOwnedProcess } from '../process-tree-windows'
 import { spawnCodexWithInstallAdmission } from './managed-codex'
 import { codexSubscriptionStorageDir } from './codex-paths'
 import { augmentedPathEnv } from './shell-path'
@@ -1152,19 +1154,33 @@ export const openCodexAuthSession = async ({
   }
   if (nativePath) env.CODEX_PATH = nativePath
   const ownership = createPosixProcessTreeOwnership(env)
+  // A Windows Job proves the whole adapter tree is gone even after the adapter exits on its own.
+  // A taskkill fallback cannot prove that, which would retain Codex install admission.
+  const jobName = `Local\\OpenScience.Delegation.${randomUUID()}`
 
   const child = spawnCodexWithInstallAdmission(
     [adapterPath, ...(nativePath ? [nativePath] : [])],
     () =>
-      spawn(command, args, {
-        env: ownership.env,
-        shell: needsShell,
-        stdio: 'pipe',
-        detached: process.platform !== 'win32',
-        windowsHide: true
-      })
+      process.platform === 'win32'
+        ? spawnWindowsOwnedProcess(jobName, command, args, {
+            env: ownership.env,
+            shell: needsShell,
+            stdio: 'pipe'
+          })
+        : spawn(command, args, {
+            env: ownership.env,
+            shell: needsShell,
+            stdio: 'pipe',
+            detached: true,
+            windowsHide: true
+          })
   )
-  if (process.platform !== 'win32') trackOwnedPosixProcessTree(child, ownership.token)
+  if (process.platform === 'win32')
+    registerProcessTreeOwnership(child, {
+      terminate: async () => ({ reaped: await reapWindowsOwnedJob(jobName) }),
+      settled: () => undefined
+    })
+  else trackOwnedPosixProcessTree(child, ownership.token)
   // Diagnostics are not ACP messages; drain them so adapter writes cannot block authentication.
   child.stderr.resume()
   try {

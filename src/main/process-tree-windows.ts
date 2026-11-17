@@ -194,6 +194,20 @@ export const captureRuntimeWindowsProcessCleanup = (): ((deadlineAt: number) => 
 
 // Keep the normal ACP ChildProcess/stream boundary. Overlapped native pipe descriptors use libuv's
 // pipe transport via net.Socket, not blocking fs reads that could exhaust the worker pool.
+const WINDOWS_REQUIRED_ENVIRONMENT = [
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'LOGONSERVER',
+  'PATH',
+  'SYSTEMDRIVE',
+  'SYSTEMROOT',
+  'TEMP',
+  'USERDOMAIN',
+  'USERNAME',
+  'USERPROFILE',
+  'WINDIR'
+] as const
+
 export const spawnWindowsOwnedProcess = (
   jobName: string,
   command: string,
@@ -202,22 +216,6 @@ export const spawnWindowsOwnedProcess = (
 ): ChildProcessWithoutNullStreams => {
   const native = binding()
   const env = { ...(options.env ?? process.env) }
-  // libuv supplies these variables for ordinary Windows child processes even when callers pass a
-  // deliberately narrow environment. The native launcher must preserve the same runtime contract.
-  for (const name of [
-    'SystemRoot',
-    'SystemDrive',
-    'WINDIR',
-    'TEMP',
-    'TMP',
-    'USERPROFILE',
-    'COMSPEC'
-  ]) {
-    if (Object.keys(env).some((key) => key.toUpperCase() === name.toUpperCase())) continue
-    const hostKey = Object.keys(process.env).find((key) => key.toUpperCase() === name.toUpperCase())
-    const value = hostKey ? process.env[hostKey] : undefined
-    if (value !== undefined) env[name] = value
-  }
   const envValue = (name: string): string | undefined =>
     Object.entries(env).find(([key]) => key.toUpperCase() === name)?.[1]
   let executable = command
@@ -248,6 +246,16 @@ export const spawnWindowsOwnedProcess = (
     keys.add(key.toUpperCase())
     environment.push(`${key}=${value}`)
   }
+  // Match libuv's required_vars. Like child_process.spawn, fill these from the parent when callers
+  // pass a deliberately narrow environment. Node aborts at startup without SYSTEMROOT.
+  for (const name of WINDOWS_REQUIRED_ENVIRONMENT) {
+    const hostKey = Object.keys(process.env).find((key) => key.toUpperCase() === name)
+    const value = hostKey ? process.env[hostKey] : undefined
+    if (keys.has(name) || value === undefined || value.includes('\0')) continue
+    keys.add(name)
+    environment.push(`${name}=${value}`)
+  }
+  environment.sort((left, right) => left.toUpperCase().localeCompare(right.toUpperCase()))
   let launched: ReturnType<Binding['spawnWindowsOwnedProcess']>
   try {
     launched = native.spawnWindowsOwnedProcess(
