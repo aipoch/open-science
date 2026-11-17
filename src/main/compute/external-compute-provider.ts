@@ -7,6 +7,7 @@ import type {
   RayTarget
 } from '../../shared/compute'
 
+/** Target-catalog dispatch only. Submission and runtime lifecycle stays provider-owned for now. */
 export type ExternalComputeTargetRepository = {
   listKubernetesTargets(): Promise<KubernetesTarget[]>
   getKubernetesTarget(providerId: string): Promise<KubernetesTarget | null>

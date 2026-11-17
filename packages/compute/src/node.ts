@@ -158,7 +158,7 @@ export {
 
 export { HuggingFaceJobCreationRejectedError } from './hugging-face-jobs-http'
 
-/** @deprecated Import Ray endpoint helpers from `@aipoch/compute/ray`. */
+/** @deprecated Import Ray endpoint helpers from `@aipoch/compute/ray-endpoint`. */
 export { resolveRayJobsEndpoint, isRayBearerEndpoint } from './ray-endpoint'
 export type { RayJobsTarget } from './ray-jobs-http'
 /** @deprecated Import Ray APIs from `@aipoch/compute/ray`. */

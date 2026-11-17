@@ -1,15 +1,22 @@
 export {
   isRayBearerEndpoint,
   normalizeRayDashboardEndpoint,
-  parseRayDashboardEndpoint,
   resolveRayJobsEndpoint
 } from './ray-endpoint'
+export type { RayJobsTarget } from './ray-jobs-http'
+export { prepareRayJobInputs, uploadRayWorkingDirectory } from './ray-job-inputs'
 export {
-  rayNodeRequest,
-  requestRayDashboard,
-  RayRequestCredentialError,
-  type RayJobsTarget
-} from './ray-jobs-http'
-export * from './ray-job-inputs'
-export * from './ray-job-control'
-export * from './ray-job-outputs'
+  inspectRayDashboard,
+  inspectRayJob,
+  verifyRayJobsAccess,
+  submitRayJob,
+  RayJobCreationRejectedError,
+  RayJobCreationNotSentError,
+  stopRayJob,
+  deleteRayJob,
+  readRayJobLogs,
+  type RayJobClaim,
+  type RayJobStatus,
+  type RayJobObservation
+} from './ray-job-control'
+export { stageRayJobOutputs } from './ray-job-outputs'
