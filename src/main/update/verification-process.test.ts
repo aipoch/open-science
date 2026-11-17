@@ -309,6 +309,22 @@ describe('bounded verification subprocess', () => {
     ).resolves.toEqual({ stdout: 'verified', stderr: 'diagnostic' })
   })
 
+  it('reports the exit code of a CLI that preserves its children after a failed exit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'verification-preserve-'))
+    try {
+      const outcome = await runVerificationProcess(
+        process.execPath,
+        ['-e', "process.stderr.write('sign-in denied'); process.exit(1)"],
+        { cwd: root, stdin: 'pipe', preserveChildrenOnExit: true }
+      ).catch((error: unknown) => error)
+      expect(outcome).toBeInstanceOf(VerificationProcessExitError)
+      expect(outcome).toMatchObject({ exitCode: 1, stderr: 'sign-in denied' })
+      expect(verificationDirectoryIsSettled(root)).toBe(true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('blocks cleanup of an unconfirmed working directory and its parents, but not siblings', async () => {
     const root = await mkdtemp(join(tmpdir(), 'verification-unsettled-'))
     const directory = join(root, 'candidate')

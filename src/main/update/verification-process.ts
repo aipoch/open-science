@@ -51,21 +51,23 @@ export async function runVerificationProcess(
     shell?: boolean
     stdin?: 'pipe'
     // Interactive authentication may hand ownership of a browser to the user after the CLI exits.
-    preserveChildrenOnSuccess?: boolean
+    // Windows leaves this tree untracked, so a CLI that exits on its own, with any code, is
+    // finished; only cancellation, timeout, and output overflow still terminate the tree.
+    preserveChildrenOnExit?: boolean
   } = {}
 ): Promise<{ stdout: string; stderr: string }> {
   options.signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
     const jobName = `Local\\OpenScience.Delegation.${randomUUID()}`
     const ownership = createPosixProcessTreeOwnership(options.env)
-    const preserveChildrenOnSuccess =
-      process.platform === 'win32' && options.preserveChildrenOnSuccess === true
+    const preserveChildrenOnExit =
+      process.platform === 'win32' && options.preserveChildrenOnExit === true
     // Darwin commands such as ps can exit before kernel identity capture. Hold the same process
     // behind fd3 until tracking is installed; stdin stays dedicated to the target command.
     // Linux pins /proc birth in this JS turn, including an exited, not-yet-reaped zombie.
     const gateLaunch = process.platform === 'darwin'
     const child =
-      process.platform === 'win32' && !preserveChildrenOnSuccess
+      process.platform === 'win32' && !preserveChildrenOnExit
         ? spawnWindowsOwnedProcess(jobName, command, args, {
             cwd: options.cwd,
             env: options.env ?? process.env,
@@ -96,7 +98,7 @@ export async function runVerificationProcess(
             }
           )
     const launchGate = gateLaunch ? child.stdio[3] : undefined
-    if (process.platform === 'win32' && !preserveChildrenOnSuccess)
+    if (process.platform === 'win32' && !preserveChildrenOnExit)
       registerProcessTreeOwnership(child, {
         terminate: async () => ({ reaped: await reapWindowsOwnedJob(jobName) }),
         settled: () => undefined
@@ -112,7 +114,7 @@ export async function runVerificationProcess(
       settlement ??= (async () => {
         let deadline: NodeJS.Timeout | undefined
         const result =
-          preserveChildrenOnSuccess && code === 0 && !failure
+          preserveChildrenOnExit && code !== null && !failure
             ? { reaped: true }
             : await Promise.race([
                 terminateProcessTree(child, 'SIGKILL'),

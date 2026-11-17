@@ -12,7 +12,7 @@ export const runClaudeCli = async (
     env: NodeJS.ProcessEnv
     signal: AbortSignal
     timeoutMs: number
-    preserveChildrenOnSuccess?: boolean
+    preserveChildrenOnExit?: boolean
   }
 ): Promise<{ stdout: string; stderr: string; code: number | null }> => {
   const script = /\.(js|mjs)$/i.test(resolvedPath)
@@ -24,7 +24,7 @@ export const runClaudeCli = async (
         ...options,
         // Browser authentication can still be active before stdin receives anything.
         stdin: 'pipe',
-        preserveChildrenOnSuccess: options.preserveChildrenOnSuccess,
+        preserveChildrenOnExit: options.preserveChildrenOnExit,
         env: script ? { ...options.env, ...nodeRuntimeEnvironment() } : options.env
       }
     )

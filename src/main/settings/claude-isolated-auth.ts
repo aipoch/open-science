@@ -99,7 +99,7 @@ const runSetupTokenLogin = async (
   const { stdout, stderr, code } = await runClaudeCli(
     resolveClaudeExecutableForSpawn(claudePath),
     ['setup-token'],
-    { env, signal, timeoutMs, preserveChildrenOnSuccess: true }
+    { env, signal, timeoutMs, preserveChildrenOnExit: true }
   )
   const token = extractSetupToken(stdout)
   // Some CLI builds print the token before failing a follow-up step. Re-probe before trusting it.
