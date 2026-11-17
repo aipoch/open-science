@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
@@ -88,6 +89,13 @@ import {
 
 const frozenColumnEdge =
   'after:pointer-events-none after:absolute after:inset-y-0 after:left-full after:w-2 after:bg-linear-to-r after:from-foreground/5 after:to-transparent after:opacity-0 group-data-[overflow-left=true]/journal-scroll:after:opacity-100'
+
+const formatElapsedDuration = (durationMs: number): string => {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
+}
 
 export function LiteratureComparisonPage({
   table,
@@ -236,6 +244,8 @@ export function LiteratureComparisonPage({
   }>()
   const [sourceChecks, setSourceChecks] = useState<ComparisonResult['sourceChecks']>()
   const [sourceCheckProgress, setSourceCheckProgress] = useState<{ done: number; total: number }>()
+  const [sourceCheckStartedAt, setSourceCheckStartedAt] = useState<number>()
+  const [sourceCheckNow, setSourceCheckNow] = useState(() => Date.now())
   const [exportOpen, setExportOpen] = useState(false)
   const checkGeneration = useRef(0)
   const resumeTrigger = useRef<HTMLButtonElement | null>(null)
@@ -244,6 +254,11 @@ export function LiteratureComparisonPage({
   useLayoutEffect(() => {
     currentAdmission.current = { table, reviewStatus, editing }
   }, [table, reviewStatus, editing])
+  useEffect(() => {
+    if (!sourceCheckStartedAt || sourceChecks || !busy) return
+    const interval = window.setInterval(() => setSourceCheckNow(Date.now()), 1000)
+    return () => window.clearInterval(interval)
+  }, [busy, sourceCheckStartedAt, sourceChecks])
   const { cellsByItem, memberOrder, matrixCells, fieldsById, membersById } = useMemo(() => {
     const members = table?.members ?? []
     const fields = table?.fields ?? []
@@ -429,6 +444,8 @@ export function LiteratureComparisonPage({
     checkGeneration.current++
     setConfirmation(undefined)
     setSourceCheckProgress(undefined)
+    setSourceCheckStartedAt(undefined)
+    setSourceCheckNow(Date.now())
     setBusy(false)
   }
   const launchBlocked = taskActive || table.remainingCellIds.length > 0
@@ -441,6 +458,8 @@ export function LiteratureComparisonPage({
       setConfirmation({ request, revision: table.revision, singleCell })
     setSourceChecks(undefined)
     setSourceCheckProgress(undefined)
+    setSourceCheckStartedAt(Date.now())
+    setSourceCheckNow(Date.now())
     setBusy(true)
     setError(false)
     try {
@@ -1000,6 +1019,13 @@ export function LiteratureComparisonPage({
   const checkingSources = sourceCheckProgress && (
     <div className="mt-2 w-full max-w-md space-y-1.5" role="status">
       <p>{t('Checking sources: {{done}} / {{total}} references', sourceCheckProgress)}</p>
+      {sourceCheckStartedAt && (
+        <p className="text-xs text-muted-foreground">
+          {t('Elapsed {{duration}}', {
+            duration: formatElapsedDuration(sourceCheckNow - sourceCheckStartedAt)
+          })}
+        </p>
+      )}
       <ProgressBar
         label={t('Checking sources…')}
         value={
@@ -1627,6 +1653,15 @@ export function LiteratureComparisonPage({
             {table.taskId && (
               <p className="text-xs text-muted-foreground">
                 {t('Task: {{id}}', { id: table.taskId })}
+              </p>
+            )}
+            {table.taskId && taskCellIds && committedTaskCells !== undefined && (
+              <p className="text-xs text-muted-foreground">
+                {t('Table totals')} ·{' '}
+                {t('Extracted cells: {{extracted}} / {{total}}', {
+                  extracted: currentResults.length,
+                  total: table.cells.length
+                })}
               </p>
             )}
             {table.taskId && (

@@ -2142,6 +2142,7 @@ describe('comparison workflow', () => {
         done: 0,
         total: 9
       })
+      expect(translate).toHaveBeenCalledWith('Elapsed {{duration}}', { duration: '0s' })
       for (let index = 0; index < 3; index++) {
         const ids = table.itemIds.slice(index * 4, index * 4 + 4)
         expect(command).toHaveBeenLastCalledWith({
