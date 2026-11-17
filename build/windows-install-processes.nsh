@@ -44,6 +44,13 @@
   StrLen $R3 $R2
   StrCpy $R9 1
   System::Call 'kernel32::GetCurrentProcessId()i.R1'
+  # System services and protected processes in session 0 are outside the interactive install
+  # session. Ignore those when their limited query handle is unavailable, but fail closed for
+  # processes in the current session where the installed application can be running.
+  System::Call 'kernel32::ProcessIdToSessionId(i R1, *i .R0)i.R7'
+  ${If} $R7 = 0
+    StrCpy $R9 "error"
+  ${EndIf}
   System::Call 'kernel32::CreateToolhelp32Snapshot(i 2, i 0)p.R4'
   ${If} $R4 = -1
   ${OrIf} $R4 = 0
@@ -64,6 +71,19 @@
       ${EndIf}
       System::Call '*$R5(i, i, i .R7)'
       ${If} $R7 <> $R1
+      ${AndIf} $R7 <> 0
+        System::Call 'kernel32::ProcessIdToSessionId(i R7, *i .R6)i.R8'
+        ${If} $R8 = 0
+          ${If} $R6 == $R0
+            Goto inspect_process_${_OSP_ID}
+          ${EndIf}
+        ${Else}
+          # If the session cannot be read, inspect the process directly rather than silently
+          # dropping a possible application child from the inventory.
+          Goto inspect_process_${_OSP_ID}
+        ${EndIf}
+        Goto next_process_${_OSP_ID}
+        inspect_process_${_OSP_ID}:
         System::Call 'kernel32::OpenProcess(i ${_OSP_ACCESS}, i 0, i R7)p.R8'
         ${If} $R8 <> 0
           System::Call 'kernel32::QueryFullProcessImageNameW(pR8, i 0, w .R6, *i ${NSIS_MAX_STRLEN})i.R7'
@@ -76,6 +96,9 @@
                 System::Call 'kernel32::TerminateProcess(pR8, i 1)'
               !endif
             ${EndIf}
+          ${Else}
+            # A live process whose image cannot be inspected leaves the inventory unproven.
+            StrCpy $R9 "error"
           ${EndIf}
           System::Call 'kernel32::CloseHandle(pR8)'
           !if "${ACTION}" != "stop"
@@ -83,8 +106,13 @@
               Goto done_${_OSP_ID}
             ${EndIf}
           !endif
+        ${Else}
+          # Do not continue with an incomplete process inventory. Access-denied and exiting
+          # processes in the install session are both conservative failures.
+          StrCpy $R9 "error"
         ${EndIf}
       ${EndIf}
+      next_process_${_OSP_ID}:
       System::Call 'kernel32::Process32NextW(pR4, pR5)i.R6 ?e'
       Goto loop_${_OSP_ID}
     done_${_OSP_ID}:

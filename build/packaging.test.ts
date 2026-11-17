@@ -1470,6 +1470,8 @@ SectionEnd
     expect(include).not.toContain('OPEN_SCIENCE_PROCESS_ROOT')
     const inventory = readFileSync(join(repoRoot, 'build/windows-install-processes.nsh'), 'utf8')
     expect(inventory).toContain('StrCpy $R2 "$R2\\"')
+    expect(inventory).toContain('A live process whose image cannot be inspected')
+    expect(inventory).toContain('Do not continue with an incomplete process inventory')
   })
 
   it('caches the per-user install location before the HKCU uninstall pass deletes it', () => {
