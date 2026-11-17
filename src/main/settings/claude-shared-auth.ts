@@ -90,7 +90,7 @@ const runBrowserLogin = async (
     const { code, stderr } = await runClaudeCli(
       resolveClaudeExecutableForSpawn(claudePath),
       ['auth', 'login', '--claudeai'],
-      { env, signal, timeoutMs }
+      { env, signal, timeoutMs, preserveChildrenOnSuccess: true }
     )
     return {
       supported: true,

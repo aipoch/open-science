@@ -201,7 +201,23 @@ export const spawnWindowsOwnedProcess = (
   options: Parameters<AgentProcessSpawner>[2]
 ): ChildProcessWithoutNullStreams => {
   const native = binding()
-  const env = options.env ?? process.env
+  const env = { ...(options.env ?? process.env) }
+  // libuv supplies these variables for ordinary Windows child processes even when callers pass a
+  // deliberately narrow environment. The native launcher must preserve the same runtime contract.
+  for (const name of [
+    'SystemRoot',
+    'SystemDrive',
+    'WINDIR',
+    'TEMP',
+    'TMP',
+    'USERPROFILE',
+    'COMSPEC'
+  ]) {
+    if (Object.keys(env).some((key) => key.toUpperCase() === name.toUpperCase())) continue
+    const hostKey = Object.keys(process.env).find((key) => key.toUpperCase() === name.toUpperCase())
+    const value = hostKey ? process.env[hostKey] : undefined
+    if (value !== undefined) env[name] = value
+  }
   const envValue = (name: string): string | undefined =>
     Object.entries(env).find(([key]) => key.toUpperCase() === name)?.[1]
   let executable = command

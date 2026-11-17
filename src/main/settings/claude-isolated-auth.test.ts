@@ -4,6 +4,7 @@ import { PassThrough } from 'node:stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ClaudeIsolatedAuthController, type ClaudeIsolatedTokenStore } from './claude-isolated-auth'
+import * as windowsOwnedProcess from '../process-tree-windows'
 
 // The browser flow spawns `claude setup-token`; mock node:child_process so tests can script the
 // subprocess's stdout/stderr/exit without launching anything. Each test sets `nextSpawn` to the
@@ -37,6 +38,11 @@ vi.mock('node:child_process', async (original) => ({
     spawnCalls.push({ command, args, env: options?.env, windowsHide: options?.windowsHide })
     return (nextSpawn ?? (() => new FakeChild()))()
   }
+}))
+vi.mock('../process-tree-windows', async (original) => ({
+  ...(await original<typeof import('../process-tree-windows')>()),
+  spawnWindowsOwnedProcess: vi.fn(),
+  reapWindowsOwnedJob: vi.fn(async () => true)
 }))
 
 // Minimal fake child process exposing the stdout/stderr/close surface the controller consumes.
@@ -94,6 +100,22 @@ const createStore = (
 
   return store
 }
+
+beforeEach(() => {
+  spawnCalls.length = 0
+  nextSpawn = undefined
+  vi.mocked(windowsOwnedProcess.spawnWindowsOwnedProcess).mockImplementation(
+    (_jobName, command, args, options) => {
+      spawnCalls.push({
+        command,
+        args: [...args],
+        env: options.env,
+        windowsHide: options.windowsHide ?? (process.platform === 'win32' ? true : undefined)
+      })
+      return (nextSpawn ?? (() => new FakeChild()))() as never
+    }
+  )
+})
 
 describe('ClaudeIsolatedAuthController', () => {
   it('reports authenticated: true when the stored token decrypts', async () => {

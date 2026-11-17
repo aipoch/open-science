@@ -135,6 +135,13 @@ it.each(['compatible', 'wrong-version', 'invalid-json', 'timeout', 'cleanup-fail
     }
     const temporary = spawnOptions?.env?.HOME
     expect(spawnOptions?.env).toMatchObject({ PI_OFFLINE: '1', HOME: temporary })
+    if (process.platform === 'win32')
+      expect(spawnOptions?.env).toMatchObject({
+        SystemRoot: process.env.SystemRoot,
+        SystemDrive: process.env.SystemDrive,
+        TEMP: process.env.TEMP,
+        USERPROFILE: process.env.USERPROFILE
+      })
     expect(args).toContain('--no-delegation')
     expect(JSON.parse(child.stdin.read().toString())).toMatchObject({
       id: 1,

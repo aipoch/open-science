@@ -1254,6 +1254,10 @@ const currentRecordedPosixIdentity = (pid: number): PosixProcessIdentity | undef
   return undefined
 }
 
+export const readCurrentPosixProcessTreeIdentity = (
+  pid: number
+): PosixProcessIdentity | undefined => currentRecordedPosixIdentity(pid)
+
 /** Positive identity proof only; an unavailable identity does not prove process exit. */
 export const isRecordedPosixLeaderCurrent = (leader: {
   pid: number

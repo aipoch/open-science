@@ -4,6 +4,7 @@ import { PassThrough } from 'node:stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ClaudeSharedAuthController } from './claude-shared-auth'
+import * as windowsOwnedProcess from '../process-tree-windows'
 
 // Mock node:child_process so tests can script the subprocess without launching anything.
 const spawnCalls: {
@@ -36,6 +37,11 @@ vi.mock('node:child_process', async (original) => ({
     return (nextSpawn ?? (() => new FakeChild()))()
   }
 }))
+vi.mock('../process-tree-windows', async (original) => ({
+  ...(await original<typeof import('../process-tree-windows')>()),
+  spawnWindowsOwnedProcess: vi.fn(),
+  reapWindowsOwnedJob: vi.fn(async () => true)
+}))
 
 class FakeChild extends EventEmitter {
   stdout = new EventEmitter()
@@ -63,6 +69,17 @@ const makeController = (
 beforeEach(() => {
   spawnCalls.length = 0
   nextSpawn = undefined
+  vi.mocked(windowsOwnedProcess.spawnWindowsOwnedProcess).mockImplementation(
+    (_jobName, command, args, options) => {
+      spawnCalls.push({
+        command,
+        args: [...args],
+        env: options.env,
+        windowsHide: options.windowsHide ?? (process.platform === 'win32' ? true : undefined)
+      })
+      return (nextSpawn ?? (() => new FakeChild()))() as never
+    }
+  )
 })
 
 describe('ClaudeSharedAuthController.getStatus', () => {

@@ -75,6 +75,15 @@ export const resolvePiExecutable = async (options: PiRuntimeLocation = {}): Prom
         '--quiet-startup'
       ]
       const ownership = createPosixProcessTreeOwnership({
+        ...process.env,
+        ...(process.platform === 'win32'
+          ? {
+              SystemRoot: process.env.SystemRoot,
+              SystemDrive: process.env.SystemDrive,
+              TEMP: process.env.TEMP,
+              USERPROFILE: process.env.USERPROFILE
+            }
+          : {}),
         PATH: process.env.PATH ?? '/usr/bin:/bin',
         HOME: temporary,
         PI_CODING_AGENT_DIR: join(temporary, 'agent'),

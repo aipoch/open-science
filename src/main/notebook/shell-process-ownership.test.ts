@@ -56,7 +56,7 @@ describe.runIf(process.platform === 'linux')('Shell process ownership recovery',
 
 describe('Shell process ownership receipt lifecycle', () => {
   it.runIf(process.platform !== 'win32')(
-    'offers explicit archival of a real legacy POSIX receipt without signaling its process',
+    'recovers a real legacy POSIX receipt when its current birth identity still matches',
     async () => {
       const root = await mkdtemp(join(tmpdir(), 'shell-legacy-posix-'))
       roots.push(root)
@@ -76,25 +76,51 @@ describe('Shell process ownership receipt lifecycle', () => {
       const path = join(root, 'shell-process-ownership', 'legacy-posix.json')
       const record = JSON.parse(await readFile(path, 'utf8'))
       delete record.posixBirthToken
-      const bytes = JSON.stringify(record)
-      fs.writeFileSync(path, bytes)
+      fs.writeFileSync(path, JSON.stringify(record))
       const restarted = new ShellProcessOwnershipRegistry(root)
       try {
         expect(original.getLegacyRecovery()).toBeUndefined()
-        await expect(restarted.recover()).rejects.toMatchObject({
-          code: 'SHELL_PROCESS_RECOVERY_BLOCKED'
-        })
-        expect(() => process.kill(child.pid!, 0)).not.toThrow()
-        const offer = restarted.getLegacyRecovery()
-        expect(offer).toMatchObject({ count: 1, token: expect.any(String) })
-        expect(() => restarted.archiveLegacyLaunches('unreviewed')).toThrow('records changed')
-        restarted.archiveLegacyLaunches(offer!.token)
+        await restarted.recover()
+        expect(restarted.hasReceipts()).toBe(false)
+        expect(() => process.kill(child.pid!, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+      } finally {
+        await terminateProcessTree(child)
+        release()
+      }
+    }
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'does not signal a legacy POSIX receipt when its start identity no longer matches',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-legacy-posix-reused-'))
+      roots.push(root)
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true,
+        stdio: 'ignore'
+      })
+      trackOwnedPosixProcessTree(child)
+      trackedChildren.push(child)
+      const original = new ShellProcessOwnershipRegistry(root)
+      const release = original.claim(child, {
+        runId: 'legacy-posix-reused',
+        projectId: 'project',
+        sessionId: 'session',
+        platform: process.platform
+      })
+      const path = join(root, 'shell-process-ownership', 'legacy-posix-reused.json')
+      const record = JSON.parse(await readFile(path, 'utf8'))
+      delete record.posixBirthToken
+      fs.writeFileSync(path, JSON.stringify(record))
+      const restarted = new ShellProcessOwnershipRegistry(root, {
+        processStartIdentity: () => 'different-start-identity'
+      })
+      try {
+        await restarted.recover()
         expect(restarted.hasReceipts()).toBe(false)
         expect(() => process.kill(child.pid!, 0)).not.toThrow()
-        const backups = join(root, 'shell-process-ownership-backups')
-        expect(
-          await readFile(join(backups, fs.readdirSync(backups)[0], 'legacy-posix.json'), 'utf8')
-        ).toBe(bytes)
       } finally {
         await terminateProcessTree(child)
         release()

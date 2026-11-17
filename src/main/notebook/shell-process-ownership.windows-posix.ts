@@ -19,6 +19,7 @@ import { EventEmitter } from 'node:events'
 
 import {
   capturePosixProcessTreeIdentity,
+  readCurrentPosixProcessTreeIdentity,
   registerProcessTreeOwnership,
   terminateOwnedPosixProcessGroupById,
   terminateProcessTree
@@ -299,6 +300,14 @@ class ShellProcessOwnershipRegistry {
         }
         const bootToken =
           platform === 'linux' ? (this.options.readBootToken ?? readBootToken)() : undefined
+        const posixBirthToken = capturePosixProcessTreeIdentity(child)?.birthToken
+        if (
+          (platform === 'linux' || platform === 'darwin') &&
+          platform === process.platform &&
+          !posixBirthToken
+        ) {
+          throw new Error('Shell process birth identity could not be confirmed.')
+        }
         const record: ShellProcessOwnershipRecord = {
           version: 1,
           runId: metadata.runId,
@@ -309,7 +318,7 @@ class ShellProcessOwnershipRegistry {
           ownerInstanceId: this.ownerInstanceId,
           launchedAt: intent.launchedAt,
           ...(bootToken ? { bootToken } : {}),
-          posixBirthToken: capturePosixProcessTreeIdentity(child)?.birthToken,
+          ...(posixBirthToken ? { posixBirthToken } : {}),
           processStartIdentity:
             (this.options.processStartIdentity ?? processStartIdentity)(pid, platform) ??
             (() => {
@@ -540,6 +549,10 @@ class ShellProcessOwnershipRegistry {
         }
       }
       const leaderExists = (this.options.processExists ?? processExists)(record.pid)
+      const currentPosixIdentity =
+        record.platform !== 'win32' && record.platform === process.platform && leaderExists
+          ? readCurrentPosixProcessTreeIdentity(record.pid)
+          : undefined
       if (leaderExists) {
         const currentIdentity = (this.options.processStartIdentity ?? processStartIdentity)(
           record.pid,
@@ -556,16 +569,23 @@ class ShellProcessOwnershipRegistry {
           continue
         }
       }
-      const treeExists = (this.options.ownedTreeExists ?? ownedTreeExists)(record)
-      if (treeExists && record.platform !== 'win32' && !leaderExists) {
+      const recoveryRecord =
+        record.platform !== 'win32' &&
+        record.posixBirthToken === undefined &&
+        leaderExists &&
+        currentPosixIdentity?.birthToken
+          ? { ...record, posixBirthToken: currentPosixIdentity.birthToken }
+          : record
+      const treeExists = (this.options.ownedTreeExists ?? ownedTreeExists)(recoveryRecord)
+      if (treeExists && recoveryRecord.platform !== 'win32' && !leaderExists) {
         // A leaderless POSIX group cannot be tied back to the persisted start identity. Its numeric
         // id may have been reused during this boot, so never signal it from the receipt alone.
         throw new ShellProcessRecoveryBlockedError(record.runId)
       }
       if (treeExists) {
         const result = this.options.terminateOwnedTree
-          ? await this.options.terminateOwnedTree(record)
-          : await terminateProcessTree(recoveryHandle(record))
+          ? await this.options.terminateOwnedTree(recoveryRecord)
+          : await terminateProcessTree(recoveryHandle(recoveryRecord))
         if (!result.reaped) throw new ShellProcessRecoveryBlockedError(record.runId)
       }
       await unlink(path)
