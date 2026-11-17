@@ -278,6 +278,10 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'export-package',
     'import-package',
     'package-operation',
+    'org-case-cancel-import',
+    'org-case-detail',
+    'org-case-import',
+    'org-cases-list',
     'use-case-catalog',
     'use-case-introduction'
   ],

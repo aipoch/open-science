@@ -233,4 +233,83 @@ describe('Lab API client', () => {
     expect(error).toBeInstanceOf(LabApiError)
     expect((error as LabApiError).code).toBe('timeout')
   })
+
+  it('calls organization cases list, detail, and download endpoints and preserves 503 storage reason', async () => {
+    const item = {
+      id: 'case_1',
+      name: 'RNA workflow',
+      code: '7Q2M9X4B',
+      description: 'Desc',
+      size_bytes: 512,
+      sha256: 'a'.repeat(64),
+      created_at: '2026-11-17T00:00:00Z',
+      owner: { id: 'usr_1', display_name: 'Alice' },
+      can_delete: false,
+      summary: {
+        schema_version: 1,
+        features: ['content-dedupe'],
+        file_count: 2,
+        total_bytes: 512,
+        excluded_files: 0,
+        omission_count: 0,
+        omissions: []
+      }
+    }
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ items: [item], total: 1, page: 2, page_size: 20 }), {
+          status: 200
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ case: { ...item, original_filename: 'workflow.science' } }), {
+          status: 200
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            url: 'https://storage.example.test/workflow.science',
+            expires_at: '2026-11-17T00:05:00Z',
+            size_bytes: 512,
+            sha256: 'A'.repeat(64),
+            name: 'RNA workflow',
+            code: '7Q2M9X4B'
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: 'STORAGE_NOT_CONFIGURED' } }), {
+          status: 503
+        })
+      )
+
+    const api = new LabApi({ fetch: fetchMock })
+    const listPage = await api.listCases('https://lab.example.com', 'tok-1', {
+      q: '7Q2M9X4B',
+      page: 2,
+      pageSize: 20
+    })
+    expect(listPage.items).toHaveLength(1)
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'https://lab.example.com/api/cases?q=7Q2M9X4B&page=2&page_size=20'
+    )
+
+    const detail = await api.getCase('https://lab.example.com', 'tok-1', 'case_1')
+    expect(detail.original_filename).toBe('workflow.science')
+
+    const ticket = await api.getCaseDownload('https://lab.example.com', 'tok-1', 'case_1')
+    expect(ticket.sha256).toBe('a'.repeat(64))
+
+    await expect(api.listCases('https://lab.example.com', 'tok-1')).rejects.toMatchObject({
+      status: 503,
+      reason: 'STORAGE_NOT_CONFIGURED'
+    })
+    await expect(api.getCase('https://lab.example.com', 'tok-1', '../bad')).rejects.toMatchObject({
+      code: 'invalid-response'
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
 })

@@ -506,9 +506,9 @@ describe('Settings backend ownership architecture', () => {
         detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getActiveInstallId getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getComputePythonRuntime getNotebookFolderRestrictionEnabled getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
         getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail getSkillMarketplaceBatch getSkillMarketplaceDetail getWslSetupStatus getWsl2BashPreviewStatus hasActiveInstall holdInstallAdmission quiesceAuthentication
-        getLabView getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
+        getLabCase getLabCaseDownload getLabView getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
         cancelNotebookNetworkSetup importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installPi installRecommendedWslDistro installSkillMarketplace installWslPlatform isEncryptionAvailable
-        isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkillMarketplace listSkills listSpecialistSkillCatalog listUserSkills
+        isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listLabCases listSkillMarketplace listSkills listSpecialistSkillCatalog listUserSkills
         dispose initializeLab loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutLab logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
         markPathsNormalized migrateAgentHomeSkillIdentities openHarnessSession openWslTerminal prepareDelegatedSkills previewAgentHomeSkill previewCustomServerTemplateExport

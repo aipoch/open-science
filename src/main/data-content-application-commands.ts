@@ -51,6 +51,7 @@ import {
 } from '../shared/application-command-contract'
 import * as Artifacts from '../shared/artifacts'
 import type * as ConversationExport from '../shared/conversation-export'
+import * as OrgCases from '../shared/org-cases'
 import * as SessionPackage from '../shared/session-package'
 import type * as SessionDiagnostics from '../shared/session-diagnostics'
 import { sessionDiagnosticCommandContracts } from '../shared/session-diagnostics-contracts'
@@ -231,6 +232,12 @@ type DataRootWrite = <Result>(operation: () => Promise<Result>) => Promise<Resul
 
 type DataContentApplicationCommandDependencies = Readonly<{
   useCaseCatalog: UseCaseCatalog
+  orgCases: {
+    listCases(query?: OrgCases.ListOrgCasesQuery): Promise<OrgCases.ListOrgCasesResult>
+    getCase(caseId: string): Promise<OrgCases.GetOrgCaseDetailResult>
+    importCase(caseId: string): Promise<OrgCases.ImportOrgCaseResult>
+    cancelImport(caseId?: string): OrgCases.CancelOrgCaseImportResult
+  }
   officePreviewCommands: OfficePreviewCommands
   fileSaveCommands: FileSaveCommands
   reproducibility: ArtifactReproducibilityCommands
@@ -274,6 +281,26 @@ const dataContentApplicationCommands = Object.freeze({
     readonly ['cached' | 'refreshed' | 'reload'],
     UseCase[]
   >('sessions:use-case-catalog', useCaseCatalogContract),
+  orgCasesList: defineApplicationCommand<
+    'sessions:org-cases-list',
+    readonly [query?: OrgCases.ListOrgCasesQuery],
+    OrgCases.ListOrgCasesResult
+  >('sessions:org-cases-list', OrgCases.orgCaseCommandContracts.list),
+  orgCaseDetail: defineApplicationCommand<
+    'sessions:org-case-detail',
+    readonly [caseId: string],
+    OrgCases.GetOrgCaseDetailResult
+  >('sessions:org-case-detail', OrgCases.orgCaseCommandContracts.detail),
+  orgCaseImport: defineApplicationCommand<
+    'sessions:org-case-import',
+    readonly [caseId: string],
+    OrgCases.ImportOrgCaseResult
+  >('sessions:org-case-import', OrgCases.orgCaseCommandContracts.import),
+  orgCaseCancelImport: defineApplicationCommand<
+    'sessions:org-case-cancel-import',
+    readonly [caseId?: string],
+    OrgCases.CancelOrgCaseImportResult
+  >('sessions:org-case-cancel-import', OrgCases.orgCaseCommandContracts.cancelImport),
   officePreviewOpen: invocationCommandFor<OfficePreviewCommands>()('office-preview:open', 'open'),
   officePreviewAttachFrame: invocationCommandFor<OfficePreviewCommands>()(
     'office-preview:attach-frame',
@@ -787,6 +814,10 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionExportPackage,
     dataContentApplicationCommands.sessionImportPackage,
     dataContentApplicationCommands.sessionPackageOperation,
+    dataContentApplicationCommands.orgCasesList,
+    dataContentApplicationCommands.orgCaseDetail,
+    dataContentApplicationCommands.orgCaseImport,
+    dataContentApplicationCommands.orgCaseCancelImport,
     dataContentApplicationCommands.useCaseCatalog,
     dataContentApplicationCommands.useCaseIntroduction,
     dataContentApplicationCommands.sessionFilterPdfContextCandidates,
@@ -1216,6 +1247,22 @@ const registerDataContentApplicationCommands = (
         return invocation.args[0] === 'cached'
           ? dependencies.useCaseCatalog.cached()
           : dependencies.useCaseCatalog.refresh(invocation.args[0] === 'reload')
+      },
+      'sessions:org-cases-list': (invocation) => {
+        assertLocalCaller(invocation, dataContentApplicationCommands.orgCasesList.name)
+        return dependencies.orgCases.listCases(invocation.args[0])
+      },
+      'sessions:org-case-detail': (invocation) => {
+        assertLocalCaller(invocation, dataContentApplicationCommands.orgCaseDetail.name)
+        return dependencies.orgCases.getCase(invocation.args[0])
+      },
+      'sessions:org-case-import': (invocation) => {
+        assertLocalCaller(invocation, dataContentApplicationCommands.orgCaseImport.name)
+        return dependencies.orgCases.importCase(invocation.args[0])
+      },
+      'sessions:org-case-cancel-import': (invocation) => {
+        assertLocalCaller(invocation, dataContentApplicationCommands.orgCaseCancelImport.name)
+        return dependencies.orgCases.cancelImport(invocation.args[0])
       },
       'sessions:package-operation': (invocation) => {
         assertElectronOrLocalWebCaller(

@@ -11,6 +11,12 @@ import { isCurrentInFlight } from '../../shared/in-flight-promise'
 
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
+import type {
+  ListOrgCasesQuery,
+  OrgCaseDetail,
+  OrgCaseDownloadTicket,
+  OrgCasesPage
+} from '../../shared/org-cases'
 import { LabApi, LabApiError } from './lab-api'
 import { LabCredentialStore, type LabPreviousSelection } from './lab-credential-store'
 import { LabOAuthController } from './lab-oauth'
@@ -376,6 +382,66 @@ export class LabAccountOwner {
   // Resolves a live bearer token for the provider bridges. Refreshes are strictly single-flight and
   // never retried after a failure: the server rotates refresh tokens and a duplicate request can
   // revoke the whole client session, so a failed refresh means "sign in again".
+  async listCases(query: ListOrgCasesQuery = {}, signal?: AbortSignal): Promise<OrgCasesPage> {
+    return this.withAuthorizedCaseRequest(signal, (serverUrl, accessToken) =>
+      this.api.listCases(serverUrl, accessToken, query, signal)
+    )
+  }
+
+  async getCase(caseId: string, signal?: AbortSignal): Promise<OrgCaseDetail> {
+    return this.withAuthorizedCaseRequest(signal, (serverUrl, accessToken) =>
+      this.api.getCase(serverUrl, accessToken, caseId, signal)
+    )
+  }
+
+  async getCaseDownload(caseId: string, signal?: AbortSignal): Promise<OrgCaseDownloadTicket> {
+    return this.withAuthorizedCaseRequest(signal, (serverUrl, accessToken) =>
+      this.api.getCaseDownload(serverUrl, accessToken, caseId, signal)
+    )
+  }
+
+  private async withAuthorizedCaseRequest<T>(
+    signal: AbortSignal | undefined,
+    execute: (serverUrl: string, accessToken: string) => Promise<T>
+  ): Promise<T> {
+    if (signal?.aborted) {
+      throw new LabApiError('cancelled', 'The Lab request was cancelled.')
+    }
+    const expectedServerUrl = this.view.serverUrl
+    const startGeneration = this.refreshGeneration
+    if (!expectedServerUrl || this.view.state !== 'authenticated') {
+      throw new LabApiError('unauthorized', 'Sign in to Lab first.')
+    }
+    const token = await this.getAccessToken(false, expectedServerUrl)
+    if (signal?.aborted) {
+      throw new LabApiError('cancelled', 'The Lab request was cancelled.')
+    }
+    if (this.refreshGeneration !== startGeneration || this.view.serverUrl !== expectedServerUrl) {
+      throw new LabApiError('cancelled', 'The Lab session changed.')
+    }
+    try {
+      return await execute(expectedServerUrl, token)
+    } catch (error) {
+      if (signal?.aborted || (error instanceof LabApiError && error.code === 'cancelled')) {
+        throw new LabApiError('cancelled', 'The Lab request was cancelled.')
+      }
+      if (this.refreshGeneration !== startGeneration || this.view.serverUrl !== expectedServerUrl) {
+        throw new LabApiError('cancelled', 'The Lab session changed.')
+      }
+      if (!(error instanceof LabApiError) || error.code !== 'unauthorized') {
+        throw error
+      }
+      const refreshed = await this.getAccessToken(true, expectedServerUrl)
+      if (signal?.aborted) {
+        throw new LabApiError('cancelled', 'The Lab request was cancelled.')
+      }
+      if (this.refreshGeneration !== startGeneration || this.view.serverUrl !== expectedServerUrl) {
+        throw new LabApiError('cancelled', 'The Lab session changed.')
+      }
+      return await execute(expectedServerUrl, refreshed)
+    }
+  }
+
   async getAccessToken(forceRefresh = false, expectedServerUrl?: string): Promise<string> {
     const resolvedServerUrl =
       expectedServerUrl ??

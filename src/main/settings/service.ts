@@ -40,6 +40,12 @@ import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { ClassificationSettingsOwner } from './classification-settings'
 import { ClassificationUsageRecorder } from './classification-usage'
 import { ProviderRuntimeHealthOwner } from './provider-runtime-health-owner'
+import type {
+  ListOrgCasesQuery,
+  OrgCaseDetail,
+  OrgCaseDownloadTicket,
+  OrgCasesPage
+} from '../../shared/org-cases'
 import { LabAccountOwner } from './lab-account-owner'
 import { ProviderTransportOwner } from './provider-transport-owner'
 import {
@@ -1829,6 +1835,18 @@ class SettingsService {
 
   getLabView(): LabView {
     return this.lab.getView()
+  }
+
+  listLabCases(query: ListOrgCasesQuery = {}, signal?: AbortSignal): Promise<OrgCasesPage> {
+    return this.lab.listCases(query, signal)
+  }
+
+  getLabCase(caseId: string, signal?: AbortSignal): Promise<OrgCaseDetail> {
+    return this.lab.getCase(caseId, signal)
+  }
+
+  getLabCaseDownload(caseId: string, signal?: AbortSignal): Promise<OrgCaseDownloadTicket> {
+    return this.lab.getCaseDownload(caseId, signal)
   }
 
   async setLabServer(request: SetLabServerRequest): Promise<LabView> {

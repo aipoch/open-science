@@ -8,6 +8,19 @@ import type {
   LabUsage
 } from '../../shared/lab'
 import { LAB_CLIENT_ID, readLabUsage } from '../../shared/lab'
+import {
+  ORG_CASE_DEFAULT_PAGE_SIZE,
+  ORG_CASE_MAX_PAGE_SIZE,
+  ORG_CASE_MAX_QUERY_LENGTH,
+  isValidOrgCaseId,
+  normalizeOrgCaseSearchQuery,
+  parseOrgCaseDetailResponse,
+  parseOrgCaseDownloadTicket,
+  parseOrgCasesPage,
+  type OrgCaseDetail,
+  type OrgCaseDownloadTicket,
+  type OrgCasesPage
+} from '../../shared/org-cases'
 import { netFetchStandard } from '../network-fetch'
 import { LAB_RESOURCE_LIMITS } from './lab-resource-limits'
 
@@ -94,7 +107,9 @@ const errorCodeFrom = (status: number, body: unknown): { code: LabErrorCode; rea
       ? record.reason
       : typeof errorRecord?.code === 'string'
         ? errorRecord.code
-        : undefined
+        : typeof record.code === 'string'
+          ? record.code
+          : undefined
   const description =
     typeof record.error_description === 'string'
       ? record.error_description
@@ -318,11 +333,98 @@ export class LabApi {
     }
   }
 
+  async listCases(
+    serverUrl: string,
+    accessToken: string,
+    query: { q?: string; page?: number; pageSize?: number } = {},
+    signal?: AbortSignal
+  ): Promise<OrgCasesPage> {
+    const url = new URL(`${serverUrl}/api/cases`)
+    const normalizedQuery = normalizeOrgCaseSearchQuery(query.q)
+    if (normalizedQuery) {
+      if (Array.from(normalizedQuery).length > ORG_CASE_MAX_QUERY_LENGTH) {
+        throw new LabApiError('invalid-response', 'Search query exceeds maximum length.')
+      }
+      url.searchParams.set('q', normalizedQuery)
+    }
+    const page =
+      typeof query.page === 'number' && Number.isInteger(query.page) && query.page >= 1
+        ? query.page
+        : 1
+    const pageSize =
+      typeof query.pageSize === 'number' &&
+      Number.isInteger(query.pageSize) &&
+      query.pageSize >= 1 &&
+      query.pageSize <= ORG_CASE_MAX_PAGE_SIZE
+        ? query.pageSize
+        : ORG_CASE_DEFAULT_PAGE_SIZE
+    url.searchParams.set('page', String(page))
+    url.searchParams.set('page_size', String(pageSize))
+    const body = await this.request(
+      url.toString(),
+      { method: 'GET', headers: { authorization: `Bearer ${accessToken}` } },
+      LAB_RESOURCE_LIMITS.bootstrapTimeoutMs,
+      { signal, maxResponseBytes: Math.max(LAB_RESOURCE_LIMITS.maxResponseBytes, 1024 * 1024) }
+    )
+    const parsed = parseOrgCasesPage(body)
+    if (!parsed) {
+      throw new LabApiError('invalid-response', 'Lab returned invalid organization cases data.')
+    }
+    return parsed
+  }
+
+  async getCase(
+    serverUrl: string,
+    accessToken: string,
+    caseId: string,
+    signal?: AbortSignal
+  ): Promise<OrgCaseDetail> {
+    if (!isValidOrgCaseId(caseId)) {
+      throw new LabApiError('invalid-response', 'Invalid organization case identifier.')
+    }
+    const body = await this.request(
+      `${serverUrl}/api/cases/${encodeURIComponent(caseId)}`,
+      { method: 'GET', headers: { authorization: `Bearer ${accessToken}` } },
+      LAB_RESOURCE_LIMITS.bootstrapTimeoutMs,
+      { signal }
+    )
+    const parsed = parseOrgCaseDetailResponse(body)
+    if (!parsed) {
+      throw new LabApiError('invalid-response', 'Lab returned invalid organization case details.')
+    }
+    return parsed
+  }
+
+  async getCaseDownload(
+    serverUrl: string,
+    accessToken: string,
+    caseId: string,
+    signal?: AbortSignal
+  ): Promise<OrgCaseDownloadTicket> {
+    if (!isValidOrgCaseId(caseId)) {
+      throw new LabApiError('invalid-response', 'Invalid organization case identifier.')
+    }
+    const body = await this.request(
+      `${serverUrl}/api/cases/${encodeURIComponent(caseId)}/download`,
+      { method: 'GET', headers: { authorization: `Bearer ${accessToken}` } },
+      LAB_RESOURCE_LIMITS.usageTimeoutMs,
+      { signal }
+    )
+    const parsed = parseOrgCaseDownloadTicket(body)
+    if (!parsed) {
+      throw new LabApiError(
+        'invalid-response',
+        'Lab returned an invalid organization case download ticket.'
+      )
+    }
+    return parsed
+  }
+
   private async request(
     url: string,
     init: RequestInit,
     timeoutMs: number,
-    options: { allowEmpty?: boolean; signal?: AbortSignal } = {}
+    options: { allowEmpty?: boolean; signal?: AbortSignal; maxResponseBytes?: number } = {}
   ): Promise<Record<string, unknown>> {
     return withDeadline(
       async (signal) => {
@@ -341,7 +443,7 @@ export class LabApi {
         try {
           text = await readBoundedResponseText(
             response,
-            LAB_RESOURCE_LIMITS.maxResponseBytes,
+            options.maxResponseBytes ?? LAB_RESOURCE_LIMITS.maxResponseBytes,
             'Lab response',
             undefined,
             signal

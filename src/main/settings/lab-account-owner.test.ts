@@ -1073,4 +1073,44 @@ describe('Lab account owner', () => {
       activeProviderId: 'p1'
     })
   })
+
+  it('forces a single token refresh on 401 when fetching organization cases', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const credentials = new LabCredentialStore(dir)
+    await seedSession(credentials)
+    const expectedPage = { items: [], total: 0, page: 1, page_size: 20 }
+    const api = createApi()
+    api.refreshToken.mockResolvedValue({
+      accessToken: 'at_refreshed',
+      refreshToken: 'rt_refreshed',
+      expiresIn: 900,
+      tokenExpiresAt: Date.now() + 900_000
+    })
+    const listCases = vi
+      .fn()
+      .mockRejectedValueOnce(new LabApiError('unauthorized', 'expired', 401, 'SESSION_INVALID'))
+      .mockResolvedValueOnce(expectedPage)
+    Object.assign(api, { listCases })
+    const { owner } = await createOwner(dir, api)
+    await owner.check()
+
+    const page = await owner.listCases({ q: '7Q2M9X4B', page: 1 })
+    expect(page).toEqual(expectedPage)
+    expect(api.refreshToken).toHaveBeenCalledTimes(1)
+    expect(listCases).toHaveBeenNthCalledWith(
+      1,
+      SERVER,
+      'at_1',
+      { q: '7Q2M9X4B', page: 1 },
+      undefined
+    )
+    expect(listCases).toHaveBeenNthCalledWith(
+      2,
+      SERVER,
+      'at_refreshed',
+      { q: '7Q2M9X4B', page: 1 },
+      undefined
+    )
+  })
 })

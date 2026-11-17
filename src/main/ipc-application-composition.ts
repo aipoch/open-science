@@ -62,6 +62,8 @@ import {
   createElectronSurfaceAdapter
 } from './desktop-surface-declarations'
 import { LocalePreferenceOwner } from './locale/owner'
+import { netFetchStandard } from './network-fetch'
+import { OrgCaseService } from './session-package/org-cases'
 import { createManagedPreviewProtocolHandler } from './managed-preview-handler'
 import { runtimeMetadata } from './runtime-metadata'
 
@@ -809,6 +811,35 @@ export const createApplicationModules = async (
     declareElectronAdapter
   })
   sessionAuthority.reviewerCommandOwnerRef.current = reviewerCommandOwner
+  const orgCases = new OrgCaseService({
+    getLabView: () => settingsBootstrap.settingsService.getLabView?.() ?? { state: 'unconfigured' },
+    listLabCases: (query, signal) => settingsBootstrap.settingsService.listLabCases(query, signal),
+    getLabCase: (caseId, signal) => settingsBootstrap.settingsService.getLabCase(caseId, signal),
+    getLabCaseDownload: (caseId, signal) =>
+      settingsBootstrap.settingsService.getLabCaseDownload(caseId, signal),
+    enqueuePackageFile: (path, onReleased, validateBeforeTarget) =>
+      sessionPackageSurfaces.sessionPackageDesktop.enqueueFile(
+        path,
+        onReleased,
+        validateBeforeTarget
+      ),
+    publishDownloadChanged: (snapshot) =>
+      applicationEvents.publish('sessions:org-case-download-changed', snapshot),
+    downloadFetch: netFetchStandard
+  })
+  const unsubscribeOrgCasesLabSync = applicationEvents.subscribe?.((event) => {
+    if (event.channel === 'settings:changed') {
+      orgCases.handleLabViewChanged(event.payload.lab)
+    }
+  })
+  await modules.add(orgCases, (cases) => ({
+    name: 'org-cases',
+    capability: cases,
+    dispose: () => {
+      unsubscribeOrgCasesLabSync?.()
+      cases.dispose()
+    }
+  }))
   const commandDependencies = composeCommandDependencies({
     localeOwner,
     reportUploadProgress,
@@ -844,6 +875,7 @@ export const createApplicationModules = async (
     storageHandoff,
     artifactSurfaces,
     sessionPackageSurfaces,
+    orgCases,
     reviewerCommandOwner,
     listAppIconPreviews
   })
@@ -977,7 +1009,8 @@ export const createApplicationModules = async (
     abortDesktopUpdate: handoff.abortDesktopUpdate,
     hasActivePackageTransfer: () =>
       sessionPackageSurfaces.browserPackageImport.active ||
-      sessionPackageSurfaces.sessionPackageDesktop.hasActiveTransfer(),
+      sessionPackageSurfaces.sessionPackageDesktop.hasActiveTransfer() ||
+      orgCases.hasActiveDownload(),
     hasActiveReviewerWork: () =>
       handoff.reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
     getActiveSettingsInstallId: () => settingsBootstrap.settingsService.getActiveInstallId(),
