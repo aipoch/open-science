@@ -12,7 +12,7 @@ import {
   type SkillRuntimeEnvironment,
   environmentFromProcess,
   isOwnedSkillRuntimeAcpServer
-} from '../skills/runtime-mcp-server'
+} from '../skills/runtime-mcp-config'
 
 import type { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 

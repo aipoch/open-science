@@ -6559,7 +6559,11 @@
       ]
     },
     "skill_runtime_transport": {
-      "sources": ["src/main/skills/runtime-mcp-server.ts"],
+      "sources": [
+        "src/main/skills/runtime-mcp-config.ts",
+        "src/main/skills/runtime-mcp-constants.ts",
+        "src/main/skills/runtime-mcp-server.ts"
+      ],
       "layer": "host-owner",
       "sourceLayers": {},
       "consumerModules": ["settings_service_facade"],
@@ -6572,9 +6576,11 @@
         "src/main/host-layer-dependencies.architecture.test.ts"
       ],
       "externalImports": [
+        "@agentclientprotocol/sdk",
         "@aipoch/skills/projection",
         "@modelcontextprotocol/sdk/server/mcp.js",
         "@modelcontextprotocol/sdk/server/stdio.js",
+        "node:crypto",
         "node:path",
         "zod"
       ]

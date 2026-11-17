@@ -122,6 +122,8 @@ const desktopExternalRoots = [
   // Connector providers are resolved by subpath at runtime, so esbuild cannot record these
   // dynamic requires in its external import graph. Keep the published package staged.
   '@aipoch/connector-builtins',
+  // The diff worker is created from an eval string and requires an absolute path at runtime.
+  'diff',
   'pdfjs-dist',
   '@bokuweb/zstd-wasm',
   'tiktoken',
@@ -345,22 +347,75 @@ const bundledSelfLocationAllowlist = new Map([
 
 const selfLocationPattern =
   /\b__dirname\b|\b__filename\b|import\.meta\.(?:url|dirname|filename)|require\.resolve\s*\(/
+const dynamicRequireAliasPattern =
+  /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*createRequire\s*\(/g
+const dynamicRequireCallPattern = (aliases) =>
+  new RegExp(
+    `\\b(?:${aliases.map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s*(?:\\.resolve\\s*)?\\(\\s*`,
+    'g'
+  )
+const directCreateRequireCallPattern = /\bcreateRequire\s*\([^)]*\)\s*(?:\.resolve\s*)?\(\s*/g
 
-export function assertBundledModulesStayPortable(metafiles, root) {
+const maskSourceLiterals = (source) =>
+  source
+    .replace(/\/\*[\s\S]*?\*\//g, (value) => value.replace(/[^\r\n]/g, ' '))
+    .replace(/\/\/[^\r\n]*/g, (value) => value.replace(/[^\r\n]/g, ' '))
+    .replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g, (value) =>
+      value.replace(/[^\r\n]/g, ' ')
+    )
+
+const dynamicPackageSpecifiers = (source) => {
+  const code = maskSourceLiterals(source)
+  const aliases = new Set(['nodeRequire'])
+  for (const match of code.matchAll(dynamicRequireAliasPattern)) aliases.add(match[1])
+  const calls = [dynamicRequireCallPattern([...aliases]), directCreateRequireCallPattern]
+  const specifiers = []
+  for (const pattern of calls)
+    for (const match of code.matchAll(pattern)) {
+      const openParenthesis = match.index + match[0].lastIndexOf('(') + 1
+      const specifier = source.slice(openParenthesis).match(/^\s*(['"])([^'"]+)\1/)
+      if (specifier) specifiers.push(specifier[2])
+    }
+  return specifiers
+}
+
+export function assertBundledModulesStayPortable(metafiles, root, external = new Set()) {
   const offenders = []
+  const dynamicDependencyOffenders = []
   for (const meta of metafiles)
     for (const path of Object.keys(meta.inputs)) {
       if (path.startsWith('raw-resource:') || path.startsWith('node-worker:')) continue
       const relative = (isAbsolute(path) ? relativePath(root, path) : path).replaceAll('\\', '/')
-      if (relative.startsWith('src/')) continue
-      if (!selfLocationPattern.test(readFileSync(join(root, relative), 'utf8'))) continue
-      if (!bundledSelfLocationAllowlist.has(relative)) offenders.push(relative)
+      const source = readFileSync(join(root, relative), 'utf8')
+      if (
+        !relative.startsWith('src/') &&
+        selfLocationPattern.test(source) &&
+        !bundledSelfLocationAllowlist.has(relative)
+      )
+        offenders.push(relative)
+      for (const specifier of dynamicPackageSpecifiers(source)) {
+        if (specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('node:'))
+          continue
+        const dependency = packageName(specifier)
+        if (dependency === 'original-fs') continue
+        if (!external.has(dependency))
+          dynamicDependencyOffenders.push(`${relative} -> ${dependency}`)
+      }
     }
-  if (offenders.length)
+  if (offenders.length || dynamicDependencyOffenders.length)
     throw new Error(
-      'Bundled module locates its own files and is not on the allowlist: ' +
-        offenders.sort().join(', ') +
-        '. Keep the package external, or verify the read and add the file to bundledSelfLocationAllowlist.'
+      [
+        offenders.length &&
+          'Bundled module locates its own files and is not on the allowlist: ' +
+            offenders.sort().join(', ') +
+            '. Keep the package external, or verify the read and add the file to bundledSelfLocationAllowlist.',
+        dynamicDependencyOffenders.length &&
+          'Bundled module dynamically resolves runtime packages that are not staged as external dependencies: ' +
+            dynamicDependencyOffenders.sort().join(', ') +
+            '.'
+      ]
+        .filter(Boolean)
+        .join(' ')
     )
 }
 

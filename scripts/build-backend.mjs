@@ -185,7 +185,7 @@ export async function createBackendBuilder({
       external && new Set([...external, ...missingOptionalDependencies(root, metadata)])
     )
     desktopBundledDependencies(metadata, external, root)
-    if (desktop) assertBundledModulesStayPortable(metadata, root)
+    if (desktop) assertBundledModulesStayPortable(metadata, root, external)
     if (desktop) {
       await rm(join(out, 'third-party-licenses'), { recursive: true, force: true })
       const notices = await bundledDependencyNotices(root, metadata)

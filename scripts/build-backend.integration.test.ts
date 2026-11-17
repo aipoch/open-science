@@ -381,3 +381,41 @@ it('checks every bundled input after an allowlisted self-location file', async (
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it('rejects dynamic package loads from bundled source unless they are staged externally', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-dynamic-package-'))
+  const put = async (file: string, content: string): Promise<void> => {
+    await mkdir(dirname(join(root, file)), { recursive: true })
+    await writeFile(join(root, file), content)
+  }
+  try {
+    await put(
+      'src/main/dynamic-loader.ts',
+      `
+        const nodeRequire = createRequire(import.meta.url)
+        nodeRequire('@aipoch/skills/projection')
+        const require = createRequire(import.meta.url)
+        require.resolve('diff')
+        createRequire(import.meta.url).resolve('another-runtime-only')
+      `
+    )
+    const metadata = [
+      {
+        inputs: { 'src/main/dynamic-loader.ts': {} },
+        outputs: {}
+      }
+    ]
+    expect(() => assertBundledModulesStayPortable(metadata, root)).toThrow(/@aipoch\/skills/)
+    expect(() => assertBundledModulesStayPortable(metadata, root)).toThrow(/diff/)
+    expect(() => assertBundledModulesStayPortable(metadata, root)).toThrow(/another-runtime-only/)
+    expect(() =>
+      assertBundledModulesStayPortable(
+        metadata,
+        root,
+        new Set(['@aipoch/skills', 'diff', 'another-runtime-only'])
+      )
+    ).not.toThrow()
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

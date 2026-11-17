@@ -7,7 +7,7 @@ import { isolateCodeBuddyEnvironment } from '../agent-framework/codebuddy'
 import { isolatePiProfile } from '../agent-framework/pi'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings-runtime'
 import { prepareCodexRuntimeHomeAuthentication } from '../settings/codex-auth'
-import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 
 type RestrictedRuntimeProfile = Readonly<{
   taskOnly?: boolean

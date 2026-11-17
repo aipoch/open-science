@@ -33,6 +33,7 @@ import {
 
 it('stages dynamically loaded connector providers in the desktop backend', () => {
   expect(desktopExternalClosure(process.cwd())).toContain('@aipoch/connector-builtins')
+  expect(desktopExternalClosure(process.cwd())).toContain('diff')
 })
 
 describe('generated native Prisma payload', () => {

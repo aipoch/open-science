@@ -1,10 +1,8 @@
 import { AUTHORIZED_DIRECTORIES_PROMPT } from '../local-fs/authorized-directories'
 import { NOTEBOOK_SYSTEM_PROMPT_APPEND } from '../notebook/mcp-server'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
-import {
-  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
-  inheritSkillRuntimeAcpServerOwnership
-} from '../skills/runtime-mcp-server'
+import { inheritSkillRuntimeAcpServerOwnership } from '../skills/runtime-mcp-config'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import type { McpServer } from '@agentclientprotocol/sdk'
 import type { AgentFramework, SessionSetup } from '../agent-framework/types'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
