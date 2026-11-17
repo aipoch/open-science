@@ -7,7 +7,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { trackOwnedPosixProcessTree, terminateProcessTree } from '../process-tree'
+import * as processTree from '../process-tree'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import { windowsProcessCommandLine } from '../windows-process-query'
 import type { ChildProcess } from 'node:child_process'
@@ -25,9 +25,20 @@ const roots: string[] = []
 const trackedChildren: ChildProcess[] = []
 const BOOT_A = '11111111-1111-4111-8111-111111111111'
 const BOOT_B = '22222222-2222-4222-8222-222222222222'
+const captureProcessTreeIdentity = processTree.capturePosixProcessTreeIdentity
+
+vi.spyOn(processTree, 'capturePosixProcessTreeIdentity').mockImplementation((child) => {
+  if (child.pid === 4242)
+    return { birthToken: 'linux-proc-starttime:4242' } as ReturnType<
+      typeof captureProcessTreeIdentity
+    >
+  return captureProcessTreeIdentity(child)
+})
 
 afterEach(async () => {
-  await Promise.all(trackedChildren.splice(0).map((child) => terminateProcessTree(child)))
+  await Promise.all(
+    trackedChildren.splice(0).map((child) => processTree.terminateProcessTree(child))
+  )
   vi.unstubAllEnvs()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -37,7 +48,7 @@ describe.runIf(process.platform === 'linux')('Shell process ownership recovery',
     const root = await mkdtemp(join(tmpdir(), 'shell-process-recovery-'))
     roots.push(root)
     const child = spawn('/bin/sh', ['-c', 'sleep 30'], { detached: true })
-    trackOwnedPosixProcessTree(child)
+    processTree.trackOwnedPosixProcessTree(child)
     trackedChildren.push(child)
     const firstInstance = new ShellProcessOwnershipRegistry(root)
     const release = firstInstance.claim(child, {
@@ -64,7 +75,7 @@ describe('Shell process ownership receipt lifecycle', () => {
         detached: true,
         stdio: 'ignore'
       })
-      trackOwnedPosixProcessTree(child)
+      processTree.trackOwnedPosixProcessTree(child)
       trackedChildren.push(child)
       const original = new ShellProcessOwnershipRegistry(root)
       const release = original.claim(child, {
@@ -86,7 +97,7 @@ describe('Shell process ownership receipt lifecycle', () => {
           expect.objectContaining({ code: 'ESRCH' })
         )
       } finally {
-        await terminateProcessTree(child)
+        await processTree.terminateProcessTree(child)
         release()
       }
     }
@@ -101,7 +112,7 @@ describe('Shell process ownership receipt lifecycle', () => {
         detached: true,
         stdio: 'ignore'
       })
-      trackOwnedPosixProcessTree(child)
+      processTree.trackOwnedPosixProcessTree(child)
       trackedChildren.push(child)
       const original = new ShellProcessOwnershipRegistry(root)
       const release = original.claim(child, {
@@ -122,7 +133,7 @@ describe('Shell process ownership receipt lifecycle', () => {
         expect(restarted.hasReceipts()).toBe(false)
         expect(() => process.kill(child.pid!, 0)).not.toThrow()
       } finally {
-        await terminateProcessTree(child)
+        await processTree.terminateProcessTree(child)
         release()
       }
     }
@@ -301,7 +312,7 @@ describe('Shell process ownership receipt lifecycle', () => {
         throw error
       } finally {
         vi.unstubAllEnvs()
-        await terminateProcessTree(child)
+        await processTree.terminateProcessTree(child)
       }
     },
     20_000
