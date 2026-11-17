@@ -36,8 +36,8 @@ describe('packageFilesFromLock', () => {
 
 describe('curated version matrix', () => {
   it('publishes the confirmed Python and R versions', () => {
-    expect(VERSIONS.python).toEqual(['3.11', '3.12', '3.13'])
-    expect(VERSIONS.r).toEqual(['4.3', '4.4'])
+    expect(VERSIONS.python).toEqual(['3.12'])
+    expect(VERSIONS.r).toEqual(['4.4'])
   })
 
   it('packId is <language>-<version>', () => {
@@ -52,18 +52,12 @@ describe('curated version matrix', () => {
 
   it('packMatrix is the full language x version cross product with pinned floors', () => {
     const matrix = packMatrix()
-    expect(matrix.map((p) => p.id)).toEqual([
-      'python-3.11',
-      'python-3.12',
-      'python-3.13',
-      'r-4.3',
-      'r-4.4'
-    ])
-    const py311 = matrix.find((p) => p.id === 'python-3.11')
-    expect(py311).toMatchObject({ language: 'python', version: '3.11' })
-    expect(py311?.packages).toEqual(['python=3.11', 'matplotlib-base', 'nomkl'])
-    const r43 = matrix.find((p) => p.id === 'r-4.3')
-    expect(r43?.packages).toEqual(['r-base=4.3', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2'])
+    expect(matrix.map((p) => p.id)).toEqual(['python-3.12', 'r-4.4'])
+    const python = matrix.find((p) => p.id === 'python-3.12')
+    expect(python).toMatchObject({ language: 'python', version: '3.12' })
+    expect(python?.packages).toEqual(['python=3.12', 'matplotlib-base', 'nomkl'])
+    const r = matrix.find((p) => p.id === 'r-4.4')
+    expect(r?.packages).toEqual(['r-base=4.4', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2'])
   })
 })
 
@@ -80,9 +74,9 @@ describe('floor package sync with provisioner base floor', () => {
     expect(stripPin(floorPackages('r', '4.4'))).toEqual(stripPin(BASE_R_PACKAGES))
   })
   it('the floor is minimal (no scientific stack)', () => {
-    expect(floorPackages('python', '3.11')).not.toContain('numpy')
-    expect(floorPackages('python', '3.11')).not.toContain('pandas')
-    expect(floorPackages('python', '3.11')).not.toContain('matplotlib')
+    expect(floorPackages('python', '3.12')).not.toContain('numpy')
+    expect(floorPackages('python', '3.12')).not.toContain('pandas')
+    expect(floorPackages('python', '3.12')).not.toContain('matplotlib')
   })
 })
 
