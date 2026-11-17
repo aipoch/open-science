@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { NotebookRuntimeService } from './runtime-service'
+import type { NotebookExecutionRequest } from './execution-contract'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import {
   notebookUserOperation,
@@ -41,6 +42,64 @@ beforeEach(() => {
 afterEach(() => clearMigrationPending())
 
 describe('notebook IPC handlers', () => {
+  it('forces a fresh terminal check through native IPC and the real runtime without replacing the kernel', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'notebook-terminal-native-recheck-'))
+    const policy = healthyNotebookMemoryPolicy()
+    const getState = vi.fn(policy.getState)
+    const identity = {}
+    const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+      status: 'completed' as const,
+      stdout: '',
+      stderr: '',
+      traceback: '',
+      cwdAfter: request.cwd,
+      outputs: []
+    }))
+    const executorFactory = vi.fn(() => ({
+      execute,
+      shutdown: async () => ({ reaped: true }),
+      idleProcesses: () => [
+        { identity, processKey: 'python:default-python', release: async () => true }
+      ]
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project',
+      memoryPolicy: { ...policy, getState },
+      executorFactory
+    })
+    const workflows = createNotebookCommandWorkflows(service)
+    registerNotebookIpcHandlers(workflows)
+    const sender = Object.assign(new EventEmitter(), { id: 324, isDestroyed: () => false })
+    const request = {
+      sessionId: 'session',
+      workspaceCwd: root,
+      source: 'user' as const,
+      language: 'python' as const,
+      code: '1'
+    }
+    try {
+      expect((await workflows.execute(request)).status).toBe('completed')
+      getState.mockClear()
+      const terminal = { ...request, inputKind: 'terminal' as const }
+      expect((await workflows.execute(terminal)).status).toBe('completed')
+      expect(getState.mock.calls.some(([options]) => options?.force)).toBe(false)
+
+      getState.mockClear()
+      await expect(
+        ipcHandlers.get('notebook:execute')!({ sender }, terminal)
+      ).resolves.toMatchObject({ status: 'completed' })
+      expect(getState.mock.calls.some(([options]) => options?.force)).toBe(true)
+      expect(notebookUserOperation(terminal)).toBeUndefined()
+      expect(execute).toHaveBeenCalledTimes(3)
+      expect(executorFactory).toHaveBeenCalledOnce()
+    } finally {
+      await service.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('marks only a current native human terminal request and retains the caller fence', async () => {
     const execute = vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' })
     const service = { execute } as unknown as NotebookRuntimeService
