@@ -759,6 +759,38 @@ describe('WorkspaceRunMarks interaction', () => {
     })
   })
 
+  it('replaces a pending reveal before either target mounts, ignoring the stale completion', async () => {
+    const items = Array.from({ length: 4 }, (_, index) =>
+      createMessageItem({ id: `prompt-${index}` }, index)
+    )
+    const reveal = vi.fn()
+    const { rerender } = render(
+      <WorkspaceRunMarks items={items} viewport={viewport} onRevealMessage={reveal} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Go to run 2/u }))
+    expect(reveal).toHaveBeenLastCalledWith('prompt-1')
+    expect(scrollToMessage).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /Go to run 3/u }))
+    expect(reveal).toHaveBeenLastCalledWith('prompt-2')
+    expect(scrollToMessage).not.toHaveBeenCalled()
+
+    // Complete the superseded reveal first while the latest target is still unmounted.
+    appendMessageTarget(viewport, 'prompt-1', 300)
+    rerender(<WorkspaceRunMarks items={[...items]} viewport={viewport} onRevealMessage={reveal} />)
+    expect(scrollToMessage).not.toHaveBeenCalled()
+
+    appendMessageTarget(viewport, 'prompt-2', 600)
+    rerender(<WorkspaceRunMarks items={[...items]} viewport={viewport} onRevealMessage={reveal} />)
+    await waitFor(() => expect(scrollToMessage).toHaveBeenCalledTimes(1))
+    expect(scrollToMessage).toHaveBeenLastCalledWith('prompt-2', {
+      align: 'start',
+      scrollMargin: 8,
+      behavior: 'instant'
+    })
+    rerender(<WorkspaceRunMarks items={[...items]} viewport={viewport} onRevealMessage={reveal} />)
+    expect(scrollToMessage).toHaveBeenCalledTimes(1)
+  })
+
   it('retries when the mounted target is not registered by the scroller yet', async () => {
     const items = Array.from({ length: 4 }, (_, index) =>
       createMessageItem({ id: `prompt-${index}` }, index)
