@@ -4,7 +4,8 @@ import {
   type KubernetesTarget,
   type HostedTarget,
   type RayTarget,
-  type ModalTarget
+  type ModalTarget,
+  type ExternalComputeTarget
 } from '../../shared/compute'
 import type {
   ComputeExecutionMode,
@@ -216,6 +217,9 @@ export class ComputeService {
   }
   listModalTargets(): Promise<ModalTarget[]> {
     return this.repository.listModalTargets()
+  }
+  listExternalTargets(mode: ExternalComputeMode): Promise<ExternalComputeTarget[]> {
+    return this.repository.listExternalTargets(mode)
   }
 
   async list(): Promise<ComputeHost[]> {
