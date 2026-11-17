@@ -118,6 +118,65 @@ export function prepareResearchFilmPrompt(
     correction?: { draft: string; error: string }
   }
   const source = envelope.source ?? (payload as ResearchVideoSessionSource)
+  if (source.replay) {
+    const formatReplay = (events: typeof source.replay.events): string =>
+      JSON.stringify({
+        ...envelope,
+        ...(envelope.correction
+          ? {
+              correction: {
+                ...envelope.correction,
+                draft: excerpt(
+                  envelope.correction.draft,
+                  Math.max(64, Math.floor(budget / 8)),
+                  count
+                )
+              }
+            }
+          : {}),
+        source: { ...source, messages: [], replay: { ...source.replay, events }, contextNote }
+      })
+    const events = source.replay.events.map((event) => ({
+      ...event,
+      text: excerpt(event.text, 256, count),
+      ...(event.previewText === undefined
+        ? {}
+        : { previewText: excerpt(event.previewText, 256, count) }),
+      ...(event.execution
+        ? {
+            execution: {
+              ...event.execution,
+              code: excerpt(event.execution.code, 256, count),
+              output: excerpt(event.execution.output, 256, count)
+            }
+          }
+        : {})
+    }))
+    // Prefer the question, a real execution, the final answer and a result over incidental snapshots.
+    const essential = new Set([
+      events.at(-1)?.id,
+      events.find((event) => event.kind === 'human-input')?.id,
+      events.find((event) => event.execution)?.id,
+      events.findLast((event) => event.kind === 'agent-message')?.id,
+      events.findLast((event) => event.kind === 'result')?.id
+    ])
+    const costs = new Map(events.map((event) => [event.id, count(JSON.stringify(event)) + 1]))
+    let estimated =
+      count(formatReplay([])) + [...costs.values()].reduce((sum, cost) => sum + cost, 0)
+    while (events.length > 1 && (estimated > budget || count(formatReplay(events)) > budget)) {
+      const expendable = events.findIndex((event) => !essential.has(event.id))
+      const [removed] = events.splice(
+        expendable < 0 ? Math.floor(events.length / 2) : expendable,
+        1
+      )
+      estimated -= costs.get(removed.id)!
+    }
+    if (count(formatReplay(events)) > budget)
+      throw new Error(
+        'The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.'
+      )
+    return formatReplay(events)
+  }
   const wrapper = envelope.source
     ? {
         ...envelope,

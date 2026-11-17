@@ -17,6 +17,9 @@ test('new Markdown publications replace the head while edits, restoration and dr
 }, testInfo) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
+  // This journey needs the editor and Provenance visible together before its narrow-layout check.
+  const wideViewport = { width: 1440, height: 900 }
+  await app.setMainWindowSize(wideViewport.width, wideViewport.height)
   // Register the actual local interpreter in the isolated app, without authorizing installation.
   const python = process.env.OPEN_SCIENCE_TASK_PYTHON
     ? realpathSync(process.env.OPEN_SCIENCE_TASK_PYTHON)
@@ -284,6 +287,7 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await preview.getByRole('button', { name: `Close preview of ${name}` }).click()
   await verifyTaskRead('restored', second.selectedVersionId)
   page = await app.restart()
+  await app.setMainWindowSize(wideViewport.width, wideViewport.height)
   provenance = page.getByTestId('artifact-provenance')
   warning = provenance.locator('[data-notice-level="warning"]')
   await openRecentSession(page, 'Create a provenance artifact.')
@@ -291,6 +295,10 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await openFile()
   preview = page.getByRole('dialog', { name: `Preview ${name}` })
   await preview.getByRole('button', { name: `Open Provenance for ${name}` }).click()
+  await expect(preview.getByRole('separator', { name: 'Resize provenance panel' })).toBeVisible()
+  await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
+    'v4 contains manual edits'
+  )
   await preview.getByRole('button', { name: `Edit ${name}`, exact: true }).click()
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
     'v4 contains manual edits'

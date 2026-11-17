@@ -970,6 +970,20 @@ it.each(['commit', 'rollback'] as const)(
       )
       expect(reviews).toHaveLength(1)
       expect(reviews[0].checks).toHaveLength(2400)
+      const filmSession = await new SessionRepository(target.storageRoot).loadSession(
+        imported.projectId,
+        imported.sessionId
+      )
+      const filmEvidence = await new SessionPackageService({
+        storageRoot: target.storageRoot,
+        getClient: async () => client
+      }).readFilmEvidence(filmSession!)
+      expect(filmEvidence.reviews[0]).toMatchObject({
+        id: reviews[0].id,
+        messageId: reviews[0].turnMessageId,
+        status: reviews[0].outcome ?? reviews[0].lifecycle
+      })
+      expect(filmEvidence.reviews[0].text).toContain('Finding 2399')
       // A connection-occupancy budget, independent of batch sizes or SQL formatting. The old
       // publisher makes 2,400 round trips for these findings while holding the sole connection.
       expect(
@@ -1839,6 +1853,15 @@ it('keeps terminal Task and Compute results as evidence without installing jobs 
     taskRuns: [{ status: 'completed', output: 'Task result' }],
     computeJobs: [{ status: 'success', stdout: '42' }]
   })
+  const importedSession = await new SessionRepository(target.storageRoot).loadSession(
+    imported.projectId,
+    imported.sessionId
+  )
+  const filmEvidence = await importer.readFilmEvidence(importedSession!)
+  expect(filmEvidence.jobs).toEqual([
+    expect.objectContaining({ status: 'success', text: expect.stringContaining('42') })
+  ])
+  expect(filmEvidence.jobs[0].id).toBe(origin.identities['job-1'] ?? 'job-1')
   const fork = await importer.fork(imported)
   expect((await importer.readOrigin(fork)).history).toEqual(origin.history)
   const refork = await importer.fork(fork)

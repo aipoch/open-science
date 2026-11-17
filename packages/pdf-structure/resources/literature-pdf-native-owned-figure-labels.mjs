@@ -2339,6 +2339,95 @@ export function nativeOwnedRasterTitleRows(
   return [rect]
 }
 
+// A partial crop through a complete vector axis can lose the bottom rail and
+// native tick row. Only a unique closed frame with a numeric scale and a
+// centered single-line axis label owns the remaining strip.
+function nativeClippedClosedAxisLabels(
+  page,
+  caption,
+  captions,
+  tables,
+  rect,
+  frames,
+  tokens,
+  font,
+  foreignOwns
+) {
+  if (page.invalidGraphicsBounds || rect[3] >= caption.rect[1]) return
+  const candidates = frames.filter(
+    (frame) =>
+      frame[0] >= rect[0] &&
+      frame[2] <= rect[2] &&
+      frame[1] >= rect[1] &&
+      frame[3] > rect[3] &&
+      frame[3] - rect[3] <= font * 3 &&
+      intersection(frame, rect) / area(frame) >= 0.75 &&
+      frame[3] - frame[1] >= font * 6 &&
+      frame[2] - frame[0] >= font * 10
+  )
+  if (candidates.length !== 1) return
+  const [frame] = candidates
+  const ticks = page.lines.filter((line) => {
+    if (
+      line.y < frame[3] ||
+      line.y - frame[3] > font * 0.6 ||
+      line.fontSize > font ||
+      line.x < frame[0] - font ||
+      line.x + line.width > frame[2] + font ||
+      line.width < (frame[2] - frame[0]) * 0.85
+    )
+      return false
+    const parts = line.text.trim().split(/\s+/u)
+    if (parts.length < 5 || !parts.every((s) => /^[−-]?\d+(?:\.\d+)?$/u.test(s))) return false
+    const vals = parts.map((s) => Number(s.replace('−', '-')))
+    const step = vals[1] - vals[0]
+    return step > 0 && vals.slice(1).every((v, n) => Math.abs(v - vals[n] - step) <= step * 0.01)
+  })
+  if (ticks.length !== 1) return
+  const [tick] = ticks
+  const title = tokens.filter(
+    (t) =>
+      t.horizontal &&
+      t.height === tick.fontSize &&
+      /^\p{L}$/u.test(t.text.trim()) &&
+      t.rect[1] > tick.y + tick.height &&
+      t.rect[1] - tick.y - tick.height <= font &&
+      Math.abs(t.rect[0] + t.rect[2] - frame[0] - frame[2]) < font * 1.5
+  )
+  if (title.length !== 1) return
+  const [axis] = title
+  const bottom = axis.rect[3] - axis.height * (axis.fontDescent ?? 0)
+  const strip = [Math.min(rect[0], tick.x), rect[3], Math.max(rect[2], tick.x + tick.width), bottom]
+  if (
+    !(bottom < caption.rect[1] - font * 0.5) ||
+    foreignOwns(strip) ||
+    captions.some((c) => c !== caption && intersection(c.rect, strip) > 0) ||
+    tables.some((r) => intersection(r, strip) > 0) ||
+    page.graphicsBounds.some((g) => {
+      const bounds = (g.paintedNormalizedRect ?? g.normalizedRect).map(
+        (v, n) => v * (n % 2 ? page.height : page.width)
+      )
+      return (
+        intersection(bounds, strip) > 0 &&
+        (g.kind !== 'path' || bounds[0] < strip[0] || bounds[2] > strip[2] || bounds[3] > strip[3])
+      )
+    }) ||
+    tokens.some(
+      (t) =>
+        t.text.trim() &&
+        t !== axis &&
+        intersection(t.rect, strip) > 0 &&
+        (t.height > font ||
+          t.rect[3] > tick.y + tick.height + font * 0.1 ||
+          t.rect[0] < frame[0] - font * 2 ||
+          t.rect[2] > frame[2] + font ||
+          (t.rect[3] <= frame[3] && t.text.trim().split(/\s+/u).length > 4))
+    )
+  )
+    return
+  return [strip]
+}
+
 export function nativeOwnedFigureBottomLabels(
   page,
   caption,
@@ -2393,6 +2482,18 @@ export function nativeOwnedFigureBottomLabels(
       .filter((v) => v > 0)
   )
   if (!Number.isFinite(font) || !rect?.every(Number.isFinite)) return []
+  const axisLabels = nativeClippedClosedAxisLabels(
+    page,
+    caption,
+    captions,
+    tables,
+    rect,
+    frames,
+    tokens,
+    font,
+    foreignOwns
+  )
+  if (axisLabels) return axisLabels
   const axes = nativeOwnedRasterAxisPair(
     page,
     caption,

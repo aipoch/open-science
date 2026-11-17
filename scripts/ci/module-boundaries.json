@@ -10389,6 +10389,7 @@
         "src/main/connectors/custom-mcp-config.ts",
         "src/main/connectors/mcp-host-dependencies.ts",
         "src/main/connectors/molecule-artifact-adapter.ts",
+        "src/main/connectors/molecule-preview-tool.ts",
         "src/main/connectors/catalog.ts",
         "src/main/connector-reload.ts"
       ],

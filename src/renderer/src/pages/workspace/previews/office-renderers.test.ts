@@ -1206,6 +1206,13 @@ describe('renderOfficeFile', () => {
       signal
     })
     expect(container.querySelectorAll('.pptx-review-thumbnail')).toHaveLength(5)
+    expect(
+      [...container.querySelectorAll('.pptx-review-thumbnail')].map((item) =>
+        item.getAttribute('data-slide')
+      )
+    ).toEqual(['0', '1', '2', '3', '4'])
+    expect(container.querySelectorAll('.pptx-review-thumbnail[data-active]')).toHaveLength(1)
+    expect(container.querySelector('.pptx-review-content')).not.toBeNull()
     expect(mocks.renderPptxThumbnail).toHaveBeenCalledTimes(5)
     expect(container.querySelector<HTMLElement>('.pptx-review-notes')?.hidden).toBe(false)
     expect(container.querySelector<HTMLElement>('.pptx-review-notes-body')).toMatchObject({

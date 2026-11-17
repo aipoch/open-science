@@ -4,7 +4,7 @@ import {
   type DatabaseMigrationError,
   type SchemaMigrationOptions,
   type SchemaMigrationProgress
-} from './migration-service'
+} from './migration-service.js'
 
 type DatabaseStartupLogging = {
   reportBlocked: (error: DatabaseMigrationError) => void

@@ -205,7 +205,7 @@ export async function inspectInstallationProcessesAsync(
   signal?: AbortSignal
 ): Promise<number[]> {
   signal?.throwIfAborted()
-  const { runVerificationProcess } = await import('./verification-process')
+  const { runVerificationProcess } = await import('./verification-process.js')
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
@@ -350,7 +350,7 @@ export async function inspectProcessNamesAsync(
   if (pids.length === 0) return names
   if (process.platform !== 'darwin') return inspectProcessNames(pids)
   try {
-    const { runVerificationProcess } = await import('./verification-process')
+    const { runVerificationProcess } = await import('./verification-process.js')
     const { stdout } = await runVerificationProcess(
       '/bin/ps',
       ['-o', 'pid=,comm=', '-p', pids.join(',')],

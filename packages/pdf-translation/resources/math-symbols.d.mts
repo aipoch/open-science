@@ -1,6 +1,7 @@
 export function nativeMathSymbolText(
   object: { text: string; bounds: [number, number, number, number] },
-  fontName: string
+  fontName: string,
+  expectsPlanckSymbol?: boolean
 ): string
 
 export function nativeMathAlphabet(

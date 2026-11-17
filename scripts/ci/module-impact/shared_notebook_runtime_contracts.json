@@ -5,14 +5,16 @@
     "src/shared/notebook-execution-error.ts",
     "src/shared/notebook-language-contract.ts",
     "src/shared/execution-recovery.ts",
-    "src/shared/notebook-runtime.test.ts"
+    "src/shared/notebook-runtime.test.ts",
+    "src/shared/notebook-process-monitor.ts"
   ],
   "interfacePaths": [
     "src/shared/notebook-env.ts",
     "src/shared/notebook-runtime.ts",
     "src/shared/notebook-execution-error.ts",
     "src/shared/notebook-language-contract.ts",
-    "src/shared/execution-recovery.ts"
+    "src/shared/execution-recovery.ts",
+    "src/shared/notebook-process-monitor.ts"
   ],
   "consumerModules": [
     "host_command_runtime",
@@ -22,7 +24,7 @@
   ],
   "testFiles": {
     "owner": ["src/shared/notebook-runtime.test.ts"],
-    "contract": [],
+    "contract": ["src/main/notebook/process-monitor.test.ts"],
     "consumer": [
       "src/shared/notebook-env.typecheck.test.ts",
       "src/shared/application-command-contract.test.ts",

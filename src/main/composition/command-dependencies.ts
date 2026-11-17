@@ -31,6 +31,8 @@ import { createRuntimeWorkflows } from '../notebook/runtime-workflows'
 import { TaskNotificationService } from '../notifications/task-notifications'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
+import { createPptxEditCommands } from '../pptx-edit/application-commands'
+import { createPptxDraftCommands } from '../pptx-edit/draft-commands'
 import { linkPdfContextWithCapability } from '../session-persistence/pdf-context-link-workflow'
 import { SETTINGS_INSTALL_LOG_CHANNEL } from '../settings/ipc'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -273,6 +275,31 @@ export function composeCommandDependencies({
     dataContent: {
       useCaseCatalog,
       officePreviewCommands,
+      pptxEditCommands: createPptxEditCommands({
+        sessions: managedFiles.pptxEditSessions,
+        withDataRootWrite,
+        onSaved: (request, result) => {
+          if (result.kind !== 'created' || result.replayed) return
+          const identity = managedFiles.pptxEditSessions.identityOf(request.sessionId)
+          if (!identity) return
+          broadcastToRenderers('project-files:changed', {
+            projectId: identity.projectId,
+            sources: [identity.source],
+            kind: 'upsert'
+          })
+        }
+      }),
+      pptxDraftCommands: createPptxDraftCommands({
+        drafts: managedFiles.pptxDrafts,
+        review: managedFiles.pptxDraftReview,
+        withDataRootWrite,
+        onSaved: (identity) =>
+          broadcastToRenderers('project-files:changed', {
+            projectId: identity.projectId,
+            sources: [identity.source],
+            kind: 'upsert'
+          })
+      }),
       fileSaveCommands,
       reproducibility: artifactSurfaces.reproducibilityCommands,
       managedFileVersions: projectLifecycle.managedFileVersionHandlers,

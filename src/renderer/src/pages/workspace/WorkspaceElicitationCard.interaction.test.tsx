@@ -154,6 +154,106 @@ afterEach(() => {
 })
 
 describe('WorkspaceElicitationCard choice question', () => {
+  it.each(['single-select', 'multi-select'] as const)(
+    'shows independent trade-offs in %s choices, review, read-only records and reopened questions',
+    async (kind) => {
+      const options = [
+        {
+          value: 'both',
+          label: 'Both',
+          description: 'Context',
+          pros: '<b>Benefit</b>',
+          cons: 'Cost'
+        },
+        { value: 'pros', label: 'Pros only', pros: 'Benefit alone' },
+        { value: 'cons', label: 'Cons only', cons: 'Cost alone' },
+        { value: 'neither', label: 'Neither' }
+      ]
+      const tradeoffFields: ElicitationField[] = [{ ...fields[0], kind, options }, fields[1]]
+      const tradeoffRequest = { ...request, fields: tradeoffFields }
+      const onRespond = vi.fn().mockResolvedValue(undefined)
+      const pending = { ...activity.elicitation!, fields: tradeoffFields }
+      await act(async () =>
+        root.render(
+          <WorkspaceElicitationCard
+            elicitation={pending}
+            request={tradeoffRequest}
+            onRespond={onRespond}
+          />
+        )
+      )
+      const assertDetails = (): void => {
+        const row = (id: string): Element =>
+          container.querySelector(`[data-testid="elicitation-option-${id}"]`)!
+        expect(row('both').textContent).toContain('ContextPros: <b>Benefit</b>Cons: Cost')
+        expect(row('both').querySelector('b')).toBeNull()
+        expect(row('pros').textContent).toContain('Pros: Benefit alone')
+        expect(row('pros').textContent).not.toContain('Cons:')
+        expect(row('cons').textContent).toContain('Cons: Cost alone')
+        expect(row('cons').textContent).not.toContain('Pros:')
+        expect(row('neither').textContent?.trim()).toMatch(/^(4)?Neither$/)
+        expect(row('neither').querySelectorAll('span.mt-1')).toHaveLength(0)
+      }
+      assertDetails()
+      // The entire explanation remains inside the selection target.
+      await act(async () =>
+        container
+          .querySelector<HTMLSpanElement>('[data-testid="elicitation-option-both"] span.mt-1')!
+          .click()
+      )
+      expect(
+        container
+          .querySelector('[data-testid="elicitation-option-both"]')
+          ?.getAttribute('aria-pressed')
+      ).toBe('true')
+      await act(async () =>
+        container
+          .querySelector('form')!
+          .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      )
+      const answers = [
+        { fieldId: 'question_0', value: kind === 'multi-select' ? ['both'] : 'both' }
+      ]
+      expect(onRespond).toHaveBeenCalledExactlyOnceWith({
+        requestId: request.requestId,
+        action: 'accept',
+        answers
+      })
+      await act(async () =>
+        root.render(
+          <WorkspaceElicitationCard
+            key="review"
+            elicitation={{ ...pending, state: 'answered', answers }}
+          />
+        )
+      )
+      expect(container.textContent).not.toContain('Pros:')
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>('[data-testid="elicitation-answer-row"]')!
+          .click()
+      )
+      assertDetails()
+      await act(async () =>
+        root.render(<WorkspaceElicitationCard key="readonly" elicitation={pending} readOnly />)
+      )
+      expect(
+        container.querySelector('[data-testid="elicitation-recorded-pending"]')?.textContent
+      ).toContain('Pros: <b>Benefit</b>Cons: Cost')
+      await act(async () =>
+        root.render(
+          <WorkspaceElicitationCard
+            key="reopened"
+            elicitation={pending}
+            request={tradeoffRequest}
+            onRespond={onRespond}
+          />
+        )
+      )
+      assertDetails()
+    }
+  )
+
   it.each(['answered', 'declined'] as const)(
     'shows progress for a saved %s decision while its continuation is pending',
     async (state) => {
@@ -1561,9 +1661,7 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(card?.className).toContain('sm:p-4')
     expect(card?.querySelector('h3')?.className).toContain('min-w-0')
     expect(container.querySelector('textarea[aria-label="Type your own answer"]')).not.toBeNull()
-    const longDescription = container.querySelector(
-      '[data-testid="elicitation-option-description"]'
-    )
+    const longDescription = container.querySelector('[data-testid="elicitation-description"]')
     expect(container.querySelector('h3')?.className).toContain('break-words')
     expect(longDescription?.className).toContain('whitespace-pre-wrap')
     expect(longDescription?.className).not.toContain('line-clamp-2')

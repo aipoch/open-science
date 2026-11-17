@@ -538,6 +538,132 @@ export function reconcileStatisticStubStarts({ cells, baseCells, rows, rules, re
   }
 }
 
+// Rebuild only the missing final record when matching native rules close its band.
+export function recoverNativeTerminalRuledBand({
+  rows,
+  items,
+  columnRects,
+  rules,
+  crop,
+  repairs,
+  cuts,
+  inventory
+}) {
+  if (rows.length < 4 || columnRects.length < 2 || columnRects.length > 8) return
+  const [left, top, right, bottom] = crop
+  const height = items.map((item) => item.height).sort((a, b) => a - b)[
+    Math.floor(items.length / 2)
+  ]
+  if (!(height > 0)) return
+  const edges = joinHorizontalTableRules(rules).filter(
+    (r) => r[0] <= left + height && r[2] >= right - height && r[1] >= top && r[1] <= bottom
+  )
+  if (edges.length < 5) return
+  const [previous, opening, closing] = edges.slice(-3)
+  if (
+    closing[1] - opening[1] < height ||
+    closing[1] - opening[1] > height * 3 ||
+    bottom - closing[1] > height ||
+    edges.some(
+      (rule) => Math.abs(rule[0] - closing[0]) > 0.01 || Math.abs(rule[2] - closing[2]) > 0.01
+    )
+  )
+    return
+  const band = [closing[0], opening[1], closing[2], closing[1]]
+  const members = items.filter((item) => intersection(item.rect, band) > 0)
+  const tail = rows.filter((row) => row.rect[1] >= opening[1])
+  if (
+    !members.length ||
+    members.length > 32 ||
+    !proveNativeUniqueWholeFonts(members, inventory) ||
+    inventory.some((item) => intersection(item.rect, band) > 0 && !members.includes(item)) ||
+    members.some((item) => !item.horizontal || !inside(band, item)) ||
+    rules.some(
+      (r) =>
+        r[1] === r[3] && r[1] > opening[1] && r[1] < closing[1] && r[0] < band[2] && r[2] > band[0]
+    ) ||
+    tail.length > 2 ||
+    tail.some((row) => row.rect[3] > closing[1] || row.origin !== 'source-text') ||
+    rows.some((row) => row.rect[1] < opening[1] && row.rect[3] > opening[1]) ||
+    !rows.some((row) => row.rect[1] >= previous[1] - height * 0.35 && row.rect[3] <= opening[1]) ||
+    items.some((item) => item.rect[1] >= closing[1])
+  )
+    return
+  const column = (item) =>
+    columnRects.findIndex(
+      (rect) =>
+        (item.rect[0] + item.rect[2]) / 2 > rect[0] && (item.rect[0] + item.rect[2]) / 2 < rect[2]
+    )
+  const owner = members.map(column)
+  if (owner.some((index) => index < 0)) return
+  // A native bottom band with only its stub is still a complete sparse record.
+  if (!tail.length && !(members.length === 1 && owner[0] === 0)) return
+  if (tail.length) {
+    if (tail.length !== 2 || new Set(owner).size !== columnRects.length) return
+    // A line in each fragment and a vertically centered peer show that
+    // these are wrapped cells within one ruled record.
+    const [upper, lower] = tail.map((row) => members.filter((item) => inside(row.rect, item)))
+    if (
+      !upper.some((item) => lower.some((other) => column(item) === column(other))) ||
+      !members.some(
+        (item) =>
+          !upper.includes(item) &&
+          !lower.includes(item) &&
+          item.baseline > Math.max(...upper.map((item) => item.baseline)) &&
+          item.baseline < Math.min(...lower.map((item) => item.baseline))
+      )
+    )
+      return
+  }
+  const priorMembers = items.filter((item) => item.rect[3] <= opening[1])
+  const recoveredCuts = columnRects.slice(0, -1).map((rect, i) => {
+    const a = members.filter((_, n) => owner[n] === i)
+    const b = members.filter((_, n) => owner[n] === i + 1)
+    const cut = rect[2]
+    if (!a.length || !b.length) return cut
+    const right = Math.max(...a.map((item) => item.rect[2]))
+    const left = Math.min(...b.map((item) => item.rect[0]))
+    if (right >= left) return
+    if (right < cut && cut < left) return cut
+    const candidate = (left + right) / 2
+    const low = Math.min(cut, candidate),
+      high = Math.max(cut, candidate)
+    if (
+      Math.abs(candidate - cut) > height * 2 ||
+      priorMembers.some((item) => item.rect[0] < high && item.rect[2] > low) ||
+      rules.some(
+        (rule) =>
+          rule[0] === rule[2] &&
+          rule[0] >= low &&
+          rule[0] <= high &&
+          rule[1] < band[3] &&
+          rule[3] > band[1]
+      )
+    )
+      return
+    return candidate
+  })
+  if (
+    recoveredCuts.some((cut) => cut === undefined) ||
+    members.some(
+      (item, n) =>
+        item.rect[0] < (recoveredCuts[owner[n] - 1] ?? left) ||
+        item.rect[2] > (recoveredCuts[owner[n]] ?? right)
+    )
+  )
+    return
+  cuts.splice(0, cuts.length, ...recoveredCuts)
+  for (const [i, rect] of columnRects.entries()) {
+    if (i) rect[0] = cuts[i - 1]
+    if (i < cuts.length) rect[2] = cuts[i]
+  }
+  rows.splice(rows.length - tail.length, tail.length, {
+    rect: [left, opening[1], right, closing[1]],
+    origin: 'source-text'
+  })
+  repairs.push('native-terminal-ruled-band-recovered')
+}
+
 // A wrapped author/year record can retain its final citation below a short
 // model row. The citation and repeated neighboring reference records bound a
 // narrow tail, including multiline bullet results in independent columns.
@@ -6052,6 +6178,131 @@ function mergeTerminalNarrativeRecord({
   repairs.push('wrapped-comparison-record-recovered')
 }
 
+// A two-column text table can draw each vertical rule separately per
+// logical row. Require all three matching segments and the closed footer.
+function mergeClosedTwoColumnNarrativeTail({ rows, items, columnRects, rules, repairs }) {
+  if (
+    columnRects.length !== 2 ||
+    rows.length < 5 ||
+    rows.slice(-2).some((row) => row.origin !== 'model')
+  )
+    return
+  const [left, right] = columnRects
+  const lanes = [left[0], right[0], right[2]]
+  const rowItems = (row) =>
+    items.filter((i) => inside([lanes[0], row.rect[1], lanes[2], row.rect[3]], i))
+  const [previous, upper, lower] = rows.slice(-3)
+  const head = rowItems(upper),
+    tail = rowItems(lower)
+  const packet = [...head, ...tail]
+  if (
+    !head.length ||
+    !tail.length ||
+    !hasUniqueRecordTokens(packet, [head, tail]) ||
+    packet.some(
+      (i) =>
+        !i.horizontal ||
+        !i.sourceItem ||
+        i.sourceSegment ||
+        i.sourceToken ||
+        i.sourceItem.text !== i.text ||
+        !Number.isSafeInteger(i.sourceItem.index)
+    ) ||
+    new Set(packet.map((i) => i.sourceItem.index)).size !== packet.length ||
+    packet.some(
+      (i) => columnRects.filter((r) => i.rect[0] >= r[0] && i.rect[2] <= r[2]).length !== 1
+    )
+  )
+    return
+  const h = head[0].height
+  const group = (tokens) =>
+    groupSourceRowsWithScripts(
+      [...tokens].sort((a, b) => a.baseline - b.baseline),
+      h,
+      0.1
+    )
+  if (!(h > 0) || packet.some((i) => Math.abs(i.height - h) > h * 0.05)) return
+  const headRows = group(head),
+    tailRows = group(tail)
+  if (headRows?.length !== 1 || tailRows?.length !== 2) return
+  const first = headRows[0][0].baseline
+  const second = tailRows[0][0].baseline
+  const final = tailRows[1][0].baseline
+  const pitch = second - first
+  const serialize = (row, col) =>
+    row
+      .filter((i) => inside(col, i))
+      .sort((a, b) => a.rect[0] - b.rect[0])
+      .map((i) => i.text)
+      .join(' ')
+      .trim()
+  if (
+    pitch < h * 0.9 ||
+    pitch > h * 1.5 ||
+    Math.abs(final - second - pitch) > h * 0.05 ||
+    !serialize(head, left) ||
+    !serialize(head, right) ||
+    !/^(?:and|or)\s+\p{L}/u.test(serialize(tailRows[0], left)) ||
+    !/^[a-z]/u.test(serialize(tailRows[0], right)) ||
+    serialize(tailRows[1], left) ||
+    !/^[a-z]/u.test(serialize(tailRows[1], right))
+  )
+    return
+  const priorBottom = Math.max(...rowItems(previous).map((i) => i.baseline))
+  if (!Number.isFinite(priorBottom)) return
+  const vertical = rules.filter((r) => r[0] === r[2])
+  const frame = vertical.filter(
+    (r) =>
+      Math.abs(r[0] - lanes[0]) < h * 0.05 &&
+      r[1] > priorBottom &&
+      first - r[1] >= h * 0.25 &&
+      first - r[1] <= h * 1.1 &&
+      r[3] >= final &&
+      r[3] - final < h * 0.75 &&
+      lanes
+        .slice(1)
+        .every(
+          (x) =>
+            vertical.filter(
+              (v) =>
+                Math.abs(v[0] - x) < h * 0.05 &&
+                Math.abs(v[1] - r[1]) < 0.02 &&
+                Math.abs(v[3] - r[3]) < 0.02
+            ).length === 1
+        )
+  )
+  if (frame.length !== 1) return
+  const [, top, , bottom] = frame[0]
+  if (
+    hasHorizontalTableRuleBetween(rules, top, bottom) ||
+    !joinHorizontalTableRules(rules).some(
+      (r) =>
+        Math.abs(r[1] - bottom) < h * 0.1 &&
+        Math.abs(r[0] - lanes[0]) < h * 0.05 &&
+        Math.abs(r[2] - lanes[2]) < h * 0.05
+    ) ||
+    !hasUniqueRecordTokens(
+      items.filter((i) => inside([lanes[0], top, lanes[2], bottom], i)),
+      [head, tail]
+    )
+  )
+    return
+  const matchingPeers = rows.slice(1, -2).filter((row) => {
+    const groups = group(rowItems(row))
+    return (
+      groups?.length === 2 &&
+      serialize(groups[0], left) &&
+      !serialize(groups[1], left) &&
+      /^[a-z]/u.test(serialize(groups[1], right)) &&
+      Math.abs(groups[1][0].baseline - groups[0][0].baseline - pitch) < h * 0.05
+    )
+  })
+  if (matchingPeers.length < 2) return
+  upper.rect = union([upper, lower])
+  rows.pop()
+  repairs.push('wrapped-comparison-record-recovered')
+}
+
 export function mergeWrappedStubTails({
   rows,
   items,
@@ -6062,6 +6313,7 @@ export function mergeWrappedStubTails({
 }) {
   recoverRepeatedMeasuredHangingTails({ rows, items, columnRects, rules, repairs })
   mergeTerminalNarrativeRecord({ rows, items, columnRects, rules, repairs })
+  mergeClosedTwoColumnNarrativeTail({ rows, items, columnRects, rules, repairs })
   repairRaisedMarkerRows({
     rows,
     items,

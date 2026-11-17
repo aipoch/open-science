@@ -10,7 +10,7 @@ test('offers Side chat while idle and hides its new-chat entry while main awaits
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.setViewportSize({ width: 1400, height: 1000 })
+  await app.setMainWindowSize(1400, 1000)
   await createProjectViaUi(page, 'Side chat admission regression')
   const mainComposer = page.getByRole('textbox', { name: 'Ask anything' })
   await mainComposer.fill('Summarize the deterministic fixture.')
@@ -50,7 +50,7 @@ test('keeps Side chat across renderer reload but discards it on application rest
 }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await page.setViewportSize({ width: 1400, height: 1000 })
+  await app.setMainWindowSize(1400, 1000)
   await createProjectViaUi(page, 'Ephemeral side chat regression')
   await submitPromptViaUi(page, 'Summarize the deterministic fixture.')
   const mainReply = 'Deterministic reply: Summarize the deterministic fixture.'

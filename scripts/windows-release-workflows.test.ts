@@ -299,7 +299,7 @@ describe('post-merge Windows validation', () => {
 
     expect(rustTest.if).toBe("${{ matrix.platform == 'win' }}")
     expect(rustTest.run).toBe(
-      'cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml'
+      'cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml -- --test-threads=1'
     )
     expect(buildHost.if).toBe("${{ matrix.platform == 'win' }}")
     expect(buildHost.run).toBe(
@@ -425,7 +425,7 @@ describe('post-merge Windows validation', () => {
     const smoke = findStep(sandbox, 'Test AppContainer ownership and removal lifecycle')
     expect(findStep(sandbox, 'Setup Node').with).toMatchObject({ 'node-version': 24 })
     expect(rustTest.run).toBe(
-      'cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml'
+      'cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml -- --test-threads=1'
     )
     expect(buildHost.run).toBe(
       'node packages/notebook-network-sandbox/vendor/windows/build.mjs x64'

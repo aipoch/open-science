@@ -130,7 +130,7 @@ const expectSplitFileName = (
   extension: string
 ): void => {
   expect(button?.querySelector('[data-testid="file-name-head"]')?.textContent).toBe(head)
-  expect(button?.querySelector('[data-testid="file-name-ellipsis"]')?.textContent).toBe('...')
+  expect(button?.querySelector('[data-testid="file-name-ellipsis"]')).toBeNull()
   expect(button?.querySelector('[data-testid="file-name-tail"]')?.textContent).toBe(tail)
   const extensionNode = button?.querySelector('[data-testid="file-name-extension"]')
   expect(extensionNode?.textContent).toBe(extension)
@@ -394,7 +394,7 @@ describe('WorkspaceMessageItem mention pills', () => {
 })
 
 describe('WorkspaceMessageItem file names', () => {
-  it('uses the compact fallback for an uploaded attachment', async () => {
+  it('keeps the full uploaded attachment name before layout measurement', async () => {
     const name = 'long_uploaded_experiment_result.png'
     const message = createMessage({
       uploads: [
@@ -413,10 +413,10 @@ describe('WorkspaceMessageItem file names', () => {
     await renderMessageItem(message)
 
     const button = container.querySelector(`[aria-label="Preview uploaded attachment ${name}"]`)
-    expectSplitFileName(button, 'lon', 't', '.png')
+    expectSplitFileName(button, 'long_uploaded_experiment_r', 'esult', '.png')
   })
 
-  it('uses the compact fallback for a generated file', async () => {
+  it('keeps the full generated filename before layout measurement', async () => {
     ;(window as unknown as { api: unknown }).api = {
       previewResources: {
         acquire: vi.fn().mockResolvedValue({ kind: 'text', content: '' }),
@@ -449,7 +449,7 @@ describe('WorkspaceMessageItem file names', () => {
     await renderMessageItem(message, artifacts)
 
     const button = container.querySelector(`[aria-label="Preview generated file ${name}"]`)
-    expectSplitFileName(button, 'lon', 't', '.csv')
+    expectSplitFileName(button, 'long_generated_experiment_r', 'esult', '.csv')
     expect(button?.querySelector('div[class*="px-1.5"]')).not.toBeNull()
     expect(button?.querySelector('span.text-text-000')?.className).toContain('ml-1')
   })

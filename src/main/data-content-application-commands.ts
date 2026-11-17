@@ -24,6 +24,8 @@ import {
   type UseCase
 } from '../shared/use-cases'
 import type { OfficePreviewCommands } from './office-preview/application-commands'
+import type { PptxEditCommands } from './pptx-edit/application-commands'
+import type { PptxDraftCommands } from './pptx-edit/draft-commands'
 import type { FileSaveCommands } from './file-save'
 import type { ArtifactReproducibilityCommands } from './artifacts/artifact-reproducibility-commands'
 import type { ManagedFileVersionCommandOwner } from './managed-file-versions/ipc'
@@ -243,6 +245,8 @@ type DataRootWrite = <Result>(operation: () => Promise<Result>) => Promise<Resul
 type DataContentApplicationCommandDependencies = Readonly<{
   useCaseCatalog: UseCaseCatalog
   officePreviewCommands: OfficePreviewCommands
+  pptxEditCommands: PptxEditCommands
+  pptxDraftCommands: PptxDraftCommands
   fileSaveCommands: FileSaveCommands
   reproducibility: ArtifactReproducibilityCommands
   runtimeWriter?: RuntimeWriterOwner
@@ -298,6 +302,13 @@ const dataContentApplicationCommands = Object.freeze({
     'office-preview:report-state',
     'reportState'
   ),
+  pptxEditOpen: invocationCommandFor<PptxEditCommands>()('pptx-edit:open', 'open'),
+  pptxEditApply: invocationCommandFor<PptxEditCommands>()('pptx-edit:apply', 'apply'),
+  pptxEditSave: invocationCommandFor<PptxEditCommands>()('pptx-edit:save', 'save'),
+  pptxEditClose: invocationCommandFor<PptxEditCommands>()('pptx-edit:close', 'close'),
+  pptxDraftGet: invocationCommandFor<PptxDraftCommands>()('pptx-draft:get', 'get'),
+  pptxDraftAccept: invocationCommandFor<PptxDraftCommands>()('pptx-draft:accept', 'accept'),
+  pptxDraftReject: invocationCommandFor<PptxDraftCommands>()('pptx-draft:reject', 'reject'),
 
   sessionOpenRecoveryFolder: electronCommand('sessions:open-recovery-folder', 'openRecoveryFolder'),
   artifactSaveProgress: invocationCommandFor<FileSaveCommands>()(
@@ -418,6 +429,10 @@ const dataContentApplicationCommands = Object.freeze({
   managedFileSaveTextEdit: managedFileCommand(
     'managed-file-versions:save-text-edit',
     'saveTextEdit'
+  ),
+  managedFileSaveBinaryEdit: managedFileCommand(
+    'managed-file-versions:save-binary-edit',
+    'saveBinaryEdit'
   ),
   managedFileDiffText: managedFileInvocationCommand('managed-file-versions:diff-text', 'diffText'),
   managedFileCancelDiff: managedFileInvocationCommand(
@@ -852,6 +867,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
   defineApplicationCommandGroup('managed-file-versions', [
     dataContentApplicationCommands.managedFileInspect,
     dataContentApplicationCommands.managedFileSaveTextEdit,
+    dataContentApplicationCommands.managedFileSaveBinaryEdit,
     dataContentApplicationCommands.managedFileDiffText,
     dataContentApplicationCommands.managedFileCancelDiff
   ] as const),
@@ -884,6 +900,15 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.officePreviewAttachFrame,
     dataContentApplicationCommands.officePreviewClose,
     dataContentApplicationCommands.officePreviewReportState
+  ]),
+  defineApplicationCommandGroup('pptx-edit', [
+    dataContentApplicationCommands.pptxEditOpen,
+    dataContentApplicationCommands.pptxEditApply,
+    dataContentApplicationCommands.pptxEditSave,
+    dataContentApplicationCommands.pptxEditClose,
+    dataContentApplicationCommands.pptxDraftGet,
+    dataContentApplicationCommands.pptxDraftAccept,
+    dataContentApplicationCommands.pptxDraftReject
   ])
 ] as const)
 
@@ -1587,6 +1612,8 @@ const registerDataContentApplicationCommands = (
       },
       'managed-file-versions:save-text-edit': ({ args }) =>
         dependencies.managedFileVersions.saveTextEdit(args[0]),
+      'managed-file-versions:save-binary-edit': ({ args }) =>
+        dependencies.managedFileVersions.saveBinaryEdit(args[0]),
       'managed-file-versions:diff-text': (invocation) =>
         dependencies.managedFileVersions.diffText(invocation),
       'managed-file-versions:cancel-diff': (invocation) =>
@@ -1642,6 +1669,15 @@ const registerDataContentApplicationCommands = (
       'office-preview:close': (invocation) => dependencies.officePreviewCommands.close(invocation),
       'office-preview:report-state': (invocation) =>
         dependencies.officePreviewCommands.reportState(invocation)
+    })
+    scope.registerGroup(dataContentApplicationCommandGroups[12], {
+      'pptx-edit:open': (invocation) => dependencies.pptxEditCommands.open(invocation),
+      'pptx-edit:apply': (invocation) => dependencies.pptxEditCommands.apply(invocation),
+      'pptx-edit:save': (invocation) => dependencies.pptxEditCommands.save(invocation),
+      'pptx-edit:close': (invocation) => dependencies.pptxEditCommands.close(invocation),
+      'pptx-draft:get': (invocation) => dependencies.pptxDraftCommands.get(invocation),
+      'pptx-draft:accept': (invocation) => dependencies.pptxDraftCommands.accept(invocation),
+      'pptx-draft:reject': (invocation) => dependencies.pptxDraftCommands.reject(invocation)
     })
     return scope.complete(() => {
       return Promise.all([videoExports.close(), dependencies.reproducibility?.dispose()]).then(

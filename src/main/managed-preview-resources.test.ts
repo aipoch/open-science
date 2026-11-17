@@ -69,6 +69,34 @@ describe('ManagedPreviewResources', () => {
     ])
   }
 
+  it('protects open previews and admitted readers, and reserves files during retention', async () => {
+    const path = await createFile(Buffer.from('film'), 'player.html')
+    const owner = new ManagedPreviewResources({ resolvePath: async () => path })
+    const request = { source: 'local' as const, path }
+    const resource = await owner.acquire(1, request)
+    const remove = vi.fn(async () => undefined)
+    expect(await owner.withUnusedFiles([path], remove)).toBe(false)
+    const reader = await owner.resolveProtocolResource(resource.id)
+    if (!('fileHandle' in reader)) throw new Error('Expected pinned file reader')
+    owner.release(1, { resourceId: resource.id })
+    expect(await owner.withUnusedFiles([path], remove)).toBe(false)
+    await reader.fileHandle.close()
+    expect(
+      await owner.withUnusedFiles([path], async () => {
+        await expect(owner.acquire(2, request)).rejects.toThrow('being removed')
+        await remove()
+      })
+    ).toBe(true)
+    expect(remove).toHaveBeenCalledOnce()
+    await expect(
+      owner.withUnusedFiles([path], async () => {
+        throw new Error('disk failure')
+      })
+    ).rejects.toThrow('disk failure')
+    const next = await owner.acquire(2, request)
+    owner.release(2, { resourceId: next.id })
+  })
+
   it('registers the preview scheme for streaming and cross-scheme capability fetches', () => {
     expect(MANAGED_PREVIEW_SCHEME).toEqual({
       scheme: 'open-science-preview',
@@ -331,6 +359,42 @@ describe('ManagedPreviewResources', () => {
       expect(lease.close).toHaveBeenCalledOnce()
     }
   )
+
+  it('opens a staged edit through its in-memory lease and rejects it when unconfigured', async () => {
+    const close = vi.fn().mockResolvedValue(undefined)
+    const lease = {
+      path: '/staged/deck.pptx',
+      size: 64,
+      versionToken: 1,
+      snapshot: { dev: 1n, ino: 2n, size: 64n, mtimeNs: 3n },
+      read: vi.fn(),
+      readRange: vi.fn(),
+      verifyUnchanged: vi.fn(),
+      close
+    }
+    const openStagedEdit = vi.fn().mockResolvedValue(lease)
+    const resources = new ManagedPreviewResources({
+      resolvePath: vi.fn(),
+      openStagedEdit,
+      createId: () => 'staged-resource'
+    } as never)
+    const resource = await resources.acquire(17, {
+      source: 'staged-edit',
+      path: 'session-1:3'
+    } as never)
+
+    expect(openStagedEdit).toHaveBeenCalledWith('session-1:3')
+    expect(resource.size).toBe(64)
+    await resources.release(17, { resourceId: resource.id })
+    expect(close).toHaveBeenCalledOnce()
+
+    await expect(
+      new ManagedPreviewResources({ resolvePath: vi.fn() } as never).acquire(17, {
+        source: 'staged-edit',
+        path: 'session-1:3'
+      } as never)
+    ).rejects.toThrow(/not configured/)
+  })
 
   it.each([
     ['upload', 'upload-v2'],

@@ -783,3 +783,158 @@ it('does not partially protect an owner that also contains ordinary native conte
     await f.document.destroy()
   }
 })
+
+it.each(['closed', 'ordinal gap'])(
+  'keeps only a closed terminal right-column native bibliography: %s',
+  async (shape) => {
+    const require = createRequire(import.meta.url),
+      assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/',
+      pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const regular = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf')),
+      bold = await pdf.embedFont(await readFile(assets + 'LiberationSans-Bold.ttf')),
+      page = pdf.addPage([612, 792])
+    page.drawText('Independent prose remains readable in the left column.', {
+      font: regular,
+      size: 10,
+      x: 52,
+      y: 260
+    })
+    page.drawText('The preceding right column ends here.', {
+      font: regular,
+      size: 10,
+      x: 318,
+      y: 405
+    })
+    for (let i = 0; i < 8; i++) {
+      const n = shape === 'ordinal gap' && i === 4 ? 9 : i + 1,
+        y = 350 - i * 22,
+        size = 9,
+        journal = 'Journal of Native Tests ',
+        x = 337,
+        volume = '12'
+      page.drawText(`[${n}] A. Reader, Complete independent study,`, {
+        font: regular,
+        size,
+        x: 318,
+        y
+      })
+      page.drawText(journal, { font: regular, size, x, y: y - 11 })
+      const volumeX = x + regular.widthOfTextAtSize(journal, size)
+      page.drawText(volume, { font: bold, size, x: volumeX, y: y - 11 })
+      page.drawText(', 100 (2020).', {
+        font: regular,
+        size,
+        x: volumeX + bold.widthOfTextAtSize(volume, size),
+        y: y - 11
+      })
+    }
+    const loading = getDocument({
+      data: await pdf.save(),
+      disableFontFace: true,
+      standardFontDataUrl: assets
+    })
+    try {
+      const { source } = await extractPdfTranslationSource({
+        document: await loading.promise,
+        resourceRequestKey: 'terminal-native-bibliography',
+        signal: new AbortController().signal
+      })
+      const owners = source.units.filter(
+        (unit) =>
+          unit.source.includes('Complete independent study') ||
+          unit.source.startsWith('Journal of Native Tests')
+      )
+      expect(owners).toHaveLength(16)
+      expect(owners.every((unit) => Boolean(unit.sourceOnly) === (shape === 'closed'))).toBe(true)
+      const nearby = source.units.filter(
+        (unit) =>
+          unit.source.startsWith('Independent prose') ||
+          unit.source.startsWith('The preceding right column')
+      )
+      expect(nearby).toHaveLength(2)
+      expect(nearby.every((unit) => !unit.sourceOnly)).toBe(true)
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+it.each(['complete', 'number-gap', 'ordinary-tail'] as const)(
+  'protects only a complete terminal right-column superscript bibliography: %s',
+  async (fault) => {
+    const require = createRequire(import.meta.url),
+      assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/',
+      pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf')),
+      page = pdf.addPage([600, 800]),
+      graphic = await PDFDocument.create()
+    graphic.addPage([90, 70]).drawRectangle({ x: 7, y: 9, width: 39, height: 23 })
+    const [embedded] = await pdf.embedPdf(await graphic.save())
+    page.drawPage(embedded, { x: 48, y: 590 })
+    page.drawText('Independent prose beside the figure remains eligible.', {
+      font,
+      size: 10,
+      x: 54,
+      y: 701
+    })
+    page.drawText('Independent prose ends before the records.', {
+      font,
+      size: 10,
+      x: 320,
+      y: 701
+    })
+    page.pushOperators(beginText())
+    for (let n = 0; n < 5; n++) {
+      const ordinal = String(n === 2 && fault === 'number-gap' ? 9 : n + 1),
+        y = 678 - n * 11,
+        height = 6.75,
+        x = 333 - font.widthOfTextAtSize(ordinal, height) - 0.2
+      page.pushOperators(
+        setFontAndSize(page.node.newFontDictionary(font.name, font.ref), height),
+        setTextMatrix(1, 0, 0, 1, x, y + 2.8),
+        showText(font.encodeText(ordinal)),
+        setFontAndSize(page.node.newFontDictionary(font.name, font.ref), 9),
+        setTextMatrix(1, 0, 0, 1, 333, y),
+        showText(
+          font.encodeText(
+            fault === 'ordinary-tail' && n === 4
+              ? 'We now present ordinary observations.'
+              : 'A. Writer, Journal of Examples 12 (2020).'
+          )
+        )
+      )
+    }
+    page.pushOperators(endText())
+    const loading = getDocument({
+      data: await pdf.save(),
+      fontExtraProperties: true,
+      disableFontFace: true,
+      useSystemFonts: false,
+      isEvalSupported: false,
+      standardFontDataUrl: assets
+    })
+    try {
+      const document = await loading.promise
+      const result = await extractPdfTranslationSource({
+        document,
+        resourceRequestKey: 'native-test',
+        signal: new AbortController().signal
+      })
+      expect(result.coverage.excludedItemCount).toBe(0)
+      const references = result.source.units.filter((unit) => unit.preserve === 'reference')
+      const prose = result.source.units
+        .filter((unit) => !unit.sourceOnly)
+        .map((unit) => unit.source)
+        .join(' ')
+      expect(prose).toContain('Independent prose beside the figure remains eligible.')
+      expect(prose).toContain('Independent prose ends before the records.')
+      const referenceItems = references.flatMap((unit) => unit.fragments.flatMap((f) => f.items))
+      expect(referenceItems).toHaveLength(fault === 'complete' ? 10 : 0)
+      expect(references.every((unit) => unit.sourceOnly)).toBe(true)
+    } finally {
+      await loading.destroy()
+    }
+  }
+)

@@ -67,6 +67,7 @@ describe('renderer contract catalog', () => {
     })
     for (const publicPath of [
       'managedFileVersions.saveTextEdit',
+      'managedFileVersions.saveBinaryEdit',
       'managedFileVersions.diffText',
       'managedFileVersions.cancelDiff'
     ]) {
@@ -74,6 +75,9 @@ describe('renderer contract catalog', () => {
     }
     expect(WEB_INVOKE_CHANNELS['managedFileVersions.inspect']).toBe('managed-file-versions:inspect')
     expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('managed-file-versions:save-text-edit')
+    expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain(
+      'managed-file-versions:save-binary-edit'
+    )
     expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('managed-file-versions:diff-text')
     expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('managed-file-versions:cancel-diff')
   })

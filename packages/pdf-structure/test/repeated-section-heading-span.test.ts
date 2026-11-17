@@ -5,6 +5,9 @@ import { readPdfFixture } from './read-fixture'
 const { reconcileRepeatedSectionHeadings } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-row-repair.mjs')).href
 )
+const { recoverRuledInteriorSectionRows } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-fenced-section.mjs')).href
+)
 const fixture = (): ReturnType<typeof readPdfFixture> =>
   readPdfFixture(
     resolve('test/fixtures/source-grids/unmerged-first-heading-among-complete-sections.jsonl')
@@ -91,3 +94,72 @@ it.each([
   expect(f).toEqual(before)
   expect(repairs).toEqual([])
 })
+
+it.each(['closed face', 'broken outer rule', 'inner divider', 'other source'])(
+  'accepts an interior heading only in a complete single-cell ruled face: %s',
+  (mode) => {
+    const grid = [
+        ['Field', 'First', 'Second'],
+        ['', '', ''],
+        ['Record', '12', '65']
+      ],
+      rows = grid.map((_, row) => ({ rect: [0, row * 20, 300, row * 20 + 20] })),
+      cells = grid.flatMap((record, row) =>
+        record.map((text, column) => {
+          const x = column * 100,
+            y = row * 20
+          return {
+            row,
+            column,
+            rowSpan: 1,
+            colSpan: 1,
+            text,
+            rect: [x, y, x + 100, y + 20],
+            sourceRects: text ? [[x + 5, y + 5, x + 25, y + 13]] : []
+          }
+        })
+      ),
+      label = {
+        text: 'Trial group',
+        sourceItem: { text: 'Trial group', pageNumber: 1, index: 4 },
+        rect: [122, 24, 178, 34],
+        baseline: 34,
+        height: 10,
+        horizontal: true
+      },
+      items = [label],
+      unassigned = [label.text],
+      rules = [
+        [0, 20, 300, 20],
+        [0, 40, 300, 40],
+        [0, 20, 0, 40],
+        [300, 20, 300, 40]
+      ]
+    if (mode === 'broken outer rule') rules[3][3] = 30
+    if (mode === 'inner divider') rules.push([100, 20, 100, 40])
+    if (mode === 'other source') items.push({ ...label, text: 'Extra', rect: [40, 24, 59, 34] })
+    const before = structuredClone({ grid, rows, cells, unassigned })
+    const count = recoverRuledInteriorSectionRows({ grid, rows, cells, items, unassigned, rules })
+    if (mode !== 'closed face') {
+      expect(count).toBe(0)
+      expect({ grid, rows, cells, unassigned }).toEqual(before)
+      return
+    }
+    expect(count).toBe(1)
+    expect(unassigned).toEqual([])
+    expect(grid[1]).toEqual([label.text, '', ''])
+    expect(cells.filter((cell) => cell.row === 1)).toEqual([
+      expect.objectContaining({
+        column: 0,
+        colSpan: 3,
+        text: label.text,
+        rect: rows[1].rect,
+        sourceItems: [label.sourceItem]
+      })
+    ])
+    expect(cells.filter((cell) => cell.row !== 1)).toEqual(
+      before.cells.filter((cell) => cell.row !== 1)
+    )
+    expect(rows).toEqual(before.rows)
+  }
+)

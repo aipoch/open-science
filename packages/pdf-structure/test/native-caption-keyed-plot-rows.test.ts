@@ -120,3 +120,94 @@ it.each([
     f.page.lines = f.page.lines.filter((l) => !(l.x === 70 && Number(l.y) < 180))
   expect(f.run()?.[1] ?? Infinity).toBeGreaterThan(180)
 })
+
+it.each(['complete', 'missing key', 'no upper frame', 'foreign prose', 'foreign paint'])(
+  'extends a caption-keyed upper schematic and plot only with complete evidence: %s',
+  (condition) => {
+    const upper = [196, 48, 290, 160]
+    const lower = [
+      [72, 180, 172, 259],
+      [190, 180, 290, 259]
+    ]
+    const frames = [upper, ...lower]
+    const caption = {
+      page: 1,
+      rect: [54, 278, 298, 288],
+      lines: ['Figure 1: (a) Plan; (b) Photo; (c) Overview; (d) Left; (e) Right.']
+    }
+    const keys: [string, number[]][] = [
+      ['(a)', [55, 45, 67, 55]],
+      ['(b)', [55, 99, 67, 109]],
+      ['(c)', [173, 45, 185, 55]],
+      ['(d)', [55, 167, 67, 177]],
+      ['(e)', [173, 167, 185, 177]]
+    ]
+    const tokens = keys.map(([text, rect], index) => ({
+      text,
+      rect,
+      height: 10,
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index, text }
+    }))
+    const line = (text: string, [x, y, right, bottom]: number[]): Record<string, unknown> => ({
+      text,
+      x,
+      y,
+      width: right - x,
+      height: bottom - y,
+      fontSize: 10
+    })
+    const width = 600
+    const height = 800
+    const paint = [
+      ...frames.flatMap(([x, y]) =>
+        [0, 1, 2, 3].map((n) => [x + 10, y + 5 + n * 15, x + 60, y + 15 + n * 15])
+      ),
+      [80, 66, 150, 80],
+      [70, 100, 161, 169]
+    ]
+    if (condition === 'foreign paint') paint.push([340, 60, 400, 100])
+    const graphicsBounds = paint.map((rect, index) => ({
+      kind: index === 13 ? 'image' : 'path',
+      operationIndex: index,
+      normalizedRect: rect.map((v, i) => v / (i % 2 ? height : width)),
+      ...(index === 13 ? { imageHash: 'anonymous-raster' } : {})
+    }))
+    const lines = [
+      line(caption.lines[0], caption.rect),
+      ...keys.map(([text, rect]) => line(text, rect)),
+      line('20', [182, 153, 192, 161]),
+      ...frames.flatMap(([x, y]) =>
+        [0, 1, 2, 3].map((n) => line(String(n), [x - 10, y + n * 16, x - 2, y + n * 16 + 8]))
+      )
+    ]
+    if (condition === 'foreign prose')
+      lines.push(
+        line(
+          'An independent paragraph occupying the middle of the column has no figure ownership.',
+          [54, 90, 296, 100]
+        )
+      )
+    if (condition === 'missing key') tokens.shift()
+    const page = {
+      pageNumber: 1,
+      width,
+      height,
+      rotation: 0,
+      renderRotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds,
+      lines
+    }
+    const rules = frames.flatMap(([l, t, r, b]) => [
+      [l, t, r, t],
+      [l, b, r, b],
+      [l, t, l, b],
+      [r, t, r, b]
+    ])
+    const closed = condition === 'no upper frame' ? [] : [upper]
+    const result = nativeCaptionedPlotBand(page, caption, [caption], [], rules, closed, tokens)
+    expect(result?.rect?.[1]).toBe(condition === 'complete' ? 45 : 153)
+    expect(result?.graphicsCount).toBe(condition === 'complete' ? 14 : 2)
+  }
+)

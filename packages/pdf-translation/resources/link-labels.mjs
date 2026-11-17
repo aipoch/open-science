@@ -517,28 +517,28 @@ export function translatedPdfLinkLabel(source, translation, label, offset) {
 // complete-list occurrences and ordered numeric identities must agree.
 // Undefined leaves non-citation labels on their existing path; null forbids a
 // bare-number fallback after a complete source citation fails identity proof.
+export function pdfBracketedReferenceBlocks(text) {
+  const entry = '\\d{1,4}(?:\\s*[–-]\\s*\\d{1,4})?'
+  const body = `${entry}(?:\\s*[,，]\\s*${entry})*`
+  const list = new RegExp(`\\[\\s*${body}\\s*\\]|［\\s*${body}\\s*］`, 'gu')
+  return [...text.matchAll(list)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+    text: match[0],
+    numbers: [...match[0].matchAll(/\d+/gu)],
+    key: match[0].slice(1, -1).replace(/\s/gu, '').replace(/，/gu, ',').replace(/–/gu, '-')
+  }))
+}
+
 export function translatedPdfBracketedReference(source, translation, label, offset) {
   if (!/^\d{1,4}$/u.test(label) || source.slice(offset, offset + label.length) !== label)
     return undefined
-  const blocks = (text) =>
-    [
-      ...text.matchAll(
-        /\[\s*\d{1,4}(?:\s*[,，]\s*\d{1,4})*\s*\]|［\s*\d{1,4}(?:\s*[,，]\s*\d{1,4})*\s*］/gu
-      )
-    ].map((match) => ({
-      start: match.index,
-      end: match.index + match[0].length,
-      text: match[0],
-      numbers: [...match[0].matchAll(/\d+/gu)]
-    }))
-  const from = blocks(source),
-    to = blocks(translation),
+  const from = pdfBracketedReferenceBlocks(source),
+    to = pdfBracketedReferenceBlocks(translation),
     block = from.find((b) => b.numbers.some((n) => b.start + n.index === offset && n[0] === label))
   if (!block) return undefined
-  const identity = (b) => b.numbers.map((n) => n[0]).join(','),
-    key = identity(block),
-    sourceMatches = from.filter((b) => identity(b) === key),
-    targetMatches = to.filter((b) => identity(b) === key)
+  const sourceMatches = from.filter((b) => b.key === block.key),
+    targetMatches = to.filter((b) => b.key === block.key)
   if (!sourceMatches.length || sourceMatches.length !== targetMatches.length) return null
   const occurrence = sourceMatches.indexOf(block),
     ordinal = block.numbers.findIndex((n) => block.start + n.index === offset),

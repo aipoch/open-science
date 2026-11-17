@@ -50,6 +50,7 @@ export async function composeAgentRuntime({
   notificationInbox,
   uploadRepository,
   managedFileVersionService,
+  pptxAgent,
   sideChatOwnerRef,
   recordAuxiliaryUsage,
   artifactRepository,
@@ -94,6 +95,7 @@ export async function composeAgentRuntime({
   notificationInbox: ReturnType<typeof createNotificationInboxController>
   uploadRepository: ReturnType<typeof createDefaultUploadRepository>
   managedFileVersionService: ManagedFileVersionService
+  pptxAgent: import('../pptx-edit/agent-handler').PptxAgentHandler
   sideChatOwnerRef: { current: SideChatRuntimeOwner | undefined }
   recordAuxiliaryUsage: (record: SessionAuxiliaryTurnUsageRecord) => Promise<void>
   artifactRepository: ReturnType<typeof createDefaultArtifactRepository>
@@ -161,6 +163,7 @@ export async function composeAgentRuntime({
       runRegistry: artifactRunRegistry,
       provenanceRepository: artifactProvenanceRepository,
       managedFileVersions: managedFileVersionService,
+      pptxAgent,
       uploadRepository,
       notebookRpcServer,
       wslSetupSessions,

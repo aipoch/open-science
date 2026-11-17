@@ -2092,7 +2092,7 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
-  it('keeps keyboard focus on project results after expanding the menu', async () => {
+  it('continues at the first newly shown project after expanding the menu', async () => {
     const otherProjects = Array.from({ length: 7 }, (_, index) => ({
       id: `project-${index + 1}`,
       name: `Project ${index + 1}`,
@@ -2114,7 +2114,7 @@ describe('WorkspaceSidebar accessible render', () => {
 
       expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(7)
       expect(document.activeElement).toBe(
-        document.body.querySelector<HTMLElement>('[data-project-id]')
+        document.body.querySelector<HTMLElement>('[data-project-id="project-6"]')
       )
     } finally {
       mounted.cleanup()

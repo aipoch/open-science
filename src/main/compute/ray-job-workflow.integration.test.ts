@@ -35,10 +35,11 @@ const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).dig
 async function dashboard(
   sharedRoot: string,
   token: string
-): Promise<{ endpoint: string; creates(): number; close(): Promise<void> }> {
+): Promise<{ endpoint: string; creates(): number; deletes(): number; close(): Promise<void> }> {
   const packages = new Map<string, Buffer>()
   const jobs = new Map<string, Record<string, unknown>>()
   let creates = 0
+  let deletes = 0
   const server = createServer(async (req, res) => {
     try {
       if (req.headers.authorization !== 'Bearer ' + token) {
@@ -78,6 +79,14 @@ async function dashboard(
           driver_exit_code: 0
         })
         data = { submission_id: spec.submission_id }
+      } else if (req.method === 'DELETE' && url.startsWith('/api/jobs/')) {
+        const id = url.slice('/api/jobs/'.length)
+        if (!jobs.has(id)) status = 404
+        else {
+          jobs.delete(id)
+          deletes++
+          data = { deleted: true }
+        }
       } else if (url.endsWith('/logs')) {
         data = { logs: 'done\n' }
       } else if (req.method === 'GET' && url.startsWith('/api/jobs/')) {
@@ -98,6 +107,7 @@ async function dashboard(
   return {
     endpoint: 'http://127.0.0.1:' + (server.address() as AddressInfo).port,
     creates: () => creates,
+    deletes: () => deletes,
     close: () =>
       new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve()))
@@ -275,6 +285,7 @@ it('recovers an approved Ray job from SQLite and publishes the output and Projec
           })
         ).toMatchObject({
           status: 'success',
+          remote_cleanup_disposition: 'cleaned',
           file_evidence: { activityId: jobId, checksum: expect.stringMatching(/^[a-f0-9]{64}$/) }
         })
       },
@@ -309,6 +320,7 @@ it('recovers an approved Ray job from SQLite and publishes the output and Projec
     if (fake) {
       expect(interrupted).toEqual(new Set([0, 1]))
       expect(fake.creates()).toBe(1)
+      expect(fake.deletes()).toBe(1)
     }
     if (live) {
       // Keep the host offline until the remote driver enforces its own deadline.

@@ -153,6 +153,8 @@ describe('notebook IPC handlers', () => {
     registerNotebookIpcHandlers(createNotebookCommandWorkflows(service))
 
     expect([...ipcHandlers.keys()]).toEqual([
+      'notebook:process-monitor',
+      'notebook:terminate-monitored-process',
       'notebook:run-index',
       'notebook:state',
       'notebook:project-activity',

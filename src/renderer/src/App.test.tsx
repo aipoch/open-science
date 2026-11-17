@@ -80,6 +80,7 @@ const mocks = vi.hoisted(() => {
       panelState: 'collapsed' as 'open' | 'collapsed'
     },
     projects: [{ id: 'project-1', archivedAt: undefined }],
+    projectLoadError: undefined as string | undefined,
     loadProjects: vi.fn().mockResolvedValue(undefined),
     loadDeletionCleanup: vi.fn().mockResolvedValue(undefined),
     deepLinkNavigation: vi.fn(),
@@ -264,12 +265,14 @@ vi.mock('@/stores/project-store', () => ({
   useProjectStore: <T,>(
     selector: (state: {
       projects: typeof mocks.projects
+      loadError: typeof mocks.projectLoadError
       loadProjects: typeof mocks.loadProjects
       loadDeletionCleanup: typeof mocks.loadDeletionCleanup
     }) => T
   ): T =>
     selector({
       projects: mocks.projects,
+      loadError: mocks.projectLoadError,
       loadProjects: mocks.loadProjects,
       loadDeletionCleanup: mocks.loadDeletionCleanup
     })
@@ -523,6 +526,7 @@ describe('App startup routing', () => {
     mocks.settings.isLoaded = false
     mocks.settings.isLoading = false
     mocks.settings.loadError = undefined
+    mocks.projectLoadError = undefined
     mocks.settings.onboardingCompletedAt = undefined
     mocks.settings.isSettingsOpen = false
     mocks.settings.load.mockReset().mockResolvedValue(true)
@@ -1589,6 +1593,7 @@ describe('App startup routing', () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isHydrated = true
     mocks.sessionPersistence.isReady = false
+    mocks.projectLoadError = 'project list unavailable'
     mocks.loadProjects.mockClear()
 
     await render()
@@ -1814,6 +1819,7 @@ describe('App startup routing', () => {
   })
 
   it('continues the startup animation while the initial session snapshot loads', async () => {
+    mocks.navigation.view = 'workspace'
     await render()
 
     const settingsLogo = container.querySelector<HTMLCanvasElement>(
@@ -1837,6 +1843,29 @@ describe('App startup routing', () => {
       shell?.querySelector<HTMLCanvasElement>('canvas[data-testid="open-science-logo-loader"]')
     ).toBe(settingsLogo)
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
+  })
+
+  it('renders Home while the Session catalog hydrates', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = false
+    mocks.sessionPersistence.isLoading = true
+    mocks.sessionPersistence.isReady = false
+    mocks.sessionPersistence.canDeleteSessionsAndProjects = true
+    mocks.sessionPersistence.hasCompleteSessionCatalog = true
+
+    await render()
+
+    expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset.canDeleteProjects
+    ).toBe('false')
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset
+        .hasCompleteSessionCatalog
+    ).toBe('false')
+    expect(
+      container.querySelector('[data-testid="session-persistence-startup-loading"]')
+    ).toBeNull()
   })
 
   it('loads startup services and renders Home with the shared overlays', async () => {

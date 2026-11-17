@@ -21,7 +21,7 @@ const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
 test('truncates the model name before wrapping the composer send buttons', async ({ app }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.setViewportSize({ width: 1280, height: 900 })
+  await app.setMainWindowSize(1280, 900)
   const model = 'long-model-name-for-composer'
   await page.evaluate(async (model) => {
     const name = 'Composer layout provider'
@@ -229,7 +229,7 @@ test('returns from Library to the originating conversation and New Conversation 
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.setViewportSize({ width: 1280, height: 900 })
+  await app.setMainWindowSize(1280, 900)
   await createProject(page)
   const composer = page.getByRole('textbox', { name: 'Ask anything' })
   const earlierPrompt = 'Review the evidence for our literature study.'
@@ -1339,7 +1339,7 @@ test.describe('New conversation transition', () => {
   }, testInfo) => {
     await app.completeOnboarding()
     const page = await app.configureFakeAgent()
-    await page.setViewportSize({ width: 1270, height: 925 })
+    await app.setMainWindowSize(1270, 925)
     await createProject(page)
     const capture = async (name: string): Promise<void> => {
       await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))

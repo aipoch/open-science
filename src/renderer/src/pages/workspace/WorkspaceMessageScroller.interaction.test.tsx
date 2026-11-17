@@ -78,13 +78,19 @@ vi.mock('pdfjs-dist', () => {
   }
 })
 
-const { agentMarkdownRenderMock, endScrollTargetMock, scrollToEndMock, scrollableMock } =
-  vi.hoisted(() => ({
-    agentMarkdownRenderMock: vi.fn(),
-    endScrollTargetMock: vi.fn(),
-    scrollToEndMock: vi.fn(),
-    scrollableMock: { end: false }
-  }))
+const {
+  agentMarkdownRenderMock,
+  endScrollTargetMock,
+  scrollToEndMock,
+  scrollToMessageMock,
+  scrollableMock
+} = vi.hoisted(() => ({
+  agentMarkdownRenderMock: vi.fn(),
+  endScrollTargetMock: vi.fn(),
+  scrollToEndMock: vi.fn(),
+  scrollToMessageMock: vi.fn(() => true),
+  scrollableMock: { end: false }
+}))
 const { flushSessionPersistenceMock } = vi.hoisted(() => ({
   flushSessionPersistenceMock: vi.fn(async (): Promise<void> => undefined)
 }))
@@ -231,7 +237,7 @@ vi.mock('@/components/ui/message-scroller', () => {
     useMessageScroller: () => ({
       stopAutoScroll: vi.fn(),
       scrollToEnd: scrollToEndMock,
-      scrollToMessage: vi.fn(),
+      scrollToMessage: scrollToMessageMock,
       scrollToStart: vi.fn()
     }),
     useMessageScrollerScrollable: () => scrollableMock
@@ -5278,7 +5284,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const firstRun = document.body.querySelector<HTMLButtonElement>('[aria-label^="Go to run 1:"]')!
     expect(firstRun).not.toBeNull()
     await act(async () => firstRun.click())
-    expect(viewport.scrollTo).toHaveBeenCalled()
+    expect(scrollToMessageMock).toHaveBeenCalledWith('find-reading-1', {
+      align: 'start',
+      scrollMargin: 8,
+      behavior: 'instant'
+    })
     await act(async () => hideWindowFindListener?.())
     expect(target.isConnected).toBe(true)
     expect(

@@ -1,16 +1,21 @@
 import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from '@aipoch/research-film/contracts'
 import type { Stats } from 'node:fs'
-import { createHash } from 'node:crypto'
 import { lstat, readdir, rm, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DurableJsonReadLimitError, readFileWithinLimit } from '@aipoch/durable-files'
 import { z } from 'zod'
 import { PENDING_FILM_OWNER, pendingFilmOwnerSchema, pendingFilmSchema } from './checkpoint'
+import { researchFilmModeSchema } from '../../shared/research-video-presentation'
 import { researchFilmScopeKey } from './stored-presentation'
 
 const identity = z.string().min(1).max(512)
 const sourceOwner = z.object({
-  provenance: z.object({ projectId: identity, sessionId: identity, branchId: identity.optional() })
+  provenance: z.object({
+    projectId: identity,
+    sessionId: identity,
+    branchId: identity.optional(),
+    mode: researchFilmModeSchema.optional()
+  })
 })
 const jobOwner = z.object({
   schemaVersion: z.literal(1),
@@ -117,9 +122,7 @@ export function createResearchFilmLifecycle(options: {
         if (!parsed.success) continue
         const owner = parsed.data.provenance
         const keys = [owner.branchId ?? null, null].map((branch) =>
-          createHash('sha256')
-            .update(JSON.stringify([owner.projectId, owner.sessionId, branch]))
-            .digest('hex')
+          researchFilmScopeKey({ ...owner, branchId: branch ?? undefined })
         )
         if (!keys.includes(key) || !remove(owner.sessionId)) continue
         deleted.add(owner.sessionId)
@@ -283,6 +286,8 @@ export function createResearchFilmLifecycle(options: {
             if (
               !pending.success ||
               pending.data.id !== owner.data.id ||
+              (pending.data.mode ?? 'research-explanation') !==
+                (owner.data.mode ?? 'research-explanation') ||
               (pending.data.built && pending.data.built.id !== pending.data.id)
             )
               continue
@@ -317,10 +322,7 @@ export function createResearchFilmLifecycle(options: {
           const owner = parsed.data.provenance
           if (
             ![owner.branchId ?? null, null].some(
-              (branch) =>
-                createHash('sha256')
-                  .update(JSON.stringify([owner.projectId, owner.sessionId, branch]))
-                  .digest('hex') === key
+              (branch) => researchFilmScopeKey({ ...owner, branchId: branch ?? undefined }) === key
             )
           )
             continue

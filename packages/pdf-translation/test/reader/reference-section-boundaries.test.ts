@@ -945,3 +945,100 @@ test.each([
     )
   expect(page).toEqual(before)
 })
+
+test.each(['complete', 'missing number', 'foreign prose'])(
+  'protects a continuous terminal decimal reference column: %s',
+  (shape) => {
+    const row = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      face = 'Reference',
+      size = 9
+    ): PdfLayoutTextItem => ({
+      ...item(text, 800 - y, size, face, x),
+      width,
+      fontAscent: 0.75,
+      fontDescent: -0.24,
+      fontVertical: false
+    })
+    const left = [1, 2, 3, 4].flatMap((number, index) => [
+      row(
+        `${number}. T. Example and C. Reader, “Catalogue of samples,”`,
+        61,
+        198 - 23 * index,
+        233
+      ),
+      row('J. of Methods 8, 70–74 (2019). (document)', 74, 187 - 23 * index, 203)
+    ])
+    const right = [5, 6, 7].flatMap((number, index) => [
+      row(
+        `${shape === 'missing number' && index === 1 ? number + 4 : number}. L. Example and F. Reader, “Measuring a variable,”`,
+        319,
+        737 - 33 * index,
+        238
+      ),
+      row(
+        index === 1
+          ? 'J. of Samples 6, 8–14 (2020). (docu-'
+          : 'An independent study published in the archive.',
+        333,
+        726 - 33 * index,
+        222
+      ),
+      row(
+        index === 1 ? 'ment)' : 'J. of Samples 6, 8–14 (2020). (document)',
+        333,
+        715 - 33 * index,
+        199
+      )
+    ])
+    const ordinary = row(
+      'The first assessment was completed with the control device.',
+      52,
+      538,
+      243,
+      'Body',
+      10
+    )
+    const foreign = row(
+      'The following sentence resumes normal reporting after the list.',
+      319,
+      625,
+      238,
+      'Body',
+      10
+    )
+    const items = [
+      ordinary,
+      row('An independent paragraph ends above the reference heading.', 52, 526, 243, 'Body', 10),
+      row('References', 53, 223, 58, 'Heading', 10),
+      ...left,
+      ...right,
+      ...(shape === 'foreign prose' ? [foreign] : []),
+      row('1', 303, 25, 5, 'Folio', 10)
+    ]
+    const page = { page: 1, width: 612, height: 792, rotation: 0, items }
+    const original = structuredClone(page)
+    const { units } = groupPdfTranslationPages({ pages: [page], pageCount: 1 })
+    const owners = (runs: PdfLayoutTextItem[]): typeof units => {
+      const keys = runs.map((run) => `1:${items.indexOf(run)}`)
+      return units.filter((unit) => unit.items.some((key) => keys.includes(key)))
+    }
+    const continuation = owners(right)
+    expect(continuation.length).toBeGreaterThan(1)
+    expect(continuation.every((unit) => unit.sourceOnly && unit.preserve === 'reference')).toBe(
+      shape === 'complete'
+    )
+    expect(owners(left).every((unit) => unit.sourceOnly && unit.preserve === 'reference')).toBe(
+      true
+    )
+    expect(owners([ordinary])[0].sourceOnly).toBeUndefined()
+    if (shape === 'foreign prose') expect(owners([foreign])[0].sourceOnly).toBeUndefined()
+    expect(page).toEqual(original)
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(
+      items.map((_, index) => `1:${index}`).sort()
+    )
+  }
+)
