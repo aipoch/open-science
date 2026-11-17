@@ -97,9 +97,9 @@ jobs:
           SOURCE_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
-          [[ "$SOURCE_MODE" == portable ]]
-          [[ "$SOURCE_BASE" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_MODE" == portable ]] || exit 1
+          [[ "$SOURCE_BASE" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
           git merge-base --is-ancestor "$SOURCE_BASE" "$GITHUB_SHA"
           git diff --exit-code "$SOURCE_BASE" "$GITHUB_SHA" -- \
             package.json package-lock.json .nvmrc .npmrc patches prisma \

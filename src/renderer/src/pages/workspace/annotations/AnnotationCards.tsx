@@ -46,6 +46,9 @@ const sessionItemSourceLabel = (itemType: SessionTextAnnotationItemType, t: TFun
 
 const annotationSourceLabel = (annotation: Annotation, t: TFunction): string => {
   if (annotation.kind === 'image-point') return annotation.source.name
+  if (annotation.kind === 'pptx-slide') {
+    return `${annotation.source.name} · ${t('Slide {{slide}}', { slide: annotation.slideIndex + 1 })}`
+  }
   if (annotation.kind === 'pdf') {
     return `${annotation.source.name} · ${t('Page {{page}}', { page: annotation.selector.pageNumber })}`
   }
@@ -120,6 +123,19 @@ const sentAnnotationViews = (
         source: annotationSourceLabel(annotation, t),
         note: annotation.note,
         image: annotation.selector.image
+      }
+    }
+    if (annotation.kind === 'pptx-slide') {
+      return {
+        id: annotation.id,
+        kind: 'text',
+        content: annotation.region
+          ? t('Selected area')
+          : annotation.shapeId !== undefined
+            ? t('Selected shape')
+            : t('Entire slide'),
+        source: annotationSourceLabel(annotation, t),
+        note: annotation.note
       }
     }
     return {

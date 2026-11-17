@@ -164,6 +164,18 @@
       "name": "DOCX Generation",
       "source": "featured",
       "updatedAt": "2026-10-26T00:00:00.000Z"
+    },
+    {
+      "id": "pdf-generation",
+      "name": "PDF Generation",
+      "source": "featured",
+      "updatedAt": "2026-11-13T00:00:00.000Z"
+    },
+    {
+      "id": "pptx-generation",
+      "name": "PPTX Generation",
+      "source": "featured",
+      "updatedAt": "2026-11-13T00:00:00.000Z"
     }
   ]
 }

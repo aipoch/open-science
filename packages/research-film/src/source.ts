@@ -4,11 +4,68 @@ export type ResearchVideoSessionSource = {
   sessionTitle: string
   project: string
   messages: Array<{ i: number; id: string; role: string; md: string; artifactIds: string[] }>
+  replay?: {
+    schemaVersion: 1
+    events: ReplayEvidence[]
+    omissions: string[]
+  }
   provenance: {
     projectId: string
     sessionId: string
     branchId?: string
+    mode?: 'research-explanation' | 'operation-replay'
     sourceRevision?: number
     sourceClaimsIndependentlyVerified: boolean
   }
+}
+
+export type ReplayEvidence = {
+  id: string
+  kind:
+    | 'human-input'
+    | 'agent-message'
+    | 'application-event'
+    | 'attachment'
+    | 'result'
+    | 'plan'
+    | 'execution'
+    | 'remote-job'
+    | 'review'
+  messageId: string
+  title: string
+  text: string
+  status?: string
+  recordedAt?: number
+  artifactId?: string
+  image?: string
+  previewText?: string
+  execution?: { code: string; output: string; language: string }
+}
+
+/** Read-only host records. Remote handles and execution authority never enter a film. */
+export type ReplayRecords = {
+  runs?: Array<{
+    id: string
+    messageId?: string
+    branchId?: string
+    status: string
+    code: string
+    output: string
+    language: string
+    recordedAt: number
+  }>
+  reviews: Array<{
+    id: string
+    messageId: string
+    status: string
+    text: string
+    recordedAt: number
+  }>
+  jobs: Array<{
+    id: string
+    status: string
+    text: string
+    recordedAt: number
+    producerRunId?: string
+  }>
 }

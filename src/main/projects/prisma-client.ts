@@ -3,11 +3,7 @@ import { join } from 'node:path'
 
 import { PrismaClient } from '@prisma/client'
 
-import {
-  classifyDatabaseFailure,
-  migrateApplicationDatabase,
-  type SchemaMigrationOptions
-} from '../database/migration-service'
+import type { SchemaMigrationOptions } from '../database/migration-service.js'
 
 const PROJECT_DB_FILE = 'open-science.db'
 // SQLite PRAGMAs used by migrations are connection-scoped. Keeping a single connection also avoids
@@ -31,6 +27,10 @@ const createProjectDbClient = (configRoot: string): PrismaClient => {
 
 let clientPromise: Promise<PrismaClient> | undefined
 
+// The migration manifest is evaluated only when a client is opened, not when this module loads.
+const loadMigrationService = (): Promise<typeof import('../database/migration-service.js')> =>
+  import('../database/migration-service.js')
+
 // Production singleton: ensures the storage directory exists and resolves only after schema verification.
 const getProjectDbClient = (
   configRoot: string,
@@ -39,17 +39,19 @@ const getProjectDbClient = (
   if (!clientPromise) {
     const pending = (async () => {
       let client: PrismaClient | undefined
+      let migrationService: Awaited<ReturnType<typeof loadMigrationService>> | undefined
 
       try {
+        migrationService = await loadMigrationService()
         await mkdir(configRoot, { recursive: true })
         client = createProjectDbClient(configRoot)
-        await migrateApplicationDatabase(client, {
+        await migrationService.migrateApplicationDatabase(client, {
           ...migrationOptions,
           databasePath: projectDatabasePath(configRoot)
         })
       } catch (error) {
         await client?.$disconnect().catch(() => undefined)
-        throw classifyDatabaseFailure(error, 'open')
+        throw migrationService?.classifyDatabaseFailure(error, 'open') ?? error
       }
 
       return client
@@ -74,6 +76,14 @@ const disconnectProjectDbClient = async (): Promise<void> => {
   const client = await pending.catch(() => undefined)
   await client?.$disconnect()
 }
+
+const migrateApplicationDatabase = (
+  client: PrismaClient,
+  options?: SchemaMigrationOptions
+): ReturnType<(typeof import('../database/migration-service.js'))['migrateApplicationDatabase']> =>
+  loadMigrationService().then(({ migrateApplicationDatabase }) =>
+    migrateApplicationDatabase(client, options)
+  )
 
 export {
   createProjectDbClient,

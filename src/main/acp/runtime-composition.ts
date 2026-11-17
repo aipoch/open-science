@@ -176,6 +176,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     import('../managed-file-versions/service').ManagedFileVersionService,
     'openLatest' | 'openVersion' | 'openUnpublishedVersion'
   >
+  pptxAgent?: import('../pptx-edit/agent-handler').PptxAgentHandler
   onSessionTurnStarted?: (sessionId: string, turnToken: string) => void
   onSessionTurnEnded?: (sessionId: string, turnToken: string) => void
   onSkillImportAttachmentEligible?: (
@@ -271,6 +272,7 @@ const createAcpRuntime = ({
   runRegistry,
   provenanceRepository,
   managedFileVersions,
+  pptxAgent,
   uploadRepository,
   notebookRpcServer,
   wslSetupSessions,
@@ -503,6 +505,7 @@ const createAcpRuntime = ({
           receiptDirectory: join(dataRoot, 'open-science-agent', 'tool-receipts')
         }),
         wslSetupSessions,
+        ...(pptxAgent ? { pptx: { agent: pptxAgent } } : {}),
         ...(literatureReader && literatureAttachments && sessionPersistenceCoordinator
           ? {
               literature: {

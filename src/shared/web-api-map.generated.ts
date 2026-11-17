@@ -516,6 +516,7 @@ export const WEB_EVENT_CHANNELS = {
   'pdfAnnotations.onChanged': 'pdf-annotations:changed',
   'pdfAnnotations.onImportProgress': 'pdf-annotations:import-progress',
   'permissions.onChanged': 'permissions:changed',
+  'pptxDraft.onChanged': 'pptx-draft:changed',
   'projectFiles.onChanged': 'project-files:changed',
   'projects.onCreated': 'project:created',
   'projects.onDeleted': 'project:deleted',

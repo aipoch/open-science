@@ -77,6 +77,17 @@ describe('builtin registry host integration', () => {
     expect([...ALL_CONNECTOR_IDS].sort()).toEqual(CONNECTOR_CATALOG.map((entry) => entry.id).sort())
     const tools = ALL_CONNECTOR_IDS.flatMap(getConnectorTools)
     expect(new Set(tools.map((tool) => `${tool.connector}/${tool.id}`)).size).toBe(tools.length)
+    for (const id of ALL_CONNECTOR_IDS)
+      for (const tool of getConnectorTools(id)) expect(tool.connector).toBe(id)
+  })
+  it('keeps tools from packages that serve several connectors', async () => {
+    const shared = [
+      (await import('@aipoch/connector-builtins/research-datasets')).RESEARCH_DATASET_TOOLS,
+      (await import('@aipoch/connector-builtins/molecular-data')).MOLECULAR_DATA_TOOLS,
+      (await import('@aipoch/connector-builtins/clinpgx')).CLINPGX_TOOLS
+    ].flat()
+    for (const tool of shared)
+      expect(getDescriptor(tool.connector, tool.id), `${tool.connector}/${tool.id}`).toBe(tool)
   })
   it.each(CONNECTOR_CATALOG)(
     'projects $id public contracts into the application Skill',

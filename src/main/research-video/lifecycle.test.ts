@@ -3,6 +3,8 @@ import { mkdtemp, mkdir, readFile, writeFile, rename, rm, symlink, lstat } from 
 import { basename, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it } from 'vitest'
+import { pruneStoredResearchFilms } from './stored-presentation'
+import { ManagedPreviewResources } from '../managed-preview-resources'
 import { createResearchFilmLifecycle, type ResearchFilmLifecycle } from './lifecycle'
 
 const roots: string[] = []
@@ -17,10 +19,11 @@ const fixture = async (): Promise<{ root: string; owner: ResearchFilmLifecycle }
 const presentation = async (
   root: string,
   sessionId: string,
-  branchId: string | null = null
+  branchId: string | null = null,
+  mode?: 'operation-replay'
 ): Promise<{ base: string; directory: string }> => {
   const key = createHash('sha256')
-    .update(JSON.stringify(['project', sessionId, branchId]))
+    .update(JSON.stringify(['project', sessionId, branchId, ...(mode ? [mode] : [])]))
     .digest('hex')
   const base = join(root, 'research-video-presentations', key),
     id = randomUUID(),
@@ -29,7 +32,7 @@ const presentation = async (
   await writeFile(
     join(directory, 'session.json'),
     JSON.stringify({
-      provenance: { projectId: 'project', sessionId, ...(branchId ? { branchId } : {}) }
+      provenance: { projectId: 'project', sessionId, mode, ...(branchId ? { branchId } : {}) }
     })
   )
   await writeFile(join(directory, 'output/player.html'), 'private film')
@@ -45,9 +48,10 @@ const exists = (path: string): Promise<boolean> =>
 const pending = async (
   root: string,
   sessionId: string,
-  marked = true
+  marked = true,
+  mode?: 'operation-replay'
 ): Promise<{ directory: string; pointer: string; latest: string }> => {
-  const saved = await presentation(root, sessionId, 'branch')
+  const saved = await presentation(root, sessionId, 'branch', mode)
   const id = basename(saved.directory)
   const directory = join(saved.base, 'pending')
   const pointer = join(saved.base, 'pending.json')
@@ -57,7 +61,8 @@ const pending = async (
   await writeFile(
     pointer,
     JSON.stringify({
-      version: 1,
+      version: mode ? 2 : 1,
+      mode,
       id,
       conversation: 'a'.repeat(64),
       source: 'b'.repeat(64),
@@ -70,7 +75,14 @@ const pending = async (
   if (marked)
     await writeFile(
       join(directory, 'pending-owner.json'),
-      JSON.stringify({ version: 1, id, projectId: 'project', sessionId, branchId: 'branch' })
+      JSON.stringify({
+        version: mode ? 2 : 1,
+        mode,
+        id,
+        projectId: 'project',
+        sessionId,
+        branchId: 'branch'
+      })
     )
   return { directory, pointer, latest }
 }
@@ -98,6 +110,22 @@ it('reclaims only marked orphan pending jobs during startup reconciliation', asy
     expect(await exists(join(retained.directory, 'session.json'))).toBe(true)
     expect(await exists(retained.pointer)).toBe(true)
   }
+})
+
+it('reconciles replay checkpoints only when the pointer and owner agree on the mode', async () => {
+  const { root } = await fixture()
+  const orphan = await pending(root, 'gone', true, 'operation-replay')
+  const mismatch = await pending(root, 'mismatch', true, 'operation-replay')
+  const pointer = JSON.parse(await readFile(mismatch.pointer, 'utf8'))
+  await writeFile(mismatch.pointer, JSON.stringify({ ...pointer, mode: 'research-explanation' }))
+  await new Promise((resolve) => setTimeout(resolve, 2))
+  const owner = createResearchFilmLifecycle({ dataRoot: () => root })
+  const plans = await owner.planSessionReconciliation([])
+  expect(plans.map(({ sessionId }) => sessionId)).toEqual(['gone'])
+  await plans[0].apply()
+  await expect(lstat(orphan.directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await exists(mismatch.pointer)).toBe(true)
+  expect(await exists(join(mismatch.directory, 'pending-owner.json'))).toBe(true)
 })
 
 it('continues orphan cleanup when a published index is oversized', async () => {
@@ -356,3 +384,57 @@ it.each(['published', 'pending'] as const)(
     await expect(owner.run('project', 'gone', async () => 'available')).resolves.toBe('available')
   }
 )
+
+it('removes both modes for a deleted session while keeping a live session', async () => {
+  const { root, owner } = await fixture()
+  const explanation = await presentation(root, 'gone', 'branch')
+  const replay = await presentation(root, 'gone', 'branch', 'operation-replay')
+  const live = await presentation(root, 'live', 'branch', 'operation-replay')
+  await owner.deleteSessions(['gone'])
+  for (const saved of [explanation, replay])
+    expect(await exists(join(saved.directory, 'session.json'))).toBe(false)
+  expect(await exists(join(live.directory, 'session.json'))).toBe(true)
+})
+
+it('retains the latest two films, defers open outputs and leaves other modes and unproven data alone', async () => {
+  const { root } = await fixture()
+  const old = await presentation(root, 'session', 'branch', 'operation-replay')
+  const pinned = await presentation(root, 'session', 'branch', 'operation-replay')
+  const wrong = await presentation(root, 'session', 'branch', 'operation-replay')
+  const corrupt = await presentation(root, 'session', 'branch', 'operation-replay')
+  const inaccessible = await presentation(root, 'session', 'branch', 'operation-replay')
+  const previous = await presentation(root, 'session', 'branch', 'operation-replay')
+  const current = await presentation(root, 'session', 'branch', 'operation-replay')
+  const explanation = await presentation(root, 'session', 'branch')
+  for (const film of [old, pinned, wrong, corrupt, inaccessible, previous, current, explanation])
+    await writeFile(join(film.directory, 'output/sources.zip'), 'archive')
+  await writeFile(
+    join(wrong.directory, 'session.json'),
+    JSON.stringify({ provenance: { projectId: 'other', sessionId: 'session' } })
+  )
+  await writeFile(join(corrupt.directory, 'session.json'), '{invalid json')
+  const previews = new ManagedPreviewResources({
+    resolvePath: async (_source, request) => request.path
+  })
+  const path = join(pinned.directory, 'output/player.html')
+  const resource = await previews.acquire(1, { source: 'local', path })
+  const prune = (): Promise<void> =>
+    pruneStoredResearchFilms(
+      root,
+      { projectId: 'project', sessionId: 'session', branchId: 'branch', mode: 'operation-replay' },
+      basename(current.directory),
+      basename(previous.directory),
+      async (paths, remove) => {
+        if (paths.includes(join(inaccessible.directory, 'output/player.html')))
+          throw Object.assign(new Error('Removal denied'), { code: 'EACCES' })
+        return previews.withUnusedFiles(paths, remove)
+      }
+    )
+  await prune()
+  expect(await exists(join(old.directory, 'output/player.html'))).toBe(false)
+  for (const film of [pinned, wrong, corrupt, inaccessible, previous, current, explanation])
+    expect(await exists(join(film.directory, 'output/player.html'))).toBe(true)
+  previews.release(1, { resourceId: resource.id })
+  await prune()
+  expect(await exists(path)).toBe(false)
+})

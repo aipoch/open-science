@@ -567,6 +567,11 @@ async function main(): Promise<void> {
         node: process.versions.node
       }
     })
+    // Module evaluation only needs the runtime metadata and composition definitions. Start it while
+    // database verification runs so a slow SQLite open or migration does not serialize all startup
+    // work behind the core runtime import.
+    const coreRuntimeImport = import('./core-runtime')
+    void coreRuntimeImport.catch(() => undefined)
     const earlyChannels = [
       'locale:initialize',
       'locale:set-preference',
@@ -806,7 +811,7 @@ async function main(): Promise<void> {
 
     abortStartupIfStopping()
     startupReporter.phase('runtime')
-    const { createCoreRuntime } = await import('./core-runtime')
+    const { createCoreRuntime } = await coreRuntimeImport
     abortStartupIfStopping()
     configureDesktopFileInteraction(
       createRemoteDesktopFileInteraction(async (request, callerId) => {

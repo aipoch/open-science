@@ -16,6 +16,7 @@ import {
 export { ResearchVideoSpeechCleanupError } from './speech-client.js'
 
 export type ResearchVideoGenerationInput = {
+  mode?: 'research-explanation' | 'operation-replay'
   retainNarration?: boolean
   speechConcurrency?: 1 | 2
   specPath: string
@@ -317,12 +318,16 @@ export async function generateResearchVideoInWorker(
   const { prepareVideoNarration } = await import('./narration.js')
   const { buildResearchVideoPlayer } = await import('./build-player.js')
   const { freezeResearchVideoSource } = await import('./freeze-source.js')
-  const specPath = await freezeResearchVideoSource(
+  const replay = input.mode === 'operation-replay'
+  const { freezeReplaySource, buildReplayPlayer } = await import('./replay-player.js')
+  const { replayNarrationSpec, REPLAY_RUNTIME_VERSION } = await import('./replay-case.js')
+  const specPath = await (replay ? freezeReplaySource : freezeResearchVideoSource)(
     input.specPath,
     join(input.temporaryDirectory, 'source'),
     new AbortController().signal
   )
   const spec = JSON.parse(await readFile(specPath, 'utf8'))
+  const narrationSpec = replay ? replayNarrationSpec(spec) : spec
   progress({ phase: 'loading' })
   const speech = input.retainNarration
     ? join(dirname(input.specPath), 'speech')
@@ -331,7 +336,9 @@ export async function generateResearchVideoInWorker(
   const mixPath = join(speech, 'mix.wav')
   const marker = join(speech, 'complete.json')
   const inputKey = createHash('sha256')
-    .update(JSON.stringify([1, spec, input.provenance?.modelRevision]))
+    .update(
+      JSON.stringify([replay ? REPLAY_RUNTIME_VERSION : 1, spec, input.provenance?.modelRevision])
+    )
     .digest('hex')
   // Check the bytes once before using a previous run's speech/timing files.
   const signature = async (): Promise<string> => {
@@ -373,7 +380,7 @@ export async function generateResearchVideoInWorker(
   }
   if (!ready) {
     const { mix } = await prepareVideoNarration({
-      spec,
+      spec: narrationSpec,
       synthesizer: synthesizers[0],
       additionalSynthesizer: synthesizers[1],
       onProgress: progress,
@@ -385,5 +392,10 @@ export async function generateResearchVideoInWorker(
       await writeFile(marker, await signature(), { flag: 'wx', mode: 0o600 })
   }
   progress({ phase: 'build' })
-  return buildResearchVideoPlayer({ ...input, specPath, voiceDirectory, mixPath })
+  return (replay ? buildReplayPlayer : buildResearchVideoPlayer)({
+    ...input,
+    specPath,
+    voiceDirectory,
+    mixPath
+  })
 }

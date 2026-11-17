@@ -87,7 +87,8 @@ setTimeout(() => {}, 4000);`,
     const settled = vi.fn()
     const result = findSystemVideoEncoders(controller.signal).then(settled, settled)
     try {
-      await vi.waitFor(() => readFile(ready))
+      // Start the cancellation clock only after the fixture process is actually running.
+      await vi.waitFor(() => readFile(ready), { timeout: 5000 })
       vi.useFakeTimers()
       controller.abort()
       await vi.advanceTimersByTimeAsync(5000)
