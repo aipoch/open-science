@@ -152,7 +152,7 @@ class AcpDurableContinuationContextOwner {
       }
     )
     if (input.replacePreviousAnswer) {
-      return this.prepareElicitationRevision(session, input)
+      return this.prepareElicitationRevision(session, { ...input, replay })
     }
     if (input.action === 'cancel') {
       return this.endElicitation(session, input)
