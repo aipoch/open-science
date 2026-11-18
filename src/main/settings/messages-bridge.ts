@@ -15,6 +15,7 @@ import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
+  withProviderConnectionMarker,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
 import {
@@ -205,7 +206,7 @@ export class MessagesBridge {
     let upstream: Response
     try {
       upstream = await fetchProviderRequest(
-        this.fetchImpl,
+        withProviderConnectionMarker(this.fetchImpl, response),
         `${baseUrl}${requestUrl.pathname}${requestUrl.search}`,
         {
           method: 'POST',
@@ -215,8 +216,6 @@ export class MessagesBridge {
         }
       )
     } catch (error) {
-      if (!request.signal.aborted)
-        response.setHeader('x-open-science-provider-failure', 'connection')
       const origin = upstreamOrigin(baseUrl)
       this.diagnostics.error('anthropic provider request failed', {
         targetId: target.id,

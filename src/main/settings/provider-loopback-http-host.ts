@@ -35,6 +35,22 @@ const excludedResponseHeaders = new Set([
   'x-open-science-upstream-status'
 ])
 
+/** Preserve the upstream failure class when forwarding a rejected fetch over local HTTP. */
+export function withProviderConnectionMarker(
+  fetchImpl: typeof fetch,
+  response: ServerResponse
+): typeof fetch {
+  return async (input, init) => {
+    try {
+      return await fetchImpl(input, init)
+    } catch (error) {
+      if (!init?.signal?.aborted)
+        response.setHeader('x-open-science-provider-failure', 'connection')
+      throw error
+    }
+  }
+}
+
 export function copyProviderResponseHeaders(source: Headers): Record<string, string> {
   const headers: Record<string, string> = {}
   for (const [name, value] of source) {

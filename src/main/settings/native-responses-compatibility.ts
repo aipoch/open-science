@@ -42,6 +42,7 @@ import {
   PROVIDER_HOP_BY_HOP_HEADERS,
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
+  withProviderConnectionMarker,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
 
@@ -1040,7 +1041,8 @@ export class NativeResponsesCompatibilityProxy {
         'Native Responses upstream did not return response headers in time.'
       )
       const providerRequestStartedAt = Date.now()
-      let upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(target.baseUrl), {
+      const fetchUpstream = withProviderConnectionMarker(this.fetchImpl, response)
+      let upstream = await fetchProviderRequest(fetchUpstream, responsesUrl(target.baseUrl), {
         method: 'POST',
         headers: headersToForward,
         body: upstreamRequestBody,
@@ -1048,7 +1050,7 @@ export class NativeResponsesCompatibilityProxy {
       })
       if (upstream.status === 401 && target.resolveKey) {
         const refreshedKey = await target.resolveKey(true)
-        upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(target.baseUrl), {
+        upstream = await fetchProviderRequest(fetchUpstream, responsesUrl(target.baseUrl), {
           method: 'POST',
           headers: upstreamHeaders(request, refreshedKey),
           body: upstreamRequestBody,

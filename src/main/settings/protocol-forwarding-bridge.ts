@@ -12,6 +12,7 @@ import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
+  withProviderConnectionMarker,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
 import {
@@ -231,20 +232,16 @@ export class ProtocolForwardingBridge {
     const transport: typeof fetch = connection
       ? (url, init) => this.fetchImpl(url, { ...init, redirect: 'error', credentials: 'omit' })
       : this.fetchImpl
-    let upstream: Response
-    try {
-      upstream = await fetchProviderRequest(transport, endpoint, {
+    const upstream = await fetchProviderRequest(
+      withProviderConnectionMarker(transport, response),
+      endpoint,
+      {
         method: 'POST',
         headers: headersToForward,
         body,
         signal: request.signal
-      })
-    } catch (error) {
-      // This is a host connection failure, rather than an upstream HTTP 502 response.
-      if (!request.signal.aborted)
-        response.setHeader('x-open-science-provider-failure', 'connection')
-      throw error
-    }
+      }
+    )
     if (connection && !upstream.ok) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })
       let code = 'provider_error'
