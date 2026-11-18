@@ -201,6 +201,7 @@ type BuildSessionCapabilitiesRequest = {
   nativeMcpEnabled: boolean
   bridgeMcpAliasesEnabled: boolean
   policy: SessionCapabilityPolicy
+  stableAppSessionId?: string
   routingIds: SessionCapabilityRoutingIds
   routingOwner: object
   provisionGeneration: number
@@ -424,6 +425,7 @@ export class AcpSessionCapabilityOwner {
         nativeMcpEnabled: request.nativeMcpEnabled,
         bridgeMcpAliasesEnabled: request.bridgeMcpAliasesEnabled,
         policy: request.policy,
+        stableAppSessionId: request.stableAppSessionId,
         routingIds,
         routingOwner,
         provisionGeneration,
@@ -892,16 +894,28 @@ export class AcpSessionCapabilityOwner {
     const planAllowed = policyAllowsSessionCapability(request.policy, 'plan')
     const hostMessageAllowed = policyAllowsSessionCapability(request.policy, 'host-message')
     const memoryToolsEnabled = this.options.notebook?.memoryTools ?? true
-    const literatureAllowed =
-      policyAllowsSessionCapability(request.policy, 'literature') &&
-      Boolean(this.options.literature) &&
+    const literaturePolicyAllows = policyAllowsSessionCapability(request.policy, 'literature')
+    const literature = this.options.literature
+    const literatureEnabledBySession = this.literatureEnabledSessionIds.has(
+      request.routingIds.literature
+    )
+    const stableAppSessionId = request.stableAppSessionId
+    const canReadPersistedLiterature =
+      !request.literatureEnabled &&
+      !literatureEnabledBySession &&
+      literaturePolicyAllows &&
       Boolean(this.options.mcpHttpHost) &&
-      (request.literatureEnabled ||
-        this.literatureEnabledSessionIds.has(request.routingIds.literature) ||
-        (await this.options.literature?.isEnabled(
-          request.routingIds.literature,
-          request.projectId
-        )))
+      Boolean(literature) &&
+      Boolean(stableAppSessionId)
+    const persistedLiteratureEnabled =
+      canReadPersistedLiterature && stableAppSessionId && literature
+        ? await literature.isEnabled(stableAppSessionId, request.projectId)
+        : false
+    const literatureAllowed =
+      literaturePolicyAllows &&
+      Boolean(literature) &&
+      Boolean(this.options.mcpHttpHost) &&
+      (request.literatureEnabled || literatureEnabledBySession || persistedLiteratureEnabled)
     const libraryAllowed =
       policyAllowsSessionCapability(request.policy, 'literature-library') &&
       Boolean(this.options.library) &&
