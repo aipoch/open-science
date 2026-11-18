@@ -1038,6 +1038,7 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   const childEnv = {
     ...process.env,
     OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT: '1',
+    OPEN_SCIENCE_LAUNCH_LOG_PIPE: '4',
     OPEN_SCIENCE_WEB_PORT: String(port)
   }
   // A computed default is not an override: injecting it would make the backend select
@@ -1064,7 +1065,7 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
     capture = await startLaunchLogReader(backend.command, logFd)
     const child = spawn(backend.command, buildBackendLaunchArgs(backend, options, port), {
       detached: true,
-      stdio: ['ignore', capture.input, capture.input],
+      stdio: ['ignore', capture.input, capture.input, 'ignore', capture.control],
       windowsHide: true,
       env: childEnv
     })
@@ -1072,10 +1073,12 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
     const startupPromise = waitForStartup(configRoot, child, deps, startupTimeoutMs)
     child.unref()
     capture.input.destroy()
+    capture.control.destroy()
 
     startup = await startupPromise
   } finally {
     capture?.input.destroy()
+    capture?.control.destroy()
     closeSync(logFd)
     installationLease?.release()
   }

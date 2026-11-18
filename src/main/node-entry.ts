@@ -1,3 +1,4 @@
+import { bindLaunchLogReader } from '../../packages/open-science/launch-log.mjs'
 import { ResourceRecorder, installResourceRecorder } from './resource-diagnostics/recorder'
 import { ResourceLogStore } from './resource-diagnostics/store'
 import { resourceActivity } from './resource-diagnostics/activity'
@@ -158,6 +159,13 @@ async function main(): Promise<void> {
     configRoot,
     generation,
     pid: process.pid
+  })
+  await bindLaunchLogReader({
+    entryPath: mainEntryPath,
+    bootstrapPath: join(
+      applicationPath,
+      packaged ? 'installation-startup.cjs' : 'packages/open-science/installation-startup.cjs'
+    )
   })
   const ownership = new RuntimeDirectoryOwnership()
   ownership.acquireSync(configRoot)

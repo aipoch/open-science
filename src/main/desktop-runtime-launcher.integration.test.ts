@@ -12,6 +12,9 @@ import {
 } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { pathToFileURL } from 'node:url'
+import { once } from 'node:events'
+import { inspectInstallationAvailability } from './update/installation-protection'
 import * as childProcess from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { build } from 'esbuild'
@@ -58,6 +61,148 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.j
 process.once('SIGTERM',()=>server.close());
 `
 describe('ordinary Node desktop launcher', () => {
+  it.each(['desktop', 'cli'])(
+    'admits launch-log readers, rejects foreign occupants, and releases the installation on shutdown (%s)',
+    async (surface) => {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'update-launch-ownership-')))
+      roots.push(root)
+      const installationRoot = join(root, 'installed app')
+      const configRoot = join(root, 'config')
+      const stateRoot = join(root, 'state')
+      const entry = join(installationRoot, 'resources/backend/out/backend/index.cjs')
+      const command = join(installationRoot, 'node' + (process.platform === 'win32' ? '.exe' : ''))
+      const bootstrap = join(installationRoot, 'resources/backend/installation-startup.cjs')
+      await mkdir(dirname(entry), { recursive: true })
+      await mkdir(configRoot)
+      await copyFile(process.execPath, command)
+      await copyFile('packages/open-science/installation-startup.cjs', bootstrap)
+      const previousStateRoot = process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT
+      process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT = stateRoot
+      try {
+        await build({
+          stdin: {
+            contents: `import { registerInstallationRuntime } from './src/main/update/installation-protection';
+import * as log from './packages/open-science/launch-log.mjs';
+async function main() {
+${fixtureSource
+  .replace(
+    "req.headers['x-open-science-runtime-generation']!==generation",
+    "(req.url!=='/api/bootstrap'&&req.headers['x-open-science-runtime-generation']!==generation)"
+  )
+  .replace(
+    'server.listen(',
+    `registerInstallationRuntime({installationRoot:${JSON.stringify(installationRoot)}, configRoot:root, generation});
+await log.bindLaunchLogReader({entryPath:__filename, bootstrapPath:${JSON.stringify(bootstrap)}});
+server.listen(`
+  )}
+} main().catch(error => {console.error(error);process.exit(1)});`,
+            resolveDir: process.cwd()
+          },
+          outfile: entry,
+          bundle: true,
+          platform: 'node',
+          format: 'cjs',
+          packages: 'external',
+          banner: {
+            js: `require = require('node:module').createRequire(${JSON.stringify(join(process.cwd(), 'package.json'))});`
+          }
+        })
+        const options = {
+          configRoot,
+          profilePath: configRoot,
+          version: 'test',
+          command,
+          entry,
+          packaged: true,
+          timeoutMs: 10000
+        }
+        let backendProcess: ChildProcess | undefined
+        if (surface === 'desktop') {
+          backendProcess = (await startOrAttachDesktopBackend(options)).startedProcess
+        } else {
+          const { startCommand } = await import(
+            pathToFileURL(join(process.cwd(), 'packages/open-science/cli.mjs')).href
+          )
+          const result = await startCommand(
+            { configRoot, port: 0, timeoutMs: 10000 },
+            {
+              locateBackend: async () => ({ command, entry, development: false }),
+              findServiceState: async () => {
+                try {
+                  return {
+                    ...JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8')),
+                    configRoot
+                  }
+                } catch (error) {
+                  if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+                  throw error
+                }
+              },
+              readWebToken: async () => readFile(join(configRoot, 'web-token'), 'utf8'),
+              isAlive: (pid: number) => {
+                try {
+                  process.kill(pid, 0)
+                  return true
+                } catch {
+                  return false
+                }
+              },
+              fetch,
+              now: Date.now,
+              sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+              log: () => {},
+              warn: () => {}
+            }
+          )
+          expect(result.started).toBe(true)
+          backendProcess = children.find((child) => child.pid === result.state.pid)
+        }
+        expect(backendProcess).toBeDefined()
+        const owner = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
+        const location = { installationRoot, stateRoot }
+        const runtime = { pid: owner.pid, generation: owner.generation, configRoot }
+        await expect(
+          inspectInstallationAvailability({ ...location, runtime })
+        ).resolves.toBeUndefined()
+        expect((await startOrAttachDesktopBackend(options)).startedProcess).toBeUndefined()
+        await expect(
+          inspectInstallationAvailability({ ...location, runtime })
+        ).resolves.toBeUndefined()
+        const foreign = childProcess.spawn(
+          command,
+          ['-e', "process.stdout.write('ready');process.stdin.resume()"],
+          { stdio: ['pipe', 'pipe', 'ignore'] }
+        )
+        const foreignExit = once(foreign, 'exit')
+        await once(foreign.stdout!, 'data')
+        try {
+          await expect(
+            inspectInstallationAvailability({ ...location, runtime })
+          ).rejects.toMatchObject({
+            reason: 'installation-busy',
+            recovery: { detail: 'foreign-process', blockingProcesses: [{ pid: foreign.pid }] }
+          })
+        } finally {
+          foreign.stdin!.end()
+          await foreignExit
+        }
+        await expect(
+          inspectInstallationAvailability({ ...location, runtime })
+        ).resolves.toBeUndefined()
+        const stopped = once(backendProcess!, 'exit')
+        backendProcess!.kill('SIGTERM')
+        await stopped
+        await vi.waitFor(
+          async () => expect(await inspectInstallationAvailability(location)).toBeUndefined(),
+          { timeout: 15000, interval: 100 }
+        )
+      } finally {
+        if (previousStateRoot === undefined) delete process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT
+        else process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT = previousStateRoot
+      }
+    },
+    120000
+  )
   it.each([true, false])(
     'resolves bundled npm in the actual Node backend (packaged: %s)',
     async (packaged) => {
