@@ -4818,6 +4818,163 @@ describe('startWebHttpServer', () => {
     expect(await nextResponse.json()).toMatchObject({ appName: 'Open-Science' })
   })
 
+  it('serves HTML artifacts inline while keeping the default download disposition', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    const release = vi.fn().mockResolvedValue(undefined)
+    const tasks = {
+      runWithCallerContext,
+      subscribeProgress: () => () => undefined,
+      listProjects: vi.fn(),
+      createProject: vi.fn(),
+      updateProject: vi.fn(),
+      listSessions: vi.fn(),
+      getSession: vi.fn(),
+      startRun: vi.fn(),
+      getRun: vi.fn(),
+      cancelRun: vi.fn(),
+      listArtifacts: vi.fn(),
+      acquireArtifact: vi.fn().mockResolvedValue({
+        release,
+        resourceId: 'resource-html',
+        url: 'open-science-preview://resource-html/report.html',
+        name: 'report.html',
+        mimeType: 'text/html',
+        size: 14
+      })
+    }
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: { channels: () => [], invoke: vi.fn(), releaseClient: vi.fn(), dispose: vi.fn() },
+      tasks,
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const endpoint = `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-html/content`
+    const inlineEndpoint = `${endpoint}?disposition=inline&version=1`
+    const headers = { authorization: 'Bearer test-token' }
+
+    vi.mocked(net.fetch).mockResolvedValue(
+      new Response('<!doctype html>', {
+        headers: { 'content-type': 'text/plain', 'content-length': '15' }
+      })
+    )
+    const download = await fetch(endpoint, { headers })
+    expect(download.status).toBe(200)
+    expect(download.headers.get('content-disposition')).toContain('attachment')
+    expect(download.headers.get('content-type')).toBe('text/plain')
+
+    vi.mocked(net.fetch).mockResolvedValue(
+      new Response('<!doctype html>', {
+        headers: { 'content-type': 'text/plain', 'content-length': '15' }
+      })
+    )
+    const inline = await fetch(inlineEndpoint, { headers })
+    expect(inline.status).toBe(200)
+    expect(inline.headers.get('content-disposition')).toBe('inline')
+    expect(inline.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    expect(inline.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(await inline.text()).toBe('<!doctype html>')
+
+    tasks.acquireArtifact.mockResolvedValueOnce({
+      release,
+      resourceId: 'resource-html-mime',
+      url: 'open-science-preview://resource-html-mime/report.txt',
+      name: 'report.txt',
+      mimeType: 'text/html; charset=utf-8',
+      size: 14
+    })
+    vi.mocked(net.fetch).mockResolvedValue(
+      new Response('<!doctype html>', {
+        headers: { 'content-type': 'application/octet-stream', 'content-length': '16' }
+      })
+    )
+    const mimeInline = await fetch(inlineEndpoint, { headers })
+    expect(mimeInline.status).toBe(200)
+    expect(mimeInline.headers.get('content-disposition')).toBe('inline')
+    expect(mimeInline.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    expect(mimeInline.headers.get('referrer-policy')).toBe('no-referrer')
+
+    vi.mocked(net.fetch).mockResolvedValue(
+      new Response(null, {
+        status: 200,
+        headers: { 'content-type': 'text/plain', 'content-length': '15' }
+      })
+    )
+    const head = await fetch(inlineEndpoint, { method: 'HEAD', headers })
+    expect(head.status).toBe(200)
+    expect(head.headers.get('content-disposition')).toBe(inline.headers.get('content-disposition'))
+    expect(head.headers.get('content-type')).toBe(inline.headers.get('content-type'))
+    expect(head.headers.get('content-length')).toBe(inline.headers.get('content-length'))
+    expect(head.headers.get('referrer-policy')).toBe(inline.headers.get('referrer-policy'))
+  })
+
+  it('rejects inline display for non-HTML artifacts', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
+    const release = vi.fn().mockResolvedValue(undefined)
+    const tasks = {
+      runWithCallerContext,
+      subscribeProgress: () => () => undefined,
+      listProjects: vi.fn(),
+      createProject: vi.fn(),
+      updateProject: vi.fn(),
+      listSessions: vi.fn(),
+      getSession: vi.fn(),
+      startRun: vi.fn(),
+      getRun: vi.fn(),
+      cancelRun: vi.fn(),
+      listArtifacts: vi.fn(),
+      acquireArtifact: vi.fn().mockResolvedValue({
+        release,
+        resourceId: 'resource-text',
+        url: 'open-science-preview://resource-text/report.txt',
+        name: 'report.txt',
+        mimeType: 'text/plain',
+        size: 4
+      })
+    }
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: { channels: () => [], invoke: vi.fn(), releaseClient: vi.fn(), dispose: vi.fn() },
+      tasks,
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-text/content?disposition=inline&version=1`,
+      { headers: { authorization: 'Bearer test-token' } }
+    )
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'invalid_request',
+        message: 'Inline artifact display is only supported for HTML files.'
+      }
+    })
+    expect(release).toHaveBeenCalledOnce()
+  })
+
   it.each(['before', 'after'])(
     'checks remote Preview authorization at header commit (%s)',
     async (when) => {

@@ -3,6 +3,15 @@ import {
   SessionHistoryCursorStaleError,
   loadSessionHistoryPageRequestSchema
 } from '../shared/session-history'
+import type {
+  ImageTask,
+  ImageTaskStart,
+  ImageTaskList,
+  ImageTaskStartResult,
+  ImageTaskIdentity
+} from '../shared/image-task'
+import type { ImageTaskOwner } from './image-model/tasks'
+import { ImageModelError } from './image-model/contract'
 import type { LocalModelSnapshot } from '../shared/local-models'
 import type {
   ResearchVideoPresentationRequest,
@@ -254,6 +263,7 @@ type DataContentApplicationCommandDependencies = Readonly<{
   electron: ElectronDataContentApplicationCommandAdapter
   events: ApplicationEventPublisher
   managedFileVersions: ManagedFileVersionCommandOwner
+  imageTasks?: ImageTaskOwner
   researchVideoPresentation?: ReturnType<typeof createResearchVideoPresentationOwner>
   videoExportTools?: ReturnType<typeof createVideoExportTools<LocalModelSnapshot>>
   managedPreview: ManagedPreviewApplicationCommandOwner
@@ -416,6 +426,7 @@ const dataContentApplicationCommands = Object.freeze({
   ),
   artifactGetVersionReview: artifactCommand('artifacts:get-version-review', 'getVersionReview'),
   artifactOpenFile: artifactCommand('artifacts:open-file', 'openFile'),
+  artifactOpenInBrowser: artifactCommand('artifacts:open-in-browser', 'openInBrowser'),
   artifactReadPreview: artifactCommand('artifacts:read-preview', 'readPreview'),
   artifactReconcilePending: artifactCommand(
     'artifacts:reconcile-pending',
@@ -465,6 +476,26 @@ const dataContentApplicationCommands = Object.freeze({
     readonly [request: { resourceId: string }],
     ResearchVideoExportResult
   >('preview-resources:export-research-video'),
+  imageTaskStart: defineApplicationCommand<
+    'image-tasks:start',
+    readonly [request: ImageTaskStart],
+    ImageTaskStartResult
+  >('image-tasks:start'),
+  imageTaskGet: defineApplicationCommand<
+    'image-tasks:get',
+    readonly [request: ImageTaskIdentity],
+    ImageTask | undefined
+  >('image-tasks:get'),
+  imageTaskList: defineApplicationCommand<
+    'image-tasks:list',
+    readonly [request: ImageTaskList],
+    ImageTask[]
+  >('image-tasks:list'),
+  imageTaskCancel: defineApplicationCommand<
+    'image-tasks:cancel',
+    readonly [request: ImageTaskIdentity],
+    void
+  >('image-tasks:cancel'),
   researchVideoPresentationStart: defineApplicationCommand<
     'research-video:start',
     readonly [request: ResearchVideoStartRequest],
@@ -763,6 +794,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.artifactGetVersionProvenance,
     dataContentApplicationCommands.artifactGetVersionReview,
     dataContentApplicationCommands.artifactOpenFile,
+    dataContentApplicationCommands.artifactOpenInBrowser,
     dataContentApplicationCommands.artifactReadPreview,
     dataContentApplicationCommands.artifactReconcilePending,
     dataContentApplicationCommands.artifactResolveVersionDescriptors
@@ -782,6 +814,10 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.previewResourceRelease,
     dataContentApplicationCommands.previewResearchVideoExport,
     dataContentApplicationCommands.previewResearchVideoCancel,
+    dataContentApplicationCommands.imageTaskStart,
+    dataContentApplicationCommands.imageTaskGet,
+    dataContentApplicationCommands.imageTaskList,
+    dataContentApplicationCommands.imageTaskCancel,
     dataContentApplicationCommands.researchVideoPresentationStart,
     dataContentApplicationCommands.researchVideoPresentationStatus,
     dataContentApplicationCommands.researchVideoPresentationRemove,
@@ -1035,6 +1071,10 @@ const registerDataContentApplicationCommands = (
         assertLocalCaller(invocation, dataContentApplicationCommands.artifactOpenFile.name)
         return dependencies.artifacts.openFile(invocation.args[0])
       },
+      'artifacts:open-in-browser': (invocation) => {
+        assertLocalCaller(invocation, dataContentApplicationCommands.artifactOpenInBrowser.name)
+        return dependencies.artifacts.openInBrowser(invocation.args[0])
+      },
       'artifacts:read-preview': ({ args }) => dependencies.artifacts.readPreview(args[0]),
       'artifacts:reconcile-pending': ({ args }) =>
         dependencies.artifacts.reconcilePendingArtifacts(args[0]),
@@ -1070,6 +1110,27 @@ const registerDataContentApplicationCommands = (
           invocation.args[0],
           invocation.callerContext.clientId
         )
+      },
+      'image-tasks:start': async (invocation) => {
+        if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
+        try {
+          return await dependencies.imageTasks.start(invocation.args[0])
+        } catch (error) {
+          if (!(error instanceof ImageModelError)) throw error
+          return { error: error.detail }
+        }
+      },
+      'image-tasks:get': (invocation) => {
+        if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
+        return dependencies.imageTasks.get(invocation.args[0])
+      },
+      'image-tasks:list': (invocation) => {
+        if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
+        return dependencies.imageTasks.list(invocation.args[0])
+      },
+      'image-tasks:cancel': (invocation) => {
+        if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
+        return dependencies.imageTasks.cancel(invocation.args[0])
       },
       'research-video:start': (invocation) => {
         assertElectronCaller(invocation, 'research-video:start')
@@ -1596,11 +1657,12 @@ const registerDataContentApplicationCommands = (
       'managed-file-versions:inspect': async (invocation) => {
         const [request] = invocation.args
         const result = await dependencies.managedFileVersions.inspect(request)
-        // The command may be reached from a remote Web caller. Never return a Version whose
-        // resolved Project or logical File identity differs from the requested scope.
+        // Artifact-only browser URLs let the service resolve the Project. Still reject any
+        // mismatch with an explicitly requested Project or the required logical File identity.
         if (
           result.ok &&
-          (result.value.projectId !== request.projectId || result.value.fileId !== request.fileId)
+          ((request.projectId !== undefined && result.value.projectId !== request.projectId) ||
+            result.value.fileId !== request.fileId)
         ) {
           throw new Error('Managed file version identity does not match the requested scope.')
         }

@@ -53,7 +53,8 @@ import { SettingsDocumentStore } from './document-store'
 import type { LocalShellRuntimeMutation } from './local-shell-runtime-contract'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { buildProviderValidationPatch } from './provider-validation-state'
-import { sanitizePackageMirror } from './record-codec'
+import { imageProviderConfiguration } from '../../shared/image-model-service-policy'
+import { sanitizeImageSettings, sanitizePackageMirror } from './record-codec'
 import {
   buildPromptOptimizationModelMutation,
   buildReviewerModelMutation,
@@ -97,9 +98,34 @@ type ProviderValidationHistory = {
 const validationScopeKey = (target: ProviderValidationTarget): string =>
   JSON.stringify([target.model, target.endpoint])
 
+const imageExecutionConfiguration = (settings: StoredSettings): unknown => {
+  const binding = settings.imageModel
+  const service = settings.imageServices?.find((entry) => entry.id === binding?.serviceId)
+  const model = service?.models.find((entry) => entry.id === binding?.modelId)
+  if (!service || !model) return undefined
+  const provider = settings.providers.find((entry) => entry.id === service.providerId)
+  return {
+    binding,
+    adapter: service.adapter,
+    providerId: service.providerId,
+    baseUrl: service.baseUrl ?? (provider && imageProviderConfiguration(provider)?.baseUrl),
+    keyRef: provider ? provider.keyRef : service.keyRef,
+    wireModelId: model.wireModelId,
+    presetId: model.presetId
+  }
+}
+
 // Stable mutation facade; the document store owns atomic IO, and secrets stay above this layer.
 class SettingsRepository {
   private readonly providerListeners = new Set<(changes: readonly ProviderChange[]) => void>()
+  private readonly imageModelListeners = new Set<() => void>()
+
+  subscribeImageModels(listener: () => void): () => void {
+    this.imageModelListeners.add(listener)
+    return () => {
+      this.imageModelListeners.delete(listener)
+    }
+  }
 
   // Commit notifications must stay synchronous; observers schedule drains without awaiting them.
   subscribeProviders(listener: (changes: readonly ProviderChange[]) => void): () => void {
@@ -652,6 +678,10 @@ class SettingsRepository {
         ...(deletingClaudeSubscription ? { claudeSubscriptionProviderId: undefined } : {})
       }
 
+      delete next.imageServices
+      delete next.imageModel
+      Object.assign(next, sanitizeImageSettings(settings, providers))
+
       if (scenarioModelHandling === 'inherit') {
         if (
           settings.subagentModel?.mode === 'fixed' &&
@@ -1183,6 +1213,18 @@ class SettingsRepository {
     })
   }
 
+  async mutateImageModels(
+    update: (settings: StoredSettings) => Pick<StoredSettings, 'imageServices' | 'imageModel'>
+  ): Promise<StoredSettings> {
+    return this.mutate((current) => {
+      const imageSettings = sanitizeImageSettings(update(current), current.providers)
+      const next = { ...current }
+      delete next.imageServices
+      delete next.imageModel
+      return Object.assign(next, imageSettings)
+    })
+  }
+
   async mutateClassification(
     update: (
       value: StoredClassificationSettings | undefined,
@@ -1344,12 +1386,23 @@ class SettingsRepository {
   // Serializes a read-modify-write cycle so concurrent callers cannot clobber each other.
   private mutate(update: (settings: StoredSettings) => StoredSettings): Promise<StoredSettings> {
     let previous: StoredProvider[] = []
+    let previousImageConfiguration: unknown
     return this.store
       .mutate((settings) => {
         previous = structuredClone(settings.providers)
+        previousImageConfiguration = structuredClone(imageExecutionConfiguration(settings))
         return update(settings)
       })
       .then((settings) => {
+        if (!isDeepStrictEqual(previousImageConfiguration, imageExecutionConfiguration(settings))) {
+          for (const listener of this.imageModelListeners) {
+            try {
+              listener()
+            } catch {
+              createLogger('settings:repository').error('Image model change listener failed')
+            }
+          }
+        }
         const before = new Map(previous.map((provider) => [provider.id, provider]))
         const after = new Map(settings.providers.map((provider) => [provider.id, provider]))
         const changes = [...new Set([...before.keys(), ...after.keys()])]

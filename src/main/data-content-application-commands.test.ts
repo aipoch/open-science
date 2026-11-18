@@ -184,6 +184,7 @@ const createDependencies = () => {
     finalizeRunArtifacts: vi.fn(async () => []),
     reconcilePendingArtifacts: vi.fn(async () => []),
     openFile: vi.fn(async () => undefined),
+    openInBrowser: vi.fn(async () => undefined),
     readPreview: vi.fn(async () => ({
       content: '',
       encoding: 'utf8' as const,
@@ -396,6 +397,10 @@ const createDependencies = () => {
 
 type DataContentCommandKey = keyof typeof dataContentApplicationCommands
 const WRAPPED_COMMAND_KEYS = [
+  'imageTaskStart',
+  'imageTaskGet',
+  'imageTaskList',
+  'imageTaskCancel',
   'previewResearchVideoExport',
   'previewResearchVideoCancel',
   'researchVideoPresentationStart',
@@ -405,6 +410,7 @@ const WRAPPED_COMMAND_KEYS = [
   'previewResearchVideoProgress',
   'artifactFinalizeRun',
   'artifactOpenFile',
+  'artifactOpenInBrowser',
   'lifecycleClientId',
   'runtimeWriterClaim',
   'projectCreate',
@@ -592,6 +598,7 @@ describe('Data and content application commands', () => {
         'artifacts:get-version-provenance',
         'artifacts:get-version-review',
         'artifacts:open-file',
+        'artifacts:open-in-browser',
         'artifacts:read-preview',
         'artifacts:reconcile-pending',
         'artifacts:resolve-version-descriptors',
@@ -605,6 +612,10 @@ describe('Data and content application commands', () => {
         'preview-resources:release',
         'preview-resources:export-research-video',
         'preview-resources:cancel-research-video-export',
+        'image-tasks:start',
+        'image-tasks:get',
+        'image-tasks:list',
+        'image-tasks:cancel',
         'research-video:start',
         'research-video:status',
         'research-video:remove',

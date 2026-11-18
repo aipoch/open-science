@@ -6,6 +6,7 @@ import type {
 
 export type NoticeActionId =
   | 'retry'
+  | 'refresh'
   | 'resume'
   | 'open-provider-settings'
   | 'open-agent-settings'
@@ -172,6 +173,10 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     secondaryActions: [],
     feedback: 'none'
   },
+  'service/image-observation': {
+    ...noticeCatalog.service,
+    primaryAction: 'refresh'
+  },
   'service/prompt-optimization': {
     level: 'warning',
     titleKey: 'Optimize question',
@@ -235,6 +240,7 @@ export type ComposerNotice = Readonly<{
   recovery?: 'retry-artifact-publication'
   recoveryCause?: string
   operation?: string
+  summary?: { title: string; description?: string }
 }>
 export type NoticeActionHandler = Readonly<{
   run: (notice: ComposerNotice) => void | Promise<void>

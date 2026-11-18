@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
+import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { useComposerNotices } from '@/lib/composer-notice/use-composer-notices'
 import type { FailureCategory } from '../../../src/shared/failure/contract'
-import type { NoticeActionHandlers } from '@/lib/composer-notice/catalog'
+import type { NoticeActionHandlers } from '@/components/notices/composer-notice-catalog'
 import '@/assets/main.css'
 
 const query = new URLSearchParams(location.search)

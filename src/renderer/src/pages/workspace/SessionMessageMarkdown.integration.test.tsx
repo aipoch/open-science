@@ -78,7 +78,7 @@ describe('SessionMessageMarkdown integration', () => {
     vi.unstubAllGlobals()
   })
 
-  it('shares image bytes with Generated through streaming, visibility changes and version updates', async () => {
+  it('reuses the inline image and Generated thumbnail through streaming and reloads each on version change', async () => {
     // Use a unique logical file so module-level cache entries from other cases cannot mask reads.
     const imageArtifact = { ...artifact, artifactId: 'streaming-lifecycle-image' }
     const preview = vi.fn()
@@ -120,43 +120,49 @@ describe('SessionMessageMarkdown integration', () => {
 
     await render(imageArtifact)
     const originalImage = inline()
-    expect(originalImage).not.toBeNull()
-    expect(thumbnail()?.src).toBe(originalImage?.src)
-    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
-    expect(fetch).toHaveBeenCalledTimes(1)
+    const originalThumbnail = thumbnail()?.src
+    expect(originalImage?.src).toMatch(/^blob:/)
+    expect(originalThumbnail).toMatch(/^blob:/)
+    expect(originalThumbnail).not.toBe(originalImage?.src)
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
+    expect(fetch).toHaveBeenCalledTimes(2)
 
     let suffix = ''
     for (let chunk = 0; chunk < 20; chunk += 1) {
       suffix += `Explanation ${chunk}. `
       await render({ ...imageArtifact }, suffix)
       expect(inline()).toBe(originalImage)
-      expect(thumbnail()?.src).toBe(originalImage?.src)
+      expect(thumbnail()?.src).toBe(originalThumbnail)
     }
     await render(imageArtifact, suffix, false)
     await render(imageArtifact, suffix, true)
     expect(inline()).toBe(originalImage)
-    expect(thumbnail()?.src).toBe(originalImage?.src)
+    expect(thumbnail()?.src).toBe(originalThumbnail)
     await act(async () => root.render(null))
     await render(imageArtifact, suffix)
     expect(inline()?.src).toBe(originalImage?.src)
-    expect(thumbnail()?.src).toBe(originalImage?.src)
-    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
-    expect(fetch).toHaveBeenCalledTimes(1)
-    expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
+    expect(thumbnail()?.src).toBe(originalThumbnail)
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(2)
 
     await render({ ...imageArtifact, id: 'version-2', versionId: 'version-2' }, suffix)
-    expect(inline()?.src).toBe('blob:lifecycle-2')
-    expect(thumbnail()?.src).toBe('blob:lifecycle-2')
-    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
-    expect(window.api.previewResources.acquire).toHaveBeenLastCalledWith({
-      source: 'artifact',
-      projectId: 'project-1',
-      fileId: imageArtifact.artifactId,
-      versionId: 'version-2',
-      mimeType: 'image/png',
-      imagePreview: true
-    })
-    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(inline()?.src).toMatch(/^blob:/)
+    expect(thumbnail()?.src).toMatch(/^blob:/)
+    expect(inline()?.src).not.toBe(originalImage?.src)
+    expect(thumbnail()?.src).not.toBe(originalThumbnail)
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(4)
+    for (const imagePreview of [true, 'thumbnail']) {
+      expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: imageArtifact.artifactId,
+        versionId: 'version-2',
+        mimeType: 'image/png',
+        imagePreview
+      })
+    }
+    expect(fetch).toHaveBeenCalledTimes(4)
   })
 
   it('preserves an HTTPS source title through the message artifact link renderer', async () => {

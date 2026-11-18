@@ -61,6 +61,7 @@ export type SessionJournalDependencies = Partial<DurableJsonFileDependencies> & 
 }
 export type SessionJournalOptions = {
   maxBytes: number
+  maxReplayBytes?: number
   maxCacheBytes?: number
   maxCacheEntries?: number
   dependencies?: SessionJournalDependencies
@@ -141,6 +142,7 @@ export class SessionJournalStore {
     if (
       !nonnegative(options.maxBytes) ||
       options.maxBytes === 0 ||
+      (options.maxReplayBytes !== undefined && !nonnegative(options.maxReplayBytes)) ||
       !nonnegative(this.maxCacheBytes) ||
       !nonnegative(this.maxCacheEntries)
     )
@@ -220,7 +222,7 @@ export class SessionJournalStore {
   ): Promise<SessionJournalRead> {
     return this.lane(path, async () => {
       if (!nonnegative(request.expectedRevision)) return fail('Invalid expected Session revision.')
-      const state = await this.readState(path)
+      const state = await this.readState(path, prepared?.previous)
       if ((state?.revision ?? 0) !== request.expectedRevision)
         throw new SessionJournalRevisionError(request.expectedRevision, state?.revision ?? 0)
       if (state?.format === 'legacy')
@@ -400,9 +402,11 @@ export class SessionJournalStore {
     this.assertSize(document)
     return document
   }
-  private async readState(path: string): Promise<State | undefined> {
+  private async readState(path: string, preparedState?: State): Promise<State | undefined> {
     await this.assertDirectory(path)
     const fingerprint = await this.fingerprint(path)
+    // A prepared save already holds its source even when it exceeds the shared cache budget.
+    if (preparedState?.fingerprint === fingerprint) return preparedState
     const cached = this.cache.get(path)
     if (cached && cached.fingerprint === fingerprint) return cached
     this.invalidate(path)
@@ -437,6 +441,9 @@ export class SessionJournalStore {
     observer?: HistoryObserver
   ): Promise<Pick<State, 'document' | 'revision' | 'storageBytes' | 'validBytes'>> {
     const expectedBytes = (await this.fileStat(path))?.size
+    const limit = this.options.maxReplayBytes
+    if (limit !== undefined && expectedBytes !== undefined && expectedBytes > limit)
+      throw new SessionJournalSizeError(limit)
     let document: JournalValue | undefined
     let validBytes = 0
     let storageBytes = 0
@@ -462,6 +469,7 @@ export class SessionJournalStore {
           throw new SessionJournalVersionError()
         revisionOf(document)
         this.assertSize(document)
+        observer?.visit(document)
       } else {
         if (
           !exact(value, ['type', 'revision', 'records']) ||
@@ -470,12 +478,11 @@ export class SessionJournalStore {
         )
           return fail('Session journal record has invalid schema or revision.')
         const records = validateSessionRecords(value.records, { parsed: true })
-        document = this.applyRecords(document, records)
+        observer?.visit(records as unknown as JournalValue)
+        document = this.applyRecords(document, records, observer?.visit)
         if (revisionOf(document) !== value.revision)
           return fail('Session journal revision does not match its update.')
-        observer?.visit(records as unknown as JournalValue)
       }
-      observer?.visit(document)
       validBytes += line.bytes
     }
     if (storageBytes !== expectedBytes)
@@ -500,9 +507,13 @@ export class SessionJournalStore {
     path: string
   ): AsyncGenerator<{ text: string; bytes: number; complete: boolean }> {
     await this.fileStat(path)
+    let readBytes = 0
     let parts: Buffer[] = []
     let length = 0
     for await (const buffer of this.dependencies.readChunks?.(path) ?? this.chunks(path)) {
+      readBytes += buffer.length
+      if (this.options.maxReplayBytes !== undefined && readBytes > this.options.maxReplayBytes)
+        throw new SessionJournalSizeError(this.options.maxReplayBytes)
       let start = 0
       for (let index = buffer.indexOf(10, start); index !== -1; index = buffer.indexOf(10, start)) {
         const part = buffer.subarray(start, index + 1)
@@ -528,9 +539,13 @@ export class SessionJournalStore {
   }
   private applyRecords(
     document: JournalValue,
-    records: readonly SessionBusinessRecord[]
+    records: readonly SessionBusinessRecord[],
+    visitJoinedText?: (value: JournalValue) => void
   ): JournalValue {
-    const result = records.reduce(applySessionRecord, document)
+    const result = records.reduce(
+      (current, record) => applySessionRecord(current, record, visitJoinedText),
+      document
+    )
     this.assertSize(result)
     return result
   }

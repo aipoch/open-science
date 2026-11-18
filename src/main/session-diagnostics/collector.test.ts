@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, symlink } from 'node:fs/promises'
+import { stat, mkdtemp, mkdir, writeFile, readFile, rm, readdir, symlink } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
@@ -92,6 +92,29 @@ describe('session diagnostics isolated collector', () => {
         (name) => name.endsWith('.checkpoint') || name.endsWith('.jsonl')
       )
     ).toBe(false)
+  })
+
+  it('exports a small current Session from a journal larger than the snapshot limit', async () => {
+    const input = await fixture()
+    const path = sessionPath(input)
+    const journal = new SessionJournalStore({ maxBytes: 8 * 1024 * 1024 })
+    for (let revision = 1; revision <= 3; revision++) {
+      await journal.write(path, {
+        expectedRevision: revision - 1,
+        document: {
+          id: 'session',
+          projectId: 'project',
+          revision,
+          title: revision === 3 ? 'Current' : String(revision).repeat(4 * 1024 * 1024)
+        }
+      })
+    }
+    expect((await stat(sessionJournalPath(path))).size).toBeGreaterThan(8 * 1024 * 1024)
+    await runSessionDiagnosticWorker({ ...input, selectedItems: ['session'] })
+    const exported = JSON.parse(
+      await readFile(join(input.directory!, 'content/session.json'), 'utf8')
+    )
+    expect(exported.session.revision).toBe(3)
   })
 
   it('does not follow a journal primary symlink during diagnostic collection', async () => {

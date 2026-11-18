@@ -63,7 +63,13 @@ export type OfficialModel = {
   readonly reasoningEffort?: ReasoningCapability
 }
 
+export type ImageGenerationProviderDefinition = Readonly<{
+  regions: readonly Readonly<{ id: string; baseUrl: string }>[]
+  models: readonly Readonly<{ id: string; label: string }>[]
+}>
+
 export type OfficialVendor = {
+  readonly imageGeneration?: ImageGenerationProviderDefinition
   readonly id: OfficialVendorId
   // Human-readable name shown in the provider-type picker and composer group headings.
   readonly label: string

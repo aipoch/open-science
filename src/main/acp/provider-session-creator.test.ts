@@ -366,6 +366,19 @@ describe('AcpProviderSessionCreator', () => {
     })
   })
 
+  it('releases provisional capabilities without publishing a retired generation', async () => {
+    const harness = createHarness({})
+    const superseded = new Error('superseded')
+    await expect(
+      harness.creator.create({}, () => {
+        throw superseded
+      })
+    ).rejects.toBe(superseded)
+    expect(harness.registry.publish).not.toHaveBeenCalled()
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(harness.session.dispose).toHaveBeenCalledOnce()
+  })
+
   it('disposes the provisional Session and releases capabilities when configuration fails', async () => {
     const failure = new Error('configuration failed')
     const harness = createHarness({ configure: vi.fn().mockRejectedValue(failure) })

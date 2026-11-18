@@ -19,7 +19,7 @@ import {
   type ComposerNotice,
   type NoticeActionHandlers,
   type NoticeActionId
-} from '@/lib/composer-notice/catalog'
+} from './composer-notice-catalog'
 
 const TruncatedText = ({
   text,
@@ -70,11 +70,13 @@ const TruncatedText = ({
 const ComposerFailureNoticeSlot = ({
   notices,
   handlers,
-  onDismiss
+  onDismiss,
+  primaryButton
 }: {
   notices: readonly ComposerNotice[]
   handlers: NoticeActionHandlers
   onDismiss?: (notice: ComposerNotice) => void
+  primaryButton?: NoticeProps['primaryButton']
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
@@ -97,9 +99,12 @@ const ComposerFailureNoticeSlot = ({
   const providerMessage = current.failure.diagnostics.protocol
     ? undefined
     : current.failure.responseMessage
-  const title = providerMessage ? t('Model provider error') : t(presentation.titleKey)
-  const description =
-    current.source === 'session' && current.failure.diagnostics.protocol
+  const title =
+    current.summary?.title ??
+    (providerMessage ? t('Model provider error') : t(presentation.titleKey))
+  const description = current.summary
+    ? (current.summary.description ?? '')
+    : current.source === 'session' && current.failure.diagnostics.protocol
       ? t('This turn was interrupted. Resume to continue.')
       : providerMessage
         ? providerMessage.startsWith('{') || providerMessage.startsWith('[')
@@ -114,12 +119,19 @@ const ComposerFailureNoticeSlot = ({
         ? ['status', 'provider', 'model'].includes(key)
         : key !== 'raw')
   )
+  const showDiagnostics =
+    !current.summary ||
+    Object.entries(current.failure.diagnostics).some(
+      ([key, value]) =>
+        value !== undefined && (key !== 'raw' || (value !== title && value !== description))
+    )
   const labels: Record<NoticeActionId, string> = {
     'export-diagnostics': t('Export diagnostics…'),
     'open-agent-settings': t('Agent settings'),
     'choose-specialist': t('Choose another specialist'),
     'use-main-agent': t('Use None (Main Agent)'),
     retry: t('Retry'),
+    refresh: t('Refresh'),
     resume: t('Resume'),
     'open-provider-settings': t('Model settings'),
     'open-environment': t('Open Settings'),
@@ -151,7 +163,7 @@ const ComposerFailureNoticeSlot = ({
     }
   }
   const available = (action: NoticeActionId, notice = current): boolean =>
-    action === 'copy-error' ||
+    (showDiagnostics && action === 'copy-error') ||
     Boolean(handlers[action] && (handlers[action]?.available?.(notice) ?? true))
   const primaryAction = (notice: ComposerNotice): NoticeActionId | undefined => {
     const action = noticePresentation(notice.failure).primaryAction
@@ -297,9 +309,10 @@ const ComposerFailureNoticeSlot = ({
                     >
                       <TruncatedText
                         text={
-                          notice.failure.responseMessage && !notice.failure.diagnostics.protocol
+                          notice.summary?.title ??
+                          (notice.failure.responseMessage && !notice.failure.diagnostics.protocol
                             ? t('Model provider error')
-                            : t(item.titleKey)
+                            : t(item.titleKey))
                         }
                       />
                     </button>
@@ -343,6 +356,33 @@ const ComposerFailureNoticeSlot = ({
     )
   }
 
+  const showFooter =
+    showDiagnostics ||
+    primary ||
+    presentation.secondaryActions.some((action) => available(action)) ||
+    (presentation.feedback === 'link' && handlers.report)
+  const footer = showFooter ? (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      {presentation.feedback === 'link' && handlers.report ? (
+        <button
+          type="button"
+          className="min-h-8 rounded-sm text-left text-xs leading-5 text-muted-foreground underline decoration-dotted underline-offset-4 hover:text-foreground focus-visible:keyboard-focus active:text-foreground disabled:pointer-events-none disabled:opacity-50"
+          disabled={pending.has(current.id)}
+          onClick={() => void run('report', current)}
+        >
+          {t('Still need help? Report this error')}
+        </button>
+      ) : null}
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
+        {actionButton('copy-error', current)}
+        {presentation.secondaryActions
+          .filter((action) => action !== primary)
+          .map((action) => actionButton(action, current))}
+        {primary ? actionButton(primary, current, true) : null}
+      </div>
+    </div>
+  ) : null
+
   return (
     <TooltipProvider delayDuration={800}>
       <Notice
@@ -358,6 +398,7 @@ const ComposerFailureNoticeSlot = ({
         data-prompt-message-id={current.promptMessageId}
         data-notice-category={current.failure.category}
         level={presentation.level}
+        primaryButton={primaryButton ? { variant: 'default', ...primaryButton } : undefined}
         className="mb-2 min-w-0 gap-2 [&_pre]:max-h-40 [&_pre]:overflow-auto"
         content={
           <>
@@ -367,38 +408,46 @@ const ComposerFailureNoticeSlot = ({
               className="space-y-1"
             >
               <h2 className="min-w-0 text-sm font-semibold leading-5 text-foreground">
-                <TruncatedText text={title} />
+                <TruncatedText text={title} lines={current.summary ? 2 : 1} />
               </h2>
               {description ? (
-                <TruncatedText
-                  text={description}
-                  lines={2}
-                  className="text-sm font-normal leading-5 text-muted-foreground"
-                />
+                current.summary ? (
+                  <p className="break-words text-sm leading-5 text-muted-foreground">
+                    {description}
+                  </p>
+                ) : (
+                  <TruncatedText
+                    text={description}
+                    lines={2}
+                    className="text-sm font-normal leading-5 text-muted-foreground"
+                  />
+                )
               ) : null}
             </div>
-            <NoticeDiagnostics
-              key={current.id}
-              errorCode={`${diagnosticText}${actionFailure?.id === current.id ? `\n${actionFailure.message}` : ''}`}
-              diagnosticsLabel={t('Details')}
-              summaryContent={
-                diagnosticFields.length > 0 ? (
-                  <span className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-hidden tabular-nums border-r border-border pr-3">
-                    {diagnosticFields.map(([key, value], index) => (
-                      <Fragment key={key}>
-                        {index > 0 ? (
-                          <span aria-hidden="true" className="h-3 w-px shrink-0 bg-border" />
-                        ) : null}
-                        <TruncatedText
-                          text={`${key}: ${value}`}
-                          className={key === 'status' ? 'shrink-0' : 'flex-1'}
-                        />
-                      </Fragment>
-                    ))}
-                  </span>
-                ) : undefined
-              }
-            />
+            {showDiagnostics || actionFailure?.id === current.id ? (
+              <NoticeDiagnostics
+                key={current.id}
+                errorCode={`${diagnosticText}${actionFailure?.id === current.id ? `\n${actionFailure.message}` : ''}`}
+                diagnosticsLabel={t('Details')}
+                summaryContent={
+                  diagnosticFields.length > 0 ? (
+                    <span className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-hidden tabular-nums border-r border-border pr-3">
+                      {diagnosticFields.map(([key, value], index) => (
+                        <Fragment key={key}>
+                          {index > 0 ? (
+                            <span aria-hidden="true" className="h-3 w-px shrink-0 bg-border" />
+                          ) : null}
+                          <TruncatedText
+                            text={`${key}: ${value}`}
+                            className={key === 'status' ? 'shrink-0' : 'flex-1'}
+                          />
+                        </Fragment>
+                      ))}
+                    </span>
+                  ) : undefined
+                }
+              />
+            ) : null}
             {actionFailure?.id === current.id ? (
               <p role="alert" className="text-sm text-destructive">
                 {t('The action could not be completed. See details and try again.')}
@@ -418,26 +467,12 @@ const ComposerFailureNoticeSlot = ({
             : undefined
         }
       >
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          {presentation.feedback === 'link' && handlers.report ? (
-            <button
-              type="button"
-              className="min-h-8 rounded-sm text-left text-xs leading-5 text-muted-foreground underline decoration-dotted underline-offset-4 hover:text-foreground focus-visible:keyboard-focus active:text-foreground disabled:pointer-events-none disabled:opacity-50"
-              disabled={pending.has(current.id)}
-              onClick={() => void run('report', current)}
-            >
-              {t('Still need help? Report this error')}
-            </button>
-          ) : null}
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
-            {actionButton('copy-error', current)}
-            {presentation.secondaryActions
-              .filter((action) => action !== primary)
-              .map((action) => actionButton(action, current))}
-            {primary ? actionButton(primary, current, true) : null}
-          </div>
-        </div>
-        {moreNotices}
+        {footer || moreNotices ? (
+          <>
+            {footer}
+            {moreNotices}
+          </>
+        ) : null}
       </Notice>
     </TooltipProvider>
   )
@@ -453,7 +488,23 @@ export const ComposerNoticeSlot = ({
 }): React.JSX.Element => (
   <>
     {draftConflict ? <Notice {...draftConflict} inline level="info" /> : null}
-    {persistence ? <Notice {...persistence} inline className="mb-2" /> : null}
+    {persistence?.level === 'error' && persistence.title ? (
+      <ComposerFailureNoticeSlot
+        notices={[
+          {
+            id: 'conversation-storage',
+            source: 'operation',
+            occurredAt: 0,
+            failure: { category: 'internal', diagnostics: {} },
+            summary: { title: persistence.title, description: persistence.description }
+          }
+        ]}
+        handlers={{}}
+        primaryButton={persistence.primaryButton}
+      />
+    ) : persistence ? (
+      <Notice {...persistence} inline className="mb-2" />
+    ) : null}
     <ComposerFailureNoticeSlot {...props} />
   </>
 )

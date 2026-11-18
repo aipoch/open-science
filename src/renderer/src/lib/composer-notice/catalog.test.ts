@@ -10,7 +10,7 @@ import {
   noticePresentation,
   reasonCatalog,
   type NoticeActionId
-} from './catalog'
+} from '@/components/notices/composer-notice-catalog'
 
 const root = resolve(__dirname, '../../../../..')
 const sources = (directory: string): string[] =>
@@ -99,8 +99,8 @@ describe('composer notice boundaries', () => {
   it('keeps failure matching out of the composer and renderer event consumers', () => {
     const paths = [
       'src/renderer/src/pages/workspace/ConversationPanel.tsx',
-      'src/renderer/src/components/composer-notice/ComposerNoticeSlot.tsx',
-      'src/renderer/src/lib/composer-notice/catalog.ts',
+      'src/renderer/src/components/notices/ComposerNoticeSlot.tsx',
+      'src/renderer/src/components/notices/composer-notice-catalog.ts',
       'src/renderer/src/lib/composer-notice/use-composer-notices.ts',
       'src/renderer/src/lib/acp/workspace-events.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts',
@@ -122,7 +122,7 @@ describe('composer notice boundaries', () => {
       /import.*ErrorNotice|<ErrorNotice\b|<SessionInterruptedBanner\b|<TurnOutcomeNotice\b|<EnvStatusBanner\b/
     )
     expect(
-      read(join(root, 'src/renderer/src/components/composer-notice/ComposerNoticeSlot.tsx'))
+      read(join(root, 'src/renderer/src/components/notices/ComposerNoticeSlot.tsx'))
     ).toContain('<Notice')
   })
 

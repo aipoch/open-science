@@ -10,12 +10,12 @@ import { PptxVersionCompare } from './previews/PptxVersionCompare'
 import { PptxVersionHistory } from './previews/PptxVersionHistory'
 import { unwrapProvenanceRead } from '../../../../shared/provenance-read-result'
 import {
-  AtSign,
   BookOpen,
   Check,
   ChevronLeft,
   ChevronRight,
   Eye,
+  ExternalLink,
   FileDiff,
   GitBranch,
   Link2,
@@ -40,7 +40,6 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { ActionMenuItems, ActionMenuProvider, ActionMenuTarget } from '@/components/action-menu'
-import { ActionToast } from '@/components/ActionToast'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
@@ -76,7 +75,7 @@ import {
   type SaveAsArtifactState
 } from './LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
-import { useProjectFileMentionAction } from './use-project-file-mention-action'
+import { ProjectFileMentionButton } from './ProjectFileMentionButton'
 import type { ProjectFileMentionTarget } from './project-file-mention'
 import {
   useManagedFileDownload,
@@ -95,6 +94,7 @@ import {
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
+import { getFileExtension } from './preview-support'
 import type { PreviewDownloadVersionContext } from './previews/preview-runtime-context'
 import type { ActivePdfTranslation, PreviewInteractionPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
@@ -212,56 +212,6 @@ const PreviewProvenanceButton = ({
   )
 }
 
-const ProjectFileMentionButton = ({
-  target,
-  tooltipClassName,
-  onMentioned
-}: {
-  target: ProjectFileMentionTarget
-  tooltipClassName?: string
-  onMentioned?: () => void
-}): React.JSX.Element => {
-  const { t } = useTranslation()
-  const mention = useProjectFileMentionAction(target)
-  const label = t('Mention {{name}}', { name: target.name })
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className={previewHeaderActionClassName}
-            aria-label={label}
-            disabled={!mention.available || mention.pending}
-            aria-busy={mention.pending}
-            onClick={() => {
-              void mention.mention().then((mentioned) => {
-                if (mentioned) onMentioned?.()
-              })
-            }}
-          >
-            {mention.pending ? (
-              <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
-            ) : (
-              <AtSign aria-hidden="true" />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent className={tooltipClassName}>{label}</TooltipContent>
-      </Tooltip>
-      {mention.error ? (
-        <ActionToast
-          title={t('Could not resolve file version.')}
-          dismissLabel={t('Dismiss')}
-          onDismiss={mention.dismissError}
-        />
-      ) : null}
-    </TooltipProvider>
-  )
-}
-
 const PreviewViewInContextButton = ({
   item,
   onViewInContext,
@@ -319,7 +269,8 @@ const PreviewFileHeader = ({
   downloadVersionContext,
   pdfContextAction,
   saveAsArtifactState,
-  managedDownload
+  managedDownload,
+  imageEditorVersionId
 }: Pick<
   PreviewFileSurfaceProps,
   | 'item'
@@ -339,6 +290,7 @@ const PreviewFileHeader = ({
   pdfContextAction?: PdfContextAction
   saveAsArtifactState: SaveAsArtifactState
   managedDownload: ManagedFileDownloadController
+  imageEditorVersionId?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const previewActions = usePreviewActions()
@@ -350,6 +302,10 @@ const PreviewFileHeader = ({
   const viewInContextEntry = previewActions.entries.find(
     (entry) => entry.kind === 'action' && entry.action === 'view-in-context'
   )
+  const openInBrowserEntry = previewActions.entries.find(
+    (entry): entry is Extract<(typeof previewActions.entries)[number], { kind: 'action' }> =>
+      entry.kind === 'action' && entry.action === 'open-in-browser'
+  )
   const managedMenuEntries = [
     ...(provenanceActionEntry ? [provenanceActionEntry] : []),
     ...(provenanceActionEntry && viewInContextEntry ? [{ kind: 'separator' as const }] : []),
@@ -358,6 +314,7 @@ const PreviewFileHeader = ({
   // Managed artifact/upload previews can be mentioned in the chat straight from the open surface;
   // local and literature previews carry no managed identity and never offer the action. An omitted
   // source is the artifact default the preview projection uses for generated files.
+  const mentionVersionId = imageEditorVersionId ?? item.selectedVersionId
   const mentionTarget = useMemo<ProjectFileMentionTarget | undefined>(() => {
     const source = item.source ?? 'artifact'
     if (!item.projectId || !item.managedFileId || (source !== 'artifact' && source !== 'upload')) {
@@ -370,9 +327,18 @@ const PreviewFileHeader = ({
       projectId: item.projectId,
       name: item.name,
       path: item.path,
+      ...(mentionVersionId ? { versionId: mentionVersionId } : {}),
       ...(item.mimeType ? { mimeType: item.mimeType } : {})
     }
-  }, [item.managedFileId, item.mimeType, item.name, item.path, item.projectId, item.source])
+  }, [
+    item.managedFileId,
+    item.mimeType,
+    item.name,
+    item.path,
+    item.projectId,
+    item.source,
+    mentionVersionId
+  ])
 
   return (
     <header
@@ -517,6 +483,31 @@ const PreviewFileHeader = ({
                   tooltipClassName={tooltipClassName}
                 />
               ) : null}
+              {openInBrowserEntry ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        className={previewHeaderActionClassName}
+                        disabled={openInBrowserEntry.disabled}
+                        aria-label={t('Open in browser')}
+                        onFocus={(event) => {
+                          if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                        }}
+                        onClick={() => void previewActions.execute('open-in-browser')}
+                      >
+                        <ExternalLink aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className={tooltipClassName}>
+                      {t('Open in browser')}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : null}
               <ManagedFileDownloadButton
                 source={item.source ?? 'artifact'}
                 path={item.path}
@@ -531,6 +522,7 @@ const PreviewFileHeader = ({
                   : {})}
                 suggestedName={item.name}
                 download={managedDownload}
+                downloadSelectedVersion={Boolean(imageEditorVersionId)}
                 tone="strong"
                 className="bg-transparent shadow-none"
               />
@@ -910,8 +902,22 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       canEditPptx && mode === 'view' && pptxCompareState?.surfaceKey === surfaceKey
         ? pptxCompareState
         : undefined
+    const [imageEditorSelection, setImageEditorSelection] = useState<{
+      key: string
+      item: PreviewFileItem
+    }>()
+    const reportImageEditorVersion = useCallback(
+      (version: PreviewFileItem | undefined) => {
+        setImageEditorSelection(version ? { key: previewContentKey, item: version } : undefined)
+      },
+      [previewContentKey]
+    )
+    const imageEditorItem =
+      imageEditorSelection?.key === previewContentKey ? imageEditorSelection.item : undefined
     const canShowProvenance = Boolean(
-      previewItem.source !== 'upload' && previewItem.artifactId && projectId
+      (imageEditorItem ?? previewItem).source !== 'upload' &&
+      (imageEditorItem ?? previewItem).artifactId &&
+      projectId
     )
     const requestedProvenanceOpen =
       storedItem?.fileViewState?.provenanceOpen ??
@@ -1009,14 +1015,17 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     // Default managed previews follow the DB head without pinning the tab, while annotations still
     // need the exact immutable Version that is currently visible.
     const annotationVersionId = managedNavigationInspect?.selectedVersionId ?? selectedVersionId
-    const resolvedPreviewItem =
-      selectedVersion && projectId
-        ? createPreviewFileItemForArtifactVersion({
-            item: previewItem,
-            version: selectedVersion,
-            projectId
-          })
-        : previewItem
+    const resolvedPreviewItem = useMemo(
+      () =>
+        selectedVersion && projectId
+          ? createPreviewFileItemForArtifactVersion({
+              item: previewItem,
+              version: selectedVersion,
+              projectId
+            })
+          : previewItem,
+      [selectedVersion, projectId, previewItem]
+    )
     // Bind byte reads and shared renderer caches to the confirmed immutable selection without
     // pinning the workbench tab, which must keep following future head notifications.
     const contentVersion =
@@ -1024,17 +1033,22 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       managedNavigationInspect?.versions.find(
         (version) => version.id === managedNavigationInspect.selectedVersionId
       )
-    const contentItem =
-      managedNavigationInspect && contentVersion && !previewItem.selectedVersionId
-        ? createPreviewFileItemForManagedVersion({
-            item: resolvedPreviewItem,
-            version: contentVersion,
-            projectId: managedNavigationInspect.projectId,
-            sessionId: managedNavigationInspect.sessionId
-          })
-        : resolvedPreviewItem
+    const contentItem = useMemo(
+      () =>
+        managedNavigationInspect && contentVersion && !previewItem.selectedVersionId
+          ? createPreviewFileItemForManagedVersion({
+              item: resolvedPreviewItem,
+              version: contentVersion,
+              projectId: managedNavigationInspect.projectId,
+              sessionId: managedNavigationInspect.sessionId
+            })
+          : resolvedPreviewItem,
+      [managedNavigationInspect, contentVersion, previewItem.selectedVersionId, resolvedPreviewItem]
+    )
     // An editor owns a draft of its confirmed baseline, even when a newer head arrives.
-    const provenanceItem = mode === 'edit' && editBaseline ? editBaseline.item : contentItem
+    const actionItem = imageEditorItem ?? resolvedPreviewItem
+    const provenanceItem =
+      mode === 'edit' && editBaseline ? editBaseline.item : (imageEditorItem ?? contentItem)
     const { action: linkedPdfContextAction, readingContextBindingId } = usePdfContextAction(
       contentItem,
       onPdfContextError,
@@ -1051,21 +1065,21 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       : allowReadingContext
         ? linkedPdfContextAction
         : undefined
-    const downloadVersionContext = managedWorkflow.downloadVersionContext
+    const downloadVersionContext = imageEditorItem
+      ? undefined
+      : managedWorkflow.downloadVersionContext
     const managedDownload = useManagedFileDownload({
-      source: resolvedPreviewItem.source ?? 'artifact',
-      path: resolvedPreviewItem.path,
-      ...(resolvedPreviewItem.projectId && resolvedPreviewItem.managedFileId
+      source: actionItem.source ?? 'artifact',
+      path: actionItem.path,
+      ...(actionItem.projectId && actionItem.managedFileId
         ? {
-            projectId: resolvedPreviewItem.projectId,
-            fileId: resolvedPreviewItem.managedFileId,
+            projectId: actionItem.projectId,
+            fileId: actionItem.managedFileId,
             ...(downloadVersionContext ??
-              (resolvedPreviewItem.selectedVersionId
-                ? { versionId: resolvedPreviewItem.selectedVersionId }
-                : {}))
+              (actionItem.selectedVersionId ? { versionId: actionItem.selectedVersionId } : {}))
           }
         : {}),
-      suggestedName: resolvedPreviewItem.name
+      suggestedName: actionItem.name
     })
     const pdfPageCountKey = JSON.stringify([
       contentItem.id,
@@ -1116,6 +1130,17 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       [pdfPageCountKey, readingContextBindingId]
     )
     const stageLocalPath = window.api.uploads?.stageLocalPath
+    const normalizedMimeType = resolvedPreviewItem.mimeType?.split(';', 1)[0]?.trim().toLowerCase()
+    const isHtmlFile =
+      normalizedMimeType === 'text/html' ||
+      getFileExtension(resolvedPreviewItem.name) === 'html' ||
+      getFileExtension(resolvedPreviewItem.name) === 'htm'
+    const isLocalHtmlFile = resolvedPreviewItem.source === 'local' && isHtmlFile
+    const isManagedArtifactHtmlFile =
+      (resolvedPreviewItem.source ?? 'artifact') === 'artifact' && isHtmlFile
+    // Only register the shared header/menu action when the current surface provides it.
+    const canOpenManagedHtmlInBrowser =
+      isManagedArtifactHtmlFile && typeof window.api.artifacts?.openInBrowser === 'function'
 
     const copyPath = async (): Promise<void> => {
       setLocalActionFailure(undefined)
@@ -1155,6 +1180,47 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
           title: t('Could not download this file.'),
           detail: errorDetail(error),
           retry: () => void downloadLocalFile()
+        })
+      }
+    }
+
+    const openHtmlInBrowser = async (): Promise<void> => {
+      setLocalActionFailure(undefined)
+      try {
+        if (resolvedPreviewItem.source === 'local') {
+          await window.api.localFs.openInBrowser(resolvedPreviewItem.path)
+        } else {
+          // Use the same immutable selection as the rendered bytes, including default head previews.
+          const artifactId = contentItem.artifactId ?? contentItem.managedFileId
+          if (!artifactId || !contentItem.projectId) {
+            throw new Error(t('Could not open this file.'))
+          }
+          await window.api.artifacts.openInBrowser({
+            projectId: contentItem.projectId,
+            artifactId,
+            ...(typeof contentItem.versionNumber === 'number'
+              ? { versionNumber: contentItem.versionNumber }
+              : {})
+          })
+        }
+      } catch (error) {
+        setLocalActionFailure({
+          title: t('Could not open this file.'),
+          detail: errorDetail(error),
+          retry: () => void openHtmlInBrowser()
+        })
+      }
+    }
+
+    const revealLocalHtmlInFolder = async (): Promise<void> => {
+      setLocalActionFailure(undefined)
+      try {
+        await window.api.localFs.reveal(resolvedPreviewItem.path)
+      } catch (error) {
+        setLocalActionFailure({
+          title: t('Could not open that folder.'),
+          detail: errorDetail(error),
+          retry: () => void revealLocalHtmlInFolder()
         })
       }
     }
@@ -1406,21 +1472,25 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const originSessionUnavailable =
       originSessionDeleted || currentOriginSessionState === 'deleting'
     const canViewInContext =
-      previewItem.source !== 'upload' &&
-      previewItem.artifactId !== undefined &&
+      actionItem.source !== 'upload' &&
+      actionItem.artifactId !== undefined &&
       projectId !== undefined &&
       !originSessionUnavailable
     const viewInContext = (): void => {
       if (!projectId) return
-      const sourceMessageId = lineage
-        ? resolveArtifactVersionDescriptor(lineage, annotationVersionId)?.messageId
-        : undefined
+      const sourceMessageId =
+        lineage && actionItem.artifactId === previewItem.artifactId
+          ? resolveArtifactVersionDescriptor(
+              lineage,
+              imageEditorItem?.selectedVersionId ?? annotationVersionId
+            )?.messageId
+          : undefined
       // Resolve the visible version's origin only after guarded navigation succeeds.
       const afterNavigate = sourceMessageId
         ? (): void => {
             useSearchMessageFocusStore.getState().request({
               projectId,
-              sessionId: previewItem.sessionId,
+              sessionId: actionItem.sessionId,
               messageId: sourceMessageId,
               navigationRevision: useNavigationStore.getState().userNavigationRevision
             })
@@ -1429,10 +1499,10 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
         : onViewInContextNavigate
       useNavigationStore
         .getState()
-        .openSession(projectId, previewItem.sessionId, 'user', afterNavigate)
+        .openSession(projectId, actionItem.sessionId, 'user', afterNavigate)
     }
     const openProvenance =
-      previewItem.source !== 'upload' && previewItem.artifactId && projectId
+      actionItem.source !== 'upload' && actionItem.artifactId && projectId
         ? (): void => updateFileView({ provenanceOpen: true })
         : undefined
     const closePreview = (): void => {
@@ -1728,6 +1798,12 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
               execute: copyPath,
               ...(copied ? { labelKey: 'Copied', icon: Check } : {})
             },
+            ...(isLocalHtmlFile
+              ? {
+                  'open-in-browser': { execute: openHtmlInBrowser },
+                  'reveal-in-folder': { execute: revealLocalHtmlInFolder }
+                }
+              : {}),
             download: { execute: downloadLocalFile },
             'save-as-artifact': {
               execute: saveLocalFileAsArtifact,
@@ -1740,6 +1816,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
           }
         : {
             ...addPdfBinding,
+            ...(canOpenManagedHtmlInBrowser
+              ? { 'open-in-browser': { execute: openHtmlInBrowser } }
+              : {}),
             ...(visiblePdfContextAction
               ? {
                   'pdf-context': {
@@ -1775,11 +1854,11 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
             close: { execute: closePreview }
           }
     const previewActionIdentityKey = JSON.stringify([
-      resolvedPreviewItem.id,
-      resolvedPreviewItem.path,
-      resolvedPreviewItem.managedFileId ?? null,
-      resolvedPreviewItem.selectedVersionId ?? null,
-      resolvedPreviewItem.mtimeMs ?? null
+      actionItem.id,
+      actionItem.path,
+      actionItem.managedFileId ?? null,
+      actionItem.selectedVersionId ?? null,
+      actionItem.mtimeMs ?? null
     ])
     const previewActionRecipe =
       resolvedPreviewItem.source === 'local'
@@ -1826,19 +1905,20 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
               className="relative flex size-full min-h-0 flex-col overflow-hidden"
             >
               <PreviewFileHeader
-                item={resolvedPreviewItem}
+                item={actionItem}
                 onClose={closePreview}
                 onOpenFullScreen={onOpenFullScreen}
                 onReload={() => setReloadToken((token) => token + 1)}
                 pdfContextAction={visiblePdfContextAction}
                 saveAsArtifactState={saveAsArtifactState}
                 managedDownload={managedDownload}
+                imageEditorVersionId={imageEditorItem?.selectedVersionId}
                 provenanceEntry={provenanceEntry}
                 onOpenProvenance={openProvenance}
                 onViewInContext={canViewInContext ? viewInContext : undefined}
                 viewInContextDisabled={originSessionArchived}
                 tooltipClassName={tooltipClassName}
-                downloadVersionContext={managedWorkflow.downloadVersionContext}
+                downloadVersionContext={downloadVersionContext}
                 checkingVersion={!provenanceFocused && managedWorkflow.inspectLoading}
                 managedControlsOnly={mode === 'edit'}
                 managedControls={
@@ -2073,6 +2153,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                             ? (provenanceTab) => updateFileView({ provenanceTab })
                             : undefined
                         }
+                        lockVersion={Boolean(imageEditorItem)}
                         onVersionChange={selectProvenanceVersion}
                         tooltipClassName={tooltipClassName}
                         initialTab={
@@ -2255,6 +2336,8 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                       <PreviewFileContent
                         key={previewContentKey}
                         item={contentItem}
+                        onImageEditorVersionChange={reportImageEditorVersion}
+                        onPinImageSource={() => applyVersionItem(contentItem, true)}
                         downloadVersionContext={managedWorkflow.downloadVersionContext}
                         annotationVersionId={annotationVersionId}
                         annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}

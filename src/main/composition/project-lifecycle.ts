@@ -1,4 +1,5 @@
 import { reserveAcpSessionStorageCleanup } from '../acp/session-registry'
+import type { ImageTaskOwner } from '../image-model/tasks'
 import type { PromptOptimizationService } from '../projects/prompt-optimization'
 import { join } from 'node:path'
 import { HarnessStorageCleanup } from '../harness-acp/storage-cleanup'
@@ -55,6 +56,7 @@ import { createUploadCommandOwner } from '../uploads/command-owner'
 import { createDefaultUploadRepository } from '../uploads/ipc'
 
 export function composeProjectLifecycle({
+  imageTasks,
   promptOptimization,
   applicationEvents,
   notificationInbox,
@@ -83,6 +85,7 @@ export function composeProjectLifecycle({
   clearSessionCredentials,
   getNotebookService
 }: {
+  imageTasks?: Pick<ImageTaskOwner, 'isBusy' | 'cancelSessions' | 'cancelProject'>
   promptOptimization?: PromptOptimizationService
   applicationEvents: ApplicationEvents
   notificationInbox: ReturnType<typeof createNotificationInboxController>
@@ -205,6 +208,7 @@ export function composeProjectLifecycle({
         const owner = projectRuntimeQuiescenceRef.current
         if (!owner) throw new Error('Project runtime cleanup is not initialized.')
         await archiveCoordinator.withProjectDeletion(projectId, async () => {
+          imageTasks?.cancelProject(projectId)
           getNotebookService().beginProjectDeletion(projectId)
           await artifactReproducibilityAttemptOwnerRef.current?.cancelProject(projectId)
           await owner.quiesceProject(projectId)
@@ -270,6 +274,7 @@ export function composeProjectLifecycle({
       isSessionLocallyBusy(projectId, sessionId) {
         const snapshot = runtimeRef.current?.getSnapshot()
         return (
+          imageTasks?.isBusy(projectId, sessionId) === true ||
           snapshot?.pendingPermissions?.some((request) => request.sessionId === sessionId) ===
             true ||
           snapshot?.pendingElicitations?.some((request) => request.sessionId === sessionId) ===
@@ -292,6 +297,7 @@ export function composeProjectLifecycle({
         if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
         const jobs = await computeJobs.countNonTerminalBySession(sessionId)
         return (
+          imageTasks?.isBusy(projectId, sessionId) === true ||
           jobs > 0 ||
           detectSessionExportBlockingSessions().some(
             (session) => session.projectId === projectId && session.sessionId === sessionId
@@ -300,6 +306,7 @@ export function composeProjectLifecycle({
       },
       isProjectBusy: async (projectId) => {
         if (
+          imageTasks?.isBusy(projectId) === true ||
           reviewerProjectRuntime.isProjectBusy(projectId) ||
           detectArchiveBlockingSessions().some((session) => session.projectId === projectId)
         ) {
@@ -345,6 +352,7 @@ export function composeProjectLifecycle({
     inbox: notificationInbox,
     sessionPersistenceCoordinator,
     onSessionsDeleted: async (sessionIds) => {
+      imageTasks?.cancelSessions(sessionIds)
       for (const sessionId of sessionIds) clearSessionCredentials(sessionId)
       const results = await Promise.allSettled([
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),

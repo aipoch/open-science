@@ -159,6 +159,11 @@ const localFsCommands = Object.freeze({
   openPath: defineApplicationCommand<'local-fs:open-path', readonly [path: string], string>(
     'local-fs:open-path'
   ),
+  openInBrowser: defineApplicationCommand<
+    'local-fs:open-in-browser',
+    readonly [path: string],
+    void
+  >('local-fs:open-in-browser'),
   readPreview: defineApplicationCommand<
     'local-fs:read-preview',
     readonly [request: ReadArtifactPreviewRequest],
@@ -594,6 +599,7 @@ type HostApplicationCommandDependencies = Readonly<{
     | 'listDrives'
     | 'listGrantedRoots'
     | 'openPath'
+    | 'openInBrowser'
     | 'readPreview'
     | 'removeGrantedRoot'
     | 'revealInFolder'
@@ -721,6 +727,10 @@ const registerHostApplicationCommands = (
       'local-fs:open-path': ({ args, callerContext }) =>
         localCommand(callerContext, 'local-fs:open-path', () =>
           dependencies.localFs.openPath(args[0])
+        ),
+      'local-fs:open-in-browser': ({ args, callerContext }) =>
+        localCommand(callerContext, 'local-fs:open-in-browser', () =>
+          dependencies.localFs.openInBrowser(args[0])
         ),
       'local-fs:read-preview': ({ args, callerContext }) =>
         localCommand(callerContext, 'local-fs:read-preview', () =>

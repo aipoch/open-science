@@ -221,11 +221,14 @@ const declaredImageDimensions = (
   return dimensions
 }
 
-const assertImagePixelLimit = (size: RasterImageDimensions): void => {
-  if (exceedsDecodedImagePixelLimit(size)) {
+const assertImagePixelLimit = (
+  size: RasterImageDimensions,
+  limit = MAX_DECODED_IMAGE_PIXELS
+): void => {
+  if (exceedsDecodedImagePixelLimit(size, limit)) {
     throw new ImageContentError(
       'IMAGE_PROCESSING_FAILED',
-      `Decoded image exceeds the ${MAX_DECODED_IMAGE_PIXELS}-pixel processing limit.`
+      `Decoded image exceeds the ${limit}-pixel processing limit.`
     )
   }
 }
@@ -274,7 +277,8 @@ const processImageBytes = async (
   bytes: Buffer,
   sourcePolicy: ImageSourcePolicy,
   options: { crop?: ImageCrop; maxSize?: number } = {},
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  pixelLimit = MAX_DECODED_IMAGE_PIXELS
 ): Promise<PreparedImageContentData> => {
   if (sourcePolicy === 'png-jpeg-only') {
     const mimeType = detectedImageMimeType(bytes)
@@ -284,13 +288,13 @@ const processImageBytes = async (
         'Only PNG and JPEG image sources are supported.'
       )
     }
-    assertImagePixelLimit(declaredImageDimensions(bytes, mimeType))
+    assertImagePixelLimit(declaredImageDimensions(bytes, mimeType), pixelLimit)
   }
 
   const { default: sharp } = await import('sharp')
   const inputOptions = {
     failOn: 'error' as const,
-    limitInputPixels: MAX_DECODED_IMAGE_PIXELS,
+    limitInputPixels: pixelLimit,
     sequentialRead: true
   }
   const source = sharp(bytes, inputOptions)
@@ -304,7 +308,7 @@ const processImageBytes = async (
     width: metadata.width ?? 0,
     height: metadata.height ?? 0
   }
-  assertImagePixelLimit(originalSize)
+  assertImagePixelLimit(originalSize, pixelLimit)
 
   const crop = resolvedCrop(options.crop, originalSize)
   const croppedSize = crop
@@ -401,7 +405,8 @@ export const prepareImageContentData = async (
   filePath: string,
   options: { crop?: ImageCrop; maxSize?: number } = {},
   signal?: AbortSignal,
-  expectedCanonicalPath?: string
+  expectedCanonicalPath?: string,
+  managedVersion = false
 ): Promise<PreparedImageContentData> => {
   signal?.throwIfAborted()
   if (
@@ -438,23 +443,37 @@ export const prepareImageContentData = async (
     if (!fileInfo.isFile()) {
       throw new ImageContentError('IMAGE_PROCESSING_FAILED', 'Image source is not a regular file.')
     }
-    if (fileInfo.size > MAX_AUTO_PROCESS_IMAGE_BYTES) {
+    const byteLimit = managedVersion ? 64 * 1024 * 1024 : MAX_AUTO_PROCESS_IMAGE_BYTES
+    if (fileInfo.size > byteLimit) {
       throw new ImageContentError(
         'IMAGE_SOURCE_TOO_LARGE',
         `Image source is ${fileInfo.size} bytes, exceeding the automatic processing limit.`,
-        { sourceBytes: fileInfo.size, limitBytes: MAX_AUTO_PROCESS_IMAGE_BYTES }
+        { sourceBytes: fileInfo.size, limitBytes: byteLimit }
       )
     }
     const bytes = await handle.readFile()
-    if (bytes.byteLength > MAX_AUTO_PROCESS_IMAGE_BYTES) {
+    if (bytes.byteLength > byteLimit) {
       throw new ImageContentError(
         'IMAGE_SOURCE_TOO_LARGE',
         `Image source is ${bytes.byteLength} bytes, exceeding the automatic processing limit.`,
-        { sourceBytes: bytes.byteLength, limitBytes: MAX_AUTO_PROCESS_IMAGE_BYTES }
+        { sourceBytes: bytes.byteLength, limitBytes: byteLimit }
       )
     }
     signal?.throwIfAborted()
     try {
+      // Managed Version reads are already owner-scoped. Permit the image service's larger
+      // raster inputs for visual review while keeping the same bounded model attachment.
+      if (managedVersion) {
+        const webp = readRasterImageDimensions(bytes, 'image/webp')
+        if (webp) assertImagePixelLimit(webp, 20_000_000)
+        return await processImageBytes(
+          bytes,
+          webp ? 'sharp-raster' : 'png-jpeg-only',
+          options,
+          signal,
+          20_000_000
+        )
+      }
       return await processImageBytes(bytes, 'png-jpeg-only', options, signal)
     } catch (error) {
       if (error instanceof ImageContentError) throw error

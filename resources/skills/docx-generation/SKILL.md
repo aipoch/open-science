@@ -21,15 +21,15 @@ In Open Science, first prepare the workflow through the registered Notebook help
 }
 ```
 
-Call the function directly, without importing it. Repeat `kernelSkillIds` in every cell using this function. The helper writes the fixed converter and reference into a new directory inside the authorized Notebook working directory and returns `script_path`, `reference_path`, and `workflow_directory`. This uses the registered skill transport; the Notebook and shell cannot necessarily read the framework's skill directory.
+Call the function directly, without importing it. Repeat `kernelSkillIds` in every cell using this function. The helper writes the fixed converter and reference into a new directory inside the authorized Notebook working directory and returns `script_path`, `reference_path`, `workflow_directory`, and the Notebook environment’s `pandoc_path` when available. This uses the registered skill transport; the Notebook and shell cannot necessarily read the framework's skill directory.
 
 Then run the returned `script_path` through the session's approved shell tool:
 
 ```text
-python "<returned-script_path>" "<source.md>" "<output.docx>"
+python "<returned-script_path>" "<source.md>" "<output.docx>" --pandoc "<returned-pandoc_path>"
 ```
 
-Use the interpreter configured for the session. If the helper is unavailable, report that prerequisite through the normal execution recovery flow; do not probe or copy from the isolated framework skill directory. In environments outside Open Science that already allow reading this package, the original `scripts/convert.py` is also a standalone CLI.
+If `pandoc_path` is null, omit `--pandoc` to use Pandoc on the shell path. Use the interpreter configured for the session. If the helper is unavailable, report that prerequisite through the normal execution recovery flow; do not probe or copy from the isolated framework skill directory. In environments outside Open Science that already allow reading this package, the original `scripts/convert.py` is also a standalone CLI.
 
 Optional arguments:
 

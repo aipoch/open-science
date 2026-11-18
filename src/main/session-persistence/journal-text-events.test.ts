@@ -123,6 +123,32 @@ afterEach(async () => {
 })
 
 describe('durable accepted text events', () => {
+  it('inspects a reference formed across a saved message and a later chunk', async () => {
+    const { root } = await fixture()
+    const path = join(root, 'joined.json')
+    const initial = document()
+    const reference = 'ac3dde96-c909-4a3c-9afa-6f90f264c9f4'
+    for (const message of [
+      ...initial.session.messages,
+      ...initial.session.conversationGraph.messages
+    ])
+      message.content = reference.slice(0, 20)
+    const owner = store()
+    await owner.write(path, { document: initial, expectedRevision: 0 })
+    const { after, event } = next(initial, 'continued', reference.slice(20))
+    const prepared = owner.prepareWrite(path, after, (await owner.read(path))!, {
+      textEvents: [event]
+    })
+    await owner.writePrepared(path, prepared, { expectedRevision: 1 })
+    expect(await readFile(sessionJournalPath(path), 'utf8')).not.toContain(reference)
+    const seen: unknown[] = []
+    await owner.visitRetainedHistory(path, {
+      maxBytes: 1024 * 1024,
+      maxRecords: 100,
+      visit: (value) => seen.push(value)
+    })
+    expect(seen).toContain(reference)
+  })
   it('appends the actual received chunks once and restores both partial transcript views', async () => {
     const { path, initial } = await fixture()
     const owner = store()

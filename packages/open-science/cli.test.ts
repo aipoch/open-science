@@ -1202,7 +1202,9 @@ describe('task CLI', () => {
     expect(client.getRun).toHaveBeenCalledWith('run-1')
     expect(client.cancelRun).toHaveBeenCalledWith('run-1')
     expect(client.listArtifacts).toHaveBeenCalledWith('session-1')
-    expect(client.downloadArtifact).toHaveBeenCalledWith('artifact-1')
+    expect(client.downloadArtifact).toHaveBeenCalledWith('artifact-1', {
+      timeoutMs: 5 * 60 * 1_000
+    })
     expect(writeDownload).toHaveBeenCalledWith(expect.any(Response), 'report.md')
   })
 

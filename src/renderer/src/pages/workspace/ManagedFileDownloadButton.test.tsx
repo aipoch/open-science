@@ -226,19 +226,23 @@ describe('ManagedFileDownloadButton', () => {
     const saveManagedFile = vi.fn().mockResolvedValue({ saved: false })
     window.api = { saveManagedFile } as unknown as Window['api']
     root = createRoot(container)
-    await act(async () => {
-      root.render(
-        <ManagedFileDownloadButton
-          source="artifact"
-          path="artifact-version:project-1/session-1/file-1/version-1"
-          projectId="project-1"
-          fileId="file-1"
-          versionId="version-1"
-          suggestedName="report.md"
-        />
-      )
-    })
+    const renderVersion = async (downloadSelectedVersion = false): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <ManagedFileDownloadButton
+            source="artifact"
+            path="artifact-version:project-1/session-1/file-1/version-1"
+            projectId="project-1"
+            fileId="file-1"
+            versionId="version-1"
+            suggestedName="report.md"
+            downloadSelectedVersion={downloadSelectedVersion}
+          />
+        )
+      })
+    }
 
+    await renderVersion()
     const button = container.querySelector<HTMLButtonElement>('button')!
     expect(button.disabled).toBe(true)
     await act(async () => {
@@ -246,6 +250,15 @@ describe('ManagedFileDownloadButton', () => {
       await Promise.resolve()
     })
     expect(saveManagedFile).not.toHaveBeenCalled()
+
+    await renderVersion(true)
+    const selectedDownload = container.querySelector<HTMLButtonElement>('button')!
+    expect(selectedDownload.disabled).toBe(false)
+    await act(async () => selectedDownload.click())
+    expect(saveManagedFile).toHaveBeenCalledOnce()
+    expect(saveManagedFile).toHaveBeenCalledWith(
+      expect.objectContaining({ versionId: 'version-1' })
+    )
   })
 
   it('disables managed downloads that have no logical identity', async () => {

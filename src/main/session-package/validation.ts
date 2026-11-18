@@ -1,3 +1,4 @@
+import { imageTaskEvidenceMatches } from '../../shared/image-task'
 import { validateResearchFilms } from './research-films'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -185,7 +186,10 @@ export const validatePackageRecords = async (
     reportValidation(0.35)
     // File and reproducibility checks still apply to conversation-only packages. With no
     // native rows, there are no database relationships or provenance records to validate.
-    if (Object.values(records.tables).every((rows) => rows.length === 0)) return
+    if (Object.values(records.tables).every((rows) => rows.length === 0)) {
+      if (records.imageTasks?.length) throw new Error('Image task source Version is missing.')
+      return
+    }
     client = createProjectDbClient(root)
     await migrateApplicationDatabase(client)
     reportValidation(0.6)
@@ -198,6 +202,53 @@ export const validatePackageRecords = async (
         await transaction.project.create({ data: { id, name: 'Package validation' } })
       await publishRecords(transaction)
     })
+    const tasksById = new Map(records.imageTasks?.map((task) => [task.id, task]))
+    for (const task of records.imageTasks ?? []) {
+      if (
+        task.projectId !== manifest.source.projectId ||
+        task.sessionId !== manifest.source.sessionId ||
+        task.state === 'queued' ||
+        task.state === 'running'
+      )
+        throw new Error('Invalid Session image task ownership or state.')
+      const source = task.edit.source
+      const artifactSource = source.sourceKind === 'artifact-version'
+      const sourceVersion = records.tables[
+        artifactSource ? 'ArtifactVersion' : 'UploadVersion'
+      ].find((row) => row.id === source.sourceVersionId)
+      const sourceFile = records.tables[artifactSource ? 'ArtifactLineage' : 'UploadFile'].find(
+        (row) => row.id === source.sourceFileId
+      )
+      if (
+        !sourceVersion ||
+        !sourceFile ||
+        sourceVersion[artifactSource ? 'artifactId' : 'uploadFileId'] !== sourceFile.id ||
+        sourceFile.projectId !== source.projectId ||
+        sourceFile.sessionId !== source.sourceSessionId ||
+        sourceVersion.state !== (artifactSource ? 'finalized' : 'ready')
+      )
+        throw new Error('Image task source Version ownership does not match.')
+      if (task.result) {
+        const result = task.result
+        const output = records.tables.ArtifactVersion.find((row) => row.id === result.versionId)
+        const lineage = records.tables.ArtifactLineage.find((row) => row.id === result.artifactId)
+        if (
+          !output ||
+          !lineage ||
+          lineage.projectId !== task.projectId ||
+          lineage.sessionId !== task.sessionId ||
+          output.artifactId !== result.artifactId ||
+          output.artifactRunId !== task.id ||
+          output.state !== 'finalized' ||
+          output.checksum !== result.checksum ||
+          Number(output.sizeBytes) !== result.size ||
+          output.versionNumber !== result.versionNumber ||
+          output.filename !== result.name ||
+          (output.contentType ?? undefined) !== result.mimeType
+        )
+          throw new Error('Image task output Version does not match.')
+      }
+    }
     reportValidation(0.7)
     let validatedVersions = 0
     const repository = new ArtifactProvenanceRepository({
@@ -216,6 +267,12 @@ export const validatePackageRecords = async (
       }
       if (version.originKind === 'agent_generated') {
         const result = await repository.getVersionProvenance(identity)
+        const task = tasksById.get(String(version.artifactRunId))
+        if (
+          task &&
+          !imageTaskEvidenceMatches(result.evidence, task.id, task.edit.source.sourceVersionId)
+        )
+          throw new Error('Image task output does not match its source Version.')
         if (
           result.contentStatus.state !== 'available' &&
           !excluded.has(String(version.contentStorageKey))

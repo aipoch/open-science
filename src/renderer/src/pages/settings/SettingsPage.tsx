@@ -891,6 +891,25 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   } | null => {
     if (
       activePanel === 'model' &&
+      (modelView.kind === 'image-services' ||
+        modelView.kind === 'image-service-create' ||
+        modelView.kind === 'image-service-edit')
+    )
+      return {
+        rootLabelKey: 'Model',
+        rootTo: {
+          panel: 'model',
+          view: { kind: modelView.kind === 'image-services' ? 'list' : 'image-services' }
+        },
+        leaf:
+          modelView.kind === 'image-services'
+            ? t('Image services')
+            : modelView.kind === 'image-service-create'
+              ? t('Add image service')
+              : t('Edit image service')
+      }
+    if (
+      activePanel === 'model' &&
       (modelView.kind === 'classification-create' || modelView.kind === 'classification-edit')
     )
       return {
@@ -1716,7 +1735,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     'mx-auto w-full max-w-[880px]',
                     (activePanel === 'model' &&
                       (modelView.kind === 'classification-create' ||
-                        modelView.kind === 'classification-edit')) ||
+                        modelView.kind === 'classification-edit' ||
+                        modelView.kind === 'image-service-create' ||
+                        modelView.kind === 'image-service-edit')) ||
                       activePanel === 'memory' ||
                       activePanel === 'tags'
                       ? 'h-full'
@@ -2103,6 +2124,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           }
                           recoveryModel={
                             modelView.kind === 'list' ? modelView.recoveryModel : undefined
+                          }
+                          onManageImages={() =>
+                            navigate({ panel: 'model', view: { kind: 'image-services' } })
                           }
                           onCreateProvider={openCreate}
                           onEditProvider={openEdit}

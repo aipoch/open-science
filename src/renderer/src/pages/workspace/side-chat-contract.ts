@@ -1,3 +1,4 @@
+import type { ClassifiedFailure } from '../../../../shared/failure/contract'
 import type { Annotation } from '../../../../shared/annotation-contract'
 import type { SideChatModelSelection, SideChatSnapshot } from '../../../../shared/side-chat'
 import type { SideChatEntry } from '../../../../shared/side-chat-entry-contract'
@@ -17,6 +18,7 @@ export type SideChatView = Readonly<{
   annotations?: readonly Annotation[]
   running: boolean
   error?: string
+  errorDetails?: { message: string; failure: ClassifiedFailure }
   persistenceError?: string
   notice?: SideChatSnapshot['notice']
 }>

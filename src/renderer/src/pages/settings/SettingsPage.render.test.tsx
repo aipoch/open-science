@@ -584,6 +584,39 @@ describe('SettingsPage layout', () => {
     expect(document.body.textContent).not.toContain(copy)
   })
 
+  it('opens image services from the scenario row and uses shared breadcrumbs for its editor', async () => {
+    window.api.settings.getImageModels = vi
+      .fn()
+      .mockResolvedValue({ services: [], availableProviders: [] })
+    useSettingsStore.getState().openSettingsToPanel('model')
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[data-scenario-model="image-generation"]')!.click()
+    )
+    const clickText = async (text: string): Promise<void> => {
+      const button = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === text
+      )
+      expect(button).toBeDefined()
+      await act(async () => button!.click())
+    }
+    await clickText('Image services')
+    expect(document.querySelector('[aria-label="Back to model"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('No model services added')
+    await clickText('Add image service')
+    expect(document.querySelector('#image-service-name')).not.toBeNull()
+    expect(document.body.textContent).toContain('Add image service')
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')!.click()
+    )
+    expect(document.querySelector('#image-service-name')).toBeNull()
+    expect(document.body.textContent).toContain('No model services added')
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')!.click()
+    )
+    expect(document.querySelector('[data-scenario-model="image-generation"]')).not.toBeNull()
+  })
+
   it('retains model tab DOM across model routes and navigation Back', async () => {
     window.api.settings.getClassification = vi.fn().mockResolvedValue({ revision: 0, services: [] })
     window.api.localModels = {

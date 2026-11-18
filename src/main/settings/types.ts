@@ -2,6 +2,10 @@ import type { CatalogSnapshot, CatalogStatus } from '@aipoch/providers'
 import type { McpOAuthConfig, McpOAuthState } from '@aipoch/connector-mcp-client'
 import type { ClassificationAdapter } from '@aipoch/providers'
 import type { ClassificationBinding } from '../../shared/classification'
+import type {
+  ImageModelBinding,
+  ImageServiceConfiguration
+} from '../../shared/image-model-settings'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
@@ -53,6 +57,7 @@ type StoredClassificationService = {
   keyMask?: string
 }
 type StoredClassificationBinding = ClassificationBinding & { modelId?: string }
+export type StoredImageService = ImageServiceConfiguration & { keyRef?: string; keyMask?: string }
 export type StoredClassificationSettings = {
   revision: number
   services: StoredClassificationService[]
@@ -233,6 +238,8 @@ export type StoredSettings = {
   huggingFaceRuntime?: import('../../shared/compute-python-runtime').ComputePythonSelection
   version: typeof SETTINGS_FILE_VERSION
   classification?: StoredClassificationSettings
+  imageServices?: StoredImageService[]
+  imageModel?: ImageModelBinding
   claude?: ClaudeInfo
   // Selected agent backend. Absent means the default (Claude Code). Switching needs a reconnect.
   agentFrameworkId?: AgentFrameworkId

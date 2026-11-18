@@ -21,6 +21,7 @@ import { exportResourceJournal, inspectResourceJournal } from './resources'
 
 const FILE_LIMIT = 8 * 1024 * 1024
 const TOTAL_LIMIT = 32 * 1024 * 1024
+const SESSION_JOURNAL_READ_LIMIT = 32 * 1024 * 1024
 const BACKEND_LOG_TAIL_BYTES = 256 * 1024
 const safeSegment = (value: string): boolean => /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/.test(value)
 class DiagnosticCollectionError extends Error {}
@@ -440,17 +441,24 @@ async function readSource(source: Source): Promise<{
   }
 }
 
+const sourceReadLimit = (source: Source): number =>
+  source.kind === 'session' && source.path?.endsWith('.jsonl')
+    ? SESSION_JOURNAL_READ_LIMIT
+    : FILE_LIMIT
+
 // Reconstruct JSONL through the ordinary diagnostic redaction path. It remains a read-only
 // observation: no recovery, migration or file cleanup is performed during collection.
 async function readSessionSource(source: Source): ReturnType<typeof readSource> {
   if (!source.path!.endsWith('.jsonl')) return readSource(source)
   await checkPath(source.root, source.path!)
-  const stat = await lstat(source.path!)
-  if (!stat.isFile() || stat.size > FILE_LIMIT)
-    throw new DiagnosticCollectionError('Source exceeds file limit or is not regular')
-  const journal = new SessionJournalStore({ maxBytes: FILE_LIMIT, maxCacheEntries: 0 })
+  const journal = new SessionJournalStore({
+    maxBytes: FILE_LIMIT,
+    maxReplayBytes: sourceReadLimit(source),
+    maxCacheEntries: 0
+  })
   const reconstructed = await journal.read(source.path!)
-  if (!reconstructed) throw new DiagnosticCollectionError('Session journal is unavailable')
+  if (reconstructed?.format !== 'journal')
+    throw new DiagnosticCollectionError('Session journal is unavailable')
   return { text: JSON.stringify(reconstructed.document) }
 }
 
@@ -745,7 +753,7 @@ export async function runSessionDiagnosticWorker(
           const stat = await lstat(source.path!)
           const metadata = { sizeBytes: stat.size, mtimeMs: stat.mtimeMs }
           state.sourceMetadata = metadata
-          if (stat.size > FILE_LIMIT && !source.tailBytes) {
+          if (stat.size > sourceReadLimit(source) && !source.tailBytes) {
             await writeBestEffort(
               `${source.output}.metadata.json`,
               () => encode({ ...metadata, omissionReason: 'source-size-limit' }),

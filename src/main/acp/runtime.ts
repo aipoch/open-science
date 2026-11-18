@@ -932,13 +932,11 @@ class AcpRuntime {
   }
 
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
-  async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(async () => {
-      const created = await this.providerSessionCreator.create(request)
-      const session = this.activeSessionFor(created.sessionId)
-      if (session) await this.options.authorizedDirectories?.initialize(session)
-      return created
-    })
+  async createSession(
+    request: AcpCreateSessionRequest = {},
+    beforePublish?: () => void
+  ): Promise<AcpCreateSessionResponse> {
+    return this.withOperationLease(() => this.providerSessionCreator.create(request, beforePublish))
   }
 
   getSessionReasoningEffort(sessionId: string): ResolvedReasoningEffort | undefined {
@@ -1918,7 +1916,8 @@ class AcpRuntime {
     this.clearPlanDeliveryClaimRetry(request.sessionId)
     this.sessionPlanWorkflow.sessionDeleted(request.sessionId)
     try {
-      return await this.sessionDeletion.delete(request.sessionId)
+      const result = await this.sessionDeletion.delete(request.sessionId)
+      return result
     } finally {
       this.clearPlanDeliveryClaimRetry(request.sessionId)
     }
@@ -3150,6 +3149,7 @@ class AcpRuntime {
     input: {
       filename: string
       content: string
+      encoding?: import('../../shared/artifacts').ArtifactWriteEncoding
       mimeType?: string
       producer?: AppGeneratedArtifactProducer
     }

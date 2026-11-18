@@ -8,6 +8,9 @@
   "references": [
     {
       "path": "../literature-citations/tsconfig.dev.json"
+    },
+    {
+      "path": "../resilient-download/tsconfig.dev.json"
     }
   ]
 }
