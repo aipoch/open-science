@@ -14,6 +14,8 @@ import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { once } from 'node:events'
+import { inspectInstallationProcessesAsync } from './update/installation-occupancy'
+import { processBirthIdentity } from './process-birth-identity'
 import { inspectInstallationAvailability } from './update/installation-protection'
 import * as childProcess from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -34,7 +36,14 @@ vi.mock('node:child_process', async (original) => {
   }
 })
 const roots: string[] = []
+const replacements: { pid: number; birth: string }[] = []
 afterEach(async () => {
+  for (const { pid, birth } of replacements.splice(0)) {
+    if (processBirthIdentity(pid) === birth) {
+      process.kill(pid, 'SIGTERM')
+      await vi.waitFor(() => expect(processBirthIdentity(pid)).not.toBe(birth))
+    }
+  }
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
@@ -86,13 +95,29 @@ import * as log from './packages/open-science/launch-log.mjs';
 async function main() {
 ${fixtureSource
   .replace(
+    ' res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration',
+    ` if(req.url==='/restart') {
+      res.end('restarting');
+      setImmediate(()=>{
+        const child=require('node:child_process').spawn(process.execPath,process.argv.slice(1),{
+          detached:true,
+          stdio:launchLogControl?['inherit','inherit','inherit','ignore',launchLogControl]:'inherit',
+          env:launchLogControl?{...process.env,OPEN_SCIENCE_LAUNCH_LOG_PIPE:'4'}:process.env
+        });
+        child.unref();process.exit(0);
+      });return;
+    }
+    res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration`
+  )
+  .replace('const server=http', 'setTimeout(()=>process.exit(2),60000).unref();\nconst server=http')
+  .replace(
     "req.headers['x-open-science-runtime-generation']!==generation",
     "(req.url!=='/api/bootstrap'&&req.headers['x-open-science-runtime-generation']!==generation)"
   )
   .replace(
     'server.listen(',
     `registerInstallationRuntime({installationRoot:${JSON.stringify(installationRoot)}, configRoot:root, generation});
-await log.bindLaunchLogReader({entryPath:__filename, bootstrapPath:${JSON.stringify(bootstrap)}});
+const launchLogControl=await log.bindLaunchLogReader({entryPath:__filename, bootstrapPath:${JSON.stringify(bootstrap)}});
 server.listen(`
   )}
 } main().catch(error => {console.error(error);process.exit(1)});`,
@@ -189,9 +214,36 @@ server.listen(`
         await expect(
           inspectInstallationAvailability({ ...location, runtime })
         ).resolves.toBeUndefined()
-        const stopped = once(backendProcess!, 'exit')
-        backendProcess!.kill('SIGTERM')
-        await stopped
+        const beforeRestart = await inspectInstallationProcessesAsync(installationRoot)
+        const restarted = once(backendProcess!, 'exit')
+        await fetch(`http://127.0.0.1:${owner.port}/restart`, {
+          headers: {
+            authorization: 'Bearer ' + 'x'.repeat(43),
+            'x-open-science-runtime-generation': owner.generation
+          }
+        })
+        await restarted
+        let replacement: typeof owner
+        await vi.waitFor(
+          async () => {
+            replacement = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
+            expect(replacement.pid).not.toBe(owner.pid)
+          },
+          { timeout: 10000 }
+        )
+        const birth = processBirthIdentity(replacement.pid)
+        expect(birth).toBeTruthy()
+        replacements.push({ pid: replacement.pid, birth: birth! })
+        await expect(
+          inspectInstallationAvailability({
+            ...location,
+            runtime: { pid: replacement.pid, generation: replacement.generation, configRoot }
+          })
+        ).resolves.toBeUndefined()
+        expect((await inspectInstallationProcessesAsync(installationRoot)).sort()).toEqual(
+          [...beforeRestart.filter((pid) => pid !== owner.pid), replacement.pid].sort()
+        )
+        process.kill(replacement.pid, 'SIGTERM')
         await vi.waitFor(
           async () => expect(await inspectInstallationAvailability(location)).toBeUndefined(),
           { timeout: 15000, interval: 100 }

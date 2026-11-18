@@ -15,13 +15,15 @@ const readerSource = `
     request += chunk
     if (request.length > 16384) { control.destroy(); return }
     if (!request.includes('\\n')) return
-    control.removeAllListeners('data')
     try {
       const {entryPath, bootstrapPath, owner, stateRoot, appImage, appDir} = JSON.parse(request)
       if (appImage && appDir) { process.env.APPIMAGE = appImage; process.env.APPDIR = appDir }
-      lease = require(bootstrapPath).protectInstallationStartup(entryPath, owner.configRoot, stateRoot, owner)
-      control.end('registered\\n')
-    } catch { control.end('failed\\n') }
+      const next = require(bootstrapPath).protectInstallationStartup(entryPath, owner.configRoot, stateRoot, owner)
+      lease?.release()
+      lease = next
+      control.write('registered\\n')
+    } catch { control.write('failed\\n') }
+    request = ''
   })
   // A failed/legacy backend never adopts the control pipe. Keep draining its diagnostics until EOF.
   control.on('end', () => control.destroy())
@@ -90,7 +92,19 @@ export async function bindLaunchLogReader({ entryPath, bootstrapPath }) {
     })
     control.write(request)
     await registered
-  } finally {
+    // Preserve the private descriptor only for an explicit self-restart. Stop reading before
+    // sharing it: the old backend must not consume the replacement's acknowledgement.
+    control.setTimeout(0)
+    control.removeAllListeners('data')
+    control.removeAllListeners('end')
+    control.removeAllListeners('timeout')
+    control.removeAllListeners('error')
+    control.on('error', () => control.destroy())
+    control.pause()
+    control.unref()
+    return control
+  } catch (error) {
     control.destroy()
+    throw error
   }
 }

@@ -160,7 +160,7 @@ async function main(): Promise<void> {
     generation,
     pid: process.pid
   })
-  await bindLaunchLogReader({
+  const launchLogControl = await bindLaunchLogReader({
     entryPath: mainEntryPath,
     bootstrapPath: join(
       applicationPath,
@@ -390,8 +390,12 @@ async function main(): Promise<void> {
         const { spawn } = await import('node:child_process')
         const child = spawn(process.execPath, process.argv.slice(1), {
           detached: true,
-          stdio: 'inherit',
-          env: process.env
+          stdio: launchLogControl
+            ? ['inherit', 'inherit', 'inherit', 'ignore', launchLogControl]
+            : 'inherit',
+          env: launchLogControl
+            ? { ...process.env, OPEN_SCIENCE_LAUNCH_LOG_PIPE: '4' }
+            : process.env
         })
         child.once('error', (error) => {
           createLogger('node-runtime').error('restart failed', diagnosticErrorFields(error))

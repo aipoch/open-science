@@ -1,5 +1,6 @@
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { Socket } from 'node:net'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi, type MockInstance } from 'vitest'
 import { backendStartupStatusSchema } from './backend-startup'
@@ -31,6 +32,8 @@ const f = vi.hoisted(() => ({
   credentialAccess: undefined as
     typeof import('./credential-identity/access').createCredentialAccess | undefined,
   releaseInstallation: vi.fn(),
+  bindLaunchLogReader:
+    vi.fn<typeof import('../../packages/open-science/launch-log.mjs').bindLaunchLogReader>(),
   writeExit: vi.fn(async () => {}),
   closeOwnership: vi.fn(async () => {}),
   closeNetwork: vi.fn(async () => {}),
@@ -174,6 +177,9 @@ vi.mock('./storage/config-root', () => ({
 }))
 vi.mock('./storage/electron-profile', () => ({
   resolveElectronProfile: () => '/isolated-fixture/profile'
+}))
+vi.mock('../../packages/open-science/launch-log.mjs', () => ({
+  bindLaunchLogReader: f.bindLaunchLogReader
 }))
 vi.mock('./update/installation-protection', () => ({
   installationRootForEntry: () => '/isolated-fixture/app',
@@ -839,6 +845,8 @@ it('keeps startup commands bounded until database verification and hands off to 
 it.each([true, false])(
   'preserves durability decisions and restarts with desktop acceptance %s',
   async (accepted) => {
+    const launchLogControl = new Socket()
+    f.bindLaunchLogReader.mockResolvedValueOnce(launchLogControl)
     const send = await startHealthyRuntime()
     await waitForReady(send)
     const options = f.createRuntime.mock.calls[0][0]
@@ -868,8 +876,8 @@ it.each([true, false])(
     else
       expect(f.spawn).toHaveBeenCalledExactlyOnceWith(process.execPath, process.argv.slice(1), {
         detached: true,
-        stdio: 'inherit',
-        env: process.env
+        stdio: ['inherit', 'inherit', 'inherit', 'ignore', launchLogControl],
+        env: { ...process.env, OPEN_SCIENCE_LAUNCH_LOG_PIPE: '4' }
       })
   }
 )

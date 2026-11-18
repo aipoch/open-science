@@ -1,4 +1,5 @@
 import type { Writable, Duplex } from 'node:stream'
+import type { Socket } from 'node:net'
 export function startLaunchLogReader(
   node: string,
   fileDescriptor: number,
@@ -12,4 +13,4 @@ export function startLaunchLogReader(
 export function bindLaunchLogReader(options: {
   entryPath: string
   bootstrapPath: string
-}): Promise<void>
+}): Promise<Socket | undefined>
