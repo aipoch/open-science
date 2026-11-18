@@ -307,6 +307,21 @@ describe('navigation store', () => {
     })
   })
 
+  it('queues details recovery for an automatic deep-link to an unloaded Session', () => {
+    useSessionStore.getState().hydrateSessions([createSession({})])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({ ...session, contentLoaded: false }))
+    }))
+
+    useNavigationStore.getState().openSession('project-a', 'session-1', 'automatic')
+
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
+    expect(useSessionStore.getState().sessionDetailsRecoveryRequest).toEqual({
+      projectId: 'project-a',
+      sessionId: 'session-1'
+    })
+  })
+
   it('returns Home after a Home entry even with a retained Session selection', () => {
     useSessionStore.getState().hydrateSessions([createSession({})])
     useNavigationStore.getState().openSession('project-a', 'session-1', 'user')

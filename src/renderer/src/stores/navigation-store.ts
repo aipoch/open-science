@@ -497,7 +497,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         .sessions.find(
           (candidate) => candidate.projectId === projectId && candidate.id === sessionId
         )
-      if (session && origin !== 'automatic') selectSessionForNavigation(session)
+      if (session) selectSessionForNavigation(session)
       else useSessionStore.getState().selectSession(sessionId)
 
       if (origin === 'user') recordLastOpenedProject(projectId)
