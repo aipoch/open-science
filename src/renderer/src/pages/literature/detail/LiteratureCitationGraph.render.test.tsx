@@ -1882,7 +1882,6 @@ it('names OpenCitations omitted and empty relationships without suggesting anoth
   ).toHaveLength(2)
   expect(screen.getByText('Source: OpenCitations · SKG-IF')).toBeTruthy()
   expect(screen.queryByText('Source: Europe PMC')).toBeNull()
-  expect(screen.queryByText('Source: Semantic Scholar')).toBeNull()
 })
 
 it('rejects a different OpenCitations mode during Index graph paging and retries the same cursor', async () => {
@@ -1942,7 +1941,6 @@ it('defaults an independent graph to Europe PMC and keeps failures on that sourc
   fireEvent.click(screen.getAllByRole('button', { name: 'Retry' })[0])
   await waitFor(() => expect(related).toHaveBeenCalledTimes(3))
   expect(related.mock.calls.every(([request]) => request.provider === 'europe-pmc')).toBe(true)
-  expect(screen.queryByText('Source: Semantic Scholar')).toBeNull()
 })
 
 it('discloses the paper list separately and returns to selected details without querying or saving', async () => {

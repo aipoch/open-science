@@ -39,8 +39,8 @@ package, installs its declared sibling tarball and validates consumption outside
 citing papers. `provider` defaults to `europe-pmc`; the legacy `auto` value has the same behavior.
 Callers may explicitly select `europe-pmc` or `opencitations`; each selection contacts only that
 provider. Failures remain attributed to that source and never start another provider automatically.
-Every live result reports its actual `provider`. Semantic Scholar is not a supported graph source;
-its old provider value and temporary 40-character paper IDs are rejected by the graph schemas.
+Every live result reports its actual `provider`. Legacy provider values and temporary 40-character
+paper IDs are rejected by the graph schemas.
 Historical catalog provenance and other discovery features use their own contracts.
 
 Europe PMC resolution requires an exact normalized DOI, PMID or PMCID. It never guesses from a

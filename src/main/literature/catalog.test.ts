@@ -333,7 +333,6 @@ describe('LiteratureCatalog', () => {
   })
 
   it.each([
-    ['semantic-scholar', undefined],
     ['europe-pmc', undefined],
     ['opencitations', undefined],
     ['opencitations', 'index']
