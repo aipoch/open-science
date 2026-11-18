@@ -179,13 +179,15 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Reviewed: save_to_inbox/acquire_pdf advertise candidates as objects; the same strict
         // candidate schema now validates inline records in the handler before any save or download.
         // Citation tool descriptions are shortened only. Trusted origin, permission inputs and
-        // allow-once disposition are unchanged.
+        // allow-once disposition are unchanged. Shared contracts were extracted from the runtime
+        // handlers without changing the automatically handled operation branches.
         'literature/library-mcp-server.ts':
-          '400ea9fb1739b849dad3f55d453b02be9879bda3e86fde29ebb34084d3e7e33e',
+          'a243f2ab289a861466bb203213f8ee747224345c52220aacfe758a3f119ee3ef',
         // Reviewed: errors keep specific codes with a next step and annotation cursors are opaque
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
+        // Presentation helpers and contracts were extracted without changing handler branches.
         'literature/mcp-server.ts':
-          '561a62c02556d3677874d524dd7c9433b3131a42eda21f526d8684888a673cd9',
+          '10a2eec347f763a29d87725b2dca1676814b387e4603defbfff4a4f37574b1ab',
         // Reviewed: calls require a mounted route and current turn. Task edits are scoped to the
         // originating conversation, and unattended mutations are limited to the task's own trigger.
         'schedules/mcp.ts': '4c7322e66195808835ae282899a90c51777f79cf0ccf07ee7cdb6d2607b63f52',
