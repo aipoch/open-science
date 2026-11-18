@@ -20,7 +20,7 @@ import {
 } from '../../shared/claude-runtime'
 import { findPythonCommand, type PythonCommand } from '@aipoch/environment'
 import { netFetchStandard } from '../network-fetch'
-import { CODEBUDDY_VERSION } from './codebuddy-install'
+import { CODEBUDDY_VERSION } from '../../shared/codebuddy-subscription'
 import { getManagedPlatform } from './managed-claude'
 import { detectAvx2, resolveOpencodePlatform } from './managed-opencode'
 import { resolveManagedCodexPlatform } from './managed-codex'

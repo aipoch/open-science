@@ -1,6 +1,5 @@
 {
   "ownerPaths": [
-    "src/main/settings/codebuddy-install.ts",
     "src/main/settings/backend-selection-owner.ts",
     "src/main/settings/backend-route-planner.ts",
     "src/main/settings/codex-bridge-tools.ts",

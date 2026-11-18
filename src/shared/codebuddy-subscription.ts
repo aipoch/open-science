@@ -1,3 +1,5 @@
+export const CODEBUDDY_VERSION = '2.185.0'
+
 export const codeBuddyAccounts = {
   internal: { id: 'builtin-codebuddy-china', name: 'CodeBuddy (China)' },
   external: { id: 'builtin-codebuddy-international', name: 'CodeBuddy (International)' }
