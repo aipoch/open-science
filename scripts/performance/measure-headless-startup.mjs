@@ -82,6 +82,16 @@ const measureRun = ({ backend, configRoot, installationStateRoot }) =>
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString()
     })
+    child.once('close', (code, signal) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      rejectRun(
+        new Error(
+          `Backend exited before becoming ready (code=${code ?? 'unknown'}, signal=${signal ?? 'none'}).\n${stderr}`
+        )
+      )
+    })
     child.once('error', (error) => {
       if (settled) return
       settled = true

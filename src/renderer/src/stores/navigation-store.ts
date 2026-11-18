@@ -465,8 +465,8 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         const session = useSessionStore
           .getState()
           .sessions.find((candidate) => candidate.id === mostRecentSessionId)
-        if (session && origin !== 'automatic') requestSessionDetailsRecovery(session)
         useSessionStore.getState().selectSession(mostRecentSessionId)
+        if (session && origin !== 'automatic') requestSessionDetailsRecovery(session)
       } else {
         useSessionStore.getState().clearSelection()
       }
@@ -493,8 +493,8 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         .sessions.find(
           (candidate) => candidate.projectId === projectId && candidate.id === sessionId
         )
-      if (session && origin !== 'automatic') requestSessionDetailsRecovery(session)
       useSessionStore.getState().selectSession(sessionId)
+      if (session && origin !== 'automatic') requestSessionDetailsRecovery(session)
 
       if (origin === 'user') recordLastOpenedProject(projectId)
 
