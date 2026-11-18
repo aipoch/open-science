@@ -512,7 +512,10 @@ it.each([
   'discovers %s models with the same connection credentials and region',
   async (id, region, url, header) => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () =>
-      Response.json({ data: [{ id: 'new-model' }] })
+      Response.json({
+        data: [{ id: 'new-model' }],
+        ...(id === 'anthropic' ? { has_more: false } : {})
+      })
     )
     const provider = createProvider({ id: id!, region, key: 'secret', fetch })
     expect(provider.supportsModelDiscovery).toBe(true)
