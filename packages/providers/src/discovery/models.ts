@@ -383,11 +383,13 @@ export const listProviderModels = async (
         if (Array.isArray(items))
           for (const item of items) {
             const id = at(item, 'id')
-            if (typeof id === 'string' && catalog.has(id))
-              catalog.set(id, {
-                ...describe(item, id, options.enrichment.fields),
-                ...catalog.get(id)
-              })
+            const primary = typeof id === 'string' ? catalog.get(id) : undefined
+            if (!primary) continue
+            const extra = describe(item, primary.id, options.enrichment.fields)
+            for (const [field, value] of Object.entries(extra)) {
+              if (primary[field as keyof CatalogModel] === undefined)
+                Object.assign(primary, { [field]: value })
+            }
           }
       } catch {
         // Once the primary list is complete, only caller cancellation should discard it.

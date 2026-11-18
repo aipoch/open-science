@@ -507,7 +507,6 @@ it('preserves classification cancellation and response transport errors rather t
 it.each([
   ['deepseek', undefined, 'https://api.deepseek.com/v1/models', 'authorization'],
   ['anthropic', undefined, 'https://api.anthropic.com/v1/models', 'x-api-key'],
-  ['xai', undefined, 'https://api.x.ai/v1/language-models', 'authorization'],
   ['stepfun', 'global', 'https://api.stepfun.ai/v1/models', 'authorization']
 ])(
   'discovers %s models with the same connection credentials and region',
@@ -515,13 +514,7 @@ it.each([
     const fetch = vi.fn<typeof globalThis.fetch>(async () =>
       Response.json({ data: [{ id: 'new-model' }] })
     )
-    const provider = createProvider({
-      id: id!,
-      region,
-      key: 'secret',
-      fetch,
-      ...(id === 'xai' ? { discovery: { url } } : {})
-    })
+    const provider = createProvider({ id: id!, region, key: 'secret', fetch })
     expect(provider.supportsModelDiscovery).toBe(true)
     await expect(provider.listModels()).resolves.toMatchObject({ ok: true, models: ['new-model'] })
     expect(String(fetch.mock.calls[0][0])).toMatch(
@@ -532,6 +525,32 @@ it.each([
     )
   }
 )
+
+it('enriches only listed xAI language models with their reported context windows', async () => {
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(Response.json({ models: [{ id: 'grok-4.7', name: 'Grok 4.7' }] }))
+    .mockResolvedValueOnce(
+      Response.json({
+        data: [
+          { id: 'grok-4.7', context_length: 131072 },
+          { id: 'image-only', context_length: 4096 }
+        ]
+      })
+    )
+  const provider = createProvider({ id: 'xai', key: 'secret', fetch })
+  await expect(provider.listModels()).resolves.toMatchObject({
+    ok: true,
+    models: ['grok-4.7'],
+    catalog: [{ id: 'grok-4.7', name: 'Grok 4.7', contextWindow: 131072 }]
+  })
+  expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+    'https://api.x.ai/v1/language-models',
+    'https://api.x.ai/v1/models'
+  ])
+  for (const [, init] of fetch.mock.calls)
+    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer secret')
+})
 
 it('snapshots an explicit discovery endpoint and retains per-call resource limits', async () => {
   const fetch = vi.fn<typeof globalThis.fetch>(async () =>
