@@ -573,6 +573,7 @@
         "e2e/settings-error-transport.spec.ts",
         "e2e/desktop-runtime-startup.spec.ts",
         "e2e/desktop-runtime-native-relaunch.spec.ts",
+        "e2e/kernel-startup-fence.spec.ts",
         "e2e/runtime-update-ui-acceptance.spec.ts",
         "e2e/session-journal-recovery.spec.ts",
         "e2e/session-history-pages.spec.ts",
@@ -580,6 +581,7 @@
         "e2e/official-science-ui-opening-diagnosis.spec.ts",
         "e2e/fixtures/legacy-json/open-science-1.0.8-session.v2.json",
         "e2e/fixtures/session-ui-performance.ts",
+        "e2e/mac-python-diagnostic-e2e.spec.ts",
         "e2e/fixtures/library.ts",
         "e2e/fixtures/relaunch-observer.cjs",
         "e2e/fixtures/runtime-relaunch-stall.cjs",
@@ -635,6 +637,7 @@
         "e2e/fixtures/electron-app.ts",
         "e2e/fixtures/local-service-cleanup.ts",
         "e2e/fixtures/fake-opencode.mjs",
+        "e2e/fixtures/macos-acceptance.mjs",
         "e2e/fixtures/fake-remoteit.cjs",
         "e2e/fixtures/mock-credential-identity.cjs",
         "e2e/fixtures/mock-credential-identity.sh",
@@ -647,6 +650,8 @@
         "e2e/fixtures/project.ts",
         "e2e/fixtures/renderer-failure-gate.ts",
         "e2e/fixtures/research-analysis.mjs",
+        "e2e/fixtures/kernel-fence.mjs",
+        "e2e/fixtures/kernel-fence.d.mts",
         "e2e/fixtures/sanitized-performance.png",
         "e2e/fixtures/session-outcome-preload.cjs",
         "e2e/fixtures/settings-preferences.ts"
@@ -791,6 +796,8 @@
       "role": "overlay",
       "paths": [
         "e2e/fixtures/fake-opencode.mjs",
+        "e2e/fixtures/kernel-fence.mjs",
+        "e2e/fixtures/macos-acceptance.mjs",
         "e2e/fixtures/research-analysis.mjs",
         "e2e/fixtures/session-outcome-fault.ts"
       ],

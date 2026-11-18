@@ -16,8 +16,8 @@
     true
   )
   if (!new URLSearchParams(location.search).has('render')) {
-    window.__ready.then(() =>
-      parent.postMessage({ type: 'open-science-research-video-ready' }, '*')
+    window.__ready.then(({ duration }) =>
+      parent.postMessage({ type: 'open-science-research-video-ready', duration }, '*')
     )
   }
 })()

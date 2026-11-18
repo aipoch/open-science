@@ -119,6 +119,14 @@ b.x,
 .ar-9x16 .ov {
   padding: 250px 60px 520px;
 }
+.ov-group {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  width: max-content;
+  gap: inherit;
+}
 .ov-main {
   display: flex;
   align-items: center;
@@ -270,6 +278,45 @@ b.x,
 }
 .caption .w.on {
   opacity: 1;
+}
+
+.cobrand {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  margin-bottom: 8px;
+}
+.cobrand img {
+  display: block;
+}
+.cobrand .cb-ai {
+  height: 48px;
+}
+.cobrand .cb-os {
+  height: 48px;
+}
+.cobrand .cb-bar {
+  width: 2px;
+  height: 44px;
+  background: var(--s-border);
+}
+.ar-9x16 .cobrand .cb-ai {
+  height: 56px;
+}
+.ar-9x16 .cobrand .cb-os {
+  height: 56px;
+}
+.ar-9x16 .cobrand .cb-bar {
+  height: 52px;
+}
+.brand-fly {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 5;
 }
 
 /* panel boxes */

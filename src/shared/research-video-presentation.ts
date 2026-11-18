@@ -36,6 +36,8 @@ export type ResearchVideoPresentation = {
   playerPath: string
   sourcePath: string
   duration: number
+  scriptScore?: number
+  sessionAppMode?: 'live' | 'drawn'
 }
 export type ResearchVideoPresentationStatus = {
   canResume?: boolean

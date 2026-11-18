@@ -22,6 +22,10 @@ import {
 import { windowsProcessCommandLine, windowsProcessIsAlive } from '../windows-process-query'
 import { reapWindowsOwnedJob } from '../process-tree-windows'
 import {
+  createDarwinKernelRecovery,
+  type DarwinRecoveryIdentity
+} from './kernel-process-recovery.darwin'
+import {
   readProcessStartToken,
   bootTokenProvesReboot,
   isValidBootToken,
@@ -57,6 +61,7 @@ type KernelProcessRecord = KernelProcessSpawnScope & {
   bootToken?: string
   windowsProcessTreeProof?: WindowsProcessTreeProof
   windowsJobName?: string
+  darwinRecoveryProcesses?: DarwinRecoveryIdentity[]
 }
 
 type KernelProcessSpawnIntent = Readonly<{
@@ -73,8 +78,14 @@ type KernelProcessReceipt = Readonly<{
 type KernelProcessProbe = 'dead' | 'owned' | 'reused' | 'unknown'
 
 type KernelProcessRecoveryController = Readonly<{
-  probe(record: Readonly<KernelProcessRecord>): Promise<KernelProcessProbe>
-  terminate(record: Readonly<KernelProcessRecord>): Promise<ProcessTreeKillResult>
+  probe(
+    record: Readonly<KernelProcessRecord>,
+    checkpoint?: (identities: DarwinRecoveryIdentity[]) => void
+  ): Promise<KernelProcessProbe>
+  terminate(
+    record: Readonly<KernelProcessRecord>,
+    checkpoint?: (identities: DarwinRecoveryIdentity[]) => void
+  ): Promise<ProcessTreeKillResult>
 }>
 
 type KernelProcessRecoveryOptions = Readonly<{
@@ -144,6 +155,15 @@ const decodeRecord = (contents: string): KernelProcessRecord | undefined => {
       typeof value.receiptId !== 'string' ||
       typeof value.ownerInstanceId !== 'string' ||
       typeof value.ownerToken !== 'string' ||
+      (value.darwinRecoveryProcesses !== undefined &&
+        (!Array.isArray(value.darwinRecoveryProcesses) ||
+          !value.darwinRecoveryProcesses.every(
+            (identity) =>
+              identity &&
+              isPositivePid(identity.pid) &&
+              typeof identity.uniqueId === 'string' &&
+              /^[1-9][0-9]*$/.test(identity.uniqueId)
+          ))) ||
       typeof value.platform !== 'string' ||
       typeof value.laneKey !== 'string' ||
       typeof value.processKey !== 'string' ||
@@ -253,16 +273,16 @@ const requestWindowsProcessTreeReap = async (proof: WindowsProcessTreeProof): Pr
 
 const terminateWindowsPid = async (
   pid: number,
-  proof?: WindowsProcessTreeProof
+  proof: WindowsProcessTreeProof
 ): Promise<ProcessTreeKillResult> => {
-  if (proof && (await requestWindowsProcessTreeReap(proof))) return { reaped: true }
+  if (await requestWindowsProcessTreeReap(proof)) return { reaped: true }
   await capture('taskkill.exe', ['/pid', String(pid), '/T', '/F'])
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (!pidIsAlive(pid)) {
       // A proof-backed receipt remains unresolved until the supervisor publishes terminal
       // evidence. The taskkill fallback only proves that the recorded host exited, not that
       // descendants were reaped.
-      return { reaped: proof ? proofFileConfirmsWindowsProcessTreeReaped(proof) : true }
+      return { reaped: proofFileConfirmsWindowsProcessTreeReaped(proof) }
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 50))
   }
@@ -273,7 +293,7 @@ const defaultController = (
   platform: NodeJS.Platform,
   currentBootToken: () => string | undefined = readBootToken
 ): KernelProcessRecoveryController => ({
-  probe: async (record) => {
+  probe: async (record, checkpoint) => {
     if (record.platform !== platform) return 'dead'
     // New hosts are atomically created inside this exact Job before they can activate a receipt.
     // Its identity survives the proof publisher; a missing Job proves there are no members left.
@@ -288,29 +308,22 @@ const defaultController = (
       const bootToken = currentBootToken()
       if (bootTokenProvesReboot(record.bootToken, bootToken)) return 'dead'
     }
-    if (platform === 'win32') {
-      try {
-        if (!windowsProcessIsAlive(record.pid)) {
-          return record.windowsProcessTreeProof
-            ? (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
-              ? 'dead'
-              : 'unknown'
-            : 'unknown'
-        }
-      } catch {
-        // Fall back to the portable PID probe. An unreadable native query must not authorize
-        // clearing or killing a receipt that may still refer to a live process.
-      }
+    if (platform === 'darwin') {
+      return createDarwinKernelRecovery().probe({ ...record, pid: record.pid }, checkpoint)
     }
-    const alive = pidIsAlive(record.pid)
+    let alive: boolean
     if (platform === 'win32') {
-      if (!alive) {
-        return record.windowsProcessTreeProof
-          ? (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
-            ? 'dead'
-            : 'unknown'
-          : 'unknown'
+      // Exited intermediate parents disappear from snapshots even if their children survive.
+      const proof = record.windowsProcessTreeProof
+      if (!proof) return 'unknown'
+      try {
+        alive = windowsProcessIsAlive(record.pid) && pidIsAlive(record.pid)
+      } catch {
+        alive = pidIsAlive(record.pid)
       }
+      if (!alive) return (await requestWindowsProcessTreeReap(proof)) ? 'dead' : 'unknown'
+    } else {
+      alive = pidIsAlive(record.pid)
     }
     if (platform !== 'win32') {
       const groupAlive = isOwnedPosixProcessGroupAlive(record.pid)
@@ -336,17 +349,25 @@ const defaultController = (
     // process from ambiguous evidence.
     return 'unknown'
   },
-  terminate: (record) => {
+  terminate: (record, checkpoint) => {
     if (!record.pid) return Promise.resolve({ reaped: false })
-    return platform === 'win32'
-      ? terminateWindowsPid(record.pid, record.windowsProcessTreeProof)
-      : terminateOwnedPosixProcessGroupById(
-          record.pid,
-          undefined,
-          undefined,
-          record.posixBirthToken,
-          { name: OWNER_TOKEN_ENV, value: record.ownerToken }
-        )
+    if (platform === 'darwin') {
+      return checkpoint
+        ? createDarwinKernelRecovery().terminate({ ...record, pid: record.pid }, checkpoint)
+        : Promise.resolve({ reaped: false })
+    }
+    if (platform === 'win32') {
+      return record.windowsProcessTreeProof
+        ? terminateWindowsPid(record.pid, record.windowsProcessTreeProof)
+        : Promise.resolve({ reaped: false })
+    }
+    return terminateOwnedPosixProcessGroupById(
+      record.pid,
+      undefined,
+      undefined,
+      record.posixBirthToken,
+      { name: OWNER_TOKEN_ENV, value: record.ownerToken }
+    )
   }
 })
 
@@ -597,7 +618,18 @@ class KernelProcessLifecycleOwner {
         const encodedPid = name.match(/\.active\.(\d+)\./)?.[1]
         if (encodedPid && isPositivePid(Number(encodedPid))) record.pid = Number(encodedPid)
       }
-      const probe = await this.controller.probe(record)
+      const recoveryRecord = record
+      const checkpoint = (identities: DarwinRecoveryIdentity[]): void => {
+        // Remember uncertain associated members even if ownership cannot yet authorize a signal.
+        if (decodeRecord(readFileSync(path, 'utf8'))?.receiptId !== recoveryRecord.receiptId) {
+          throw new Error('Kernel recovery receipt changed before checkpoint.')
+        }
+        recoveryRecord.darwinRecoveryProcesses = identities
+        writeRecordSync(path, recoveryRecord)
+      }
+      const probe = await (this.platform === 'darwin'
+        ? this.controller.probe(record, checkpoint)
+        : this.controller.probe(record))
       if (probe === 'dead' || probe === 'reused') {
         if (
           probe === 'reused' &&
@@ -616,7 +648,9 @@ class KernelProcessLifecycleOwner {
         continue
       }
       if (probe === 'owned') {
-        const result = await this.controller.terminate(record)
+        const result = await (this.platform === 'darwin'
+          ? this.controller.terminate(record, checkpoint)
+          : this.controller.terminate(record))
         if (result.reaped) {
           if (this.removeIfOwned(path, record.receiptId)) {
             removeWindowsProcessTreeProof(record.windowsProcessTreeProof)

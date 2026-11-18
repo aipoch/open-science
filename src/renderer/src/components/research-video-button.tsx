@@ -1,3 +1,4 @@
+import { RESEARCH_VIDEO_PLAYER_SIZE_ERROR } from '@aipoch/research-film/contracts'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -309,6 +310,12 @@ function ResearchVideoModeButton({
     )
   }
   const filmErrors: Record<string, string> = {
+    [RESEARCH_VIDEO_PLAYER_SIZE_ERROR]: t(
+      'The film exceeds 200 MiB. Shorten it or use smaller media.'
+    ),
+    'Shorten the film to fit the narration audio limit.': t(
+      'Shorten the film to fit the narration audio limit.'
+    ),
     'The model returned no research film content. Try again or select another model.': t(
       'The model returned no film content.'
     ),
@@ -866,7 +873,19 @@ function ResearchVideoModeButton({
                         <AudioLines className="size-3.5" aria-hidden="true" />
                         {t('English narration')}
                       </span>
+                      {playableResult.scriptScore !== undefined && (
+                        <span>
+                          {t('Narration rubric {{score}}/9', { score: playableResult.scriptScore })}
+                        </span>
+                      )}
                     </div>
+                    {playableResult.sessionAppMode && (
+                      <p className="text-xs text-muted-foreground">
+                        {playableResult.sessionAppMode === 'live'
+                          ? t('Includes the session app in motion.')
+                          : t('Uses a drawn illustration of the session app.')}
+                      </p>
+                    )}
                   </div>
                   <Button
                     className="min-h-10 w-full whitespace-normal"

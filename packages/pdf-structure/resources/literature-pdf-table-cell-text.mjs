@@ -264,7 +264,9 @@ export function rejectNativeLetterFractionScriptMetadata(cells, rules) {
 // Keep this deliberately narrow: only reconstruct lists of scientific-notation
 // values over a letter or integer denominator, with a complete centered bar.
 export function recoverNativeStackedScientificFractions(items, rules, runs) {
-  if (!Array.isArray(items) || !Array.isArray(rules) || !Array.isArray(runs)) return
+  if (!Array.isArray(items) || !Array.isArray(rules) || !rules.length || !Array.isArray(runs))
+    return
+  items = items.filter((item) => item.text.replaceAll(BACKSPACE, '').trim())
   const proofs = []
   for (const [x1, y1, x2, y2] of rules) {
     if (y1 !== y2 || !(x2 > x1)) continue
@@ -301,6 +303,7 @@ export function recoverNativeStackedScientificFractions(items, rules, runs) {
     const numerator = above.map((item) => item.text.trim()).join(''),
       denominator = below[0].text.trim()
     proofs.push({
+      items: [...above, below[0]],
       malformed: [
         ...new Set([
           /^\p{L}$/u.test(denominator)
@@ -316,7 +319,46 @@ export function recoverNativeStackedScientificFractions(items, rules, runs) {
   let text = runs
     .map((run) => run.text)
     .join('')
+    .replaceAll(BACKSPACE, '')
     .replace(/\s+/gu, '')
+  // Reading order may put every numerator before every denominator. Rebuild
+  // complete native fractions as atomic values before horizontal ordering.
+  // Require exact token ownership and character conservation; unrelated text
+  // must never be discarded by this whole-cell serialization.
+  const provedItems = proofs.flatMap((proof) => proof.items)
+  const owned = new Set(provedItems)
+  const punctuation = items.filter((item) => !owned.has(item))
+  // Horizontal order is meaningful only when one horizontal line intersects
+  // every fraction (between its baselines) and every punctuation glyph.
+  const rowTop = Math.max(
+    ...proofs.map((proof) => proof.items[0].baseline),
+    ...punctuation.map((item) => item.rect?.[1])
+  )
+  const rowBottom = Math.min(
+    ...proofs.map((proof) => proof.items.at(-1).baseline),
+    ...punctuation.map((item) => item.rect?.[3])
+  )
+  const characters = (value) => [...value.replace(/\s+/gu, '')].sort().join('')
+  if (
+    rowTop <= rowBottom &&
+    owned.size === provedItems.length &&
+    punctuation.every((item) => /^[[\](),;]+$/u.test(item.text.trim())) &&
+    characters(text) === characters(items.map((item) => item.text).join(''))
+  ) {
+    const values = proofs.map((proof) => ({
+      x: Math.min(...proof.items.map((item) => item.rect[0])),
+      text: proof.corrected
+    }))
+    values.push(...punctuation.map((item) => ({ x: item.rect[0], text: item.text.trim() })))
+    return [
+      {
+        text: values
+          .sort((a, b) => a.x - b.x)
+          .map((value) => value.text)
+          .join('')
+      }
+    ]
+  }
   if (
     proofs.length !==
     (text.match(/(?:\d+e\p{L}[−-]\d+|\d+e[−-]\d+(?:\p{L}|\d{2,}))/gu) ?? []).length

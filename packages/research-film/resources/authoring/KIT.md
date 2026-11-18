@@ -6,7 +6,7 @@ You write **one JavaScript file per animation**. The file is the _body_ of `draw
 
 **Supported drawing surfaces:** the packaged drawing kit, raw Canvas through `k.ctx`, and inline SVG/HTML through `k.dom`. Create reusable DOM or geometry with `k.once(key, () => ...)`, then update it from `k.t` on every frame. The host invokes this code inside the isolated browser stage; return the requested file body, not commands or setup instructions.
 
-The current application does not stage custom libraries, an animation asset directory or subject manifests. Do not use `libs`, `k.svg`, `k.image`, `k.asset`, `k.subject` or `k.anchor` for missing resources. Define recurring subjects as JavaScript functions in a shared `use` file (section 8). Session figures are separate, host-staged resources; CSV examples below require an explicitly supplied CSV.
+The host can stage one approved session app as `libs/app.js` (see “Running an approved session app” below). Define drawn subjects as JavaScript functions in a shared `use` file (section 8). Session figures and CSV inputs must be explicitly supplied. Omit calls to `k.svg`, `k.image`, `k.asset`, `k.subject` or `k.anchor` for unstaged resources.
 
 **Authoring requirements:**
 
@@ -15,7 +15,7 @@ The current application does not stage custom libraries, an animation asset dire
 - **Colours:** use the packaged palette and its tint/shade families.
 - **Frame:** keep content within the panel except for intentional camera cropping. Leave room for captions, labels and margins.
 
-These are visual requirements, not a promise of automatic visual certification. The runtime validates source structure, cues and JavaScript syntax; review the rendered result for layout, motion and factual accuracy.
+The desktop app seeks through the live HTML player to check the drawings. A correction can identify a pair of overlapping labels, a clipped shape or a bad cue. Keep the source evidence and fix the reported element at the specified time.
 
 ## The style standard: fixed for every video
 
@@ -190,6 +190,7 @@ Every shape takes an options object `o`:
 | `k.stamp(str, x, y, p, o)`                            | ✓/✕ verdict popping in as `p` goes 0→1, **centred on x**. `o.tone` is `good` or `bad`. Keep it short (≤ 24 characters).                                                                                                                                                                                                                                               |
 | `k.gauge(x, y, w, h, value01, o)`                     | bar gauge. `o.tone`, `o.label`, `o.vertical`                                                                                                                                                                                                                                                                                                                          |
 | `k.readouts(x, y, [[label, value, tone?], ...], o)`   | live readouts: `data`-style values, each **above** its label (design system rule). Returns the height used.                                                                                                                                                                                                                                                           |
+| `k.readoutCard(x, y, w, rows, o)`                     | Sizes a card around its rows of readouts; use `o.pad`, `o.gap` or `o.eyebrow`. Returns its box.                                                                                                                                                                                                                                                                       |
 | `k.bars(x, y, w, [{label, value, display, tone}], o)` | small comparison bars (result vs limit, ours vs baseline). Each bar's length is `value / o.max`, multiplied by `o.p` (0→1) for the grow-in; for bars that appear at different times, call `k.bars` once per bar with its own `p`. `o.max` sets the full-width value, `o.height` the bar thickness (32). Each bar uses about 86 px of height. Returns the height used. |
 
 **Layout:**
@@ -496,3 +497,7 @@ drawTank(k, k.lerp(0.8, 0.2, k.seg('0', '0.end')))
 ```
 
 Treat this example as schematic, not a measured result. Give real subjects a recognizable silhouette, coherent proportions, contextual background and contact shadow. Model their meaningful states as function parameters so the same subject remains consistent across scenes. Keep scientific quantities grounded in the supplied source.
+
+## Running an approved session app
+
+When the host supplies `source.sessionApp` and the spec lists `libs/app.js`, the offline player exposes the app's actual exports as `window.APP`, its modules by path as `APP.modules`, and its vendored packages as `APP.packages`. Use the supplied API signatures. Keep one renderer and world across panels. Drive the simulation with fixed steps on `k.t`, resetting on backward seeks or a change of `k.scene`. Disable the app's render loop. For WebGL use `preserveDrawingBuffer: true` and draw the renderer canvas into `k.ctx` at the panel size. Use the app's own views and put labels outside the moving picture. Give charts or tables a supporting panel.

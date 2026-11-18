@@ -288,10 +288,10 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
 
     expect(owner.toProviderView(openai).models).toEqual(
-      expect.arrayContaining(['gpt-6-sol', 'gpt-6-luna'])
+      expect.arrayContaining(['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6-sol', 'gpt-6-luna'])
     )
     expect(owner.toProviderView(codex).models).toEqual(
-      expect.arrayContaining(['gpt-6-sol', 'gpt-6-luna'])
+      expect.arrayContaining(['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6-sol', 'gpt-6-luna'])
     )
   })
 
@@ -306,7 +306,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
         name: 'OpenAI',
         apiEndpoints: ['responses']
       }
-      const model = 'gpt-6.1-sol'
+      const model = 'gpt-6.2-sol'
 
       expect(owner.toProviderView(provider).models).toContain(model)
       expect(owner.resolveActiveModel(provider)).toBe(type === 'official' ? model : undefined)

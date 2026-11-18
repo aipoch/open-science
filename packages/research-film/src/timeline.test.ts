@@ -34,6 +34,24 @@ describe('research video timeline', () => {
         'Scene veil'
       )
   })
+  it('gives the ending its own space and time to finish the logo animation', () => {
+    const story = {
+      scenes: [
+        {
+          ...spec.scenes[0],
+          role: 'outro',
+          panels: [...spec.scenes[0].panels, { type: 'end_card', at: 'end-0.1' }]
+        }
+      ]
+    }
+    const {
+      scenes: [scene]
+    } = buildVideoTimeline(story, voices)
+    const [report, card] = scene.panels
+    expect(report.t_out).toBe(card.occ_from)
+    expect(card.t_in).toBe(card.occ_from)
+    expect(scene.dur - card.t_in).toBeCloseTo(5)
+  })
   it('pins quantitative reveals to the corresponding spoken caption word', () => {
     const result = buildVideoTimeline(spec, voices)
     expect(result.duration).toBe(5.3)
@@ -45,6 +63,27 @@ describe('research video timeline', () => {
   it('requires voice for production and makes estimation opt-in', () => {
     expect(() => buildVideoTimeline(spec, {})).toThrow('Missing narration')
     expect(buildVideoTimeline(spec, {}, true).scenes[0].lines[0].voiced).toBe(false)
+  })
+  it('keeps hyphenated cue words distinct from positive and negative timing offsets', () => {
+    const scene = buildVideoTimeline(
+      {
+        scenes: [
+          {
+            ...spec.scenes[0],
+            panels: [],
+            lines: [{ caption: 'Compare 2-opt with nearest-neighbor.' }]
+          }
+        ]
+      },
+      {},
+      true
+    ).scenes[0]
+    const start = scene.lines[0].words[1][1]
+    expect(resolveVideoCue('0:2-opt', scene)).toBe(start)
+    expect(resolveVideoCue('0:2-opt-0.2', scene)).toBeCloseTo(start - 0.2)
+    expect(resolveVideoCue('0:nearest-neighbor+0.1', scene)).toBeCloseTo(
+      scene.lines[0].words[3][1] + 0.1
+    )
   })
   it('rejects unknown cues and invalid measured alignment', () => {
     const result = buildVideoTimeline(spec, voices)
