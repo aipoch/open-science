@@ -332,6 +332,7 @@ export class LiteratureComparisons {
             state: table.state,
             issue: table.issue,
             revision: table.revision,
+            inFlight: this.inFlightAdmissions.has(table.id),
             memberCount: table.members.length,
             total: table.cells.length,
             pending: table.cells.filter((cell) => cell.status === 'pending').length,

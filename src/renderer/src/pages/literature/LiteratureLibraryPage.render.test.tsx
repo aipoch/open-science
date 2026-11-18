@@ -3601,41 +3601,48 @@ describe('LiteratureLibraryPage', () => {
   )
 
   it('keeps a failed comparison deletion visible for retry and disables deletion during extraction', async () => {
-    const table: ComparisonTable = {
+    const table = {
       id: 'delete-failure',
       name: 'Retry deletion',
-      language: 'en',
-      sourcePolicy: 'abstract',
-      revision: 1,
-      fields: [],
-      members: [],
-      itemIds: [],
-      state: 'paused',
-      remainingCellIds: [],
-      cells: [
-        { id: 'stale-running', itemId: 'paper', fieldId: 'field', status: 'running', history: [] }
-      ]
+      state: 'paused' as const,
+      memberCount: 1,
+      total: 1,
+      pending: 0,
+      running: 1,
+      succeeded: 0,
+      failed: 0,
+      unavailable: 0,
+      pendingItemIds: [],
+      inFlight: false
     }
     const running = {
       ...table,
-      id: 'running-comparison',
+      id: 'running',
       name: 'Running comparison',
       state: 'running' as const
     }
+    const draining = { ...table, id: 'draining', name: 'Finishing comparison', inFlight: true }
     const pending = Promise.withResolvers<{ tables: ComparisonTable[] }>()
     const comparisons = vi.mocked(window.api.literature.comparisons)
     comparisons.mockImplementation(async (request) =>
-      request.action === 'delete' ? pending.promise : { tables: [table, running] }
+      request.action === 'delete'
+        ? pending.promise
+        : {
+            tables: [],
+            summaries: [table, running, draining]
+          }
     )
     render(<LiteratureLibraryPage />)
     await screen.findByRole('button', { name: table.name })
-    const menu = comparisonMenu(running.name)
-    expect(
-      within(menu)
-        .getByRole('menuitem', { name: `Delete comparison table: ${running.name}` })
-        .getAttribute('aria-disabled')
-    ).toBe('true')
-    fireEvent.keyDown(menu, { key: 'Escape' })
+    for (const busy of [running, draining]) {
+      const menu = comparisonMenu(busy.name)
+      expect(
+        within(menu)
+          .getByRole('menuitem', { name: `Delete comparison table: ${busy.name}` })
+          .getAttribute('aria-disabled')
+      ).toBe('true')
+      fireEvent.keyDown(menu, { key: 'Escape' })
+    }
     fireEvent.click(
       within(comparisonMenu(table.name)).getByRole('menuitem', {
         name: `Delete comparison table: ${table.name}`
@@ -3697,8 +3704,22 @@ describe('LiteratureLibraryPage', () => {
     vi.mocked(window.api.literature.comparisons).mockImplementation(async (request) =>
       request.action === 'read-cell' ? { tables: [], cell: table.cells[0] } : { tables: [table] }
     )
+    const collection = {
+      id: 'saved-papers',
+      name: 'Saved papers',
+      itemCount: 1,
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    search.mockImplementation(async ({ scope }) => ({
+      entries: scope === 'collections' ? [collection] : []
+    }))
     render(<LiteratureLibraryPage />)
     const tableEntry = await screen.findByRole('button', { name: table.name })
+    const collectionEntry = await screen.findByRole('button', { name: collection.name })
+    fireEvent.click(collectionEntry)
+    expect(collectionEntry.getAttribute('aria-current')).toBe('page')
     fireEvent.click(tableEntry)
     const region = await screen.findByRole('region', { name: 'Comparison tables' })
     const matrix = await within(region).findByRole('table', { name: 'Comparison matrix' })
@@ -3706,6 +3727,8 @@ describe('LiteratureLibraryPage', () => {
     expect(matrix.closest('[role="dialog"]')).toBeNull()
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(tableEntry.getAttribute('aria-current')).toBe('page')
+    expect(collectionEntry.hasAttribute('aria-current')).toBe(false)
+    expect(collectionEntry.classList.contains('bg-bg-300')).toBe(false)
     expect(tableEntry.className).toContain('bg-bg-300')
     const allReferences = within(
       screen.getByRole('navigation', { name: 'Literature library' })

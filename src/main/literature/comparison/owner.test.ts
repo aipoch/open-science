@@ -2186,10 +2186,12 @@ it('rejects deletion while extraction is in flight, including after pause', asyn
     await expect(f.owner.run({ action: 'delete', tableId: f.table.id })).rejects.toThrow(
       'comparison-busy'
     )
+    expect((await f.owner.run({ action: 'list' })).summaries?.[0].inFlight).toBe(true)
     blocked.resolve(ready())
     await vi.waitFor(async () =>
       expect((await f.read()).cells.some((cell) => cell.status === 'running')).toBe(false)
     )
+    expect((await f.owner.run({ action: 'list' })).summaries?.[0].inFlight).toBe(false)
     await f.owner.run({ action: 'delete', tableId: f.table.id })
     expect((await f.owner.run({ action: 'list' })).summaries).toEqual([])
   } finally {

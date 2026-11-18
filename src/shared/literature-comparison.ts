@@ -236,6 +236,7 @@ export const comparisonTableSummarySchema = comparisonTableSchema
   })
   .extend({
     revision: z.number().int().min(1).optional(),
+    inFlight: z.boolean().optional(),
     memberCount: z.number().int().min(0).max(100),
     total: z.number().int().min(0).max(1200),
     pending: z.number().int().min(0).max(1200),

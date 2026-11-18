@@ -114,6 +114,14 @@ export function LiteratureLibrarySidebar({
     openJournals,
     openCitationStyles
   } = navigation
+  const activeCollectionId =
+    !comparisons?.selectedId &&
+    !citationStylesOpen &&
+    !journalsOpen &&
+    !duplicatesOpen &&
+    section === 'library'
+      ? collectionId
+      : undefined
   const { inboxPendingCount, libraryCountRevision, projectItemCounts, duplicateCountRef } = counts
   return (
     <LiteratureSidebarState>
@@ -417,7 +425,7 @@ export function LiteratureLibrarySidebar({
                     </LiteratureSidebarHint>
                   }
                   navButtonClassName={navButtonClassName}
-                  selectedId={duplicatesOpen ? undefined : collectionId}
+                  selectedId={activeCollectionId}
                   showAllLabel={t('Show all collections')}
                   showAllText={t('Show all')}
                   showFewerLabel={t('Show fewer collections')}
@@ -432,20 +440,9 @@ export function LiteratureLibrarySidebar({
                         type="button"
                         className={cn(
                           navButtonClassName,
-                          !duplicatesOpen &&
-                            collectionId === collection.id &&
-                            'bg-bg-300 font-medium'
+                          activeCollectionId === collection.id && 'bg-bg-300 font-medium'
                         )}
-                        aria-current={
-                          !comparisons?.selectedId &&
-                          !citationStylesOpen &&
-                          !journalsOpen &&
-                          !duplicatesOpen &&
-                          section === 'library' &&
-                          collectionId === collection.id
-                            ? 'page'
-                            : undefined
-                        }
+                        aria-current={activeCollectionId === collection.id ? 'page' : undefined}
                         aria-label={collection.name}
                         onClick={() => selectLibrary(collection.id)}
                       >
@@ -577,11 +574,13 @@ export function LiteratureLibrarySidebar({
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 className="gap-2 text-destructive"
-                                disabled={table.state === 'running'}
+                                disabled={table.state === 'running' || table.inFlight}
                                 title={
                                   table.state === 'running'
                                     ? t('Pause extraction before deleting this table.')
-                                    : undefined
+                                    : table.inFlight
+                                      ? t('Saving…')
+                                      : undefined
                                 }
                                 aria-label={t('Delete comparison table: {{name}}', {
                                   name: table.name
