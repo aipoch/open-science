@@ -2084,7 +2084,7 @@ it('shows loaded papers beside the graph, retries within their group and restore
   expect(screen.getByRole('button', { name: 'Select Paper c' }).getAttribute('aria-pressed')).toBe(
     'true'
   )
-  fireEvent.click(screen.getByRole('button', { name: 'Paper list' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Back to list' }))
   expect(scroll.scrollTop).toBe(220)
   expect(related).toHaveBeenCalledTimes(4)
   expect(transact).not.toHaveBeenCalled()
@@ -2099,7 +2099,7 @@ it('discloses the paper list separately and returns to selected details without 
   render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Select Paper b' }))
   const details = screen.getByRole('region', { name: 'Selected paper' })
-  const listToggle = within(details).getByRole('button', { name: 'Paper list' })
+  const listToggle = within(details).getByRole('button', { name: 'Back to list' })
   expect(listToggle.getAttribute('aria-expanded')).toBe('false')
   fireEvent.click(listToggle)
   expect(listToggle.getAttribute('aria-expanded')).toBe('true')

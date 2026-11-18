@@ -1,7 +1,7 @@
 import { CitationAbstract } from './LiteratureDetailText'
 import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { List, Inbox, FileText } from 'lucide-react'
+import { ArrowLeft, Inbox, FileText } from 'lucide-react'
 import { Tabs } from 'radix-ui'
 import { Button } from '@/components/ui/button'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
@@ -195,28 +195,17 @@ export function LiteratureCitationInspector({
       }
     >
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border-300 px-2">
-        <h3 className="min-w-0 flex-1 truncate px-1 text-sm font-medium">
-          {listOpen ? t('Paper list') : t('Selected paper')}
-        </h3>
-        {expanded && onOpenInbox ? (
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={t('Open Inbox')}
-            title={t('Open Inbox')}
-            disabled={saving}
-            onClick={onOpenInbox}
-          >
-            <Inbox className="size-4" aria-hidden="true" />
-          </Button>
+        {listOpen ? (
+          <h3 className="min-w-0 flex-1 truncate px-1 text-sm font-medium">{t('Paper list')}</h3>
         ) : null}
         {expanded && graph ? (
           <Button
-            size="icon-sm"
+            size={listOpen ? 'icon-sm' : 'sm'}
+            className={listOpen ? undefined : 'mr-auto min-w-0'}
             variant={listOpen ? 'secondary' : 'ghost'}
             data-citation-paper-list-toggle
-            aria-label={listOpen ? t('Selected paper') : t('Paper list')}
-            title={listOpen ? t('Selected paper') : t('Paper list')}
+            aria-label={listOpen ? t('Selected paper') : t('Back to list')}
+            title={listOpen ? t('Selected paper') : t('Back to list')}
             aria-expanded={listOpen}
             aria-controls={`${marker}-paper-list`}
             onClick={() => {
@@ -227,8 +216,23 @@ export function LiteratureCitationInspector({
             {listOpen ? (
               <FileText className="size-4" aria-hidden="true" />
             ) : (
-              <List className="size-4" aria-hidden="true" />
+              <>
+                <ArrowLeft className="size-4" aria-hidden="true" />
+                <span className="truncate">{t('Back to list')}</span>
+              </>
             )}
+          </Button>
+        ) : null}
+        {expanded && onOpenInbox ? (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={t('Open Inbox')}
+            title={t('Open Inbox')}
+            disabled={saving}
+            onClick={onOpenInbox}
+          >
+            <Inbox className="size-4" aria-hidden="true" />
           </Button>
         ) : null}
       </div>

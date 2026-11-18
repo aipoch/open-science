@@ -311,6 +311,7 @@ export async function verifyCitationDesktopLayout(page: Page): Promise<void> {
     expect(box.x + box.width).toBeLessThanOrEqual(panelBox.x + panelBox.width)
   }
   await expectNoHorizontalOverflow(page)
+  await expect(list).toHaveText('Back to list')
   await list.click()
   await expect(list).toHaveAttribute('aria-expanded', 'true')
   const listedPaper = inspector.locator('ol button').filter({ hasText: paperTitle(1100) })
