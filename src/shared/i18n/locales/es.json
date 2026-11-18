@@ -8412,6 +8412,7 @@
     "Open the affected project to retry or manage its Notebook resources.": "Abra el proyecto afectado para reintentar o gestionar sus recursos de Notebook.",
     "Open reproducibility checks": "Abrir comprobaciones de reproducibilidad",
     "Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.": "Vuelva a comprobar la memoria y reconsidere el trabajo bloqueado de Notebook. Conserve los resultados completados y pregunte antes de repetir pasos completados.",
+    "Return to the conversation branch where Notebook execution stopped before continuing.": "Antes de continuar, vuelva a la rama de la conversación en la que se detuvo la ejecución de Notebook.",
     "Notebook continuation could not be started. The previous request remains stopped.": "No se pudo iniciar la continuación de Notebook. La solicitud anterior permanece detenida.",
     "Notebook continuation is unavailable. Update the application before retrying.": "La continuación de Notebook no está disponible. Actualice la aplicación antes de reintentar.",
     "Notebook resources": "Recursos de Notebook",

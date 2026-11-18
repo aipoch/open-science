@@ -8064,6 +8064,7 @@
     "Open the affected project to retry or manage its Notebook resources.": "해당 프로젝트를 열어 재시도하거나 Notebook 리소스를 관리하세요.",
     "Open reproducibility checks": "재현성 확인 열기",
     "Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.": "메모리를 다시 확인하고 차단된 Notebook 작업을 재검토하세요. 완료된 결과를 유지하고 완료된 단계를 반복하기 전에 물어보세요.",
+    "Return to the conversation branch where Notebook execution stopped before continuing.": "계속하려면 Notebook 실행이 중단된 대화 분기로 돌아가세요.",
     "Notebook continuation could not be started. The previous request remains stopped.": "Notebook 작업 계속을 시작하지 못했습니다. 이전 요청은 중지된 상태로 유지됩니다.",
     "Notebook continuation is unavailable. Update the application before retrying.": "Notebook 작업 계속을 사용할 수 없습니다. 앱을 업데이트한 후 재시도하세요.",
     "Notebook resources": "Notebook 리소스",

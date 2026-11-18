@@ -8235,6 +8235,7 @@
     "Open the affected project to retry or manage its Notebook resources.": "Öffnen Sie das betroffene Projekt, um es erneut zu versuchen oder dessen Notebook-Ressourcen zu verwalten.",
     "Open reproducibility checks": "Reproduzierbarkeitsprüfungen öffnen",
     "Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.": "Prüfen Sie den Speicher erneut und bewerten Sie die blockierte Notebook-Arbeit neu. Behalten Sie abgeschlossene Ergebnisse bei und fragen Sie vor der Wiederholung abgeschlossener Schritte.",
+    "Return to the conversation branch where Notebook execution stopped before continuing.": "Wechseln Sie vor dem Fortfahren zum Konversationszweig, in dem die Notebook-Ausführung gestoppt wurde.",
     "Notebook continuation could not be started. The previous request remains stopped.": "Die Fortsetzung von Notebook konnte nicht gestartet werden. Die vorherige Anfrage bleibt gestoppt.",
     "Notebook continuation is unavailable. Update the application before retrying.": "Die Fortsetzung von Notebook ist nicht verfügbar. Aktualisieren Sie die Anwendung vor einem neuen Versuch.",
     "Notebook resources": "Notebook-Ressourcen",

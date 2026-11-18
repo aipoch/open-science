@@ -33704,7 +33704,14 @@ it.each(['new', 'resume', 'task', 'schedule', 'schedule-without-origin'] as cons
             {
               sessionId: scope.sessionId,
               text: 'Execute the scheduled Notebook.',
-              ...(promptMessageId ? { provenanceContext: { promptMessageId } } : {}),
+              ...(promptMessageId
+                ? {
+                    provenanceContext: {
+                      promptMessageId,
+                      messageAncestry: ['scheduled-notebook-first', promptMessageId]
+                    }
+                  }
+                : {}),
               permissionPrompts: 'none'
             },
             {
@@ -33777,9 +33784,33 @@ it.each(['new', 'resume', 'task', 'schedule', 'schedule-without-origin'] as cons
         await task.prompt({ ...acceptedTask, text: 'Retry using a changed tool.' })
         expect(promptResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
         expect(execute).toHaveBeenCalledOnce()
+        await expect(
+          runtime.sendPrompt(
+            withNotebookUserOperation(
+              {
+                sessionId: scope.sessionId,
+                text: 'Continue on a different branch.',
+                provenanceContext: { promptMessageId: 'wrong-branch', messageBranchId: 'other' }
+              },
+              {
+                projectId: scope.projectId,
+                refusalId: stopped.refusalId,
+                assertCurrent: () => undefined
+              }
+            )
+          )
+        ).rejects.toThrow('Notebook refusal changed')
+        expect(service.currentExecutionIntent(scope)).toBe(stopped)
         await runtime.sendPrompt(
           withNotebookUserOperation(
-            { sessionId: scope.sessionId, text: 'Explicitly continue a new Notebook execution.' },
+            {
+              sessionId: scope.sessionId,
+              text: 'Explicitly continue a new Notebook execution.',
+              provenanceContext: {
+                promptMessageId: 'continue-task',
+                messageBranchId: 'task-branch'
+              }
+            },
             {
               projectId: scope.projectId,
               refusalId: stopped.refusalId,

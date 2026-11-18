@@ -23,6 +23,7 @@ export type NotebookPendingDecision = {
   projectId: string
   sessionId: string
   refusalId: string
+  messageBranchId?: string
 }
 
 export type NotebookSessionResources = {

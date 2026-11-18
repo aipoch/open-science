@@ -23,6 +23,7 @@ export type NotebookMemoryRejectedEvent = Readonly<{
   source?: string
   inputKind?: string
   refusalId?: string
+  messageBranchId?: string
   terminalTarget?: string
   memory: NotebookMemoryPolicyState
 }>

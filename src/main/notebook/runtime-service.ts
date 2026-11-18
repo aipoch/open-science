@@ -250,6 +250,7 @@ type NotebookMemoryRejectionContext = Pick<NotebookSessionReference, 'projectId'
   source?: string
   inputKind?: string
   refusalId?: string
+  messageBranchId?: string
   terminalTarget?: string
 }
 type NotebookRuntimeServiceCallbacks = NotebookSessionLifecycleCallbacks & {
@@ -637,7 +638,10 @@ class NotebookRuntimeService {
         const refusalId = intent?.block(state.status)
         if (context)
           this.notifyMemoryPolicyRejected(
-            { ...context, ...(refusalId ? { refusalId } : {}) },
+            {
+              ...context,
+              ...(refusalId ? { refusalId, messageBranchId: intent?.scope.messageBranchId } : {})
+            },
             state
           )
       }
@@ -729,7 +733,7 @@ class NotebookRuntimeService {
               source: request.source,
               inputKind: request.inputKind,
               terminalTarget,
-              ...(refusalId ? { refusalId } : {})
+              ...(refusalId ? { refusalId, messageBranchId: intent?.scope.messageBranchId } : {})
             },
             state
           )

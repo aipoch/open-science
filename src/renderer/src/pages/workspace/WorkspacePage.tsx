@@ -1658,6 +1658,7 @@ const WorkspacePage = ({
               sessionId: event.sessionId,
               cwd: event.workspaceCwd,
               refusalId: event.refusalId,
+              messageBranchId: event.messageBranchId,
               text: t(
                 'Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.'
               )

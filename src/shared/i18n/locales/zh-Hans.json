@@ -8066,6 +8066,7 @@
     "Open the affected project to retry or manage its Notebook resources.": "请打开受影响的项目，以重试或管理其 Notebook 资源。",
     "Open reproducibility checks": "打开可复现性检查",
     "Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.": "请重新检查内存并重新评估被阻止的 Notebook 工作。保留已完成的结果，重复已完成步骤前先询问我。",
+    "Return to the conversation branch where Notebook execution stopped before continuing.": "请先返回 Notebook 执行停止时所在的对话分支，再继续。",
     "Notebook continuation could not be started. The previous request remains stopped.": "无法开始继续 Notebook 工作。之前的请求仍已停止。",
     "Notebook continuation is unavailable. Update the application before retrying.": "Notebook 继续执行入口不可用。请先更新应用，再选择重试。",
     "Notebook resources": "Notebook 资源",

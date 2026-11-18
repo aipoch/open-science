@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto'
 import { NotebookExecutionAdmissionError } from './execution-admission'
 import type { notebookExecutionIntentReference } from './execution-model-contract'
 
-export type NotebookExecutionIntentScope = Readonly<{ projectId: string; sessionId: string }>
+export type NotebookExecutionIntentScope = Readonly<{
+  projectId: string
+  sessionId: string
+  messageBranchId?: string
+  promptMessageId?: string
+}>
 export type NotebookExecutionContinuation = NotebookExecutionIntentScope &
   Readonly<{ refusalId: string }>
 
@@ -23,6 +28,23 @@ export class NotebookExecutionIntent {
 
   get refusalId(): string | undefined {
     return this.refusal?.id
+  }
+
+  // A missing origin can inherit only when its admitted conversation contains this grant.
+  forDescendant(context?: {
+    messageBranchId?: string
+    messageAncestry?: readonly string[]
+  }): NotebookExecutionIntent {
+    if (
+      this.refusal ||
+      (this.scope.messageBranchId === context?.messageBranchId &&
+        this.scope.promptMessageId &&
+        context?.messageAncestry?.includes(this.scope.promptMessageId))
+    )
+      return this
+    const stopped = new NotebookExecutionIntent(this.scope)
+    stopped.block('originating-execution-context-unavailable')
+    return stopped
   }
 
   block(reason: string): string {
@@ -152,6 +174,10 @@ export class NotebookExecutionIntentOwner {
   private readonly currentIntents = new Map<string, NotebookExecutionIntent>()
   private readonly origins = new Map<string, WeakRef<NotebookExecutionIntent>>()
 
+  private readonly collectedOrigins = new FinalizationRegistry<string>((key) => {
+    if (!this.origins.get(key)?.deref()) this.origins.delete(key)
+  })
+
   private live(scope: NotebookExecutionIntentScope): Set<WeakRef<NotebookExecutionIntent>> {
     const key = JSON.stringify([scope.projectId, scope.sessionId])
     const refs = this.scopes.get(key) ?? new Set<WeakRef<NotebookExecutionIntent>>()
@@ -195,7 +221,14 @@ export class NotebookExecutionIntentOwner {
     return [...this.currentIntents.entries()].flatMap(([key, intent]) => {
       const [ownerProjectId, sessionId] = JSON.parse(key) as [string, string]
       return ownerProjectId === projectId && intent.refusalId
-        ? [{ projectId, sessionId, refusalId: intent.refusalId }]
+        ? [
+            {
+              projectId,
+              sessionId,
+              refusalId: intent.refusalId,
+              messageBranchId: intent.scope.messageBranchId
+            }
+          ]
         : []
     })
   }
@@ -211,27 +244,22 @@ export class NotebookExecutionIntentOwner {
     intent: NotebookExecutionIntent
   ): void {
     this.register(scope, intent)
-    this.origins.set(
-      JSON.stringify([scope.projectId, scope.sessionId, promptMessageId]),
-      new WeakRef(intent)
-    )
+    const key = JSON.stringify([scope.projectId, scope.sessionId, promptMessageId])
+    const previous = this.origins.get(key)
+    if (previous?.deref() === intent) return
+    if (previous) this.collectedOrigins.unregister(previous)
+    const ref = new WeakRef(intent)
+    this.origins.set(key, ref)
+    this.collectedOrigins.register(intent, key, ref)
   }
 
   resolve(
     scope: NotebookExecutionIntentScope,
     promptMessageId: string
   ): NotebookExecutionIntent | undefined {
-    const key = JSON.stringify([scope.projectId, scope.sessionId, promptMessageId])
-    const ref = this.origins.get(key)
-    if (!ref) return undefined
-    const intent = ref.deref()
-    if (intent) return intent
-    // A previously known origin must never borrow a newer turn's authority after its old
-    // transport/Attempt has been collected. Missing ephemeral authority stays fail-closed.
-    const expired = new NotebookExecutionIntent(scope)
-    expired.block('originating-execution-context-unavailable')
-    this.origins.set(key, new WeakRef(expired))
-    return expired
+    return this.origins
+      .get(JSON.stringify([scope.projectId, scope.sessionId, promptMessageId]))
+      ?.deref()
   }
 
   refused(
@@ -262,7 +290,14 @@ export class NotebookExecutionIntentOwner {
     return [...this.currentIntents.entries()].flatMap(([key, intent]) => {
       if (!affected.has(intent) || !intent.refusalId) return []
       const [projectId, sessionId] = JSON.parse(key) as [string, string]
-      return [{ projectId, sessionId, refusalId: intent.refusalId }]
+      return [
+        {
+          projectId,
+          sessionId,
+          refusalId: intent.refusalId,
+          messageBranchId: intent.scope.messageBranchId
+        }
+      ]
     })
   }
 }

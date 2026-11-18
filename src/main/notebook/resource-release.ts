@@ -135,10 +135,10 @@ export class NotebookResourceReleaseOwner {
       if (!resource.projectId || !resource.sessionId) continue
       const scope = { projectId: resource.projectId, sessionId: resource.sessionId }
       const key = keyFor(scope)
-      const group = grouped.get(key) ?? { scope, resources: [] }
-      if (!group.resources.some((entry) => sameResource(entry, resource)))
+      const group = grouped.get(key)
+      if (!group) grouped.set(key, { scope, resources: [resource] })
+      else if (!group.resources.some((entry) => sameResource(entry, resource)))
         group.resources.push(resource)
-      grouped.set(key, group)
     }
     for (const key of this.confirmations.keys()) {
       const [confirmedProject] = JSON.parse(key) as [string, string]

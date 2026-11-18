@@ -567,6 +567,26 @@ describe('Stop before an existing Session prompt reaches Main', () => {
     expect(JSON.stringify(main.read())).not.toContain('notebookContinuation')
   })
 
+  it('leaves history untouched when a Notebook decision belongs to another branch', async () => {
+    const { main, agent } = await existing()
+    const before = main.read()
+    const continueNotebookExecution = vi.fn()
+    await expect(
+      sendWorkspaceMessage(
+        { ...agent, continueNotebookExecution },
+        {
+          sessionId: 'bound-session',
+          projectId: 'project',
+          text: 'Continue',
+          requireExistingSession: true,
+          notebookContinuation: { refusalId: 'refusal-1', messageBranchId: 'another-branch' }
+        }
+      )
+    ).rejects.toThrow('Return to the conversation branch')
+    expect(main.read()).toEqual(before)
+    expect(continueNotebookExecution).not.toHaveBeenCalled()
+  })
+
   it.each(['prepare', 'flush'] as const)(
     'rolls back an exact unsent preparation after Stop during %s',
     async (phase) => {

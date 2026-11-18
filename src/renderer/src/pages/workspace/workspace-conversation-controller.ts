@@ -159,6 +159,7 @@ type WorkspaceConversationController = {
         sessionId: string
         cwd?: string
         refusalId: string
+        messageBranchId?: string
         text: string
       }) => ReturnType<WorkspaceConversationRuntime['sendMessage']>
     }
@@ -759,7 +760,10 @@ const useWorkspaceConversationController = (
             cwd: intent.cwd,
             requireExistingSession: true,
             preserveSelection: true,
-            notebookContinuation: { refusalId: intent.refusalId },
+            notebookContinuation: {
+              refusalId: intent.refusalId,
+              messageBranchId: intent.messageBranchId
+            },
             text: intent.text
           })
       },

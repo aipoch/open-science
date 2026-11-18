@@ -8066,6 +8066,7 @@
     "Open the affected project to retry or manage its Notebook resources.": "対象のプロジェクトを開き、再試行または Notebook リソースの管理を行ってください。",
     "Open reproducibility checks": "再現性チェックを開く",
     "Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.": "メモリを再確認し、停止された Notebook の作業を再検討してください。完了済みの結果を保持し、完了済みの手順を繰り返す前に確認してください。",
+    "Return to the conversation branch where Notebook execution stopped before continuing.": "続行するには、Notebook の実行が停止した会話の分岐に戻ってください。",
     "Notebook continuation could not be started. The previous request remains stopped.": "Notebook の続行を開始できませんでした。以前のリクエストは停止したままです。",
     "Notebook continuation is unavailable. Update the application before retrying.": "Notebook の続行を利用できません。アプリを更新してから再試行してください。",
     "Notebook resources": "Notebook リソース",

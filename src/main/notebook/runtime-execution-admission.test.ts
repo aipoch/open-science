@@ -5,7 +5,31 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { NotebookRuntimeService } from './runtime-service'
 import type { NotebookExecutionRequest } from './execution-contract'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
-import { withNotebookExecutionIntent, withNotebookUserOperation } from './execution-intent'
+import {
+  NotebookExecutionIntent,
+  withNotebookExecutionIntent,
+  withNotebookUserOperation
+} from './execution-intent'
+
+it('requires the current grant in the same branch ancestry before inheriting a missing origin', () => {
+  const intent = new NotebookExecutionIntent({
+    projectId: 'p',
+    sessionId: 's',
+    messageBranchId: 'a',
+    promptMessageId: 'grant'
+  })
+  expect(intent.forDescendant({ messageBranchId: 'a', messageAncestry: ['grant', 'next'] })).toBe(
+    intent
+  )
+  for (const context of [
+    undefined,
+    { messageBranchId: 'b', messageAncestry: ['grant'] },
+    { messageBranchId: 'a', messageAncestry: ['old'] }
+  ]) {
+    expect(intent.forDescendant(context).refusalId).toBeDefined()
+  }
+  expect(intent.refusalId).toBeUndefined()
+})
 
 let root: string | undefined
 let runtime: NotebookRuntimeService | undefined

@@ -440,7 +440,12 @@ const composeAcpRuntimePromptOwners = (
       prepareNotebookIntent: (request, mode) => {
         const notebook = options.notebook
         if (!notebook) return
-        const scope = { projectId: projectId(request.sessionId), sessionId: request.sessionId }
+        const scope = {
+          projectId: projectId(request.sessionId),
+          sessionId: request.sessionId,
+          messageBranchId: request.provenanceContext?.messageBranchId,
+          promptMessageId: request.provenanceContext?.promptMessageId
+        }
         const current = notebook.currentExecutionIntent
           ? notebook.currentExecutionIntent(scope)
           : base.sessionCapabilities.notebookExecutionIntentFor(request.sessionId)
@@ -458,7 +463,11 @@ const composeAcpRuntimePromptOwners = (
           operation.assertCurrent()
           if (operation.projectId && operation.projectId !== scope.projectId)
             throw new Error('Notebook continuation does not belong to this Project.')
-          if (operation.refusalId && current?.refusalId !== operation.refusalId)
+          if (
+            operation.refusalId &&
+            (current?.refusalId !== operation.refusalId ||
+              current.scope.messageBranchId !== scope.messageBranchId)
+          )
             throw new Error('The Notebook refusal changed. Refresh it before continuing execution.')
           // Ordinary chat may explain a refusal; only the purpose-owned human command creates
           // another executable context after rejection.
@@ -475,11 +484,12 @@ const composeAcpRuntimePromptOwners = (
             !intent &&
             mode.kind === 'application' &&
             mode.attribution.feature === 'schedule' &&
+            !request.provenanceContext?.originMessageId &&
             request.provenanceContext?.promptMessageId
           ) {
             // A trusted scheduled wake keeps the Session's existing execution context, including
             // refusals. Its first context remains pending until the ordinary prompt preparation.
-            intent = current
+            intent = current?.forDescendant(request.provenanceContext)
             if (!intent && notebook.createExecutionIntent) {
               intent = notebook.createExecutionIntent(scope)
               intent.prepareUserExecution()

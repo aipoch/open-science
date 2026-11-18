@@ -62,7 +62,10 @@ const NotebookContinuation = ({
         cwd: session.cwd,
         requireExistingSession: true,
         preserveSelection: true,
-        notebookContinuation: { refusalId: decision.refusalId },
+        notebookContinuation: {
+          refusalId: decision.refusalId,
+          messageBranchId: decision.messageBranchId
+        },
         text: t(
           'Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.'
         )

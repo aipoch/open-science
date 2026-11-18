@@ -112,7 +112,7 @@ type SendWorkspaceMessageIntent = {
   requireExistingSession?: boolean
   turnIntent?: 'plan-first'
   // One human click; consumed only by fresh prompt dispatch and never persisted.
-  notebookContinuation?: { refusalId: string }
+  notebookContinuation?: { refusalId: string; messageBranchId?: string }
   attachments?: UploadedAttachment[]
   annotations?: annotationProtocol.Annotation[]
   cwd?: string
@@ -297,6 +297,19 @@ const promptContext = (
     .getState()
     .sessions.find((item) => item.id === sessionId)?.conversationGraph
   return graph ? getActiveConversationContext(graph, messageId) : { promptMessageId: messageId }
+}
+
+const notebookBranchMatches = (
+  sessionId: string | undefined,
+  branchId: string | undefined
+): boolean => {
+  if (!branchId) return true
+  const graph = useSessionStore
+    .getState()
+    .sessions.find((session) => session.id === sessionId)?.conversationGraph
+  return (
+    graph?.frames.find((frame) => frame.id === graph.activeFrameId)?.activeBranchId === branchId
+  )
 }
 
 const ownsPrompt = (sessionId: string, messageId: string): boolean => {
@@ -1623,6 +1636,14 @@ const performSendWorkspaceMessage = async (
       }
       return undefined
     }
+    if (!notebookBranchMatches(sessionId, input.notebookContinuation?.messageBranchId)) {
+      await rollbackWorkspacePrompt(promptPreparation)
+      throw new Error(
+        i18next.t(
+          'Return to the conversation branch where Notebook execution stopped before continuing.'
+        )
+      )
+    }
     if (input.truncateFromMessageId) {
       useSessionStore
         .getState()
@@ -1736,7 +1757,7 @@ const performSendWorkspaceMessage = async (
         turnIntent: input.turnIntent,
         notebookContinuation:
           input.notebookContinuation && projectId
-            ? { ...input.notebookContinuation, projectId }
+            ? { refusalId: input.notebookContinuation.refusalId, projectId }
             : undefined,
         onPromptAccepted: input.onPromptAccepted,
         accepted: () => prepared.acceptPrompt(appended.messageId),
@@ -1896,6 +1917,13 @@ const sendWorkspaceMessage = async (
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const sessionId = input.sessionId
   const previousSession = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
+  if (!notebookBranchMatches(sessionId, input.notebookContinuation?.messageBranchId)) {
+    throw new Error(
+      i18next.t(
+        'Return to the conversation branch where Notebook execution stopped before continuing.'
+      )
+    )
+  }
   if (
     input.notebookContinuation &&
     (!previousSession ||

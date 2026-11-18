@@ -1623,13 +1623,17 @@ class AcpRuntime {
     if (!notebook) return request
     const scope = {
       projectId: this.sessionEnvironment.projectId(request.sessionId),
-      sessionId: request.sessionId
+      sessionId: request.sessionId,
+      messageBranchId: request.provenanceContext?.messageBranchId,
+      promptMessageId: request.provenanceContext?.promptMessageId
     }
     const origin = request.provenanceContext?.promptMessageId
     let intent = origin ? notebook.resolveExecutionIntent?.(scope, origin) : undefined
-    intent ??= notebook.currentExecutionIntent
-      ? notebook.currentExecutionIntent(scope)
-      : this.sessionCapabilities.notebookExecutionIntentFor(request.sessionId)
+    intent ??= (
+      notebook.currentExecutionIntent
+        ? notebook.currentExecutionIntent(scope)
+        : this.sessionCapabilities.notebookExecutionIntentFor(request.sessionId)
+    )?.forDescendant(request.provenanceContext)
     if (!intent && origin && notebook.createExecutionIntent) {
       // TaskRunner has accepted this exact first root under its Session reservation. Generic
       // resume, application prompts and later roots cannot replace an existing refused context.
