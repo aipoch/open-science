@@ -147,9 +147,9 @@ describe('citation discovery session safeguards', () => {
   it('refreshes reopened roots after absolute expiry or metadata changes', async () => {
     const { finder, fetcher, catalog, advance } = fixture()
     const root = await finder.run(request)
-    advance(14 * 60_000)
+    advance(23 * 60 * 60_000)
     expect((await finder.run(request)).resolutionToken).toBe(root.resolutionToken)
-    advance(60_000)
+    advance(60 * 60_000)
     const fresh = await finder.run(request)
     expect(fresh.resolutionToken).not.toBe(root.resolutionToken)
     expect(fetcher).toHaveBeenCalledTimes(4)
@@ -352,10 +352,10 @@ describe('citation discovery session safeguards', () => {
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
 
-  it('expires a token after fifteen minutes without restarting root resolution', async () => {
+  it('expires a token after twenty-four hours without restarting root resolution', async () => {
     const { finder, advance, fetcher } = fixture()
     const root = await finder.run(request)
-    advance(15 * 60_000)
+    advance(24 * 60 * 60_000)
     expect(await finder.run({ ...request, resolutionToken: root.resolutionToken })).toMatchObject({
       issue: 'expired'
     })

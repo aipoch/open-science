@@ -122,6 +122,7 @@ type Resolution = {
   >
   expires: number
 }
+const resolutionLifetimeMs = 24 * 60 * 60_000
 const maxDiscoveredRecords = 2000
 export class LiteratureRelatedFinder {
   private readonly resolutions = new Map<string, Resolution>()
@@ -480,7 +481,7 @@ export class LiteratureRelatedFinder {
             opencitationsReferences: undefined,
             opencitationsIndexSnapshots: undefined,
             discovered: new Map(),
-            expires: Date.now() + 15 * 60_000
+            expires: Date.now() + resolutionLifetimeMs
           }
           token = randomUUID()
           publish = true
@@ -521,7 +522,7 @@ export class LiteratureRelatedFinder {
               provider === 'opencitations' ? (request.opencitationsMode ?? 'skg-if') : undefined,
             provider,
             discovered: new Map(),
-            expires: Date.now() + 15 * 60_000
+            expires: Date.now() + resolutionLifetimeMs
           }
           Object.assign(result, await this.page(candidate, request, attemptSignal))
           await check()

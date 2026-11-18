@@ -130,7 +130,7 @@ record must be fetched again before becoming a seed. Expired tokens require a fr
 Requests use fixed HTTPS origins, one-request-per-second admission per provider, responses bounded
 to 2 MiB, and a single 30-second deadline. Caller cancellation and changed root references stop
 the lookup. HTTP 429 respects a capped Retry-After cooldown. Up to 200
-resolution tokens remain in memory and expire after 15 minutes. Each session caches its ten most
+resolution tokens remain in memory and expire after 24 hours. Each session caches its ten most
 recent successful pages, keyed by direction and offset. Reopened views reuse the original root
 session only when item ID, metadata revision, provider and source mode match. Cache hits still
 validate the saved root and caller cancellation. Reads do not extend expiry; failures are not
