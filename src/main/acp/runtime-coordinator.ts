@@ -2261,6 +2261,10 @@ class AcpRuntimeCoordinator {
     await this.retireRuntimeGenerations(this.runtimes, 'shell-capabilities')
   }
 
+  async requestImageCapabilityRefresh(): Promise<void> {
+    await this.retireRuntimeGenerations(this.runtimes, 'image-capabilities')
+  }
+
   async requestProjectAgentContextReload(projectId: string): Promise<void> {
     // Context is captured during Session setup. Shared generations still retire together,
     // but generations serving only unrelated Projects can keep their Sessions connected.

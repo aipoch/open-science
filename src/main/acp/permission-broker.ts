@@ -29,6 +29,7 @@ import {
   type PermissionDiagnostic
 } from '../permission-grants/diagnostics'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import { IMAGE_MCP_TOOL_IDENTITIES } from './auto-operation-policy'
 import {
   isManagedSkillPermission,
   isMcpToolName,
@@ -639,7 +640,8 @@ const resolveCategoryKey = (
           resolveLegacyClaudeMcpIdentity(toolCall.title))
         : undefined)
 
-    if (!identity) return undefined
+    // Ask confirms each new image request. Keep any prior grants stored so nothing is deleted.
+    if (!identity || IMAGE_MCP_TOOL_IDENTITIES.has(identity)) return undefined
 
     const notebookContext =
       (trustedIdentity

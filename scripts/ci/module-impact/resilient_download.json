@@ -12,14 +12,17 @@
     "packages/resilient-download/src/types.ts",
     "packages/resilient-download/test/transport.mjs",
     "packages/resilient-download/tsc.cjs",
-    "packages/resilient-download/vitest.config.ts"
+    "packages/resilient-download/vitest.config.ts",
+    "packages/resilient-download/src/public-https.ts",
+    "packages/resilient-download/src/public-https.test.ts"
   ],
   "interfacePaths": [
     "packages/resilient-download/src/index.ts",
     "packages/resilient-download/src/types.ts",
     "packages/resilient-download/src/errors.ts",
     "packages/resilient-download/src/download-speed.ts",
-    "packages/resilient-download/test/transport.mjs"
+    "packages/resilient-download/test/transport.mjs",
+    "packages/resilient-download/src/public-https.ts"
   ],
   "consumerModules": [
     "main_update",
@@ -36,7 +39,8 @@
     "owner": [
       "packages/resilient-download/src/download-speed.test.ts",
       "packages/resilient-download/src/resilient-download.test.ts",
-      "packages/resilient-download/src/transport.test.ts"
+      "packages/resilient-download/src/transport.test.ts",
+      "packages/resilient-download/src/public-https.test.ts"
     ],
     "contract": [
       "src/main/notebook/environment-download.contract.test.ts",
@@ -1103,5 +1107,6 @@
     "windows_sensitive",
     "notebook_network_sandbox"
   ],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Public HTTPS request policy adds a network security interface; retain complete CI validation until its consumers and boundary are reviewed."
 }

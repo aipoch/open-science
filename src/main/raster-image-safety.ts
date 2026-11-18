@@ -11,12 +11,10 @@ const JPEG_START_OF_FRAME_MARKERS = new Set([
 // (image-orientation: from-image), so a phone-shot JPEG's displayed size is the SOF size swapped.
 const EXIF_TRANSPOSE_ORIENTATIONS = new Set([5, 6, 7, 8])
 
-// Parses the orientation tag (0x0112) out of an APP1 'Exif\0\0' payload. Any structural
-// oddity degrades to undefined — orientation is a refinement, never worth failing over.
+// PNG stores the TIFF payload without the EXIF identifier used in JPEG and some WebP files.
 const readExifOrientation = (segment: Buffer): number | undefined => {
-  if (segment.length < 14 || segment.toString('latin1', 0, 6) !== 'Exif\0\0') return undefined
   // TIFF header: byte order ('II'/'MM'), magic 42, then the offset of IFD0 relative to it.
-  const tiff = segment.subarray(6)
+  const tiff = segment.toString('latin1', 0, 6) === 'Exif\0\0' ? segment.subarray(6) : segment
   const order = tiff.toString('latin1', 0, 2)
   const readU16 =
     order === 'II'
@@ -86,7 +84,11 @@ const readJpegDimensions = (bytes: Buffer): RasterImageDimensions | undefined =>
 
     const segmentLength = bytes.readUInt16BE(offset)
     if (segmentLength < 2 || offset + segmentLength > bytes.length) return undefined
-    if (marker === 0xe1 && orientation === undefined) {
+    if (
+      marker === 0xe1 &&
+      orientation === undefined &&
+      bytes.toString('latin1', offset + 2, offset + 8) === 'Exif\0\0'
+    ) {
       orientation = readExifOrientation(bytes.subarray(offset + 2, offset + segmentLength))
     }
     if (JPEG_START_OF_FRAME_MARKERS.has(marker)) {
@@ -160,6 +162,45 @@ export const readRasterImageDimensions = (
   if (mimeType === 'image/jpeg') return readJpegDimensions(bytes)
   if (mimeType === 'image/gif') return readGifDimensions(bytes)
   return readWebpDimensions(bytes)
+}
+
+export async function readRasterPreviewDimensions(
+  header: Buffer,
+  mimeType: RasterImageMimeType,
+  size: number,
+  read: (length: number, offset: number) => Promise<Buffer>
+): Promise<(RasterImageDimensions & { requiresOrientation?: true }) | undefined> {
+  const dimensions = readRasterImageDimensions(header, mimeType)
+  if (!dimensions) return undefined
+  const png = mimeType === 'image/png'
+  const webpWithExif =
+    mimeType === 'image/webp' &&
+    header.toString('ascii', 12, 16) === 'VP8X' &&
+    Boolean(header[20] & 0x08)
+  if (!png && !webpWithExif) return dimensions
+
+  const peek = (offset: number, length: number): Buffer | Promise<Buffer> =>
+    offset + length <= header.length
+      ? header.subarray(offset, offset + length)
+      : read(length, offset)
+  // Skip image data by its chunk length. EXIF in WebP normally follows the compressed pixels.
+  let offset = png ? 33 : 12
+  for (let count = 0; count < 128 && offset + 8 <= size; count += 1) {
+    const chunk = await peek(offset, 8)
+    const tag = png ? chunk.toString('ascii', 4, 8) : chunk.toString('ascii', 0, 4)
+    const length = png ? chunk.readUInt32BE(0) : chunk.readUInt32LE(4)
+    const next = offset + 8 + length + (png ? 4 : length % 2)
+    if (next > size || (png && (tag === 'IDAT' || tag === 'IEND'))) break
+    if (tag === (png ? 'eXIf' : 'EXIF')) {
+      const orientation = readExifOrientation(await peek(offset + 8, Math.min(length, 65536)))
+      if (orientation === undefined || orientation === 1) return dimensions
+      return EXIF_TRANSPOSE_ORIENTATIONS.has(orientation)
+        ? { width: dimensions.height, height: dimensions.width, requiresOrientation: true }
+        : { ...dimensions, requiresOrientation: true }
+    }
+    offset = next
+  }
+  return dimensions
 }
 
 export const exceedsDecodedImagePixelLimit = (

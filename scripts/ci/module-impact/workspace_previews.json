@@ -278,7 +278,19 @@
     "src/renderer/src/pages/workspace/annotations/pptx-annotation-source.test.ts",
     "src/renderer/src/pages/workspace/annotations/pptx-annotation-source.ts",
     "src/renderer/src/pages/workspace/annotations/pptx-slide-annotation.ts",
-    "src/renderer/src/pages/workspace/previews/renderers/PptxAnnotatedPreview.tsx"
+    "src/renderer/src/pages/workspace/previews/renderers/PptxAnnotatedPreview.tsx",
+    "src/renderer/src/pages/workspace/image-edit/ImageEditCandidate.tsx",
+    "src/renderer/src/pages/workspace/image-edit/ImageEditCanvas.tsx",
+    "src/renderer/src/pages/workspace/image-edit/ImageEditComparison.tsx",
+    "src/renderer/src/pages/workspace/ProjectFileMentionButton.tsx",
+    "src/renderer/src/pages/workspace/image-edit/ImageEditHistory.tsx",
+    "src/renderer/src/pages/workspace/image-edit/ImageHistoryCanvas.tsx",
+    "src/renderer/src/pages/workspace/image-edit/ImageEditParameters.tsx",
+    "src/renderer/src/pages/workspace/image-edit/ImageEditingProvider.tsx",
+    "src/renderer/src/pages/workspace/image-edit/ImageEditor.test.tsx",
+    "src/renderer/src/pages/workspace/image-edit/ImageEditor.tsx",
+    "src/renderer/src/pages/workspace/image-edit/image-editor-state.ts",
+    "src/renderer/src/pages/workspace/image-edit/image-edit-context.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/previews/PreviewFallback.tsx",
@@ -410,7 +422,8 @@
       "src/renderer/src/pages/workspace/previews/pptx-version-labels.test.ts",
       "src/renderer/src/pages/workspace/previews/use-pptx-draft-preview.test.tsx",
       "src/renderer/src/pages/workspace/previews/use-pptx-draft.test.tsx",
-      "src/renderer/src/pages/workspace/previews/use-pptx-edit-session.test.ts"
+      "src/renderer/src/pages/workspace/previews/use-pptx-edit-session.test.ts",
+      "src/renderer/src/pages/workspace/image-edit/ImageEditor.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

@@ -44,6 +44,7 @@ import {
 } from '../../shared/skill-import'
 import { requestSkillImportToolSchema } from '../skills/mcp-server'
 import type { ResponsesNamespacedTool } from '@aipoch/providers/protocol'
+import { IMAGE_MCP_SERVER_NAME, imageMcpToolDefinitions } from '../image-model/mcp-server'
 import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
 import { proposePptxOperationsInput, readPptxOutlineInput } from '../pptx-edit/agent-tools'
 import {
@@ -311,6 +312,8 @@ export const createCodexBridgeMcpTools = (options: {
   literature?: boolean | { elements?: boolean; annotations?: boolean }
   artifacts?: boolean
   pptx?: boolean
+  images?: boolean
+  imagePresetId?: string
 }): ResponsesNamespacedTool[] => {
   const tools = [
     ...(options.schedules
@@ -325,6 +328,19 @@ export const createCodexBridgeMcpTools = (options: {
       : []),
     ...(options.artifacts ? ARTIFACT_TOOLS : []),
     ...(options.pptx ? PPTX_TOOLS : []),
+    ...(options.images
+      ? Object.entries(imageMcpToolDefinitions(options.imagePresetId)).map(
+          ([name, definition]) => ({
+            namespace: namespaceFor(IMAGE_MCP_SERVER_NAME),
+            name,
+            description: definition.description,
+            parameters: z.toJSONSchema(z.object(definition.inputSchema), {
+              target: 'draft-7',
+              io: 'input'
+            }) as ResponsesNamespacedTool['parameters']
+          })
+        )
+      : []),
     ...(options.notebook ? notebookTools(options.notebook) : []),
     ...(options.skillImport ? SKILL_IMPORT_TOOLS : []),
     ...(options.library
@@ -337,6 +353,7 @@ export const createCodexBridgeMcpTools = (options: {
   return tools
 }
 
+// Image tools require a mounted Session capability and must not enter the global fallback.
 export const codexBridgeStaticMcpTools = (): ResponsesNamespacedTool[] =>
   createCodexBridgeMcpTools({
     notebook: { memoryTools: false, wslSetupTools: false },

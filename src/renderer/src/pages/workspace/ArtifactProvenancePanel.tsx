@@ -1,3 +1,4 @@
+import { WorkspaceImageToolCard } from './WorkspaceImageToolCard'
 import { ErrorNotice } from '@/components/error-notice'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useSessionStore } from '@/stores/session-store'
@@ -124,6 +125,7 @@ type ArtifactProvenancePanelProps = {
   item: PreviewFileItem
   projectId: string
   onClose: () => void
+  lockVersion?: boolean
   onVersionChange?: (item: PreviewFileItem) => boolean
   initialTab?: ProvenanceTab
   selectedTab?: ProvenanceTab
@@ -801,6 +803,7 @@ const ArtifactProvenancePanel = ({
   item,
   projectId,
   onClose,
+  lockVersion,
   onVersionChange,
   initialTab,
   selectedTab,
@@ -830,6 +833,11 @@ const ArtifactProvenancePanel = ({
     key: string
     value?: ArtifactVersionProvenance
     error?: ProvenanceReadFailure
+    item?: Pick<
+      PreviewFileItem,
+      'artifactId' | 'selectedVersionId' | 'name' | 'projectId' | 'versionNumber'
+    >
+    originSession?: ArtifactLineageProvenance['originSession']
   }>()
   const [requestedTab, setRequestedTab] = useState<ProvenanceTab | undefined>(initialTab)
   const setActiveTab = (tab: ProvenanceTab): void => {
@@ -927,10 +935,53 @@ const ArtifactProvenancePanel = ({
   )
   const coreProvenance =
     provenanceResult?.key === provenanceKey ? provenanceResult.value : undefined
-  const activeTab =
+  const previousProducer = provenanceResult?.value?.evidence.producer
+  const retainedImage =
+    !coreProvenance &&
+    provenanceResult?.key !== provenanceKey &&
+    provenanceResult?.item?.projectId === projectId &&
+    previousProducer?.state === 'available' &&
+    'kind' in previousProducer &&
+    previousProducer.kind === 'connector' &&
+    previousProducer.connector_id === 'image-model' &&
+    !lineageUnavailable &&
+    !selectedVersionUnavailable &&
+    !(lineageResult?.key === lineageRequestKey && lineageResult.error) &&
+    !isUserEdit &&
+    !isLegacyVersion
+      ? provenanceResult
+      : undefined
+  const displayedCore = coreProvenance ?? retainedImage?.value
+  const imageProducer = displayedCore?.evidence.producer
+  const isImageGeneration =
+    imageProducer?.state === 'available' &&
+    'kind' in imageProducer &&
+    imageProducer.kind === 'connector' &&
+    imageProducer.connector_id === 'image-model'
+  const inapplicableImageTabs = [
+    'code',
+    'environment',
+    'reproducibility',
+    ...(displayedCore?.evidence.image_task_id ? ['messages'] : [])
+  ]
+  const requestedActiveTab =
     selectedTab ??
     requestedTab ??
     (selectedVersionDescriptor?.hasLiterature || coreProvenance?.literature ? 'sources' : 'code')
+  const activeTab =
+    isImageGeneration && inapplicableImageTabs.includes(requestedActiveTab)
+      ? 'execution'
+      : requestedActiveTab
+  const imageArguments = isImageGeneration
+    ? displayedCore?.evidence.connector_execution?.normalized_arguments
+    : undefined
+  const retainingImageCard = Boolean(retainedImage && activeTab === 'execution' && imageArguments)
+  const displayedVersionNumber = retainedImage
+    ? retainedImage.item?.versionNumber
+    : selectedVersionDescriptor?.versionNumber
+  const displayedOriginSession = retainedImage
+    ? retainedImage.originSession
+    : lineage?.originSession
   const showAllPackages = showAllPackagesKey === provenanceKey
   const notebookExportError =
     notebookExportFailure?.key === provenanceKey ? notebookExportFailure.message : undefined
@@ -999,6 +1050,14 @@ const ArtifactProvenancePanel = ({
     let active = true
     if (!item.artifactId || !selectedVersionId || !initialLineage || isUserEdit || isLegacyVersion)
       return
+    const loadedItem = {
+      artifactId: item.artifactId,
+      selectedVersionId,
+      name: item.name,
+      projectId,
+      versionNumber: resolveArtifactVersionDescriptor(initialLineage, selectedVersionId)
+        ?.versionNumber
+    }
     void window.api.artifacts
       .getVersionProvenance({
         projectId,
@@ -1008,7 +1067,13 @@ const ArtifactProvenancePanel = ({
       })
       .then(unwrapProvenanceRead)
       .then((value) => {
-        if (active) setProvenanceResult({ key: provenanceKey, value })
+        if (active)
+          setProvenanceResult({
+            key: provenanceKey,
+            value,
+            item: loadedItem,
+            originSession: initialLineage.originSession
+          })
       })
       .catch((failure: unknown) => {
         if (active) {
@@ -1026,6 +1091,7 @@ const ArtifactProvenancePanel = ({
     isUserEdit,
     isLegacyVersion,
     item.artifactId,
+    item.name,
     item.sessionId,
     initialLineage,
     projectId,
@@ -1120,11 +1186,13 @@ const ArtifactProvenancePanel = ({
 
   const reviewReloadKey = activeTab === 'review' ? reviewRevision : 0
   const deferredTab = (
-    activeTab === 'reproducibility' || activeTab === 'environment'
-      ? 'execution'
-      : activeTab === 'execution' || activeTab === 'messages' || activeTab === 'review'
-        ? activeTab
-        : undefined
+    isImageGeneration && activeTab === 'execution'
+      ? undefined
+      : activeTab === 'reproducibility' || activeTab === 'environment'
+        ? 'execution'
+        : activeTab === 'execution' || activeTab === 'messages' || activeTab === 'review'
+          ? activeTab
+          : undefined
   ) as DeferredProvenanceTab | undefined
   const deferredSectionKey = deferredTab
     ? `${provenanceKey}:${deferredTab}:${deferredTab === 'review' ? reviewReloadKey : 0}`
@@ -1180,13 +1248,18 @@ const ArtifactProvenancePanel = ({
     { id: 'review', label: t('Review', { context: 'audit' }) }
   ]
   const sourcesTab = { id: 'sources', label: t('Literature') } as const
+  const applicableTabs = isImageGeneration
+    ? tabs.filter(({ id }) => !inapplicableImageTabs.includes(id))
+    : tabs
   const visibleTabs = isUserEdit
     ? literature
       ? [sourcesTab]
       : []
     : literature
-      ? [tabs[0]!, sourcesTab, ...tabs.slice(1)]
-      : tabs
+      ? isImageGeneration
+        ? [sourcesTab, ...applicableTabs]
+        : [tabs[0]!, sourcesTab, ...tabs.slice(1)]
+      : applicableTabs
   useEffect(() => {
     if ((selectedTab ?? requestedTab) === 'sources' && provenance && !provenance.literature) {
       setRequestedTab(undefined)
@@ -1447,7 +1520,7 @@ const ArtifactProvenancePanel = ({
   }
 
   const selectVersion = (versionId: string): void => {
-    if (!item.artifactId) return
+    if (lockVersion || !item.artifactId) return
     const version = lineage ? resolveArtifactVersionDescriptor(lineage, versionId) : undefined
     if (!version) return
 
@@ -1630,7 +1703,7 @@ const ArtifactProvenancePanel = ({
         <div className="space-y-1.5 text-xs">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>{t('Manually edited in Open-Science')}</span>
-            {basedOnVersionId && basedOnVersionNumber !== undefined ? (
+            {!lockVersion && basedOnVersionId && basedOnVersionNumber !== undefined ? (
               <button
                 type="button"
                 aria-label={t('Open source version v{{version}}', {
@@ -1662,6 +1735,7 @@ const ArtifactProvenancePanel = ({
       onValueChange={(value) => setActiveTab(value as ProvenanceTab)}
       className="flex size-full min-h-0 flex-col bg-bg-000"
       data-testid="artifact-provenance"
+      aria-busy={retainingImageCard || undefined}
     >
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border-300/60 px-2">
         <Button
@@ -1669,7 +1743,7 @@ const ArtifactProvenancePanel = ({
           variant="ghost"
           size="icon-xs"
           aria-label={t('Previous Artifact version')}
-          disabled={selectedIndex <= 0 && !lineage?.previousVersion}
+          disabled={lockVersion || (selectedIndex <= 0 && !lineage?.previousVersion)}
           onClick={() => {
             const versionId = (
               selectedIndex > 0 ? lineage?.versions[selectedIndex - 1] : lineage?.previousVersion
@@ -1680,7 +1754,7 @@ const ArtifactProvenancePanel = ({
           <ChevronLeft aria-hidden="true" />
         </Button>
         <span className="text-xs font-medium text-text-100">
-          {selectedVersionDescriptor ? `v${selectedVersionDescriptor.versionNumber}` : t('Version')}
+          {displayedVersionNumber !== undefined ? `v${displayedVersionNumber}` : t('Version')}
         </span>
         <Button
           type="button"
@@ -1688,6 +1762,7 @@ const ArtifactProvenancePanel = ({
           size="icon-xs"
           aria-label={t('Next Artifact version')}
           disabled={
+            lockVersion ||
             !lineage ||
             ((selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1) &&
               !lineage.nextVersion)
@@ -1704,17 +1779,17 @@ const ArtifactProvenancePanel = ({
           <ChevronRight aria-hidden="true" />
         </Button>
         <span className="min-w-0 flex-1 truncate text-xs text-text-300">
-          {lineage?.originSession.state === 'deleted'
+          {displayedOriginSession?.state === 'deleted'
             ? [
                 t('Source session deleted'),
-                lineage.originSession.title,
-                lineage.originSession.deletedAt
-                  ? formatDate(lineage.originSession.deletedAt, 'dateTime')
+                displayedOriginSession.title,
+                displayedOriginSession.deletedAt
+                  ? formatDate(displayedOriginSession.deletedAt, 'dateTime')
                   : undefined
               ]
                 .filter(Boolean)
                 .join(' · ')
-            : lineage?.originSession.title}
+            : displayedOriginSession?.title}
         </span>
         <Button
           type="button"
@@ -1793,7 +1868,12 @@ const ArtifactProvenancePanel = ({
             content={<ExecutionEvidenceDetails key={provenanceKey + ':legacy'} reason="legacy" />}
           />
         ) : null}
-        {!error && !lineageUnavailable && !isUserEdit && !isLegacyVersion && !provenance ? (
+        {!error &&
+        !lineageUnavailable &&
+        !isUserEdit &&
+        !isLegacyVersion &&
+        !provenance &&
+        !retainingImageCard ? (
           <div className="flex h-full items-center justify-center text-text-300">
             <LoaderCircle className="size-4 animate-spin" aria-label={t('Loading Provenance')} />
           </div>
@@ -2112,8 +2192,32 @@ const ArtifactProvenancePanel = ({
             }
           />
         ) : null}
-        {provenance && activeTab === 'execution' && deferredSectionReady ? (
-          executionRuns.length > 0 ? (
+        {activeTab === 'execution' && deferredSectionReady ? (
+          displayedCore && isImageGeneration && imageArguments ? (
+            <div className="p-3" inert={retainingImageCard}>
+              <WorkspaceImageToolCard
+                operation={imageProducer.tool_id === 'edit_image' ? 'edit' : 'generate'}
+                input={{ options: imageArguments.parameters }}
+                inputFilename={
+                  displayedCore.evidence.inputs.find(
+                    (entry) => entry.input_file_version_id === imageArguments.sourceVersionId
+                  )?.filename
+                }
+                variant="provenance"
+                result={{
+                  artifactId: retainedImage?.item?.artifactId ?? item.artifactId!,
+                  versionId: retainedImage?.item?.selectedVersionId ?? selectedVersionId!,
+                  filename: retainedImage?.item?.name ?? item.name,
+                  model:
+                    typeof imageArguments.model === 'string' ? imageArguments.model : undefined,
+                  width:
+                    typeof imageArguments.width === 'number' ? imageArguments.width : undefined,
+                  height:
+                    typeof imageArguments.height === 'number' ? imageArguments.height : undefined
+                }}
+              />
+            </div>
+          ) : !provenance ? null : executionRuns.length > 0 ? (
             <div>
               {executionTruncation ? (
                 <InlineNotice className="m-2">
