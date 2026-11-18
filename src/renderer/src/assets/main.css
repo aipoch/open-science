@@ -529,17 +529,21 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 .onboarding-provider-silk::after {
   position: absolute;
   inset: 0;
-  background: color-mix(in oklab, var(--bg-000) 30%, transparent);
+  background: color-mix(in oklab, var(--bg-000) 24%, transparent);
   backdrop-filter: blur(3px);
   content: '';
   pointer-events: none;
+  transition:
+    background-color 420ms ease,
+    backdrop-filter 420ms ease;
 }
 .onboarding-provider-silk.is-active {
   opacity: 0.56;
   filter: blur(2.5px) saturate(0.92) contrast(0.94);
 }
 .onboarding-provider-silk.is-active::after {
-  background: color-mix(in oklab, var(--bg-000) 48%, transparent);
+  background: color-mix(in oklab, var(--bg-000) 13%, transparent);
+  backdrop-filter: blur(2px);
 }
 .onboarding-provider-card::after {
   position: absolute;
@@ -553,6 +557,11 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   content: '';
   opacity: 0.55;
   pointer-events: none;
+  transition: opacity 360ms ease;
+}
+.onboarding-provider-card:hover::after,
+.onboarding-provider-card:focus-within::after {
+  opacity: 0.3;
 }
 .onboarding-provider-card:hover,
 .onboarding-provider-card:focus-within {
@@ -585,8 +594,10 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 .onboarding-provider-card-actions {
   min-height: 7.35rem;
   padding: 1rem 1.35rem 1.25rem;
-  border-top: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
-  background: color-mix(in oklab, var(--bg-000) 26%, transparent);
+  border-top: 0;
+  background: color-mix(in oklab, var(--bg-000) 32%, transparent);
+  backdrop-filter: blur(12px) saturate(1.05);
+  -webkit-backdrop-filter: blur(12px) saturate(1.05);
   opacity: 0;
   pointer-events: none;
   transform: translateY(0.65rem);
@@ -665,7 +676,12 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   box-shadow: var(--shadow-card);
 }
 .dark .onboarding-provider-card::after {
-  opacity: 0.18;
+  opacity: 0.14;
+  transition: opacity 360ms ease;
+}
+.dark .onboarding-provider-card:hover::after,
+.dark .onboarding-provider-card:focus-within::after {
+  opacity: 0.07;
 }
 .dark .onboarding-provider-card:hover,
 .dark .onboarding-provider-card:focus-within {
@@ -691,8 +707,10 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   color: var(--text-100);
 }
 .dark .onboarding-provider-card-actions {
-  border-top-color: transparent;
-  background: linear-gradient(transparent, color-mix(in oklab, var(--bg-10) 65%, transparent));
+  border-top: 0;
+  background: linear-gradient(transparent, color-mix(in oklab, var(--bg-10) 52%, transparent));
+  backdrop-filter: blur(14px) saturate(1.08);
+  -webkit-backdrop-filter: blur(14px) saturate(1.08);
 }
 .dark .onboarding-provider-card-actions small,
 .dark .onboarding-provider-key-form label,
