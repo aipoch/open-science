@@ -3875,3 +3875,55 @@ describe('compactRestartResult', () => {
 })
 
 ;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()
+
+describe('manual kernel termination feedback', () => {
+  const environment = {
+    endpoint: 'http://127.0.0.1:4567',
+    token: 'secret',
+    projectId: 'p1',
+    sessionId: 's1',
+    workspaceCwd: '/workspace'
+  }
+  const events = [
+    {
+      id: 'event',
+      instanceId: 'kernel',
+      projectId: 'p1',
+      sessionId: 's1',
+      kind: 'python',
+      requestedAt: 1,
+      comment: 'Use smaller batches',
+      status: 'stopped'
+    }
+  ]
+  it('keeps feedback visible even when a tool maps its result', async () => {
+    const raw = await callNotebookRpc(
+      environment,
+      'state',
+      {},
+      async () =>
+        new Response(JSON.stringify({ result: { ok: true }, manualKernelTerminations: events }))
+    )
+    expect(raw).toEqual({ ok: true })
+    const content = buildNotebookToolContent(raw, { mapResult: () => ({ summary: 'done' }) })
+    expect(content).toHaveLength(2)
+    expect(content[1]).toMatchObject({
+      type: 'text',
+      text: expect.stringContaining('Use smaller batches')
+    })
+  })
+  it('includes the user reason in interrupted tool errors', async () => {
+    await expect(
+      callNotebookRpc(
+        environment,
+        'execute',
+        {},
+        async () =>
+          new Response(
+            JSON.stringify({ error: 'Kernel exited', manualKernelTerminations: events }),
+            { status: 500 }
+          )
+      )
+    ).rejects.toThrow('Use smaller batches')
+  })
+})

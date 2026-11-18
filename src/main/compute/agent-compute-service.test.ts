@@ -36,11 +36,28 @@ const createHarness = (
   access = { enabled: ['ssh:available', 'ssh:selected'], selected: ['ssh:selected'] },
   onFinalJobObserved = vi.fn(async () => 'suppressed' as const)
 ): AgentComputeHarness => {
-  const raw = {
+  const catalogs = {
     listKubernetesTargets: vi.fn(async () => []),
     listHostedTargets: vi.fn(async () => []),
     listRayTargets: vi.fn(async () => []),
-    listModalTargets: vi.fn(async () => []),
+    listModalTargets: vi.fn(async () => [])
+  }
+  const raw = {
+    ...catalogs,
+    listExternalTargets: vi.fn(
+      async (mode: 'kubernetes' | 'hugging_face_jobs' | 'ray_jobs' | 'modal_sandbox') => {
+        switch (mode) {
+          case 'kubernetes':
+            return catalogs.listKubernetesTargets()
+          case 'hugging_face_jobs':
+            return catalogs.listHostedTargets()
+          case 'ray_jobs':
+            return catalogs.listRayTargets()
+          case 'modal_sandbox':
+            return catalogs.listModalTargets()
+        }
+      }
+    ),
     list: vi.fn(async () => [host('ssh:available'), host('ssh:selected'), host('ssh:hidden')]),
     getDetails: vi.fn(async () => ({ doc: '', probeResult: undefined })),
     appendDetails: vi.fn(async () => undefined),

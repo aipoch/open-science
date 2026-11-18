@@ -1,11 +1,11 @@
 name: Stage runtime bundle
 
 # Build the per-platform offline default-environment bundle and publish it to the CDN. The published
-# layout is the CURATED multi-version pack layout consumed by packages/environment/src/bundle-local.ts:
+# layout is the default pack layout consumed by packages/environment/src/bundle-local.ts:
 # per-pack `<language>-<version>.tar.zst` archives (packId) and manifest.json — the same files the
 # local bundle adapter looks up under resources/default-envs. Run this by hand whenever
-# DEFAULT_ENV_VERSION or the default env specs change; the packaged app and this bundle are keyed by the
-# same version (runtime-paths.ts DEFAULT_ENV_VERSION), so a bump here must accompany a bump there. Each
+# DEFAULT_BUNDLE_VERSION or the default env specs change; the packaged app and this bundle are keyed by the
+# same version (runtime-paths.ts DEFAULT_BUNDLE_VERSION), so a bump here must accompany a bump there. Each
 # platform solves NATIVELY on its own runner (osx-arm64 on Apple Silicon, etc.) so there is no cross-arch
 # solve — each installer ships pack archives for exactly its own conda subdir.
 #
@@ -17,7 +17,7 @@ on:
       version:
         description: Runtime bundle version to publish
         required: true
-        default: '2'
+        default: '3'
         type: string
       subdir:
         description: Stage one platform, or all existing platforms
@@ -139,7 +139,7 @@ jobs:
           node scripts/fetch-micromamba.mjs "${{ matrix.runner_subdir }}" "$bin"
           echo "MICROMAMBA_BIN=$bin" >> "$GITHUB_ENV"
 
-      # Solve the curated multi-version matrix (Python 3.11/3.12/3.13, R 4.3/4.4) for the target subdir
+      # Solve the managed defaults (Python 3.12 and R 4.4) for the target subdir
       # (dry-run, so cross-solving osx-64 on an arm64 runner is fine): one self-contained pack archive
       # per version + manifest.json, all under resources/default-envs.
       - name: Stage default environments
@@ -167,13 +167,13 @@ jobs:
         shell: bash
         run: |
           requested="$REQUESTED_VERSION"
-          current=$(node -p "require('@aipoch/environment').DEFAULT_ENV_VERSION")
+          current=$(node -p "require('@aipoch/environment').DEFAULT_BUNDLE_VERSION")
           if ! [[ "$requested" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::version must be a positive integer"
             exit 1
           fi
           if [ "$requested" != "$current" ]; then
-            echo "::error::requested version $requested does not match DEFAULT_ENV_VERSION $current on this ref"
+            echo "::error::requested version $requested does not match DEFAULT_BUNDLE_VERSION $current on this ref"
             exit 1
           fi
           echo "version=$requested" >> "$GITHUB_OUTPUT"
@@ -199,7 +199,7 @@ jobs:
           aws configure set aws_secret_access_key "$S3_SECRET_ACCESS_KEY"
           aws configure set default.region "$S3_REGION"
 
-      # The operator explicitly chooses the version, which must match DEFAULT_ENV_VERSION on this ref.
+      # The operator explicitly chooses the version, which must match DEFAULT_BUNDLE_VERSION on this ref.
       # Same-version retries must have identical bytes. A changed pack requires a new env version;
       # the workflow lock keeps separate runs from racing the same manifest.
       # Publishes EACH curated pack file (`<language>-<version>.tar.zst`) + the shared manifest.json as

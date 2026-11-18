@@ -486,6 +486,63 @@ function hasProseDisplayFolio(table, items) {
   return previous.some((i) => /\b(?:Corollary|Theorem|Proposition|Lemma)\s+\d/u.test(i.text))
 }
 
+// An unruled detector crop can cut into a centered two-column reference list.
+function hasCenteredAuthorDateReferences(table, items) {
+  if (
+    !table.issues?.includes('text-crosses-crop-boundary') ||
+    table.grid.some((row) => row.length !== 2)
+  )
+    return false
+  const [left, top, right, bottom] = table.cropRect
+  const headings = items.filter(
+    (item) =>
+      item.horizontal &&
+      /^(?:References|Bibliography)$/iu.test(item.text.trim()) &&
+      item.rect[3] <= top &&
+      top - item.rect[3] < item.height * 2.5 &&
+      item.rect[0] > left &&
+      item.rect[2] < right
+  )
+  if (headings.length !== 1) return false
+  const heading = headings[0]
+  const middle = (heading.rect[0] + heading.rect[2]) / 2
+  const rows = items.filter(
+    (item) =>
+      item.text.trim() &&
+      item.rect[1] >= heading.rect[3] &&
+      item.rect[1] < bottom &&
+      item.rect[0] < right
+  )
+  if (rows.some((item) => !item.horizontal || (item.rect[0] < middle && item.rect[2] > middle)))
+    return false
+  return [true, false].every((leftLane) => {
+    const lane = rows.filter((item) => item.rect[0] < middle === leftLane)
+    if (!lane.length) return false
+    const em = lane[0].height
+    const body = lane.filter((item) => Math.abs(item.height - em) < em * 0.03)
+    const margin = Math.min(...body.map((item) => item.rect[0]))
+    const starts = body.filter((item) => Math.abs(item.rect[0] - margin) < em * 0.1)
+    const last = body.at(-1)
+    return (
+      starts.length >= 4 &&
+      starts[0] === body[0] &&
+      starts[0].rect[1] - heading.rect[3] < 1.5 * em &&
+      last.rect[3] > bottom - 0.24 * (bottom - top) &&
+      starts.every((item) => /^\p{Lu}[\p{L}’'-]+ (?:[A-Z]\.)/u.test(item.text.trim())) &&
+      body.filter((item) => /\b(?:19|20)\d{2}[a-z]?,/u.test(item.text)).length >= 4 &&
+      body.some((item) => item.rect[0] - margin > em * 0.7 && item.rect[0] - margin < em * 1.2) &&
+      lane.every(
+        (item) =>
+          body.includes(item) ||
+          (leftLane &&
+            item.height < em * 0.95 &&
+            item.rect[1] > last.rect[3] + em &&
+            /^(?:\d{1,2}|https?:\/\/\S+)$/u.test(item.text.trim()))
+      )
+    )
+  })
+}
+
 export function hasNativeNonTableLayout(table, items, rules) {
   if (!table.cropRect || !Array.isArray(rules)) return false
   const [left, top, right, bottom] = table.cropRect,
@@ -515,6 +572,7 @@ export function hasNativeNonTableLayout(table, items, rules) {
   if (hasWholeFontContents(wholeRows, left, width)) return true
   if (hasWholeFontNumberedReferences(wholeRows, table, left, width)) return true
   if (hasNativeBracketedReferenceTail(table, items, rules)) return true
+  if (!rules.length && hasCenteredAuthorDateReferences(table, items)) return true
   const rows = []
   for (const item of [...source].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
     const row = rows.find(

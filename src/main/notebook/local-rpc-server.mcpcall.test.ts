@@ -403,6 +403,7 @@ describe('computeCall RPC', () => {
           probeResult: undefined
         }
       ],
+      listExternalTargets: async () => [],
       callCommand
     }
     const admitted = new AgentComputeService(raw as never, {

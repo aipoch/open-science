@@ -2,7 +2,12 @@ import { expect, it } from 'vitest'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
-import type { PdfLayoutTextItem } from '../../src/reader/layout.js'
+import type {
+  PdfLayoutPage,
+  PdfLayoutTextItem,
+  PdfTranslationLayout
+} from '../../src/reader/layout.js'
+import { nativeRuledAlgorithmOwners } from '../../src/reader/ruled-algorithm-packets.js'
 
 function algorithmDocument(fault = ''): PDFDocumentProxy {
   const text = (
@@ -348,6 +353,99 @@ it.each([
   expect(result.source.units.some((unit) => unit.preserve === 'reference')).toBe(false)
 })
 
+it.each(['complete', 'no separator', 'offset separator', 'number gap', 'ordinary note'])(
+  'retains only the closed native bibliography below its centered separator: %s',
+  async (shape) => {
+    const items: PdfLayoutTextItem[] = []
+    const add = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      hasEOL = true
+    ): void => {
+      items.push({
+        str,
+        width,
+        height,
+        dir: 'ltr',
+        transform: [height, 0, 0, height, x, y],
+        fontName: 'Native',
+        hasEOL
+      })
+    }
+    add('These measurements provide an ordinary explanation for the report.', 50, 700, 450, 11)
+    for (let n = 1; n <= 6; n++) {
+      const x = n <= 3 ? 50 : 320,
+        y = 566 - ((n - 1) % 3) * 43,
+        marker = shape === 'number gap' && n === 3 ? '9' : String(n)
+      add(marker, x, y + 3.8, 4, 6, false)
+      add(
+        shape === 'ordinary note' && n === 3
+          ? 'The ordinary observations should be recorded each year (2020).'
+          : n === 6
+            ? 'Avery Stone, “An incomplete native record about'
+            : `Avery Stone, “A bounded reference,” Plain Journal 4, 8 (${2000 + n}).`,
+        x + 8.5,
+        y,
+        225,
+        9
+      )
+    }
+    const shift = shape === 'offset separator' ? 85 : 0
+    const operatorList =
+      shape === 'no separator'
+        ? { fnArray: [], argsArray: [] }
+        : {
+            fnArray: [OPS.setLineWidth, OPS.constructPath],
+            argsArray: [
+              [0.5],
+              [OPS.stroke, [new Float32Array([0, 180 + shift, 595, 1, 420 + shift, 595])]]
+            ]
+          }
+    const document = {
+      numPages: 1,
+      fingerprints: ['anonymous-ruled-column-references'],
+      getPage: async () => ({
+        getViewport: () => ({ width: 600, height: 800, transform: [1, 0, 0, -1, 0, 800] }),
+        getTextContent: async () => ({
+          items,
+          styles: { Native: { ascent: 0.8, descent: -0.2, vertical: false } }
+        }),
+        getOperatorList: async () => operatorList,
+        commonObjs: {
+          has: () => true,
+          get: () => ({
+            missingFile: false,
+            isType3Font: false,
+            isInvalidPDFjsFont: false,
+            systemFontInfo: null,
+            vertical: false,
+            ascent: 0.8,
+            descent: -0.2
+          })
+        }
+      })
+    } as unknown as PDFDocumentProxy
+    const result = await extractPdfTranslationSource({
+      document,
+      resourceRequestKey: 'anonymous',
+      signal: new AbortController().signal
+    })
+    const units = result.source.units
+    expect(units.filter(({ preserve }) => preserve === 'reference')).toHaveLength(
+      shape === 'complete' ? 5 : 0
+    )
+    expect(
+      units.find(({ source }) => source.includes('ordinary explanation'))?.sourceOnly
+    ).toBeUndefined()
+    expect(
+      units.find(({ source }) => source.includes('incomplete native'))?.sourceOnly
+    ).toBeUndefined()
+  }
+)
+
 function supplementDocument(fault = ''): PDFDocumentProxy {
   const text = (
     str: string,
@@ -450,4 +548,195 @@ it.each([
   expect(
     result.source.units.find((unit) => unit.source.startsWith('S1 Independent'))?.preserve
   ).toBe('reference')
+})
+
+it.each(['complete frame', 'skipped step', 'raster overlaps column'] as const)(
+  'keeps a compact native loop intact only with %s',
+  async (condition) => {
+    const rows = [
+      ['Algorithm 1 Refine estimates', 60, 740],
+      ['Initialization:', 70, 720],
+      ['s = 0', 138, 720],
+      ['for item = 1 do:', 70, 706],
+      ['1. Compute r = q', 90, 692],
+      ['2. Assign s = r', 90, 678],
+      [condition === 'skipped step' ? '5. Apply q = s' : '3. Apply q = s', 90, 664],
+      ['4. Stopping criterion: r ≤ 1.', 90, 650],
+      ['end.', 70, 636],
+      ['Output:', 70, 622],
+      ['s', 115, 622],
+      ['Ordinary prose continues outside the algorithm.', 60, 580]
+    ] as const
+    const items = rows.map(([str, x, y], index) => ({
+      ...(index === 0 ? { height: 14 } : { height: 10 }),
+      str,
+      width: Math.min(str.length * 4, 175),
+      dir: 'ltr',
+      transform: index === 0 ? [14, 0, 0, 14, x, y] : [10, 0, 0, 10, x, y],
+      fontName: 'Body',
+      hasEOL: str !== 'Initialization:' && str !== 'Output:'
+    }))
+    const fnArray: number[] = [],
+      argsArray: unknown[][] = []
+    for (const y of [752, 732, 612]) {
+      fnArray.push(OPS.save, OPS.setLineWidth, OPS.constructPath, OPS.restore)
+      argsArray.push([], [0.5], [OPS.stroke, [new Float32Array([0, 60, y, 1, 292, y])]], [])
+    }
+    fnArray.push(OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore)
+    argsArray.push(
+      [],
+      [80, 0, 0, 80, condition === 'raster overlaps column' ? 270 : 350, 630],
+      ['image', 160, 160],
+      []
+    )
+    const source = await extractPdfTranslationSource({
+      document: {
+        numPages: 1,
+        fingerprints: ['compact-loop'],
+        getPage: async () => ({
+          getViewport: () => ({ width: 600, height: 800, transform: [1, 0, 0, -1, 0, 800] }),
+          getTextContent: async () => ({
+            items,
+            styles: { Body: { ascent: 0.8, descent: -0.2, vertical: false } }
+          }),
+          getOperatorList: async () => ({ fnArray, argsArray }),
+          commonObjs: {
+            get: () => ({
+              missingFile: false,
+              isType3Font: false,
+              isInvalidPDFjsFont: false,
+              systemFontInfo: null,
+              vertical: false,
+              ascent: 0.8,
+              descent: -0.2
+            })
+          }
+        })
+      } as unknown as PDFDocumentProxy,
+      resourceRequestKey: 'compact-loop',
+      signal: new AbortController().signal
+    })
+    const unit = source.source.units.find((value) => value.source.includes('Assign s'))
+    expect(unit?.preserve === 'code').toBe(condition === 'complete frame')
+    expect(
+      source.source.units.find((value) => value.source.startsWith('Ordinary prose'))?.sourceOnly
+    ).toBeUndefined()
+    expect(source.coverage.excludedItemCount).toBe(0)
+  }
+)
+
+function nestedClosureFixture(
+  fault = '',
+  twoLoops = false
+): {
+  page: PdfLayoutPage
+  units: PdfTranslationLayout['units']
+  owners: string[]
+} {
+  const items: PdfLayoutTextItem[] = [],
+    units: PdfTranslationLayout['units'] = [],
+    owners: string[] = []
+  const add = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    height = 10,
+    fontName = 'body'
+  ): string => {
+    items.push({
+      str,
+      dir: 'ltr',
+      fontName,
+      transform: [height, 0, 0, height, x, y],
+      width,
+      height,
+      fontVertical: false
+    })
+    return `1:${items.length - 1}`
+  }
+  const title = add('Algorithm 1', 300, 700, 60)
+  const prose = add('Compare the output after the computation.', 366, 700, 175)
+  const unit = (
+    source: string,
+    keys: string[],
+    code = false
+  ): PdfTranslationLayout['units'][number] => ({
+    id: `u${units.length}`,
+    source,
+    items: keys,
+    originalStrings: keys.map((key) => {
+      const index = Number(key.slice(2))
+      return items[index].str
+    }),
+    kind: 'prose-candidate',
+    fragments: [],
+    risks: [],
+    ...(code ? { sourceOnly: true, preserve: 'code' } : {})
+  })
+  units.push(unit('Algorithm 1 Compare the output after the computation.', [title, prose]))
+  const rows: [string, number][] = twoLoops
+    ? [
+        ['for', 318],
+        ['Input:', 318],
+        ['for', 330],
+        ['A ← B', 340],
+        ['C ← D', 340],
+        ['E ← F', 340],
+        ['G ← H', 340],
+        ['I ← J', 340],
+        ['end for', 330],
+        ['end for', fault === 'unbound-gutter' ? 318 : 318.65]
+      ]
+    : [
+        ['Input:', 318],
+        ['for', 318],
+        ['for', 330],
+        ['for', 342],
+        ['A ← B', 348],
+        ['end for', fault === 'invalid-indent' ? 340 : 342],
+        ['end for', 330],
+        ['end for', 318]
+      ]
+  const closing = rows.length - (twoLoops ? 2 : 3)
+  for (const [index, [text, x]] of rows.entries()) {
+    const ordinal = `${fault === 'missing-ordinal' && index === 4 ? 8 : index + 1}:`
+    const y = 670 - index * 11
+    const widerOrdinal = twoLoops && index === rows.length - 1
+    const marker = add(ordinal, widerOrdinal ? 300 : 305, y, widerOrdinal ? 12.65 : 7, 8, 'gutter')
+    const token = add(text, x, y, 20)
+    const readonly = index < closing && !(fault === 'writable-opener' && index === 3)
+    units.push(unit(`${ordinal} ${text}`, [marker, token], readonly))
+    if (index >= closing) owners.push(`${marker}|${token}`)
+    if (index === 5 && fault === 'extra-prose') {
+      const extra = add('when appropriate', 365, y, 72)
+      units.push(unit('when appropriate', [extra]))
+    }
+  }
+  const outside = add('Ordinary narrative after the algorithm remains eligible.', 300, 565, 255)
+  units.push(unit('Ordinary narrative after the algorithm remains eligible.', [outside]))
+  return { page: { page: 1, rotation: 0, width: 612, height: 792, items }, units, owners }
+}
+
+it('retains only complete native nested loop closure owners', () => {
+  const { units, page, owners } = nestedClosureFixture()
+  expect([...nativeRuledAlgorithmOwners(units, [page])]).toEqual(owners)
+})
+
+it.each(['missing-ordinal', 'invalid-indent', 'writable-opener', 'extra-prose'])(
+  'requires complete native nested loop closure ownership with %s',
+  (fault) => {
+    const { units, page } = nestedClosureFixture(fault)
+    expect(nativeRuledAlgorithmOwners(units, [page]).size).toBe(0)
+  }
+)
+
+it('retains two nested loop closures when the first two-digit gutter moves with its keyword', () => {
+  const { units, page, owners } = nestedClosureFixture('', true)
+  expect([...nativeRuledAlgorithmOwners(units, [page])]).toEqual(owners)
+})
+
+it('rejects a shifted two-digit gutter without corresponding closing keyword alignment', () => {
+  const { units, page } = nestedClosureFixture('unbound-gutter', true)
+  expect(nativeRuledAlgorithmOwners(units, [page]).size).toBe(0)
 })

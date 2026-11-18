@@ -3,33 +3,29 @@
 // PDFium can report their legacy encodings as "b"/"e", whereas PDF.js resolves
 // the accent. Never reinterpret prose: require the extension font and geometry,
 // centered above exactly one separate mathematical base glyph.
-// CMR's spacing circumflex has narrower ink, but still needs that same
-// unique raised-base proof; an ordinary inline circumflex is not an accent.
+// CMR spacing accents use the same unique raised-base proof with their
+// own narrower ink limits. Inline or detached marks remain separate.
 export const resolveNativeMathAccents = (objects) => {
   const result = []
   const used = new Set()
   for (const accent of objects) {
-    const macron =
-        accent.text.trim() === '¯' &&
-        /^(?:[A-Z]{6}\+)?CMR(?:7|8|9|10|12)$/u.test(accent.fontName ?? ''),
-      narrowHat =
-        accent.text.trim() === 'ˆ' &&
-        /^(?:[A-Z]{6}\+)?CMR(?:7|8|9|10|12)$/u.test(accent.fontName ?? ''),
-      tilde =
-        accent.text.trim() === 'e' &&
-        /^(?:[A-Z]{6}\+)?CMEX(?:7|8|9|10|12)$/u.test(accent.fontName ?? '')
+    const text = accent.text.trim(),
+      macron = text === '¯' && /^(?:[A-Z]{6}\+)?CMR(?:7|8|9|10|12)$/u.test(accent.fontName ?? ''),
+      spacingAccent =
+        /^[ˆ˜]$/u.test(text) && /^(?:[A-Z]{6}\+)?CMR(?:7|8|9|10|12)$/u.test(accent.fontName ?? ''),
+      maximumWidth = text === 'ˆ' ? 0.8 : text === '˜' ? 1 : 1.8,
+      tilde = text === 'e' && /^(?:[A-Z]{6}\+)?CMEX(?:7|8|9|10|12)$/u.test(accent.fontName ?? '')
     if (
       !macron &&
-      !narrowHat &&
+      !spacingAccent &&
       !tilde &&
-      (accent.text.trim() !== 'b' ||
-        !/^(?:[A-Z]{6}\+)?CMEX(?:7|8|9|10|12)$/u.test(accent.fontName ?? ''))
+      (text !== 'b' || !/^(?:[A-Z]{6}\+)?CMEX(?:7|8|9|10|12)$/u.test(accent.fontName ?? ''))
     )
       continue
     const [left, bottom, right, top] = accent.bounds,
       width = right - left,
       height = top - bottom
-    if (width <= 0 || height <= 0 || height >= width * (narrowHat ? 0.8 : 0.45)) continue
+    if (width <= 0 || height <= 0 || height >= width * (spacingAccent ? 0.8 : 0.45)) continue
     const bases = objects.flatMap((base) => {
       if (
         base.i === accent.i ||
@@ -83,8 +79,8 @@ export const resolveNativeMathAccents = (objects) => {
           baseHeight > base.size * 0.65 &&
           baseHeight < base.size * 0.75
         return baseHeight > height * 1.5 &&
-          (shortMacron || width >= baseWidth * (narrowHat ? 0.2 : 0.6)) &&
-          width <= baseWidth * (narrowHat ? 0.8 : 1.8) &&
+          (shortMacron || width >= baseWidth * (spacingAccent ? 0.2 : 0.6)) &&
+          width <= baseWidth * maximumWidth &&
           Math.abs((left + right - x - end) / 2 - skew) < baseWidth * 0.25 &&
           bottom >= upper - height * 0.2 &&
           bottom - upper < baseHeight * 0.5
@@ -97,7 +93,7 @@ export const resolveNativeMathAccents = (objects) => {
     used.add(base.i)
     const before = base.text.slice(0, glyph.offset),
       after = base.text.slice(glyph.offset + glyph.text.length),
-      mark = macron ? '¯' : narrowHat ? 'ˆ' : tilde ? '˜' : '\u0302',
+      mark = macron ? '¯' : spacingAccent ? text : tilde ? '˜' : '\u0302',
       label = (before + glyph.text + mark + after).trim(),
       leading = (before + mark + glyph.text + after).trim()
     result.push({
