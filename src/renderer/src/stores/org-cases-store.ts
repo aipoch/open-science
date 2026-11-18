@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { create } from 'zustand'
-import type { LabView } from '../../../../shared/lab'
+import type { LabView } from '../../../shared/lab'
 import {
   buildLabConnectionKey,
   normalizeOrgCaseSearchQuery,
@@ -9,7 +9,7 @@ import {
   type OrgCaseDownloadSnapshot,
   type OrgCaseErrorCode,
   type OrgCaseItem
-} from '../../../../shared/org-cases'
+} from '../../../shared/org-cases'
 import { useSettingsStore } from '@/stores/settings-store'
 
 export type UseCaseSourceKind = 'official' | 'organization'

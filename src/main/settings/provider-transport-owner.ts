@@ -6,8 +6,12 @@ import {
   isLabProvider,
   preferredEndpoint
 } from '../../shared/settings-runtime'
-import { isLabDeploymentUrl, labModelWireId, mapLabGatewayError } from '../../shared/lab'
-import { LabApiError } from './lab-api'
+import {
+  isLabDeploymentUrl,
+  LabApiError,
+  labModelWireId,
+  mapLabGatewayError
+} from '../../shared/lab'
 import type {
   ProviderFailureObservation,
   ProviderFailureObserver

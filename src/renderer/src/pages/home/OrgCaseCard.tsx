@@ -15,7 +15,7 @@ import {
   formatOrgCaseDownloadLabel,
   orgCaseErrorNoticeActions
 } from './org-case-errors'
-import type { UseCaseSourceKind } from './org-cases-store'
+import type { UseCaseSourceKind } from '@/stores/org-cases-store'
 
 export const UseCaseSourceToggle = ({
   source,

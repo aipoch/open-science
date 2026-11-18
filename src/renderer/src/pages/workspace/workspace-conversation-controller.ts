@@ -115,6 +115,7 @@ type WorkspaceConversationControllerOptions = {
   permissionProfile: PermissionProfileId
   isReviewing: boolean
   isTurnAdmissionBlocked: boolean
+  cancelInFlightRun?: boolean
   promptInFlightSessionIds: string[]
   sendPreparationInFlightSessionIds: string[]
   saveAsSkillInFlightSessionIds: string[]
@@ -401,6 +402,25 @@ const useWorkspaceConversationController = (
     optionsRef.current = options
   }, [options])
   const inFlightDraftKeysRef = useRef(new Set<string>())
+  const cancelledInFlightSessionRef = useRef<string | undefined>(undefined)
+  const { activeSession, cancelInFlightRun, promptInFlightSessionIds, runtime } = options
+  const activeSessionId = activeSession?.id
+  useEffect(() => {
+    if (!cancelInFlightRun) {
+      cancelledInFlightSessionRef.current = undefined
+      return
+    }
+    if (
+      !activeSessionId ||
+      !promptInFlightSessionIds.includes(activeSessionId) ||
+      cancelledInFlightSessionRef.current === activeSessionId
+    )
+      return
+    // Main stopped using the expired credential. End the visible turn immediately instead of
+    // leaving the runtime retrying a 5xx until its own timeout.
+    cancelledInFlightSessionRef.current = activeSessionId
+    void runtime.cancelRun(activeSessionId).catch(() => undefined)
+  }, [activeSessionId, cancelInFlightRun, promptInFlightSessionIds, runtime])
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, ChatMessage>>({})
   const planProjectionRecoveryError = usePlanProjectionRecovery(
     options.activeSession,

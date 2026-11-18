@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { LabApiError } from './lab-api'
 import type { ProtocolForwardingBridgeTarget } from './protocol-forwarding-bridge'
 import { ProviderRuntimeProjectionOwner } from './provider-runtime-projection'
 import { ProviderTransportOwner } from './provider-transport-owner'
@@ -69,6 +70,12 @@ describe('Lab harness forwarding', () => {
         key: 'at_live'
       })
       expect(credentialServers).toEqual(['https://lab.example.com'])
+      expect(
+        captured[0]?.mapConnectionError?.(new LabApiError('unauthorized', 'Credentials expired'))
+      ).toMatchObject({ status: 401, code: 'unauthorized' })
+      expect(
+        captured[0]?.mapConnectionError?.(new LabApiError('network', 'The server is offline'))
+      ).toBeUndefined()
     } finally {
       await lease.release()
     }

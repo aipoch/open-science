@@ -47,6 +47,18 @@ export type LabErrorCode =
   | 'expired'
   | 'unknown'
 
+export class LabApiError extends Error {
+  constructor(
+    readonly code: LabErrorCode,
+    message: string,
+    readonly status?: number,
+    readonly reason?: string
+  ) {
+    super(message)
+    this.name = 'LabApiError'
+  }
+}
+
 export type LabModelSummary = Readonly<{
   id: string
   name: string

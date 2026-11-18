@@ -11,7 +11,7 @@ import type {
   LabErrorCode,
   LabUsage
 } from '../../shared/lab'
-import { LAB_CLIENT_ID, readLabUsage } from '../../shared/lab'
+import { LAB_CLIENT_ID, LabApiError, readLabUsage } from '../../shared/lab'
 import {
   ORG_CASE_DEFAULT_PAGE_SIZE,
   ORG_CASE_MAX_PAGE_SIZE,
@@ -33,17 +33,7 @@ import { LAB_RESOURCE_LIMITS } from './lab-resource-limits'
 // exchange would be wrong (one-time codes) and a retried refresh can revoke the whole client session.
 // Every method has a deadline and a response-size cap, and no token is ever written to a log.
 
-export class LabApiError extends Error {
-  constructor(
-    readonly code: LabErrorCode,
-    message: string,
-    readonly status?: number,
-    readonly reason?: string
-  ) {
-    super(message)
-    this.name = 'LabApiError'
-  }
-}
+export { LabApiError }
 
 type FetchLike = typeof globalThis.fetch
 

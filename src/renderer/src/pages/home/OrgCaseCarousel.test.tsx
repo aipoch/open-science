@@ -10,7 +10,7 @@ import type {
 import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../../shared/web-event-connection'
 import { useSettingsStore } from '@/stores/settings-store'
-import { useOrgCaseStore } from './org-cases-store'
+import { useOrgCaseStore } from '@/stores/org-cases-store'
 import { UseCaseCarousel } from './UseCaseCarousel'
 
 function makeOrgCase(overrides: Partial<OrgCaseItem> = {}): OrgCaseItem {

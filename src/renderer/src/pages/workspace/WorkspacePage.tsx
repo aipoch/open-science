@@ -770,25 +770,8 @@ const WorkspacePage = ({
       providerId && state.providers.find((provider) => provider.id === providerId)?.type === 'lab'
     )
   })
-  const labExpiredCancelledSession = useRef<string | undefined>(undefined)
-  useEffect(() => {
-    if (!labSignInExpired) {
-      labExpiredCancelledSession.current = undefined
-      return
-    }
-    const sessionId = activeSession?.id
-    if (
-      !sessionId ||
-      !promptInFlightSessionIds.includes(sessionId) ||
-      labExpiredCancelledSession.current === sessionId
-    )
-      return
-    // The main process already stopped using the expired Lab credential. End the visible turn
-    // immediately instead of leaving the runtime retrying a 5xx until its own timeout.
-    labExpiredCancelledSession.current = sessionId
-    void runtime.cancelRun(sessionId).catch(() => undefined)
-  }, [activeSession?.id, labSignInExpired, promptInFlightSessionIds, runtime])
   const conversation = useWorkspaceConversationController({
+    cancelInFlightRun: labSignInExpired,
     activeSession,
     projectId: scopedProjectId,
     currentDraftKey,

@@ -13,7 +13,7 @@ import {
   orgCaseErrorNoticeActions,
   resolveOrgCaseLabError
 } from './org-case-errors'
-import { useOrgCaseSearchActions, useOrgCaseStore } from './org-cases-store'
+import { useOrgCaseSearchActions, useOrgCaseStore } from '@/stores/org-cases-store'
 
 export const OrgCaseSectionContent = ({
   variant,

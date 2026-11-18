@@ -23,7 +23,6 @@
     "src/renderer/src/pages/home/OrgCaseDetailsDialog.tsx",
     "src/renderer/src/pages/home/OrgCaseSectionContent.tsx",
     "src/renderer/src/pages/home/org-case-errors.ts",
-    "src/renderer/src/pages/home/org-cases-store.ts",
     "src/renderer/src/pages/home/use-home-gallery-navigation.test.tsx",
     "src/renderer/src/pages/home/use-home-gallery-navigation.ts",
     "src/renderer/src/pages/marketplace/OrgCaseDetailsPage.tsx",

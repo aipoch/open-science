@@ -16,7 +16,7 @@ import {
 } from './SessionPackageOperation'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { useSettingsStore } from '@/stores/settings-store'
-import { useOrgCaseStore } from '@/pages/home/org-cases-store'
+import { useOrgCaseStore } from '@/stores/org-cases-store'
 import type { PackageOperationSnapshot } from '../../../shared/session-package'
 
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
