@@ -201,6 +201,34 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   )
 
+  it('restores only trusted protocol routes from a saved official catalog', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'saved',
+      type: 'official',
+      name: 'OpenCode',
+      vendorId: 'opencode',
+      modelCatalog: {
+        fetchedAt: 1,
+        models: [
+          {
+            id: 'mixed',
+            routes: {
+              responses: 'https://opencode.ai/inference/v1',
+              messages: 'https://other.example.invalid/v1'
+            }
+          },
+          { id: 'foreign-only', routes: { responses: 'https://other.example.invalid/v1' } }
+        ]
+      }
+    }
+    expect(owner.toProviderView(provider).models).toEqual(['mixed'])
+    const [target] = owner.resolveRuntimeModelCatalog(provider, getAgentFramework('codex'))
+    expect(target.apiEndpoints).toEqual(['responses'])
+    expect(resolveResponsesBaseUrl(target.provider)).toBe('https://opencode.ai/inference/v1')
+    expect(owner.toProviderView({ ...provider, vendorId: 'openai' }).models).toEqual([])
+  })
+
   it('reads a large inventory once while enumerating its runtime targets', () => {
     const models = Array.from({ length: 1000 }, (_, index) => ({ id: 'model-' + index }))
     const readModels = vi.fn(() => models)

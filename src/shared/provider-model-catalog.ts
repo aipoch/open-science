@@ -1,6 +1,7 @@
 import {
   getOfficialVendor,
   resolveVendorBaseUrl,
+  resolveVendorModelCatalog,
   resolveVendorChatCompletionsBaseUrl,
   resolveVendorResponsesBaseUrl,
   resolveVendorModelApiEndpoints,
@@ -25,6 +26,36 @@ export type OfficialCatalogSource = {
 export const usesBundledModelCatalog = (vendorId: OfficialVendorId | undefined): boolean =>
   vendorId === 'openrouter' || vendorId === 'requesty'
 
+// Disk snapshots may be edited independently of discovery. Only a vendor that publishes routes
+// can supply a new path, and it must still belong to the registered discovery origin.
+function resolveSnapshotRoutes(
+  cached: CatalogModel['routes'],
+  bundled: NonNullable<CatalogModel['routes']>,
+  discoveryOrigin: string | undefined
+): NonNullable<CatalogModel['routes']> {
+  if (!cached) return bundled
+  const routes: NonNullable<CatalogModel['routes']> = {}
+  for (const protocol of ['messages', 'responses', 'chat-completions'] as const) {
+    const base = cached[protocol]
+    if (!base) continue
+    if (base === bundled[protocol]) {
+      routes[protocol] = base
+    } else if (discoveryOrigin) {
+      const url = URL.parse(base)
+      if (
+        url?.origin === discoveryOrigin &&
+        (url.protocol === 'https:' || url.protocol === 'http:') &&
+        !url.username &&
+        !url.password &&
+        !url.search &&
+        !url.hash
+      )
+        routes[protocol] = url.href.replace(/\/$/, '')
+    }
+  }
+  return routes
+}
+
 /** Membership comes from the latest complete snapshot; bundled values only fill missing metadata. */
 export function resolveOfficialModelCatalog(source: OfficialCatalogSource): CatalogModel[] {
   const { vendorId, region, modelCatalog } = source
@@ -32,6 +63,9 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
   const vendor = getOfficialVendor(vendorId)
   if (!vendor) return []
   const curated = usesBundledModelCatalog(vendorId)
+  const discovery =
+    modelCatalog && !curated ? resolveVendorModelCatalog(vendorId, region) : undefined
+  const discoveryOrigin = discovery?.options.routes ? URL.parse(discovery.url)?.origin : undefined
   const live = new Map(
     (curated ? undefined : modelCatalog)?.models.map((model) => [model.id, model])
   )
@@ -63,6 +97,7 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
               : resolveVendorBaseUrl(vendorId, region)
         if (base) routes[endpoint] = base
       }
+      const cached = live.get(id)
       return {
         id,
         ...(bundled
@@ -70,8 +105,8 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
           : {}),
         supportsImageInput: isVendorModelMultimodal(vendorId, id),
         reasoningEffort: getVendorModelReasoningCapability(vendorId, id),
-        routes,
-        ...live.get(id)
+        ...cached,
+        routes: resolveSnapshotRoutes(cached?.routes, routes, discoveryOrigin)
       }
     })
 }
