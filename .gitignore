@@ -96,6 +96,8 @@ local/
 .mcp/
 .serena/
 .taskmaster/
+.agents/
+skills-lock.json
 
 # Locally downloaded CI build artifacts (Windows installer, etc.)
 dist-win-artifact/

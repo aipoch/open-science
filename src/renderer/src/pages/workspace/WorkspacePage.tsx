@@ -113,6 +113,7 @@ import { WorkspacePanelLayout } from './workspace-panel-layout'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
 import { useAgentAuthenticationRecovery } from './use-agent-authentication-recovery'
 import { useWorkspaceConversationController } from './workspace-conversation-controller'
+import type { DocumentConversationRequest } from './previews/preview-types'
 import { useWorkspaceSessionController } from './workspace-session-controller'
 import { useWorkspaceBranchSwitchGuard } from './use-workspace-branch-switch-guard'
 import { useSideChatController } from './use-side-chat-controller'
@@ -645,7 +646,10 @@ const WorkspacePage = ({
           : annotationValidationMessage(error, t)
       ),
     onLinkReadingContext: composer.actions.linkReadingContext,
-    onUnlinkReadingContext: composer.actions.unlinkReadingContext
+    onUnlinkReadingContext: composer.actions.unlinkReadingContext,
+    onFocusComposer: requestComposerFocus,
+    onSendDocumentRequest: (request: DocumentConversationRequest) =>
+      conversation.actions.submit.document({ ...request, sessionId: activeSession?.id })
   }
 
   const sideChat = useSideChatController(

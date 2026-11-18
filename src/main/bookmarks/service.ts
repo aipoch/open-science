@@ -233,7 +233,7 @@ class BookmarkService {
       if (!found) throw new Error('Bookmark source is not available.')
       return
     }
-    if (source.projectId !== request.projectId) {
+    if (source.kind !== 'project-file' || source.projectId !== request.projectId) {
       throw new Error('Bookmark source is not available.')
     }
     const managed = resolveManagedProjectFileAnnotationIdentity(source)

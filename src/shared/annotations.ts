@@ -58,6 +58,7 @@ const SESSION_TEXT_ANNOTATION_ITEM_TYPES = new Set<SessionTextAnnotationItemType
 ])
 
 type ProjectFileAnnotationSource = Extract<TextAnnotationSource, { kind: 'project-file' }>
+type DocumentDraftAnnotationSource = Extract<TextAnnotationSource, { kind: 'document-draft' }>
 
 export type ManagedProjectFileAnnotationIdentity = Readonly<{
   fileSource: 'artifact' | 'upload'
@@ -123,7 +124,8 @@ export const resolveManagedProjectFileAnnotationIdentity = (
 
 export type SessionTextAnnotationSource = Exclude<
   TextAnnotationSource,
-  Readonly<{ kind: 'project-file'; projectId: string; path: string }>
+  | Readonly<{ kind: 'project-file'; projectId: string; path: string }>
+  | Readonly<{ kind: 'document-draft'; projectId: string; path: string }>
 >
 
 export const annotationRequiresImageInput = (annotation: Annotation): boolean =>
@@ -380,6 +382,49 @@ const sanitizeTextSource = (value: unknown): TextAnnotationSource | undefined =>
       ...(trimmed(value.sessionId) ? { sessionId: trimmed(value.sessionId) } : {})
     }
     return resolveManagedProjectFileAnnotationIdentity(source) === null ? undefined : source
+  }
+  if (kind === 'document-draft') {
+    const projectId = trimmed(value.projectId)
+    const path = trimmed(value.path)
+    const name = trimmed(value.name)
+    const sourceFileId = trimmed(value.sourceFileId)
+    const baseVersionId = trimmed(value.baseVersionId)
+    const snapshotId = trimmed(value.snapshotId)
+    const checksum = trimmed(value.checksum)
+    const draftRevision = value.draftRevision
+    const fileSource =
+      value.fileSource === 'artifact' || value.fileSource === 'upload'
+        ? value.fileSource
+        : undefined
+    if (
+      !projectId ||
+      !path ||
+      !name ||
+      !sourceFileId ||
+      !baseVersionId ||
+      !snapshotId ||
+      !checksum ||
+      !/^[a-f0-9]{64}$/u.test(checksum) ||
+      !fileSource ||
+      typeof draftRevision !== 'number' ||
+      !Number.isSafeInteger(draftRevision) ||
+      draftRevision < 0
+    )
+      return undefined
+    const source: DocumentDraftAnnotationSource = {
+      kind,
+      projectId,
+      path,
+      name,
+      fileSource,
+      sourceFileId,
+      baseVersionId,
+      snapshotId,
+      draftRevision,
+      checksum,
+      ...(trimmed(value.sessionId) ? { sessionId: trimmed(value.sessionId) } : {})
+    }
+    return source
   }
   if (kind === 'session-item') {
     const sessionId = trimmed(value.sessionId)

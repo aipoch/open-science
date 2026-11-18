@@ -10,7 +10,8 @@ import type { ChatMessage, ChatSession } from '@/stores/session-store-contract'
 import type { Annotation } from '../../../../shared/annotation-contract'
 import {
   annotationRequiresImageInput,
-  sideChatAnnotationText
+  sideChatAnnotationText,
+  validateAnnotations
 } from '../../../../shared/annotations'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/failure/messages'
@@ -154,6 +155,12 @@ type WorkspaceConversationController = {
     submit: {
       draft: (intent: DraftSubmitIntent) => void
       restoredPlan: (response: RestoredPlanResponse) => Promise<void>
+      document: (request: {
+        sessionId: string | undefined
+        projectId: string
+        text: string
+        annotations: Annotation[]
+      }) => Promise<boolean>
     }
     revise: (
       messageId: string,
@@ -742,7 +749,58 @@ const useWorkspaceConversationController = (
     }
 
     return {
-      submit: { draft: submitDraft, restoredPlan: submitRestoredPlan },
+      submit: {
+        draft: submitDraft,
+        restoredPlan: submitRestoredPlan,
+        document: async ({ sessionId, projectId, text, annotations }): Promise<boolean> => {
+          const current = optionsRef.current
+          const active = current.activeSession
+          if (
+            !active ||
+            active.id !== sessionId ||
+            active.projectId !== projectId ||
+            !text.trim() ||
+            !current.agentConfiguration ||
+            !canResume(current) ||
+            active.activeRun ||
+            active.status === 'running' ||
+            current.hasPendingPermissionRequest(active.id) ||
+            !current.session.lifecycle.canStartSend(active.id) ||
+            messageQueue.lifecycle.blocksImmediateSend(active.id) ||
+            inFlightDraftKeysRef.current.has(current.currentDraftKey) ||
+            validateAnnotations(annotations, text)
+          )
+            return false
+          const intent = current.session.lifecycle.captureSendIntent(false)
+          if (intent.hasPendingSwitch) return false
+          const draftKey = current.currentDraftKey
+          inFlightDraftKeysRef.current.add(draftKey)
+          try {
+            // This request must not capture, clear or restore the unrelated composer draft.
+            let rejected = false
+            const result = await current.runtime.sendMessage({
+              sessionId: active.id,
+              projectId: active.projectId,
+              cwd: active.cwd,
+              text,
+              annotations,
+              agentConfiguration: current.agentConfiguration,
+              permissionProfile: current.permissionProfile,
+              specialistId: intent.draftSpecialistId,
+              memoryEnabled: active.memoryEnabled !== false,
+              onPreparationRejected: () => {
+                rejected = true
+              },
+              onPreparationCancelled: () => {
+                rejected = true
+              }
+            })
+            return Boolean(result) && !rejected
+          } finally {
+            inFlightDraftKeysRef.current.delete(draftKey)
+          }
+        }
+      },
       revise: async (messageId, doc, annotations = []): Promise<EditedMessageSendResult> => {
         const current = optionsRef.current
         const sessionId = current.activeSession?.id

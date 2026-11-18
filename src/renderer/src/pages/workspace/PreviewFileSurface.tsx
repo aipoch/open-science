@@ -33,6 +33,8 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  lazy,
+  Suspense,
   useMemo,
   useRef,
   useState
@@ -113,6 +115,19 @@ import {
   type PreviewCapabilityId
 } from './preview-actions/preview-action-model'
 import { useManagedVersionWorkflow, type ManagedVersionMode } from './useManagedVersionWorkflow'
+import type { MarkdownDocumentSelection } from './markdown-document/markdown-selection'
+import type { MarkdownEditorSurfaceHandle } from './markdown-document/MarkdownEditorSurface'
+import type { MarkdownAgentRequest } from './markdown-document/MarkdownAgentPrompt'
+import { ANNOTATION_LIMITS } from '../../../../shared/annotations'
+import { createMarkdownDocumentDraftAnnotation } from './markdown-document/markdown-selection'
+
+const MarkdownEditorSurface = lazy(() =>
+  import('./markdown-document/MarkdownEditorSurface').then(
+    ({ MarkdownEditorSurface: surface }) => ({
+      default: surface
+    })
+  )
+)
 
 type PreviewFileSurfaceProps = PreviewInteractionPort & {
   item: PreviewFileItem
@@ -767,7 +782,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       onAnnotationError,
       onPdfContextError,
       onLinkReadingContext,
-      onUnlinkReadingContext
+      onUnlinkReadingContext,
+      onFocusComposer,
+      onSendDocumentRequest
     },
     ref
   ): React.JSX.Element => {
@@ -809,10 +826,14 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const [lineageRetryToken, setLineageRetryToken] = useState(0)
     const [mode, setMode] = useState<ManagedVersionMode>('view')
     const [draft, setDraft] = useState('')
+    const [markdownDraftRevision, setMarkdownDraftRevision] = useState(0)
+    const markdownEditorRef = useRef<MarkdownEditorSurfaceHandle>(null)
+    const [markdownEditorRevision, setMarkdownEditorRevision] = useState(0)
     const [editBaseline, setEditBaseline] = useState<{
       text: string
       expectedHeadVersionId: string
       basedOnVersionId: string
+      textFormat?: ManagedFileVersionInspectResult['textFormat']
       item: PreviewFileItem
     }>()
     const [saving, setSaving] = useState(false)
@@ -826,10 +847,14 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     }, [])
     const [pendingLeaveAction, setPendingLeaveAction] = useState<() => boolean | void>()
     const saveGenerationRef = useRef(0)
+    const draftRef = useRef(draft)
     const pendingSaveRef = useRef<ManagedFileVersionSaveTextEditRequest | undefined>(undefined)
     const acceptedIdentityTransitionRef = useRef<string | undefined>(undefined)
     const mountedRef = useRef(false)
     const retryGenerationRef = useRef(0)
+    useEffect(() => {
+      draftRef.current = draft
+    }, [draft])
     const retryInFlightRef = useRef<{ generation: number; operation: Promise<void> } | undefined>(
       undefined
     )
@@ -925,7 +950,10 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const showProvenance =
       canShowProvenance &&
       (requestedProvenanceOpen ??
-        (widePreview && renderContent && mode === 'view' && dismissedProvenanceKey !== surfaceKey))
+        (widePreview &&
+          renderContent &&
+          (mode === 'view' || previewItem.format === 'markdown') &&
+          dismissedProvenanceKey !== surfaceKey))
     const provenanceFocused = showProvenance && !widePreview
     const updateFileView = (patch: PreviewFileViewState): void => {
       if (storedItem) {
@@ -1253,7 +1281,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     // Copy feedback is transient and must not outlive a closed or replaced preview.
     useEffect(() => () => clearTimeout(copiedTimer.current), [])
     const isDirty =
-      (mode === 'edit' && editBaseline !== undefined && draft !== editBaseline.text) ||
+      (mode === 'edit' &&
+        editBaseline !== undefined &&
+        (draft !== editBaseline.text || markdownDraftRevision > 0)) ||
       (pptxEditing && pptxSession.dirty)
     useEffect(() => {
       if (!isDirty) return
@@ -1269,7 +1299,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       saveGenerationRef.current += 1
       pendingSaveRef.current = undefined
       setSaving(false)
-      setMode('view')
+      setMode((current) => (current === 'diff' ? current : 'view'))
       setDraft('')
       setEditBaseline(undefined)
       setEditError(undefined)
@@ -1539,17 +1569,37 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
 
     const beginEdit = (): void => {
       if (!managedInspect?.canEdit || managedInspect.text === undefined) return
-      pendingSaveRef.current = undefined
       setDraft(managedInspect.text)
       setEditBaseline({
         text: managedInspect.text,
         expectedHeadVersionId: managedInspect.headVersionId,
         basedOnVersionId: managedInspect.selectedVersionId,
+        textFormat: managedInspect.textFormat,
         item: contentItem
       })
       setEditError(undefined)
       setConflictHead(undefined)
+      setMarkdownDraftRevision(0)
+      setMarkdownEditorRevision((revision) => revision + 1)
       setMode('edit')
+    }
+
+    // Markdown is a live document, not a separate preview/edit workflow. Follow new
+    // inspections only while clean; a dirty draft keeps its original CAS baseline.
+    if (
+      resolvedPreviewItem.format === 'markdown' &&
+      mode !== 'diff' &&
+      renderContent &&
+      managedInspect?.canEdit &&
+      managedInspect.text !== undefined &&
+      !saving &&
+      !isDirty &&
+      (mode !== 'edit' ||
+        !editBaseline ||
+        editBaseline.basedOnVersionId !== managedInspect.selectedVersionId ||
+        editBaseline.expectedHeadVersionId !== managedInspect.headVersionId)
+    ) {
+      beginEdit()
     }
 
     const copyEditDraft = async (): Promise<void> => {
@@ -1571,14 +1621,17 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       editBaseline && editBaseline.basedOnVersionId !== editBaseline.expectedHeadVersionId
     )
     const saveEdit = async (): Promise<void> => {
+      const flushedDraft = markdownEditorRef.current?.flush()
+      const currentDraft = flushedDraft ?? draft
       if (
         !managedIdentity ||
         !managedInspect?.canEdit ||
         !editBaseline ||
-        (draft === editBaseline.text && !restoringHistory) ||
+        (currentDraft === editBaseline.text && !restoringHistory) ||
         saving
       )
         return
+      const requestedDraft = currentDraft
       setSaving(true)
       setEditError(undefined)
       const saveGeneration = saveGenerationRef.current
@@ -1594,13 +1647,13 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
           previous.fileId !== managedIdentity.fileId ||
           previous.basedOnVersionId !== editBaseline.basedOnVersionId ||
           previous.expectedHeadVersionId !== editBaseline.expectedHeadVersionId ||
-          previous.content !== draft
+          previous.content !== currentDraft
         ) {
           pendingSaveRef.current = {
             ...managedIdentity,
             basedOnVersionId: editBaseline.basedOnVersionId,
             expectedHeadVersionId: editBaseline.expectedHeadVersionId,
-            content: draft,
+            content: currentDraft,
             restore: restoringHistory,
             operationId: crypto.randomUUID()
           }
@@ -1621,15 +1674,38 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
         setEditError(managedSaveErrorMessage(result.error.code, t))
         return
       }
-      if (result.value.kind === 'conflict') {
-        setConflictHead(result.value.actualHead)
+      const saved = result.value
+      if (saved.kind === 'conflict') {
+        setConflictHead(saved.actualHead)
         setEditError(t('This file has a newer version.'))
         return
       }
       pendingSaveRef.current = undefined
-      setMode('view')
-      setEditBaseline(undefined)
-      setDraft('')
+      if (resolvedPreviewItem.format === 'markdown' || draftRef.current !== requestedDraft) {
+        // Keep the live editor and any newer typing; only the explicitly submitted
+        // text becomes clean. The next manual save uses the committed CAS baseline.
+        setEditBaseline((current) =>
+          current
+            ? {
+                ...current,
+                text: requestedDraft,
+                basedOnVersionId: saved.version.id,
+                expectedHeadVersionId: saved.headVersionId,
+                item: createPreviewFileItemForManagedVersion({
+                  item: previewItem,
+                  version: saved.version,
+                  projectId: managedIdentity.projectId,
+                  sessionId: managedInspect.sessionId
+                })
+              }
+            : current
+        )
+        setMarkdownDraftRevision(0)
+      } else {
+        setMode('view')
+        setEditBaseline(undefined)
+        setDraft('')
+      }
       if (result.value.kind === 'created' && projectId) {
         applyVersionItem(
           {
@@ -1645,6 +1721,80 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
         )
       }
       managedWorkflow.refreshInspect()
+    }
+
+    const sendMarkdownSelection = useCallback(
+      async (selection: MarkdownDocumentSelection, note?: string): Promise<boolean> => {
+        if (
+          !onAddAnnotation ||
+          !managedIdentity ||
+          !managedInspect ||
+          !projectId ||
+          !editBaseline
+        ) {
+          setEditError(t('Save before sending a selection.'))
+          return false
+        }
+        const markdown = markdownEditorRef.current?.flush() ?? draft
+        const generation = saveGenerationRef.current
+        try {
+          const annotation = await createMarkdownDocumentDraftAnnotation({
+            projectId,
+            fileSource: managedIdentity.source,
+            sourceFileId: managedIdentity.fileId,
+            baseVersionId: editBaseline.basedOnVersionId,
+            path: editBaseline.item.path,
+            name: editBaseline.item.name,
+            sessionId: managedInspect.sessionId,
+            draftRevision: markdownDraftRevision,
+            markdown,
+            selection
+          })
+          if (!mountedRef.current || saveGenerationRef.current !== generation) return false
+          if (!annotation) {
+            setEditError(t('This selection could not be anchored safely.'))
+            return false
+          }
+          const validationError = onAddAnnotation(note ? { ...annotation, note } : annotation)
+          if (validationError) {
+            onAnnotationError?.(validationError)
+            return false
+          }
+          onFocusComposer?.()
+          setEditError(undefined)
+          return true
+        } catch {
+          setEditError(t('This selection could not be added to the conversation.'))
+          return false
+        }
+      },
+      [
+        draft,
+        editBaseline,
+        managedIdentity,
+        managedInspect,
+        markdownDraftRevision,
+        onAddAnnotation,
+        onAnnotationError,
+        onFocusComposer,
+        projectId,
+        t
+      ]
+    )
+
+    const sendDocumentRequest = async ({
+      instruction,
+      selection
+    }: MarkdownAgentRequest): Promise<boolean> => {
+      if (!onSendDocumentRequest || !projectId || !editBaseline) return false
+      const markdown = markdownEditorRef.current?.flush() ?? draft
+      // Use the in-memory draft, not the last saved file. Asking a question never saves it.
+      const text = `${instruction}\n\n${editBaseline.item.name}\n${editBaseline.item.path}\n\n${selection?.quote ?? markdown}`
+      if (text.length > ANNOTATION_LIMITS.messagePayload) {
+        setEditError(t('This document is too large to send. Select a smaller passage.'))
+        return false
+      }
+      return onSendDocumentRequest({ projectId, text, annotations: [] })
     }
 
     const beginPptxEdit = (): void => {
@@ -1907,7 +2057,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
               <PreviewFileHeader
                 item={actionItem}
                 onClose={closePreview}
-                onOpenFullScreen={onOpenFullScreen}
+                onOpenFullScreen={
+                  onOpenFullScreen ? () => requestLeave(onOpenFullScreen) : undefined
+                }
                 onReload={() => setReloadToken((token) => token + 1)}
                 pdfContextAction={visiblePdfContextAction}
                 saveAsArtifactState={saveAsArtifactState}
@@ -1920,131 +2072,140 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                 tooltipClassName={tooltipClassName}
                 downloadVersionContext={downloadVersionContext}
                 checkingVersion={!provenanceFocused && managedWorkflow.inspectLoading}
-                managedControlsOnly={mode === 'edit'}
+                managedControlsOnly={mode === 'edit' && resolvedPreviewItem.format !== 'markdown'}
                 managedControls={
-                  mode === 'edit' ? (
-                    <div className="flex h-7 shrink-0 items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-text-000 hover:text-text-000"
-                        onClick={() => {
-                          requestLeave(() => {
-                            if (pptxEditing) {
-                              discardPptxEdit()
-                              return
-                            }
-                            invalidateSave()
-                            setMode('view')
-                            setDraft('')
-                            setEditBaseline(undefined)
-                          })
-                        }}
-                      >
-                        {t('Cancel')}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        aria-label={t('Save changes')}
-                        disabled={
-                          pptxEditing
-                            ? (!pptxSession.dirty && !pptxSession.restoring) ||
-                              pptxSession.phase !== 'ready'
-                            : (!isDirty && !restoringHistory) || saving || !managedInspect?.canEdit
-                        }
-                        onClick={() => void (pptxEditing ? savePptxEdit() : saveEdit())}
-                      >
-                        {pptxEditing
-                          ? pptxSession.restoring && !pptxSession.dirty
-                            ? t('Restore as new version')
-                            : t('Save')
-                          : restoringHistory && !isDirty
-                            ? t('Restore as new version')
-                            : t('Save')}
-                      </Button>
-                    </div>
-                  ) : managedWorkflow.showTextTools && managedControlsInspect ? (
-                    <>
-                      {managedInspect?.canEdit ? (
+                  <>
+                    {mode === 'edit' ? (
+                      <div className="flex h-7 shrink-0 items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-text-000 hover:text-text-000"
+                          onClick={() => {
+                            requestLeave(() => {
+                              if (pptxEditing) {
+                                discardPptxEdit()
+                                return
+                              }
+                              invalidateSave()
+                              setMode('view')
+                              setDraft('')
+                              setEditBaseline(undefined)
+                            })
+                          }}
+                        >
+                          {t('Cancel')}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          aria-label={t('Save changes')}
+                          disabled={
+                            pptxEditing
+                              ? (!pptxSession.dirty && !pptxSession.restoring) ||
+                                pptxSession.phase !== 'ready'
+                              : (!isDirty && !restoringHistory) ||
+                                saving ||
+                                !managedInspect?.canEdit
+                          }
+                          onClick={() => void (pptxEditing ? savePptxEdit() : saveEdit())}
+                        >
+                          {pptxEditing
+                            ? pptxSession.restoring && !pptxSession.dirty
+                              ? t('Restore as new version')
+                              : t('Save')
+                            : restoringHistory && !isDirty
+                              ? t('Restore as new version')
+                              : t('Save')}
+                        </Button>
+                      </div>
+                    ) : null}
+                    {managedWorkflow.showTextTools &&
+                    managedControlsInspect &&
+                    (mode !== 'edit' || resolvedPreviewItem.format === 'markdown') ? (
+                      <>
+                        {managedInspect?.canEdit && resolvedPreviewItem.format !== 'markdown' ? (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  className={previewHeaderActionClassName}
+                                  aria-label={t('Edit {{name}}', {
+                                    name: resolvedPreviewItem.name
+                                  })}
+                                  onClick={beginEdit}
+                                >
+                                  <Pencil aria-hidden="true" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent className={tooltipClassName}>
+                                {t('Edit content')}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        ) : null}
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
                                 type="button"
-                                variant="ghost"
+                                variant={mode === 'diff' ? 'default' : 'ghost'}
                                 size="icon-xs"
-                                className={previewHeaderActionClassName}
-                                aria-label={t('Edit {{name}}', {
-                                  name: resolvedPreviewItem.name
-                                })}
-                                onClick={beginEdit}
+                                className={
+                                  mode === 'diff' ? undefined : previewHeaderActionClassName
+                                }
+                                aria-label={
+                                  mode === 'diff'
+                                    ? t('Stop comparing {{name}}', {
+                                        name: resolvedPreviewItem.name
+                                      })
+                                    : t('Compare {{name}} with its source version', {
+                                        name: resolvedPreviewItem.name
+                                      })
+                                }
+                                disabled={mode !== 'diff' && !managedControlsInspect.canDiff}
+                                onClick={toggleDiff}
                               >
-                                <Pencil aria-hidden="true" />
+                                <FileDiff aria-hidden="true" />
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent className={tooltipClassName}>
-                              {t('Edit content')}
+                              {mode === 'diff'
+                                ? t('Stop comparing {{name}}', { name: resolvedPreviewItem.name })
+                                : managedControlsInspect.canDiff
+                                  ? t('Compare with source version')
+                                  : t('No source version to compare')}
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
-                      ) : null}
+                      </>
+                    ) : mode !== 'edit' && canEditPptx && managedControlsInspect ? (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
                               type="button"
-                              variant={mode === 'diff' ? 'default' : 'ghost'}
+                              variant="ghost"
                               size="icon-xs"
-                              className={mode === 'diff' ? undefined : previewHeaderActionClassName}
-                              aria-label={
-                                mode === 'diff'
-                                  ? t('Stop comparing {{name}}', {
-                                      name: resolvedPreviewItem.name
-                                    })
-                                  : t('Compare {{name}} with its source version', {
-                                      name: resolvedPreviewItem.name
-                                    })
-                              }
-                              disabled={mode !== 'diff' && !managedControlsInspect.canDiff}
-                              onClick={toggleDiff}
+                              className={previewHeaderActionClassName}
+                              aria-label={t('Edit {{name}}', { name: resolvedPreviewItem.name })}
+                              disabled={pptxSession.phase === 'opening'}
+                              onClick={beginPptxEdit}
                             >
-                              <FileDiff aria-hidden="true" />
+                              <Pencil aria-hidden="true" />
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent className={tooltipClassName}>
-                            {mode === 'diff'
-                              ? t('Stop comparing {{name}}', { name: resolvedPreviewItem.name })
-                              : managedControlsInspect.canDiff
-                                ? t('Compare with source version')
-                                : t('No source version to compare')}
+                            {t('Edit presentation')}
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-                    </>
-                  ) : canEditPptx && managedControlsInspect ? (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-xs"
-                            className={previewHeaderActionClassName}
-                            aria-label={t('Edit {{name}}', { name: resolvedPreviewItem.name })}
-                            disabled={pptxSession.phase === 'opening'}
-                            onClick={beginPptxEdit}
-                          >
-                            <Pencil aria-hidden="true" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent className={tooltipClassName}>
-                          {t('Edit presentation')}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  ) : undefined
+                    ) : null}
+                  </>
                 }
               />
               {!provenanceFocused &&
@@ -2171,7 +2332,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   data-preview-action-menu-content
                   className={`${provenanceFocused ? 'hidden' : 'block'} h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-bg-000`}
                 >
-                  {mode === 'edit' ? (
+                  {mode === 'edit' && renderContent ? (
                     <div className="flex size-full min-h-0 flex-col">
                       {pptxEditing ? (
                         <div className="min-h-0 flex-1">
@@ -2182,6 +2343,36 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                             saving={saving}
                           />
                         </div>
+                      ) : resolvedPreviewItem.format === 'markdown' ? (
+                        <Suspense
+                          fallback={
+                            <div
+                              aria-hidden="true"
+                              data-testid="markdown-editor-loading"
+                              className="min-h-0 flex-1 bg-bg-000"
+                            />
+                          }
+                        >
+                          <MarkdownEditorSurface
+                            ref={markdownEditorRef}
+                            key={markdownEditorRevision}
+                            source={draft}
+                            sourceFormat={editBaseline?.textFormat}
+                            disabled={saving}
+                            onDirtyChange={() =>
+                              setMarkdownDraftRevision((revision) => revision || 1)
+                            }
+                            onChange={(next) => {
+                              draftRef.current = next
+                              setDraft(next)
+                              setMarkdownDraftRevision(next === editBaseline?.text ? 0 : 1)
+                            }}
+                            onSendSelection={onAddAnnotation ? sendMarkdownSelection : undefined}
+                            onSubmitRequest={
+                              onSendDocumentRequest ? sendDocumentRequest : undefined
+                            }
+                          />
+                        </Suspense>
                       ) : (
                         <textarea
                           autoFocus

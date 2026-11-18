@@ -5,13 +5,21 @@ import { PreviewFileSurface } from '@/pages/workspace/PreviewFileSurface'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { createManagedPreviewTestTransport } from '@/pages/workspace/previews/managed-preview-test-support'
 import type { ManagedFileVersionSaveTextEditRequest } from '../../../src/shared/managed-file-versions'
+import type { Annotation } from '../../../src/shared/annotation-contract'
+import type { DocumentConversationRequest } from '@/pages/workspace/previews/preview-types'
 
 initI18n('en')
 const text = new URLSearchParams(location.search).has('footnotes')
   ? '# Scroll preview\n\n' +
     'A paragraph before the end.\n\n'.repeat(100) +
     'Document end[^1]\n\n[^1]: Final footnote.\n'
-  : '# Current\n'
+  : new URLSearchParams(location.search).has('features')
+    ? '# Current\n\n' +
+      Array.from({ length: 24 }, (_, index) => `Paragraph ${index + 1} for scrolling.\n\n`).join(
+        ''
+      ) +
+      'Choose this passage for formatting.\n'
+    : '# Current\n'
 const version = {
   id: 'v1',
   source: 'upload' as const,
@@ -34,7 +42,7 @@ const inspect = {
   headVersionId: 'v1',
   selectedVersionId: 'v1',
   versions: [version],
-  canEdit: true,
+  canEdit: !new URLSearchParams(location.search).has('footnotes'),
   canDiff: false,
   text,
   textFormat: { hasUtf8Bom: false, newline: 'lf', hasTrailingNewline: true }
@@ -43,13 +51,27 @@ const transport = createManagedPreviewTestTransport({
   read: async () => ({ content: text, encoding: 'utf8', size: text.length, truncated: false })
 })
 const saves: ManagedFileVersionSaveTextEditRequest[] = []
-Object.assign(window, { previewEditRecovery: { saves } })
+const requests: DocumentConversationRequest[] = []
+const annotations: Annotation[] = []
+Object.assign(window, { previewEditRecovery: { saves, requests, annotations } })
 window.api = {
   previewResources: transport,
   managedFileVersions: {
     inspect: async () => ({ ok: true, value: inspect }),
     saveTextEdit: async (request: ManagedFileVersionSaveTextEditRequest) => {
       saves.push(request)
+      if (new URLSearchParams(location.search).has('success')) {
+        const saved = {
+          ...version,
+          id: `v${saves.length + 1}`,
+          versionNumber: saves.length + 1
+        }
+        inspect.headVersionId = saved.id
+        inspect.selectedVersionId = saved.id
+        inspect.text = request.content
+        inspect.versions = [...inspect.versions, saved]
+        return { ok: true, value: { kind: 'created', version: saved, headVersionId: saved.id } }
+      }
       return {
         ok: true,
         value: {
@@ -80,6 +102,14 @@ createRoot(document.getElementById('root')!).render(
         source: 'upload'
       }}
       onClose={() => {}}
+      onSendDocumentRequest={async (request) => {
+        requests.push(request)
+        return true
+      }}
+      onAddAnnotation={(annotation) => {
+        annotations.push(annotation)
+        return undefined
+      }}
     />
   </main>
 )

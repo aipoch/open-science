@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
+import { waitFor } from '@testing-library/react'
 import { act, createRef, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { PlateEditor } from 'platejs/react'
 
 import {
   createInitialPreviewWorkbenchState,
@@ -22,12 +24,25 @@ import {
   type ChatSession,
   useSessionStore
 } from '@/stores/session-store'
+import { parseMarkdownDocument } from './markdown-document/markdown-codec'
 
+const markdownEditors = vi.hoisted(() => [] as unknown[])
 const provenancePanelSpy = vi.hoisted(() => vi.fn())
 const previewContentSpy = vi.hoisted(() => vi.fn())
 const pdfPageReport = vi.hoisted(() => ({ enabled: true }))
 const diffContentSpy = vi.hoisted(() => vi.fn())
 const downloadButtonSpy = vi.hoisted(() => vi.fn())
+
+vi.mock('platejs/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('platejs/react')>()
+  const createPlateEditor = vi.fn(actual.createPlateEditor)
+  createPlateEditor.mockImplementation((options) => {
+    const editor = actual.createPlateEditor(options)
+    if (editor.plugins.markdownLiveInput) markdownEditors.push(editor)
+    return editor
+  })
+  return { ...actual, createPlateEditor }
+})
 
 vi.mock('./ArtifactProvenancePanel', () => ({
   ArtifactProvenancePanel: (props: {
@@ -177,7 +192,11 @@ let root: Root
 
 const click = async (element: HTMLElement | null): Promise<void> => {
   if (!element) throw new Error('element not found')
-  await act(async () => element.click())
+  await act(async () => {
+    element.click()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
 }
 
 const discardConfirmation = (): HTMLElement | null =>
@@ -195,11 +214,73 @@ const cancelDiscard = async (): Promise<void> => {
   )
 }
 
-const changeTextarea = async (textarea: HTMLTextAreaElement, value: string): Promise<void> => {
-  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+type EditablePreview = HTMLTextAreaElement | HTMLElement
+
+const editablePreview = (): EditablePreview | null =>
+  container.querySelector<HTMLTextAreaElement>('textarea') ??
+  container.querySelector<HTMLElement>('[data-testid="markdown-plate-editor"]') ??
+  container.querySelector<HTMLElement>('[contenteditable]')
+
+const editablePreviewValue = (
+  element: EditablePreview | null = editablePreview()
+): string | undefined => {
+  if (!element) return undefined
+  if (element instanceof HTMLTextAreaElement) return element.value
+  return Array.from(element.children)
+    .map((block) => {
+      const content = block.matches('[data-slate-node="element"]')
+        ? block
+        : (block.querySelector('[data-slate-node="element"]') ?? block)
+      const text = Array.from(content.querySelectorAll('[data-slate-string]'))
+        .map((leaf) => leaf.textContent ?? '')
+        .join('')
+      switch (content.tagName.toLowerCase()) {
+        case 'h1':
+          return `# ${text}\n`
+        case 'h2':
+          return `## ${text}\n`
+        case 'h3':
+          return `### ${text}\n`
+        default:
+          return `${text}\n`
+      }
+    })
+    .join('')
+}
+
+const editablePreviewAcceptsInput = (element: EditablePreview | null): boolean =>
+  element instanceof HTMLTextAreaElement
+    ? !element.readOnly && !element.disabled
+    : element?.getAttribute('contenteditable') !== 'false'
+
+const changeTextarea = async (textarea: EditablePreview | null, value: string): Promise<void> => {
+  const target =
+    textarea ??
+    (await waitFor(() => {
+      if (!editablePreview()) throw new Error('editable preview not found')
+      return editablePreview()
+    }))
+  if (target instanceof HTMLTextAreaElement) {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(
+        target,
+        value
+      )
+      target.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    return
+  }
+  const parsed = parseMarkdownDocument(value)
+  if (parsed.mode !== 'rich') throw new Error('Markdown input is not safely editable')
+  const editor = markdownEditors.at(-1) as PlateEditor | undefined
+  if (!editor) throw new Error('Plate editor not found')
   await act(async () => {
-    setter?.call(textarea, value)
-    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    editor.tf.withoutNormalizing(() => {
+      for (let index = editor.children.length - 1; index >= 0; index -= 1) {
+        editor.tf.removeNodes({ at: [index] })
+      }
+      editor.tf.insertNodes(parsed.value, { at: [0], select: true })
+    })
   })
 }
 
@@ -257,8 +338,10 @@ const selectPdfContextSession = (
   })
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await i18next.changeLanguage('en')
   pdfPageReport.enabled = true
+  markdownEditors.length = 0
   previewLeaveGuards.clear()
   provenancePanelSpy.mockClear()
   previewContentSpy.mockClear()
@@ -424,7 +507,7 @@ describe('PreviewFileSurface managed text versions', () => {
   })
 
   it.each([false, true])(
-    'preserves input accepted while saving (workbenchConnected=%s)',
+    'keeps Markdown editing manual and resumes after saving (workbenchConnected=%s)',
     async (workbenchConnected) => {
       type SaveResult = Awaited<ReturnType<typeof window.api.managedFileVersions.saveTextEdit>>
       let complete!: (result: SaveResult) => void
@@ -442,16 +525,31 @@ describe('PreviewFileSurface managed text versions', () => {
           />
         )
       )
-      await click(container.querySelector('[aria-label="Edit README.md"]'))
+      expect(container.querySelector('[aria-label="Edit README.md"]')).toBeNull()
+      await waitFor(() => expect(editablePreview()).not.toBeNull())
       const submitted = '# Submitted A\n'
-      await changeTextarea(container.querySelector('textarea')!, submitted)
+      await changeTextarea(editablePreview()!, submitted)
+      await new Promise((resolve) => setTimeout(resolve, 950))
+      expect(save).not.toHaveBeenCalled()
       await click(container.querySelector('[aria-label="Save changes"]'))
-      const editor = container.querySelector('textarea')!
-      const acceptsInput = !editor.readOnly && !editor.disabled
+      const editor = editablePreview()!
+      expect(editablePreviewAcceptsInput(editor)).toBe(false)
       const newerDraft = `${submitted}New unsaved B\n`
-      if (acceptsInput) await changeTextarea(editor, newerDraft)
       expect(save).toHaveBeenCalledTimes(1)
       expect(save.mock.calls[0]).toEqual([expect.objectContaining({ content: submitted })])
+      window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          ...managedInspect,
+          headVersionId: 'upload-v3',
+          selectedVersionId: 'upload-v3',
+          text: submitted,
+          versions: [
+            ...managedInspect.versions,
+            { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
+          ]
+        }
+      })
       await act(async () => {
         complete({
           ok: true,
@@ -463,11 +561,10 @@ describe('PreviewFileSurface managed text versions', () => {
           }
         })
       })
-      if (acceptsInput) {
-        expect(container.querySelector('textarea')?.value).toBe(newerDraft)
-      } else {
-        expect(container.querySelector('textarea')).toBeNull()
-      }
+      const savedEditor = editablePreview()!
+      expect(editablePreviewAcceptsInput(savedEditor)).toBe(true)
+      expect(editablePreviewValue(savedEditor)).toBe(submitted)
+      await changeTextarea(savedEditor, newerDraft)
       expect(save).toHaveBeenCalledTimes(1)
       expect(discardConfirmation()).toBeNull()
     }
@@ -533,7 +630,7 @@ describe('PreviewFileSurface managed text versions', () => {
     )
     expect(header.textContent).not.toContain('Checking version…')
     expect(container.querySelector('[role="alert"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Edit README.md"]')).not.toBeNull()
+    expect(editablePreview()).not.toBeNull()
   })
 
   it.each(['rejection', 'storage error', 'integrity error'])(
@@ -571,14 +668,13 @@ describe('PreviewFileSurface managed text versions', () => {
       await act(async () =>
         root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       )
-      await click(container.querySelector('[aria-label="Edit README.md"]'))
-      await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Revised\n')
+      await changeTextarea(editablePreview()!, '# Revised\n')
       await click(container.querySelector('[aria-label="Save changes"]'))
       expect(container.querySelector('[role="alert"]')).not.toBeNull()
-      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Revised\n')
+      expect(editablePreviewValue()).toBe('# Revised\n')
       await click(container.querySelector('[aria-label="Save changes"]'))
       expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0])
-      expect(container.querySelector('textarea')).toBeNull()
+      expect(editablePreview()).not.toBeNull()
       expect(container.textContent).not.toContain('This file has a newer version.')
     }
   )
@@ -613,15 +709,14 @@ describe('PreviewFileSurface managed text versions', () => {
       await act(async () =>
         root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       )
-      await click(container.querySelector('[aria-label="Edit README.md"]'))
-      await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Revised\n')
+      await changeTextarea(editablePreview()!, '# Revised\n')
       await click(container.querySelector('[aria-label="Save changes"]'))
       expect(container.querySelector('[role="alert"]')).not.toBeNull()
-      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Revised\n')
+      expect(editablePreviewValue()).toBe('# Revised\n')
       await click(container.querySelector('[aria-label="Save changes"]'))
       if (outcome === 'response lost') {
         expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0])
-        expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Revised\n')
+        expect(editablePreviewValue()).toBe('# Revised\n')
         await click(container.querySelector('[aria-label="Save changes"]'))
       }
       expect(save).toHaveBeenCalledTimes(outcome === 'response lost' ? 3 : 2)
@@ -631,7 +726,7 @@ describe('PreviewFileSurface managed text versions', () => {
         ...save.mock.calls[0][0],
         operationId: retry.operationId
       })
-      expect(container.querySelector('textarea')).toBeNull()
+      expect(editablePreview()).not.toBeNull()
       expect(container.querySelector('[role="alert"]')).toBeNull()
     }
   )
@@ -644,14 +739,10 @@ describe('PreviewFileSurface managed text versions', () => {
       await act(async () =>
         root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       )
-      await click(container.querySelector('[aria-label="Edit README.md"]'))
-      await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+      await changeTextarea(editablePreview()!, '# Draft\n')
       await click(container.querySelector('[aria-label="Save changes"]'))
       if (change === 'content') {
-        await changeTextarea(
-          container.querySelector<HTMLTextAreaElement>('textarea')!,
-          '# Changed\n'
-        )
+        await changeTextarea(editablePreview()!, '# Changed\n')
       } else {
         await click(
           [...container.querySelectorAll('button')].find(
@@ -666,8 +757,7 @@ describe('PreviewFileSurface managed text versions', () => {
           })
           await click(container.querySelector('[aria-label="Previous file version"]'))
         }
-        await click(container.querySelector('[aria-label="Edit README.md"]'))
-        await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+        await changeTextarea(editablePreview()!, '# Draft\n')
       }
       await click(container.querySelector('[aria-label="Save changes"]'))
       expect(save).toHaveBeenCalledTimes(2)
@@ -761,8 +851,7 @@ describe('PreviewFileSurface managed text versions', () => {
         latestVersionId: 'upload-v3'
       })
     )
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# New head\n')
+    expect(editablePreviewValue()).toBe('# New head\n')
   })
 
   it('refreshes the head from parent metadata while keeping a locally selected historical version', async () => {
@@ -808,8 +897,7 @@ describe('PreviewFileSurface managed text versions', () => {
   it('preserves a draft and its original version baseline when the default file path advances', async () => {
     const currentItem = { ...managedUploadItem, selectedVersionId: undefined }
     await act(async () => root.render(<PreviewFileSurface item={currentItem} onClose={vi.fn()} />))
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await changeTextarea(editablePreview()!, '# Draft\n')
     window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
       ok: true,
       value: {
@@ -835,7 +923,7 @@ describe('PreviewFileSurface managed text versions', () => {
         />
       )
     )
-    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
+    expect(editablePreviewValue()).toBe('# Draft\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
     expect(window.api.managedFileVersions.saveTextEdit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -860,8 +948,7 @@ describe('PreviewFileSurface managed text versions', () => {
       await act(async () =>
         root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       )
-      await click(container.querySelector('[aria-label="Edit README.md"]'))
-      await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+      await changeTextarea(editablePreview()!, '# Draft\n')
       type Result = Awaited<ReturnType<typeof window.api.managedFileVersions.inspect>>
       let resolveInspect!: (value: Result) => void
       window.api.managedFileVersions.inspect = vi.fn(
@@ -876,7 +963,7 @@ describe('PreviewFileSurface managed text versions', () => {
       const saveButton = (): HTMLButtonElement | null =>
         container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')
       expect(saveButton()?.disabled).toBe(true)
-      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
+      expect(editablePreviewValue()).toBe('# Draft\n')
       await act(async () =>
         resolveInspect({
           ok: true,
@@ -1020,6 +1107,7 @@ describe('PreviewFileSurface managed text versions', () => {
   it('blocks annotation when an editable managed file is not on its head Version', async () => {
     const historicalItem = {
       ...managedUploadItem,
+      format: 'text' as const,
       selectedVersionId: 'upload-v1',
       versionNumber: 1,
       path: 'upload-version:project-1/session-1/upload-v1'
@@ -1166,11 +1254,7 @@ describe('PreviewFileSurface managed text versions', () => {
         )
       }
       if (action === 'save' || action === 'draft') {
-        await click(container.querySelector('[aria-label="Edit README.md"]'))
-        await changeTextarea(
-          container.querySelector<HTMLTextAreaElement>('textarea')!,
-          '# Unsaved draft\n'
-        )
+        await changeTextarea(editablePreview()!, '# Unsaved draft\n')
       }
       if (action === 'save') await click(container.querySelector('[aria-label="Save changes"]'))
       else {
@@ -1192,24 +1276,20 @@ describe('PreviewFileSurface managed text versions', () => {
         )
         if (action === 'pending') {
           expect(panelVersion()).toBe('artifact-v2')
-          expect(previewContentSpy.mock.lastCall?.[0].item.selectedVersionId).toBe('artifact-v2')
           await act(async () => confirm(nextInspect))
         }
       }
       expect(panelVersion()).toBe(
         action === 'history' ? 'artifact-v1' : action === 'draft' ? 'artifact-v2' : 'artifact-v3'
       )
-      if (action === 'draft')
-        expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
-          '# Unsaved draft\n'
-        )
-      else expect(previewContentSpy.mock.lastCall?.[0].item.selectedVersionId).toBe(panelVersion())
+      if (action === 'draft') expect(editablePreviewValue()).toBe('# Unsaved draft\n')
     }
   )
 
   it('supplies the exact head Version when annotating a default managed Artifact', async () => {
     const managedArtifactItem: PreviewFileItem = {
       ...managedUploadItem,
+      format: 'text',
       id: 'artifact-1',
       artifactId: 'artifact-1',
       managedFileId: 'artifact-1',
@@ -1254,6 +1334,7 @@ describe('PreviewFileSurface managed text versions', () => {
   it('retains the last confirmed annotation Version while its managed inspect refreshes', async () => {
     const managedArtifactItem: PreviewFileItem = {
       ...managedUploadItem,
+      format: 'text',
       id: 'artifact-1',
       artifactId: 'artifact-1',
       managedFileId: 'artifact-1',
@@ -1293,7 +1374,7 @@ describe('PreviewFileSurface managed text versions', () => {
       await Promise.resolve()
     })
     await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Revised\n')
+    await changeTextarea(editablePreview()!, '# Revised\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
 
     expect(previewContentSpy).toHaveBeenLastCalledWith(
@@ -1338,14 +1419,17 @@ describe('PreviewFileSurface managed text versions', () => {
     await act(async () => root.render(<PreviewPanelSurface activeAnnotations={[]} />))
     await click(container.querySelector('[aria-label="Open full screen preview of README.md"]'))
     const fullscreen = container.querySelector<HTMLElement>('[role="dialog"]')!
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+    const textarea = await waitFor(() => {
+      const editor = editablePreview()
+      if (!editor) throw new Error('editable preview not found')
+      return editor
+    })
     await changeTextarea(textarea, '# Unsaved draft\n')
     textarea.focus()
     await act(async () => root.render(<PreviewPanelSurface activeAnnotations={[]} />))
-    expect(container.querySelector('textarea')).toBe(textarea)
+    expect(editablePreview()).toBe(textarea)
     expect(document.activeElement).toBe(textarea)
-    expect(textarea.value).toBe('# Unsaved draft\n')
+    expect(editablePreviewValue(textarea)).toBe('# Unsaved draft\n')
 
     const escape = async (): Promise<void> => {
       await act(async () =>
@@ -1360,7 +1444,7 @@ describe('PreviewFileSurface managed text versions', () => {
     await cancelDiscard()
     expect(discardConfirmation()).toBeNull()
     expect(fullscreen.getAttribute('role')).toBe('dialog')
-    expect(textarea.value).toBe('# Unsaved draft\n')
+    expect(editablePreviewValue(textarea)).toBe('# Unsaved draft\n')
     textarea.focus()
     await escape()
     await confirmDiscard()
@@ -1370,7 +1454,7 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
   })
 
-  it('inspects uploads with the database file id and edits raw Markdown in a plain textarea', async () => {
+  it('inspects uploads with the database file id and opens Markdown in the rich editor', async () => {
     window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
       ok: true,
       value: { kind: 'noop', version: managedInspect.versions[1], headVersionId: 'upload-v2' }
@@ -1385,15 +1469,15 @@ describe('PreviewFileSurface managed text versions', () => {
       fileId: 'upload-file-1',
       versionId: 'upload-v2'
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    const textarea = container.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="Edit README.md source"]'
-    )
-    expect(textarea?.value).toBe('# Current\n')
+    const editor = editablePreview()
+    expect(editor).not.toBeNull()
+    expect(editablePreviewValue(editor)).toBe('# Current\n')
+    expect(container.querySelector('[data-testid="markdown-plate-editor"]')).toBe(editor)
     expect(container.querySelector('[data-testid="preview-content"]')).toBeNull()
     expect(
       container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')?.disabled
     ).toBe(true)
+    expect(window.api.managedFileVersions.saveTextEdit).not.toHaveBeenCalled()
   })
 
   it('gives the download control both the viewed and latest managed versions', async () => {
@@ -1421,7 +1505,7 @@ describe('PreviewFileSurface managed text versions', () => {
     )
   })
 
-  it('replaces preview actions with text-only Cancel and Save controls while editing', async () => {
+  it('keeps preview navigation alongside manual Markdown save controls', async () => {
     const managedArtifactItem: PreviewFileItem = {
       ...managedUploadItem,
       id: 'artifact-1',
@@ -1441,38 +1525,15 @@ describe('PreviewFileSurface managed text versions', () => {
     })
 
     expect(container.querySelector('[aria-label="File actions for README.md"]')).not.toBeNull()
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
 
     const saveButton = container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')
     expect(saveButton?.textContent).toBe('Save')
-    expect(saveButton?.querySelector('svg')).toBeNull()
     expect(container.textContent).toContain('Cancel')
-    expect(container.textContent).not.toContain('Download file')
-    expect(container.querySelector('[aria-label="Close preview of README.md"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Close preview of README.md"]')).not.toBeNull()
     expect(
       container.querySelector('[aria-label="Open full screen preview of README.md"]')
-    ).toBeNull()
-    expect(container.querySelector('[aria-label="File actions for README.md"]')).toBeNull()
-  })
-
-  it('uses stronger header action colors and keeps disabled actions only slightly lighter', async () => {
-    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
-      ok: true,
-      value: { ...managedInspect, canDiff: false }
-    })
-    await act(async () => {
-      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-
-    const editButton = container.querySelector<HTMLButtonElement>('[aria-label="Edit README.md"]')
-    const diffButton = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Compare README.md with its source version"]'
-    )
-    expect(editButton?.className).toContain('text-text-000')
-    expect(diffButton?.disabled).toBe(true)
-    expect(diffButton?.className).toContain('disabled:opacity-50')
-    expect(diffButton?.className).not.toContain('disabled:opacity-100')
+    ).not.toBeNull()
+    expect(container.querySelector('[aria-label="File actions for README.md"]')).not.toBeNull()
   })
 
   it('keeps read-only diff and version navigation for eligible text when writes are unavailable', async () => {
@@ -1513,8 +1574,7 @@ describe('PreviewFileSurface managed text versions', () => {
       )
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await changeTextarea(editablePreview()!, '# Draft\n')
     await act(async () => i18next.changeLanguage('zh-Hans'))
 
     await act(async () => {
@@ -1537,8 +1597,7 @@ describe('PreviewFileSurface managed text versions', () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await changeTextarea(editablePreview()!, '# Draft\n')
     const saveButton = container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')
     await act(async () => i18next.changeLanguage('zh-Hans'))
     await click(saveButton)
@@ -1583,8 +1642,7 @@ describe('PreviewFileSurface managed text versions', () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+    const textarea = editablePreview()!
     await changeTextarea(textarea, '# Unsaved draft\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
 
@@ -1592,9 +1650,7 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).not.toContain(
       'Internal storage detail.'
     )
-    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
-      '# Unsaved draft\n'
-    )
+    expect(editablePreviewValue()).toBe('# Unsaved draft\n')
   })
 
   it('uses the generic save failure for an unknown error code and preserves the draft', async () => {
@@ -1607,8 +1663,7 @@ describe('PreviewFileSurface managed text versions', () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+    const textarea = editablePreview()!
     await changeTextarea(textarea, '# Unsaved draft\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
 
@@ -1618,9 +1673,7 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).not.toContain(
       'Unexpected backend detail.'
     )
-    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
-      '# Unsaved draft\n'
-    )
+    expect(editablePreviewValue()).toBe('# Unsaved draft\n')
   })
 
   it('preserves a dirty draft on conflict and offers the latest version', async () => {
@@ -1636,11 +1689,10 @@ describe('PreviewFileSurface managed text versions', () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+    const textarea = editablePreview()!
     await changeTextarea(textarea, '# Draft\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
-    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
+    expect(editablePreviewValue()).toBe('# Draft\n')
     expect(container.textContent).toContain('View latest version')
     expect(window.api.managedFileVersions.saveTextEdit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1675,11 +1727,9 @@ describe('PreviewFileSurface managed text versions', () => {
         await act(async () => {
           root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
         })
-        await click(container.querySelector('[aria-label="Edit README.md"]'))
-        const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+        const textarea = editablePreview()!
         const draft = '# Draft\nαβ 中文\r\n' + 'data '.repeat(5000)
         await changeTextarea(textarea, draft)
-        const normalized = textarea.value
         await click(container.querySelector('[aria-label="Save changes"]'))
         const request = vi.mocked(window.api.managedFileVersions.saveTextEdit).mock.calls[0][0]
         await click(
@@ -1687,9 +1737,9 @@ describe('PreviewFileSurface managed text versions', () => {
             (button) => button.textContent === 'Copy draft'
           )!
         )
-        expect(clipboard).toHaveBeenCalledExactlyOnceWith(normalized)
-        expect(container.querySelector('textarea')).toBe(textarea)
-        expect(textarea.value).toBe(normalized)
+        expect(clipboard).toHaveBeenCalledExactlyOnceWith(request.content)
+        expect(editablePreview()).toBe(textarea)
+        expect(editablePreviewValue(textarea)).toContain('# Draft')
         expect(container.textContent).toContain(
           failure ? 'Could not copy the draft. Select the text and copy it manually.' : 'Copied!'
         )
@@ -1745,8 +1795,7 @@ describe('PreviewFileSurface managed text versions', () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# A draft\n')
+    await changeTextarea(editablePreview()!, '# A draft\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
 
     await act(async () => {
@@ -1754,8 +1803,7 @@ describe('PreviewFileSurface managed text versions', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit OTHER.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# B draft\n')
+    await changeTextarea(editablePreview()!, '# B draft\n')
 
     await act(async () => {
       resolveSave({
@@ -1770,7 +1818,7 @@ describe('PreviewFileSurface managed text versions', () => {
       await Promise.resolve()
     })
 
-    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# B draft\n')
+    expect(editablePreviewValue()).toBe('# B draft\n')
   })
 
   it('ignores a save result that arrives after the surface unmounts', async () => {
@@ -1787,8 +1835,7 @@ describe('PreviewFileSurface managed text versions', () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await changeTextarea(editablePreview()!, '# Draft\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
     await act(async () => root.unmount())
 
@@ -1820,8 +1867,7 @@ describe('PreviewFileSurface managed text versions', () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await changeTextarea(editablePreview()!, '# Draft\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
     await click(container.querySelector('[aria-label="Previous file version"]'))
     expect(discardConfirmation()).not.toBeNull()
@@ -1877,7 +1923,7 @@ describe('PreviewFileSurface managed text versions', () => {
       })
       await Promise.resolve()
     })
-    expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+    expect(editablePreview()).not.toBeNull()
     expect(container.querySelector('[aria-label="Stop comparing README.md"]')).toBeNull()
     expect(
       container.querySelector('[aria-label="Compare README.md with its source version"]')
@@ -1981,7 +2027,7 @@ describe('PreviewFileSurface managed text versions', () => {
     })
 
     expect(container.querySelector('[aria-label="Stop comparing README.md"]')).toBeNull()
-    expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+    expect(editablePreview()).not.toBeNull()
   })
 
   it('leaves diff mode when the source version itself has no text preview', async () => {
@@ -2446,8 +2492,7 @@ describe('PreviewFileSurface managed text versions', () => {
       )
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await changeTextarea(editablePreview()!, '# Draft\n')
     await click(container.querySelector('[aria-label="Previous file version"]'))
     expect(discardConfirmation()).not.toBeNull()
     await confirmDiscard()
@@ -2455,7 +2500,7 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
       selectedVersionId: 'upload-v1'
     })
-    expect(container.querySelector('textarea')).toBeNull()
+    expect(editablePreview()).not.toBeNull()
   })
 
   it('guards a running PDF translation, retains progress on dismissal, and cancels only on confirmation', async () => {
@@ -2553,8 +2598,7 @@ describe('PreviewFileSurface managed text versions', () => {
       )
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await changeTextarea(editablePreview()!, '# Draft\n')
 
     await act(async () => {
       surfaceRef.current?.requestLeave(() =>
@@ -2575,14 +2619,13 @@ describe('PreviewFileSurface managed text versions', () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await changeTextarea(editablePreview()!, '# Draft\n')
 
     await click(container.querySelector('[aria-label="Previous file version"]'))
     expect(discardConfirmation()).not.toBeNull()
     await cancelDiscard()
 
-    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
+    expect(editablePreviewValue()).toBe('# Draft\n')
     expect(
       container.querySelector('[data-testid="managed-preview-version-navigation"] > span')
         ?.textContent
@@ -2608,19 +2651,18 @@ describe('PreviewFileSurface managed text versions', () => {
           <PreviewFileSurface item={historicalItem} onClose={vi.fn()} workbenchConnected />
         )
       )
-      await click(container.querySelector('[aria-label="Edit README.md"]'))
-      const editor = container.querySelector<HTMLTextAreaElement>('textarea')!
+      const editor = editablePreview()!
       if (dirty) await changeTextarea(editor, '# Keep draft\n')
       const next = container.querySelector<HTMLButtonElement>('[aria-label="Next file version"]')
       await click(next)
       if (dirty) {
         expect(discardConfirmation()).not.toBeNull()
         await cancelDiscard()
-        expect(editor.value).toBe('# Keep draft\n')
+        expect(editablePreviewValue(editor)).toBe('# Keep draft\n')
         await click(next)
         await confirmDiscard()
       }
-      expect(container.querySelector('textarea')).toBeNull()
+      expect(editablePreview()).not.toBeNull()
       expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
         selectedVersionId: 'upload-v2'
       })
@@ -2653,7 +2695,6 @@ describe('PreviewFileSurface managed text versions', () => {
         />
       )
     )
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
     const save = container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')!
     expect(save.disabled).toBe(false)
     expect(save.textContent).toBe('Restore as new version')
@@ -2687,8 +2728,7 @@ describe('PreviewFileSurface managed text versions', () => {
       )
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Saved\n')
+    await changeTextarea(editablePreview()!, '# Saved\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
 
     expect(discardConfirmation()).toBeNull()
@@ -2719,8 +2759,7 @@ describe('PreviewFileSurface managed text versions', () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
     })
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await changeTextarea(editablePreview()!, '# Draft\n')
 
     await act(async () => {
       root.render(<PreviewFileSurface item={replacement} onClose={vi.fn()} />)
@@ -2728,7 +2767,7 @@ describe('PreviewFileSurface managed text versions', () => {
       await Promise.resolve()
     })
 
-    expect(container.querySelector('textarea')).toBeNull()
+    expect(editablePreview()).not.toBeNull()
     expect(window.api.managedFileVersions.inspect).toHaveBeenLastCalledWith({
       source: 'upload',
       projectId: 'project-1',

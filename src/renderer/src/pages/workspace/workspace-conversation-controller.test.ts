@@ -2664,3 +2664,59 @@ describe('draft acceptance notifications', () => {
     expect(onAccepted).toHaveBeenCalledOnce()
   })
 })
+
+describe('inline document requests', () => {
+  const request = {
+    sessionId: 'session-a',
+    projectId: 'project-a',
+    text: 'Explain this passage.\n\nreport.md\n\nUnsaved text',
+    annotations: []
+  }
+
+  it('sends the explicit request without consuming the existing composer draft', async () => {
+    const input = options()
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => {
+      expect(await hook.result.current.actions.submit.document(request)).toBe(true)
+    })
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining(request))
+    expect(input.composer.lifecycle.captureSend).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+  })
+
+  it.each(['session', 'project', 'busy', 'persistence', 'permission'] as const)(
+    'rejects a stale or unavailable %s without sending',
+    async (reason) => {
+      const input = options()
+      if (reason === 'busy') input.promptInFlightSessionIds = ['session-a']
+      if (reason === 'persistence') input.isPersistenceReady = false
+      if (reason === 'permission') input.hasPendingPermissionRequest = () => true
+      const hook = renderController(input)
+      mounted.push(hook)
+      const candidate = {
+        ...request,
+        ...(reason === 'session' ? { sessionId: 'old-session' } : {}),
+        ...(reason === 'project' ? { projectId: 'other-project' } : {})
+      }
+      await act(async () => {
+        expect(await hook.result.current.actions.submit.document(candidate)).toBe(false)
+      })
+      expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    }
+  )
+
+  it('does not report success after preparation rejects the request', async () => {
+    const input = options()
+    input.runtime.sendMessage = vi.fn(async (payload) => {
+      payload.onPreparationRejected?.('Rejected', 'session-a', [])
+      return { sessionId: 'session-a', messageId: 'message-a' }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => {
+      expect(await hook.result.current.actions.submit.document(request)).toBe(false)
+    })
+    expect(input.composer.lifecycle.restoreFailedSend).not.toHaveBeenCalled()
+  })
+})

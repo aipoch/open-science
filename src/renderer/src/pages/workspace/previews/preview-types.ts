@@ -38,7 +38,15 @@ export type PreviewFileRendererProps = {
 
 export type PreviewAnnotationPort = Omit<PreviewFileRendererProps, 'item'>
 
+export type DocumentConversationRequest = {
+  projectId: string
+  text: string
+  annotations: Annotation[]
+}
+
 export type PreviewInteractionPort = PreviewAnnotationPort & {
   onLinkReadingContext?: (source: SessionPdfContextSource) => Promise<void>
   onUnlinkReadingContext?: (bindingId: string) => void
+  onFocusComposer?: () => void
+  onSendDocumentRequest?: (request: DocumentConversationRequest) => Promise<boolean>
 }

@@ -201,12 +201,18 @@ test('new Markdown publications replace the head while edits, restoration and dr
   let provenance = page.getByTestId('artifact-provenance')
   await expect(provenance.getByRole('button', { name: 'Generate script' })).toBeEnabled()
   await provenance.evaluate((element) => element.setAttribute('data-continuously-open', 'true'))
-  await preview.getByRole('button', { name: `Edit ${name}`, exact: true }).click()
-  let editor = preview.getByRole('textbox', { name: `Edit ${name} source` })
-  await expect(editor).toHaveValue(original)
-  await editor.fill(edited)
+  let editor = preview.getByTestId('markdown-plate-editor')
+  await expect(editor).toContainText('Original result.')
+  await editor.press('ControlOrMeta+a')
+  await editor.evaluate((element, content) => {
+    const clipboardData = new DataTransfer()
+    clipboardData.setData('text/plain', content)
+    element.dispatchEvent(
+      new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true })
+    )
+  }, edited)
   await preview.getByRole('button', { name: 'Save changes' }).click()
-  await expect(editor).toBeHidden()
+  await expect(preview.getByRole('button', { name: 'Save changes' })).toBeDisabled()
   const second = await inspect()
   expect(second.selectedVersion?.versionNumber).toBe(2)
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
@@ -271,13 +277,12 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await expect(warning.locator('details')).not.toHaveAttribute('open')
   await preview.getByRole('button', { name: 'Previous file version' }).click()
   await expect(preview.getByText('Manually corrected result.', { exact: true })).toBeVisible()
-  await preview.getByRole('button', { name: `Edit ${name}`, exact: true }).click()
-  await expect(editor).toHaveValue(edited)
+  await expect(editor).toContainText('Manually corrected result.')
   await expect(preview.getByRole('button', { name: 'Save changes' })).toHaveText(
     'Restore as new version'
   )
   await preview.getByRole('button', { name: 'Save changes' }).click()
-  await expect(editor).toBeHidden()
+  await expect(preview.getByRole('button', { name: 'Save changes' })).toBeDisabled()
   expect(await inspect()).toMatchObject({ text: edited, selectedVersion: { versionNumber: 4 } })
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
     'v4 contains manual edits'
@@ -299,12 +304,10 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
     'v4 contains manual edits'
   )
-  await preview.getByRole('button', { name: `Edit ${name}`, exact: true }).click()
-  await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
-    'v4 contains manual edits'
-  )
-  editor = preview.getByRole('textbox', { name: `Edit ${name} source` })
-  await editor.fill(edited + '\nUnsaved draft.\n')
+  editor = preview.getByTestId('markdown-plate-editor')
+  await editor.press('ControlOrMeta+End')
+  await editor.press('Enter')
+  await editor.pressSequentially('Unsaved draft.')
   // A genuine backend head advance arrives while the renderer owns an unsaved draft.
   await page.evaluate(
     async ({ identity, edited }) => {
@@ -321,10 +324,10 @@ test('new Markdown publications replace the head while edits, restoration and dr
     },
     { identity, edited }
   )
-  await expect(editor).toHaveValue(edited + '\nUnsaved draft.\n')
+  await expect(editor).toContainText('Unsaved draft.')
   await preview.getByRole('button', { name: 'Save changes' }).click()
   await expect(preview.getByText('This file has a newer version.', { exact: true })).toBeVisible()
-  await expect(editor).toHaveValue(edited + '\nUnsaved draft.\n')
+  await expect(editor).toContainText('Unsaved draft.')
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
     'v4 contains manual edits'
   )
@@ -332,7 +335,7 @@ test('new Markdown publications replace the head while edits, restoration and dr
   const discard = page.getByTestId('discard-preview-changes-confirmation')
   await expect(discard).toBeVisible()
   await discard.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(editor).toHaveValue(edited + '\nUnsaved draft.\n')
+  await expect(editor).toContainText('Unsaved draft.')
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
     'v4 contains manual edits'
   )

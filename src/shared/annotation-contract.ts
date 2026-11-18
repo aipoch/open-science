@@ -26,6 +26,19 @@ export type TextAnnotationSource =
       sessionId?: string
     }>
   | Readonly<{
+      kind: 'document-draft'
+      projectId: string
+      path: string
+      name: string
+      fileSource: 'artifact' | 'upload'
+      sourceFileId: string
+      baseVersionId: string
+      snapshotId: string
+      draftRevision: number
+      checksum: string
+      sessionId?: string
+    }>
+  | Readonly<{
       kind: 'session-item'
       sessionId: string
       itemId: string

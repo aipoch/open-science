@@ -56,18 +56,34 @@ const saveTextVersion = async (
   nextContent: string,
   fileName = FILE_NAME
 ): Promise<void> => {
-  await preview.getByRole('button', { name: `Edit ${fileName}` }).click()
-  const editor = preview.getByRole('textbox', { name: `Edit ${fileName} source` })
-  await expect(editor).toHaveValue(baseline)
+  const markdown = fileName.endsWith('.md')
+  if (!markdown) await preview.getByRole('button', { name: `Edit ${fileName}` }).click()
+  const editor = markdown
+    ? preview.getByTestId('markdown-plate-editor')
+    : preview.getByRole('textbox', { name: `Edit ${fileName} source` })
+  if (markdown) await expect(editor).toContainText(baseline.split('\n\n').at(-1)!)
+  else await expect(editor).toHaveValue(baseline)
   const saveButton = preview.getByRole('button', { name: 'Save changes' })
   await expect(preview.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible()
   await expect(saveButton).toHaveText('Save')
   await expect(saveButton.locator('svg')).toHaveCount(0)
-  await expect(preview.getByRole('button', { name: `Download ${fileName}` })).toHaveCount(0)
-  await expect(preview.getByRole('button', { name: `Close preview of ${fileName}` })).toHaveCount(0)
-  await editor.fill(nextContent)
+  if (markdown) {
+    await editor.press('ControlOrMeta+a')
+    await editor.evaluate((element, content) => {
+      const clipboardData = new DataTransfer()
+      clipboardData.setData('text/plain', content)
+      element.dispatchEvent(
+        new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true })
+      )
+    }, nextContent)
+  } else {
+    await editor.fill(nextContent)
+  }
   await saveButton.click()
-  await expect(editor).toBeHidden()
+  if (markdown) {
+    await expect(saveButton).toBeDisabled()
+    await expect(editor).toHaveAttribute('contenteditable', 'true')
+  } else await expect(editor).toBeHidden()
   await expect(preview.getByRole('button', { name: `Download ${fileName}` })).toBeVisible()
   await expect(preview.getByRole('button', { name: `Close preview of ${fileName}` })).toBeVisible()
 }
