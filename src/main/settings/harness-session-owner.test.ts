@@ -68,6 +68,49 @@ afterEach(async () => {
 })
 
 describe('harness account and session lifetimes', () => {
+  it('lets an in-flight tool finish on its pinned route after discovery removes the model', async () => {
+    const stored: StoredProvider = {
+      id: 'p1',
+      name: 'DeepSeek',
+      type: 'official',
+      vendorId: 'deepseek'
+    }
+    await repository.upsertProvider(stored)
+    const session = await owner.open(
+      { ...request, model: 'deepseek-flash' },
+      new AbortController().signal
+    )
+    const started = deferred<AbortSignal>()
+    const finish = deferred<void>()
+    const turn = session.run(async (signal) => {
+      started.resolve(signal)
+      await finish.promise
+      return 'complete'
+    })
+    const signal = await started.promise
+    const models = [{ id: 'deepseek-v4-pro' }]
+    await repository.updateProviderModelCatalogIfTargetMatches(
+      stored,
+      models.map((m) => m.id),
+      {
+        modelCatalog: { fetchedAt: 1, models },
+        modelCatalogStatus: { attemptedAt: 1, ok: true }
+      }
+    )
+    await repository.upsertProvider({ ...stored, name: 'Renamed' }, stored.id, {
+      expectedConfigRevision: 0
+    })
+    const interrupted = signal.aborted
+    finish.resolve()
+    expect(await turn).toBe('complete')
+    expect(interrupted).toBe(false)
+    await expect(
+      owner.open({ ...request, model: 'deepseek-flash' }, new AbortController().signal)
+    ).rejects.toThrow('no longer available')
+    expect(session.signal.aborted).toBe(false)
+    expect(leases[0].release).not.toHaveBeenCalled()
+  })
+
   it('scopes requests to each turn and step and rejects retained capabilities', async () => {
     const fetchImpl = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       Response.json({

@@ -50,6 +50,7 @@ describe('listProviderModels', () => {
     const headers = fetchImpl.mock.calls[0][1].headers as Record<string, string>
     expect(headers.authorization).toBeUndefined()
     expect(headers['x-api-key']).toBe('sk-ant-1')
+    expect(headers['anthropic-version']).toBe('2023-06-01')
   })
 
   it('reports a non-2xx status without throwing', async () => {
@@ -61,7 +62,7 @@ describe('listProviderModels', () => {
     )
 
     expect(result.ok).toBe(false)
-    expect(result.status).toBe(401)
+    expect(result).toMatchObject({ status: 401, code: 'authentication' })
   })
 
   it('cancels an unread error body before returning the failure', async () => {
@@ -71,8 +72,37 @@ describe('listProviderModels', () => {
     )
     await expect(
       listProviderModels({ url: 'https://example.test/models' }, { fetchImpl })
-    ).resolves.toMatchObject({ ok: false, status: 429 })
+    ).resolves.toMatchObject({ ok: false, status: 429, code: 'rate-limit' })
     expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('requires at least one usable advertised route across the complete catalog', async () => {
+    const target = {
+      url: 'https://example.test/models',
+      options: { auth: 'none', routes: { type: 'map', path: 'api', baseUrlPath: 'base_url' } }
+    } as const
+    const unknown = { id: 'unknown', api: { future: { base_url: target.url } } }
+    const supported = { id: 'supported', api: { messages: { base_url: target.url } } }
+    for (const data of [
+      [unknown],
+      [{ id: 'missing' }],
+      [{ id: 'malformed', api: { messages: { base_url: '?' } } }]
+    ]) {
+      expect(
+        await listProviderModels(target, { fetchImpl: async () => Response.json({ data }) })
+      ).toMatchObject({ ok: false, code: 'invalid-response' })
+    }
+    expect(
+      await listProviderModels(target, {
+        fetchImpl: async () => Response.json({ data: [unknown, supported] })
+      })
+    ).toMatchObject({
+      ok: true,
+      catalog: [
+        { id: 'unknown', routes: {} },
+        { id: 'supported', routes: { messages: target.url } }
+      ]
+    })
   })
 
   it('fails on an invalid model-list URL', async () => {
@@ -93,9 +123,35 @@ describe('listProviderModels', () => {
       )
     ).resolves.toEqual({
       ok: false,
+      code: 'resource-limit',
       message: 'Model list response exceeded 2097152 bytes.'
     })
   })
+
+  it.each(['declared', 'streamed'] as const)(
+    'classifies an oversized configured catalog as a resource limit (%s bytes)',
+    async (source) => {
+      const response =
+        source === 'declared'
+          ? new Response(null, { headers: { 'content-length': '10' } })
+          : new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode('{"data":'))
+                  controller.enqueue(new TextEncoder().encode('[]}'))
+                  controller.close()
+                }
+              })
+            )
+
+      const result = await listProviderModels(
+        { url: 'https://example.test/models', options: { auth: 'none' } },
+        { fetchImpl: async () => response, limits: { modelListResponseBytes: 8 } }
+      )
+
+      expect(result).toMatchObject({ ok: false, code: 'resource-limit' })
+    }
+  )
 
   it('rejects a model catalog with more than 2000 model ids', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
@@ -112,6 +168,7 @@ describe('listProviderModels', () => {
     ).resolves.toEqual({
       ok: false,
       status: 200,
+      code: 'resource-limit',
       message: 'The vendor returned more than 2000 models.'
     })
   })
@@ -127,6 +184,7 @@ describe('listProviderModels', () => {
     ).resolves.toEqual({
       ok: false,
       status: 200,
+      code: 'resource-limit',
       message: 'The vendor returned a model ID longer than 512 characters.'
     })
   })
@@ -141,7 +199,7 @@ it('does not send a pre-cancelled discovery request', async () => {
       signal: AbortSignal.abort(new Error('caller cancelled'))
     }
   )
-  expect(result).toEqual({ ok: false, message: 'caller cancelled' })
+  expect(result).toEqual({ ok: false, code: 'network', message: 'caller cancelled' })
   expect(fetchImpl).not.toHaveBeenCalled()
 })
 
@@ -184,7 +242,11 @@ it.each(['modelListResponseBytes', 'fetchedModels', 'modelIdCharacters'] as cons
           { url: 'https://example.test/models' },
           { fetchImpl, limits: { [field]: value } }
         )
-      ).toEqual({ ok: false, message: 'Invalid model-list resource limits.' })
+      ).toEqual({
+        ok: false,
+        code: 'resource-limit',
+        message: 'Invalid model-list resource limits.'
+      })
       expect(fetchImpl).not.toHaveBeenCalled()
     }
   }
@@ -203,7 +265,7 @@ it('retains default limits for undefined options and rejects overflowing timeout
   for (const timeoutMs of [0, -1, Infinity, 2_147_483_648]) {
     expect(
       await listProviderModels({ url: 'https://example.test/models' }, { fetchImpl, timeoutMs })
-    ).toEqual({ ok: false, message: 'Invalid model-list resource limits.' })
+    ).toEqual({ ok: false, code: 'resource-limit', message: 'Invalid model-list resource limits.' })
   }
   expect(fetchImpl).toHaveBeenCalledOnce()
 })

@@ -6,6 +6,11 @@ import {
   imageModelBindingSchema
 } from '../../shared/image-model-service-policy'
 import {
+  decodeModelCatalog,
+  decodeModelCatalogStatus,
+  decodeCatalogParameters
+} from '../../shared/provider-model-catalog-codec'
+import {
   isAgentFrameworkId,
   AGENT_MODEL_ROUTE_VALUES,
   type AgentModelRoute
@@ -289,6 +294,13 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
+  const modelCatalog = decodeModelCatalog(value.modelCatalog)
+  const modelCatalogStatus = decodeModelCatalogStatus(value.modelCatalogStatus)
+  const catalogParameters = decodeCatalogParameters(value.catalogParameters)
+  // Keep absent catalog fields absent so repeated saves do not appear to change the provider.
+  if (modelCatalog !== undefined) provider.modelCatalog = modelCatalog
+  if (modelCatalogStatus !== undefined) provider.modelCatalogStatus = modelCatalogStatus
+  if (catalogParameters !== undefined) provider.catalogParameters = catalogParameters
   if (type === 'codebuddy-subscription' && value.codeBuddyAuthMode === 'shared')
     provider.codeBuddyAuthMode = 'shared'
   if (keyRef) provider.keyRef = keyRef

@@ -1734,6 +1734,7 @@ describe('ACP runtime migration write-gate', () => {
             text: expect.stringContaining(capacityError),
             failure: {
               category: 'service',
+              reason: 'service/unavailable',
               responseMessage: capacityError,
               diagnostics: { code: 'overloaded_error', raw: `Internal error: ${capacityError}` }
             }
@@ -27156,7 +27157,7 @@ describe('ACP runtime session management', () => {
       'Claude Code explicit 4xx',
       { errorKind: 'unknown' },
       'API Error: 400 Authentication Fails, Your api key: ****e52d is invalid',
-      'service'
+      'configuration'
     ],
     [
       'Claude Code API connection refused',

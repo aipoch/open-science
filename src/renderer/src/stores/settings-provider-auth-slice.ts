@@ -13,6 +13,7 @@ import type {
   ProviderDeletionScenarioModelHandling,
   ProviderView,
   RefreshProviderModelsResult,
+  RefreshProviderModelsRequest,
   SettingsSnapshot,
   SaveValidatedProviderResult,
   UpsertProviderRequest,
@@ -51,7 +52,9 @@ export type ProviderAuthActions = {
   waitXaiOAuthLogin: () => Promise<XaiOAuthLoginResult>
   cancelXaiOAuthLogin: () => Promise<void>
   logoutXaiOAuth: () => Promise<void>
-  refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
+  refreshProviderModels: (
+    request: string | RefreshProviderModelsRequest
+  ) => Promise<RefreshProviderModelsResult & { refreshFailed?: boolean }>
   setActiveProvider: (providerId: string, model?: string) => Promise<void>
   setAgentFramework: (id: AgentFrameworkId) => Promise<void>
   deleteProvider: (
@@ -289,14 +292,15 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     await refreshPreflight()
   },
 
-  refreshProviderModels: async (providerId) => {
+  refreshProviderModels: async (request) => {
     const commands = getCommands()
-    const result = await commands.refreshProviderModels({ providerId })
+    const target = typeof request === 'string' ? { providerId: request } : request
+    const result = await commands.refreshProviderModels(target)
+    if (target.draft && result.code !== 'stale') return result
     try {
       reconcileSnapshot(await commands.getSettings())
-    } catch (error) {
-      // Keep the original refresh failure if best-effort reconciliation also fails.
-      if (result.ok) throw error
+    } catch {
+      if (result.ok) return { ...result, refreshFailed: true }
     }
     return result
   },

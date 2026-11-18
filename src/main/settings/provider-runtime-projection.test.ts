@@ -4,6 +4,7 @@ import { configureTestElectronHost } from '../../../test/runtime-host'
 import { describe, expect, it, vi } from 'vitest'
 
 import { getAgentFramework } from '../agent-framework'
+import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import type { StoredProvider } from './types'
 import { resolveProviderDraft } from './provider-draft-projection'
 
@@ -178,6 +179,106 @@ describe('ProviderRuntimeProjectionOwner', () => {
         model: 'manual-model[1m]',
         contextWindow: type === 'custom' ? 200_000 : 1_000_000
       })
+    }
+  )
+
+  it.each([undefined, { fetchedAt: 1, models: [{ id: 'gpt-6.1-sol' }] }])(
+    'uses the versioned official OpenAI route with a bundled or refreshed model catalog',
+    (modelCatalog) => {
+      const provider: StoredProvider = {
+        id: 'openai',
+        type: 'official',
+        vendorId: 'openai',
+        name: 'OpenAI',
+        modelCatalog
+      }
+      const target = new ProviderRuntimeProjectionOwner().resolveRuntimeTarget(
+        provider,
+        { kind: 'configured' },
+        getAgentFramework('codex')
+      )
+      expect(resolveResponsesBaseUrl(target.provider)).toBe('https://api.openai.com/v1')
+    }
+  )
+
+  it('restores only trusted protocol routes from a saved official catalog', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'saved',
+      type: 'official',
+      name: 'OpenCode',
+      vendorId: 'opencode',
+      modelCatalog: {
+        fetchedAt: 1,
+        models: [
+          {
+            id: 'mixed',
+            routes: {
+              responses: 'https://opencode.ai/inference/v1',
+              messages: 'https://other.example.invalid/v1'
+            }
+          },
+          { id: 'foreign-only', routes: { responses: 'https://other.example.invalid/v1' } }
+        ]
+      }
+    }
+    expect(owner.toProviderView(provider).models).toEqual(['mixed'])
+    const [target] = owner.resolveRuntimeModelCatalog(provider, getAgentFramework('codex'))
+    expect(target.apiEndpoints).toEqual(['responses'])
+    expect(resolveResponsesBaseUrl(target.provider)).toBe('https://opencode.ai/inference/v1')
+    expect(owner.toProviderView({ ...provider, vendorId: 'openai' }).models).toEqual([])
+  })
+
+  it('reads a large inventory once while enumerating its runtime targets', () => {
+    const models = Array.from({ length: 1000 }, (_, index) => ({ id: 'model-' + index }))
+    const readModels = vi.fn(() => models)
+    const stored: StoredProvider = {
+      id: 'directory',
+      type: 'official',
+      vendorId: 'opencode',
+      name: 'Directory',
+      modelCatalog: {
+        fetchedAt: 1,
+        get models() {
+          return readModels()
+        }
+      }
+    }
+    const targets = new ProviderRuntimeProjectionOwner().resolveRuntimeModelCatalog(
+      stored,
+      getAgentFramework('pi')
+    )
+    expect(targets.map((target) => target.effectiveModel)).toEqual(models.map((model) => model.id))
+    expect(readModels).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['openrouter', 'requesty'] as const)(
+    'excludes a historical full %s snapshot from views and runtime targets',
+    (vendorId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const stored: StoredProvider = {
+        id: vendorId,
+        name: vendorId,
+        type: 'official',
+        vendorId
+      }
+      const models = owner.toProviderView(stored).models
+      const historical = {
+        ...stored,
+        fetchedModels: ['directory-only'],
+        modelCatalogStatus: { attemptedAt: 1, ok: true },
+        modelCatalog: { fetchedAt: 1, models: [{ id: 'directory-only' }] }
+      }
+      expect(owner.toProviderView(historical)).toMatchObject({
+        models,
+        modelCatalog: undefined,
+        modelCatalogStatus: undefined
+      })
+      expect(
+        owner
+          .resolveRuntimeModelCatalog(historical, getAgentFramework('codex'))
+          .map((target) => target.effectiveModel)
+      ).toEqual(models)
     }
   )
 
@@ -606,15 +707,18 @@ describe('ProviderRuntimeProjectionOwner', () => {
         name: 'DeepSeek',
         fetchedModels: ['deepseek-flash', 'deepseek-v4-pro']
       }
-      for (const model of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
-        expect(owner.toProviderView(provider).models).toContain(model)
-        expect(
-          owner.resolveRuntimeTarget(
-            provider,
-            { kind: 'required', model },
-            getAgentFramework(frameworkId)
-          )
-        ).toMatchObject({ effectiveModel: model, provider: { model }, frameworkCompatible: true })
+      const modelCatalog = { fetchedAt: 1, models: provider.fetchedModels!.map((id) => ({ id })) }
+      for (const record of [provider, { ...provider, modelCatalog }]) {
+        for (const model of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+          expect(owner.toProviderView(record).models).toContain(model)
+          expect(
+            owner.resolveRuntimeTarget(
+              record,
+              { kind: 'required', model },
+              getAgentFramework(frameworkId)
+            )
+          ).toMatchObject({ effectiveModel: model, provider: { model }, frameworkCompatible: true })
+        }
       }
     }
   )

@@ -190,6 +190,25 @@ describe('legacy failure migration', () => {
     expect(outcome).toMatchObject({ failure: { category, diagnostics: { raw: 'legacy' } } })
     expect(JSON.stringify(outcome)).not.toContain('errorReportable')
   })
+  it.each([
+    [
+      { adapterCode: 'protocol', phase: 'missing-done' },
+      { adapterCode: 'protocol', phase: 'missing-done' }
+    ],
+    [{ adapterCode: 'arbitrary detail', phase: 'arbitrary detail' }, {}]
+  ])('restores only recognized harness adapter codes and phases', (input, expected) => {
+    expect(
+      sanitizeTurnOutcome({
+        kind: 'failed',
+        settledAt: 1,
+        failure: { category: 'service', diagnostics: { protocol: 'responses', ...input } }
+      })
+    ).toEqual({
+      kind: 'failed',
+      settledAt: 1,
+      failure: { category: 'service', diagnostics: { protocol: 'responses', ...expected } }
+    })
+  })
   it('drops a misplaced provider response from an internal failure', () => {
     const diagnostics = { code: '-32603', raw: 'Example adapter failure' }
     const outcome = sanitizeTurnOutcome({

@@ -1,0 +1,15 @@
+{
+  "consumerModules": ["settings_model_presentation", "settings_page_composition"],
+  "capabilityOverlays": [],
+  "fallbackCapability": "renderer_view",
+  "ownerPaths": ["src/renderer/src/pages/settings/model-catalog-feedback.ts"],
+  "interfacePaths": ["src/renderer/src/pages/settings/model-catalog-feedback.ts"],
+  "testFiles": {
+    "owner": [],
+    "contract": [
+      "src/renderer/src/pages/settings/ProviderForm.render.test.tsx",
+      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx"
+    ],
+    "consumer": []
+  }
+}

@@ -38,6 +38,7 @@ import {
 // Editable value for the provider form, kept in its own module so the component file only exports a
 // component (satisfying react-refresh) while the wizard and settings page share this shape/factory.
 export type ProviderFormValue = {
+  catalogParameters?: Record<string, string>
   type: ProviderType
   codeBuddySite?: CodeBuddySite
   codeBuddyAuthMode?: CodeBuddyAuthMode
@@ -394,63 +395,57 @@ export const providerKindPatch = (
   key: string,
   customApiEndpoint: ModelProtocol = 'messages'
 ): Partial<ProviderFormValue> => {
+  const reset = {
+    codeBuddySite: undefined,
+    codeBuddyAuthMode: undefined,
+    key: '',
+    catalogParameters: undefined,
+    vendorId: undefined,
+    region: undefined,
+    model: '',
+    contextWindow: '',
+    maxInputTokens: '',
+    maxOutputTokens: ''
+  }
   const site = codeBuddySiteForId(key)
   if (site)
     return createEmptyProviderFormValue({
+      ...reset,
       type: 'codebuddy-subscription',
       codeBuddySite: site,
-      name: codeBuddyAccounts[site].name,
-      region: undefined,
-      vendorId: undefined
+      name: codeBuddyAccounts[site].name
     })
   if (key === 'codex-subscription') {
     const identity = codexSubscriptionProviderIdentity()
     return {
+      ...reset,
       type: 'codex-shared',
       name: identity.name,
       apiEndpoint: 'responses',
-      baseUrl: '',
-      model: '',
-      contextWindow: '',
-      maxInputTokens: '',
-      maxOutputTokens: '',
-      key: '',
-      vendorId: undefined,
-      region: undefined
+      baseUrl: ''
     }
   }
 
   if (key === 'claude-subscription') {
     const identity = claudeIsolatedProviderIdentity()
     return {
+      ...reset,
       type: 'claude-shared',
       name: identity.name,
       apiEndpoint: 'messages',
-      baseUrl: '',
-      model: '',
-      contextWindow: '',
-      maxInputTokens: '',
-      maxOutputTokens: '',
-      key: '',
-      vendorId: undefined,
-      region: undefined
+      baseUrl: ''
     }
   }
 
   if (key === 'xai-subscription') {
     const identity = xaiSubscriptionProviderIdentity()
     return {
+      ...reset,
       type: 'xai-subscription',
       name: identity.name,
       apiEndpoint: 'responses',
       baseUrl: '',
-      model: defaultVendorModel('xai') ?? '',
-      contextWindow: '',
-      maxInputTokens: '',
-      maxOutputTokens: '',
-      key: '',
-      vendorId: undefined,
-      region: undefined
+      model: defaultVendorModel('xai') ?? ''
     }
   }
 
@@ -458,28 +453,19 @@ export const providerKindPatch = (
     const vendorId = key.slice('official:'.length) as OfficialVendorId
     const vendor = getOfficialVendor(vendorId)
 
-    // No per-provider model: the vendor catalog is fixed and the chosen model is the global selection.
     return {
+      ...reset,
       type: 'official',
       name: vendor?.label,
       vendorId,
-      region: vendor?.regions?.[0]?.id,
-      model: '',
-      contextWindow: '',
-      maxInputTokens: '',
-      maxOutputTokens: ''
+      region: vendor?.regions?.[0]?.id
     }
   }
 
   return {
+    ...reset,
     type: 'custom',
-    apiEndpoint: customApiEndpoint,
-    vendorId: undefined,
-    region: undefined,
-    model: '',
-    contextWindow: '',
-    maxInputTokens: '',
-    maxOutputTokens: ''
+    apiEndpoint: customApiEndpoint
   }
 }
 

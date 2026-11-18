@@ -13,6 +13,52 @@ import { createLogger, errorLogFields, type Logger } from '@aipoch/diagnostics/n
 // and tool declarations. Keep every authenticated Provider bridge on one memory-bounded envelope.
 const MAX_PROVIDER_LOOPBACK_REQUEST_BYTES = 64 * 1024 * 1024
 
+export const PROVIDER_HOP_BY_HOP_HEADERS: ReadonlySet<string> = new Set([
+  'connection',
+  'content-length',
+  'host',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade'
+])
+
+const excludedResponseHeaders = new Set([
+  ...PROVIDER_HOP_BY_HOP_HEADERS,
+  // Fetch decodes the body before the bridge forwards it.
+  'content-encoding',
+  // Only the local bridge may set failure classification headers.
+  'x-open-science-provider-failure',
+  'x-open-science-upstream-status'
+])
+
+/** Preserve the upstream failure class when forwarding a rejected fetch over local HTTP. */
+export function withProviderConnectionMarker(
+  fetchImpl: typeof fetch,
+  response: ServerResponse
+): typeof fetch {
+  return async (input, init) => {
+    try {
+      return await fetchImpl(input, init)
+    } catch (error) {
+      if (!init?.signal?.aborted)
+        response.setHeader('x-open-science-provider-failure', 'connection')
+      throw error
+    }
+  }
+}
+
+export function copyProviderResponseHeaders(source: Headers): Record<string, string> {
+  const headers: Record<string, string> = {}
+  for (const [name, value] of source) {
+    if (!excludedResponseHeaders.has(name.toLowerCase())) headers[name] = value
+  }
+  return headers
+}
+
 type ProviderLoopbackConnection = Readonly<{
   baseUrl: string
   token: string

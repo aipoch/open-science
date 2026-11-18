@@ -1,3 +1,4 @@
+import type { CatalogSnapshot, CatalogStatus } from '@aipoch/providers'
 import type { CodeBuddyAuthMode } from '../../shared/codebuddy-subscription'
 import type { McpOAuthConfig, McpOAuthState } from '@aipoch/connector-mcp-client'
 import type { ClassificationAdapter } from '@aipoch/providers'
@@ -109,6 +110,9 @@ export type StoredProvider = {
   // Model ids fetched live from the vendor (via "refresh from vendor"). When present, these take
   // precedence over the bundled registry catalog for this provider.
   fetchedModels?: string[]
+  modelCatalog?: CatalogSnapshot
+  modelCatalogStatus?: CatalogStatus
+  catalogParameters?: Record<string, string>
   // Non-secret identity returned by xAI after device authorization.
   accountEmail?: string
   keyRef?: string

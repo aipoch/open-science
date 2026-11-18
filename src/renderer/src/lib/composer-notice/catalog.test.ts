@@ -8,7 +8,8 @@ import {
   formatNoticeDiagnostics,
   noticeCatalog,
   noticePresentation,
-  reasonCatalog
+  reasonCatalog,
+  type NoticeActionId
 } from '@/components/notices/composer-notice-catalog'
 
 const root = resolve(__dirname, '../../../../..')
@@ -176,6 +177,29 @@ it('offers diagnostics and a fresh conversation for unknown effects, never a bli
   expect(presentation.primaryAction).toBe('export-diagnostics')
   expect(presentation.secondaryActions).toEqual(['new-session'])
   expect(presentation.descriptionKey).toContain('verified state')
+})
+
+it.each<[FailureReason, NoticeActionId, readonly NoticeActionId[]]>([
+  ['configuration/model-unavailable', 'open-provider-settings', ['retry']],
+  ['configuration/endpoint-invalid', 'open-provider-settings', ['retry']],
+  ['configuration/auth-failed', 'open-provider-settings', ['retry']],
+  ['configuration/billing', 'open-provider-settings', ['retry']],
+  ['configuration/request-invalid', 'open-provider-settings', ['retry']],
+  ['service/rate-limited', 'retry', []],
+  ['service/unavailable', 'retry', []],
+  ['service/connection-failed', 'retry', ['open-provider-settings']],
+  ['service/response-interrupted', 'retry', []],
+  ['service/response-invalid', 'retry', ['open-provider-settings']],
+  ['service/provider-error', 'retry', ['open-provider-settings']],
+  ['input/context-overflow', 'compact', ['remove-attachments']]
+])('offers the recovery actions for %s', (reason, primaryAction, secondaryActions) => {
+  expect(
+    noticePresentation({
+      category: reason.split('/')[0] as FailureCategory,
+      reason,
+      diagnostics: {}
+    })
+  ).toMatchObject({ primaryAction, secondaryActions })
 })
 
 it('explains missing image support without suggesting credential failures', () => {

@@ -56,6 +56,93 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('preserves a concurrent catalog refresh on ordinary saves and applies an explicit draft', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const saved = provider({
+      type: 'official',
+      vendorId: 'deepseek',
+      modelCatalog: { fetchedAt: 1, models: [{ id: 'old' }] },
+      fetchedModels: ['old']
+    })
+    await repository.upsertProvider(saved)
+    const refreshed = { fetchedAt: 2, models: [{ id: 'new' }] }
+    await repository.updateProviderModelCatalogIfTargetMatches(saved, ['new'], {
+      modelCatalog: refreshed
+    })
+    await repository.upsertProvider({ ...saved, name: 'Renamed' }, saved.id, {
+      expectedConfigRevision: 0
+    })
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      modelCatalog: refreshed,
+      fetchedModels: ['new']
+    })
+    await repository.upsertProvider(saved, saved.id, {
+      catalogBaseline: {
+        fetchedModels: ['old'],
+        modelCatalog: saved.modelCatalog,
+        modelCatalogStatus: undefined
+      },
+      expectedConfigRevision: 1
+    })
+    expect((await repository.getSettings()).providers[0].fetchedModels).toEqual(['new'])
+    await repository.upsertProvider(saved, saved.id, {
+      catalogBaseline: {
+        fetchedModels: ['new'],
+        modelCatalog: refreshed,
+        modelCatalogStatus: undefined
+      },
+      expectedConfigRevision: 2
+    })
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      modelCatalog: saved.modelCatalog,
+      fetchedModels: ['old']
+    })
+  })
+
+  it('retires only health evidence for moved catalog routes, including on a later stale form save', async () => {
+    const dir = await createStorageRoot()
+    const repository = new SettingsRepository(dir)
+    const moved = { model: 'model-a', endpoint: 'responses' } as const
+    const stable = { model: 'model-b', endpoint: 'messages' } as const
+    const other = { id: stable.model, routes: { messages: 'https://opencode.ai/stable' } }
+    const saved = provider({
+      type: 'official',
+      vendorId: 'opencode',
+      modelCatalog: {
+        fetchedAt: 1,
+        models: [{ id: moved.model, routes: { responses: 'https://opencode.ai/old' } }, other]
+      },
+      lastValidatedAt: 1,
+      lastValidatedTarget: moved,
+      lastValidationFailure: {
+        at: 2,
+        category: 'model-not-found',
+        status: 404,
+        target: moved,
+        targets: [moved, stable]
+      }
+    })
+    await repository.upsertProvider(saved)
+    await repository.updateProviderModelCatalogIfTargetMatches(saved, [moved.model, stable.model], {
+      modelCatalog: {
+        fetchedAt: 3,
+        models: [{ id: moved.model, routes: { responses: 'https://opencode.ai/new' } }, other]
+      }
+    })
+    await repository.upsertProvider({ ...saved, name: 'Renamed' }, saved.id, {
+      expectedConfigRevision: 0
+    })
+    const current = (await new SettingsRepository(dir).getSettings()).providers[0]
+    expect(current.lastValidatedAt).toBeUndefined()
+    expect(current.lastValidationFailure).toEqual({
+      at: 2,
+      category: 'model-not-found',
+      target: stable
+    })
+    expect(providerValidationFailed(current, moved)).toBe(false)
+    expect(providerValidationFailed(current, stable)).toBe(true)
+  })
+
   it('publishes only committed provider changes and isolates observers', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
     const first = vi.fn(() => {

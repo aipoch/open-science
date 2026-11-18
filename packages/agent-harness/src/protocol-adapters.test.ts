@@ -85,10 +85,14 @@ describe('independent protocol adapter subpaths', () => {
           ])
         )
     })
-    await expect(finish(model)).rejects.toMatchObject({
+    const failure = await finish(model).catch((error: unknown) => error)
+    expect(failure).toMatchObject({
       code: 'protocol',
-      message: 'Responses protocol error'
+      status: 200,
+      diagnostics: { reason: 'provider_error' }
     })
+    expect(JSON.stringify(failure)).not.toMatch(/private account|unknown_private_code/)
+    expect((failure as Error).message).not.toContain('private account')
   })
   it('maps Anthropic Messages SSE thinking, tool use and stop reason', async () => {
     const fetch = vi.fn(async () =>
