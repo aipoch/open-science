@@ -23,7 +23,7 @@ describe('ProviderSilkBackground', () => {
         color: '#123456',
         paused: false,
         rotation: 0,
-        speed: 1.15,
+        speed: 0.35,
         noiseIntensity: 1.6,
         mouseInteraction: false,
         clickRipple: false,
