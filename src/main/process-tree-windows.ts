@@ -20,6 +20,14 @@ const binding = (): Binding => {
   return native
 }
 
+const normalizeWindowsSpawnError = (error: unknown): unknown => {
+  if (!(error instanceof Error)) return error
+  const match = /^Create owned process failed \((\d+)\)$/.exec(error.message)
+  if (!match || ![2, 3, 267].includes(Number(match[1]))) return error
+  Object.assign(error, { code: 'ENOENT' })
+  return error
+}
+
 export const reapWindowsOwnedJob = async (jobName: string): Promise<boolean> => {
   const native = binding()
   const deadline = Date.now() + 4_000
@@ -186,6 +194,20 @@ export const captureRuntimeWindowsProcessCleanup = (): ((deadlineAt: number) => 
 
 // Keep the normal ACP ChildProcess/stream boundary. Overlapped native pipe descriptors use libuv's
 // pipe transport via net.Socket, not blocking fs reads that could exhaust the worker pool.
+const WINDOWS_REQUIRED_ENVIRONMENT = [
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'LOGONSERVER',
+  'PATH',
+  'SYSTEMDRIVE',
+  'SYSTEMROOT',
+  'TEMP',
+  'USERDOMAIN',
+  'USERNAME',
+  'USERPROFILE',
+  'WINDIR'
+] as const
+
 export const spawnWindowsOwnedProcess = (
   jobName: string,
   command: string,
@@ -193,7 +215,7 @@ export const spawnWindowsOwnedProcess = (
   options: Parameters<AgentProcessSpawner>[2]
 ): ChildProcessWithoutNullStreams => {
   const native = binding()
-  const env = options.env ?? process.env
+  const env = { ...(options.env ?? process.env) }
   const envValue = (name: string): string | undefined =>
     Object.entries(env).find(([key]) => key.toUpperCase() === name)?.[1]
   let executable = command
@@ -224,14 +246,29 @@ export const spawnWindowsOwnedProcess = (
     keys.add(key.toUpperCase())
     environment.push(`${key}=${value}`)
   }
-  const launched = native.spawnWindowsOwnedProcess(
-    jobName,
-    executable,
-    argv,
-    environment,
-    cwd,
-    verbatim
-  )
+  // Match libuv's required_vars. Like child_process.spawn, fill these from the parent when callers
+  // pass a deliberately narrow environment. Node aborts at startup without SYSTEMROOT.
+  for (const name of WINDOWS_REQUIRED_ENVIRONMENT) {
+    const hostKey = Object.keys(process.env).find((key) => key.toUpperCase() === name)
+    const value = hostKey ? process.env[hostKey] : undefined
+    if (keys.has(name) || value === undefined || value.includes('\0')) continue
+    keys.add(name)
+    environment.push(`${name}=${value}`)
+  }
+  environment.sort((left, right) => left.toUpperCase().localeCompare(right.toUpperCase()))
+  let launched: ReturnType<Binding['spawnWindowsOwnedProcess']>
+  try {
+    launched = native.spawnWindowsOwnedProcess(
+      jobName,
+      executable,
+      argv,
+      environment,
+      cwd,
+      verbatim
+    )
+  } catch (error) {
+    throw normalizeWindowsSpawnError(error)
+  }
   const child = new ChildProcess() as ChildProcessWithoutNullStreams
   nativeProcesses.set(child, launched.handle)
   activeJobs.set(jobName, new WeakRef(launched.handle))

@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import { MessageScrollerItem, useMessageScroller } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
-import { useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../../shared/compute'
@@ -108,6 +108,147 @@ const ActivityGroupElapsed = ({
   )
 }
 
+// The timeline rebuilds group arrays on session updates. Keep each tool's detail work keyed
+// to its own record and presentation inputs; fresh receipt records still render normally.
+const WorkspaceActivityGroupRow = memo(function WorkspaceActivityGroupRow({
+  activity,
+  phase,
+  isSearch,
+  expansionOverride,
+  allowFolderAccess,
+  notebookRunsById,
+  onNotebookRunNearViewport,
+  onToggleRow,
+  annotationPort,
+  revealRequest,
+  boundJob,
+  onOpenJobDetail
+}: Pick<
+  WorkspaceActivityGroupProps,
+  | 'allowFolderAccess'
+  | 'notebookRunsById'
+  | 'onNotebookRunNearViewport'
+  | 'onToggleRow'
+  | 'annotationPort'
+  | 'revealRequest'
+  | 'onOpenJobDetail'
+> & {
+  activity: ConversationActivityGroupItem['activities'][number]
+  phase: ReturnType<typeof getToolExecutionPhase>
+  isSearch: boolean
+  expansionOverride?: boolean
+  boundJob?: JobSummary
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const correlatedNotebookRun = getCorrelatedNotebookRun(activity, notebookRunsById)
+  // Search rows get bespoke query/result details; other tools reuse the shared builder.
+  const searchDetails = useMemo(
+    () => (isSearch ? formatWebSearchDetails(activity) : undefined),
+    [activity, isSearch]
+  )
+  // A completed load_skill expands into its rendered SKILL.md when the output carries
+  // the document; without it (payload stripped, running, failed, or old sessions) the
+  // IPC-capable skill row resolves the document by invocation name instead of showing
+  // the generic input/output JSON.
+  const skillLoadDocument = useMemo(
+    () => (!isSearch ? getSkillLoadDocument(activity) : undefined),
+    [activity, isSearch]
+  )
+  const skillLoadWithoutDocument = !skillLoadDocument && isSkillLoadActivity(activity)
+  const toolDetails = useMemo(
+    () =>
+      isSearch || skillLoadDocument || skillLoadWithoutDocument
+        ? undefined
+        : buildToolActivityDetails(activity, t),
+    [activity, t, isSearch, skillLoadDocument, skillLoadWithoutDocument]
+  )
+  // Detail presenters own their defaults; explicit user toggles always win.
+  const isRowExpanded = expansionOverride ?? toolDetails?.defaultExpanded ?? false
+  const showManagePackagesProgress =
+    isManagePackagesActivity(activity) &&
+    (phase === 'executing' || phase === 'completed' || phase === 'failed')
+
+  return (
+    <div key={activity.id} className="w-full overflow-hidden">
+      {showManagePackagesProgress ? (
+        <WorkspaceManagePackagesActivityRow
+          activity={activity}
+          phase={phase}
+          isExpanded={isRowExpanded}
+          onToggle={onToggleRow}
+          annotationPort={annotationPort}
+          revealRequest={revealRequest?.itemId === activity.id ? revealRequest : undefined}
+        />
+      ) : searchDetails ? (
+        <WorkspaceWebSearchActivityRow
+          activity={activity}
+          phase={phase}
+          details={searchDetails}
+          isExpanded={isRowExpanded}
+          onToggleSearch={onToggleRow}
+          annotationPort={annotationPort}
+        />
+      ) : skillLoadDocument ? (
+        <WorkspaceSkillLoadRow
+          activity={activity}
+          phase={phase}
+          skillName={getLoadedSkillName(activity)}
+          markdown={skillLoadDocument}
+          isExpanded={isRowExpanded}
+          onToggle={onToggleRow}
+        />
+      ) : skillLoadWithoutDocument ? (
+        // load_skill without a document payload: the row resolves the SKILL.md from
+        // the skills catalog or the connector-aware resolver, keeping the raw JSON out
+        // of the transcript; it stays compact when no source provides the name.
+        <WorkspaceSkillActivityRow
+          activity={activity}
+          phase={phase}
+          isExpanded={isRowExpanded}
+          onToggle={onToggleRow}
+        />
+      ) : toolDetails ? (
+        <WorkspaceToolDetailsRow
+          allowFolderAccess={allowFolderAccess}
+          activity={activity}
+          phase={phase}
+          details={toolDetails}
+          notebookRun={
+            correlatedNotebookRun ??
+            (toolDetails.notebookRunId
+              ? notebookRunsById?.get(toolDetails.notebookRunId)
+              : undefined)
+          }
+          isExpanded={isRowExpanded}
+          onNotebookRunNearViewport={onNotebookRunNearViewport}
+          onToggle={onToggleRow}
+          annotationPort={annotationPort}
+          revealRequest={revealRequest?.itemId === activity.id ? revealRequest : undefined}
+        />
+      ) : isSkillActivity(activity) ? (
+        // Native Skill rows carry no payload; the row resolves the SKILL.md from
+        // the skills catalog on expand (or stays compact when unlisted).
+        <WorkspaceSkillActivityRow
+          activity={activity}
+          phase={phase}
+          isExpanded={isRowExpanded}
+          onToggle={onToggleRow}
+        />
+      ) : (
+        <WorkspaceToolActivityRow activity={activity} phase={phase} />
+      )}
+      {/* RemoteJobRow: injected below a repl_execute activity that submitted a job */}
+      {boundJob ? (
+        <RemoteJobRow
+          key={`job-row-${boundJob.job_id}`}
+          job={boundJob}
+          onOpen={(job) => onOpenJobDetail?.(job)}
+        />
+      ) : null}
+    </div>
+  )
+})
+
 // Renders adjacent tool calls as one collapsible transcript row group.
 const WorkspaceActivityGroup = ({
   allowFolderAccess = false,
@@ -162,10 +303,13 @@ const WorkspaceActivityGroup = ({
   const failedCount = visiblePhases.filter((phase) => phase === 'failed').length
 
   // Expanding or collapsing is a reading interaction, not message navigation.
-  const handleToggleRow = (activityId: string, nextExpanded: boolean): void => {
-    stopAutoScroll()
-    onToggleRow(activityId, nextExpanded)
-  }
+  const handleToggleRow = useCallback(
+    (activityId: string, nextExpanded: boolean): void => {
+      stopAutoScroll()
+      onToggleRow(activityId, nextExpanded)
+    },
+    [stopAutoScroll, onToggleRow]
+  )
 
   if (visibleActivities.length === 0) return null
 
@@ -220,115 +364,23 @@ const WorkspaceActivityGroup = ({
           }
         >
           {renderableActivityEntries.map(({ activity, activityIndex }) => {
-            const phase = getToolExecutionPhase(activity, permission, notebookRunsById)
-            const correlatedNotebookRun = getCorrelatedNotebookRun(activity, notebookRunsById)
-            // Search rows get bespoke query/result details; other tools reuse the shared builder.
-            const isSearch = isSearchActivity(activity, group.activities, activityIndex)
-            const searchDetails = isSearch ? formatWebSearchDetails(activity) : undefined
-            // A completed load_skill expands into its rendered SKILL.md when the output carries
-            // the document; without it (payload stripped, running, failed, or old sessions) the
-            // IPC-capable skill row resolves the document by invocation name instead of showing
-            // the generic input/output JSON.
-            const skillLoadDocument = !isSearch ? getSkillLoadDocument(activity) : undefined
-            const skillLoadWithoutDocument = !skillLoadDocument && isSkillLoadActivity(activity)
-            const toolDetails =
-              isSearch || skillLoadDocument || skillLoadWithoutDocument
-                ? undefined
-                : buildToolActivityDetails(activity, t)
-            // Detail presenters own their defaults; explicit user toggles always win.
-            const isRowExpanded =
-              expansionOverrides[activity.id] ?? toolDetails?.defaultExpanded ?? false
-            const showManagePackagesProgress =
-              isManagePackagesActivity(activity) &&
-              (phase === 'executing' || phase === 'completed' || phase === 'failed')
-
+            const jobId = extractJobIdFromActivity(activity)
             return (
-              <div key={activity.id} className="w-full overflow-hidden">
-                {showManagePackagesProgress ? (
-                  <WorkspaceManagePackagesActivityRow
-                    activity={activity}
-                    phase={phase}
-                    isExpanded={isRowExpanded}
-                    onToggle={handleToggleRow}
-                    annotationPort={annotationPort}
-                    revealRequest={
-                      revealRequest?.itemId === activity.id ? revealRequest : undefined
-                    }
-                  />
-                ) : searchDetails ? (
-                  <WorkspaceWebSearchActivityRow
-                    activity={activity}
-                    phase={phase}
-                    details={searchDetails}
-                    isExpanded={isRowExpanded}
-                    onToggleSearch={handleToggleRow}
-                    annotationPort={annotationPort}
-                  />
-                ) : skillLoadDocument ? (
-                  <WorkspaceSkillLoadRow
-                    activity={activity}
-                    phase={phase}
-                    skillName={getLoadedSkillName(activity)}
-                    markdown={skillLoadDocument}
-                    isExpanded={isRowExpanded}
-                    onToggle={handleToggleRow}
-                  />
-                ) : skillLoadWithoutDocument ? (
-                  // load_skill without a document payload: the row resolves the SKILL.md from
-                  // the skills catalog or the connector-aware resolver, keeping the raw JSON out
-                  // of the transcript; it stays compact when no source provides the name.
-                  <WorkspaceSkillActivityRow
-                    activity={activity}
-                    phase={phase}
-                    isExpanded={isRowExpanded}
-                    onToggle={handleToggleRow}
-                  />
-                ) : toolDetails ? (
-                  <WorkspaceToolDetailsRow
-                    allowFolderAccess={allowFolderAccess}
-                    activity={activity}
-                    phase={phase}
-                    details={toolDetails}
-                    notebookRun={
-                      correlatedNotebookRun ??
-                      (toolDetails.notebookRunId
-                        ? notebookRunsById?.get(toolDetails.notebookRunId)
-                        : undefined)
-                    }
-                    isExpanded={isRowExpanded}
-                    onNotebookRunNearViewport={onNotebookRunNearViewport}
-                    onToggle={handleToggleRow}
-                    annotationPort={annotationPort}
-                    revealRequest={
-                      revealRequest?.itemId === activity.id ? revealRequest : undefined
-                    }
-                  />
-                ) : isSkillActivity(activity) ? (
-                  // Native Skill rows carry no payload; the row resolves the SKILL.md from
-                  // the skills catalog on expand (or stays compact when unlisted).
-                  <WorkspaceSkillActivityRow
-                    activity={activity}
-                    phase={phase}
-                    isExpanded={isRowExpanded}
-                    onToggle={handleToggleRow}
-                  />
-                ) : (
-                  <WorkspaceToolActivityRow activity={activity} phase={phase} />
-                )}
-                {/* RemoteJobRow: injected below a repl_execute activity that submitted a job */}
-                {(() => {
-                  const jobId = extractJobIdFromActivity(activity)
-                  const boundJob = jobId ? jobsByActivityId?.get(jobId) : undefined
-                  if (!boundJob) return null
-                  return (
-                    <RemoteJobRow
-                      key={`job-row-${boundJob.job_id}`}
-                      job={boundJob}
-                      onOpen={(job) => onOpenJobDetail?.(job)}
-                    />
-                  )
-                })()}
-              </div>
+              <WorkspaceActivityGroupRow
+                key={activity.id}
+                activity={activity}
+                phase={getToolExecutionPhase(activity, permission, notebookRunsById)}
+                isSearch={isSearchActivity(activity, group.activities, activityIndex)}
+                expansionOverride={expansionOverrides[activity.id]}
+                allowFolderAccess={allowFolderAccess}
+                notebookRunsById={notebookRunsById}
+                onNotebookRunNearViewport={onNotebookRunNearViewport}
+                onToggleRow={handleToggleRow}
+                annotationPort={annotationPort}
+                revealRequest={revealRequest?.itemId === activity.id ? revealRequest : undefined}
+                boundJob={jobId ? jobsByActivityId?.get(jobId) : undefined}
+                onOpenJobDetail={onOpenJobDetail}
+              />
             )
           })}
         </WorkspaceActivityGroupSurface>

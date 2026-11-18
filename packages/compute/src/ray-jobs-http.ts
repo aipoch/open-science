@@ -1,60 +1,13 @@
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { isIPv4 } from 'node:net'
 import { Readable } from 'node:stream'
+import { isRayBearerEndpoint, parseRayDashboardEndpoint } from './ray-endpoint'
 
 export interface RayJobsTarget {
   endpoint: string
   fetch?: typeof fetch
   /** Resolve credentials for this exact canonical Dashboard, including its gateway path. */
   getToken?: (endpoint: string) => Promise<string | undefined>
-}
-
-function dashboard(endpoint: string): URL {
-  let base: URL
-  try {
-    base = new URL(endpoint)
-  } catch {
-    throw new Error('Invalid Ray Dashboard endpoint.')
-  }
-  if (
-    !['http:', 'https:'].includes(base.protocol) ||
-    base.username ||
-    base.password ||
-    base.search ||
-    base.hash
-  )
-    throw new Error('Invalid Ray Dashboard endpoint.')
-  // URL keeps a bare '?' or '#' in href even though its search/hash accessor is empty.
-  base.search = ''
-  base.hash = ''
-  return base
-}
-
-/** Resolve once for approval; use the pinned endpoint for subsequent requests. */
-export function resolveRayJobsEndpoint(explicit?: string, saved?: string): string {
-  const address =
-    explicit?.trim() ||
-    saved?.trim() ||
-    process.env.RAY_DASHBOARD_URL?.trim() ||
-    'http://127.0.0.1:8265'
-  return dashboard(address).href.replace(/\/+$/, '')
-}
-
-function allowsBearer(base: URL): boolean {
-  return (
-    base.protocol === 'https:' ||
-    base.hostname === '[::1]' ||
-    (isIPv4(base.hostname) && base.hostname.startsWith('127.'))
-  )
-}
-
-export function isRayBearerEndpoint(endpoint: string): boolean {
-  try {
-    return allowsBearer(dashboard(endpoint))
-  } catch {
-    return false
-  }
 }
 
 /** Preserve a configured gateway path when addressing the Jobs API. */
@@ -81,7 +34,7 @@ export async function requestRayDashboard(
   init: RequestInit & { signal: AbortSignal },
   onDispatch?: () => void
 ): Promise<Response> {
-  const base = dashboard(target.endpoint)
+  const base = parseRayDashboardEndpoint(target.endpoint)
   const endpoint = base.href.replace(/\/+$/, '')
   const url = rayJobsUrl(base, path)
   const { signal } = init
@@ -110,7 +63,7 @@ export async function requestRayDashboard(
   }
   signal.throwIfAborted()
   if (token === undefined) return send(options)
-  if (!allowsBearer(url))
+  if (!isRayBearerEndpoint(url.href))
     throw new RayRequestCredentialError(
       'Ray Dashboard tokens require HTTPS or a loopback IP address.'
     )

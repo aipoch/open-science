@@ -29,6 +29,7 @@ import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { SessionPersistenceCoordinator } from './coordinator'
 import { SessionRepository } from './repository'
+import { SessionJournalStore, sessionJournalPath } from './journal'
 import { SessionProjectionRepository } from './projection'
 import { SessionDeletionOwner } from '../session-deletion/owner'
 import {
@@ -355,7 +356,14 @@ describe('managed-file deletion integration', () => {
     const projection = new SessionProjectionRepository(() => Promise.resolve(client))
     const repository = new SessionRepository(storageRoot, undefined, projection)
     await repository.ensureSessionProjection(() => sessions.loadAll())
-    await rm(join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`))
+    // This case starts after complete out-of-band authority removal. A missing pointer with
+    // retained journal evidence is corruption, not missing authority, and has separate coverage.
+    const sessionDirectory = join(storageRoot, 'sessions', PROJECT_ID)
+    await Promise.all(
+      (await readdir(sessionDirectory))
+        .filter((name) => name.startsWith(`${SESSION_ID}.`))
+        .map((name) => rm(join(sessionDirectory, name)))
+    )
     await expect(repository.loadSessionWithDiagnostics(PROJECT_ID, SESSION_ID)).resolves.toEqual({
       status: 'missing'
     })
@@ -390,14 +398,21 @@ describe('managed-file deletion integration', () => {
   it.each(['backup', 'json', 'projection', 'provenance', 'compute'] as const)(
     'compensates only before authority removal when %s deletion fails',
     async (failurePhase) => {
-      const primaryPath = join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`)
-      const backupPath = `${primaryPath}.pre-s2-backup`
+      const logicalPath = join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`)
+      const primaryPath = sessionJournalPath(logicalPath)
+      const backupPath = `${logicalPath}.pre-s2-backup`
       const cwd = join(storageRoot, 'workspaces', 'delete-boundary')
       await mkdir(cwd, { recursive: true })
       await initializeManagedWorkspaceOwnership(cwd, PROJECT_ID, 100, storageRoot)
       await finalizeManagedWorkspaceOwnership(cwd, SESSION_ID, 200, storageRoot)
       await sessions.saveSession({ ...createSession(uploadPath, artifactPath), cwd })
-      await writeFile(backupPath, await readFile(primaryPath))
+      await writeFile(
+        backupPath,
+        JSON.stringify(
+          (await new SessionJournalStore({ maxBytes: 128 * 1024 * 1024 }).read(logicalPath))!
+            .document
+        )
+      )
 
       const failure = new Error(`injected ${failurePhase} deletion failure`)
       const projection = new SessionProjectionRepository(() => Promise.resolve(client))
@@ -647,7 +662,7 @@ describe('managed-file deletion integration', () => {
       storageRoot,
       getClient: () => Promise.resolve(client)
     })
-    const sessionPath = join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`)
+    const sessionPath = join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.jsonl`)
     let signalPrimaryRemoval!: () => void
     let releasePrimaryRemoval!: () => void
     const primaryRemovalStarted = new Promise<void>((resolve) => {
@@ -750,6 +765,7 @@ describe('managed-file deletion integration', () => {
         updatedAt: session.updatedAt
       })
       // Current Session saves reject pending references; reproduce a retained legacy JSON record.
+      await removeLiveAuthority(storageRoot)
       await writeFile(
         join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`),
         JSON.stringify({ version: 2, session }),
@@ -822,6 +838,7 @@ describe('managed-file deletion integration', () => {
     await writeManagedFile(legacyPath, 'upload bytes')
     const liveProjectDir = join(storageRoot, 'sessions', PROJECT_ID)
     const tombstoneDir = join(storageRoot, 'deleted-sessions', PROJECT_ID)
+    await removeLiveAuthority(storageRoot)
     await writeFile(
       join(liveProjectDir, `${SESSION_ID}.json`),
       JSON.stringify({ version: 2, session: legacySession }),
@@ -832,9 +849,9 @@ describe('managed-file deletion integration', () => {
 
     await coordinator.deleteProjectSessions(PROJECT_ID)
 
-    const durableTombstone = JSON.parse(
-      await readFile(join(tombstoneDir, `${SESSION_ID}.json`), 'utf8')
-    ) as { session: PersistedChatSession }
+    const durableTombstone = (await new SessionJournalStore({ maxBytes: 128 * 1024 * 1024 }).read(
+      join(tombstoneDir, `${SESSION_ID}.json`)
+    ))!.document as unknown as { session: PersistedChatSession }
     expect(JSON.stringify(durableTombstone)).toContain('upload-version-1')
     expect(durableTombstone.session.messages[0].uploads?.[0]).not.toHaveProperty('path')
     await expect(sessions.getProjectSessionDeletionState(PROJECT_ID)).resolves.toBe('prepared')
@@ -1143,6 +1160,7 @@ describe('managed-file deletion integration', () => {
       }
     ]
     await writeManagedFile(legacyPath, 'upload bytes')
+    await removeLiveAuthority(storageRoot)
     await writeFile(
       join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`),
       JSON.stringify({ version: 2, session: legacySession }),
@@ -1258,9 +1276,16 @@ describe('managed-file deletion integration', () => {
 
   it('refuses Session deletion when its JSON is unreadable even though unlink would succeed', async () => {
     const legacyPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')
-    const sessionPath = join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`)
+    const sessionPath = join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.jsonl`)
     await writeManagedFile(legacyPath, 'upload bytes')
     const unreadableSessions = new SessionRepository(storageRoot, {
+      journalDependencies: {
+        readChunks: async function* () {
+          yield await Promise.reject(
+            Object.assign(new Error('permission denied'), { code: 'EACCES' })
+          )
+        }
+      },
       readSessionFile: vi
         .fn()
         .mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
@@ -1314,6 +1339,7 @@ describe('managed-file deletion integration', () => {
       JSON.stringify({ version: 2, session: readableSibling }),
       'utf8'
     )
+    await removeLiveAuthority(storageRoot)
     await writeFile(sessionPath, '{malformed Session JSON', 'utf8')
 
     await expect(coordinator.deleteProjectSessions(PROJECT_ID)).resolves.toEqual({
@@ -1339,6 +1365,13 @@ describe('managed-file deletion integration', () => {
     const legacyPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')
     await writeManagedFile(legacyPath, 'upload bytes')
     const scopedSessions = new SessionRepository(storageRoot, {
+      journalDependencies: {
+        readChunks: async function* (filePath) {
+          if (filePath.includes(join('sessions', 'project-b')))
+            throw Object.assign(new Error('unrelated project unavailable'), { code: 'EACCES' })
+          yield await readFile(filePath)
+        }
+      },
       readSessionFile: async (filePath) => {
         if (filePath.includes(join('sessions', 'project-b'))) {
           throw Object.assign(new Error('unrelated project unavailable'), { code: 'EACCES' })
@@ -1418,6 +1451,14 @@ const createPathOnlySession = (legacyPath: string): PersistedChatSession => {
     }
   ]
   return session
+}
+
+const removeLiveAuthority = async (root: string): Promise<void> => {
+  const logicalPath = join(root, 'sessions', PROJECT_ID, `${SESSION_ID}.json`)
+  const owned = await new SessionJournalStore({ maxBytes: 128 * 1024 * 1024 }).inspectStorage(
+    logicalPath
+  )
+  await Promise.all(owned.paths.map((file) => rm(file)))
 }
 
 const replaceLiveSessionWithLegacyTombstone = async (

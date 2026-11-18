@@ -29,6 +29,13 @@ function loadStage(cache: string): {
     ).toBe(true)
     writeFileSync(destination, 'compiled helper')
   })
+  const installHelper = vi.fn((destination: string) => {
+    writeFileSync(destination, 'compiled install helper')
+  })
+  const uninstallHelper = vi.fn((destination: string) => {
+    writeFileSync(destination, 'compiled uninstall helper')
+  })
+  Object.assign(compile, { installHelper, uninstallHelper })
   const module = { exports: undefined as unknown as (context: unknown) => Promise<void> }
   runInNewContext(script, {
     module,
@@ -86,8 +93,8 @@ describe('verified Windows installer extractor', () => {
       const { stage, compile } = loadStage(toolDirectory!)
       const destination = join(root, 'out/windows-installer/x64/7za.exe')
       const signIf = vi.fn(async (file: string) => {
-        if (file.endsWith('.dll')) {
-          expect(readFileSync(file, 'utf8')).toBe('compiled helper')
+        if (file.endsWith('-helper.exe')) {
+          expect(readFileSync(file, 'utf8')).toMatch(/^compiled /)
           return
         }
         expect(file).toBe(destination)
@@ -102,10 +109,16 @@ describe('verified Windows installer extractor', () => {
       }
       await stage(context)
       await stage(context)
-      expect(signIf).toHaveBeenCalledTimes(4)
-      expect(compile).toHaveBeenCalledWith(
-        resolve('build/windows-install-publication.cs'),
-        join(root, 'out/windows-installer/x64/windows-install-publication.dll')
+      expect(signIf).toHaveBeenCalledTimes(6)
+      // No publication DLL ships: both helpers compile its source in.
+      expect(compile).not.toHaveBeenCalled()
+      expect(
+        existsSync(join(root, 'out/windows-installer/x64/windows-install-publication.dll'))
+      ).toBe(false)
+      const installCalls = (compile as unknown as { installHelper: ReturnType<typeof vi.fn> })
+        .installHelper.mock.calls
+      expect(installCalls[0][0]).toBe(
+        join(root, 'out/windows-installer/x64/windows-install-helper.exe')
       )
       expect(readFileSync(join(toolDirectory!, 'x64/7za.exe')).equals(original)).toBe(true)
       expect(readFileSync(join(root, 'app/resources/7zip-LICENSE.txt'))).toEqual(

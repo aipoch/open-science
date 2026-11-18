@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { isRayBearerEndpoint, resolveRayJobsEndpoint } from '@aipoch/compute/node'
+import { isRayBearerEndpoint, normalizeRayDashboardEndpoint } from '@aipoch/compute/ray-endpoint'
 import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 import {
   decodeRayTokenDocument,
@@ -24,7 +24,7 @@ function canonicalEndpoint(endpoint: string): string {
     endpoint.length > rayTokenEndpointMaxLength
   )
     throw new Error('Invalid Ray Dashboard endpoint.')
-  const canonical = resolveRayJobsEndpoint(endpoint)
+  const canonical = normalizeRayDashboardEndpoint(endpoint)
   if (canonical.length > rayTokenEndpointMaxLength)
     throw new Error('Invalid Ray Dashboard endpoint.')
   return canonical

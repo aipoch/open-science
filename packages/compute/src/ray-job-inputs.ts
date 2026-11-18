@@ -3,7 +3,6 @@ import { constants } from 'node:fs'
 import { lstat, open } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { isPortableComputeFileName } from './remote-path-security'
-import JSZip from 'jszip'
 import { requestRayDashboard, type RayJobsTarget } from './ray-jobs-http'
 
 type FrozenInput = Readonly<{
@@ -24,6 +23,7 @@ export async function prepareRayJobInputs(
   signal?.throwIfAborted()
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || files.length > 65535)
     throw new Error('Invalid Ray input budget.')
+  const { default: JSZip } = await import('jszip')
   const archive = new JSZip()
   const seen = new Set<string>()
   let remaining = maxBytes

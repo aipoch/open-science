@@ -1,4 +1,7 @@
+import { execFile } from 'node:child_process'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 
@@ -29,6 +32,63 @@ const commandDeps = (runCodex = vi.fn()) => ({
 })
 
 describe('Codex CLI login', () => {
+  it('discards status diagnostics without retaining output in the login process', async () => {
+    const producer = `
+      const { once } = await import('node:events')
+      const chunk = Buffer.alloc(64 * 1024, 'x')
+      for (const stream of [process.stdout, process.stderr]) {
+        for (let index = 0; index < 256; index++) {
+          if (!stream.write(chunk)) await once(stream, 'drain')
+        }
+      }
+      process.exitCode = 7
+    `
+    const moduleUrl = pathToFileURL(resolve('packages/open-science/codex-login.mjs')).href
+    // Isolate the heap measurement from Vitest and retain the result through the final GC.
+    const probe = `
+      import { runCodexProcess } from ${JSON.stringify(moduleUrl)}
+      global.gc()
+      const before = process.memoryUsage().heapUsed
+      globalThis.statusResult = await runCodexProcess(
+        process.execPath, ['--input-type=module', '--eval', ${JSON.stringify(producer)}],
+        { inherit: false }
+      )
+      global.gc()
+      process.stdout.write(JSON.stringify({
+        code: globalThis.statusResult.code,
+        signal: globalThis.statusResult.signal,
+        retainedBytes: process.memoryUsage().heapUsed - before
+      }))
+    `
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      ['--expose-gc', '--input-type=module', '--eval', probe],
+      { timeout: 10_000, cwd: tmpdir(), windowsHide: true }
+    )
+    const result = JSON.parse(stdout)
+    expect(result).toMatchObject({ code: 7, signal: null })
+    // The child emits 32 MiB; allow 8 MiB for runtime and module bookkeeping.
+    expect(result.retainedBytes).toBeLessThan(8 * 1024 * 1024)
+  })
+
+  it('preserves terminal output and native exit codes for device sign-in', async () => {
+    const moduleUrl = pathToFileURL(resolve('packages/open-science/codex-login.mjs')).href
+    const probe = `
+      import { runCodexProcess } from ${JSON.stringify(moduleUrl)}
+      const result = await runCodexProcess(process.execPath, ['--eval',
+        'console.log("DEVICE-CODE"); console.error("login diagnostic"); process.exitCode = 7'
+      ], { inherit: true })
+      process.stdout.write(JSON.stringify(result))
+    `
+    const { stdout, stderr } = await promisify(execFile)(
+      process.execPath,
+      ['--input-type=module', '--eval', probe],
+      { timeout: 10_000, cwd: tmpdir(), windowsHide: true }
+    )
+    expect(stdout).toBe('DEVICE-CODE\n' + JSON.stringify({ code: 7, signal: null }))
+    expect(stderr).toBe('login diagnostic\n')
+  })
+
   it('prepares an empty profile before resolving the runtime and registers a successful login', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'osci-first-login-'))
     const nativePath = resolve(root, 'codex')

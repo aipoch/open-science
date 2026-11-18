@@ -34,7 +34,29 @@ try {
   if (record.receiptId !== receiptId || (record.pid !== undefined && record.pid !== process.pid)) {
     process.exit(125)
   }
-  const updated = { ...record, pid: process.pid, commandIdentityMarker: receiptId }
+  let posixBirthToken
+  if (process.platform === 'linux') {
+    const stat = fs.readFileSync('/proc/self/stat', 'utf8')
+    const fields = stat
+      .slice(stat.lastIndexOf(')') + 1)
+      .trim()
+      .split(/\s+/u)
+    if (!/^\d+$/.test(fields[19])) throw new Error('Kernel host birth identity is unavailable.')
+    posixBirthToken = `linux-proc-starttime:${fields[19]}`
+  } else if (process.platform === 'darwin') {
+    const identity = require('@aipoch/process-tree-native').getDarwinProcess(process.pid)
+    if (!identity?.uniqueId || identity.uniqueId === '0')
+      throw new Error('Kernel host birth identity is unavailable.')
+    posixBirthToken = `darwin-proc-uniqueid:${identity.uniqueId}`
+  }
+  if (record.posixBirthToken && record.posixBirthToken !== posixBirthToken)
+    throw new Error('Kernel host birth identity changed.')
+  const updated = {
+    ...record,
+    pid: process.pid,
+    commandIdentityMarker: receiptId,
+    ...(posixBirthToken ? { posixBirthToken } : {})
+  }
   const temporary = `${activePath}.${process.pid}.tmp`
   fs.writeFileSync(temporary, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o600 })
   const descriptor = fs.openSync(temporary, 'r+')

@@ -11,9 +11,9 @@ import { resolvePermissionProfileApplication } from '../acp/permission-profile-c
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
 import {
   createSkillRuntimeAcpServerConfig,
-  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
   type SkillRuntimeMcpServerConfig
-} from '../skills/runtime-mcp-server'
+} from '../skills/runtime-mcp-config'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import {
   HARNESS_ACP_ARG,
   HARNESS_AUTH_METHOD,

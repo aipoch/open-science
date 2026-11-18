@@ -750,8 +750,17 @@ describe('workspace session controller', () => {
       revision: 2,
       updatedAt: 2
     }
-    const editDetails = vi.fn().mockResolvedValue(edited)
-    window.api = { sessions: { editDetails } } as unknown as Window['api']
+    const rename = vi.fn().mockResolvedValue({
+      id: edited.id,
+      projectId: edited.projectId,
+      title: edited.title,
+      description: edited.description,
+      pinned: false,
+      revision: edited.revision,
+      updatedAt: edited.updatedAt
+    })
+    const editDetails = vi.fn()
+    window.api = { sessions: { editDetails, rename } } as unknown as Window['api']
     useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
     const hook = renderController({ activeSession: active })
     mounted.push(hook)
@@ -760,19 +769,19 @@ describe('workspace session controller', () => {
       await hook.result.current.actions.renameTitle(active, '  Renamed inline  ')
     })
 
-    expect(editDetails).toHaveBeenCalledWith({
+    expect(rename).toHaveBeenCalledWith({
       projectId: active.projectId,
       sessionId: active.id,
       expectedTitle: 'Original title',
-      expectedDescription: 'Keep me',
-      title: 'Renamed inline',
-      description: 'Keep me'
+      title: 'Renamed inline'
     })
+    expect(editDetails).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       title: 'Renamed inline',
-      sessionDetailsSource: 'manual',
-      revision: 2
+      sessionDetailsSource: 'manual'
     })
+    // A metadata receipt does not acknowledge the loaded transcript revision.
+    expect(useSessionStore.getState().sessions[0].revision).toBe(active.revision)
   })
 
   it.each(['inline rename', 'Edit dialog'] as const)(
@@ -781,7 +790,7 @@ describe('workspace session controller', () => {
       const active = session({ revision: 2, description: 'Keep me' })
       const receipt = deferred<PersistedChatSession>()
       const editDetails = vi.fn().mockReturnValue(receipt.promise)
-      window.api = { sessions: { editDetails } } as unknown as Window['api']
+      window.api = { sessions: { editDetails, rename: editDetails } } as unknown as Window['api']
       useSessionStore.getState().hydrateSessions([active])
       const hook = renderController({ activeSession: active })
       mounted.push(hook)
@@ -812,7 +821,7 @@ describe('workspace session controller', () => {
   it('ignores blank or unchanged inline rename titles', () => {
     const active = session()
     const editDetails = vi.fn()
-    window.api = { sessions: { editDetails } } as unknown as Window['api']
+    window.api = { sessions: { editDetails, rename: editDetails } } as unknown as Window['api']
     useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
     const hook = renderController({ activeSession: active })
     mounted.push(hook)
@@ -825,7 +834,7 @@ describe('workspace session controller', () => {
     expect(editDetails).not.toHaveBeenCalled()
   })
 
-  it('loads an unopened Session before an inline rename to preserve its description', async () => {
+  it('renames an unopened Session without loading its transcript', async () => {
     const summary = session({ contentLoaded: false, activeMessageCount: 1 })
     const latestSummary = { ...summary, title: 'Title updated in another window' }
     const persisted: PersistedChatSession = {
@@ -850,10 +859,19 @@ describe('workspace session controller', () => {
       updatedAt: summary.updatedAt
     }
     const loadOne = vi.fn().mockResolvedValue(persisted)
-    const editDetails = vi
-      .fn()
-      .mockResolvedValue({ ...persisted, title: 'Renamed', sessionDetailsSource: 'manual' })
-    window.api = { sessions: { loadOne, editDetails } } as unknown as Window['api']
+    const rename = vi.fn().mockResolvedValue({
+      id: persisted.id,
+      projectId: persisted.projectId,
+      title: 'Renamed',
+      description: persisted.description,
+      pinned: false,
+      revision: 1,
+      updatedAt: persisted.updatedAt
+    })
+    const editDetails = vi.fn()
+    window.api = {
+      sessions: { loadOne, editDetails, rename }
+    } as unknown as Window['api']
     useSessionStore.setState({ sessions: [latestSummary], selectedSessionId: summary.id })
     const hook = renderController({ activeSession: latestSummary })
     mounted.push(hook)
@@ -865,32 +883,35 @@ describe('workspace session controller', () => {
       await Promise.resolve()
     })
 
-    expect(loadOne).toHaveBeenCalledWith({ projectId: 'project-a', sessionId: 'session-a' })
-    expect(editDetails).toHaveBeenCalledWith({
+    expect(loadOne).not.toHaveBeenCalled()
+    expect(rename).toHaveBeenCalledWith({
       projectId: 'project-a',
       sessionId: 'session-a',
       expectedTitle: 'Original title',
-      expectedDescription: 'Durable description',
-      title: 'Renamed',
-      description: 'Durable description'
+      title: 'Renamed'
+    })
+    expect(editDetails).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      contentLoaded: false,
+      messages: []
     })
   })
 
-  it('reports an unopened Session load failure without turning it into a save failure', async () => {
+  it('retains an unopened Session when a title-only rename fails', async () => {
     const summary = session({ contentLoaded: false, activeMessageCount: 1 })
-    const loadOne = vi.fn().mockRejectedValue(new Error('read failure'))
-    const editDetails = vi.fn()
-    window.api = { sessions: { loadOne, editDetails } } as unknown as Window['api']
+    const loadOne = vi.fn()
+    const rename = vi.fn().mockRejectedValue(new Error('save failure'))
+    window.api = { sessions: { loadOne, rename } } as unknown as Window['api']
     useSessionStore.setState({ sessions: [summary], selectedSessionId: summary.id })
     const hook = renderController({ activeSession: summary })
     mounted.push(hook)
-
     await act(async () => {
-      await expect(hook.result.current.actions.renameTitle(summary, 'Renamed')).resolves.toBe(false)
+      await expect(hook.result.current.actions.renameTitle(summary, 'Renamed')).rejects.toThrow(
+        'save failure'
+      )
     })
-
-    expect(hook.result.current.view.exportError).toBe('Could not load this session for editing.')
-    expect(editDetails).not.toHaveBeenCalled()
+    expect(loadOne).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toBe(summary)
   })
 
   it('loads an unopened Session before opening conversation export', async () => {

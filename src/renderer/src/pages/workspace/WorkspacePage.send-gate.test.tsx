@@ -21,6 +21,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { createInitialReviewState, useReviewStore } from '@/stores/review-store'
 import {
   createInitialSessionState,
+  toPersistedSession,
   useSessionStore,
   type ChatSession
 } from '@/stores/session-store'
@@ -1689,6 +1690,69 @@ describe('WorkspacePage send gate while compacting', () => {
 
     expect(runtime.setMemoryEnabled).toHaveBeenCalledWith('sess-a', false)
     expect(conversationProps.view.actionError).toBe('Memory update failed')
+  })
+
+  it('hydrates a displayed page before changing automatic review', async () => {
+    const complete = toPersistedSession(createReviewableSession())
+    let resolve!: (session: PersistedChatSession) => void
+    const loadOne = vi.fn(
+      () =>
+        new Promise<PersistedChatSession>((done) => {
+          resolve = done
+        })
+    )
+    window.api.sessions = { loadOne } as never
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...createReviewableSession(),
+          contentLoaded: false,
+          historyPage: { revision: 0, hasMore: true, totalItems: 80 }
+        }
+      ],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+    act(() => conversationProps.agentControls.toggleAutoReview?.(true))
+    expect(loadOne).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].autoReviewEnabled).not.toBe(true)
+    await act(async () => {
+      resolve(complete)
+    })
+    const saved = toPersistedSession(useSessionStore.getState().sessions[0])
+    expect(saved.autoReviewEnabled).toBe(true)
+    expect(saved.messages).toEqual(complete.messages)
+  })
+
+  it('hydrates complete history before assembling a manual review from a displayed page', async () => {
+    const complete = toPersistedSession(createReviewableSession())
+    let resolve!: (session: PersistedChatSession) => void
+    const loadOne = vi.fn(
+      () =>
+        new Promise<PersistedChatSession>((done) => {
+          resolve = done
+        })
+    )
+    window.api.sessions = { loadOne } as never
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...createReviewableSession(),
+          contentLoaded: false,
+          historyPage: { revision: 0, hasMore: true, totalItems: 80 }
+        }
+      ],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+    act(() => conversationProps.workflows.review.request())
+    expect(loadOne).toHaveBeenCalledOnce()
+    expect(window.api.reviewer.run).not.toHaveBeenCalled()
+    await act(async () => {
+      resolve(complete)
+    })
+    expect(window.api.reviewer.run).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].contentLoaded).not.toBe(false)
   })
 
   it('locks a manual review request before the running event arrives', async () => {

@@ -1,6 +1,7 @@
-import { request as httpRequest } from 'node:http'
-import { createConnection } from 'node:net'
+import { createServer, request as httpRequest, type ServerResponse } from 'node:http'
+import { createConnection, type AddressInfo } from 'node:net'
 
+import { Agent, fetch as nodeFetch } from 'undici'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
@@ -1972,6 +1973,82 @@ describe('Responses bridge Skill selector', () => {
     { name: 'statistics', description: 'Analyze numerical data.', path: '/private/stats/SKILL.md' },
     { name: 'writing', description: 'Improve prose.', path: '/private/writing/SKILL.md' }
   ]
+
+  it.each(['empty', 'throw'] as const)(
+    'closes real upstream error responses after %s-mode selection and fallback',
+    async (failureMode) => {
+      const active = new Set<ServerResponse>()
+      let requests = 0
+      const upstream = createServer((request, response) => {
+        request.resume()
+        requests++
+        active.add(response)
+        response.once('close', () => active.delete(response))
+        response.writeHead(503, { 'content-type': 'text/plain' })
+        response.write('unavailable')
+        // Leave the body open: returning from selection must release it without waiting for EOF.
+      })
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+      const { port } = upstream.address() as AddressInfo
+      const bridge = new ResponsesToChatCompletionsBridge(
+        { baseUrl: `http://127.0.0.1:${port}/v1`, model: 'model-a' },
+        fetch,
+        { skillSelectorFailureMode: failureMode }
+      )
+      try {
+        const selecting = bridge.selectSkills('analyze numerical data', catalog)
+        if (failureMode === 'throw') {
+          await expect(selecting).rejects.toThrow('Skill selector failed (invalid-response).')
+        } else {
+          await expect(selecting).resolves.toEqual([])
+        }
+        expect(requests).toBe(2)
+        await vi.waitFor(() => expect(active.size).toBe(0), { timeout: 1_000 })
+      } finally {
+        await bridge.close()
+        upstream.closeAllConnections()
+        await new Promise<void>((resolve) => upstream.close(() => resolve()))
+      }
+    }
+  )
+
+  it('releases a real failed response before retrying through a single-connection pool', async () => {
+    let requests = 0
+    const upstream = createServer((request, response) => {
+      request.resume()
+      requests++
+      if (requests === 1) {
+        response.writeHead(503, { 'content-type': 'text/plain' })
+        response.write('unavailable')
+      } else {
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({ choices: [{ message: { content: '{"skill_names":["statistics"]}' } }] })
+        )
+      }
+    })
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+    const { port } = upstream.address() as AddressInfo
+    const pool = new Agent({ connections: 1, pipelining: 1 })
+    const pooledFetch: typeof nodeFetch = (input, init) =>
+      nodeFetch(input, { ...init, dispatcher: pool })
+    const bridge = new ResponsesToChatCompletionsBridge(
+      { baseUrl: `http://127.0.0.1:${port}/v1`, model: 'model-a' },
+      pooledFetch as unknown as typeof fetch,
+      { skillSelectorTimeoutMs: 2_000 }
+    )
+    try {
+      await expect(bridge.selectSkills('analyze numerical data', catalog)).resolves.toEqual([
+        { name: 'statistics', path: '/private/stats/SKILL.md' }
+      ])
+      expect(requests).toBe(2)
+    } finally {
+      await bridge.close()
+      await pool.destroy()
+      upstream.closeAllConnections()
+      await new Promise<void>((resolve) => upstream.close(() => resolve()))
+    }
+  })
 
   it('fails open and cancels an oversized successful selector response', async () => {
     let cancelBody: ReturnType<typeof vi.spyOn> | undefined

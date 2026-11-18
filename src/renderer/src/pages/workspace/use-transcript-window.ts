@@ -66,6 +66,7 @@ const useTranscriptWindow = (
   end: number
   revealMessage: (messageId: string) => void
   revealAll: () => void
+  revealEarlier: () => void
   restoreWindow: () => void
   expandAtScrollEdge: (previousScrollTop: number) => void
   followEnd: () => void
@@ -234,6 +235,24 @@ const useTranscriptWindow = (
     stateMatchesScope,
     viewportRef
   ])
+
+  const revealEarlier = useCallback((): void => {
+    const anchor = captureReadingAnchor(scopeId, viewportRef.current)
+    if (anchor) {
+      readingAnchorRef.current = anchor
+      pendingTargetRef.current = anchor
+    }
+    const anchorIndex = anchor ? items.findIndex((item) => item.id === anchor.messageId) : -1
+    const nextStart = Math.max(0, anchorIndex - TRANSCRIPT_WINDOW_SIZE + 1)
+    setState({
+      scopeId,
+      itemCount: items.length,
+      start: nextStart,
+      end: Math.min(items.length, nextStart + TRANSCRIPT_WINDOW_SIZE),
+      anchorId: items[nextStart]?.id,
+      followEnd: false
+    })
+  }, [items, scopeId, viewportRef])
 
   const restoreWindow = useCallback((): void => {
     const snapshot = findRestoreRef.current
@@ -490,6 +509,7 @@ const useTranscriptWindow = (
     end,
     revealMessage,
     revealAll,
+    revealEarlier,
     restoreWindow,
     expandAtScrollEdge,
     followEnd,
