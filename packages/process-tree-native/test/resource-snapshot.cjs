@@ -25,6 +25,8 @@ test('returns Windows resource evidence or explicitly unsupported metrics', asyn
   }
   assert.equal(systemOnly.supported, true)
   assert.ok(systemOnly.system.committedBytes > 0)
+  assert.ok(systemOnly.system.totalPhysicalBytes > 0)
+  assert.ok(systemOnly.system.availableBytes <= systemOnly.system.totalPhysicalBytes)
   assert.ok(systemOnly.system.commitLimitBytes >= systemOnly.system.committedBytes)
   assert.equal(family.supported, true)
   const self = family.processes.find((entry) => entry.pid === process.pid)
