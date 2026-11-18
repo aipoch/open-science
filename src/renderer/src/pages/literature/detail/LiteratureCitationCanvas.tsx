@@ -316,7 +316,7 @@ export function LiteratureCitationCanvas({
         data-citation-canvas
         role="region"
         aria-label={t('Citation graph')}
-        className="relative min-h-[180px] min-w-0 flex-1 touch-none overflow-hidden bg-[radial-gradient(circle_at_50%_42%,hsl(var(--primary)/.09),transparent_34%),linear-gradient(135deg,hsl(var(--muted)/.42),hsl(var(--background))_52%,hsl(var(--muted)/.2))] cursor-grab active:cursor-grabbing"
+        className="relative min-h-[180px] min-w-0 flex-1 touch-none overflow-hidden bg-background cursor-grab active:cursor-grabbing"
         onPointerDown={(event) => {
           if (event.button !== 0 || event.isPrimary === false) return
           ignoreClickUntil.current = 0
@@ -360,7 +360,7 @@ export function LiteratureCitationCanvas({
         <div
           data-citation-toolbar
           data-no-pan
-          className="absolute bottom-6 right-2 z-20 flex max-w-[calc(100%-1.5rem)] items-center gap-0.5 rounded-xl border border-border-300/80 bg-card/85 p-1 !text-foreground shadow-lg shadow-black/5 backdrop-blur-md sm:top-3 sm:right-3 sm:bottom-auto"
+          className="absolute bottom-6 right-2 z-20 flex max-w-[calc(100%-1.5rem)] items-center gap-0.5 rounded-md border border-border-300 bg-background p-0.5 !text-foreground sm:top-3 sm:right-3 sm:bottom-auto"
           style={{ color: 'var(--foreground)' }}
         >
           <TooltipProvider>
@@ -514,7 +514,7 @@ export function LiteratureCitationCanvas({
         {graph ? (
           <div
             data-citation-legend
-            className="pointer-events-none absolute bottom-2 left-3 z-10 hidden items-center gap-1.5 rounded-lg border border-border-300/70 bg-card/80 px-2 py-1 text-[10px] shadow-sm backdrop-blur-md sm:flex"
+            className="pointer-events-none absolute bottom-2 left-3 z-10 hidden items-center gap-1.5 rounded-md bg-background/90 px-2 py-1 text-[10px] sm:flex"
             aria-label={t('Citation graph')}
           >
             <span className="inline-flex items-center gap-1 text-foreground">

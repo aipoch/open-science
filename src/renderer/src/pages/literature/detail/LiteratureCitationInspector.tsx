@@ -1,10 +1,10 @@
 import { CitationAbstract } from './LiteratureDetailText'
 import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, ChevronRight, List } from 'lucide-react'
+import { ChevronDown, ChevronRight, List, Inbox } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
-import { fullCreatorLabel } from '../literature-item-display'
+import { fullCreatorLabel, getExternalLiteratureUrl } from '../literature-item-display'
 import type { CitationGraphRelation } from './citation-graph'
 import type { CitationGraphController } from './useCitationGraphController'
 
@@ -127,9 +127,9 @@ export function LiteratureCitationInspector({
             ?.focus()
         } else collapse()
       }}
-      className={`flex min-h-0 flex-col overflow-x-hidden overflow-y-auto overscroll-contain border-t border-border-300/80 bg-card/95 shadow-[0_-8px_24px_-20px_hsl(var(--foreground)/.45)] backdrop-blur-sm lg:border-t-0 lg:border-l lg:shadow-[-8px_0_24px_-20px_hsl(var(--foreground)/.45)] ${expanded ? 'sm:max-h-[42vh] lg:max-h-none lg:w-80' : 'lg:w-11'}`}
+      className={`flex min-h-0 flex-col overflow-x-hidden overflow-y-auto overscroll-contain border-t border-border-300 bg-background lg:border-t-0 lg:border-l ${expanded ? 'sm:max-h-[42vh] lg:max-h-none lg:w-80' : 'lg:w-11'}`}
     >
-      <div className="flex h-12 shrink-0 items-center gap-1 border-b border-border-300/80 bg-muted/20 px-2">
+      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border-300 px-2">
         <Button
           ref={toggle}
           size="sm"
@@ -173,6 +173,18 @@ export function LiteratureCitationInspector({
             )}
           </span>
         </Button>
+        {expanded && onOpenInbox ? (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={t('Open Inbox')}
+            title={t('Open Inbox')}
+            disabled={saving}
+            onClick={onOpenInbox}
+          >
+            <Inbox className="size-4" aria-hidden="true" />
+          </Button>
+        ) : null}
         {expanded && graph ? (
           <Button
             size="icon-sm"
@@ -206,14 +218,14 @@ export function LiteratureCitationInspector({
             ref={inspectorTitle}
             tabIndex={-1}
             data-citation-inspector-title
-            className="mb-2 break-words text-sm font-semibold leading-snug outline-none"
+            className="mb-4 break-words text-base font-semibold leading-snug outline-none"
           >
             {selectedNode?.record.item.title ?? t('Selected paper')}
           </h3>
           {selectedNode && !listOpen ? (
             <div className="space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded-xl border border-border-300/70 bg-muted/25 p-3 shadow-sm">
-                <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs font-medium">
+              <div className="flex flex-col items-start gap-2">
+                <div className="flex min-w-0 flex-col items-start gap-1 text-xs leading-relaxed">
                   {fullCreatorLabel(selectedNode.record.item) ? (
                     <span
                       title={fullCreatorLabel(selectedNode.record.item)}
@@ -226,7 +238,7 @@ export function LiteratureCitationInspector({
                     {selectedNode.record.item.issuedYear?.toString() ?? t('No year')}
                   </span>
                 </div>
-                <p className="inline-flex items-center gap-1.5 rounded-full border border-border-300/80 bg-background/70 px-2.5 py-1 text-xs font-medium text-foreground">
+                <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                   <span
                     aria-hidden="true"
                     className={`size-2 rounded-full ${selectedNode.relation === 'references' ? 'bg-chart-1' : selectedNode.relation === 'citations' ? 'bg-chart-3' : selectedNode.relation === 'center' ? 'bg-muted-foreground' : 'bg-chart-1 ring-2 ring-chart-3'}`}
@@ -234,22 +246,24 @@ export function LiteratureCitationInspector({
                   {relationLabel(selectedNode.relation)}
                 </p>
               </div>
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-1">
+              <div className="flex flex-col items-start gap-2">
                 {selectedNode.record.item.containerTitle ? (
-                  <p className="text-xs italic text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     {selectedNode.record.item.containerTitle}
                   </p>
                 ) : null}
-                <ExternalTextLink
-                  href={selectedNode.record.item.url}
-                  className="text-xs text-muted-foreground"
-                >
-                  {t('View source')}
-                </ExternalTextLink>
+                {getExternalLiteratureUrl(selectedNode.record.item.url) ? (
+                  <ExternalTextLink
+                    href={selectedNode.record.item.url}
+                    className="text-xs text-muted-foreground"
+                  >
+                    {t('View source')}
+                  </ExternalTextLink>
+                ) : null}
               </div>
               <CitationAbstract
                 text={selectedNode.record.item.abstract}
-                className="rounded-xl border border-border-300/70 bg-muted/15 px-3 py-2 [&>summary]:font-medium"
+                className="border-t border-border-300 pt-3 [&>summary]:font-medium"
               />
             </div>
           ) : !selectedNode ? (
@@ -284,7 +298,7 @@ export function LiteratureCitationInspector({
             </section>
           ) : null}
         </div>
-        {selectedNode && (!selectedNode.center || temporaryCenter || receipt || onOpenInbox) ? (
+        {selectedNode && (!selectedNode.center || temporaryCenter || receipt) ? (
           <div
             data-citation-inspector-actions
             className="shrink-0 space-y-2 border-t border-border-300 bg-card px-3 py-2 sm:px-4"
@@ -327,13 +341,6 @@ export function LiteratureCitationInspector({
                       ? t('Previously dismissed; review it in Inbox.')
                       : t('In Inbox')}
               </p>
-            ) : null}
-            {onOpenInbox ? (
-              <div data-citation-inspector-secondary-actions className="flex items-center">
-                <Button size="sm" variant="ghost" disabled={saving} onClick={onOpenInbox}>
-                  {t('Open Inbox')}
-                </Button>
-              </div>
             ) : null}
           </div>
         ) : null}

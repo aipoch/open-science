@@ -64,6 +64,33 @@ for (const width of [375, 1440]) {
   })
 }
 
+for (const width of [320, 375, 414, 768]) {
+  test(`citation panel keeps pagination compact at ${width}px`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 812 })
+    await openCitationGraph(page, citationGraphPath)
+    const frame = page.locator('[data-current-frame="true"]')
+    const footer = frame.locator('[data-citation-status]')
+    const more = footer.getByRole('button', { name: 'Load more' })
+    const box = (await more.boundingBox())!
+    expect(box.width).toBeLessThan(140)
+    const footerBox = (await footer.boundingBox())!
+    expect(box.x + box.width).toBeLessThanOrEqual(footerBox.x + footerBox.width)
+    expect(footerBox.x + footerBox.width - box.x - box.width).toBeLessThan(20)
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
+    ).toBe(true)
+    await more.click()
+    await expect(frame.locator('[data-paper-id="europe-pmc:MED:1139"]')).toHaveCount(1)
+    await frame.locator('[data-paper-id="europe-pmc:MED:1100"] [data-node-mark]').click()
+    await expect(frame.getByRole('button', { name: 'Open Inbox', exact: true })).toBeVisible()
+    await expect(frame.getByRole('button', { name: 'Add to Inbox', exact: true })).toBeVisible()
+    await page.mouse.move(0, 0)
+    if (await frame.locator('[data-citation-hover-title]').count())
+      await page.keyboard.press('Escape')
+    await page.screenshot({ path: info.outputPath(`panel-${width}.png`) })
+  })
+}
+
 test('citation graph pointer hits, pan, zoom and cached exploration', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await openCitationGraph(page, citationGraphPath)
@@ -375,8 +402,7 @@ for (const [height, language, landscape] of [
     await page.mouse.wheel(0, 2000)
     await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
     await expect(actions.getByRole('status')).toBeInViewport({ ratio: 1 })
-    const inboxLabel = translations['Open Inbox'] ?? 'Open Inbox'
-    for (const source of ['Set as center', 'Add to Inbox', 'Open Inbox']) {
+    for (const source of ['Set as center', 'Add to Inbox']) {
       const button = actions.getByRole('button', {
         name: translations[source] ?? source,
         exact: true
@@ -409,7 +435,10 @@ for (const [height, language, landscape] of [
     await pane.evaluate((element) => {
       element.scrollTop = element.scrollHeight
     })
-    await actions.getByRole('button', { name: inboxLabel, exact: true }).click()
+    const openInbox = pane.getByRole('button', { name: 'Open Inbox', exact: true })
+    await openInbox.scrollIntoViewIfNeeded()
+    await expect(openInbox).toBeInViewport({ ratio: 1 })
+    await openInbox.click()
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(page.locator('#inbox-state-pending')).toHaveAttribute('aria-selected', 'true')
   })
