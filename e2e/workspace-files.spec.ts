@@ -919,6 +919,11 @@ test('reviews an uploaded PowerPoint without remounting its paged surface', asyn
   expect(zoomInBounds!.x).toBeLessThan(findBounds!.x)
   expect(findBounds!.x - zoomInBounds!.x - zoomInBounds!.width).toBeLessThan(20)
   expect(Math.abs(navigationBounds!.y - findBounds!.y)).toBeLessThan(2)
+  // A wide, short desktop fits the slide by height. Exercise horizontal overflow with
+  // a width-limited stage so the same 125% zoom checks horizontal panning on every host.
+  await stage.evaluate((element) => {
+    element.style.maxWidth = `${element.clientHeight}px`
+  })
   await officeFrame.getByRole('button', { name: 'Zoom in' }).click()
   await expect(officeFrame.getByRole('button', { name: 'Reset zoom' })).toHaveText('125%')
   await expect(stage).toHaveAttribute('tabindex', '0')
@@ -940,6 +945,9 @@ test('reviews an uploaded PowerPoint without remounting its paged surface', asyn
         .evaluate((element) => element.getBoundingClientRect().height)
     )
     .toBeLessThan(170)
+  await stage.evaluate((element) => {
+    element.style.maxWidth = ''
+  })
   await expect(root).toHaveCount(1)
   await officeFrame.getByRole('button', { name: 'Find', exact: true }).click()
   await expect(toolbar.locator(':scope > button').first()).toHaveAttribute(

@@ -405,6 +405,41 @@ beforeEach(() => {
 })
 
 describe('A03 unavailable permission downgrade projection', () => {
+  it('hydrates complete history before changing a permission profile from a displayed page', async () => {
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Earlier question',
+      permissionProfile: 'full'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const original = useSessionStore.getState().sessions[0]
+    const complete = toPersistedSession(original)
+    useSessionStore.setState({
+      sessions: [{ ...original, messages: [], conversationGraph: undefined, contentLoaded: false }]
+    })
+    let resolve!: (session: PersistedChatSession) => void
+    const loadOne = vi.fn(
+      () =>
+        new Promise<PersistedChatSession>((done) => {
+          resolve = done
+        })
+    )
+    window.api.sessions.loadOne = loadOne
+    const changed = setWorkspacePermissionProfile(
+      { state: createSnapshot([]), setPermissionProfile: vi.fn() },
+      'session-1',
+      'ask'
+    )
+    expect(loadOne).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].permissionProfile).toBe('full')
+    resolve(complete)
+    await expect(changed).resolves.toBe(true)
+    const saved = toPersistedSession(useSessionStore.getState().sessions[0])
+    expect(saved.messages).toEqual(complete.messages)
+    expect(saved.permissionProfile).toBe('ask')
+  })
+
   it.each(['empty snapshot', 'rejection'] as const)(
     'preserves the stored profile without notifying the saver after %s',
     async (failure) => {

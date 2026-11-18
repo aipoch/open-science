@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -59,6 +59,21 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
+const removeSessionStorage = async (
+  root: string,
+  projectId: string,
+  sessionId: string
+): Promise<void> => {
+  const directory = join(root, 'sessions', projectId)
+  // Model complete external removal, including every retained journal generation. Leaving the
+  // checkpoint/log behind instead models an unreadable orphan, not a missing Session.
+  await Promise.all(
+    (await readdir(directory))
+      .filter((name) => name.startsWith(`${sessionId}.`))
+      .map((name) => rm(join(directory, name)))
+  )
+}
+
 describe('missing runtime Session authority regression', () => {
   // Diagnostic controls only: these do not establish the trigger of the exported incident.
   it('reads an empty runtime context from a durable Session without a context field', async () => {
@@ -109,7 +124,7 @@ describe('missing runtime Session authority regression', () => {
   it('rejects a runtime context read after out-of-band removal without recreating authority', async () => {
     const { root, coordinator, repository } = await harness()
     await coordinator.saveSession(createSession())
-    await rm(join(root, 'sessions', 'project-1', 'session-1.json'))
+    await rm(join(root, 'sessions', 'project-1', 'session-1.jsonl'))
 
     await expect(coordinator.readSessionRuntimeContext('project-1', 'session-1')).rejects.toThrow(
       'Cannot read runtime context for a missing Session.'
@@ -119,7 +134,7 @@ describe('missing runtime Session authority regression', () => {
     })
   })
 
-  it.each(['session-file', 'project-directory'] as const)(
+  it.each(['session-storage', 'project-directory'] as const)(
     'releases an admitted turn after %s disappears without recreating its record',
     async (missing) => {
       const { root, repository, coordinator } = await harness()
@@ -166,11 +181,11 @@ describe('missing runtime Session authority regression', () => {
           coordinator.recordRuntimeTerminalFailure(event, retry)
       })
       await owner.begin(scope)
-      const path =
-        missing === 'session-file'
-          ? join(root, 'sessions', durable.projectId, durable.id + '.json')
-          : join(root, 'sessions', durable.projectId)
-      await rm(path, { recursive: true, force: true })
+      if (missing === 'session-storage') {
+        await removeSessionStorage(root, durable.projectId, durable.id)
+      } else {
+        await rm(join(root, 'sessions', durable.projectId), { recursive: true, force: true })
+      }
       const published: AcpRuntimeEvent[] = []
       await owner.commitTerminal(
         {
@@ -210,13 +225,13 @@ describe('missing runtime Session authority regression', () => {
     ).rejects.toThrow('Cannot mutate a session that has been deleted.')
   })
 
-  it('out-of-band JSON removal rejects admission and runtime mutation against missing authority', async () => {
+  it('out-of-band Session storage removal rejects admission and runtime mutation against missing authority', async () => {
     const { root, coordinator } = await harness()
     await coordinator.saveSession(createSession())
 
     // The renderer/runtime still believes the Session exists (e.g. an active turn or an open
-    // conversation), but the file vanished outside this process's delete paths.
-    await rm(join(root, 'sessions', 'project-1', 'session-1.json'))
+    // conversation), but all its storage vanished outside this process's delete paths.
+    await removeSessionStorage(root, 'project-1', 'session-1')
 
     // RuntimeSessionOwner.begin() pre-loads through this path: it succeeds only while the file
     // exists. The subsequent admission mutation is what throws the user-facing error.

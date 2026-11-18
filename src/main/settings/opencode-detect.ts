@@ -2,12 +2,12 @@ import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import {
+  runVerificationProcess,
+  VerificationProcessExitError
+} from '../update/verification-process'
 
 import { augmentedPathEnv, withNpmBinFallback } from './shell-path'
-
-const execFileAsync = promisify(execFile)
 
 export type OpencodeDetectResult = {
   resolvedPath: string
@@ -127,33 +127,44 @@ const parseVersion = (output: string): string | undefined => {
   return match ? match[0] : output.trim() || undefined
 }
 
-// Real `<path> --version` runner. On Windows a `.cmd`/`.bat` shim cannot be launched by execFile
-// directly, so route it through the shell with the path quoted; native `.exe`/Unix binaries run
-// without a shell. Short timeout so a hung binary can't stall detection.
+// Real `<path> --version` runner. Windows preserves shell support for `.cmd`/`.bat` shims with
+// the path quoted; Unix binaries run without a shell. Short timeout bounds detection.
 const runOpencodeVersion =
   (platform: NodeJS.Platform, preserveFailure = false) =>
   async (path: string, signal?: AbortSignal): Promise<string | undefined> => {
     try {
-      const { stdout } =
-        platform === 'win32'
-          ? await execFileAsync(`"${path}"`, ['--version'], {
-              timeout: 5000,
-              shell: true,
-              windowsHide: true,
-              env: augmentedPathEnv(process.env),
-              signal
-            })
-          : await execFileAsync(path, ['--version'], {
-              timeout: 5000,
-              windowsHide: true,
-              env: augmentedPathEnv(process.env),
-              signal
-            })
+      const { stdout } = await runVerificationProcess(
+        platform === 'win32' ? `"${path}"` : path,
+        ['--version'],
+        {
+          timeoutMs: 5000,
+          maxBytes: 1024 * 1024,
+          shell: platform === 'win32',
+          env: augmentedPathEnv(process.env),
+          signal
+        }
+      )
 
       return parseVersion(stdout)
     } catch (error) {
       signal?.throwIfAborted()
-      if (preserveFailure) throw error
+      if (preserveFailure) {
+        if (error instanceof VerificationProcessExitError) {
+          const cmd = `${platform === 'win32' ? `"${path}"` : path} --version`
+          throw Object.assign(
+            new Error(`Command failed: ${cmd}\n${error.stderr}`, { cause: error }),
+            {
+              code: error.exitCode,
+              signal: error.signal ?? null,
+              killed: false,
+              stdout: error.stdout,
+              stderr: error.stderr,
+              cmd
+            }
+          )
+        }
+        throw error
+      }
       return undefined
     }
   }
@@ -164,20 +175,13 @@ const resolveNpmBinDirs =
   (platform: NodeJS.Platform) =>
   async (signal?: AbortSignal): Promise<string[]> => {
     try {
-      const { stdout } =
-        platform === 'win32'
-          ? await execFileAsync('npm', ['prefix', '-g'], {
-              timeout: 10_000,
-              shell: true,
-              windowsHide: true,
-              env: augmentedPathEnv(),
-              signal
-            })
-          : await execFileAsync('npm', ['prefix', '-g'], {
-              timeout: 10_000,
-              env: augmentedPathEnv(),
-              signal
-            })
+      const { stdout } = await runVerificationProcess('npm', ['prefix', '-g'], {
+        timeoutMs: 10_000,
+        maxBytes: 1024 * 1024,
+        shell: platform === 'win32',
+        env: augmentedPathEnv(),
+        signal
+      })
       const prefix = stdout.trim()
 
       if (!prefix) return []

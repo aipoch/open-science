@@ -31,6 +31,7 @@ import type {
   PrepareArtifactRunFinalizationRequest
 } from './publication-types'
 import type { FileDigest } from '../bounded-file-io'
+import type { PendingFileTransactionRequest } from './pending-file-contract'
 import type { PendingFileBudgetReservation } from './pending-file-transaction'
 import { assertDiskReserve, copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
@@ -272,7 +273,7 @@ class ArtifactPublicationOwner {
   }
 
   async withPendingFileTransaction<Result>(
-    request: WritePendingArtifactFileRequest,
+    request: PendingFileTransactionRequest,
     options: PendingFileTransactionOptions,
     operation: (
       artifact: ArtifactFile,

@@ -300,6 +300,42 @@ it('summarizes compacted state and retains the latest failed run diagnostic', ()
 })
 
 describe('permission summaries', () => {
+  it('names the exact same-turn image version without exposing input identifiers', () => {
+    const request = {
+      ...permission('edit_image'),
+      mcpIdentity: 'open-science-images/edit_image',
+      rawInput: {
+        prompt: 'Change the color to blue.',
+        source: {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-private-id',
+          inputFileVersionId: 'source-private-version'
+        }
+      }
+    }
+    const completedImage = (versionId: string, filename: string): ToolActivity =>
+      activity({
+        title: 'open_science_images_generate_image',
+        status: 'completed',
+        rawOutput: { artifactId: 'artifact-private-id', versionId, filename }
+      })
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[request]}
+        onRespond={vi.fn()}
+        imageSourceSession={{
+          messages: [],
+          activities: [
+            completedImage('other-version', 'other.png'),
+            completedImage('source-private-version', 'selected.png')
+          ]
+        }}
+      />
+    )
+    expect(html).toContain('selected.png')
+    expect(html).not.toMatch(/other\.png|source-private-version|artifact-private-id/)
+  })
+
   it.each([false, true])(
     'shows the actual file source and redacts inline bytes (encoded source: %s)',
     (encoded) => {

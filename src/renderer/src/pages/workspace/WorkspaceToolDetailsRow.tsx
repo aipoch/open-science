@@ -1,3 +1,4 @@
+import { WorkspaceImageToolCard, WorkspaceImageToolOutput } from './WorkspaceImageToolCard'
 import type { ToolActivity } from '@/stores/session-store-contract'
 import { TriangleAlert } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -359,6 +360,15 @@ const WorkspaceToolDetailsRow = ({
         buttonRef={setRowElement}
         onToggle={onToggle}
       >
+        {details.image ? (
+          <WorkspaceImageToolCard
+            operation={details.image.operation}
+            input={activity.rawInput}
+            result={details.image.result}
+            error={details.image.error}
+            pending={activity.status === 'in_progress'}
+          />
+        ) : null}
         {details.codeReview ? (
           <NotebookCodeReviewReceipt key={activity.id} review={details.codeReview} />
         ) : (
@@ -366,6 +376,7 @@ const WorkspaceToolDetailsRow = ({
         )}
       </WorkspaceToolActivityRowButton>
       {allowFolderAccess && notebookRun ? <NotebookFolderAccessNotice run={notebookRun} /> : null}
+      {details.image?.result ? <WorkspaceImageToolOutput result={details.image.result} /> : null}
       {notebookRun ? <NotebookToolFigureOutputs run={notebookRun} /> : null}
     </>
   )

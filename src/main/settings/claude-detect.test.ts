@@ -1,7 +1,17 @@
-import { posix, win32 } from 'node:path'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { delimiter, join, posix, win32 } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { candidateDirs, detectClaude, parseVersion, type ClaudeDetectDeps } from './claude-detect'
+import { detectNpmAvailable, isNpmGlobalPrefixWritable, runInstall } from './claude-install'
+
+import {
+  candidateDirs,
+  createDefaultDetectDeps,
+  detectClaude,
+  parseVersion,
+  type ClaudeDetectDeps
+} from './claude-detect'
 
 // Builds detect deps around a set of "installed" executables keyed by absolute path.
 const createDeps = (
@@ -19,6 +29,62 @@ const createDeps = (
 })
 
 describe('claude-detect', () => {
+  it
+    .skipIf(process.platform === 'win32')
+    .each([
+      'version',
+      'npm discovery',
+      'npm availability',
+      'npm prefix',
+      'legacy installer'
+    ] as const)('releases real Claude %s descendants before returning', async (scenario) => {
+    const directory = await mkdtemp(join(tmpdir(), 'claude-resource-probe-'))
+    const executable = join(directory, scenario === 'version' ? 'claude' : 'npm')
+    const pidFile = join(directory, 'pids.json')
+    let pids: number[] = []
+    try {
+      await writeFile(
+        executable,
+        `#!${process.execPath}\n` +
+          "const { spawn } = require('node:child_process');\n" +
+          "const { writeFileSync } = require('node:fs');\n" +
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });\n" +
+          `writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify([process.pid, child.pid]));\n` +
+          "child.unref(); console.log('2.1.3');\n"
+      )
+      await chmod(executable, 0o755)
+      vi.stubEnv('PATH', `${directory}${delimiter}${process.env.PATH ?? ''}`)
+      if (scenario === 'version')
+        expect(await createDefaultDetectDeps().getVersion(executable)).toBe('2.1.3')
+      else if (scenario === 'npm discovery') await createDefaultDetectDeps().resolveNpmBinDirs()
+      else if (scenario === 'npm availability')
+        expect(await detectNpmAvailable()).toEqual({ available: true })
+      else if (scenario === 'npm prefix') await isNpmGlobalPrefixWritable()
+      else
+        expect(
+          await runInstall({
+            source: 'npm',
+            installId: 'resource-probe',
+            onEvent: () => {},
+            npmPrefixWritable: async () => true
+          })
+        ).toMatchObject({ ok: true })
+      pids = JSON.parse(await readFile(pidFile, 'utf8'))
+      for (const pid of pids)
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+    } finally {
+      for (const pid of pids) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          /* Already reaped. */
+        }
+      }
+      vi.unstubAllEnvs()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('parses a version string out of --version output', () => {
     expect(parseVersion('2.1.3 (Claude Code)')).toBe('2.1.3')
     expect(parseVersion('claude 1.0.0-beta.2')).toBe('1.0.0-beta.2')

@@ -1,8 +1,6 @@
 {
   "ownerPaths": [
-    "src/renderer/src/components/composer-notice/ComposerNoticeSlot.tsx",
     "src/renderer/src/lib/composer-notice/catalog.test.ts",
-    "src/renderer/src/lib/composer-notice/catalog.ts",
     "src/renderer/src/lib/composer-notice/use-composer-notices.ts",
     "src/renderer/src/pages/workspace/ArtifactProvenanceMessages.integration.test.tsx",
     "src/renderer/src/pages/workspace/ComposerAgentControlsMenu.interaction.test.tsx",
@@ -82,7 +80,10 @@
     "src/renderer/src/pages/workspace/workspace-message-queue-announcement.ts",
     "src/renderer/src/pages/workspace/workspace-message-queue-drain.ts",
     "src/renderer/src/pages/workspace/workspace-message-queue-projection.ts",
-    "src/renderer/src/pages/workspace/workspace-session-recovery.ts"
+    "src/renderer/src/pages/workspace/workspace-session-recovery.ts",
+    "src/renderer/src/pages/workspace/SessionHistoryLoadButton.render.test.tsx",
+    "src/renderer/src/pages/workspace/SessionHistoryLoadButton.tsx",
+    "src/renderer/src/pages/workspace/WorkspaceActivityGroup.memo.render.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ComposerMessageQueue.tsx",
@@ -160,7 +161,9 @@
       "src/renderer/src/pages/workspace/message-working-files.test.ts",
       "src/renderer/src/pages/workspace/session-message-artifact-reference.test.ts",
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx",
-      "src/renderer/src/pages/workspace/use-transcript-window.test.tsx"
+      "src/renderer/src/pages/workspace/use-transcript-window.test.tsx",
+      "src/renderer/src/pages/workspace/SessionHistoryLoadButton.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceActivityGroup.memo.render.test.tsx"
     ],
     "contract": [
       "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.interaction.test.tsx",

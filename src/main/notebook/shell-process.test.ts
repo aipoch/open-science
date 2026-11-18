@@ -4,7 +4,7 @@ import * as processTree from '../process-tree'
 import * as windowsRuntime from './windows-notebook-runtime'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
-import { realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -1223,7 +1223,7 @@ describe('notebook shell process behavior', () => {
       await rm(runtimeRoot, { recursive: true, force: true })
     })
 
-    it('settles a missing executable without an unhandled asynchronous spawn error', async () => {
+    it('settles a missing executable and releases its launch evidence', async () => {
       const registry = new ShellProcessOwnershipRegistry(runtimeRoot)
       const cleanup = vi.fn()
       const result = await runShellCommand({
@@ -1249,10 +1249,82 @@ describe('notebook shell process behavior', () => {
           })
         }
       })
-      expect(result.stderr).toContain('valid process identity')
+      if (process.platform === 'darwin') {
+        // The ownership gate starts successfully; exec then reports the missing workload.
+        expect(result.stderr).toContain('missing-executable')
+        expect(result.exitCode).toBe(126)
+        expect(result.errorCode).toBeUndefined()
+        expect(cleanup).toHaveBeenCalledWith('exit', {
+          processesTerminated: true,
+          processState: 'started-and-reaped'
+        })
+      } else {
+        expect(result.stderr).toContain('valid process identity')
+        expect(result.exitCode).toBeNull()
+      }
       expect(registry.hasReceipts()).toBe(false)
       expect(cleanup).toHaveBeenCalledOnce()
     })
+
+    it.runIf(process.platform === 'darwin')(
+      'withholds the workload when birth proof is missing',
+      async () => {
+        const marker = join(runtimeRoot, 'unproven-workload')
+        const proof = vi
+          .spyOn(processTree, 'capturePosixProcessTreeIdentity')
+          .mockReturnValue(undefined)
+        try {
+          const result = await runShellCommand({
+            command: 'unused',
+            processSandbox: {
+              wrap: async (invocation) => ({
+                executable: '/bin/sh',
+                args: ['-c', 'printf ran > "$1"', 'test-shell', marker],
+                env: invocation.env,
+                annotateStderr: (stderr) => stderr,
+                cleanup: vi.fn()
+              })
+            },
+            cwd: runtimeRoot,
+            handoffDir: runtimeRoot,
+            runtimeRoot,
+            sessionId: 'missing-birth',
+            projectId: 'project-1'
+          })
+          expect(existsSync(marker)).toBe(false)
+          expect(result.exitCode).toBeNull()
+          expect(result.stderr).toContain('ownership')
+        } finally {
+          proof.mockRestore()
+        }
+      }
+    )
+
+    it.skipIf(process.platform !== 'darwin')(
+      'does not release the launch gate when cancelled during ownership claim',
+      async () => {
+        const marker = join(runtimeRoot, 'workload-started')
+        const controller = new AbortController()
+        const result = await runShellCommand({
+          command: `printf launched > ${JSON.stringify(marker)}`,
+          cwd: process.cwd(),
+          handoffDir: process.cwd(),
+          runtimeRoot,
+          sessionId: 'cancel-before-release',
+          projectId: 'project-1',
+          signal: controller.signal,
+          claimProcess: () => {
+            expect(existsSync(marker)).toBe(false)
+            controller.abort()
+            return () => undefined
+          }
+        })
+        expect(result.cancelled).toBe(true)
+        expect(result.stderr).toBe('Shell command was cancelled.')
+        expect(result.exitCode).toBeNull()
+        expect(existsSync(marker)).toBe(false)
+      }
+    )
 
     it.each(['reaped', 'unreaped', 'rejected'] as const)(
       'preserves launch evidence until failed-claim cleanup is confirmed: %s',

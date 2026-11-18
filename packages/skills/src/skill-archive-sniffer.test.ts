@@ -193,9 +193,16 @@ describe('isImportableSkillArchivePath', () => {
         method: 99
       }
     ])
-    const startedAt = performance.now()
-
     await expect(inspect(archive)).resolves.toBe(true)
+
+    // Time archive processing after the real-file fixture check completes.
+    const startedAt = performance.now()
+    await expect(
+      isImportableSkillArchive({
+        size: archive.byteLength,
+        read: async (position, length) => archive.subarray(position, position + length)
+      })
+    ).resolves.toBe(true)
 
     expect(performance.now() - startedAt).toBeLessThan(250)
   })

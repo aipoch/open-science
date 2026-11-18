@@ -179,23 +179,12 @@ export const runCodexProcess = (codexPath, args, options = {}) =>
     const child = spawn(needsShell ? '"' + codexPath + '"' : codexPath, args, {
       env: options.env,
       shell: needsShell,
-      stdio: options.inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'],
+      // Status callers only inspect the exit result; device login keeps its terminal output.
+      stdio: options.inherit ? 'inherit' : 'ignore',
       windowsHide: true
     })
-    let stdout = ''
-    let stderr = ''
-    if (!options.inherit) {
-      child.stdout?.setEncoding('utf8')
-      child.stderr?.setEncoding('utf8')
-      child.stdout?.on('data', (chunk) => {
-        stdout += chunk
-      })
-      child.stderr?.on('data', (chunk) => {
-        stderr += chunk
-      })
-    }
     child.once('error', rejectRun)
-    child.once('exit', (code, signal) => resolveRun({ code, signal, stdout, stderr }))
+    child.once('exit', (code, signal) => resolveRun({ code, signal }))
   })
 
 const DEFAULT_DEPS = {

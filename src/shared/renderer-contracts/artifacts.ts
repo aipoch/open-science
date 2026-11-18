@@ -6,6 +6,7 @@ import type {
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult,
+  OpenArtifactInBrowserRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest,
   ReconcilePendingArtifactsRequest,
@@ -55,7 +56,14 @@ import type {
   GetArtifactCodeReconstructionRequest
 } from '../artifact-code-reconstruction'
 
-import { callable, ELECTRON, LOCAL, type RemoveListener, ELECTRON_EVENT } from './definition'
+import {
+  callable,
+  ELECTRON,
+  LOCAL,
+  MAPPED_NATIVE,
+  type RemoveListener,
+  ELECTRON_EVENT
+} from './definition'
 
 export const contracts = {
   'artifacts.cancelReproducibilityCheck': callable<
@@ -156,6 +164,10 @@ export const contracts = {
   'artifacts.openFile': callable<(request: OpenArtifactFileRequest) => Promise<void>>()(
     'artifacts',
     ['artifacts:open-file', LOCAL]
+  ),
+  'artifacts.openInBrowser': callable<(request: OpenArtifactInBrowserRequest) => Promise<void>>()(
+    'artifacts',
+    ['artifacts:open-in-browser', MAPPED_NATIVE]
   ),
   'artifacts.onReproducibilityCheckChanged': callable<
     (listener: (state: ArtifactReproducibilityCheckState) => void) => RemoveListener

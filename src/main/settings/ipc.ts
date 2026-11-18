@@ -560,6 +560,10 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:set-ncbi-credentials', (_event, request: SetNcbiCredentialsRequest) =>
     workflows.connectors.setNcbiCredentials(request)
   )
+  ipcMainHandle('settings:get-image-models', () => service.imageModels.snapshot())
+  ipcMainHandle('settings:update-image-models', (_event, request) =>
+    service.imageModels.mutate(request)
+  )
   ipcMainHandle('settings:get-classification', () => service.classification.snapshot())
   ipcMainHandle('settings:update-classification', (_event, request) =>
     service.classification.mutate(request)

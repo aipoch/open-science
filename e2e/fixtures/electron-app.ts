@@ -14,6 +14,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   writeFile
 } from 'node:fs/promises'
@@ -349,6 +350,7 @@ type NativeMenuProbe = {
 }
 type ElectronApp = {
   addCleanupAudit: (audit: () => Promise<void>) => void
+  isolatedDataRoot: () => Promise<string>
   captureBrandState: () => Promise<BrandState>
   restartWithBrandFixture: (
     mode: 'legacy' | 'legacy-config' | 'custom' | 'onboarding'
@@ -415,6 +417,11 @@ type ElectronApp = {
   }) => Promise<Page>
   restartAfterCrash: (options?: { force?: boolean }) => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
+  restartWithRawSessionFileFixture: (fixture: {
+    projectId: string
+    sessionId: string
+    contents: string
+  }) => Promise<Page>
   restartWithSessionFixture: (
     session: PersistedChatSession,
     notebookRuns?: NotebookRunRecord[],
@@ -486,6 +493,8 @@ const launchEnvironment = (
         !key.startsWith('OPEN_SCIENCE_E2E_') &&
         key !== 'OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT' &&
         key !== 'OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT' &&
+        key !== 'OPEN_SCIENCE_ALLOW_MULTI_INSTANCE' &&
+        key !== 'OPEN_SCIENCE_WEB_PORT' &&
         key !== 'OPEN_SCIENCE_MICROMAMBA_BIN'
       )
         delete environment[key]
@@ -957,14 +966,15 @@ class ElectronAppHarness implements ElectronApp {
           : 'open-science-electron-e2e-'
       )
     )
+    const canonicalRoot = await realpath(testRoot)
     const harness = new ElectronAppHarness(
       testRoot,
       {
         fakeAgentBinRoot: join(testRoot, 'fake-agent-bin'),
         fakeRemoteItRoot: join(testRoot, 'fake-remoteit'),
         fakeRemoteItState: join(testRoot, 'fake-remoteit-state.json'),
-        storageRoot: join(testRoot, 'storage'),
-        userDataRoot: join(testRoot, 'electron-profile')
+        storageRoot: join(canonicalRoot, 'storage'),
+        userDataRoot: join(canonicalRoot, 'electron-profile')
       },
       windowMode
     )
@@ -1840,6 +1850,16 @@ class ElectronAppHarness implements ElectronApp {
     this.sabotagedDelegatedHandoffs.delete(childName)
   }
 
+  async isolatedDataRoot(): Promise<string> {
+    const dataRoot = await realpath(
+      await this.page.evaluate(async () => (await window.api.storage.getInfo()).dataRoot)
+    )
+    const offset = relative(await realpath(this.testRoot), dataRoot)
+    if (!offset || offset === '..' || offset.startsWith('..' + sep) || isAbsolute(offset))
+      throw new Error('Data root is outside the Electron fixture: ' + dataRoot)
+    return dataRoot
+  }
+
   async captureBrandState(): Promise<BrandState> {
     return this.runningApplication.evaluate(({ app, BrowserWindow, Menu }) => ({
       name: app.getName(),
@@ -1965,6 +1985,30 @@ class ElectronAppHarness implements ElectronApp {
         })
     }
     // Rebuild the catalog from the fixture file, just as the historical-session fixture does.
+    const client = createProjectDbClient(this.roots.storageRoot)
+    try {
+      await client.sessionProjectionState.deleteMany()
+    } finally {
+      await client.$disconnect()
+    }
+    await this.launch()
+    return this.page
+  }
+
+  async restartWithRawSessionFileFixture(fixture: {
+    projectId: string
+    sessionId: string
+    contents: string
+  }): Promise<Page> {
+    if (![fixture.projectId, fixture.sessionId].every((id) => /^[a-zA-Z0-9_-]+$/.test(id))) {
+      throw new Error('Invalid E2E Session fixture identity.')
+    }
+    await this.close()
+    const directory = join(this.roots.storageRoot, 'sessions', fixture.projectId)
+    await mkdir(directory, { recursive: true })
+    // Preserve the released fixture byte-for-byte instead of re-encoding it through the current
+    // createSessionFile projection.
+    await writeFile(join(directory, `${fixture.sessionId}.json`), fixture.contents, 'utf8')
     const client = createProjectDbClient(this.roots.storageRoot)
     try {
       await client.sessionProjectionState.deleteMany()

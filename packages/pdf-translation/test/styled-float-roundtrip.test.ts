@@ -474,3 +474,176 @@ it.each([
     expect(protectedResult.pages.every((page) => page.pixels!.changedPixels === 0)).toBe(true)
   }
 )
+
+it.each([
+  { kind: 'underline', gap: 4 },
+  { kind: 'underline', gap: 14 },
+  { kind: 'overprint', gap: 4 },
+  { kind: 'overprint', gap: 14 }
+])('checks prose spacing beside a retained $kind anchor (gap=$gap)', async ({ kind, gap }) => {
+  const pdf = await PDFDocument.create()
+  const font = await pdf.embedFont(StandardFonts.TimesRoman)
+  const page = pdf.addPage([600, 800])
+  page.drawText('Label', { x: 40, y: 500, size: 12, font })
+  if (kind === 'underline') {
+    const [{ pngBase64 }] = readPdfTranslationCases<{ pngBase64: string }>(
+      'raster-run-in-label-roundtrip.jsonl'
+    )
+    const image = await pdf.embedPng(Buffer.from(pngBase64, 'base64'))
+    page.drawImage(image, {
+      x: 40,
+      y: 498,
+      width: font.widthOfTextAtSize('Label', 12),
+      height: 0.48
+    })
+  } else page.drawText('Label', { x: 40.17, y: 500.21, size: 12, font })
+  page.drawText(': ordinary introduction.', { x: 72, y: 500, size: 12, font })
+  page.drawText('First ordinary prose line.', { x: 40, y: 480, size: 12, font })
+  page.drawText('Second ordinary prose line.', { x: 40, y: 480 - gap, size: 12, font })
+  const bytes = new Uint8Array(await pdf.save())
+  const unit = {
+    source: `${kind === 'overprint' ? 'LabelLabel' : 'Label'}: ordinary introduction. First ordinary prose line. Second ordinary prose line.`,
+    translation: `${kind === 'overprint' ? 'LabelLabel' : 'Label'}: A translated introduction. The first ordinary line is followed by the second ordinary line.`,
+    fragments: [
+      { pageNumber: 1, rect: { x: 40 / 600, y: 285 / 800, width: 400 / 600, height: 65 / 800 } }
+    ]
+  }
+  const caller = new TestCallerRegistry().acquire({
+    leaseId: `crowded-${kind}`,
+    surface: 'electron'
+  })
+  try {
+    const result = await new PdfTranslationWriter(() =>
+      resolve('resources/worker.mjs')
+    ).generateDetailed(
+      {
+        id: `crowded-${kind}`,
+        data: bytes,
+        pages: [{ width: 600, height: 800 }],
+        preserveUnsupported: true,
+        units: [unit]
+      },
+      caller.lease
+    )
+    expect(result).not.toBeNull()
+    expect(result!.layoutFailures).toEqual(
+      gap === 14 ? [] : [expect.objectContaining({ unitIndex: 0, code: 'annotations' })]
+    )
+    if (gap === 14) return
+    const originalTask = getDocument({ data: bytes.slice(), useSystemFonts: true })
+    const outputTask = getDocument({ data: result!.data.slice(), useSystemFonts: true })
+    onTestFinished(() => originalTask.destroy())
+    onTestFinished(() => outputTask.destroy())
+    const preservation = await verifyPdfPreservation(
+      await originalTask.promise,
+      await outputTask.promise,
+      [unit],
+      result!.layoutFailures,
+      [1]
+    )
+    expect(preservation.pages.flatMap((entry) => entry.failures)).toEqual([])
+    expect(preservation.pages.every((entry) => entry.pixels!.changedPixels === 0)).toBe(true)
+  } finally {
+    caller.release()
+  }
+})
+
+it.each([
+  { gap: 14, formulaY: 500 },
+  { gap: 4, formulaY: 500 },
+  { gap: 14, formulaY: 550 },
+  { gap: 4, formulaY: 550 }
+])(
+  'checks ordinary prose spacing independently of a retained formula (gap=$gap, formulaY=$formulaY)',
+  async ({ gap, formulaY }) => {
+    const pdf = await PDFDocument.create()
+    const font = await pdf.embedFont(StandardFonts.TimesRoman)
+    const page = pdf.addPage([600, 800])
+    page.drawText('Ratio ', { x: 40, y: formulaY, size: 12, font })
+    const fractionX = 80
+    const width = font.widthOfTextAtSize('32', 8)
+    page.drawText('32', { x: fractionX, y: formulaY + 5, size: 8, font })
+    page.drawText('8', {
+      x: fractionX + (width - font.widthOfTextAtSize('8', 8)) / 2,
+      y: formulaY - 5,
+      size: 8,
+      font
+    })
+    page.drawLine({
+      start: { x: fractionX, y: formulaY + 2 },
+      end: { x: fractionX + width, y: formulaY + 2 },
+      thickness: 0.4
+    })
+    page.drawText(' samples.', { x: fractionX + width + 3, y: formulaY, size: 12, font })
+    page.drawText('First ordinary prose line.', { x: 40, y: 480, size: 12, font })
+    page.drawText('Second ordinary prose line.', { x: 40, y: 480 - gap, size: 12, font })
+    const bytes = new Uint8Array(await pdf.save())
+    const unit = {
+      source: 'Ratio 32/8 samples. First ordinary prose line. Second ordinary prose line.',
+      translation:
+        'The ratio 32/8 is stable. The first ordinary line is followed by the second ordinary line.',
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: {
+            x: 40 / 600,
+            y: (785 - formulaY) / 800,
+            width: 400 / 600,
+            height: (formulaY - 435) / 800
+          }
+        }
+      ]
+    }
+    const caller = new TestCallerRegistry().acquire({
+      leaseId: 'formula-prose-spacing',
+      surface: 'electron'
+    })
+    try {
+      const result = await new PdfTranslationWriter(() =>
+        resolve('resources/worker.mjs')
+      ).generateDetailed(
+        {
+          id: 'formula-prose-spacing',
+          data: bytes,
+          pages: [{ width: 600, height: 800 }],
+          preserveUnsupported: true,
+          units: [unit]
+        },
+        caller.lease
+      )
+      expect(result).not.toBeNull()
+      expect(result!.layoutFailures).toEqual(
+        gap === 14 ? [] : [expect.objectContaining({ unitIndex: 0, code: 'annotations' })]
+      )
+      const outputTask = getDocument({ data: result!.data.slice(), useSystemFonts: true })
+      onTestFinished(() => outputTask.destroy())
+      const output = await outputTask.promise
+      if (gap === 14) {
+        const content = await (await output.getPage(1)).getTextContent()
+        const text = content.items.filter((item) => 'str' in item)
+        expect(text.map((item) => item.str).join('')).toContain('The ratio')
+        const top = text.find((item) => item.str === '32')!
+        const bottom = text.find((item) => item.str === '8')!
+        expect(top).toBeDefined()
+        expect(bottom).toBeDefined()
+        expect(top.transform[5] - bottom.transform[5]).toBeCloseTo(10, 2)
+        expect(top.height).toBeCloseTo(8, 2)
+        expect(bottom.height).toBeCloseTo(8, 2)
+      } else {
+        const originalTask = getDocument({ data: bytes.slice(), useSystemFonts: true })
+        onTestFinished(() => originalTask.destroy())
+        const preservation = await verifyPdfPreservation(
+          await originalTask.promise,
+          output,
+          [unit],
+          result!.layoutFailures,
+          [1]
+        )
+        expect(preservation.pages.flatMap((page) => page.failures)).toEqual([])
+        expect(preservation.pages.every((page) => page.pixels!.changedPixels === 0)).toBe(true)
+      }
+    } finally {
+      caller.release()
+    }
+  }
+)

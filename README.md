@@ -53,13 +53,13 @@
 
 ### 💡 AIPOCH Open-Science v1.2.2 updates
 
-_November 12, 2026_
+_November 18, 2026_
 
 - **Strict network mode**: Opt in to a Strict whitelist for Notebook networking — requests must match your rules by protocol, host, and port; unmatched requests are blocked without an authorization prompt.
 - **Films resume**: Interrupted research-film generation continues from validated checkpoints with a five-step progress view; completed scenes and narration are reused.
-- **PDF fidelity**: External PDFs keep native figures, tables, captions, and reading order, and translated documents preserve the original structure and layout.
+- **PDF fidelity**: External PDFs keep native figures, tables, captions, and reading order; translations preserve structure and layout, retaining original content when placement cannot be verified.
 - **Safer Windows grants**: Folder grants in protected mode are checked before saving, and update, uninstall, and handoff flows recover more reliably with diagnostics preserved.
-- **Provider updates**: Qwen4 Max Preview joins Bailian Token Plans in Beijing and Singapore, and default models for official connections are refreshed.
+- **Provider updates**: Qwen4 Max Preview (1M context) joins Bailian Token Plans in Beijing and Singapore, and default models for official connections are refreshed.
 - **Reliability fixes**: Session imports report their outcome, service recovery blocks the workspace until the connection returns, and dark-mode contrast is preserved across surfaces.
 
 [View the full v1.2.2 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.2)

@@ -92,6 +92,7 @@ const mountSessionGestureSidebar = async (
         onNewProject={vi.fn()}
         mobileMode={mobileMode}
         isMobileOpen={isOpen}
+        onMobileClose={() => setIsOpen(false)}
         {...overrides}
       />
     )
@@ -138,6 +139,26 @@ describe('WorkspaceSidebar mobile session gestures', () => {
     } finally {
       sidebar.cleanup()
       vi.useRealTimers()
+    }
+  })
+
+  it('closes the drawer like conversation export without opening the film’s target session', async () => {
+    const sidebar = await mountSessionGestureSidebar()
+    const status = vi.fn(async () => ({}))
+    vi.stubGlobal('api', { ...window.api, researchVideo: { status } })
+    try {
+      const row = sidebar.container.querySelector<HTMLElement>('[data-session-id="second"]')!
+      await act(async () => row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true })))
+      await act(async () =>
+        document.querySelector<HTMLElement>('[data-action-id="research-explanation"]')?.click()
+      )
+      expect(sidebar.container.querySelector('aside')?.hasAttribute('inert')).toBe(true)
+      expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Research film')
+      expect(status).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'second' }))
+      expect(sidebar.onOpenSession).not.toHaveBeenCalled()
+    } finally {
+      sidebar.cleanup()
+      vi.unstubAllGlobals()
     }
   })
 

@@ -98,6 +98,14 @@ export async function composeSettingsEffects({
   settingsFileCommands: ReturnType<typeof createSettingsFileCommands>
   backgroundResultActivity: ReturnType<typeof createBackgroundResultActivityOwner>
 }> {
+  await modules.add(undefined, () => {
+    const unsubscribe = settingsRepository.subscribeImageModels(() => {
+      void runtime.requestImageCapabilityRefresh().catch(() => {
+        createLogger('settings:effects').error('Image capability refresh failed')
+      })
+    })
+    return { name: 'image-model-settings-effects', capability: unsubscribe, dispose: unsubscribe }
+  })
   const permissionGrantProjection = await modules.add(
     {
       registry: permissionGrantRegistry,

@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { execFile } from 'node:child_process'
 import { createReadStream, type Dirent } from 'node:fs'
 import {
   chmod,
@@ -14,7 +13,6 @@ import {
 import { dirname, join, posix, resolve, sep } from 'node:path'
 import { Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { promisify } from 'node:util'
 import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent } from '../../shared/settings'
@@ -28,8 +26,8 @@ import {
   type FetchTarball,
   type ManagedInstallOutcome
 } from './managed-claude'
+import { runVerificationProcess } from '../update/verification-process'
 
-const execFileAsync = promisify(execFile)
 const CODEBUDDY_PACKAGE = '@tencent-ai/codebuddy-code'
 export { CODEBUDDY_VERSION } from './codebuddy-install'
 const TAR_BLOCK = 512
@@ -135,6 +133,7 @@ class TarPackageExtractor extends Writable {
   private remaining = 0
   private padding = 0
   private currentFile: FileHandle | undefined
+  private pendingWrite: Promise<void> | undefined
   private currentPath: string | undefined
   private currentMode = 0o644
   private entries = 0
@@ -154,7 +153,8 @@ class TarPackageExtractor extends Writable {
   ): Promise<void> {
     try {
       this.leftover = Buffer.concat([this.leftover, chunk])
-      await this.consume()
+      this.pendingWrite = this.consume()
+      await this.pendingWrite
       callback()
     } catch (error) {
       callback(error as Error)
@@ -162,12 +162,13 @@ class TarPackageExtractor extends Writable {
   }
 
   _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
-    if (!this.currentFile) {
-      callback(error)
-      return
-    }
-
-    this.currentFile.close().then(() => callback(error), callback)
+    // Cancellation can arrive while mkdir/open/write is pending. Settle that work before closing
+    // so a late open cannot escape cleanup or keep the installation staging tree in use.
+    void (async () => {
+      await this.pendingWrite?.catch(() => undefined)
+      await this.currentFile?.close()
+      this.currentFile = undefined
+    })().then(() => callback(error), callback)
   }
 
   private outputPath(entryName: string): string | undefined {
@@ -322,10 +323,18 @@ type VersionCommandRunner = (
   options: { timeout: number; windowsHide: boolean; shell?: boolean; signal?: AbortSignal }
 ) => Promise<{ stdout: string }>
 
+const runVersionCommand: VersionCommandRunner = (file, args, options) =>
+  runVerificationProcess(file, args, {
+    timeoutMs: options.timeout,
+    signal: options.signal,
+    shell: options.shell,
+    maxBytes: 1024 * 1024
+  })
+
 export const verifyCodeBuddyVersion = async (
   binPath: string,
   platform: NodeJS.Platform = process.platform,
-  run: VersionCommandRunner = execFileAsync as VersionCommandRunner,
+  run: VersionCommandRunner = runVersionCommand,
   signal?: AbortSignal
 ): Promise<string | undefined> => {
   try {

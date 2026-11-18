@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv'
 import { LiteratureIndex, LiteratureReader } from '@aipoch/literature-reading'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { createImageMcpServer } from '../image-model/mcp-server'
 
 import { codexBridgeStaticMcpTools, createCodexBridgeMcpTools } from './codex-bridge-tools'
 import {
@@ -28,6 +31,51 @@ describe('Codex bridge MCP catalogs', () => {
       expect(abstract.parameters.required ?? []).not.toContain('query')
     }
   })
+  it.each([
+    'minimax-h3/official',
+    'minimax-h3/sglang',
+    'openai/gpt-image-2.6',
+    'qwen/image-3.0',
+    'seedream/5.5',
+    'openai-images/generic'
+  ])(
+    'projects the live image tool schemas for %s only into an enabled session catalog',
+    async (presetId) => {
+      const server = createImageMcpServer({
+        projectId: 'p',
+        sessionId: 's',
+        currentRunFile: 'unused',
+        presetId
+      })
+      const client = new Client({ name: 'image-catalog-test', version: '1' })
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      try {
+        await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+        const live = await client.listTools()
+        const projected = createCodexBridgeMcpTools({ images: true, imagePresetId: presetId })
+        expect(projected.map(identity).sort()).toEqual(
+          live.tools.map(({ name }) => `mcp__open_science_images/${name}`).sort()
+        )
+        for (const tool of live.tools) {
+          const declaration = projected.find(({ name }) => name === tool.name)!
+          expect(declaration.description).toBe(tool.description)
+          expect({ ...declaration.parameters, $schema: undefined }).toEqual({
+            ...tool.inputSchema,
+            $schema: undefined
+          })
+        }
+        expect(createCodexBridgeMcpTools({})).toEqual([])
+        expect(
+          codexBridgeStaticMcpTools().some(
+            ({ namespace }) => namespace === 'mcp__open_science_images'
+          )
+        ).toBe(false)
+      } finally {
+        await client.close()
+        await server.close()
+      }
+    }
+  )
 
   it.each(['binding-1', 'b'.repeat(512)])(
     'declares a cursor range that accepts a production reader continuation (%#. binding)',

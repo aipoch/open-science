@@ -366,8 +366,8 @@ const createAcpRuntime = ({
               scope.projectId,
               scope.sessionId
             ),
-          mutateSession: (scope, mutate, onJsonCommitted) =>
-            sessionPersistenceCoordinator.mutateRuntimeSession(scope, mutate, onJsonCommitted),
+          mutateSession: (scope, mutate, options) =>
+            sessionPersistenceCoordinator.mutateRuntimeSession(scope, mutate, options),
           finalizeArtifacts: finalizeRuntimeArtifacts,
           onTerminalCommitExhausted: (_scope, event, retry, waitForWriteRelease) =>
             sessionPersistenceCoordinator.recordRuntimeTerminalFailure?.(
@@ -839,6 +839,13 @@ const createAcpRuntime = ({
                 dataRoot,
                 projectId: DEFAULT_ARTIFACT_PROJECT_ID,
                 mcpEntryPath,
+                enableImageGeneration: true,
+                imageMcp: {
+                  getPresetId: () =>
+                    settingsService.imageModels
+                      .resolve()
+                      .then((resolved) => resolved?.model.presetId)
+                },
                 repository,
                 runRegistry,
                 provenance: provenanceRepository,

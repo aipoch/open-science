@@ -1,6 +1,7 @@
 import type { ScheduleSummary } from '../../../../shared/session-schedules'
 import { ScheduleStarterPanel } from './schedules/ScheduleStarterPanel'
 import { ScheduleRunPanel } from './schedules/ScheduleRunPanel'
+import { ImageEditingProvider } from './image-edit/ImageEditingProvider'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import {
   LibraryReferenceActionsContext,
@@ -32,6 +33,7 @@ import {
   saveSessionInOrder
 } from '@/lib/session-persistence/session-persistence'
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
+import { ensureSessionContentLoaded } from '@/lib/session-persistence/session-history'
 import { exportSessionPackage, sessionPackageExportAvailable } from '@/lib/session-package-export'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { createSessionActionBindings, isImportedSession } from './session-action-menu'
@@ -1449,7 +1451,18 @@ const WorkspacePage = ({
       return
     }
 
-    setAutoReviewEnabled(activeSession.id, enabled)
+    if (activeSession.contentLoaded === false) {
+      void ensureSessionContentLoaded({
+        projectId: activeSession.projectId,
+        sessionId: activeSession.id
+      })
+        .then((loaded) => {
+          if (loaded && !loaded.packageOrigin) setAutoReviewEnabled(loaded.id, enabled)
+        })
+        .catch((error: unknown) =>
+          setAttachmentError(error instanceof Error ? error.message : String(error))
+        )
+    } else setAutoReviewEnabled(activeSession.id, enabled)
   }
 
   const changeMemoryEnabled = (enabled: boolean): void => {
@@ -1465,10 +1478,6 @@ const WorkspacePage = ({
   const requestManualReview = (): void => {
     if (!activeSession || isReviewHistoryUnavailable) return
 
-    const request = assembleReviewRunRequest(activeSession.id)
-
-    if (!request) return
-
     const sessionId = activeSession.id
     if (manualReviewPendingSessionIdsRef.current.has(sessionId)) return
 
@@ -1482,6 +1491,10 @@ const WorkspacePage = ({
     void (async () => {
       let error: string | null = null
       try {
+        if (activeSession.contentLoaded === false)
+          await ensureSessionContentLoaded({ projectId: activeSession.projectId, sessionId })
+        const request = assembleReviewRunRequest(sessionId)
+        if (!request) return
         const result = await window.api.reviewer.run({ ...request, origin: 'manual' })
         if (!result.started && result.reason !== 'already-in-flight') {
           error = t('Review could not start. Try again.')
@@ -2226,7 +2239,7 @@ const WorkspacePage = ({
       }
     >
       <LibraryPreviewNavigationContext.Provider value={onOpenLibraryMention}>
-        {content}
+        <ImageEditingProvider>{content}</ImageEditingProvider>
       </LibraryPreviewNavigationContext.Provider>
     </LibraryReferenceActionsContext.Provider>
   )

@@ -21,6 +21,11 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
     tools: ['write_artifact_file']
   },
   {
+    canonicalName: 'open-science-images',
+    openCodeName: 'open_science_images',
+    tools: ['generate_image', 'edit_image']
+  },
+  {
     canonicalName: 'open-science-notebook',
     openCodeName: 'open_science_notebook',
     tools: [

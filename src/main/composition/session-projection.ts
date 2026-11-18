@@ -156,9 +156,11 @@ export function composeSessionProjection({
     if (canReconcileSessionAbsences(result)) {
       for (let index = 0; index < result.sessions.length; index++) {
         try {
-          result.sessions[index] = await sandboxNetworkApprovalOwner.recoverSession(
-            result.sessions[index]
-          )
+          const candidate = result.sessions[index]
+          if (candidate.projectId)
+            result.sessions[index] = await sandboxNetworkApprovalOwner.recoverSession(
+              result.sessions[index]
+            )
         } catch (error) {
           // Keep healthy transcripts navigable and the saved decision available for a later retry.
           log.warn('saved network approval recovery failed', errorLogFields(error))
@@ -287,6 +289,14 @@ export function composeSessionProjection({
           )
         )
       )
+    },
+    loadHistoryPage: async (request) => {
+      const recovery = await recoverProjectDeletionsForSessionRead(
+        projectDeletionCoordinator,
+        sessionPersistenceCoordinator
+      )
+      if (!recovery.isComplete) return undefined
+      return sessionRepository.loadSessionHistoryPage(request)
     },
     saveSession: async (session, options, authority) => {
       const created =

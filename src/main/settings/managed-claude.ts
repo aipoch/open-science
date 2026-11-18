@@ -756,32 +756,29 @@ const fetchSuccessfulResponse = async (url: string, init?: RequestInit): Promise
       ...init,
       redirect: 'manual'
     })
-    if (!REDIRECT_STATUSES.has(response.status)) {
-      if (!response.ok) throw new Error(`HTTP ${response.status} for ${target.toString()}`)
-      return response
-    }
+    const redirected = REDIRECT_STATUSES.has(response.status)
+    if (response.ok && !redirected) return response
+    // Discard before parsing Location: malformed targets can throw before the next request.
+    void response.body?.cancel().catch(() => undefined)
+    if (!redirected) throw new Error(`HTTP ${response.status} for ${target.toString()}`)
 
     const location = response.headers.get('location')
     if (!location) {
-      await response.body?.cancel()
       throw new Error(
         `HTTP ${response.status} without a redirect location for ${target.toString()}`
       )
     }
     if (redirects >= MAX_HTTPS_REDIRECTS) {
-      await response.body?.cancel()
       throw new Error(`Too many redirects for ${url}`)
     }
 
     const next = new URL(location, target)
     if (next.protocol !== 'https:') {
-      await response.body?.cancel()
       throw new Error(
         `Refusing installer redirect from ${target.toString()} to non-HTTPS ${next.toString()}`
       )
     }
 
-    await response.body?.cancel()
     target = next
   }
 }

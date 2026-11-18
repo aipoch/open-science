@@ -17,7 +17,7 @@ import type {
 import { formatPlanProtectedContext } from '../../shared/session-plan/contract'
 import type { AgentFramework } from '../agent-framework/types'
 import type { RuntimeSessionContinuationAdmission } from '../session-persistence/runtime-session-owner'
-import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import { DelegateMessagePreAcceptanceError } from '../delegation/execution-port'
 import { PLAN_FIRST_TURN_PROMPT_REMINDER } from '../session-plan/guidance'
 import {
@@ -274,7 +274,6 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
 class AcpPromptTurnWorkflow {
   // A send outlives the provider generation replaced by a forced Skill reload.
   private readonly requests = new Map<string, AcpPromptRequestState>()
-
   captureCancellation(sessionId: string): (() => void) | undefined {
     const request = this.requests.get(sessionId)
     return request

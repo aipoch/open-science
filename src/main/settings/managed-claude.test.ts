@@ -1,3 +1,5 @@
+import { createServer, type ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import {
   link,
   mkdir,
@@ -14,6 +16,7 @@ import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
+import { Agent, fetch as nodeFetch } from 'undici'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { netFetchWithManualRedirect, nonRegularMarkerPaths, markerReplacementsOnRead } = vi.hoisted(
@@ -58,6 +61,8 @@ afterEach(() => {
   markerReplacementsOnRead.clear()
 })
 
+import { installManagedCodex } from './managed-codex'
+import { CODEBUDDY_VERSION, installManagedCodeBuddy } from './managed-codebuddy'
 import type { ClaudeInstallEvent } from '../../shared/settings'
 import {
   defaultFetchJson,
@@ -107,8 +112,158 @@ const sha512 = (data: Buffer): string =>
   `sha512-${createHash('sha512').update(data).digest('base64')}`
 
 describe('managed-claude: default transport', () => {
-  beforeEach(() => netFetchWithManualRedirect.mockReset())
+  beforeEach(() => {
+    netFetchWithManualRedirect.mockReset()
+  })
   afterEach(() => vi.useRealTimers())
+
+  it.each([
+    { transport: 'metadata', status: 503 },
+    { transport: 'tarball', status: 503 },
+    { transport: 'metadata', status: 302 },
+    { transport: 'tarball', status: 302 }
+  ] as const)(
+    'releases a real unfinished $status response rejected by the $transport installer transport',
+    async ({ transport, status }) => {
+      const active = new Set<ServerResponse>()
+      const server = createServer((_request, response) => {
+        active.add(response)
+        response.once('close', () => active.delete(response))
+        response.writeHead(status, status === 302 ? { location: 'http://[' } : {})
+        response.write('unfinished registry response')
+      })
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+      const { port } = server.address() as AddressInfo
+      const caller = new AbortController()
+      // Substitute only Electron's transport boundary: use real Node fetch and HTTP sockets.
+      // The production HTTPS URL/redirect policy and response ownership remain under test.
+      netFetchWithManualRedirect.mockImplementation((_url: string, init?: RequestInit) =>
+        fetch(`http://127.0.0.1:${port}/package`, init)
+      )
+      const request = transport === 'metadata' ? defaultFetchJson : defaultFetchTarball
+      try {
+        await expect(
+          request('https://registry.example.test/package', caller.signal)
+        ).rejects.toThrow(status === 503 ? /HTTP 503/ : /Invalid URL/)
+        await vi.waitFor(() => expect(active.size).toBe(0), { timeout: 1000 })
+      } finally {
+        caller.abort()
+        server.closeAllConnections()
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+      }
+    }
+  )
+
+  it.each(['codex', 'codebuddy'] as const)(
+    'releases registry error responses after a real %s installation falls back and fails',
+    async (framework) => {
+      const root = await mkdtemp(join(tmpdir(), 'installer-http-release-'))
+      const active = new Set<ServerResponse>()
+      const server = createServer((_request, response) => {
+        active.add(response)
+        response.once('close', () => active.delete(response))
+        response.writeHead(503)
+        response.write('unfinished registry error')
+      })
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+      const { port } = server.address() as AddressInfo
+      const caller = new AbortController()
+      netFetchWithManualRedirect.mockImplementation((_url: string, init?: RequestInit) =>
+        fetch(`http://127.0.0.1:${port}/package`, init)
+      )
+      try {
+        const install = framework === 'codex' ? installManagedCodex : installManagedCodeBuddy
+        const outcome = await install({
+          dataRoot: root,
+          installId: 'http-release',
+          onEvent: () => undefined,
+          registries: ['https://first.example.test', 'https://second.example.test'],
+          signal: caller.signal
+        })
+        expect(outcome.result.ok).toBe(false)
+        expect(netFetchWithManualRedirect).toHaveBeenCalledTimes(2)
+        await vi.waitFor(() => expect(active.size).toBe(0), { timeout: 1000 })
+      } finally {
+        caller.abort()
+        server.closeAllConnections()
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('completes real CodeBuddy fallback installation through a single-connection pool', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'installer-pool-release-'))
+    const payload = buildTgz([
+      {
+        name: 'package/bin/codebuddy',
+        content: Buffer.from(`console.log(${JSON.stringify(CODEBUDDY_VERSION)})`)
+      }
+    ])
+    const paths: string[] = []
+    const active = new Set<ServerResponse>()
+    const server = createServer((request, response) => {
+      paths.push(request.url!)
+      active.add(response)
+      response.once('close', () => active.delete(response))
+      if (request.url === '/first') {
+        response.writeHead(503)
+        response.write('unfinished registry error')
+      } else if (request.url === '/package.tgz') response.end(payload)
+      else
+        response.end(
+          JSON.stringify({
+            versions: {
+              [CODEBUDDY_VERSION]: {
+                dist: {
+                  tarball: 'https://second.example.test/package.tgz',
+                  integrity: sha512(payload)
+                }
+              }
+            }
+          })
+        )
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    const pool = new Agent({ connections: 1, pipelining: 1 })
+    const caller = new AbortController()
+    // This fixture deadline bounds the pre-fix hang; it is not a production download deadline.
+    const timer = setTimeout(() => caller.abort(), 3000)
+    netFetchWithManualRedirect.mockImplementation((url: string, init?: RequestInit) => {
+      const path = url.endsWith('.tgz')
+        ? '/package.tgz'
+        : new URL(url).hostname.startsWith('first.')
+          ? '/first'
+          : '/second'
+      return nodeFetch(`http://127.0.0.1:${port}${path}`, {
+        redirect: init?.redirect,
+        signal: init?.signal,
+        dispatcher: pool
+      })
+    })
+    try {
+      const outcome = await installManagedCodeBuddy({
+        dataRoot: root,
+        installId: 'pool-release',
+        onEvent: () => undefined,
+        registries: ['https://first.example.test', 'https://second.example.test'],
+        signal: caller.signal
+      })
+      expect(outcome.result.ok, JSON.stringify({ outcome, paths })).toBe(true)
+      expect(outcome.version).toBe(CODEBUDDY_VERSION)
+      expect(paths).toEqual(['/first', '/second', '/package.tgz'])
+      expect(caller.signal.aborted).toBe(false)
+      await vi.waitFor(() => expect(active.size).toBe(0), { timeout: 1000 })
+    } finally {
+      clearTimeout(timer)
+      caller.abort()
+      await pool.destroy()
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 
   it('loads registry metadata through the Electron manual-redirect adapter', async () => {
     netFetchWithManualRedirect.mockResolvedValue(

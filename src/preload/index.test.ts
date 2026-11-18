@@ -59,6 +59,7 @@ type PreloadApi = {
   sessions: {
     loadAll: () => unknown
     loadOne: (request: unknown) => unknown
+    loadHistoryPage: (request: unknown) => unknown
     filterPdfContextCandidates: (request: unknown) => Promise<unknown>
     linkPdfContext: (request: unknown) => Promise<unknown>
     unlinkPdfContext: (request: unknown) => Promise<unknown>
@@ -312,6 +313,7 @@ describe('preload bridge — public surface inventory', () => {
       'artifacts.listReproducibilityReceipts',
       'artifacts.onReproducibilityCheckChanged',
       'artifacts.openFile',
+      'artifacts.openInBrowser',
       'artifacts.readPreview',
       'artifacts.readReproducibilityOutput',
       'artifacts.reconcilePendingArtifacts',
@@ -406,6 +408,10 @@ describe('preload bridge — public surface inventory', () => {
       'handoff.list',
       'handoff.onChanged',
       'handoff.retry',
+      'imageTasks.cancel',
+      'imageTasks.get',
+      'imageTasks.list',
+      'imageTasks.start',
       'lifecycle.claimRuntimeWriter',
       'lifecycle.getClientId',
       'literature.addPdf',
@@ -440,6 +446,7 @@ describe('preload bridge — public surface inventory', () => {
       'localFs.listDir',
       'localFs.listDrives',
       'localFs.listGrantedRoots',
+      'localFs.openInBrowser',
       'localFs.openPath',
       'localFs.readPreview',
       'localFs.removeGrantedRoot',
@@ -676,6 +683,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.list',
       'sessions.listRuntimeTerminalFailures',
       'sessions.loadAll',
+      'sessions.loadHistoryPage',
       'sessions.loadOne',
       'sessions.loadUsage',
       'sessions.onCreated',
@@ -686,12 +694,14 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.onUpdated',
       'sessions.openRecoveryFolder',
       'sessions.packageOperation',
+      'sessions.rename',
       'sessions.retryRuntimeTerminalCommit',
       'sessions.saveManifest',
       'sessions.saveSession',
       'sessions.searchMessages',
       'sessions.sendFlushResponse',
       'sessions.setDelegationPolicy',
+      'sessions.setPinned',
       'sessions.unlinkPdfContext',
       'sessions.updateArchive',
       'sessions.useCaseCatalog',
@@ -725,6 +735,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.getClassification',
       'settings.getConnectorDetail',
       'settings.getGitHubTokenStatus',
+      'settings.getImageModels',
       'settings.getLocalShellRuntimePreference',
       'settings.getNotebookNetworkStatus',
       'settings.getPackageMirror',
@@ -848,6 +859,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.updateClassification',
       'settings.updateCustomServer',
       'settings.updateDeviceCredential',
+      'settings.updateImageModels',
       'settings.updateSkill',
       'settings.upsertProvider',
       'settings.useWsl2Bash',
@@ -1593,6 +1605,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.sessions.loadAll(),
     channel: 'sessions:load-all',
     args: []
+  },
+  {
+    name: 'sessions.loadHistoryPage → sessions:load-history-page',
+    invoke: (a) => a.sessions.loadHistoryPage(sampleDeleteSession),
+    channel: 'sessions:load-history-page',
+    args: [sampleDeleteSession]
   },
   {
     name: 'sessions.loadOne → sessions:load-one',

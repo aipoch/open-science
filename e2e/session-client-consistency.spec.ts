@@ -66,7 +66,7 @@ test('does not restore a deleted Session from a delayed Web rename receipt', asy
     const receipt = new Promise<void>((resolve) => {
       receiptReady = resolve
     })
-    await web.route('**/rpc/sessions%3Aedit-details', async (route) => {
+    await web.route('**/rpc/sessions%3Arename', async (route) => {
       const response = await route.fetch()
       receiptReady()
       await released
@@ -82,7 +82,7 @@ test('does not restore a deleted Session from a delayed Web rename receipt', asy
     }, saved)
     await expect(row(web, 'Original title')).toHaveCount(0)
     await expect(row(second, 'Renamed before deletion')).toHaveCount(0)
-    const delivered = web.waitForResponse('**/rpc/sessions%3Aedit-details')
+    const delivered = web.waitForResponse('**/rpc/sessions%3Arename')
     release()
     await (await delivered).finished()
     await web.evaluate(

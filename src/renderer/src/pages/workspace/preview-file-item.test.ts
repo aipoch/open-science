@@ -10,6 +10,7 @@ import {
   createPreviewFileItemFromPdfContext,
   createPreviewFileItemFromUpload,
   createPreviewFileItemForArtifactVersion,
+  createPreviewFileItemForManagedVersion,
   createProjectFileResolveRequest,
   refreshPreviewFileItemFromProjectFile,
   resolveArtifactVersionDescriptor
@@ -229,7 +230,7 @@ describe('preview file item helpers', () => {
     })
   })
 
-  it('does not pin a default Artifact preview to the Version stored in an old message', () => {
+  it('pins a message image preview to the Version represented by its card', () => {
     const item = createPreviewFileItemFromArtifact(
       createManagedArtifact({
         artifactId: 'artifact-lineage-1',
@@ -245,7 +246,7 @@ describe('preview file item helpers', () => {
       artifactId: 'artifact-lineage-1',
       path: 'artifact-version:project-1/session-1/artifact-lineage-1/artifact-version-2'
     })
-    expect(item).not.toHaveProperty('selectedVersionId')
+    expect(item).toHaveProperty('selectedVersionId', 'artifact-version-2')
   })
 
   it('keeps an explicit Artifact history selection pinned', () => {
@@ -280,6 +281,39 @@ describe('preview file item helpers', () => {
         }
       })
     ).toMatchObject({ selectedVersionId: 'artifact-version-2', versionNumber: 2 })
+  })
+
+  it('carries a managed Version MIME type into extensionless preview items', () => {
+    const item = createPreviewFileItem({
+      id: 'artifact-lineage-1',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      path: '/legacy/report',
+      name: 'report',
+      artifactId: 'artifact-lineage-1',
+      managedFileId: 'artifact-lineage-1'
+    })
+
+    expect(
+      createPreviewFileItemForManagedVersion({
+        item,
+        version: {
+          id: 'artifact-version-2',
+          source: 'artifact',
+          fileId: 'artifact-lineage-1',
+          versionNumber: 2,
+          displayName: 'report',
+          originKind: 'agent_generated',
+          basedOnVersionId: null,
+          contentType: 'text/html; charset=UTF-8',
+          sizeBytes: 20,
+          checksum: 'checksum-2',
+          createdAt: '2026-07-27T20:00:00.000Z'
+        },
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+    ).toMatchObject({ name: 'report', mimeType: 'text/html; charset=UTF-8' })
   })
 
   it('uses artifact mime type when the file name has no previewable extension', () => {

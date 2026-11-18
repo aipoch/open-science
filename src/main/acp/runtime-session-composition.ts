@@ -180,7 +180,31 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
   })
   const durableContinuationContext = new AcpDurableContinuationContextOwner(
     options.permissionWait?.sessions,
-    options.permissionWait?.onContinuationSessionUpdated
+    options.permissionWait?.onContinuationSessionUpdated,
+    {
+      descriptor: () => {
+        const backend = base.backendGeneration.current
+        const target =
+          backend.framework.id === 'opencode'
+            ? 'opencode'
+            : backend.framework.id === 'codebuddy'
+              ? 'codebuddy'
+              : backend.framework.id === 'pi'
+                ? 'pi'
+                : backend.framework.id === 'codex'
+                  ? backend.modelRoute === 'codex-bridge'
+                    ? 'codex-bridge'
+                    : 'codex-response'
+                  : 'claude-code'
+        return {
+          target,
+          ...(backend.context.window ? { contextWindow: backend.context.window } : {})
+        }
+      },
+      supportsImageInput: async () =>
+        base.backendGeneration.current.context.supportsImageInput ||
+        (await options.imageInputCompatibility?.isAvailable()) === true
+    }
   )
   const sandboxNetworkApprovalOwner =
     options.permissionWait?.networkApprovalOwner ??

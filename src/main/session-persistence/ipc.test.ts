@@ -215,6 +215,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn(),
@@ -241,6 +242,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -284,6 +286,7 @@ describe('session persistence IPC handlers', () => {
       {
         loadAll: vi.fn(),
         loadOne: vi.fn(),
+        loadHistoryPage: vi.fn(),
         saveSession,
         deleteSession: vi.fn(),
         saveManifest: vi.fn()
@@ -311,6 +314,7 @@ describe('session persistence IPC handlers', () => {
       {
         loadAll: vi.fn(),
         loadOne: vi.fn(),
+        loadHistoryPage: vi.fn(),
         saveSession: vi.fn().mockResolvedValue({ created: false, session }),
         setDelegationPolicy: vi.fn().mockResolvedValue(session),
         updateArchive: vi.fn().mockResolvedValue(session),
@@ -630,6 +634,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -643,6 +648,7 @@ describe('session persistence IPC handlers', () => {
       list: vi.fn(),
       loadUsage: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession,
       setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
@@ -680,6 +686,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -693,6 +700,7 @@ describe('session persistence IPC handlers', () => {
       list: vi.fn(),
       loadUsage: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession,
       setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
@@ -982,6 +990,7 @@ describe('session persistence IPC handlers', () => {
     const repository = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn().mockResolvedValue({ created: false, session: createSession() }),
       deleteSession: vi.fn().mockRejectedValueOnce(new Error('repository failed')),
       saveManifest: vi.fn().mockResolvedValue(undefined)
@@ -1003,6 +1012,7 @@ describe('session persistence IPC handlers', () => {
     const repository = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn().mockResolvedValue({ created: false, session: createSession() }),
       deleteSession: vi.fn(async () => {
         order.push('session')
@@ -1077,6 +1087,7 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-usage',
       'sessions:search-messages',
       'sessions:load-one',
+      'sessions:load-history-page',
       'sessions:list-runtime-terminal-failures',
       'sessions:save-session',
       'sessions:save-manifest',
@@ -1121,6 +1132,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -1133,6 +1145,7 @@ describe('session persistence IPC handlers', () => {
       list: vi.fn(),
       loadUsage: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(),
       setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
@@ -1153,6 +1166,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -1165,6 +1179,7 @@ describe('session persistence IPC handlers', () => {
       list: vi.fn(),
       loadUsage: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(async () => {
         order.push('saved')
         return { created: false, session }
@@ -1190,6 +1205,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -1202,6 +1218,7 @@ describe('session persistence IPC handlers', () => {
       list: vi.fn(),
       loadUsage: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(),
       setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
@@ -1226,6 +1243,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn().mockResolvedValue({ created: false, session: createSession() }),
       deleteSession: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
@@ -1244,6 +1262,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn().mockRejectedValue(failure),
       deleteSession: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
@@ -1261,6 +1280,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -1273,6 +1293,7 @@ describe('session persistence IPC handlers', () => {
       list: vi.fn(),
       loadUsage: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn().mockRejectedValue(conflict),
       setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
@@ -1298,6 +1319,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -1310,6 +1332,7 @@ describe('session persistence IPC handlers', () => {
       list: vi.fn(),
       loadUsage: vi.fn(),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn().mockRejectedValue(failure),
       setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
@@ -1335,6 +1358,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn().mockResolvedValue({ created: false, session }),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -1373,6 +1397,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(async () => {
         await savePending
         return { created: false, session }
@@ -1396,6 +1421,7 @@ describe('session persistence IPC handlers', () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       loadOne: vi.fn(),
+      loadHistoryPage: vi.fn(),
       saveSession: vi.fn(async () => {
         durableReadable = true
         return { created: true, session }

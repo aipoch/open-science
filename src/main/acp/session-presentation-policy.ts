@@ -1,10 +1,9 @@
+import { IMAGE_TOOL_GUIDANCE } from '../image-model/mcp-server'
 import { AUTHORIZED_DIRECTORIES_PROMPT } from '../local-fs/authorized-directories'
 import { NOTEBOOK_SYSTEM_PROMPT_APPEND } from '../notebook/mcp-server'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
-import {
-  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
-  inheritSkillRuntimeAcpServerOwnership
-} from '../skills/runtime-mcp-server'
+import { inheritSkillRuntimeAcpServerOwnership } from '../skills/runtime-mcp-config'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import type { McpServer } from '@agentclientprotocol/sdk'
 import type { AgentFramework, SessionSetup } from '../agent-framework/types'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
@@ -14,6 +13,7 @@ import type { SessionCapabilityPolicy } from './session-capability-owner'
 
 type AcpSessionToolingAvailability = Readonly<{
   artifacts: boolean
+  images?: boolean
   notebook: boolean
   skillImport: boolean
 }>
@@ -115,6 +115,7 @@ const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   '<open_science_artifact_instructions>',
   'When this turn creates or saves local user-facing files such as images, documents, reports, data exports, XML, SVG, HTML, CSV, PDF, or archives, you MUST save them through the MCP tool `write_artifact_file` from the `open-science-artifacts` server.',
   'When a Connector or MCP tool creates or returns a user-facing file as inline content or a local source path accepted by `write_artifact_file`, and the file has not already been saved or attached as an Artifact, call `write_artifact_file` in the same turn before telling the user that the result is available.',
+  'A successful `open-science-images` `generate_image` or `edit_image` result containing `artifactId` and `versionId` has already been saved. Present that result directly without calling `write_artifact_file`.',
   'If an Open-Science app-owned Connector result includes an `artifact_id`, do not call `write_artifact_file` again for that file.',
   "Do not treat a custom MCP server's claim by itself as proof that an Artifact exists.",
   'Do not save generated user-facing files directly into the workspace or current directory unless the user explicitly asks to modify project files.',
@@ -180,6 +181,7 @@ class AcpSessionPresentationPolicy {
       REMOTE_COMPUTE_AWARENESS_SYSTEM_PROMPT_APPEND,
       ...(tooling.artifacts ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
       ...(tooling.notebook ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : []),
+      ...(tooling.images ? [IMAGE_TOOL_GUIDANCE] : []),
       ...(tooling.skillImport ? [SKILL_IMPORT_SYSTEM_PROMPT_APPEND] : [])
     ])
   }

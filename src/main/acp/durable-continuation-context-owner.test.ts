@@ -101,6 +101,43 @@ const setActivities = (
 }
 
 describe('AcpDurableContinuationContextOwner', () => {
+  it('keeps reset replay pending until cleared and honors an explicit reload without a reset', async () => {
+    const session = createSession([message('prompt-active', 'Continue the analysis.')])
+    const order: string[] = []
+    const read = vi.fn(async () => {
+      order.push('read')
+      return structuredClone(session)
+    })
+    const supportsImageInput = vi.fn(async () => {
+      order.push('capability')
+      return false
+    })
+    const owner = new AcpDurableContinuationContextOwner(
+      { loadSessionForContinuation: read },
+      undefined,
+      { descriptor: () => ({ target: 'claude-code' }), supportsImageInput }
+    )
+    const input = {
+      projectId: session.projectId,
+      sessionId: session.id,
+      promptMessageId: 'prompt-active',
+      replayIfContextReset: true
+    }
+    expect((await owner.prepare(input)).historyReplay).toBeUndefined()
+    expect(supportsImageInput).not.toHaveBeenCalled()
+    owner.markContextReset(session.id)
+    order.length = 0
+    expect((await owner.prepare(input)).historyReplay).toBeDefined()
+    expect(order).toEqual(['capability', 'read'])
+    expect(owner.requiresReplay(session.id)).toBe(true)
+    owner.clearContextReset(session.id)
+    expect((await owner.prepare(input)).historyReplay).toBeUndefined()
+    expect((await owner.prepare({ ...input, forceReplay: true })).historyReplay).toBeDefined()
+    expect(owner.requiresReplay(session.id)).toBe(false)
+    expect(read).toHaveBeenCalledTimes(4)
+    expect(supportsImageInput).toHaveBeenCalledTimes(2)
+  })
+
   it('publishes the saved decision without declaring a continuation failure', async () => {
     let session = createSession([message('prompt-active', 'Choose an approach.')])
     setActivities(session, [pendingChoice()])
@@ -1052,7 +1089,7 @@ describe('AcpDurableContinuationContextOwner', () => {
     ).rejects.toThrow('pending Session activity')
   })
 
-  it.each(['single', 'multi', 'skipped', 'decline'] as const)(
+  it.each(['single', 'multi', 'skipped', 'decline', 'context-reset'] as const)(
     'validates an inherited revision fork and creates Main-owned identities (%s)',
     async (scenario) => {
       const multiSelect = scenario === 'multi'
@@ -1177,12 +1214,29 @@ describe('AcpDurableContinuationContextOwner', () => {
         }
         return structuredClone(revisedPrompt)
       }
-      const owner = new AcpDurableContinuationContextOwner({
-        loadSessionForContinuation: vi.fn(async () => structuredClone(durable)),
-        appendUserMessageToInteraction: vi.fn(appendUserMessageToInteraction)
-      })
+      const owner = new AcpDurableContinuationContextOwner(
+        {
+          loadSessionForContinuation: vi.fn(async () => structuredClone(durable)),
+          appendUserMessageToInteraction: vi.fn(appendUserMessageToInteraction)
+        },
+        undefined,
+        {
+          descriptor: () => ({ target: 'claude-code' }),
+          supportsImageInput: async () => false
+        }
+      )
+      if (scenario === 'context-reset') owner.markContextReset(durable.id)
 
-      const prepared = await owner.prepareElicitation(revisionInput)
+      const prepared = await owner.prepareElicitation({
+        ...revisionInput,
+        replayIfContextReset: true
+      })
+      if (scenario === 'context-reset') {
+        expect(prepared.historyReplay?.historyPreamble).toContain('Choose an approach.')
+        expect(prepared.historyReplay?.historyPreamble).toContain('Please choose one option.')
+      } else {
+        expect(prepared.historyReplay).toBeUndefined()
+      }
 
       expect(prepared.request).toMatchObject({
         requestId: 'choice-1',

@@ -49,11 +49,12 @@ describe('Compute Job operation migration', () => {
     expect(computeJobSqlAfter).toContain('"executionMode" TEXT NOT NULL DEFAULT')
     await expect(
       client.$queryRawUnsafe<Array<{ id: string }>>(
-        `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 2`
+        `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 3`
       )
     ).resolves.toEqual([
-      { id: '0058_session_schedules' },
-      { id: '0057_project_optimization_prompt' }
+      { id: '0060_image_models' },
+      { id: '0059_session_history' },
+      { id: '0058_session_schedules' }
     ])
   })
 

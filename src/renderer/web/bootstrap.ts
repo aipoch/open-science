@@ -37,6 +37,7 @@ import {
   WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME,
   type SaveManagedFileRequest
 } from '../../shared/file-save'
+import type { OpenArtifactInBrowserRequest } from '../../shared/artifacts'
 import type { AcquireManagedPreviewRequest } from '../../shared/preview-resources'
 import { installWebRendererContracts } from './api-installer'
 import { i18next, initI18n, prepareI18nLocale } from '@/i18n'
@@ -582,6 +583,41 @@ const installWebApi = async (): Promise<EventCursor> => {
     invoke,
     subscribe,
     nativeAdapters: {
+      'artifacts.openInBrowser': async ({
+        artifactId,
+        versionNumber
+      }: OpenArtifactInBrowserRequest) => {
+        const url = new URL(
+          `/api/v1/artifacts/${encodeURIComponent(artifactId)}/content`,
+          location.origin
+        )
+        url.searchParams.set('disposition', 'inline')
+        if (versionNumber !== undefined) url.searchParams.set('version', String(versionNumber))
+        // Open during the click gesture, then use the same origin's existing authentication cookie.
+        const tab = window.open('about:blank', '_blank')
+        if (!tab) throw new Error(t('Could not open this file.'))
+        try {
+          tab.opener = null
+          await withRequestTimeout(WEB_RPC_TIMEOUT_MS, async (signal) => {
+            const response = await fetch(url, {
+              method: 'HEAD',
+              credentials: 'same-origin',
+              signal
+            })
+            if (!response.ok) {
+              throw responseError(
+                response,
+                await response.text(),
+                `Open-Science returned HTTP ${response.status}.`
+              )
+            }
+          })
+          tab.location.replace(url.toString())
+        } catch (error) {
+          tab.close()
+          throw error
+        }
+      },
       getRuntimeVersions: () => bootstrap.versions,
       saveBlobFile: (request: { suggestedName: string; mimeType: string; data: ArrayBuffer }) => {
         downloadBlob(new Blob([request.data], { type: request.mimeType }), request.suggestedName)
@@ -625,7 +661,7 @@ const installWebApi = async (): Promise<EventCursor> => {
               break
           }
           const acquiredResource = (await invoke('preview-resources:acquire', [
-            previewRequest
+            { ...previewRequest, purpose: 'download' }
           ])) as { id: string; url: string; size: number }
           resource = acquiredResource
           if (!writable && acquiredResource.size > WEB_BLOB_DOWNLOAD_MAX_BYTES) {

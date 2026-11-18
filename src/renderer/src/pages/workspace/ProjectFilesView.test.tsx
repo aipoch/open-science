@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { waitFor } from '@testing-library/react'
-import { act, StrictMode } from 'react'
+import { act, StrictMode, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -2975,14 +2975,14 @@ describe('ProjectFilesView', () => {
       projectId: 'default',
       fileId: 'artifact-1',
       mimeType: 'image/png',
-      imagePreview: true
+      imagePreview: 'thumbnail'
     })
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
       projectId: 'default',
       fileId: 'upload-1',
       mimeType: 'image/png',
-      imagePreview: true
+      imagePreview: 'thumbnail'
     })
     expect(
       vi
@@ -3071,7 +3071,7 @@ describe('ProjectFilesView', () => {
       projectId: 'default',
       fileId: 'artifact-1',
       mimeType: 'image/png',
-      imagePreview: true
+      imagePreview: 'thumbnail'
     })
   })
 
@@ -3156,6 +3156,7 @@ describe('ProjectFilesView', () => {
       projectId: 'default',
       sessionId: 'session-1',
       fileId: 'artifact-csv',
+      versionId: 'artifact-csv',
       maxBytes: 32768,
       encoding: 'utf8'
     })
@@ -3197,6 +3198,56 @@ describe('ProjectFilesView', () => {
 
     // The existence probe rejected with ENOENT, so the tile carries the "Missing" tag.
     expect(container.textContent).toContain('Missing')
+  })
+
+  it('refreshes file previews when only the selected version changes', async () => {
+    const { useProjectFilePreviewReader, useProjectFilePreviews } =
+      await import('./project-files-preview-owner')
+    const file: ProjectFileItem = {
+      id: 'artifact:diagram',
+      source: 'artifact',
+      sourceFileId: 'diagram',
+      sourceVersionId: 'version-1',
+      projectId: 'default',
+      sessionId: 'session-1',
+      name: 'diagram.treefile',
+      path: '/workspace/diagram.treefile',
+      mimeType: 'text/plain',
+      size: 100,
+      mtimeMs: 1710000000000,
+      sortAtMs: 1710000000000
+    }
+    vi.mocked(window.api.artifacts.readPreview)
+      .mockResolvedValueOnce({
+        content: 'first version',
+        encoding: 'utf8',
+        size: 100,
+        truncated: false
+      })
+      .mockResolvedValueOnce({
+        content: 'second version',
+        encoding: 'utf8',
+        size: 100,
+        truncated: false
+      })
+    const Preview = ({ files }: { files: ProjectFileItem[] }): ReactElement => {
+      const reader = useProjectFilePreviewReader()
+      const previews = useProjectFilePreviews(files, reader)
+      return <span>{previews.get(file.id)?.content}</span>
+    }
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<Preview files={[file]} />)
+    })
+    await waitFor(() => expect(container.textContent).toBe('first version'))
+    await act(async () => {
+      root.render(<Preview files={[{ ...file, sourceVersionId: 'version-2' }]} />)
+    })
+    await waitFor(() => expect(container.textContent).toBe('second version'))
+    expect(window.api.artifacts.readPreview).toHaveBeenLastCalledWith(
+      expect.objectContaining({ fileId: 'diagram', versionId: 'version-2' })
+    )
   })
 
   it('keeps previews for every currently rendered file beyond the hidden cache limit', async () => {
