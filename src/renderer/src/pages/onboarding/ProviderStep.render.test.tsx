@@ -171,6 +171,37 @@ describe('ProviderStep', () => {
     )
   })
 
+  it('shows a loading indicator while testing a quick-connect API key', async () => {
+    readyClaudeEnvironment()
+    let resolveSave: ((value: ValidateProviderResult) => void) | undefined
+    const saveAndActivateProvider = vi.fn(
+      () =>
+        new Promise<{ providerId: string; validation: ValidateProviderResult }>((resolve) => {
+          resolveSave = () =>
+            resolve({ providerId: 'p1', validation: { ok: true, category: 'ok' } })
+        })
+    )
+    useSettingsStore.setState({ saveAndActivateProvider })
+    await renderStep({ variant: 'quick' })
+
+    const deepseek = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')!
+    await act(async () => {
+      fireEvent.change(deepseek, { target: { value: 'test-deepseek-key' } })
+      fireEvent.submit(deepseek.closest('form')!)
+    })
+
+    const submitButton = deepseek.closest('form')?.querySelector('button[type="submit"]')
+    expect(submitButton?.getAttribute('aria-label')).toBe('Test connection and connect')
+    expect((submitButton as HTMLButtonElement | null)?.disabled).toBe(true)
+    expect(submitButton?.querySelector('.animate-spin')).not.toBeNull()
+    const minimax = container.querySelector<HTMLInputElement>('#onboarding-key-minimax')!
+    expect(minimax.closest('form')?.querySelector('.animate-spin')).toBeNull()
+
+    await act(async () => {
+      resolveSave?.({ ok: true, category: 'ok' })
+    })
+  })
+
   it('offers Claude subscription and switches to Claude Code before signing in', async () => {
     const setAgentFramework = vi.fn(async () => {
       useSettingsStore.setState({ agentFrameworkId: 'claude-code' })
