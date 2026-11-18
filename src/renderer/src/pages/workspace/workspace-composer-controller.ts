@@ -1888,6 +1888,38 @@ const useWorkspaceComposerController = ({
       setActiveAnnotations
     ]
   )
+  const updateAnnotationNote = useCallback(
+    (id: string, note: string): AnnotationValidationError | undefined => {
+      const next = annotationsRef.current.map((annotation) =>
+        annotation.id === id
+          ? annotation.kind === 'text'
+            ? { ...annotation, note: note.trim() || undefined }
+            : { ...annotation, note: note.trim() }
+          : annotation
+      )
+      const validation = validateAnnotations(next, docToText(docRef.current))
+      if (validation) return validation
+      clearPastedTextUndo()
+      clearHistory(activeDraftKeyRef.current)
+      captureUndo()
+      markChanged()
+      setActiveAnnotations(next)
+      return undefined
+    },
+    [captureUndo, clearHistory, clearPastedTextUndo, markChanged, setActiveAnnotations]
+  )
+  const removeAnnotation = useCallback(
+    (id: string): void => {
+      const next = annotationsRef.current.filter((annotation) => annotation.id !== id)
+      if (next.length === annotationsRef.current.length) return
+      clearPastedTextUndo()
+      clearHistory(activeDraftKeyRef.current)
+      captureUndo()
+      markChanged()
+      setActiveAnnotations(next)
+    },
+    [captureUndo, clearHistory, clearPastedTextUndo, markChanged, setActiveAnnotations]
+  )
 
   const admissionProjectionActive =
     admissionProjection !== undefined &&
@@ -1974,32 +2006,8 @@ const useWorkspaceComposerController = ({
         return true
       },
       addAnnotation,
-      updateAnnotationNote: (id, note): AnnotationValidationError | undefined => {
-        const next = annotationsRef.current.map((annotation) =>
-          annotation.id === id
-            ? annotation.kind === 'text'
-              ? { ...annotation, note: note.trim() || undefined }
-              : { ...annotation, note: note.trim() }
-            : annotation
-        )
-        const validation = validateAnnotations(next, docToText(docRef.current))
-        if (validation) return validation
-        clearPastedTextUndo()
-        clearHistory(activeDraftKeyRef.current)
-        captureUndo()
-        markChanged()
-        setActiveAnnotations(next)
-        return undefined
-      },
-      removeAnnotation: (id): void => {
-        const next = annotationsRef.current.filter((annotation) => annotation.id !== id)
-        if (next.length === annotationsRef.current.length) return
-        clearPastedTextUndo()
-        clearHistory(activeDraftKeyRef.current)
-        captureUndo()
-        markChanged()
-        setActiveAnnotations(next)
-      },
+      updateAnnotationNote,
+      removeAnnotation,
       navigateHistory,
       stageFiles,
       stagePastedText,

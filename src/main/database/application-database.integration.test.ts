@@ -33,7 +33,7 @@ afterEach(async () => {
 })
 
 describe('application database (integration)', () => {
-  it('adds Schedule to the 0057 database without changing its existing ledger or project settings', async () => {
+  it('adds Schedule and Session history to the 0057 database without changing its existing ledger or project settings', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-schedule-upgrade-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -49,9 +49,9 @@ describe('application database (integration)', () => {
     const before = await readLedger()
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       from: '0057_project_optimization_prompt',
-      applied: ['0058_session_schedules']
+      applied: ['0058_session_schedules', '0059_session_history']
     })
-    expect((await readLedger()).slice(0, -1)).toEqual(before)
+    expect((await readLedger()).slice(0, -2)).toEqual(before)
     await expect(
       client.project.findUniqueOrThrow({ where: { id: project.id } })
     ).resolves.toMatchObject({ optimizationPrompt: 'Keep this prompt' })
@@ -188,7 +188,8 @@ describe('application database (integration)', () => {
         '0055_session_discussion_parent',
         '0056_compute_kubernetes_workspace',
         '0057_project_optimization_prompt',
-        '0058_session_schedules'
+        '0058_session_schedules',
+        '0059_session_history'
       ]
     })
 
@@ -1221,7 +1222,8 @@ describe('application database (integration)', () => {
         '0055_session_discussion_parent',
         '0056_compute_kubernetes_workspace',
         '0057_project_optimization_prompt',
-        '0058_session_schedules'
+        '0058_session_schedules',
+        '0059_session_history'
       ]
     })
 

@@ -34,11 +34,11 @@ import {
   type SkillImportMcpEnvironment,
   type SkillImportRpcConnection
 } from '../skills/mcp-server'
+import { isOwnedSkillRuntimeAcpServer } from '../skills/runtime-mcp-config'
 import {
   SKILL_RUNTIME_MCP_SERVER_NAME,
-  LOAD_SKILL_TOOL_NAME,
-  isOwnedSkillRuntimeAcpServer
-} from '../skills/runtime-mcp-server'
+  LOAD_SKILL_TOOL_NAME
+} from '../skills/runtime-mcp-constants'
 import {
   PLAN_MCP_SERVER_NAME,
   createPlanMcpServerConfig,

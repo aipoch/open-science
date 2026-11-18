@@ -8,7 +8,13 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 
 import type { CodexSubscriptionTransport } from '../../shared/settings'
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import {
+  createPosixProcessTreeOwnership,
+  registerProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
+  terminateProcessTree
+} from '../process-tree'
+import { reapWindowsOwnedJob, spawnWindowsOwnedProcess } from '../process-tree-windows'
 import { spawnCodexWithInstallAdmission } from './managed-codex'
 import { codexSubscriptionStorageDir } from './codex-paths'
 import { augmentedPathEnv } from './shell-path'
@@ -1147,45 +1153,77 @@ export const openCodexAuthSession = async ({
     else delete env.ELECTRON_RUN_AS_NODE
   }
   if (nativePath) env.CODEX_PATH = nativePath
+  const ownership = createPosixProcessTreeOwnership(env)
+  // A Windows Job proves the whole adapter tree is gone even after the adapter exits on its own.
+  // A taskkill fallback cannot prove that, which would retain Codex install admission.
+  const jobName = `Local\\OpenScience.Delegation.${randomUUID()}`
 
   const child = spawnCodexWithInstallAdmission(
     [adapterPath, ...(nativePath ? [nativePath] : [])],
     () =>
-      spawn(command, args, {
-        env,
-        shell: needsShell,
-        stdio: 'pipe',
-        detached: process.platform !== 'win32',
-        windowsHide: true
-      })
+      process.platform === 'win32'
+        ? spawnWindowsOwnedProcess(jobName, command, args, {
+            env: ownership.env,
+            shell: needsShell,
+            stdio: 'pipe'
+          })
+        : spawn(command, args, {
+            env: ownership.env,
+            shell: needsShell,
+            stdio: 'pipe',
+            detached: true,
+            windowsHide: true
+          })
   )
-  if (process.platform !== 'win32') registerOwnedPosixProcessGroup(child)
-  const stream = acp.ndJsonStream(
-    Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-    Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
-  )
-  const connection = acp.client({ name: 'open-science-auth' }).connect(stream)
+  if (process.platform === 'win32')
+    registerProcessTreeOwnership(child, {
+      terminate: async () => ({ reaped: await reapWindowsOwnedJob(jobName) }),
+      settled: () => undefined
+    })
+  else trackOwnedPosixProcessTree(child, ownership.token)
+  // Diagnostics are not ACP messages; drain them so adapter writes cannot block authentication.
+  child.stderr.resume()
+  try {
+    // Observe the asynchronous spawn error before exposing an ACP session. A failed launch has no
+    // session for the controller to close, so this owner must also release its install admission.
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', reject)
+      child.once('spawn', resolve)
+    })
+    const stream = acp.ndJsonStream(
+      Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+      Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
+    )
+    const connection = acp.client({ name: 'open-science-auth' }).connect(stream)
 
-  return {
-    initialize: () =>
-      connection.agent.request(acp.methods.agent.initialize, {
-        protocolVersion: acp.PROTOCOL_VERSION,
-        clientInfo: { name: 'open-science-auth', version: '0.0.0' },
-        clientCapabilities: {}
-      }),
-    status: () => connection.agent.request<CodexAuthenticationStatus>('authentication/status', {}),
-    authenticateChatGpt: () =>
-      connection.agent
-        .request(acp.methods.agent.authenticate, { methodId: 'chat-gpt' })
-        .then(() => undefined),
-    logout: () =>
-      connection.agent
-        .request<Record<string, never>>('authentication/logout', {})
-        .then(() => undefined),
-    close: async () => {
-      connection.close()
-      child.stdin.end()
-      await terminateProcessTree(child)
+    return {
+      initialize: () =>
+        connection.agent.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientInfo: { name: 'open-science-auth', version: '0.0.0' },
+          clientCapabilities: {}
+        }),
+      status: () =>
+        connection.agent.request<CodexAuthenticationStatus>('authentication/status', {}),
+      authenticateChatGpt: () =>
+        connection.agent
+          .request(acp.methods.agent.authenticate, { methodId: 'chat-gpt' })
+          .then(() => undefined),
+      logout: () =>
+        connection.agent
+          .request<Record<string, never>>('authentication/logout', {})
+          .then(() => undefined),
+      close: async () => {
+        connection.close()
+        child.stdin.end()
+        await terminateProcessTree(child)
+      }
     }
+  } catch (error) {
+    child.stdin.destroy()
+    child.stdout.destroy()
+    child.stderr.destroy()
+    await terminateProcessTree(child)
+    throw error
   }
 }

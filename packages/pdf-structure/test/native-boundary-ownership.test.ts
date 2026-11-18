@@ -24,6 +24,7 @@ const {
   recoverNativeClosedParameterRows,
   recoverNativeClosedProseSymbolRows,
   recoverNativeCaptionedTwoFieldRows,
+  recoverNativeDoubleRuledParameterRows,
   recoverNativeRuledIntervalColumns
 } = await import(pathToFileURL(resolve('resources/literature-pdf-table-regions.mjs')).href)
 const { recoverNativeHeterogeneousRuledParts } = await import(
@@ -41,7 +42,8 @@ function anonymousRuledPacket(
     | 'records'
     | 'interval'
     | 'ordinal-continuation'
-    | 'missing-first',
+    | 'missing-first'
+    | 'double-ruled-parameters',
   options: { gap?: number; stroke?: number; offpage?: number } = {}
 ): AnonymousRuledPacket {
   const O = ruledPacketOPS
@@ -239,6 +241,19 @@ function anonymousRuledPacket(
       tokens.pop()
       font('Page', 510, 470)
     }
+  } else if (kind === 'double-ruled-parameters') {
+    for (const y of [80, 83, 105, 169, 172]) line([20, y, 220, y])
+    font('Parameter', 30, 99)
+    font('Value', 145, 99)
+    for (const [row, label] of ['Length', 'Spacing', 'Depth', 'Width'].entries()) {
+      const y = 120 + row * 12
+      font(label, 30, y)
+      font('d', 145, y)
+      font('a', 150, y + 2, 6)
+      font('=', 158, y)
+      font(String(12 + row), 166, y)
+    }
+    cropRect = [18, 78, 222, 174]
   } else if (kind === 'scripts') {
     for (const y of [80, 105, 225]) line([20, y, 200, y])
     font('Position', 30, 95)
@@ -289,6 +304,46 @@ function anonymousRuledPacket(
     }
   }
 }
+
+it('recovers complete parameter rows between double rules with one header divider', () => {
+  const x = anonymousRuledPacket('double-ruled-parameters')
+  const plan = recoverNativeDoubleRuledParameterRows(
+    x.table,
+    x.tokens,
+    x.captions,
+    x.rules,
+    x.context
+  )
+  expect(
+    plan.groups.map((group: AnonymousRuledPacket) =>
+      group.map((token: AnonymousRuledPacket) => token.text)
+    )
+  ).toEqual([
+    ['Parameter', 'Value'],
+    ['Length', 'd', 'a', '=', '12'],
+    ['Spacing', 'd', 'a', '=', '13'],
+    ['Depth', 'd', 'a', '=', '14'],
+    ['Width', 'd', 'a', '=', '15']
+  ])
+  expect(plan.headerRows).toBe(1)
+  expect(plan.cropRect).toEqual([20, 79.5, 220, 172.5])
+  expect(plan.consumed).toEqual(x.tokens.slice(1))
+})
+
+it.each(['missing rule', 'additional graphic', 'duplicate original font', 'competing caption'])(
+  'leaves a double-ruled parameter crop unchanged with %s',
+  (shape) => {
+    const x = anonymousRuledPacket('double-ruled-parameters')
+    if (shape === 'missing rule') x.rules.splice(1, 1)
+    if (shape === 'additional graphic')
+      x.context.nativeEvidenceGraphics.push({ kind: 'image', rect: [90, 115, 110, 140] })
+    if (shape === 'duplicate original font') x.tokens.push({ ...x.tokens[7] })
+    if (shape === 'competing caption') x.captions.push({ ...x.captions[0] })
+    expect(
+      recoverNativeDoubleRuledParameterRows(x.table, x.tokens, x.captions, x.rules, x.context)
+    ).toBeUndefined()
+  }
+)
 
 function intervalPacket(): AnonymousRuledPacket {
   const x = anonymousRuledPacket('interval')

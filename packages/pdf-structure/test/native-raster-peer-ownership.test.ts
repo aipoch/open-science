@@ -1,11 +1,17 @@
 import { expect, it } from 'vitest'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
 
-const { associateFigures } = await import(
+const { associateFigures, recoverNativePeerFigureBarrier } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
 )
-const { nativeRasterPeerOwnership, nativeRasterCaptionPacket } = await import(
+const {
+  nativeCaptionAboveRasterStack,
+  nativeRasterPeerOwnership,
+  nativeRasterCaptionPacket,
+  nativeWhiteBackedTiledFigures
+} = await import(
   pathToFileURL(resolve('resources/literature-pdf-native-raster-peer-ownership.mjs')).href
 )
 function fixture(): ReturnType<typeof JSON.parse> {
@@ -63,6 +69,146 @@ it('keeps complete disjoint native raster packets with their independent caption
     [330, 150, 540, 310]
   ])
   expect(f).toEqual(before)
+})
+
+it.each(['complete', 'missing-mark', 'unpaired-frame', 'shared-path'])(
+  'closes two framed raster packets with intact native caption marks: %s',
+  (kind) => {
+    const f = fixture()
+    const [caption] = f.captions
+    const mark = '\u20d7'
+    caption.lines[0] += mark
+    const nativeLabel = (
+      text: string,
+      index: number,
+      rect: number[],
+      horizontal: boolean
+    ): {
+      text: string
+      sourceItem: { pageNumber: number; index: number; text: string }
+      rect: number[]
+      horizontal: boolean
+      height: number
+    } => ({ text, sourceItem: { pageNumber: 1, index, text }, rect, horizontal, height: 10 })
+    const path = (
+      operationIndex: number,
+      rect: number[]
+    ): {
+      kind: string
+      operationIndex: number
+      normalizedRect: number[]
+    } => ({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: rect.map((value, i) => value / (i % 2 ? 800 : 600))
+    })
+    if (kind !== 'missing-mark') f.tokens.push(nativeLabel(mark, 2, [275, 331, 275, 339], true))
+    f.tokens.push(nativeLabel('Axis', 3, [252, 165, 261, 180], false))
+    f.tokens.push(nativeLabel('Scale', 4, [569, 165, 575, 190], false))
+    const left = [32, 131, 270, 318]
+    const right = [323, 132, 585, 319]
+    f.page.graphicsBounds.push(
+      path(1, [565, 100, 572, 131]),
+      path(3, left),
+      path(4, left),
+      path(103, right)
+    )
+    if (kind !== 'unpaired-frame') f.page.graphicsBounds.push(path(104, right))
+    if (kind === 'shared-path') f.page.graphicsBounds.push(path(200, [100, 160, 400, 165]))
+    const result = nativeRasterPeerOwnership(f.page, f.captions, f.tables, f.tokens)
+    if (kind !== 'complete') expect(result).toBeUndefined()
+    else {
+      expect(result?.map((entry: { rect: number[] }) => entry.rect)).toEqual([left, right])
+      expect(result?.map((entry: { caption: unknown }) => entry.caption)).toEqual(f.captions)
+    }
+  }
+)
+
+it.each(['complete', 'unknown-blank', 'foreign-paint', 'wrong-backing', 'body-in-figure'])(
+  'bounds a complete white-backed raster tile group by visible ink: %s',
+  (change) => {
+    const caption = { page: 1, lines: ['Fig. 1. Native panels.'], rect: [80, 350, 290, 361] }
+    const rect = (values: number[]): number[] => values.map((v, n) => v / (n % 2 ? 800 : 600))
+    const first = {
+      kind: 'path',
+      operationIndex: 10,
+      normalizedRect: rect([60, 100, 450, 340]),
+      whiteRectangle: true
+    }
+    const tiles = [
+      [60, 100, 280, 220],
+      [280, 100, 450, 220],
+      [60, 220, 280, 340],
+      [280, 220, 450, 340]
+    ].map((box, i) => ({
+      kind: 'image',
+      operationIndex: 13 + i * 2,
+      normalizedRect: rect(box),
+      imageHash: 'anonymous-raster',
+      ...(i % 2
+        ? { allWhiteRaster: true }
+        : { paintedNormalizedRect: rect([100, box[1] + 2, 250, box[3] - 3]) })
+    }))
+    const page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: [first, ...tiles],
+      captionStarts: [{ x: 80, y: 350, fontSize: 10, text: caption.lines[0] }]
+    }
+    const tokens = []
+    if (change === 'unknown-blank') delete tiles[1].allWhiteRaster
+    if (change === 'wrong-backing') first.normalizedRect[2] -= 0.08
+    if (change === 'foreign-paint') page.graphicsBounds.push({ ...first, operationIndex: 99 })
+    if (change === 'body-in-figure')
+      tokens.push({ text: 'Ordinary text', rect: [120, 110, 175, 121] })
+    const result = nativeWhiteBackedTiledFigures(page, [caption], [], tokens)
+    if (change === 'complete') {
+      expect(result).toHaveLength(1)
+      expect(result[0].rect).toEqual([100, 102, 250, 337])
+      expect(result[0].caption).toBe(caption)
+    } else expect(result).toBeUndefined()
+  }
+)
+
+it('keeps two raster panels with each aligned independent caption', () => {
+  const f = fixture()
+  f.captions[1].rect.splice(1, 3, 331, 570, 341)
+  f.page.graphicsBounds = [0, 1].flatMap((side) =>
+    [0, 1].map((row) => ({
+      kind: 'image',
+      imageHash: `panel-${side}-${row}`,
+      operationIndex: 10 + side * 10 + row,
+      normalizedRect: [40 + side * 290, 150 + row * 85, 260 + side * 290, 225 + row * 85].map(
+        (n, axis) => n / (axis % 2 ? f.page.height : f.page.width)
+      )
+    }))
+  )
+  const label = {
+    text: 'axis',
+    sourceItem: { pageNumber: 1, index: 2, text: 'axis' },
+    horizontal: false,
+    height: 8,
+    rect: [560, 170, 567, 210]
+  }
+  f.tokens.push(label)
+
+  expect(
+    nativeRasterPeerOwnership(f.page, f.captions, f.tables, f.tokens)?.map(
+      (r: { rect: number[] }) => r.rect
+    )
+  ).toEqual([
+    [40, 150, 260, 310],
+    [330, 150, 567, 310]
+  ])
+
+  const secondPanel = f.page.graphicsBounds[1]
+  secondPanel.operationIndex = 21
+  expect(nativeRasterPeerOwnership(f.page, f.captions, f.tables, f.tokens)).toBeUndefined()
+  secondPanel.operationIndex = 11
+  delete secondPanel.imageHash
+  expect(nativeRasterPeerOwnership(f.page, f.captions, f.tables, f.tokens)).toBeUndefined()
 })
 
 it('does not assign one native gutter label to both completed peer crops', () => {
@@ -248,4 +394,143 @@ it('does not discard an invalid local non-figure caption boundary', () => {
   const f = fixture()
   f.captions.push({ page: 1, lines: ['TABLE I'], rect: [30, Number.NaN, 280, 60] })
   expect(nativeRasterPeerOwnership(f.page, f.captions, f.tables, f.tokens)).toBeUndefined()
+})
+
+function captionAboveStack(): ReturnType<typeof JSON.parse> {
+  const width = 600,
+    height = 800
+  const captions = [2, 3, 4].map((number, i) => ({
+    page: 1,
+    rect: [40, 110 + 156 * i, 280, 120 + 156 * i],
+    lines: [`Figure ${number}: A comparison plot.`]
+  }))
+  const tokens = captions.map((caption, index) => ({
+    rect: caption.rect,
+    height: 10,
+    horizontal: true,
+    text: caption.lines[0],
+    sourceItem: { pageNumber: 1, index, text: caption.lines[0] }
+  }))
+  const rects = [0, 1, 2].map((index) => [46, 132 + 156 * index, 276, 224 + 156 * index])
+  const normalize = (rect: number[]): number[] =>
+    rect.map((v, index) => v / (index % 2 ? height : width))
+  const graphicsBounds = rects.map((rect, operationIndex) => ({
+    operationIndex,
+    kind: 'image',
+    normalizedRect: normalize([38, rect[1] - 4, 282, rect[3] + 4]),
+    paintedNormalizedRect: normalize(rect)
+  }))
+  const context = {
+    pageNumber: 1,
+    viewport: { rotation: 0 },
+    graphicsBounds,
+    operators: {
+      fnArray: rects.map(() => OPS.paintImageXObject),
+      argsArray: rects.map((_, index) => [`anonymous-image-${index}`, 1200, 480])
+    }
+  }
+  const page = {
+    pageNumber: 1,
+    width,
+    height,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    graphicsBounds
+  }
+  const figures = captions.map((caption, index) => ({
+    caption,
+    rect: rects[Math.max(0, index - 1)]
+  }))
+  return { page, captions, tokens, context, figures, rects, tables: [] }
+}
+
+it('gives each numbered above-caption its own complete following raster in a closed stack', () => {
+  const f = captionAboveStack()
+  expect(
+    nativeCaptionAboveRasterStack(
+      f.page,
+      f.captions,
+      f.tables,
+      f.tokens,
+      f.context,
+      f.figures
+    )?.map((figure: { rect: number[] }) =>
+      figure.rect.map((coordinate) => Number(coordinate.toFixed(8)))
+    )
+  ).toEqual(f.rects)
+})
+
+it.each([
+  'stale-caption',
+  'wrong-paint',
+  'duplicate-image',
+  'unproved-pixels',
+  'crossing-table',
+  'foreign-text'
+])('does not replace earlier areas with a partial stacked proof: %s', (kind) => {
+  const f = captionAboveStack()
+  if (kind === 'stale-caption') f.tokens[1].sourceItem.text += ' Changed.'
+  if (kind === 'wrong-paint') f.context.operators.fnArray[1] = OPS.paintInlineImageXObject
+  if (kind === 'duplicate-image')
+    f.context.operators.argsArray[1][0] = f.context.operators.argsArray[0][0]
+  if (kind === 'unproved-pixels') delete f.page.graphicsBounds[1].paintedNormalizedRect
+  if (kind === 'crossing-table') f.tables.push([80, 157, 270, 198])
+  if (kind === 'foreign-text') f.tokens.push({ rect: [50, 234, 270, 245] })
+  expect(
+    nativeCaptionAboveRasterStack(f.page, f.captions, f.tables, f.tokens, f.context, f.figures)
+  ).toBeUndefined()
+})
+
+it('reuses independent upper raster packets in the presence of a ruled header and a later figure', () => {
+  const f = fixture(),
+    { page, captions, tables, tokens } = f
+  const rect = [320, 563, 570, 573]
+  const caption = { page: 1, lines: ['Figure 3. A later independent plot.'], rect }
+  captions.push(caption)
+  const token = (text: string, rect: number[], index: number): ReturnType<typeof JSON.parse> => ({
+    text,
+    rect,
+    horizontal: true,
+    height: rect[3] - rect[1],
+    sourceItem: { text, index, pageNumber: 1 }
+  })
+  tokens.push(
+    token(caption.lines[0], rect, 2),
+    token('Report', [40, 23, 63, 30], 3),
+    token('1', [552, 23, 555, 30], 4)
+  )
+  const normalized = (b: number[]): number[] =>
+    b.map((v, i) => v / (i % 2 ? page.height : page.width))
+  page.graphicsBounds.push(
+    { kind: 'path', operationIndex: 1, normalizedRect: normalized([38, 21, 70, 36]) },
+    ...[0, 1, 2, 3].map((i) => ({
+      kind: 'image',
+      operationIndex: 200 + i,
+      imageHash: 'foreign-plot-tile',
+      normalizedRect: normalized([
+        330 + (i % 2) * 100,
+        410 + Math.floor(i / 2) * 52,
+        430 + (i % 2) * 100,
+        459 + Math.floor(i / 2) * 52
+      ])
+    }))
+  )
+  const figures = [
+    { caption: captions[0], rect: [40, 23, 540, 310] },
+    { caption: captions[1], rect: [330, 150, 540, 310] },
+    { caption, rect: [320, 405, 550, 520] }
+  ]
+  const rules = [[37, 34, 560, 34]]
+  const recover = (rules: number[][]): ReturnType<typeof JSON.parse> =>
+    recoverNativePeerFigureBarrier(page, captions, figures, tables, rules, [], tokens)
+  const result = recover(rules)
+  expect(result.map((f: { rect: number[] }) => f.rect)).toEqual([
+    [40, 150, 250, 310],
+    [330, 150, 540, 310],
+    [320, 405, 550, 520]
+  ])
+  expect(result[2]).toBe(figures[2])
+  expect(recover([])).toBe(figures)
+  page.graphicsBounds.at(-1).normalizedRect = normalized([325, 408, 529, 525])
+  expect(recover(rules)).toBe(figures)
 })

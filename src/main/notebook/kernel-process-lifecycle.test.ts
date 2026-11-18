@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +10,11 @@ import {
   KernelProcessLifecycleOwner
 } from './kernel-process-lifecycle.windows-posix'
 import { readProcessStartToken } from '@aipoch/environment'
+import {
+  capturePosixProcessTreeIdentity,
+  trackOwnedPosixProcessTree,
+  terminateProcessTree
+} from '../process-tree'
 
 const windowsProcessIsAlive = vi.hoisted(() => vi.fn<(pid: number) => boolean>(() => true))
 const reapWindowsOwnedJob = vi.hoisted(() => vi.fn<(name: string) => Promise<boolean>>())
@@ -37,8 +42,10 @@ describe('KernelProcessLifecycleOwner', () => {
   const bootA = '11111111-1111-4111-8111-111111111111'
   const bootB = '22222222-2222-4222-8222-222222222222'
   let root: string | undefined
+  const trackedChildren: ChildProcess[] = []
 
   afterEach(async () => {
+    await Promise.all(trackedChildren.splice(0).map((child) => terminateProcessTree(child)))
     vi.restoreAllMocks()
     reapWindowsOwnedJob.mockReset()
     if (root) await rm(root, { recursive: true, force: true })
@@ -152,6 +159,7 @@ describe('KernelProcessLifecycleOwner', () => {
     })
     first.recordSpawned(intent, {
       pid: 4242,
+      posixBirthToken: 'fixture-birth',
       processStartToken: '100',
       commandIdentityMarker: 'marker-a'
     })
@@ -197,7 +205,7 @@ describe('KernelProcessLifecycleOwner', () => {
         processKey: 'repl',
         kernelEpochId: 'epoch-interrupted'
       })
-      const receipt = first.recordSpawned(intent, { pid: 4242 })
+      const receipt = first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
       const temporary = `${receipt.path}.4242.tmp`
       const contents = await readFile(receipt.path, 'utf8')
       await writeFile(
@@ -247,7 +255,11 @@ describe('KernelProcessLifecycleOwner', () => {
       processKey: 'repl',
       kernelEpochId: 'epoch-repl'
     })
-    first.recordSpawned(intent, { pid: 5252, commandIdentityMarker: 'marker-repl' })
+    first.recordSpawned(intent, {
+      pid: 5252,
+      posixBirthToken: 'fixture-birth',
+      commandIdentityMarker: 'marker-repl'
+    })
 
     const restarted = new KernelProcessLifecycleOwner({
       storageRoot: root,
@@ -286,7 +298,7 @@ describe('KernelProcessLifecycleOwner', () => {
     })
     await first.ensureReady()
     const intent = first.beginSpawn(scope)
-    first.recordSpawned(intent, { pid: 5252 })
+    first.recordSpawned(intent, { pid: 5252, posixBirthToken: 'fixture-birth' })
 
     const restarted = new KernelProcessLifecycleOwner({
       storageRoot: root,
@@ -323,7 +335,7 @@ describe('KernelProcessLifecycleOwner', () => {
       intent.path.split(/[\\/]/).pop()!
     )
 
-    const receipt = owner.recordSpawned(intent, { pid: 5252 })
+    const receipt = owner.recordSpawned(intent, { pid: 5252, posixBirthToken: 'fixture-birth' })
     owner.complete(receipt, true)
   })
 
@@ -359,11 +371,11 @@ describe('KernelProcessLifecycleOwner', () => {
       )
       .sort((left, right) => left.path.localeCompare(right.path))
     const [active, pending] = intents
-    previous.recordSpawned(active!, { pid: 4242 })
+    previous.recordSpawned(active!, { pid: 4242, posixBirthToken: 'fixture-birth' })
     const probe = vi.fn(async () => {
       // Recovery already captured both filenames. A host publishes the pending receipt while
       // recovery awaits the preceding active process probe, before it reads the pending path.
-      previous.recordSpawned(pending!, { pid: 5252 })
+      previous.recordSpawned(pending!, { pid: 5252, posixBirthToken: 'fixture-birth' })
       return 'unknown' as const
     })
     const restarted = new KernelProcessLifecycleOwner({
@@ -412,7 +424,7 @@ describe('KernelProcessLifecycleOwner', () => {
       processKey: 'python:default-python',
       kernelEpochId: 'epoch-reused-group'
     })
-    first.recordSpawned(intent, { pid: 4242 })
+    first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
 
     const restarted = new KernelProcessLifecycleOwner({
       storageRoot: root,
@@ -492,7 +504,7 @@ describe('KernelProcessLifecycleOwner', () => {
         'owner-token-a',
         proof
       )
-      first.recordSpawned(intent, { pid: 4242 })
+      first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
       await writeFile(proof.path, JSON.stringify({ version: 1, token: proof.token, processState }))
 
       windowsProcessIsAlive.mockReturnValueOnce(false)
@@ -511,7 +523,7 @@ describe('KernelProcessLifecycleOwner', () => {
       const first = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
       const scope = { laneKey: 'lane', processKey: 'repl', kernelEpochId: 'epoch' }
       const intent = first.beginSpawn(scope, undefined, undefined, true)
-      first.recordSpawned(intent, { pid: 4242 })
+      first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
       reapWindowsOwnedJob.mockRejectedValueOnce(new Error('Job query unavailable'))
       const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
       await expect(restarted[initialRecovery]()).rejects.toThrow('KERNEL_STARTUP_FENCE')
@@ -540,7 +552,7 @@ describe('KernelProcessLifecycleOwner', () => {
         undefined,
         true
       )
-      const receipt = first.recordSpawned(intent, { pid: 4242 })
+      const receipt = first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
       const record = JSON.parse(await readFile(receipt.path, 'utf8'))
       if (mismatch === 'different-receipt') record.windowsJobName += '-other'
       if (mismatch === 'different-namespace') {
@@ -574,7 +586,7 @@ describe('KernelProcessLifecycleOwner', () => {
       'owner-token-a',
       proof
     )
-    const receipt = owner.recordSpawned(intent, { pid: 4242 })
+    const receipt = owner.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
     await writeFile(
       proof.path,
       JSON.stringify({ version: 1, token: proof.token, processState: 'started-and-reaped' })
@@ -595,7 +607,7 @@ describe('KernelProcessLifecycleOwner', () => {
       undefined,
       proof
     )
-    first.recordSpawned(intent, { pid: 4242 })
+    first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
     windowsProcessIsAlive.mockReturnValueOnce(false).mockReturnValueOnce(false)
     const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
     await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
@@ -645,7 +657,7 @@ describe('KernelProcessLifecycleOwner', () => {
       'owner-token-a',
       proof
     )
-    first.recordSpawned(intent, { pid: 4242 })
+    first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
 
     const restarted = new KernelProcessLifecycleOwner({
       storageRoot: root,
@@ -765,6 +777,41 @@ describe('KernelProcessLifecycleOwner', () => {
     await expect(readFile(proof.requestPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('retains the published POSIX birth receipt when a late parent supplies a different birth', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-birth-conflict-'))
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'linux' })
+    await owner.ensureReady()
+    const intent = owner.beginSpawn({
+      laneKey: 'lane',
+      processKey: 'repl',
+      kernelEpochId: 'epoch'
+    })
+    owner.recordSpawned(intent, { pid: 4242, posixBirthToken: 'linux-proc-starttime:100' })
+    expect(() =>
+      owner.recordSpawned(intent, {
+        pid: 4242,
+        posixBirthToken: 'linux-proc-starttime:200'
+      })
+    ).toThrow('identity changed')
+    expect(JSON.parse(await readFile(intent.activePath(4242), 'utf8')).posixBirthToken).toBe(
+      'linux-proc-starttime:100'
+    )
+  })
+
+  it('retains the fence instead of publishing a POSIX process without birth proof', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-birth-missing-'))
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'linux' })
+    await owner.ensureReady()
+    const intent = owner.beginSpawn({
+      laneKey: 'lane',
+      processKey: 'repl',
+      kernelEpochId: 'epoch'
+    })
+    expect(() => owner.recordSpawned(intent, { pid: 4242 })).toThrow('birth identity')
+    expect(JSON.parse(await readFile(intent.activePath(4242), 'utf8')).pid).toBeUndefined()
+    expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toHaveLength(1)
+  })
+
   it('prevents a delayed process host from activating after recovery cancels its intent', async () => {
     root = await mkdtemp(join(tmpdir(), 'kernel-process-cancelled-host-'))
     const first = new KernelProcessLifecycleOwner({
@@ -806,99 +853,138 @@ describe('KernelProcessLifecycleOwner', () => {
     await expect(readFile(marker, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  describe.runIf(process.platform === 'linux')('POSIX startup recovery', () => {
-    it('recovers a process host that survived before its main owner recorded the PID', async () => {
-      root = await mkdtemp(join(tmpdir(), 'kernel-process-host-recovery-'))
-      const first = new KernelProcessLifecycleOwner({
-        storageRoot: root,
-        ownerInstanceId: 'owner-a',
-        readBootToken: () => BOOT_TOKEN
-      })
-      await first.ensureReady()
-      const ownerToken = first.createOwnerToken()
-      const intent = first.beginSpawn(
-        {
-          laneKey: '["project-1","session-1","root",null,null]',
-          processKey: 'repl',
-          kernelEpochId: 'epoch-host-crash-window'
-        },
-        ownerToken
-      )
-      const host = spawn(
-        process.execPath,
-        [
-          join(__dirname, '../../../resources/notebook/kernel_process_host.js'),
-          intent.path,
-          intent.record.receiptId,
+  describe.runIf(process.platform !== 'win32')('POSIX startup recovery', () => {
+    it.each(['host-first', 'parent-first', 'host-first-parent-without-birth'])(
+      'recovers the real process host with publication order %s',
+      async (order) => {
+        root = await mkdtemp(join(tmpdir(), 'kernel-process-host-recovery-'))
+        const first = new KernelProcessLifecycleOwner({
+          storageRoot: root,
+          ownerInstanceId: 'owner-a',
+          readBootToken: () => BOOT_TOKEN
+        })
+        await first.ensureReady()
+        const ownerToken = first.createOwnerToken()
+        const intent = first.beginSpawn(
+          {
+            laneKey: '["project-1","session-1","root",null,null]',
+            processKey: 'repl',
+            kernelEpochId: 'epoch-host-crash-window'
+          },
+          ownerToken
+        )
+        const host = spawn(
           process.execPath,
-          '-e',
-          'setInterval(() => undefined, 1_000)'
-        ],
-        {
+          [
+            ...(order === 'parent-first'
+              ? ['-e', "process.stdin.once('data', () => require(process.argv[1]))"]
+              : []),
+            join(__dirname, '../../../resources/notebook/kernel_process_host.js'),
+            intent.path,
+            intent.record.receiptId,
+            process.execPath,
+            '-e',
+            'setInterval(() => undefined, 1_000)'
+          ],
+          {
+            detached: true,
+            stdio: order === 'parent-first' ? ['pipe', 'ignore', 'ignore'] : 'ignore',
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...first.environment(ownerToken) }
+          }
+        )
+        const pid = host.pid!
+        if (order === 'parent-first') {
+          trackOwnedPosixProcessTree(host)
+          trackedChildren.push(host)
+          first.recordSpawned(intent, {
+            pid,
+            posixBirthToken: capturePosixProcessTreeIdentity(host)?.birthToken
+          })
+          host.stdin!.end('start')
+        }
+        await vi.waitFor(async () => {
+          const names = await readdir(join(root!, 'runtime', 'kernel-processes'))
+          const name = names.find((name) => name.includes(`.active.${pid}.`))
+          expect(name).toBeDefined()
+          const record = JSON.parse(
+            await readFile(join(root!, 'runtime', 'kernel-processes', name!), 'utf8')
+          )
+          expect(record.posixBirthToken).toEqual(expect.any(String))
+        })
+
+        if (order === 'host-first-parent-without-birth') first.recordSpawned(intent, { pid })
+
+        const restarted = new KernelProcessLifecycleOwner({
+          storageRoot: root,
+          ownerInstanceId: 'owner-b',
+          readBootToken: () => BOOT_TOKEN
+        })
+        await restarted.ensureReady()
+
+        await vi.waitFor(() => expect(processIsAlive(pid)).toBe(false), { timeout: 5_000 })
+        expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+      },
+      15_000
+    )
+
+    it.each(['current', 'legacy'])(
+      'verifies and reaps a real orphaned process group before admission (%s)',
+      async (format) => {
+        root = await mkdtemp(join(tmpdir(), 'kernel-process-posix-recovery-'))
+        const first = new KernelProcessLifecycleOwner({
+          storageRoot: root,
+          ownerInstanceId: 'owner-a',
+          readBootToken: () => BOOT_TOKEN
+        })
+        await first.ensureReady()
+        const ownerToken = first.createOwnerToken()
+        const intent = first.beginSpawn(
+          {
+            laneKey: '["project-1","session-1","root",null,null]',
+            processKey: 'python:default-python',
+            kernelEpochId: 'epoch-posix'
+          },
+          ownerToken
+        )
+        const child = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1_000)'], {
           detached: true,
           stdio: 'ignore',
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...first.environment(ownerToken) }
+          env: { ...process.env, ...first.environment(ownerToken) }
+        })
+        trackOwnedPosixProcessTree(child)
+        trackedChildren.push(child)
+        await new Promise<void>((resolve, reject) => {
+          child.once('spawn', resolve)
+          child.once('error', reject)
+        })
+        const pid = child.pid!
+        first.recordSpawned(intent, {
+          pid,
+          processStartToken: readProcessStartToken(pid),
+          posixBirthToken: capturePosixProcessTreeIdentity(child)?.birthToken
+        })
+
+        if (format === 'legacy') {
+          const path = intent.activePath(pid)
+          const record = JSON.parse(await readFile(path, 'utf8'))
+          delete record.posixBirthToken
+          await writeFile(path, JSON.stringify(record))
         }
-      )
-      const pid = host.pid!
-      await vi.waitFor(async () => {
-        const names = await readdir(join(root!, 'runtime', 'kernel-processes'))
-        expect(names).toContainEqual(expect.stringContaining(`.active.${pid}.`))
-      })
-
-      const restarted = new KernelProcessLifecycleOwner({
-        storageRoot: root,
-        ownerInstanceId: 'owner-b',
-        readBootToken: () => BOOT_TOKEN
-      })
-      await restarted.ensureReady()
-
-      await vi.waitFor(() => expect(processIsAlive(pid)).toBe(false), { timeout: 5_000 })
-      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
-    }, 15_000)
-
-    it('verifies and reaps a real orphaned process group before admission', async () => {
-      root = await mkdtemp(join(tmpdir(), 'kernel-process-posix-recovery-'))
-      const first = new KernelProcessLifecycleOwner({
-        storageRoot: root,
-        ownerInstanceId: 'owner-a',
-        readBootToken: () => BOOT_TOKEN
-      })
-      await first.ensureReady()
-      const ownerToken = first.createOwnerToken()
-      const intent = first.beginSpawn(
-        {
-          laneKey: '["project-1","session-1","root",null,null]',
-          processKey: 'python:default-python',
-          kernelEpochId: 'epoch-posix'
-        },
-        ownerToken
-      )
-      const child = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1_000)'], {
-        detached: true,
-        stdio: 'ignore',
-        env: { ...process.env, ...first.environment(ownerToken) }
-      })
-      await new Promise<void>((resolve, reject) => {
-        child.once('spawn', resolve)
-        child.once('error', reject)
-      })
-      const pid = child.pid!
-      first.recordSpawned(intent, {
-        pid,
-        processStartToken: readProcessStartToken(pid)
-      })
-
-      const restarted = new KernelProcessLifecycleOwner({
-        storageRoot: root,
-        ownerInstanceId: 'owner-b',
-        readBootToken: () => BOOT_TOKEN
-      })
-      await restarted.ensureReady()
-
-      await vi.waitFor(() => expect(processIsAlive(pid)).toBe(false), { timeout: 5_000 })
-      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
-    }, 15_000)
+        const restarted = new KernelProcessLifecycleOwner({
+          storageRoot: root,
+          ownerInstanceId: 'owner-b',
+          readBootToken: () => BOOT_TOKEN
+        })
+        try {
+          await restarted.ensureReady()
+          await vi.waitFor(() => expect(processIsAlive(pid)).toBe(false), { timeout: 5_000 })
+          expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+        } finally {
+          await terminateProcessTree(child)
+        }
+      },
+      15_000
+    )
   })
 
   describe.skipIf(process.platform !== 'win32')('Windows startup recovery', () => {
@@ -921,7 +1007,7 @@ describe('KernelProcessLifecycleOwner', () => {
         },
         'owner-token-a'
       )
-      first.recordSpawned(intent, { pid: 4242 })
+      first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
 
       const restarted = new KernelProcessLifecycleOwner({
         storageRoot: root,

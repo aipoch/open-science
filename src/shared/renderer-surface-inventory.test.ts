@@ -211,6 +211,7 @@ const GENERATED_SOURCE_OMISSIONS = [
 ] as const
 
 const BROWSER_NATIVE_CALLABLE_PATHS = [
+  'artifacts.openInBrowser',
   'getRuntimeVersions',
   'saveBlobFile',
   'saveManagedFile',
@@ -218,6 +219,7 @@ const BROWSER_NATIVE_CALLABLE_PATHS = [
 ] as const
 
 const WEB_UNAVAILABLE_CHANNELS = [
+  'artifacts:open-in-browser',
   'file:artifact-save-progress',
   'file:cancel-artifact-save',
   'file:save-blob',
@@ -273,6 +275,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'granted-roots:set-access',
     'list-dir',
     'list-drives',
+    'open-in-browser',
     'open-path',
     'read-preview',
     'reveal'

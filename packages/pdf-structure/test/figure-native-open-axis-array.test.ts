@@ -240,3 +240,78 @@ it('declines replacement when repeated native top titles would be dropped', () =
     })
   expect(nativeOpenAxisArray(f.page, f.captions, [], f.rules)).toBeUndefined()
 })
+
+it.each([
+  { explicit: true, foreignProse: false, top: 100 },
+  { explicit: true, foreignProse: true, top: 182 },
+  { explicit: false, foreignProse: false, top: 182 }
+])('keeps only a captioned upper raster and drawing with the lower plot band (%j)', (test) => {
+  const width = 612,
+    height = 792
+  const normalized = (rect: number[]): number[] =>
+    rect.map((value, axis) => value / (axis % 2 ? height : width))
+  const line = (
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    fontSize: number
+  ): { text: string; x: number; y: number; width: number; height: number; fontSize: number } => ({
+    text,
+    x,
+    y,
+    width,
+    height: fontSize,
+    fontSize
+  })
+  const path = (rect: number[]): { kind: 'path'; normalizedRect: number[] } => ({
+    kind: 'path',
+    normalizedRect: normalized(rect)
+  })
+  const graphicsBounds: {
+    kind: string
+    normalizedRect: number[]
+    paintedNormalizedRect?: number[]
+  }[] = [
+    {
+      kind: 'image',
+      normalizedRect: normalized([150, 98, 300, 180]),
+      paintedNormalizedRect: normalized([151, 100, 299, 177])
+    }
+  ]
+  const lines = [line('Panel A', 36, 108, 27, 5)]
+  for (let index = 0; index < 12; index++) {
+    const x = 28 + (index % 6) * 19,
+      y = 125 + Math.floor(index / 6) * 24
+    graphicsBounds.push(path([x, y, x + 20, y + 20]))
+  }
+
+  const caption = test.explicit
+    ? 'Figure 1. Top: Sample and setup. Bottom: Measured responses.'
+    : 'Figure 1. Experimental results.'
+  const captions = [{ page: 1, rect: [20, 260, 305, 272], lines: [caption] }]
+  lines.push(line(caption, 20, 260, 285, 10))
+  const rules: number[][] = []
+  for (const x of [30, 128, 226]) {
+    rules.push([x, 182, x, 243], [x, 243, x + 75, 243])
+    lines.push(line('1', x - 7, 190, 4, 5), line('2', x - 7, 210, 4, 5))
+    for (const [dx, dy] of [
+      [10, 10],
+      [23, 24]
+    ])
+      graphicsBounds.push(path([x + dx, 182 + dy, x + dx + 15, 197 + dy]))
+  }
+  graphicsBounds.push(path([350, 120, 500, 155]))
+  if (test.foreignProse) lines.push(line('Independent text between the parts.', 52, 113, 170, 10))
+
+  const page = {
+    width,
+    height,
+    pageNumber: 1,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    graphicsBounds,
+    lines
+  }
+  expect(associateFigures(page, captions, [], rules)[0].rect).toEqual([23, test.top, 301, 243])
+})

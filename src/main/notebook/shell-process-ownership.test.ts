@@ -7,7 +7,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import * as processTree from '../process-tree'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import { windowsProcessCommandLine } from '../windows-process-query'
 import type { ChildProcess } from 'node:child_process'
@@ -22,10 +22,23 @@ vi.mock('../windows-process-query', async (importOriginal) => {
 })
 
 const roots: string[] = []
+const trackedChildren: ChildProcess[] = []
 const BOOT_A = '11111111-1111-4111-8111-111111111111'
 const BOOT_B = '22222222-2222-4222-8222-222222222222'
+const captureProcessTreeIdentity = processTree.capturePosixProcessTreeIdentity
+
+vi.spyOn(processTree, 'capturePosixProcessTreeIdentity').mockImplementation((child) => {
+  if (child.pid === 4242)
+    return { birthToken: 'linux-proc-starttime:4242' } as ReturnType<
+      typeof captureProcessTreeIdentity
+    >
+  return captureProcessTreeIdentity(child)
+})
 
 afterEach(async () => {
+  await Promise.all(
+    trackedChildren.splice(0).map((child) => processTree.terminateProcessTree(child))
+  )
   vi.unstubAllEnvs()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -35,7 +48,8 @@ describe.runIf(process.platform === 'linux')('Shell process ownership recovery',
     const root = await mkdtemp(join(tmpdir(), 'shell-process-recovery-'))
     roots.push(root)
     const child = spawn('/bin/sh', ['-c', 'sleep 30'], { detached: true })
-    registerOwnedPosixProcessGroup(child)
+    processTree.trackOwnedPosixProcessTree(child)
+    trackedChildren.push(child)
     const firstInstance = new ShellProcessOwnershipRegistry(root)
     const release = firstInstance.claim(child, {
       runId: 'notebook-run-recovery-1',
@@ -52,6 +66,79 @@ describe.runIf(process.platform === 'linux')('Shell process ownership recovery',
 })
 
 describe('Shell process ownership receipt lifecycle', () => {
+  it.runIf(process.platform !== 'win32')(
+    'recovers a real legacy POSIX receipt when its current birth identity still matches',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-legacy-posix-'))
+      roots.push(root)
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true,
+        stdio: 'ignore'
+      })
+      processTree.trackOwnedPosixProcessTree(child)
+      trackedChildren.push(child)
+      const original = new ShellProcessOwnershipRegistry(root)
+      const release = original.claim(child, {
+        runId: 'legacy-posix',
+        projectId: 'project',
+        sessionId: 'session',
+        platform: process.platform
+      })
+      const path = join(root, 'shell-process-ownership', 'legacy-posix.json')
+      const record = JSON.parse(await readFile(path, 'utf8'))
+      delete record.posixBirthToken
+      fs.writeFileSync(path, JSON.stringify(record))
+      const restarted = new ShellProcessOwnershipRegistry(root)
+      try {
+        expect(original.getLegacyRecovery()).toBeUndefined()
+        await restarted.recover()
+        expect(restarted.hasReceipts()).toBe(false)
+        expect(() => process.kill(child.pid!, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+      } finally {
+        await processTree.terminateProcessTree(child)
+        release()
+      }
+    }
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'does not signal a legacy POSIX receipt when its start identity no longer matches',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-legacy-posix-reused-'))
+      roots.push(root)
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true,
+        stdio: 'ignore'
+      })
+      processTree.trackOwnedPosixProcessTree(child)
+      trackedChildren.push(child)
+      const original = new ShellProcessOwnershipRegistry(root)
+      const release = original.claim(child, {
+        runId: 'legacy-posix-reused',
+        projectId: 'project',
+        sessionId: 'session',
+        platform: process.platform
+      })
+      const path = join(root, 'shell-process-ownership', 'legacy-posix-reused.json')
+      const record = JSON.parse(await readFile(path, 'utf8'))
+      delete record.posixBirthToken
+      fs.writeFileSync(path, JSON.stringify(record))
+      const restarted = new ShellProcessOwnershipRegistry(root, {
+        processStartIdentity: () => 'different-start-identity'
+      })
+      try {
+        await restarted.recover()
+        expect(restarted.hasReceipts()).toBe(false)
+        expect(() => process.kill(child.pid!, 0)).not.toThrow()
+      } finally {
+        await processTree.terminateProcessTree(child)
+        release()
+      }
+    }
+  )
+
   it.each([
     {
       name: 'access failure',
@@ -225,7 +312,7 @@ describe('Shell process ownership receipt lifecycle', () => {
         throw error
       } finally {
         vi.unstubAllEnvs()
-        await terminateProcessTree(child)
+        await processTree.terminateProcessTree(child)
       }
     },
     20_000
@@ -371,6 +458,25 @@ describe('Shell process ownership receipt lifecycle', () => {
     })
     return { root, release }
   }
+
+  it.each([
+    { platform: 'win32' },
+    { platform: 'freebsd' },
+    { posixBirthToken: 'linux-proc-starttime:100' },
+    { posixBirthToken: null },
+    { pid: 0 },
+    { state: 'unknown' },
+    { processStartIdentity: '' }
+  ])('keeps ineligible claimed receipts outside explicit legacy recovery: %j', async (change) => {
+    const { root } = await claimedReceipt()
+    const path = join(root, 'shell-process-ownership', 'notebook-run-receipt-1.json')
+    const record = JSON.parse(await readFile(path, 'utf8'))
+    fs.writeFileSync(path, JSON.stringify({ ...record, ...change }))
+    const registry = new ShellProcessOwnershipRegistry(root)
+    expect(registry.getLegacyRecovery()).toBeUndefined()
+    expect(() => registry.archiveLegacyLaunches('unreviewed')).toThrow('records changed')
+    expect(registry.hasReceipts()).toBe(true)
+  })
 
   it('retains an un-reaped receipt and retries cleanup idempotently', async () => {
     const { root } = await claimedReceipt()

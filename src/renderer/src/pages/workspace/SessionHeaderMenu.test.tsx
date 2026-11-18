@@ -198,7 +198,7 @@ it('offers research explanation only when the owner supplies the capability', as
   await render({ session, openResearchExplanation })
   await openMenu()
   const action = document.querySelector<HTMLElement>('[data-action-id="research-explanation"]')!
-  expect(action.textContent).toBe('Research film')
+  expect(action.textContent).toBe('Generate research film')
   await act(async () => action.click())
   expect(openResearchExplanation).toHaveBeenCalledTimes(1)
   expect(trigger().getAttribute('aria-expanded')).toBe('false')

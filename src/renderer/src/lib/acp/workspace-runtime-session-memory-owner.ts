@@ -4,6 +4,7 @@ import { isSessionSizeLimitError } from '../../../../shared/session-persistence'
 import { toPersistedSession, useSessionStore } from '../../stores/session-store'
 import type { ChatSession } from '../../stores/session-store-contract'
 import { saveSessionFieldsInOrder } from '../session-persistence/session-persistence'
+import { ensureSessionContentLoaded } from '../session-persistence/session-history'
 import type { useAcpRuntime } from './useAcpRuntime'
 import { acquireWorkspacePromptPreparation } from './workspace-prompt-preparation-lock'
 
@@ -55,6 +56,9 @@ const reconfigureWorkspaceMemory = async (
   }
 
   try {
+    const source = workspaceSession(sessionId)
+    if (source?.contentLoaded === false)
+      await ensureSessionContentLoaded({ projectId: source.projectId, sessionId })
     const session = workspaceSession(sessionId)
     if (!session) throw new Error(`Session not found: ${sessionId}`)
     const previousEnabled = session.memoryEnabled !== false

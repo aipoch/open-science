@@ -1076,6 +1076,23 @@ describe('HeadlessTaskApi adapter', () => {
         return { sessions: [session], manifest: { version: 1 } }
       }
       if (channel === 'artifacts:resolve-version-descriptors') return []
+      if (channel === 'managed-file-versions:inspect') {
+        const request = args[0] as { versionNumber?: number }
+        return {
+          ok: true,
+          value: {
+            projectId: project.id,
+            selectedVersion: {
+              id: 'artifact-query-version',
+              fileId: 'artifact-query',
+              versionNumber: request.versionNumber ?? 1,
+              displayName: 'query.csv',
+              contentType: 'text/csv'
+            },
+            versions: []
+          }
+        }
+      }
       if (channel === 'preview-resources:acquire') {
         return {
           id: 'resource-query',
@@ -1112,6 +1129,11 @@ describe('HeadlessTaskApi adapter', () => {
       resourceId: 'resource-query',
       name: 'query.csv'
     })
+    for (const selection of [{ projectId: project.id }, { versionNumber: 2 }]) {
+      const preview = await api.acquireArtifact('artifact-query', selection)
+      expect(preview).toMatchObject({ resourceId: 'resource-query', name: 'query.csv' })
+      await preview.release()
+    }
     await acquired.release()
 
     expect(invoke).toHaveBeenCalledWith(
@@ -1124,7 +1146,15 @@ describe('HeadlessTaskApi adapter', () => {
         source: 'artifact',
         projectId: 'project-1',
         fileId: 'artifact-query',
+        versionId: 'artifact-query-version',
         mimeType: 'text/csv'
+      }
+    ])
+    expect(invoke).toHaveBeenCalledWith('managed-file-versions:inspect', taskCallerContext(), [
+      {
+        source: 'artifact',
+        fileId: 'artifact-query',
+        versionNumber: 2
       }
     ])
     expect(invoke).toHaveBeenCalledWith('preview-resources:release', taskCallerContext(), [

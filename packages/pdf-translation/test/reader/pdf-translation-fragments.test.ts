@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { createPdfTranslationSource } from '../../src/reader/source.js'
+import { createPdfTranslationSource, type PdfTranslationFragment } from '../../src/reader/source.js'
 import { pdfTranslationLayoutFragments } from '../../src/reader/fragments.js'
 
 it.each([
@@ -322,3 +322,58 @@ it.each([
   expect(prepared.items).toEqual(source.units[0].fragments[0].items)
   expect(JSON.stringify(source)).toBe(snapshot)
 })
+
+it.each(['native caption', 'foreign formula', 'not a caption', 'nonadjacent parts'])(
+  'coalesces only contiguous native rows through one caption panel range: %s',
+  (mode) => {
+    const fragment = (
+      x: number,
+      y: number,
+      width: number,
+      index: number,
+      texts: string[]
+    ): PdfTranslationFragment => ({
+      pageNumber: 1,
+      rect: { x: x / 600, y: y / 800, width: width / 600, height: 10 / 800 },
+      items: texts.map((text, i) => ({ index: index + i, text }))
+    })
+    const source = createPdfTranslationSource({
+      resourceRequestKey: 'caption-row',
+      fingerprint: 'caption-row',
+      pages: [{ width: 600, height: 800 }],
+      units: [
+        {
+          id: 'caption',
+          source:
+            mode === 'not a caption'
+              ? 'Compare (a-c). The plot (d-f) of the result and (g) its range.'
+              : 'Figure 2. Compare (a-c). The plot (d-f) of the result and (g) its range.',
+          fragments: [
+            fragment(60, 80, 200, 0, ['Figure 2. Compare (a-c). The']),
+            fragment(60, 92, 20, 1, ['plot (d', '-']),
+            fragment(mode === 'nonadjacent parts' ? 81.5 : 80, 92, 180, 3, ['f) of the result']),
+            fragment(60, 104, 200, 4, ['and (g) its range.'])
+          ]
+        },
+        ...(mode === 'foreign formula'
+          ? [
+              {
+                id: 'formula',
+                source: 'x=1',
+                sourceOnly: true as const,
+                preserve: 'formula' as const,
+                fragments: [fragment(69, 93, 9, 5, ['x=1'])]
+              }
+            ]
+          : [])
+      ]
+    })
+    const original = JSON.stringify(source)
+    const prepared = pdfTranslationLayoutFragments(source.units[0], source)
+    expect(
+      prepared.some((f) => f.items.some((i) => i.index === 1) && f.items.some((i) => i.index === 3))
+    ).toBe(mode === 'native caption')
+    expect(prepared.flatMap((f) => f.items.flatMap((i) => i.index))).toEqual([0, 1, 2, 3, 4])
+    expect(JSON.stringify(source)).toBe(original)
+  }
+)

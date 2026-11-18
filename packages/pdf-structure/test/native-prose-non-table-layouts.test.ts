@@ -449,3 +449,33 @@ it.each([
     expect(hasNativeNonTableLayout(f.candidate, f.items, rules)).toBe(kind === 'intact')
   }
 )
+
+const { hasNativeNonTableLayout } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-non-table-layout.mjs')).href
+)
+
+it('rejects a clipped detector grid across two native author-date reference columns', () => {
+  const heading = item('REFERENCES', 274, 320, 64)
+  const left = ['Adler', 'Beck', 'Doran', 'Fries'].flatMap((name, index) => [
+    item(name + ' A., 2009, Journal of Applied Studies, 31,', 44, 342 + index * 28, 244),
+    item('Field Series, 5, 208', 54, 356 + index * 28, 140)
+  ])
+  const right = ['Hale', 'Iverson', 'Jones', 'Kerr'].flatMap((name, index) => [
+    item(name + ' B., 2018, Experimental Letters, 18,', 320, 342 + index * 28, 236),
+    item('Research Series, 4, 76', 330, 356 + index * 28, 148)
+  ])
+  const detected = table(
+    [0, 2, 4, 6].map((index) => [left[index].text, right[index].text]),
+    [146, 344, 574, 464]
+  )
+  detected.issues.push('text-crosses-crop-boundary')
+  const tokens = [heading, ...left, ...right]
+  expect(hasNativeNonTableLayout(detected, tokens, [])).toBe(true)
+  expect(hasTableEvidence(detected, undefined, tokens, [])).toBe(false)
+  expect(hasNativeNonTableLayout(detected, [...left, ...right], [])).toBe(false)
+  expect(hasTableEvidence(detected, { lines: ['Table 1. Journal index.'] }, tokens, [])).toBe(true)
+  const distinctValues = right.map((token, index) =>
+    index % 2 === 0 ? { ...token, text: 'Measured signal strength at the terminal' } : token
+  )
+  expect(hasNativeNonTableLayout(detected, [heading, ...left, ...distinctValues], [])).toBe(false)
+})

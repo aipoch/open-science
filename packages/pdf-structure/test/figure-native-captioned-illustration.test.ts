@@ -1272,6 +1272,108 @@ it('recovers a multi-row raster composite without dropping its upper panels', ()
   expect(associateFigures(page, [caption], [], [], [], [])[0].rect).toEqual([90, 120, 430, 650])
 })
 
+it('keeps two independently captioned raster stacks in separate columns', () => {
+  const captions = [
+    { page: 1, lines: ['Figure 1. First sample.'], rect: [100, 520, 235, 531] },
+    { page: 1, lines: ['Figure 2. Second sample.'], rect: [345, 525, 490, 536] }
+  ]
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: captions.map((caption) => ({
+      text: caption.lines[0],
+      x: caption.rect[0],
+      y: caption.rect[1],
+      width: caption.rect[2] - caption.rect[0],
+      height: 11,
+      fontSize: 10
+    })),
+    graphicsBounds: [
+      [50, 120, 275, 300],
+      [50, 307, 275, 400],
+      [52, 406, 295, 511],
+      [305, 100, 550, 390],
+      [345, 400, 510, 515]
+    ].map((rect) => ({
+      kind: 'image',
+      normalizedRect: rect.map((value, axis) => value / (axis % 2 ? 800 : 600))
+    }))
+  }
+  const matches = associateFigures(page, captions, [], [], [], [])
+  expect(matches.map(({ graphicsCount }) => graphicsCount)).toEqual([3, 2])
+  expect(matches[0].rect[2]).toBeCloseTo(295)
+  expect(matches[1].rect[0]).toBeCloseTo(305)
+  const single = nativeCaptionedRasterCompositeGrid(page, captions[0], [captions[0]], [])
+  expect(single?.graphicsCount).not.toBe(3)
+})
+
+it.each(['proven', 'missing panel label', 'cross-column drawing'])(
+  'keeps staggered raster figures with their own panel labels: %s',
+  (shape) => {
+    const captions = [
+      { page: 1, lines: ['Figure 1. Thermal response.'], rect: [45, 350, 294, 372] },
+      { page: 1, lines: ['Figure 2. Experimental measurements.'], rect: [313, 317, 563, 339] }
+    ]
+    const text = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      size: number
+    ): Record<string, unknown> => ({ text, x, y, width, height: size, fontSize: size })
+    const page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      lines: [
+        ...captions.map((c) => text(c.lines[0], c.rect[0], c.rect[1], c.rect[2] - c.rect[0], 10)),
+        text('(a) Initial measurements.', 50, 178, 224, 9),
+        text('Repeated under controlled conditions.', 50, 188, 232, 9),
+        text('(b) Response after cooling.', 50, 323, 240, 9),
+        text('(a) Calibration runs.', 363, 167, 100, 9),
+        text(
+          shape === 'missing panel label' ? 'Results after heating.' : '(b) Results after heating.',
+          315,
+          291,
+          232,
+          9
+        )
+      ],
+      graphicsBounds: [
+        [55, 57, 289, 169],
+        [55, 213, 289, 314],
+        [320, 58, 555, 159],
+        [320, 182, 555, 282]
+      ].map((rect) => ({
+        kind: 'image',
+        normalizedRect: rect.map((value, axis) => value / (axis % 2 ? 800 : 600))
+      }))
+    }
+    if (shape === 'cross-column drawing')
+      page.graphicsBounds.push({
+        kind: 'path',
+        normalizedRect: [285 / 600, 80 / 800, 325 / 600, 105 / 800]
+      })
+    const direct = captions.map((caption) =>
+      nativeCaptionedRasterCompositeGrid(page, caption, captions, [])
+    )
+    expect(direct.map((f) => !!f?.independentPanelLabels)).toEqual(
+      shape === 'proven' ? [true, true] : [false, false]
+    )
+    if (shape === 'proven') {
+      expect(direct.map((f) => f?.rect.map(Math.round))).toEqual([
+        [50, 57, 290, 332],
+        [315, 58, 555, 300]
+      ])
+      const associated = associateFigures(page, captions, [], [], [], [])
+      expect(associated.map((f) => f.rect)).toEqual(direct.map((f) => f?.rect))
+    }
+  }
+)
+
 it('recovers a two-row three-column raster composite', () => {
   const caption = {
     page: 1,
@@ -3888,3 +3990,75 @@ it('recovers only complete captioned circular graph paint and leaves the detache
     }
   }
 })
+
+function transparentRasterPeers(): ReturnType<typeof JSON.parse> {
+  const width = 600,
+    height = 800
+  const normalize = (rect: number[]): number[] =>
+    rect.map((value, axis) => value / (axis % 2 ? height : width))
+  const captions = [
+    { page: 1, lines: ['Figure 1: Input trace.'], rect: [97, 216, 233, 226] },
+    { page: 1, lines: ['Figure 2: Output trace.'], rect: [320, 179, 550, 189] }
+  ]
+  return {
+    captions,
+    page: {
+      pageNumber: 1,
+      width,
+      height,
+      invalidGraphicsBounds: 0,
+      lines: captions.map(({ lines, rect }) => ({
+        text: lines[0],
+        x: rect[0],
+        y: rect[1],
+        width: rect[2] - rect[0],
+        height: rect[3] - rect[1],
+        fontSize: 9
+      })),
+      graphicsBounds: [
+        {
+          kind: 'image',
+          normalizedRect: normalize([50, 80, 280, 210]),
+          paintedNormalizedRect: normalize([60, 90, 270, 168])
+        },
+        {
+          kind: 'image',
+          normalizedRect: normalize([320, 80, 550, 174]),
+          paintedNormalizedRect: normalize([326, 90, 543, 157])
+        }
+      ]
+    }
+  }
+}
+
+it('associates a centered caption past transparent margins of two parallel rasters', () => {
+  const { page, captions } = transparentRasterPeers()
+  const match = nativeCaptionedRasterModerateGap(page, captions[0], captions, [])
+  expect(match?.reason).toBe('native-raster-trimmed-frame-caption')
+  expect(match?.rect).toEqual([60, 90, 270, 168])
+  const selected = associateFigures(page, captions, [], [], [], [])
+  expect(
+    selected.find((figure: ReturnType<typeof JSON.parse>) => figure.caption === captions[0])?.rect
+  ).toEqual(match?.rect)
+  expect(nativeCaptionedRasterModerateGap(page, captions[1], captions, [])).toBeUndefined()
+})
+
+it.each(['intervening text', 'missing alpha bounds', 'repeated caption number', 'displaced frame'])(
+  'withholds transparent-margin recovery with %s',
+  (obstacle) => {
+    const { page, captions } = transparentRasterPeers()
+    if (obstacle === 'intervening text')
+      page.lines.push({
+        text: 'A separate line',
+        x: 110,
+        y: 195,
+        width: 70,
+        height: 9,
+        fontSize: 9
+      })
+    if (obstacle === 'missing alpha bounds') delete page.graphicsBounds[0].paintedNormalizedRect
+    if (obstacle === 'repeated caption number') captions[1].lines[0] = 'Figure 1: Output trace.'
+    if (obstacle === 'displaced frame') page.graphicsBounds[1].normalizedRect[1] += 0.02
+    expect(nativeCaptionedRasterModerateGap(page, captions[0], captions, [])).toBeUndefined()
+  }
+)

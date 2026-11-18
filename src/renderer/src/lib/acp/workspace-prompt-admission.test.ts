@@ -14,6 +14,7 @@ import type { UploadedAttachment } from '../../../../shared/uploads'
 import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
 import {
   createInitialSessionState,
+  hydrateSession,
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
@@ -154,6 +155,63 @@ const settleCleanup = async (): Promise<void> => {
 }
 
 describe('prompt admission across Main preparation and pending binding', () => {
+  it('loads complete history before sending from a display-only page', async () => {
+    const main = mainBoundary()
+    const authority = await main.saveSession({
+      id: 'bound-session',
+      projectId: 'project',
+      title: 'History',
+      cwd: '/workspace',
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [1, 2].map((index) => ({
+        id: `history-${index}`,
+        role: 'user',
+        content: `Past ${index}`,
+        status: 'complete',
+        createdAt: index,
+        updatedAt: index,
+        eventIds: []
+      }))
+    })
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...hydrateSession(authority),
+          conversationGraph: undefined,
+          messages: authority.messages.slice(-1),
+          contentLoaded: false,
+          historyPage: {
+            revision: authority.revision ?? 0,
+            totalItems: 2,
+            hasMore: true,
+            beforeCursor: 'earlier'
+          }
+        }
+      ]
+    })
+    window.api.sessions.loadOne = vi.fn().mockResolvedValue(authority)
+    main.saveSession.mockClear()
+    const agent = runtime()
+    Object.assign(agent.state, { promptInFlightSessionIds: [], pendingPermissions: [] })
+    await sendWorkspaceMessage(agent, {
+      sessionId: 'bound-session',
+      text: 'Continue',
+      projectId: 'project',
+      cwd: '/workspace'
+    })
+    expect(window.api.sessions.loadOne).toHaveBeenCalledWith({
+      projectId: 'project',
+      sessionId: 'bound-session'
+    })
+    expect(main.saveSession.mock.calls[0][0].messages.map(({ id }) => id)).toContain('history-1')
+    expect(main.read()?.messages.map(({ id }) => id)).toContain('history-1')
+    expect(agent.sendPrompt).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].contentLoaded).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].historyPage).toBeUndefined()
+  })
+
   it('deduplicates a Main seed push before binding and dispatches the exact tagged prompt', async () => {
     const main = mainBoundary()
     const agent = runtime()

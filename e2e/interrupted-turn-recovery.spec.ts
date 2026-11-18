@@ -116,6 +116,8 @@ test('continues a restored in-flight snapshot through the real Resume action', a
     animations: 'disabled'
   })
   expect(
-    (await app.readFakeAgentPrompts()).filter(({ prompt }) => prompt.trimEnd().endsWith(PROMPT))
+    (await app.readFakeAgentPrompts()).filter(({ prompt }) =>
+      prompt.split(/\r?\n/u).includes(PROMPT)
+    )
   ).toHaveLength(2)
 })

@@ -479,6 +479,108 @@ export function reconcileRuledLeafHeaderSpans({ cells, rows, items, rules, repai
 
 // Validate all proposals against source text before resolving overlaps. Slot identity
 // is preserved; issues and repairs are appended to the caller's existing diagnostics.
+// A native separator can resolve competing rowspan predictions when each
+// complete numeric band has one centered parameter value in the first column.
+function recoverFencedNumericStubs({ distinct, baseCells, items, rows, headerRows, rules }) {
+  if (
+    distinct.length !== 2 ||
+    headerRows.length !== 1 ||
+    headerRows[0] !== 0 ||
+    rows.length < 7 ||
+    rows.length > 15 ||
+    baseCells.length !== rows.length * 3 ||
+    !distinct.every(
+      (p) =>
+        p.origin === 'model-span' &&
+        p.column === 0 &&
+        p.row > 0 &&
+        p.colSpan === 1 &&
+        p.rowSpan >= 3
+    ) ||
+    !distinct[0].slots.some((slot) => distinct[1].slots.includes(slot)) ||
+    new Set(distinct.flatMap((p) => p.slots)).size !== rows.length - 1
+  )
+    return
+  const slots = baseCells.filter((c) => c.column === 0)
+  const parameter = items.filter((i) => i.horizontal && inside(slots[0].rect, i))
+  if (parameter.length !== 1 || !/^\p{Script=Greek}$/u.test(parameter[0].text.trim())) return
+  const font = parameter[0].height,
+    frame = union(baseCells)
+  const fences = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= frame[1] - font * 0.5 &&
+        r[1] <= frame[3] + font * 0.75 &&
+        Math.abs(r[0] - frame[0]) <= font * 0.5 &&
+        Math.abs(r[2] - frame[2]) <= font * 0.5
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    fences.length !== 4 ||
+    fences[0][1] >= parameter[0].rect[1] ||
+    fences[1][1] <= parameter[0].rect[3] ||
+    Math.abs(fences[3][1] - frame[3]) > font * 0.75
+  )
+    return
+  const bands = []
+  for (let n = 1; n < 3; n++) {
+    const start = fences[n][1],
+      end = fences[n + 1][1]
+    const separated = slots.filter(
+      (c) => c.row > 0 && (c.rect[1] + c.rect[3]) / 2 > start && (c.rect[1] + c.rect[3]) / 2 < end
+    )
+    if (
+      separated.length < 3 ||
+      separated.length > 8 ||
+      separated.some((c, i) => i && c.row !== separated[i - 1].row + 1)
+    )
+      return
+    const floor = [fences[n][0], start, fences[n][2], end]
+    if (
+      rules.some(
+        (r) => r[1] === r[3] && r[1] > start && r[1] < end && r[0] < floor[2] && r[2] > floor[0]
+      )
+    )
+      return
+    const span = union(separated),
+      label = items.filter((i) => i.horizontal && inside(span, i))
+    if (
+      label.length !== 1 ||
+      !/^\d{1,3}$/u.test(label[0].text.trim()) ||
+      Math.abs((label[0].rect[1] + label[0].rect[3] - start - end) / 2) > font * 0.25
+    )
+      return
+    const peers = baseCells.filter((c) => c.column > 0 && separated.some((s) => s.row === c.row))
+    if (
+      peers.length !== separated.length * 2 ||
+      peers.some((c) => {
+        const values = items.filter((i) => i.horizontal && inside(c.rect, i))
+        return (
+          values.length !== 1 ||
+          !/^\d+(?:\.\d+)?$/u.test(values[0].text.trim()) ||
+          values[0].rect[1] <= start ||
+          values[0].rect[3] >= end
+        )
+      })
+    )
+      return
+    bands.push({
+      slots: separated,
+      row: separated[0].row,
+      column: 0,
+      rowSpan: separated.length,
+      colSpan: 1,
+      rect: span,
+      origin: 'source-ruled-stub',
+      label: label[0].text.trim()
+    })
+  }
+  return bands[0].label !== bands[1].label &&
+    bands.reduce((n, b) => n + b.slots.length, 0) === rows.length - 1
+    ? bands
+    : undefined
+}
+
 export function resolveTableCellMerges({
   proposals,
   baseCells,
@@ -1148,6 +1250,69 @@ export function resolveTableCellMerges({
           r[0] < textRect[2] &&
           r[2] > textRect[0]
       )
+    // Two independently framed header tiers can share a centered stub.
+    const wrappedGroupedHeaderStub =
+      p.origin === 'model-span' &&
+      row === 0 &&
+      column === 0 &&
+      rowSpan === 2 &&
+      colSpan === 1 &&
+      headerRows.includes(0) &&
+      headerRows.includes(1) &&
+      spanText.length === 2 &&
+      spanText.every((item) => /^\p{L}[\p{L} -]+$/u.test(item.text.trim())) &&
+      (() => {
+        const [upper, lower] = spanText
+        const font = upper.height
+        const leading = lower.baseline - upper.baseline
+        if (
+          Math.abs(lower.height - font) > font * 0.1 ||
+          leading < font ||
+          leading > font * 1.5 ||
+          Math.abs(center(upper) - center(lower)) > font * 0.25 ||
+          spanText.some((item) => item.rect[0] < spanRect[0] || item.rect[2] > spanRect[2])
+        )
+          return false
+        const parents = unique
+          .filter(
+            (proposal) =>
+              proposal !== p &&
+              proposal.origin === 'model-span' &&
+              proposal.slots.length >= 2 &&
+              proposal.slots.every((slot) => slot.row === 0 && slot.column > 0)
+          )
+          .map((proposal) => union(proposal.slots))
+          .sort((a, b) => a[0] - b[0])
+        if (parents.length !== 2 || Math.abs(parents[0][2] - parents[1][0]) > font * 0.1)
+          return false
+        if (
+          !parents.every((rect) => {
+            const owners = items.filter((item) => item.horizontal && inside(rect, item))
+            return (
+              owners.length === 1 &&
+              /^\p{L}[\p{L} -]+$/u.test(owners[0].text.trim()) &&
+              Math.abs(owners[0].baseline - upper.baseline) <= font * 0.2 &&
+              Math.abs(center(owners[0]) - center({ rect })) <= font * 0.6
+            )
+          })
+        )
+          return false
+        const headers = joinHorizontalTableRules(rules).filter(
+          (r) => r[0] <= textRect[0] && r[2] >= parents[1][2] - font
+        )
+        return (
+          headers.some((r) => r[1] <= upper.rect[1] && upper.rect[1] - r[1] < font) &&
+          headers.some((r) => r[1] >= lower.rect[3] && r[1] - lower.rect[3] < font) &&
+          !rules.some(
+            (r) =>
+              r[1] === r[3] &&
+              r[1] > upper.rect[1] &&
+              r[1] < lower.rect[3] &&
+              r[0] < textRect[2] &&
+              r[2] > textRect[0]
+          )
+        )
+      })()
     const wrappedHeaderUnits =
       p.origin === 'model-span' &&
       row === 0 &&
@@ -1245,6 +1410,7 @@ export function resolveTableCellMerges({
       p.origin !== 'text-supported-study-span' &&
       p.origin !== 'wrapped-interval-header' &&
       p.origin !== 'source-unit-header' &&
+      !wrappedGroupedHeaderStub &&
       !wrappedHeaderUnits &&
       !verticalSampleHeader &&
       !wrappedIntervalQualifier &&
@@ -1475,8 +1641,92 @@ export function resolveTableCellMerges({
     if (superseded) repairs.push('duplicate-model-span-discarded')
     return !superseded
   })
-  const merges = distinct.filter((p) => {
-    if (distinct.some((q) => q !== p && q.slots.some((s) => p.slots.includes(s)))) {
+  // A projected section can share a slot with an overlong model row span.
+  // Keep the section only when its isolated native title is ruled off and
+  // the rival's source belongs wholly to its ordinary cell on the prior row.
+  const redundantRowSpans = new Set()
+  for (const section of distinct) {
+    if (
+      section.origin !== 'model-span' ||
+      !section.sectionHeader ||
+      section.rowSpan !== 1 ||
+      section.column !== 0 ||
+      section.colSpan < 3 ||
+      section.colSpan !== baseCells.filter((cell) => cell.row === section.row).length
+    )
+      continue
+    const conflicts = distinct.filter(
+      (p) => p !== section && p.slots.some((slot) => section.slots.includes(slot))
+    )
+    if (conflicts.length !== 1) continue
+    const [rival] = conflicts
+    if (
+      rival.origin !== 'model-span' ||
+      rival.sectionHeader ||
+      rival.row !== section.row - 1 ||
+      rival.rowSpan !== 2 ||
+      rival.column !== 0 ||
+      rival.colSpan !== 1 ||
+      distinct.some(
+        (p) => p !== section && p !== rival && p.slots.some((slot) => rival.slots.includes(slot))
+      )
+    )
+      continue
+    const title = items.filter((item) => intersect(section.rect, item.rect) > 0)
+    if (title.length !== 1) continue
+    const [label] = title,
+      [left, , right] = section.rect,
+      font = label.height
+    if (
+      !label.horizontal ||
+      !/\p{L}/u.test(label.text) ||
+      !label.rect.every((value, n) =>
+        n < 2 ? value >= section.rect[n] : value <= section.rect[n]
+      ) ||
+      Math.abs(center(label) - (left + right) / 2) > font ||
+      section.slots.some((slot) => intersect(slot.rect, label.rect) >= area(label.rect))
+    )
+      continue
+    const ordinary = rival.slots.find((slot) => slot.row === rival.row)
+    const stub = items.filter((item) => intersect(rival.rect, item.rect) > 0)
+    if (
+      !stub.length ||
+      !stub.every(
+        (item) =>
+          item.horizontal &&
+          item.rect.every((value, n) =>
+            n < 2 ? value >= ordinary.rect[n] : value <= ordinary.rect[n]
+          )
+      )
+    )
+      continue
+    const previousBottom = Math.max(...stub.map((item) => item.rect[3]))
+    const boundaries = joinHorizontalTableRules(rules).filter(
+      (rule) => Math.abs(rule[0] - left) < font && Math.abs(rule[2] - right) < font
+    )
+    const above = boundaries.find(
+      (rule) =>
+        rule[1] > previousBottom &&
+        rule[1] <= label.rect[1] + font * 0.05 &&
+        label.rect[1] - rule[1] < font
+    )
+    const below = boundaries.find(
+      (rule) => rule[1] >= label.rect[3] && rule[1] - label.rect[3] < font
+    )
+    if (
+      !above ||
+      !below ||
+      items.some((item) => item !== label && inside([left, above[1], right, below[1]], item))
+    )
+      continue
+    redundantRowSpans.add(rival)
+    repairs.push('section-heading-span-reconciled')
+  }
+  const fenced = recoverFencedNumericStubs({ distinct, baseCells, items, rows, headerRows, rules })
+  if (fenced) repairs.push('ruled-section-stub-recovered')
+  const disjoint = (fenced ?? distinct).filter((p) => !redundantRowSpans.has(p))
+  const merges = disjoint.filter((p) => {
+    if (disjoint.some((q) => q !== p && q.slots.some((s) => p.slots.includes(s)))) {
       issues.add('conflicting-spanning-cells')
       return false
     }
