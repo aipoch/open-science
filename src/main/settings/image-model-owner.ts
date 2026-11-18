@@ -1,9 +1,7 @@
 import type {
   ImageModelTestRequest,
   ImageModelTestResult,
-  ImageAdapterKind,
   ImageModelBinding,
-  ImageServiceModel,
   ImageModelSettingsMutation,
   ImageModelSettingsSnapshot
 } from '../../shared/image-model-settings'
@@ -18,6 +16,7 @@ import {
   imageServiceMatchesProvider
 } from '../../shared/image-model-service-policy'
 import { testImageModel } from '../image-model/probe'
+import type { ResolvedImageModel } from '../image-model/contract'
 import type { SettingsRepository } from './repository'
 import type { StoredImageService, StoredSettings } from './types'
 
@@ -196,15 +195,4 @@ export class ImageModelOwner {
     })
     return view(settings)
   }
-}
-
-// Host-only execution snapshot; never include this in a renderer settings response.
-export type ResolvedImageModel = {
-  serviceId: string
-  serviceName?: string
-  providerId?: string
-  adapter: ImageAdapterKind
-  baseUrl: string
-  apiKey?: string
-  model: ImageServiceModel
 }

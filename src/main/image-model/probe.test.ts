@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest'
 import sharp from 'sharp'
 import { IMAGE_MODEL_PRESET_ADAPTERS } from '../../shared/image-model-settings'
 import type { ImageModelPresetId } from '../../shared/image-model-settings'
-import type { ResolvedImageModel } from '../settings/image-model-owner'
+import type { ResolvedImageModel } from './contract'
 import { testImageModel } from './probe'
 
 const target: ResolvedImageModel = {

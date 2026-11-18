@@ -2,7 +2,7 @@ import { fetchProviderRequest, readBoundedResponseText } from '@aipoch/providers
 import { tunnelThroughProxy } from '@aipoch/notebook-network-sandbox'
 import type { ImageModelTestResult } from '../../shared/image-model-settings'
 import { validateImageModelOptions } from '../../shared/image-model-presets'
-import type { ResolvedImageModel } from '../settings/image-model-owner'
+import type { ResolvedImageModel } from './contract'
 import { netFetchWithManualRedirect } from '../network-fetch'
 import { runtimeNetwork } from '../runtime-network'
 import { parseSystemProxyRules } from '../settings/system-proxy'
