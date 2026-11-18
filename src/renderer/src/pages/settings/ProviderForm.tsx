@@ -1,5 +1,8 @@
 import { ErrorNotice } from '@/components/error-notice'
-import { resolveOfficialModelCatalog } from '../../../../shared/provider-model-catalog'
+import {
+  isCatalogModelAvailable,
+  resolveOfficialModelCatalog
+} from '../../../../shared/provider-model-catalog'
 import {
   resolveVendorModelCatalog,
   type CatalogSnapshot,
@@ -1101,7 +1104,7 @@ const ProviderForm = ({
               region: value.region,
               modelCatalog,
               fetchedModels: supportedModels
-            })
+            }).filter(isCatalogModelAvailable)
             const missingKey =
               catalog?.options.auth !== 'none' && !value.key.trim() && (!hasStoredKey || needsKey)
             const missingParameter = catalog?.options.inputs?.some(
