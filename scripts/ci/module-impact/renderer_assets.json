@@ -7,6 +7,9 @@
     "src/renderer/src/assets/logo-dark.png",
     "src/renderer/src/assets/logo-symbol.svg",
     "src/renderer/src/assets/logo.png",
+    "src/renderer/src/assets/onboarding/guide-example-cases.gif",
+    "src/renderer/src/assets/onboarding/guide-new-project.gif",
+    "src/renderer/src/assets/onboarding/welcome.json",
     "src/renderer/src/assets/main.css",
     "src/renderer/src/assets/pdf-text-layer.test.ts",
     "src/renderer/src/assets/provider-icons/anthropic.svg",
@@ -113,5 +116,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The onboarding flow adds reviewed renderer assets, including an SVG logo and binary/JSON animation resources, that intentionally extend the package asset boundary without changing its existing packaging contract."
 }

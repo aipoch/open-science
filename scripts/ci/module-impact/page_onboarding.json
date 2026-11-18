@@ -17,9 +17,6 @@
     "src/renderer/src/pages/onboarding/OnboardingWizard.tsx",
     "src/renderer/src/pages/onboarding/ProviderStep.render.test.tsx",
     "src/renderer/src/pages/onboarding/ProviderStep.tsx",
-    "src/renderer/src/assets/onboarding/guide-example-cases.gif",
-    "src/renderer/src/assets/onboarding/guide-new-project.gif",
-    "src/renderer/src/assets/onboarding/welcome.json",
     "src/renderer/src/pages/onboarding/environment-check-presentation.ts",
     "src/renderer/src/pages/onboarding/onboarding-error.ts",
     "src/renderer/src/pages/onboarding/onboarding-test-utils.ts",
@@ -54,5 +51,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The first-run onboarding flow now owns its entry and welcome presentation files, which intentionally extends the existing reviewed page boundary while retaining the same end-to-end onboarding contract."
 }
