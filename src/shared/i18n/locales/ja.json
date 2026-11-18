@@ -7820,7 +7820,6 @@
     "Generate research film": "研究ショート動画を生成",
     "View research film": "研究ショート動画を表示",
     "Play research film": "研究ショート動画を再生",
-    "Continue generation": "生成を続ける",
     "Generating animations…": "アニメーションを生成中…",
     "Writing research film…": "研究ショート動画を構成中…",
     "Generating a new film may take several minutes. Continue?": "新しい動画の生成には数分かかる場合があります。続行しますか？",
@@ -8369,6 +8368,15 @@
     "After edit": "編集後",
     "Before edit": "編集前",
     "Comparison position": "比較の境界位置",
-    "Compare with input image": "入力画像と比較"
+    "Compare with input image": "入力画像と比較",
+    "Retry_step": "再試行",
+    "Model request timed out. Try again.": "モデルへのリクエストがタイムアウトしました。再試行してください。",
+    "Generation preparation timed out. Try again.": "生成の準備がタイムアウトしました。再試行してください。",
+    "Model setup timed out. Try again.": "モデルの準備がタイムアウトしました。再試行してください。",
+    "The model reached its output limit. Increase the limit or select another model.": "モデルが出力上限に達しました。上限を引き上げるか、別のモデルを選択してください。",
+    "The model stopped before completing this step. Try again.": "このステップの完了前にモデルが停止しました。再試行してください。",
+    "The model declined to generate this content.": "モデルがこのコンテンツの生成を拒否しました。",
+    "Waiting for storage. Try again after it responds.": "ストレージの応答を待っています。応答が戻ってから再試行してください。",
+    "Could not retrieve generation status.": "生成状況を取得できませんでした。"
   }
 }

@@ -7820,7 +7820,6 @@
     "Generate research film": "產生研究短片",
     "View research film": "查看研究短片",
     "Play research film": "播放研究短片",
-    "Continue generation": "繼續產生",
     "Generating animations…": "產生動畫…",
     "Writing research film…": "正在撰寫研究短片…",
     "Generating a new film may take several minutes. Continue?": "產生新短片可能需要幾分鐘，是否繼續？",
@@ -8369,6 +8368,15 @@
     "After edit": "修改後",
     "Before edit": "修改前",
     "Comparison position": "對比分隔位置",
-    "Compare with input image": "與輸入圖對比"
+    "Compare with input image": "與輸入圖對比",
+    "Retry_step": "重新嘗試",
+    "Model request timed out. Try again.": "模型請求逾時，請重新嘗試。",
+    "Generation preparation timed out. Try again.": "產生準備逾時，請重新嘗試。",
+    "Model setup timed out. Try again.": "模型準備逾時，請重新嘗試。",
+    "The model reached its output limit. Increase the limit or select another model.": "模型已達到輸出上限。請提高上限或選擇其他模型。",
+    "The model stopped before completing this step. Try again.": "模型在完成此步驟前中斷，請重新嘗試。",
+    "The model declined to generate this content.": "模型拒絕產生此內容。",
+    "Waiting for storage. Try again after it responds.": "正在等待儲存回應，請在恢復後重新嘗試。",
+    "Could not retrieve generation status.": "無法取得產生狀態。"
   }
 }

@@ -45,6 +45,7 @@ import type { SettingsService } from '../settings/service'
 import { resolveDataRoot } from '../storage-root'
 import type { ManagedPreviewResources } from '../managed-preview-resources'
 import { NotebookRunRepository } from '../notebook/repository'
+import { RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE } from '../../shared/research-video-presentation'
 
 /** Button-owned generation: no conversation tools, Artifact publication or Notebook transport. */
 export async function composeResearchFilm({
@@ -206,6 +207,8 @@ export async function composeResearchFilm({
       providerId: target.providerId
     }
     filmLog.info('film model request', fields)
+    const modelDeadline = AbortSignal.timeout(300_000)
+    const inferenceSignal = AbortSignal.any([signal, modelDeadline])
     const response = await Promise.resolve()
       .then(() =>
         researchVideoInference.run({
@@ -217,15 +220,25 @@ export async function composeResearchFilm({
               ? 'Operation replay'
               : 'Research explanation',
           description: 'Generate a research film from a frozen session',
-          signal: AbortSignal.any([signal, AbortSignal.timeout(300_000)])
+          signal: inferenceSignal
         })
       )
       .catch(async (error: unknown) => {
+        // The runner reports all aborts as cancellation. Only our own deadline proves a timeout.
+        const timedOut =
+          modelDeadline.aborted &&
+          inferenceSignal.reason === modelDeadline.reason &&
+          (error === modelDeadline.reason ||
+            (error instanceof RestrictedInferenceError && error.code === 'cancelled'))
         const usage = extractRestrictedInferenceUsage(error)
         filmLog.info('film model failure', {
           ...fields,
           durationMs: Math.round(performance.now() - started),
-          errorCategory: error instanceof RestrictedInferenceError ? error.code : 'inference',
+          errorCategory: timedOut
+            ? 'timeout'
+            : error instanceof RestrictedInferenceError
+              ? error.code
+              : 'inference',
           outputTokens: usage?.outputTokens
         })
         if (usage)
@@ -244,6 +257,7 @@ export async function composeResearchFilm({
             signal
           )
         signal.throwIfAborted()
+        if (timedOut) throw new Error(RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE, { cause: error })
         throw error
       })
     filmLog.info('film model response', {

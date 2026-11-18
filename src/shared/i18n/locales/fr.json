@@ -8156,7 +8156,6 @@
     "Generate research film": "Générer un court-métrage de recherche",
     "View research film": "Voir le court-métrage de recherche",
     "Play research film": "Lire le court-métrage de recherche",
-    "Continue generation": "Reprendre la génération",
     "Generating animations…": "Génération des animations…",
     "Writing research film…": "Préparation du court-métrage de recherche…",
     "Generating a new film may take several minutes. Continue?": "La génération d’un nouveau film peut prendre plusieurs minutes. Continuer ?",
@@ -8721,6 +8720,15 @@
     "After edit": "Après modification",
     "Before edit": "Avant modification",
     "Comparison position": "Position de comparaison",
-    "Compare with input image": "Comparer avec l’image d’entrée"
+    "Compare with input image": "Comparer avec l’image d’entrée",
+    "Retry_step": "Réessayer",
+    "Model request timed out. Try again.": "La requête au modèle a expiré. Réessayez.",
+    "Generation preparation timed out. Try again.": "La préparation de la génération a expiré. Réessayez.",
+    "Model setup timed out. Try again.": "La préparation du modèle a expiré. Réessayez.",
+    "The model reached its output limit. Increase the limit or select another model.": "Le modèle a atteint sa limite de sortie. Augmentez la limite ou sélectionnez un autre modèle.",
+    "The model stopped before completing this step. Try again.": "Le modèle s’est arrêté avant de terminer cette étape. Réessayez.",
+    "The model declined to generate this content.": "Le modèle a refusé de générer ce contenu.",
+    "Waiting for storage. Try again after it responds.": "En attente du stockage. Réessayez lorsqu’il répondra.",
+    "Could not retrieve generation status.": "Impossible de récupérer l’état de la génération."
   }
 }
