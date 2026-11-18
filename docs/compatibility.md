@@ -56,19 +56,6 @@ upgrade; a binary downgrade is not a data rollback. Preserve the existing requir
 conflicting runtimes and use matching desktop/backend versions. This policy does not promise mixed
 version operation or arbitrary cross-platform transfer of OS-protected credentials.
 
-The application database applies `0060_image_models` after `0059_session_history`. The
-migration updates the constraints on `SessionAuxiliaryTurnUsage` to accept the
-`image-generation` usage source and on `ArtifactVersion` to accept image edits made
-outside a conversation turn. It preserves existing rows, indexes and foreign keys and
-retains a pre-upgrade backup. Returning to a build whose manifest ends at `0059_session_history`
-requires restoring a compatible backup. The usage table records measurements only. Image
-provenance uses the existing connector evidence format.
-
-Image service configuration lives in the version-2 settings document. The optional
-`imageServices` and `imageModel` fields default to no configured service or selected model
-when absent. Official services reference an existing provider account. Custom services use
-the configured credential store, and renderer snapshots omit credential references.
-
 The historical compatibility policy is a maintenance commitment, not evidence that every released
 0.x version has been individually tested against 1.0. Record the source version, platform and checked
 profile contents when reporting upgrade acceptance. The pre-1.0 CLI changes listed in the
