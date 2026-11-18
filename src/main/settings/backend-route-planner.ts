@@ -299,7 +299,8 @@ class BackendRoutePlanner {
               ? piSessionModel(piModelId(input.target.providerId, model))
               : model,
       sessionModelRequired:
-        input.frameworkId === 'codex' && isCodexSubscriptionProvider(input.target.provider.type),
+        route === 'codebuddy-subscription' ||
+        (input.frameworkId === 'codex' && isCodexSubscriptionProvider(input.target.provider.type)),
       supportsImageInput: input.target.provider.supportsImageInput === true,
       reasoningEffort: modelEffort(input.effortIntent, input.target),
       ...(hasClaudeTransport
@@ -395,6 +396,7 @@ class BackendRoutePlanner {
       })
     }
     if (frameworkId === 'codebuddy') {
+      if (route === 'codebuddy-subscription') return Object.freeze({ kind: 'direct' })
       if (active.apiEndpoints.includes('chat-completions')) return Object.freeze({ kind: 'direct' })
       return Object.freeze({
         kind: 'codebuddy-provider-compatibility',

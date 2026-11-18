@@ -137,6 +137,7 @@ export type ReviewerSessionOwnerDependencies = {
 }
 
 export type ReviewerSessionCreateCapability = Readonly<{
+  configureModel?: (connection: ClientConnection, session: ActiveSession) => Promise<void>
   ensureConnected: (cwd: string) => Promise<ClientConnection>
 }>
 
@@ -210,6 +211,7 @@ export class ReviewerSessionOwner {
           })
         }
 
+        await capability.configureModel?.(connection, session)
         this.activateIdentity(reservation, session, reviewerCwd, framework.id, mcpServerNames)
         identityActivated = true
         this.dependencies.registerBridgeSession(session.sessionId)

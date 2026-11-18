@@ -63,6 +63,7 @@
     "src/renderer/src/pages/workspace/previews/renderers/PdfThumbnail.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.test.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/ResearchVideoExportComplete.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/SourcePreview.test.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/SourcePreview.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/TextPreview.tsx",

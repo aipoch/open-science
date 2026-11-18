@@ -59,17 +59,20 @@ describe('provider registry', () => {
     }
   )
 
-  it('defaults OpenAI to GPT-6.1 Sol with its published capabilities', () => {
-    expect(getVendorModelIds('openai')[0]).toBe('gpt-6.1-sol')
-
-    expect(getVendorModelContextWindow('openai', 'gpt-6.1-sol')).toBe(1_050_000)
-    expect(isVendorModelMultimodal('openai', 'gpt-6.1-sol')).toBe(true)
-    expect(resolveVendorModelApiEndpoints('openai', 'gpt-6.1-sol')).toEqual(['responses'])
-    expect(getVendorModelReasoningCapability('openai', 'gpt-6.1-sol')).toEqual({
-      supported: true,
-      values: ['low', 'medium', 'high', 'xhigh', 'max']
-    })
-  })
+  it.each(['gpt-6.2-sol', 'gpt-6.2-astra'])(
+    'offers %s with its published capabilities',
+    (model) => {
+      expect(getOfficialVendor('openai')?.models).toContainEqual(
+        expect.objectContaining({ id: model, contextWindow: 1_050_000, maxOutputTokens: 128_000 })
+      )
+      expect(isVendorModelMultimodal('openai', model)).toBe(true)
+      expect(resolveVendorModelApiEndpoints('openai', model)).toEqual(['responses'])
+      expect(getVendorModelReasoningCapability('openai', model)).toEqual({
+        supported: true,
+        values: ['low', 'medium', 'high', 'xhigh', 'max']
+      })
+    }
+  )
 
   it('offers GPT-6.1 Terra with its published capabilities', () => {
     const model = 'gpt-6.1-terra'

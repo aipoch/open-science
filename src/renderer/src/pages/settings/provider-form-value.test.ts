@@ -363,6 +363,27 @@ describe('provider-kind helpers', () => {
     expect(groupKeys('other')).toEqual(['custom'])
   })
 
+  it('clears catalog credentials and CodeBuddy sign-in details when switching kinds', () => {
+    const subscription = {
+      ...createEmptyProviderFormValue({
+        key: 'draft-key',
+        catalogParameters: { workspace: 'old' }
+      }),
+      ...providerKindPatch('builtin-codebuddy-china')
+    }
+    expect(subscription.key).toBe('')
+    expect(subscription.catalogParameters).toBeUndefined()
+    expect(subscription.codeBuddySite).toBe('internal')
+
+    const official = {
+      ...subscription,
+      codeBuddyAuthMode: 'shared',
+      ...providerKindPatch('official:anthropic')
+    }
+    expect(official.codeBuddySite).toBeUndefined()
+    expect(official.codeBuddyAuthMode).toBeUndefined()
+  })
+
   it('defaults new xAI subscriptions to Grok 4.7', () => {
     expect(providerKindPatch('xai-subscription')).toMatchObject({
       type: 'xai-subscription',

@@ -2131,7 +2131,7 @@ describe('ACP runtime migration write-gate', () => {
 
     try {
       await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
-        'The selected model "gpt-subscription" is not available for this Codex account.'
+        'The selected model "gpt-subscription" is not available for this account.'
       )
     } finally {
       disposeSpy.mockRestore()
@@ -2260,6 +2260,37 @@ describe('ACP runtime migration write-gate', () => {
     } finally {
       disposeSpy.mockRestore()
     }
+  })
+
+  it('refuses to start a CodeBuddy subscription reviewer on a different model', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['reviewer-session'])
+    const runtime = new AcpRuntime({
+      appVersion: 'test',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codeBuddyFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/codebuddy',
+        env: {},
+        modelRoute: 'codebuddy-subscription',
+        sessionModel: 'requested-model',
+        sessionModelRequired: true
+      }),
+      framework: codeBuddyFramework
+    })
+    await expect(
+      runtime.buildReviewerSession({
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            type: 'http',
+            name: 'open-science-reviewer',
+            url: 'http://127.0.0.1:1/mcp',
+            headers: []
+          }
+        ]
+      })
+    ).rejects.toThrow('not available for this account')
   })
 
   it('skips set_config_option when a required subscription model already matches currentValue', async () => {

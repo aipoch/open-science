@@ -425,6 +425,7 @@ describe('Settings backend ownership architecture', () => {
       'cancelClaudeLogin',
       'cancelCodexLogin',
       'cancelXaiOAuthLogin',
+      'codeBuddyAccount',
       'completeBootstrapCodex',
       'deleteProvider',
       'dispose',
@@ -511,7 +512,7 @@ describe('Settings backend ownership architecture', () => {
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
         cancelNotebookNetworkSetup importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installPi installRecommendedWslDistro installSkillMarketplace installWslPlatform isEncryptionAvailable
         isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkillMarketplace listSkills listSpecialistSkillCatalog listUserSkills
-        dispose loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
+        dispose codeBuddyAccount loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
         markPathsNormalized migrateAgentHomeSkillIdentities openHarnessSession openWslTerminal prepareDelegatedSkills previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
@@ -726,6 +727,7 @@ describe('Settings backend ownership architecture', () => {
       'apiEndpoints',
       'baseUrl',
       'catalogParameters',
+      'codeBuddyAuthMode',
       'codexAuthMode',
       'codexAutoUseHttps',
       'codexTransport',

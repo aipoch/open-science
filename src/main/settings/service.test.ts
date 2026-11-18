@@ -1,3 +1,4 @@
+import { CODEBUDDY_VERSION } from './codebuddy-install'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { existsSync } from 'node:fs'
@@ -6181,7 +6182,7 @@ describe('checkEnvironment', () => {
     // but the result's runtime + gating reflect the SELECTED framework (OpenCode).
     const service = createService(undefined, {
       opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' },
-      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: '2.138.0' }
+      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: CODEBUDDY_VERSION }
     })
 
     const result = await service.checkEnvironment()
@@ -6229,7 +6230,7 @@ describe('checkEnvironment', () => {
     await repository.setAgentFramework('opencode')
     // Claude is detectable (default detectDeps); OpenCode is declared absent (no opencodeDetected).
     const service = createService(undefined, {
-      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: '2.138.0' }
+      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: CODEBUDDY_VERSION }
     })
 
     const result = await service.checkEnvironment()

@@ -1,4 +1,5 @@
 import {
+  checkResearchVideoHtml,
   renderResearchVideoMp4,
   readResearchVideoExportProgress
 } from './research-video/export-electron'
@@ -44,6 +45,7 @@ export function installElectronInteraction(): void {
     hasFocusedWindow: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
     hasWindow: () => BrowserWindow.getAllWindows().length > 0,
     renderResearchVideo: renderResearchVideoMp4,
+    checkResearchVideoHtml,
     researchVideoProgress: async (request) => readResearchVideoExportProgress(request),
     printConversationPdf,
     chooseFiles: dialog.showOpenDialog.bind(dialog),

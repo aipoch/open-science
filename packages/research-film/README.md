@@ -8,6 +8,10 @@ The package owns screenplay validation and correction, shared and per-scene anim
 
 In Open-Science, generation starts only from the user's research-film button and runs independently of conversation turns. The host uses tool-less model inference for authoring; generation is not exposed as an Agent/MCP tool. Players and source bundles are stored as session-derived film files, not published as conversation Artifacts.
 
+The explanation player supports landscape and portrait playback. Before publication, the desktop host checks the rendered HTML in both orientations. Model-assisted review uses landscape frames. MP4 exports are landscape (16:9) at 720p, 1080p, or 4K. An interrupted MP4 export starts over on the next attempt.
+
+An unfinished generation keeps individual narration WAVs and timing files under `speech/voice/`. A checksum binds their contents to the captions, spoken text, scene IDs, voice engine and model revision. Visual repairs reuse verified recordings and mix them against the current timeline in the worker's temporary directory. Before resuming an unpublished build, the host checks the player and source ZIP against the fingerprint in `pending.json`. A missing or stale fingerprint triggers a rebuild from the remaining checkpoints.
+
 The host owns session/branch authorization, frozen source and approved image staging, model selection and usage accounting, model downloads and leases, data-root admission, storage/publication, UI, and Electron capture/save dialogs. No host imports or Electron dependency are used here.
 
 ```ts
@@ -40,7 +44,7 @@ Stage the approved `session.json` and `files/` into a fresh job directory before
 
 Resources and workers resolve relative to the installed package, not the application's working directory. Keep `dist` and `resources` together. Run the Node pipeline outside an ASAR; desktop hosts can stage this package into their ordinary Node backend. The package contains no downloaded narration weights, ONNX engine, voice binary, or FFmpeg executable. Catalogs pin downloads for the host's model manager. Existing `sharp` is reused through normal package dependency resolution.
 
-Authoring documentation: [format and constraints](resources/authoring/SKILL.md), [drawing API](resources/authoring/KIT.md). Syntax validation does not certify scientific accuracy or visual quality; review generated playback.
+Open-Science uses the selected model to review narration against the [nine-point rubric](resources/authoring/SCRIPT.md) before producing the illustrations. For a session with an eligible offline ES-module app, the host can offer to stage its modules with the user’s consent. Open-Science supplies `reviewPlayer` to inspect each generated research explanation in the desktop HTML renderer. An image-capable model also checks scene screenshots. The host publishes the rebuilt player after it passes review. See the [authoring format](resources/authoring/SKILL.md) and [drawing API](resources/authoring/KIT.md).
 
 ```sh
 npm run build

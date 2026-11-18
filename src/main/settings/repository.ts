@@ -293,7 +293,8 @@ class SettingsRepository {
           ? !isDeepStrictEqual(catalog, configEdit.catalogBaseline)
           : sameCatalogTarget(existing, provider) &&
             (existing.fetchedModels || existing.modelCatalog || existing.modelCatalogStatus)
-        if (keepCatalog) {
+        // CodeBuddy sign-in and sign-out own that subscription’s model list.
+        if (provider.type !== 'codebuddy-subscription' && keepCatalog) {
           provider = reconcileCatalogHealth(provider, { ...provider, ...catalog })
           // A concurrent refresh can move the model while its old route is being tested.
           if (configEdit?.validationMatches && !configEdit.validationMatches(provider)) {

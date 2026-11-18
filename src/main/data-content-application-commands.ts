@@ -22,7 +22,8 @@ import type {
 import type { createResearchVideoPresentationOwner } from './research-video/presentation'
 import type {
   ResearchVideoProgress,
-  ResearchVideoExportResult
+  ResearchVideoExportResult,
+  ResearchVideoResolution
 } from '@aipoch/research-film/contracts'
 import type { createVideoExportTools } from '@aipoch/research-film'
 import { createResearchVideoExportControl } from './research-video/export-control'
@@ -473,7 +474,7 @@ const dataContentApplicationCommands = Object.freeze({
   >('preview-resources:read-range'),
   previewResearchVideoExport: defineApplicationCommand<
     'preview-resources:export-research-video',
-    readonly [request: { resourceId: string }],
+    readonly [request: { resourceId: string; resolution?: ResearchVideoResolution }],
     ResearchVideoExportResult
   >('preview-resources:export-research-video'),
   imageTaskStart: defineApplicationCommand<

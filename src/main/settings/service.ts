@@ -1,3 +1,4 @@
+import type { CodeBuddyAccountRequest } from '../../shared/codebuddy-subscription'
 import { ProviderAcpValidator } from './provider-acp-validation'
 import { SkillSourceRepository } from '../skills/source-repository'
 import type {
@@ -639,6 +640,7 @@ class SettingsService {
       userClaudeDir: this.userClaudeDir,
       userCodexDir,
       allocateSettingsIdSequence,
+      resolveCodeBuddyExecutable: (path) => this.runtimeManager.resolveCodeBuddyExecutable(path),
       resolveCodexExecutable: async (adapterPath, nativePath, prepareForHarness) => {
         if (
           prepareForHarness ||
@@ -1805,6 +1807,10 @@ class SettingsService {
 
   cancelClaudeLogin(): void {
     this.providers.cancelClaudeLogin()
+  }
+
+  async codeBuddyAccount(request: CodeBuddyAccountRequest): Promise<ValidateProviderResult> {
+    return this.providers.codeBuddyAccount(request)
   }
 
   async loginIsolatedCodex(): Promise<ValidateProviderResult> {

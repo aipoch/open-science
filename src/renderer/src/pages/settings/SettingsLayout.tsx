@@ -291,6 +291,38 @@ const SettingsLoadNotice = ({
   )
 }
 
+export function SettingsListCard({
+  name,
+  badge,
+  indicators,
+  detail,
+  actions
+}: {
+  name: string
+  badge: ReactNode
+  indicators?: ReactNode
+  detail: ReactNode
+  actions: ReactNode
+}): React.JSX.Element {
+  return (
+    <li data-slot="settings-list-row" className="rounded-lg border border-border bg-card p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-medium text-foreground">{name}</span>
+            <span className="inline-flex shrink-0 items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {badge}
+            </span>
+            {indicators}
+          </div>
+          <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">{detail}</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">{actions}</div>
+      </div>
+    </li>
+  )
+}
+
 type SettingsIconActionProps = Omit<
   ComponentProps<typeof Button>,
   'aria-label' | 'children' | 'size' | 'variant'

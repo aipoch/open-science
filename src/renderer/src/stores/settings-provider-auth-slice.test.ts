@@ -22,6 +22,7 @@ type ProviderCommands = Pick<
   | 'saveValidatedProvider'
   | 'cancelCodexLogin'
   | 'cancelClaudeLogin'
+  | 'codeBuddyAccount'
   | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
   | 'loginSharedClaude'
@@ -105,6 +106,7 @@ const createCommands = (): CommandMocks => ({
   validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   cancelCodexLogin: vi.fn().mockResolvedValue(undefined),
   cancelClaudeLogin: vi.fn().mockResolvedValue(undefined),
+  codeBuddyAccount: vi.fn(),
   loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   logoutIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   loginSharedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),

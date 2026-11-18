@@ -1,4 +1,8 @@
-import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
+import type {
+  FilmVisualResult,
+  ResearchVideoProgress,
+  ResearchVideoResolution
+} from '@aipoch/research-film/contracts'
 import type { VideoEncoderPaths } from '@aipoch/research-film'
 import type { CliLauncherEnv } from './cli-launcher-contract'
 import type { z } from 'zod'
@@ -20,8 +24,12 @@ export type DesktopInteraction = Readonly<{
   notificationCtor: typeof Notification
   hasFocusedWindow: () => boolean
   hasWindow: () => boolean
+  checkResearchVideoHtml?: (
+    request: { htmlPath: string; includeFrames: boolean },
+    signal: AbortSignal
+  ) => Promise<FilmVisualResult>
   renderResearchVideo?: (
-    request: { htmlPath: string } & VideoEncoderPaths,
+    request: { htmlPath: string; resolution?: ResearchVideoResolution } & VideoEncoderPaths,
     signal: AbortSignal
   ) => Promise<string>
   researchVideoProgress?: (request: { htmlPath: string }) => Promise<ResearchVideoProgress | null>
@@ -82,10 +90,12 @@ export type DesktopFileInteraction = Readonly<{
   ): Promise<{ canceled: boolean; filePath?: string }>
   confirm(
     options: z.infer<typeof desktopMessageOptionsSchema>,
-    callerId?: string
+    callerId?: string,
+    signal?: AbortSignal
   ): Promise<{ response: number }>
   printConversationPdf: DesktopInteraction['printConversationPdf']
   renderResearchVideo?: DesktopInteraction['renderResearchVideo']
+  checkResearchVideoHtml?: DesktopInteraction['checkResearchVideoHtml']
   researchVideoProgress?: DesktopInteraction['researchVideoProgress']
 }>
 let fileInteraction: DesktopFileInteraction | undefined
@@ -106,14 +116,19 @@ export function desktopFileInteraction(): DesktopFileInteraction {
       return host.chooseFiles(parent, options)
     },
     chooseSavePath: (options, callerId) => host.chooseSavePathForCaller(callerId, options),
-    confirm: (options) => host.confirm(options),
+    confirm: (options, _callerId, signal) => host.confirm({ ...options, signal }),
     renderResearchVideo: host.renderResearchVideo,
+    checkResearchVideoHtml: host.checkResearchVideoHtml,
     researchVideoProgress: host.researchVideoProgress,
     printConversationPdf: host.printConversationPdf
   }
 }
 export function createRemoteDesktopFileInteraction(
-  request: (operation: DesktopNativeOperation, callerId?: string) => Promise<unknown>
+  request: (
+    operation: DesktopNativeOperation,
+    callerId?: string,
+    signal?: AbortSignal
+  ) => Promise<unknown>
 ): DesktopFileInteraction {
   return {
     chooseFiles: async (options, callerId) =>
@@ -126,8 +141,10 @@ export function createRemoteDesktopFileInteraction(
         canceled: boolean
         filePath?: string
       },
-    confirm: async (options, callerId) =>
-      (await request({ operation: 'message-box', options }, callerId)) as { response: number },
+    confirm: async (options, callerId, signal) =>
+      (await request({ operation: 'message-box', options }, callerId, signal)) as {
+        response: number
+      },
     researchVideoProgress: async (options) =>
       (await request({
         operation: 'research-video-progress',
@@ -135,6 +152,12 @@ export function createRemoteDesktopFileInteraction(
       })) as ResearchVideoProgress | null,
     renderResearchVideo: async (options) =>
       (await request({ operation: 'research-video-mp4', ...options })) as string,
+    checkResearchVideoHtml: async (options, signal) =>
+      (await request(
+        { operation: 'research-video-check', ...options },
+        undefined,
+        signal
+      )) as FilmVisualResult,
     printConversationPdf: async (options) => {
       // The runtime created and owns this private export directory. A file handoff avoids limiting
       // existing exports to the WebSocket frame budget; normal export cleanup removes it on failure.

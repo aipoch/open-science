@@ -304,6 +304,11 @@ class AcpModelChangeWorkflow {
                 value: selection.value
               }
             )) as { configOptions?: SessionConfigOption[] | null }
+            if (
+              target.route === 'codebuddy-subscription' &&
+              !matchSessionModelOption(response?.configOptions, target.sessionModel)?.alreadyCurrent
+            )
+              return false
             configOptions = response?.configOptions ?? configOptions
           }
 
