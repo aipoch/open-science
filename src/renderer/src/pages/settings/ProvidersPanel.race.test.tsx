@@ -80,6 +80,11 @@ it('shows the main model picker with only a CodeBuddy subscription configured', 
   })
   await act(async () => render())
   expect(container.querySelector('[role="combobox"][aria-label="Main model"]')).not.toBeNull()
+  const cards = container.querySelectorAll('[data-slot="settings-list-row"]')
+  expect(
+    Array.from(cards).filter((row) => row.textContent?.includes('CodeBuddy (China)'))
+  ).toHaveLength(1)
+  expect(container.textContent).not.toContain('CodeBuddy (International)')
   expect(
     Array.from(container.querySelectorAll('button')).filter(
       (button) => button.textContent?.trim() === 'Add provider'

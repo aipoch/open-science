@@ -1,3 +1,4 @@
+import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
 import { CirclePlus, Sparkles } from 'lucide-react'
 
 import {
@@ -112,7 +113,7 @@ export const ProviderKindIcon = ({
     return <img src={openaiLogo} alt="" className={cn('size-5 shrink-0', className)} />
   }
 
-  if (kindKey === 'codebuddy-subscription') {
+  if (kindKey === 'codebuddy-subscription' || codeBuddySiteForId(kindKey)) {
     return (
       <AgentFrameworkIcon frameworkId="codebuddy" className={cn('size-5 shrink-0', className)} />
     )

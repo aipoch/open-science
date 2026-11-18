@@ -1,23 +1,29 @@
+import { CircleCheck, Loader2, LogIn, LogOut, RefreshCw, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
+
 import { ErrorNotice } from '@/components/error-notice'
+import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/stores/settings-store'
 import type {
   CodeBuddyAccountRequest,
   CodeBuddySite
 } from '../../../../shared/codebuddy-subscription'
-import { AgentFrameworkIcon } from './provider-icons'
+import type { ProviderView } from '../../../../shared/settings'
+import { ProviderKindIcon } from './provider-icons'
+import { SettingsIconAction, SettingsListCard } from './SettingsLayout'
 
 type AccountAction = CodeBuddyAccountRequest['action']
 
-export function CodeBuddySubscriptionRow({
-  site,
-  configured
-}: {
-  site: CodeBuddySite
+function useCodeBuddyAccount(
+  site: CodeBuddySite,
   configured: boolean
-}): React.JSX.Element {
+): {
+  signedIn: boolean | undefined
+  pending: AccountAction | undefined
+  run: (action: AccountAction) => Promise<boolean>
+  error: React.JSX.Element | null
+} {
   const { t } = useTranslation()
   const account = useSettingsStore((state) => state.codeBuddyAccount)
   const [signedIn, setSignedIn] = useState<boolean | undefined>(configured ? undefined : false)
@@ -27,22 +33,26 @@ export function CodeBuddySubscriptionRow({
   const [failed, setFailed] = useState<AccountAction>()
   const current = useRef<{ action: AccountAction } | undefined>(undefined)
   const run = useCallback(
-    async (action: AccountAction) => {
+    async (action: AccountAction): Promise<boolean> => {
       const operation = { action }
       current.current = operation
+      setPending(action)
+      setFailed(undefined)
       try {
         const result = await account({ site, action })
-        if (current.current !== operation) return
-        if (!result.ok && result.category !== 'auth') {
+        if (current.current !== operation) return false
+        if (!result.ok && (result.category !== 'auth' || action === 'login')) {
           setFailed(action)
         } else if (action !== 'cancel') {
           setSignedIn(result.ok && action !== 'logout')
         }
+        return result.ok
       } catch {
         if (current.current === operation) {
           setFailed(action)
           if (configured && action !== 'refresh') setSignedIn(undefined)
         }
+        return false
       } finally {
         if (current.current === operation) {
           current.current = undefined
@@ -54,7 +64,6 @@ export function CodeBuddySubscriptionRow({
   )
   useEffect(() => {
     let mounted = true
-    // Skip launching a status process for a mount already discarded by React.
     if (configured)
       queueMicrotask(() => {
         if (mounted) void run('status')
@@ -67,13 +76,61 @@ export function CodeBuddySubscriptionRow({
         void account({ site, action: 'cancel' }).catch(() => undefined)
     }
   }, [account, configured, run, site])
+  const error = failed ? (
+    <ErrorNotice
+      inline
+      role="alert"
+      level="error"
+      title={
+        failed === 'refresh'
+          ? t('Could not refresh models from the vendor.')
+          : failed === 'status'
+            ? t('Could not check CodeBuddy sign-in status.')
+            : t('CodeBuddy account request failed.')
+      }
+    />
+  ) : null
+  return { pending, signedIn, run, error }
+}
 
-  const start = (action: AccountAction): void => {
-    setPending(action)
-    setFailed(undefined)
-    void run(action)
-  }
-  const primaryAction =
+export function CodeBuddySignIn({
+  site,
+  onAdded
+}: {
+  site: CodeBuddySite
+  onAdded: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const { pending, run, error } = useCodeBuddyAccount(site, false)
+  return (
+    <>
+      {error}
+      <Button
+        type="button"
+        disabled={!!pending}
+        onClick={async () => {
+          if (await run('login')) onAdded()
+        }}
+      >
+        {pending && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+        {t('Sign in with browser')}
+      </Button>
+    </>
+  )
+}
+
+export function CodeBuddySubscriptionRow({
+  site,
+  provider,
+  onDelete
+}: {
+  site: CodeBuddySite
+  provider: ProviderView
+  onDelete: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const { pending, signedIn, run, error } = useCodeBuddyAccount(site, true)
+  const action =
     pending === 'login'
       ? 'cancel'
       : signedIn === undefined
@@ -81,53 +138,72 @@ export function CodeBuddySubscriptionRow({
         : signedIn
           ? 'logout'
           : 'login'
-  const labels = {
-    login: t('Sign in'),
-    logout: t('Sign out'),
-    cancel: t('Cancel'),
-    status: pending === 'status' ? t('Checking…') : t('Retry')
+  const authActions = {
+    login: { label: t('Sign in'), icon: LogIn },
+    logout: { label: t('Sign out'), icon: LogOut },
+    cancel: { label: t('Cancel sign-in'), icon: X },
+    status: { label: pending === 'status' ? t('Checking…') : t('Retry'), icon: RefreshCw }
   }
   return (
-    <div className="px-3 py-2">
-      <div className="flex items-center gap-3">
-        <AgentFrameworkIcon frameworkId="codebuddy" className="size-5" />
-        <span className="flex-1 text-sm font-medium">
-          {site === 'internal' ? t('CodeBuddy (China)') : t('CodeBuddy (International)')}
-        </span>
-        {signedIn && (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
+    <SettingsListCard
+      name={site === 'internal' ? t('CodeBuddy (China)') : t('CodeBuddy (International)')}
+      badge={
+        <>
+          <ProviderKindIcon kindKey={provider.type} className="size-3" />
+          {t('Subscription')}
+        </>
+      }
+      indicators={
+        signedIn && (
+          <CircleCheck
+            className="size-3.5 shrink-0 text-emerald-500"
+            role="img"
+            aria-label={t('Connection verified')}
+          />
+        )
+      }
+      detail={
+        <>
+          {signedIn
+            ? t('{{count}} models', {
+                defaultValue_one: '{{count}} model',
+                count: provider.models.length
+              })
+            : signedIn === false
+              ? t('Not signed in')
+              : pending === 'status'
+                ? t('Checking…')
+                : null}
+          {error}
+        </>
+      }
+      actions={
+        <>
+          {signedIn && (
+            <SettingsIconAction
+              label={pending === 'refresh' ? t('Refreshing…') : t('Refresh from vendor')}
+              icon={RefreshCw}
+              disabled={!!pending}
+              onClick={() => void run('refresh')}
+              className="border border-border text-foreground"
+            />
+          )}
+          <SettingsIconAction
+            {...authActions[action]}
+            disabled={!!pending && pending !== 'login'}
+            onClick={() => void run(action)}
+            className="border border-border text-foreground"
+          />
+          <SettingsIconAction
+            label={t('Delete')}
+            icon={Trash2}
+            onClick={onDelete}
             disabled={!!pending}
-            onClick={() => start('refresh')}
-          >
-            {pending === 'refresh' ? t('Refreshing…') : t('Refresh from vendor')}
-          </Button>
-        )}
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={!!pending && pending !== 'login'}
-          onClick={() => start(primaryAction)}
-        >
-          {labels[primaryAction]}
-        </Button>
-      </div>
-      {failed && (
-        <ErrorNotice
-          inline
-          level="error"
-          title={
-            failed === 'refresh'
-              ? t('Could not refresh models from the vendor.')
-              : failed === 'status'
-                ? t('Could not check CodeBuddy sign-in status.')
-                : t('CodeBuddy account request failed.')
-          }
-        />
-      )}
-    </div>
+            danger
+            className="border border-border"
+          />
+        </>
+      }
+    />
   )
 }

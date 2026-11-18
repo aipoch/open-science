@@ -1,4 +1,9 @@
 import {
+  codeBuddyAccounts,
+  codeBuddySiteForId,
+  type CodeBuddySite
+} from '../../../../shared/codebuddy-subscription'
+import {
   type ModelProtocol,
   OFFICIAL_VENDORS,
   getOfficialVendor,
@@ -33,6 +38,7 @@ import {
 // component (satisfying react-refresh) while the wizard and settings page share this shape/factory.
 export type ProviderFormValue = {
   type: ProviderType
+  codeBuddySite?: CodeBuddySite
   codexTransport: CodexSubscriptionTransport
   name: string
   baseUrl: string
@@ -326,11 +332,22 @@ export const PROVIDER_KIND_GROUPS: {
 // has to handle both and neither can be silently forgotten.
 export type ProviderKind = {
   key: string
-  descriptionKey: ProviderKindDescriptionKey
+  descriptionKey?: ProviderKindDescriptionKey
   group: ProviderKindGroup
-} & ({ label: string; labelKey?: never } | { labelKey: 'Custom Gateway'; label?: never })
+} & (
+  | { label: string; labelKey?: never }
+  | {
+      labelKey: 'Custom Gateway' | (typeof codeBuddyAccounts)[CodeBuddySite]['name']
+      label?: never
+    }
+)
 
 export const PROVIDER_KINDS: ProviderKind[] = [
+  ...Object.values(codeBuddyAccounts).map(({ id, name }): ProviderKind => ({
+    key: id,
+    labelKey: name,
+    group: 'subscription'
+  })),
   {
     key: 'xai-subscription',
     label: xaiSubscriptionProviderIdentity().name,
@@ -375,6 +392,15 @@ export const providerKindPatch = (
   key: string,
   customApiEndpoint: ModelProtocol = 'messages'
 ): Partial<ProviderFormValue> => {
+  const site = codeBuddySiteForId(key)
+  if (site)
+    return createEmptyProviderFormValue({
+      type: 'codebuddy-subscription',
+      codeBuddySite: site,
+      name: codeBuddyAccounts[site].name,
+      region: undefined,
+      vendorId: undefined
+    })
   if (key === 'codex-subscription') {
     const identity = codexSubscriptionProviderIdentity()
     return {
@@ -457,6 +483,8 @@ export const providerKindPatch = (
 
 // Maps the current form value back to its provider-kind key (the dropdown's selected value).
 export const selectedKindKey = (value: ProviderFormValue): string => {
+  if (value.type === 'codebuddy-subscription' && value.codeBuddySite)
+    return codeBuddyAccounts[value.codeBuddySite].id
   if (value.type === 'custom') {
     return 'custom'
   }
