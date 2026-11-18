@@ -3137,6 +3137,10 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [sessionLoadErrorsBySession, setSessionLoadErrorsBySession] = useState<
     Readonly<Record<string, string>>
   >({})
+  const sessionLoadErrorsBySessionRef = useRef(sessionLoadErrorsBySession)
+  useEffect(() => {
+    sessionLoadErrorsBySessionRef.current = sessionLoadErrorsBySession
+  }, [sessionLoadErrorsBySession])
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
   const [writeErrorRetryable, setWriteErrorRetryable] = useState(true)
@@ -4198,8 +4202,11 @@ const useSessionPersistence = (): SessionPersistenceState => {
           const needsSessionDetailsRecovery =
             recoveryRequest?.projectId === session.projectId &&
             recoveryRequest.sessionId === session.id
+          const sessionLoadKey = `${session.projectId}\0${session.id}`
           const canStartSessionDetailsRecovery =
-            needsSessionDetailsRecovery && !hasLocalSessionWork(session)
+            needsSessionDetailsRecovery &&
+            !hasLocalSessionWork(session) &&
+            sessionLoadErrorsBySessionRef.current[sessionLoadKey] === undefined
           return (
             session.id === state.selectedSessionId &&
             (canStartSessionDetailsRecovery ||
