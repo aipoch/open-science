@@ -1,3 +1,4 @@
+import { CitationAbstract } from './LiteratureDetailText'
 import { fullCreatorLabel, publicationSummary } from '../literature-item-display'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -632,12 +633,7 @@ function LiteratureRelatedList({
                       <ExternalTextLink href={entry.item.url} className="text-xs">
                         {t('View source')}
                       </ExternalTextLink>
-                      {entry.item.abstract ? (
-                        <details className="mt-2 text-sm">
-                          <summary className="cursor-pointer">{t('Abstract')}</summary>
-                          <p className="mt-2 whitespace-pre-wrap">{entry.item.abstract}</p>
-                        </details>
-                      ) : null}
+                      <CitationAbstract text={entry.item.abstract} className="mt-2" />
                       {receipt ? (
                         <p role="status" className="mt-2 text-xs">
                           {receiptLabel(receipt)}

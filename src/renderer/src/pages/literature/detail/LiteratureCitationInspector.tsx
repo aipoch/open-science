@@ -1,3 +1,4 @@
+import { CitationAbstract } from './LiteratureDetailText'
 import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronRight, List } from 'lucide-react'
@@ -246,12 +247,10 @@ export function LiteratureCitationInspector({
                   {t('View source')}
                 </ExternalTextLink>
               </div>
-              {selectedNode.record.item.abstract ? (
-                <details className="rounded-xl border border-border-300/70 bg-muted/15 px-3 py-2 text-sm">
-                  <summary className="cursor-pointer font-medium">{t('Abstract')}</summary>
-                  <p className="mt-2 whitespace-pre-wrap">{selectedNode.record.item.abstract}</p>
-                </details>
-              ) : null}
+              <CitationAbstract
+                text={selectedNode.record.item.abstract}
+                className="rounded-xl border border-border-300/70 bg-muted/15 px-3 py-2 [&>summary]:font-medium"
+              />
             </div>
           ) : !selectedNode ? (
             <p className="text-sm text-muted-foreground">
