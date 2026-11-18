@@ -8,7 +8,7 @@ import type {
   CodeBuddyAuthMode,
   CodeBuddySite
 } from '../../shared/codebuddy-subscription'
-import { collectSelectValues } from '../acp/session-config'
+import { collectSelectValues } from '../../shared/acp-select-options'
 import {
   createPosixProcessTreeOwnership,
   terminateProcessTree,

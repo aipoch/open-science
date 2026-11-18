@@ -21,7 +21,6 @@
     "src/main/settings/claude-runtime-provisioner.ts",
     "src/main/settings/codebuddy-detect.test.ts",
     "src/main/settings/codebuddy-detect.ts",
-    "src/main/settings/codebuddy-install.ts",
     "src/main/settings/codex-detect.test.ts",
     "src/main/settings/codex-detect.ts",
     "src/main/settings/codex-error.test-utils.ts",
