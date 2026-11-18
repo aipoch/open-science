@@ -99,6 +99,20 @@ describe('read-only ciphertext inventory', () => {
     }
   )
 
+  it('includes a retired literature credential in startup key validation', () => {
+    const paths = fixture()
+    writeFileSync(
+      join(paths.configRoot, 'settings.json'),
+      JSON.stringify({
+        version: 1,
+        connectors: { semanticScholarApiKeyRef: ref('retired-semantic-scholar-ciphertext') }
+      })
+    )
+    expect(readCredentialCiphertexts(paths).map((value) => value.toString())).toContain(
+      'retired-semantic-scholar-ciphertext'
+    )
+  })
+
   it('does not let an inactive journal bypass an unreadable application database', () => {
     const paths = fixture()
     const path = join(paths.configRoot, 'open-science.db')
