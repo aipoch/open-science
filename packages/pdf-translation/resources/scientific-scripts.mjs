@@ -99,21 +99,84 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
     body = (part) => part.scale >= 0.9 && part.scale <= 1.1 && Math.abs(part.rise) < 0.01,
     small = (part) => part.scale >= 0.5 && part.scale < 0.85,
     center = (part) => (part.bounds[1] + part.bounds[3]) / 2,
+    pushNativeGroup = (start, end, parts, baseline, targetOffset) => {
+      groups.push({
+        sourceOffset: start,
+        targetOffset,
+        label: source.slice(start, end),
+        sourceIndices: parts.flatMap((part) => part.sourceIndices),
+        baselineIndex: baseline.sourceIndices[0],
+        nativeScriptGroup: true
+      })
+    },
     addNativeGroup = (start, end, parts, baseline) => {
       const label = source.slice(start, end),
         from = occurrences(source, label),
         to = occurrences(translation, label),
         ordinal = from.indexOf(start)
       if (ordinal < 0 || from.length !== to.length) return
-      groups.push({
-        sourceOffset: start,
-        targetOffset: to[ordinal],
-        label,
-        sourceIndices: parts.flatMap((part) => part.sourceIndices),
-        baselineIndex: baseline.sourceIndices[0],
-        nativeScriptGroup: true
-      })
+      pushNativeGroup(start, end, parts, baseline, to[ordinal])
     }
+  // Extraction flattens a blackboard capital and its raised dimensions.
+  // Move the entire native group only for unchanged set relations and dimensions.
+  const dimensions =
+    /([∈⊂])\s*([A-Z][a-z](?:×[a-z])?)(?![\p{Script=Latin}\p{Script=Greek}\p{N}\p{M}_′″‴'×+\-/^−\u{1d400}-\u{1d7ff}])/gu
+  const sourceDimensions = [...source.matchAll(dimensions)],
+    targetDimensions = [...translation.matchAll(dimensions)]
+  for (const match of sourceDimensions) {
+    const label = match[2],
+      end = match.index + match[0].length,
+      start = end - label.length,
+      parts = nativeParts(match.index, end, label.length + 1)
+    if (!parts) continue
+    const [relation, base, ...exponent] = parts,
+      height = base.bounds[3] - base.bounds[1],
+      relationGap = base.bounds[0] - relation.bounds[2]
+    if (
+      relation.sourceOffset !== match.index ||
+      relation.label !== match[1] ||
+      !/^(?:[A-Z]{6}\+)?CMSY(?:5|6|7|8|9|10|12)$/u.test(relation.fontName) ||
+      !body(relation) ||
+      !body(base) ||
+      !Number.isFinite(relation.baseline - base.baseline) ||
+      Math.abs(relation.baseline - base.baseline) > 0.01 ||
+      relationGap < 0 ||
+      relationGap >= height ||
+      base.sourceOffset !== start ||
+      base.label !== label[0] ||
+      !/^(?:[A-Z]{6}\+)?MSBM(?:5|6|7|8|9|10|12)$/u.test(base.fontName) ||
+      exponent.some((part, index) => {
+        const gap = part.bounds[0] - parts[index + 1].bounds[2],
+          font =
+            part.label === '×' ? /^(?:[A-Z]{6}\+)?CMSY\d{1,2}$/u : /^(?:[A-Z]{6}\+)?CMMI\d{1,2}$/u
+        return (
+          part.sourceOffset !== start + index + 1 ||
+          part.label !== label[index + 1] ||
+          !font.test(part.fontName) ||
+          !small(part) ||
+          !sameStyle(exponent[0], part) ||
+          part.rise < height * 0.3 ||
+          part.rise > height * 0.85 ||
+          center(part) <= center(base) ||
+          gap < -height * 0.1 ||
+          gap > height * 0.4
+        )
+      })
+    )
+      continue
+    const from = sourceDimensions.filter((entry) => entry[2] === label),
+      to = targetDimensions.filter((entry) => entry[2] === label)
+    if (from.length !== to.length || from.some((entry, index) => entry[1] !== to[index][1]))
+      continue
+    const target = to[from.indexOf(match)]
+    pushNativeGroup(
+      start,
+      end,
+      parts.slice(1),
+      base,
+      target.index + target[0].length - label.length
+    )
+  }
   // Move the complete raised order and lowered index with their native base.
   for (const match of source.matchAll(/\p{Script=Greek}\(\d{1,2}\)\d{2,6}(?=\s*=)/gu)) {
     const start = match.index,

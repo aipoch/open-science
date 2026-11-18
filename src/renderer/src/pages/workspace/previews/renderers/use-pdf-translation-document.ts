@@ -2652,7 +2652,7 @@ export function usePdfTranslationDocument(
                   // citation twice. Prove all linked blocks in that run together;
                   // the full helper keeps their occurrence and numeric ordinals.
                   blockKey = pdfBracketedReferenceBlocks(nativeSource.targetBlock.text)[0]?.key,
-                  tokens = pdfBracketedReferenceBlocks(unit.source).flatMap((block) => {
+                  records = pdfBracketedReferenceBlocks(unit.source).flatMap((block) => {
                     const first = block.numbers[0],
                       proof = translatedPdfBracketedReference(
                         unit.source,
@@ -2661,47 +2661,53 @@ export function usePdfTranslationDocument(
                         block.start + first.index
                       )
                     if (!proof) return []
-                    const nativeDigits = [...proof.targetBlock.text.matchAll(/\d+/gu)]
+                    const digits = [...proof.targetBlock.text.matchAll(/\d+/gu)]
                     let cursor = 0
-                    const sharedRun = sourceItems.some((item) => {
+                    const runs = sourceItems.filter((item): item is TextItem => {
                       const start = cursor
                       cursor += 'str' in item ? item.str.length : 0
                       return (
-                        owned.includes(item) &&
-                        // A run may close one citation and open another. Sharing
-                        // only its delimiter does not share the numeric identity.
-                        nativeDigits.some(
+                        'str' in item &&
+                        digits.some(
                           (digit) =>
                             start < proof.targetBlock.start + digit.index + digit[0].length &&
                             cursor > proof.targetBlock.start + digit.index
                         )
                       )
                     })
-                    const selected = sharedRun || block.key === blockKey
-                    if (selected) {
-                      let cursor = 0
-                      for (const item of sourceItems) {
-                        const start = cursor
-                        cursor += 'str' in item ? item.str.length : 0
-                        if (
-                          'str' in item &&
-                          nativeDigits.some(
-                            (digit) =>
-                              start < proof.targetBlock.start + digit.index + digit[0].length &&
-                              cursor > proof.targetBlock.start + digit.index
-                          )
-                        )
-                          digitOwners.add(item)
-                      }
-                    }
-                    return selected
-                      ? block.numbers.map((token) => ({
+                    return [{ block, runs }]
+                  }),
+                  selectedRecords = new Set<(typeof records)[number]>(),
+                  sharedRuns = new Set(owned),
+                  sharedKeys = new Set([blockKey])
+                let expanded = true
+                while (expanded) {
+                  expanded = false
+                  for (const record of records) {
+                    if (
+                      selectedRecords.has(record) ||
+                      (!sharedKeys.has(record.block.key) &&
+                        !record.runs.some((run) => sharedRuns.has(run)))
+                    )
+                      continue
+                    selectedRecords.add(record)
+                    sharedKeys.add(record.block.key)
+                    record.runs.forEach((run) => {
+                      sharedRuns.add(run)
+                      digitOwners.add(run)
+                    })
+                    expanded = true
+                  }
+                }
+                const tokens = records.flatMap((record) =>
+                    selectedRecords.has(record)
+                      ? record.block.numbers.map((token) => ({
                           label: token[0],
-                          offset: block.start + token.index,
-                          blockKey: block.key
+                          offset: record.block.start + token.index,
+                          blockKey: record.block.key
                         }))
                       : []
-                  }),
+                  ),
                   group = sourceAnnotations
                     .flatMap((candidate, position) => {
                       if (
@@ -3179,7 +3185,7 @@ export function usePdfTranslationDocument(
                 )
               })()
             // A digit-only annotation needs the full typed-reference identity and
-            // its native row ordinal. A repeated digit in one merged row abstains.
+            // its native row ordinal. Repeated references need complete native link coverage.
             const typedReferences = (
               value: string,
               includeCompact: boolean
@@ -3327,23 +3333,77 @@ export function usePdfTranslationDocument(
                     if (
                       !same(from, actualFrom) ||
                       !same(from, to) ||
-                      candidates.length !== 1 ||
-                      [
-                        ...hit
-                          .map((i) => i.str)
-                          .join(' ')
-                          .matchAll(
-                            repeatedCompactPanel
-                              ? /(?<![A-Za-z\d])\d+[A-Za-z](?![A-Za-z\d])/gu
-                              : /\d+/gu
-                          )
-                      ].filter((m) => m[0] === sourceLabel).length !== 1 ||
-                      sourceAnnotations.filter((a) =>
-                        linkedItems(originalText!, a.rect, true).some((item) => hit.includes(item))
-                      ).length !== 1
+                      !candidates.length ||
+                      candidates.length > 8
                     )
                       return undefined
-                    const occurrence = actualFrom.indexOf(candidates[0]),
+                    const row = hit.map((item) => item.str).join(' '),
+                      digits = [
+                        ...row.matchAll(
+                          repeatedCompactPanel
+                            ? /(?<![A-Za-z\d])\d+[A-Za-z](?![A-Za-z\d])/gu
+                            : /\d+/gu
+                        )
+                      ],
+                      rowLinks = sourceAnnotations.flatMap((link) => {
+                        const items = linkedItems(originalText!, link.rect, true)
+                        return items.some((item) => hit.includes(item)) ? [{ link, items }] : []
+                      })
+                    let ordinal = 0
+                    if (candidates.length === 1) {
+                      if (
+                        digits.filter((match) => match[0] === sourceLabel).length !== 1 ||
+                        rowLinks.length !== 1
+                      )
+                        return undefined
+                    } else {
+                      // A merged row can contain several links to the same figure. Only a complete
+                      // set of disjoint links with an identical action establishes their order.
+                      const rowItem = hit[0],
+                        [, b, c, d, left] = rowItem.transform,
+                        right = left + rowItem.width
+                      rowLinks.sort((a, b) => a.link.rect[0] - b.link.rect[0])
+                      if (
+                        hit.length !== 1 ||
+                        !/^\d+$/u.test(sourceLabel) ||
+                        !annotation.destinationCoordinates?.length ||
+                        !candidates[0].key.startsWith('figure:') ||
+                        candidates.some(
+                          (part) => part.key !== candidates[0].key || part.label !== sourceLabel
+                        ) ||
+                        digits.length !== candidates.length ||
+                        digits.some((match) => match[0] !== sourceLabel) ||
+                        rowItem.transform[0] <= 0 ||
+                        b !== 0 ||
+                        c !== 0 ||
+                        d <= 0 ||
+                        ![...rowItem.transform, rowItem.width].every(Number.isFinite) ||
+                        rowItem.width <= 0 ||
+                        rowLinks.length !== candidates.length ||
+                        rowLinks.some(
+                          ({ link, items }, i) =>
+                            items.length !== 1 ||
+                            link.key !== annotation.key ||
+                            !sameCoordinates(
+                              link.destinationCoordinates,
+                              annotation.destinationCoordinates
+                            ) ||
+                            link.quadPoints?.length ||
+                            link.rect.length !== 4 ||
+                            !link.rect.every(Number.isFinite) ||
+                            link.rect[0] < left - 0.001 ||
+                            link.rect[2] > right + 0.001 ||
+                            Math.abs(link.rect[1] - annotation.rect[1]) > 0.001 ||
+                            Math.abs(link.rect[3] - annotation.rect[3]) > 0.001 ||
+                            link.rect[2] <= link.rect[0] ||
+                            (i > 0 && rowLinks[i - 1].link.rect[2] >= link.rect[0])
+                        )
+                      )
+                        return undefined
+                      ordinal = rowLinks.findIndex(({ link }) => link === annotation)
+                      if (ordinal < 0) return undefined
+                    }
+                    const occurrence = actualFrom.indexOf(candidates[ordinal]),
                       expected = translatedPdfLinkFragment(
                         unit.source,
                         runSnapshot.units[unitIndex].translation,

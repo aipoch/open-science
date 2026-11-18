@@ -1467,6 +1467,190 @@ describe('translated PDF ownership', () => {
   })
 })
 
+it.each([
+  'valid',
+  'unlinked-other-key',
+  'unlinked-repeated-key',
+  'swapped-repeated-actions',
+  'swapped-within-row',
+  'changed-number',
+  'missing-link',
+  'extra-link',
+  'changed-action'
+] as const)(
+  'verifies transitive native citation runs without borrowing actions: %s',
+  async (kind) => {
+    const f = fixture(),
+      tail =
+        kind === 'unlinked-other-key'
+          ? 'Later [11].'
+          : kind === 'unlinked-repeated-key'
+            ? 'Later [7].'
+            : '',
+      before = ['First [7], [9].', 'Again [7], [9].', ...(tail ? [tail] : [])],
+      sourceText = before.join(' '),
+      labels =
+        kind === 'swapped-within-row' ? ['9', '7'] : ['7', kind === 'changed-number' ? '8' : '9'],
+      translatedTail =
+        kind === 'unlinked-other-key'
+          ? '另见[11]。'
+          : kind === 'unlinked-repeated-key'
+            ? '另见[7]。'
+            : '',
+      targetText =
+        `见[${labels[0]}]、[${labels[1]}]。见[${labels[0]}]、[${labels[1]}]。` + translatedTail,
+      source = createPdfTranslationSource({
+        ...f.results.source,
+        units: [
+          {
+            ...f.results.source.units[0],
+            source: sourceText,
+            fragments: [
+              {
+                ...f.results.source.units[0].fragments[0],
+                items: before.map((text, index) => ({ index, text }))
+              }
+            ]
+          }
+        ]
+      }),
+      results = {
+        source,
+        units: [{ id: 'one', translationSource: sourceText, translation: targetText }]
+      },
+      item = (str: string, x: number, y: number, width: number): typeof f.item => ({
+        ...f.item,
+        str,
+        transform: [10, 0, 0, 10, x, y],
+        width
+      })
+    f.originalPage.getTextContent.mockResolvedValue({
+      items: before.map((s, i) => item(s, 60, 700 - i * 16, 160))
+    })
+    f.targetPage.getTextContent.mockResolvedValue({
+      items: [
+        ...[700, 684].flatMap((y) => [
+          item('见[', 60, y, 20),
+          item(labels[0], 80, y, 6),
+          item(']、[', 86, y, 30),
+          item(labels[1], 116, y, 6),
+          item(']。', 122, y, 20)
+        ]),
+        ...(tail ? [item(translatedTail, 60, 668, 80)] : [])
+      ]
+    })
+    const links = [0, 1, 2, 3].map((i) => ({
+      annotationType: 2,
+      rect: [
+        99 + (i % 2) * 40,
+        699 - Math.floor(i / 2) * 16,
+        107 + (i % 2) * 40,
+        711 - Math.floor(i / 2) * 16
+      ],
+      url: `https://example.org/reference/${i % 2 ? 9 : 7}/occurrence/${Math.floor(i / 2)}`
+    }))
+    f.originalPage.getAnnotations.mockResolvedValue(links)
+    const moved = links.slice(0, kind === 'missing-link' ? 3 : 4).map((link, i) => {
+      const at = kind === 'swapped-repeated-actions' ? (i + 2) % 4 : i,
+        x = [80, 116][at % 2],
+        y = 700 - Math.floor(at / 2) * 16
+      return {
+        ...link,
+        rect: [x - 1, y - 1, x + 7, y + 11],
+        ...(kind === 'changed-action' && i === 0 ? { url: 'https://example.org/changed' } : {})
+      }
+    })
+    f.targetPage.getAnnotations.mockResolvedValue(
+      kind === 'extra-link' ? [...moved, moved[0]] : moved
+    )
+    const artifact = { results, data: new Uint8Array([4, 5]) },
+      hook = renderHook(() => usePdfTranslationDocument(f.original, results, artifact, 'reader:0'))
+    await waitFor(() =>
+      expect(hook.result.current.state.status).toBe(
+        ['valid', 'unlinked-other-key'].includes(kind) ? 'ready' : 'error'
+      )
+    )
+  }
+)
+
+it.each([
+  'proved pair',
+  'swapped target order',
+  'different destination',
+  'overlapping source boxes',
+  'missing source link',
+  'changed target number',
+  'same target glyph'
+])('checks repeated figure links in one native row: %s', async (change) => {
+  const f = fixture(),
+    sourceText = 'Compare Figure 7. Use Figure 7 again.',
+    targetNumber = change === 'changed target number' ? '8' : '7',
+    translation = `比较图7。再看图${targetNumber}。`,
+    item = (str: string, x: number, width: number): typeof f.item => ({
+      ...f.item,
+      str,
+      transform: [10, 0, 0, 10, x, 700],
+      width
+    }),
+    source = createPdfTranslationSource({
+      ...f.results.source,
+      units: [
+        {
+          ...f.results.source.units[0],
+          source: sourceText,
+          fragments: [
+            {
+              ...f.results.source.units[0].fragments[0],
+              items: [{ index: 0, text: sourceText }]
+            }
+          ]
+        }
+      ]
+    }),
+    results = { source, units: [{ id: 'one', translationSource: sourceText, translation }] },
+    link = { annotationType: 2, dest: [0, { name: 'XYZ' }, 12, 90, null] },
+    second = {
+      ...link,
+      ...(change === 'different destination' ? { dest: [0, { name: 'XYZ' }, 12, 110, null] } : {})
+    },
+    firstTarget = change === 'swapped target order' ? 167 : 94,
+    secondTarget = ['swapped target order', 'same target glyph'].includes(change) ? 94 : 167
+  f.originalPage.getTextContent.mockResolvedValue({ items: [item(sourceText, 60, 220)] })
+  f.targetPage.getTextContent.mockResolvedValue({
+    items: [
+      item('比较图', 60, 30),
+      item('7', 95, 5),
+      item('。再看图', 104, 60),
+      item(targetNumber, 168, 5),
+      item('。', 177, 5)
+    ]
+  })
+  f.originalPage.getAnnotations.mockResolvedValue([
+    { ...link, rect: [136, 699, 143, 711] },
+    ...(change === 'missing source link'
+      ? []
+      : [
+          {
+            ...second,
+            rect:
+              change === 'overlapping source boxes' ? [140, 699, 147, 711] : [230, 699, 237, 711]
+          }
+        ])
+  ])
+  f.targetPage.getAnnotations.mockResolvedValue([
+    { ...link, rect: [firstTarget, 699, firstTarget + 7, 711] },
+    ...(change === 'missing source link'
+      ? []
+      : [{ ...second, rect: [secondTarget, 699, secondTarget + 7, 711] }])
+  ])
+  const artifact = { results, data: new Uint8Array([4, 5]) },
+    hook = renderHook(() => usePdfTranslationDocument(f.original, results, artifact, 'reader:0'))
+  await waitFor(() =>
+    expect(hook.result.current.state.status).toBe(change === 'proved pair' ? 'ready' : 'error')
+  )
+  hook.unmount()
+})
+
 describe('independent moved-link validation', () => {
   it.each([
     'changed-body',

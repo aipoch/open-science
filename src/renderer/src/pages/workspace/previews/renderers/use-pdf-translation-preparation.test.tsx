@@ -231,8 +231,7 @@ describe('reader-owned PDF preparation', () => {
     'pdfjs-paragraph-layout-62',
     'pdfjs-paragraph-layout-63',
     'pdfjs-paragraph-layout-64',
-    'pdfjs-paragraph-layout-65',
-    'pdfjs-paragraph-layout-66'
+    'pdfjs-paragraph-layout-65'
   ])(
     'extracts a new parser layout after %s recovery is suppressed and preparation is reset',
     async (parserVersion) => {
@@ -278,7 +277,7 @@ describe('reader-owned PDF preparation', () => {
       expect(current.state.extraction.source).toBe(fresh.source)
       expect(current.state.extraction.source.units[0].id).toBe('fresh-unit')
       expect(getPdfTranslationLayoutSnapshot(fresh.source)?.parserVersion).toBe(
-        'pdfjs-paragraph-layout-67'
+        'pdfjs-paragraph-layout-72'
       )
       expect(historical.parserVersion).toBe(parserVersion)
       expect(historical.units[0].id).toBe('saved-unit')
