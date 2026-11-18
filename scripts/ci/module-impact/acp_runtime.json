@@ -250,7 +250,11 @@
     "src/main/acp/opencode-store.test.ts",
     "src/main/acp/opencode-v2.integration.test.ts",
     "src/main/acp/harness-turn-adapter.ts",
-    "src/main/acp/harness-turn-adapter.test.ts"
+    "src/main/acp/harness-turn-adapter.test.ts",
+    "src/main/acp/permission-continuation-workflow.ts",
+    "src/main/acp/question-continuation-workflow.ts",
+    "src/main/acp/plan-continuation-workflow.ts",
+    "src/main/acp/runtime-continuation-composition.ts"
   ],
   "interfacePaths": [
     "src/main/acp/agent-process.ts",

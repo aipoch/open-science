@@ -27,7 +27,11 @@ import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
-import type { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
+import { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
+import {
+  AcpPlanContinuationWorkflow,
+  type PlanContinuationDependencies
+} from './plan-continuation-workflow'
 
 type AcpSessionPlanCall = Readonly<{
   projectId: string
@@ -1184,3 +1188,28 @@ type AcpRuntimePlanWorkflow = ReturnType<typeof composeAcpRuntimePlanWorkflow>
 
 export { composeAcpRuntimePlanWorkflow }
 export type { AcpRuntimePlanWorkflow, AcpSessionPlanCall }
+
+// Keep delivery authority and its preparation/retry workflow at the same composition boundary.
+export function composeAcpRuntimePlanContinuations(
+  options: AcpRuntimeOptions,
+  session: AcpRuntimeSessionOwners,
+  host: Pick<PlanContinuationDependencies, 'send' | 'scheduleContinuation' | 'projection'>
+): Readonly<{
+  deliveries: SessionPlanDeliveryOwner | undefined
+  workflow: AcpPlanContinuationWorkflow
+}> {
+  const deliveries = options.plan ? new SessionPlanDeliveryOwner(options.plan.sessions) : undefined
+  return Object.freeze({
+    deliveries,
+    workflow: new AcpPlanContinuationWorkflow({
+      ...host,
+      deliveries,
+      sessions: options.plan?.sessions,
+      hasActiveSession: (sessionId) =>
+        Boolean(session.sessionRegistry.lookup(sessionId)?.attachment?.session),
+      context: session.durableContinuationContext,
+      continuations: session.appContinuations,
+      publication: session.publication
+    })
+  })
+}

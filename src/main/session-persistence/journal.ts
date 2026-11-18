@@ -105,6 +105,17 @@ const fail = (message: string): never => {
 }
 const exact = (value: Record<string, unknown>, keys: string[]): boolean =>
   Object.keys(value).length === keys.length && Object.keys(value).every((key) => keys.includes(key))
+const SESSION_JOURNAL_VERSION = 1
+const assertJournalVersion = (value: Record<string, unknown>): void => {
+  const version = Object.hasOwn(value, 'journalVersion')
+    ? value.journalVersion
+    : SESSION_JOURNAL_VERSION
+  if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 1)
+    return fail('Invalid Session journal version.')
+  if (version > SESSION_JOURNAL_VERSION) throw new SessionJournalVersionError()
+}
+const exactJournalEnvelope = (value: Record<string, unknown>, keys: string[]): boolean =>
+  exact(value, Object.hasOwn(value, 'journalVersion') ? [...keys, 'journalVersion'] : keys)
 const revisionOf = (value: JournalValue, format: 'legacy' | 'journal' = 'journal'): number => {
   if (!object(value)) return fail('Session document must be an object.')
   const revision = object(value.session) ? value.session.revision : value.revision
@@ -244,7 +255,12 @@ export class SessionJournalStore {
       this.assertSize(document)
       if (!state) return this.publish(path, document)
       const contents =
-        JSON.stringify({ type: 'session_update', revision: revisionOf(document), records }) + '\n'
+        JSON.stringify({
+          type: 'session_update',
+          journalVersion: SESSION_JOURNAL_VERSION,
+          revision: revisionOf(document),
+          records
+        }) + '\n'
       this.assertLineSize(Buffer.byteLength(contents))
       const target = sessionJournalPath(path)
       if ((await this.fingerprint(path)) !== state.fingerprint)
@@ -285,7 +301,12 @@ export class SessionJournalStore {
     await this.assertDirectory(path)
     await mkdir(dirname(path), { recursive: true })
     const target = sessionJournalPath(path)
-    const contents = JSON.stringify({ type: 'session_snapshot', document }) + '\n'
+    const contents =
+      JSON.stringify({
+        type: 'session_snapshot',
+        journalVersion: SESSION_JOURNAL_VERSION,
+        document
+      }) + '\n'
     this.assertLineSize(Buffer.byteLength(contents))
     if ((await this.fingerprint(path)) !== 'missing')
       return fail('Session authority changed before initial publication.')
@@ -461,8 +482,9 @@ export class SessionJournalStore {
         return fail('Session journal contains an invalid complete record.')
       }
       if (!object(value)) return fail('Invalid Session journal record.')
+      assertJournalVersion(value)
       if (document === undefined) {
-        if (!exact(value, ['type', 'document']) || value.type !== 'session_snapshot')
+        if (!exactJournalEnvelope(value, ['type', 'document']) || value.type !== 'session_snapshot')
           return fail('Session journal must start with its initial snapshot.')
         document = freezeParsedJournalValue(value.document)
         if (object(document) && typeof document.version === 'number' && document.version > 2)
@@ -472,7 +494,7 @@ export class SessionJournalStore {
         observer?.visit(document)
       } else {
         if (
-          !exact(value, ['type', 'revision', 'records']) ||
+          !exactJournalEnvelope(value, ['type', 'revision', 'records']) ||
           value.type !== 'session_update' ||
           value.revision !== revisionOf(document) + 1
         )
