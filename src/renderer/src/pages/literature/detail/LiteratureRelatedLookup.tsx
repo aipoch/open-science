@@ -14,9 +14,8 @@ import {
 } from '@aipoch/literature-discovery/contracts'
 import { Tabs } from 'radix-ui'
 import { createPortal } from 'react-dom'
-import { BookOpen, Quote, LoaderCircle, RefreshCw } from 'lucide-react'
+import { BookOpen, Quote, LoaderCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import {
   Select,
   SelectTrigger,
@@ -67,27 +66,6 @@ function LiteratureRelatedSession(
   const { source, requestRelated } = useCitationSource(props.provider)
   const [graphOpened, setGraphOpened] = useState(view === 'graph')
   const [listOpened, setListOpened] = useState(view === 'list')
-  const [refreshEpoch, setRefreshEpoch] = useState(0)
-  const [refreshing, setRefreshing] = useState(false)
-  const refreshPending = useRef(false)
-  const active = useRef(true)
-  useEffect(() => {
-    active.current = true
-    return () => {
-      active.current = false
-    }
-  }, [])
-  const [refreshError, setRefreshError] = useState<LiteratureRelatedResult>()
-  const [retrievedAt, setRetrievedAt] = useState<number>()
-  const schedule = useCallback<ScheduleRequest>(
-    async (request, shouldRun) => {
-      const response = await requestRelated(request, shouldRun)
-      if (response.state === 'ready' && response.retrievedAt !== undefined)
-        setRetrievedAt((previous) => Math.max(previous ?? 0, response.retrievedAt!))
-      return response
-    },
-    [requestRelated]
-  )
   const [referenceInvalidated, setReferenceInvalidated] = useState(false)
   const invalidatedReference = useRef(false)
   const isReferenceInvalidated = useCallback(() => invalidatedReference.current, [])
@@ -104,49 +82,6 @@ function LiteratureRelatedSession(
     },
     [onSavingChange]
   )
-  const refresh = async (): Promise<void> => {
-    if (
-      refreshPending.current ||
-      saving ||
-      invalidatedReference.current ||
-      (refreshError?.retryAt ?? 0) > Date.now()
-    )
-      return
-    refreshPending.current = true
-    setRefreshing(true)
-    setRefreshError(undefined)
-    try {
-      const response = await schedule(
-        {
-          itemId: props.item.id,
-          expectedMetadataRevision: props.item.metadataRevision,
-          direction: 'references',
-          offset: 0,
-          refresh: true
-        },
-        () => active.current && !invalidatedReference.current
-      )
-      if (!active.current) return
-      if (response.state === 'ready') setRefreshEpoch((value) => value + 1)
-      else {
-        setRefreshError(response)
-        if (response.issue === 'reference-changed') invalidateReference()
-      }
-    } catch {
-      if (active.current)
-        setRefreshError({
-          itemId: props.item.id,
-          metadataRevision: props.item.metadataRevision,
-          direction: 'references',
-          state: 'unavailable',
-          records: [],
-          issue: 'unavailable'
-        })
-    } finally {
-      refreshPending.current = false
-      if (active.current) setRefreshing(false)
-    }
-  }
   const toolbar = (
     <div
       className="flex min-w-0 flex-wrap items-center gap-1"
@@ -159,7 +94,7 @@ function LiteratureRelatedSession(
           className="px-2"
           variant={view === 'list' ? 'secondary' : 'ghost'}
           aria-pressed={view === 'list'}
-          disabled={saving || refreshing}
+          disabled={saving}
           onClick={() => {
             setListOpened(true)
             setView('list')
@@ -172,7 +107,7 @@ function LiteratureRelatedSession(
           className="px-2"
           variant={view === 'graph' ? 'secondary' : 'ghost'}
           aria-pressed={view === 'graph'}
-          disabled={saving || refreshing}
+          disabled={saving}
           onClick={() => {
             setGraphOpened(true)
             setView('graph')
@@ -183,7 +118,7 @@ function LiteratureRelatedSession(
       </div>
       <Select
         value={props.provider}
-        disabled={saving || refreshing || referenceInvalidated}
+        disabled={saving || referenceInvalidated}
         onValueChange={(value) => {
           if (!saving && !invalidatedReference.current)
             props.onProviderChange(value as CitationProviderChoice)
@@ -198,32 +133,6 @@ function LiteratureRelatedSession(
           <SelectItem value="opencitations-index">{t('OpenCitations · Index v2')}</SelectItem>
         </SelectContent>
       </Select>
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={t('Refresh')}
-              disabled={saving || refreshing || referenceInvalidated}
-              onClick={() => void refresh()}
-            >
-              <RefreshCw
-                className={refreshing ? 'size-4 animate-spin' : 'size-4'}
-                aria-hidden="true"
-              />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{t('Refresh')}</p>
-            {retrievedAt !== undefined ? (
-              <time dateTime={new Date(retrievedAt).toISOString()}>
-                {t('Fetched: {{time}}', { time: new Date(retrievedAt).toLocaleString() })}
-              </time>
-            ) : null}
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
     </div>
   )
   return (
@@ -246,22 +155,6 @@ function LiteratureRelatedSession(
           )}
         </p>
       ) : null}
-      {refreshError ? (
-        <div className="mx-5 mt-3">
-          <CitationLookupError
-            result={refreshError}
-            sourceName={
-              props.provider === 'europe-pmc'
-                ? t('Europe PMC')
-                : props.provider === 'opencitations-index'
-                  ? t('OpenCitations · Index v2')
-                  : t('OpenCitations · SKG-IF')
-            }
-            disabled={saving || refreshing || referenceInvalidated}
-            onRetry={() => void refresh()}
-          />
-        </div>
-      ) : null}
       {referenceInvalidated ? (
         <ErrorNotice
           inline
@@ -278,10 +171,8 @@ function LiteratureRelatedSession(
         {listOpened && (
           <LiteratureRelatedList
             {...props}
-            key={refreshEpoch}
             source={source}
-            disabled={refreshing}
-            requestRelated={schedule}
+            requestRelated={requestRelated}
             referenceInvalidated={referenceInvalidated}
             isReferenceInvalidated={isReferenceInvalidated}
             onReferenceChanged={invalidateReference}
@@ -296,15 +187,14 @@ function LiteratureRelatedSession(
           className="flex min-h-0 flex-1 flex-col"
         >
           <LiteratureCitationGraph
-            key={`${props.item.id}:${props.item.metadataRevision}:${refreshEpoch}`}
             item={props.item}
             provider={props.provider}
             source={source}
-            requestRelated={schedule}
+            requestRelated={requestRelated}
             onSaved={props.onSaved}
             onOpenInbox={props.onOpenInbox}
             onSavingChange={handleSavingChange}
-            disabled={referenceInvalidated || refreshing}
+            disabled={referenceInvalidated}
             onReferenceChanged={invalidateReference}
             referenceInvalidated={referenceInvalidated}
             isReferenceInvalidated={isReferenceInvalidated}

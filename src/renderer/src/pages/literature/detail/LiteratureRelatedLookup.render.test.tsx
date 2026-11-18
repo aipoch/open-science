@@ -198,24 +198,6 @@ it('retains each direction scroll, selections and loaded pages without another r
   expect(related).toHaveBeenCalledTimes(3)
 })
 
-it('retains old results after refresh failure and replaces them only after success', async () => {
-  const retrievedAt = 1700000000000
-  related.mockResolvedValueOnce(result({ retrievedAt, records: [{ ...record('b'), retrievedAt }] }))
-  render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
-  await screen.findByText('Paper b')
-  expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy()
-  related.mockResolvedValueOnce(result({ state: 'unavailable', issue: 'unavailable', records: [] }))
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
-  await screen.findByRole('alert')
-  expect(screen.getByText('Paper b')).toBeTruthy()
-  related.mockResolvedValue(result({ records: [record('d')], retrievedAt: retrievedAt + 1000 }))
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-  await screen.findByText('Paper d')
-  expect(screen.queryByText('Paper b')).toBeNull()
-  expect(related.mock.calls.some(([request]) => request.refresh === true)).toBe(true)
-  expect(transact).not.toHaveBeenCalled()
-})
-
 it('uses graph identity merging for list counts and persists the actual retrieval time', async () => {
   const retrievedAt = 1700000000000
   const b = record('b'),
@@ -945,13 +927,18 @@ it.each([
   chooseSource('OpenCitations · SKG-IF')
   await screen.findByText(message)
   expect(screen.queryByRole('button', { name: 'Configure API key' })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Configure API key' })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Citation graph' }))
   await waitFor(() => expect(related).toHaveBeenCalledTimes(4))
   expect(screen.getByRole('tab', { name: 'All' }).getAttribute('aria-selected')).toBe('true')
-  for (const direction of ['References', 'Papers citing this paper']) {
-    expect(within(screen.getByRole('region', { name: direction })).getByText(message)).toBeTruthy()
-  }
+  expect(within(screen.getByRole('region', { name: 'References' })).getByText(message)).toBeTruthy()
+  const tabs = screen.getByRole('tablist', { name: 'Paper list' })
+  fireEvent.mouseDown(within(tabs).getByRole('tab', { name: /^Cited by/ }), {
+    button: 0,
+    ctrlKey: false
+  })
+  expect(
+    within(screen.getByRole('region', { name: 'Papers citing this paper' })).getByText(message)
+  ).toBeTruthy()
 })
 
 const indexNotice =

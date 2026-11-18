@@ -160,8 +160,7 @@ original review snapshot and append source evidence. Citation sources store dist
 direction and OpenCitations mode when available. Acceptance and item merges retain these paths. Appending paths to a frozen Inbox source
 preserves its original snapshot timestamp, so a newer Library source still wins during acceptance.
 Explicit saves retain `retrievedAt` in existing source JSON, separately from the legacy `savedAt`
-source-record write time. Old records without acquisition times remain unknown. The UI exposes a
-source refresh action, retains old results on failure, and resets exploration only after success.
+source-record write time. Old records without acquisition times remain unknown. The panel reuses cached results and offers a retry when a lookup fails.
 List directions retain their loaded pages, selections and scroll positions while the panel stays
 open. Both views share identity merging and a five-page-per-direction display budget.
 The source disclosure resolves available local root titles and falls back to their stored IDs.
