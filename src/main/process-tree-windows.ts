@@ -1,14 +1,12 @@
 /* c8 ignore file */
-import { ChildProcess, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { closeSync, existsSync } from 'node:fs'
 import { Socket } from 'node:net'
 import { win32 } from 'node:path'
-import { promisify } from 'node:util'
 
 import type { AgentProcessSpawner } from './node-process-host'
 
 type Binding = typeof import('@aipoch/process-tree-native')
-const run = promisify(execFile)
 const nativeProcesses = new WeakMap<ChildProcess, object>()
 const activeJobs = new Map<string, WeakRef<object>>()
 const binding = (): Binding => {
@@ -78,47 +76,13 @@ export const terminateWindowsProcessesByIdentity = async (
 ): Promise<void> => {
   if (!processes.size) return
   if (Date.now() >= deadlineAt) throw new Error('Update process cleanup deadline expired.')
-  const systemRoot = process.env.SystemRoot || process.env.WINDIR
-  if (!systemRoot) throw new Error('The Windows system directory is unavailable.')
-  // .NET Framework Process.Handle retains the same handle used by StartTime and Kill. Querying
-  // birth in Node and then calling taskkill/process.kill would reopen a possibly reused PID.
-  const script = `
-$ErrorActionPreference = 'Stop'
-$request = [Console]::In.ReadToEnd() | ConvertFrom-Json
-foreach ($target in $request.processes) {
-  if ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge $request.deadlineAt) { exit 1 }
-  $owned = $null
-  try {
-    $owned = [Diagnostics.Process]::GetProcessById([int]$target.pid)
-    $null = $owned.Handle
-    if (!$owned.HasExited -and $owned.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -ceq $target.birth) {
-      if ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge $request.deadlineAt) { exit 1 }
-      $owned.Kill()
-    }
-  } catch {
-    # Missing, reused and inaccessible targets never authorize a broader kill. Node confirms exit.
-  } finally {
-    if ($null -ne $owned) { $owned.Dispose() }
+  // One OpenProcess serves both the birth check and the kill, so a PID reused between the two can
+  // never be signaled. Missing, mismatched and inaccessible targets come back as not terminated.
+  const native = binding()
+  for (const [pid, birth] of processes) {
+    if (Date.now() >= deadlineAt) throw new Error('Update process cleanup deadline expired.')
+    native.windowsTerminateProcessByBirth(pid, birth)
   }
-}`
-  const execution = run(
-    win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-EncodedCommand',
-      Buffer.from(script, 'utf16le').toString('base64')
-    ],
-    { timeout: Math.max(1, deadlineAt - Date.now()), windowsHide: true }
-  )
-  execution.child.stdin?.on('error', () => {}) // Launch/timeout errors are reported by execution.
-  execution.child.stdin?.end(
-    JSON.stringify({
-      deadlineAt,
-      processes: [...processes].map(([pid, birth]) => ({ pid, birth }))
-    })
-  )
-  await execution
 }
 
 /** Retain ownership before normal teardown can orphan helpers; used only for an authorized update. */
