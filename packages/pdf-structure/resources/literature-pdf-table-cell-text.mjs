@@ -301,6 +301,7 @@ export function recoverNativeStackedScientificFractions(items, rules, runs) {
     const numerator = above.map((item) => item.text.trim()).join(''),
       denominator = below[0].text.trim()
     proofs.push({
+      items: [...above, below[0]],
       malformed: [
         ...new Set([
           /^\p{L}$/u.test(denominator)
@@ -317,6 +318,32 @@ export function recoverNativeStackedScientificFractions(items, rules, runs) {
     .map((run) => run.text)
     .join('')
     .replace(/\s+/gu, '')
+  // Reading order may put every numerator before every denominator. Rebuild
+  // complete native fractions as atomic values before horizontal ordering.
+  // Require exact token ownership and character conservation; unrelated text
+  // must never be discarded by this whole-cell serialization.
+  const provedItems = proofs.flatMap((proof) => proof.items)
+  const punctuation = items.filter((item) => !provedItems.includes(item))
+  const characters = (value) => [...value.replace(/\s+/gu, '')].sort().join('')
+  if (
+    new Set(provedItems).size === provedItems.length &&
+    punctuation.every((item) => /^[[\](),;]+$/u.test(item.text.trim())) &&
+    characters(text) === characters(items.map((item) => item.text).join(''))
+  ) {
+    const values = proofs.map((proof) => ({
+      x: Math.min(...proof.items.map((item) => item.rect[0])),
+      text: proof.corrected
+    }))
+    values.push(...punctuation.map((item) => ({ x: item.rect[0], text: item.text.trim() })))
+    return [
+      {
+        text: values
+          .sort((a, b) => a.x - b.x)
+          .map((value) => value.text)
+          .join('')
+      }
+    ]
+  }
   if (
     proofs.length !==
     (text.match(/(?:\d+e\p{L}[−-]\d+|\d+e[−-]\d+(?:\p{L}|\d{2,}))/gu) ?? []).length

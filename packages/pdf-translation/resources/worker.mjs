@@ -1394,6 +1394,7 @@ async function generate({
       let sourceSize, sourcePoint, sourceColor, sourceBaseline, cos, sin
       let mixedSizes = false
       const proseColors = new Map()
+      const nativePoints = new Map()
       {
         let selected = objects.filter(
           (o) =>
@@ -4317,6 +4318,7 @@ async function generate({
             check(p.FPDFTextObj_GetFontSize(o.obj, at))
             const point = explicitPowers.has(o.i) ? bodySize : e.m.HEAPF32[at / 4] * verticalScale
             check(point > 0 && point <= 100)
+            nativePoints.set(o.i, point)
             mixedSizes ||= sourcePoint !== undefined && Math.abs(point - sourcePoint) >= 0.01
             sourcePoint = Math.min(sourcePoint ?? point, point)
             sourceSize = Math.max(8, sourcePoint)
@@ -4437,6 +4439,19 @@ async function generate({
             // publisher rounding into a second overlapping line or a script.
             const proseRows = []
             const tolerance = Math.min(0.1, bodySize * 0.01)
+            const retainedScripts = region.anchors
+              .filter((anchor) => anchor.mathGroup)
+              .flatMap((anchor) =>
+                selected
+                  .filter(
+                    (object) =>
+                      anchor.indices.includes(object.i) &&
+                      sizes.get(object.i) < bodySize * 0.9 &&
+                      Math.abs(objectBaselines.get(object.i) - anchor.baseline) >
+                        sizes.get(object.i) * 0.1
+                  )
+                  .map((object) => ({ anchor, object }))
+              )
             // The metrics pass already maps proven explicit powers to their
             // body row. Their raised native baselines are not separate prose
             // rows; keep that admission policy before clustering body jitter.
@@ -4445,11 +4460,29 @@ async function generate({
                 (baseline) => Math.abs(objectBaselines.get(object.i) - baseline) < 0.01
               )
             )
-            for (const object of admittedProse.sort(
-              (a, b) => objectBaselines.get(b.i) - objectBaselines.get(a.i)
+            const positionedProse = admittedProse.map((object) => {
+              // An adjacent script operator can remain generated while its
+              // operand is retained. Only that native continuation belongs on
+              // the anchor's body row; unrelated prose keeps its own baseline.
+              const scriptOwner = retainedScripts.find(
+                ({ object: script }) =>
+                  object.i === script.i + 1 &&
+                  /^[+−-]$/u.test(object.text.trim()) &&
+                  Math.abs(sizes.get(object.i) - sizes.get(script.i)) < 0.01 &&
+                  Math.abs(objectBaselines.get(object.i) - objectBaselines.get(script.i)) <
+                    tolerance &&
+                  object.bounds[0] >= script.bounds[2] &&
+                  object.bounds[0] - script.bounds[2] < sizes.get(script.i) * 0.3
+              )
+              return {
+                object,
+                baseline: scriptOwner?.anchor.baseline ?? objectBaselines.get(object.i)
+              }
+            })
+            for (const { object, baseline } of positionedProse.sort(
+              (a, b) => b.baseline - a.baseline
             )) {
-              const baseline = objectBaselines.get(object.i),
-                previous = proseRows.at(-1)
+              const previous = proseRows.at(-1)
               if (previous && previous.top - baseline <= tolerance) {
                 previous.bottom = baseline
                 previous.objects.push(object)
@@ -4460,7 +4493,13 @@ async function generate({
               (row, i) =>
                 !i ||
                 (proseRows[i - 1].bottom - row.top >=
-                  (mixedSizes ? bodySize * 0.8 : sourcePoint) - 0.01 &&
+                  (mixedSizes
+                    ? Math.max(
+                        ...proseRows[i - 1].objects.map((object) => nativePoints.get(object.i)),
+                        ...row.objects.map((object) => nativePoints.get(object.i))
+                      ) * 0.8
+                    : sourcePoint) -
+                    0.01 &&
                   Math.min(
                     ...proseRows[i - 1].objects.map((o) =>
                       Math.min(
@@ -4478,12 +4517,7 @@ async function generate({
                       )
                     ))
             )
-            // A linked formula may leave a smaller native script on its own
-            // baseline. Final glyph collision and annotation bounds still prove
-            // the replacement; do not discard the surrounding prose solely for
-            // this intermediate baseline envelope.
-            if (!baselinesFit && !/(?:[=√∑βθ]|\u0302)/u.test(unit.source))
-              check(false, 'annotations')
+            check(baselinesFit, 'annotations')
           }
           // A full-size URL on its own native row is ordinary text. Since
           // anchor objects are excluded from prose baselines, their line spacing

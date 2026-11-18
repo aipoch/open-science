@@ -18703,16 +18703,33 @@ export function recoverNativeIndependentPanelParts(
   return { parts, cropRect: plan.cropRect }
 }
 
+export function nativeRecordReadingOrder(items, baselineHeight) {
+  const byPosition = (a, b) =>
+    a.rect[0] - b.rect[0] ||
+    a.baseline - b.baseline ||
+    a.rect[2] - b.rect[2] ||
+    a.height - b.height ||
+    (a.text < b.text ? -1 : a.text > b.text ? 1 : 0)
+  const rows = []
+  // Establish rows before horizontal ordering. Pairwise baseline tolerances are
+  // not transitive; fix both the baseline and tolerance when the row starts.
+  for (const item of items.slice().sort((a, b) => a.baseline - b.baseline || byPosition(a, b))) {
+    const row = rows.at(-1)
+    if (row && item.baseline - row.baseline <= row.threshold) {
+      row.items.push(item)
+    } else
+      rows.push({
+        baseline: item.baseline,
+        threshold: (baselineHeight ?? item.height) * 0.65,
+        items: [item]
+      })
+  }
+  return rows.flatMap((row) => row.items.sort(byPosition))
+}
+
 function nativeRecordText(items, options) {
   items = nativeMathOverlaySerialization(items, options?.combiningOperators)
-  const baselineHeight = options?.baselineHeight
-  const ordered = items
-    .slice()
-    .sort((a, b) =>
-      Math.abs(a.baseline - b.baseline) > (baselineHeight ?? Math.max(a.height, b.height)) * 0.65
-        ? a.baseline - b.baseline
-        : a.rect[0] - b.rect[0]
-    )
+  const ordered = nativeRecordReadingOrder(items, options?.baselineHeight)
   return ordered
     .map((item, index) => {
       const prior = ordered[index - 1]
@@ -18734,14 +18751,7 @@ function nativeRecordText(items, options) {
 function nativeRecordRuns(items, options) {
   items = nativeMathOverlaySerialization(items, options?.combiningOperators)
   const provedHeaderWordGap = nativeClosedLeafHeaderWordGap(items)
-  const baselineHeight = options?.baselineHeight
-  const ordered = items
-    .slice()
-    .sort((a, b) =>
-      Math.abs(a.baseline - b.baseline) > (baselineHeight ?? Math.max(a.height, b.height)) * 0.65
-        ? a.baseline - b.baseline
-        : a.rect[0] - b.rect[0]
-    )
+  const ordered = nativeRecordReadingOrder(items, options?.baselineHeight)
   const runs = [],
     signedParents = new Map()
   for (let n = 0; n < ordered.length; n++) {
@@ -23333,7 +23343,9 @@ function recoverNativeOperatorRecords(items, crop) {
     })
   )
     return
-  return { cuts, groups, repair: 'native-operator-records-recovered' }
+  // The recognized header establishes the body scale before smaller fraction
+  // glyphs start a record's reading-order row.
+  return { cuts, groups, baselineHeight: height, repair: 'native-operator-records-recovered' }
 }
 
 function recoverNativeAcquisitionRecords(items, crop, rules) {
