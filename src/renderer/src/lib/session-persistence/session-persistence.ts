@@ -4310,6 +4310,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
               const pendingRecovery = useSessionStore.getState().sessionDetailsRecoveryRequest
               if (
                 isMounted &&
+                !recoverSessionDetails &&
                 pendingRecovery?.projectId === selected.projectId &&
                 pendingRecovery.sessionId === selected.id
               ) {
