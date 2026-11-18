@@ -20,6 +20,7 @@
 - Abra las películas de investigación generadas directamente desde el menú de sesión y vea de antemano una explicación de cuántos tokens usará la generación de la película. (#4414)
 - Supervise los procesos de Notebook en ejecución desde la aplicación y detenga los que pertenecen a la aplicación cuando ya no se necesiten. (#4399)
 - Los skills de documentos y figuras vienen listos para usar: sus bibliotecas de soporte se preinstalan en el entorno gestionado en el primer uso en lugar de fallar a mitad de tarea. (#4411)
+- Inicie sesión con una suscripción regional de CodeBuddy (China o Internacional) desde Configuración: el CLI gestionado se encarga de la autenticación y descubre los modelos a los que su cuenta puede acceder, y la selección de modelo la confirma el CLI. (#4442)
 
 ## 🔧 Improvements
 
@@ -32,6 +33,8 @@
 - Los PDF externos recuperan su estructura nativa con más fiabilidad durante el análisis y la traducción, el lector consolida su barra de herramientas, y los límites de soporte de imágenes se explican por sí mismos en lugar de fallar en silencio. (#4361, #4360, #4435, #4407, #4394, #4400)
 - El compositor mantiene los controles de envío accesibles en diseños estrechos, muestra el uso del contexto con precisión y revela la flecha de desplazamiento hasta el final al pasar el cursor sobre la conversación. (#4367, #4403)
 - La primera pintura de conversaciones largas está acotada, de modo que la ventana se abre rápidamente incluso con muchos mensajes cargados. (#4376)
+- Las actualizaciones de Windows verifican la firma del instalador de forma resistente bajo carga del sistema, y el instalador detecta una aplicación en ejecución más pronto en lugar de depender de esperas fijas. (#4445)
+- La generación de películas reintenta automáticamente un fallo transitorio del modelo una vez tras una breve espera, compartiendo un pequeño presupuesto de reintentos entre las fases de la generación. (#4446)
 
 ## 🐛 Bug Fixes
 
@@ -46,6 +49,7 @@
 - Los paquetes de ciencia abren el modo de película importado disponible en lugar de fallar. (#4419)
 - Las vistas previas conservan su identidad de nombre de archivo en superficies estrechas, las marcas de ejecución se colocan en las posiciones correctas y el conmutador de proyectos mantiene su desplazamiento dentro de la lista. (#4401, #4350, #4405)
 - Las transcripciones del marco de Notebook se paginan de forma estable, y las notas al pie de Markdown mantienen su desplazamiento contenido. (#4370, #4391)
+- La generación de películas distingue su plazo del modelo de una cancelación del usuario, nombra claramente cada causa de agotamiento de tiempo y etiqueta con precisión los reintentos de punto de control. (#4444)
 
 ## 🙏 Agradecimientos
 

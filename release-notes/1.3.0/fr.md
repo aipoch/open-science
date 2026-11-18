@@ -20,6 +20,7 @@
 - Ouvrez les films de recherche générés directement depuis le menu de session, et voyez d'emblée combien de jetons la génération d'un film consommera. (#4414)
 - Surveillez les processus Notebook en cours d'exécution depuis l'application et arrêtez ceux que l'application détient lorsqu'ils ne sont plus nécessaires. (#4399)
 - Les skills de documents et de figures sont prêts à l'emploi : leurs bibliothèques de prise en charge sont préinstallées dans l'environnement géré dès la première utilisation au lieu d'échouer en pleine tâche. (#4411)
+- Connectez-vous à un abonnement CodeBuddy régional (Chine ou International) depuis les paramètres : le CLI géré prend en charge l'authentification et découvre les modèles accessibles à votre compte, et la sélection du modèle est confirmée par le CLI. (#4442)
 
 ## 🔧 Improvements
 
@@ -32,6 +33,8 @@
 - Les PDF externes récupèrent leur structure native de façon plus fiable pendant l'analyse et la traduction, le lecteur consolide sa barre d'outils, et les limites de prise en charge des images s'expliquent d'elles-mêmes au lieu d'échouer en silence. (#4361, #4360, #4435, #4407, #4394, #4400)
 - Le compositeur garde les contrôles d'envoi accessibles dans les mises en page étroites, affiche l'utilisation du contexte avec précision, et révèle la flèche de défilement vers le plus récent au survol de la conversation. (#4367, #4403)
 - La première peinture des longues conversations est plafonnée pour que la fenêtre s'ouvre rapidement même avec de nombreux messages chargés. (#4376)
+- Les mises à jour Windows vérifient la signature de l'installateur de manière résiliente sous charge système, et l'installateur détecte plus tôt une application en cours d'exécution au lieu de s'appuyer sur des attentes fixes. (#4445)
+- La génération de film réessaie automatiquement une défaillance transitoire du modèle après un court délai, en partageant un petit budget de nouvelles tentatives entre les phases de génération. (#4446)
 
 ## 🐛 Bug Fixes
 
@@ -46,6 +49,7 @@
 - Les paquets Science ouvrent le mode de film importé disponible au lieu d'échouer. (#4419)
 - Les aperçus conservent leur identité de nom de fichier dans les surfaces étroites, les marques d'exécution se placent aux bonnes positions, et le sélecteur de projet garde son défilement à l'intérieur de la liste. (#4401, #4350, #4405)
 - Les transcriptions du cadre Notebook se paginent de façon régulière, et les notes de bas de page Markdown gardent leur défilement contenu. (#4370, #4391)
+- La génération de film distingue le délai d'expiration de son modèle d'une annulation par l'utilisateur, nomme clairement chaque cause de délai d'attente, et étiquette avec précision les nouvelles tentatives de point de contrôle. (#4444)
 
 ## 🙏 Remerciements
 

@@ -20,6 +20,7 @@
 - Erzeugte Forschungsfilme direkt aus dem Sitzungsmenü öffnen und vorab sehen, wie viele Token die Filmerzeugung verbrauchen wird. (#4414)
 - Laufende Notebook-Prozesse aus der App überwachen und diejenigen stoppen, deren Eigentümer die App ist, wenn sie nicht mehr benötigt werden. (#4399)
 - Dokument- und Abbildungsfähigkeiten sind sofort einsatzbereit: Ihre unterstützenden Bibliotheken werden beim ersten Gebrauch in die verwaltete Umgebung vorinstalliert, statt mitten in einer Aufgabe zu scheitern. (#4411)
+- Bei einer regionalen CodeBuddy-Abonnement-Anmeldung (China oder International) über die Einstellungen übernimmt die verwaltete CLI die Authentifizierung und entdeckt die Modelle, auf die Ihr Konto zugreifen kann, während die CLI die Modellauswahl bestätigt. (#4442)
 
 ## 🔧 Improvements
 
@@ -32,6 +33,8 @@
 - Externe PDFs stellen ihre native Struktur bei Analyse und Übersetzung zuverlässiger wieder her, die Leseransicht fasst ihre Werkzeugleiste zusammen, und Grenzen der Bildunterstützung erklären sich selbst, statt still zu scheitern. (#4361, #4360, #4435, #4407, #4394, #4400)
 - Der Composer hält Sendesteuerungen in schmalen Layouts erreichbar, zeigt die Kontextnutzung genau an und blendet den Pfeil zum Neuesten beim Darüberfahren über das Gespräch ein. (#4367, #4403)
 - Die erste Darstellung langer Gespräche ist begrenzt, sodass sich das Fenster auch bei vielen geladenen Nachrichten schnell öffnet. (#4376)
+- Windows-Updates prüfen die Signatur des Installers belastbar auch unter Systemlast, und der Installer erkennt eine laufende App früher, statt auf feste Wartezeiten zu setzen. (#4445)
+- Die Filmerzeugung wiederholt ein vorübergehendes Modellversagen nach kurzer Verzögerung automatisch einmal und teilt dabei ein kleines Wiederholungsbudget über die Erzeugungsphasen hinweg. (#4446)
 
 ## 🐛 Bug Fixes
 
@@ -46,6 +49,7 @@
 - Science-Pakete öffnen den verfügbaren importierten Filmmodus, statt zu scheitern. (#4419)
 - Vorschauen behalten ihre Dateinamen-Identität in schmalen Oberflächen, Ausführungsmarken landen an den richtigen Positionen, und die Projektumschaltung hält ihr Scrollen innerhalb der Liste. (#4401, #4350, #4405)
 - Abschriften des Notebook-Rahmens werden gleichmäßig seitenweise geladen, und Markdown-Fußnoten halten ihr Scrollen im Griff. (#4370, #4391)
+- Die Filmerzeugung unterscheidet ihre Modellfrist von einem Abbruch durch den Nutzer, benennt jede Zeitüberschreitungsursache klar und kennzeichnet Wiederholungen von Prüfpunkten zutreffend. (#4444)
 
 ## 🙏 Danksagungen
 

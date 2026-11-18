@@ -20,6 +20,7 @@
 - Open generated research films directly from the session menu, and see an up-front explanation of how many tokens film generation will use. (#4414)
 - Monitor running Notebook processes from the app and stop the ones the app owns when they are no longer needed. (#4399)
 - Document and figure skills come ready to use: their supporting libraries are preinstalled into the managed environment on first use instead of failing mid-task. (#4411)
+- Sign in to a regional CodeBuddy subscription (China or International) from Settings: the managed CLI handles authentication and discovers the models your account can access, and model selection is confirmed by the CLI. (#4442)
 
 ## 🔧 Improvements
 
@@ -32,6 +33,8 @@
 - External PDFs recover their native structure more reliably during analysis and translation, the reader consolidates its toolbar, and image-support limits explain themselves instead of failing silently. (#4361, #4360, #4435, #4407, #4394, #4400)
 - The composer keeps send controls reachable in narrow layouts, shows context usage accurately, and reveals the scroll-to-latest arrow when you hover the conversation. (#4367, #4403)
 - First paint of long conversations is capped so the window opens quickly even with many loaded messages. (#4376)
+- Windows updates verify the installer signature resiliently under system load, and the installer notices a running app sooner instead of relying on fixed waits. (#4445)
+- Film generation retries a transient model failure automatically once after a short delay, sharing a small retry budget across the generation phases. (#4446)
 
 ## 🐛 Bug Fixes
 
@@ -46,6 +49,7 @@
 - Science packages open the available imported film mode instead of failing. (#4419)
 - Previews keep their filename identity in narrow surfaces, run marks land at the right positions, and the project switcher keeps its scrolling inside the list. (#4401, #4350, #4405)
 - Notebook frame transcripts paginate steadily, and Markdown footnotes keep their scroll contained. (#4370, #4391)
+- Film generation distinguishes its model deadline from a user cancellation, names each timeout cause clearly, and labels checkpoint retries accurately. (#4444)
 
 ## 🙏 Acknowledgements
 
