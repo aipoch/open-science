@@ -40,13 +40,15 @@ export const comparisonAttemptSchema = z
     evidence: z.array(comparisonEvidenceSchema).max(12)
   })
   .strict()
+export const COMPARISON_HISTORY_LIMIT = 30
 export const comparisonCellSchema = z
   .object({
     id,
     itemId: id,
     fieldId: id,
     status: z.enum(['pending', 'running', 'succeeded', 'failed', 'unavailable']),
-    history: z.array(comparisonAttemptSchema).max(30),
+    history: z.array(comparisonAttemptSchema).max(COMPARISON_HISTORY_LIMIT),
+    historyLimitReached: z.boolean().optional(),
     manual: z
       .object({
         value: z.string().max(8000),
@@ -54,6 +56,7 @@ export const comparisonCellSchema = z
         fieldVersion: z.number().int().min(1),
         sourceKey: z.string().max(4096),
         attemptId: id.optional(),
+        revision: z.number().int().positive().optional(),
         updatedAt: z.string().max(64)
       })
       .strict()
@@ -81,6 +84,7 @@ export const comparisonTableSchema = z
       )
       .max(100),
     itemIds: z.array(id).max(100),
+    sampleItemIds: z.array(id).min(1).max(2).optional(),
     cells: z.array(comparisonCellSchema).max(1200),
     state: z.enum(['idle', 'running', 'paused', 'interrupted', 'completed']),
     taskId: id.optional(),
@@ -153,6 +157,9 @@ export const comparisonRequestSchema = z.discriminatedUnion('action', [
       itemIds: z.array(id).min(1).max(100).optional()
     })
     .strict(),
+  z
+    .object({ action: z.literal('set-sample'), tableId: id, itemIds: z.array(id).min(1).max(2) })
+    .strict(),
   z.object({ action: z.literal('pause'), tableId: id }).strict(),
   z
     .object({
@@ -188,6 +195,7 @@ export const comparisonRequestSchema = z.discriminatedUnion('action', [
       confirmed: z.boolean(),
       expectedFieldVersion: z.number().int().min(1),
       expectedSourceKey: z.string().max(4096),
+      expectedManualRevision: z.number().int().nonnegative().optional(),
       expectedAttemptId: id.optional()
     })
     .strict(),

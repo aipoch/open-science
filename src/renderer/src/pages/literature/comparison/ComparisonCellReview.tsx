@@ -262,7 +262,10 @@ function CellReviewBody({
   const [discardOpen, setDiscardOpen] = useState(false)
   const discardFocus = useRef<HTMLElement | null>(null)
   const discarded = useRef(false)
+  const manualRevision = useRef<number | undefined>(undefined)
+  const [conflict, setConflict] = useState(false)
   const save = (value: string, confirmed: boolean): void => {
+    manualRevision.current ??= reviewCell.manual?.revision ?? 0
     draftDirty.current = true
     setLocalWrite(true)
     // Bind at edit time: queued saves must not adopt a refreshed rule or source.
@@ -300,10 +303,18 @@ function CellReviewBody({
         try {
           await ready
           if (queuedDraft.current === request) queuedDraft.current = undefined
-          await command(request)
+          const receipt = await command({
+            ...request,
+            expectedManualRevision: manualRevision.current
+          })
+          manualRevision.current = receipt.cell?.manual?.revision ?? manualRevision.current
+          setConflict(false)
           failedSave.current = false
           setFailed(false)
-        } catch {
+        } catch (error) {
+          setConflict(
+            error instanceof Error && error.message.includes('comparison-manual-conflict')
+          )
           failedSave.current = true
           setFailed(true)
         } finally {
@@ -541,18 +552,24 @@ function CellReviewBody({
                     if (discardOpen) return
                     setDraft(e.target.value)
                     setManualEdited(true)
-                    save(e.target.value, false)
+                    if (!conflict) save(e.target.value, false)
                   }}
                 />
               </label>
             )}
             {failed && (
               <ErrorNotice
-                title={t('Draft could not be saved.')}
+                title={conflict ? t('Revision conflict') : t('Draft could not be saved.')}
+                description={
+                  conflict
+                    ? t('Latest saved version') + ' · ' + (cell.manual?.value ?? '')
+                    : undefined
+                }
                 primaryButton={{
-                  label: t('Retry'),
-                  disabled: discardOpen,
+                  label: conflict ? t('Overwrite with my draft') : t('Retry'),
+                  disabled: discardOpen || saving,
                   onClick: () => {
+                    if (conflict) manualRevision.current = cell.manual?.revision ?? 0
                     if (!discardOpen) save(draft, false)
                   }
                 }}

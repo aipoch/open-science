@@ -293,12 +293,12 @@ it('checks closure when an admitted cell waits behind the serial queue', async (
   let serialBoundary: Promise<unknown> | undefined
   const queued = owner as unknown as {
     queue<T>(operation: () => Promise<T>): Promise<T>
+    kick(): void
   }
-  const queue = queued.queue.bind(owner)
-  const hold = vi.spyOn(queued, 'queue').mockImplementationOnce((operation) => {
-    const result = queue(operation)
-    serialBoundary = queue(() => blocked.promise)
-    return result
+  const kick = queued.kick.bind(owner)
+  const hold = vi.spyOn(queued, 'kick').mockImplementationOnce(() => {
+    serialBoundary = queued.queue(() => blocked.promise)
+    kick()
   })
   await withDataRootWrite(() => owner.run({ action: 'run', tableId: table.id }))
   hold.mockRestore()

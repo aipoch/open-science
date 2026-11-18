@@ -8064,6 +8064,7 @@
     "Rule changed. Review the saved manual value again.": "规则已更改。请重新核查已保存的人工修订。",
     "Extract pending references": "批量提取待提取文献",
     "Machine result": "机器结果",
+    "History limit reached": "已达历史记录上限",
     "A cell reached the extraction history limit. Its saved history is retained.": "一个单元格已达到提取历史上限，已保存的记录会保留。",
     "New comparison table": "新建比较表",
     "Field name": "字段名称",

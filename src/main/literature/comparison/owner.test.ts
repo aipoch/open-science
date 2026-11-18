@@ -116,7 +116,7 @@ it.each(['matrix', 'evidence'] as const)(
       await f.owner.run(edit)
       const first = await f.owner.run({ action: 'export', tableId: f.table.id, kind: firstKind })
       expect(first.nextOffset).toBeUndefined()
-      await f.owner.run({ ...edit, value: 'After export' })
+      await f.owner.run({ ...edit, expectedManualRevision: 1, value: 'After export' })
       const secondKind = firstKind === 'matrix' ? 'evidence' : 'matrix'
       const second = await f.owner.run({
         action: 'export',
@@ -275,7 +275,7 @@ it.each([false, true])(
       }
       await f.owner.run({ ...edit, value: 'First snapshot value' })
       const first = await f.owner.run({ action: 'export', tableId: f.table.id, kind: 'matrix' })
-      await f.owner.run({ ...edit, value: 'Second snapshot value' })
+      await f.owner.run({ ...edit, expectedManualRevision: 1, value: 'Second snapshot value' })
       const second = await f.owner.run({ action: 'export', tableId: other.id, kind: 'matrix' })
       expect(first.exportToken).not.toBe(second.exportToken)
       expect(first.nextOffset).toBeDefined()
@@ -1563,7 +1563,11 @@ it('exports pre-extraction manual confirmation as unreviewed until the current s
   await f.owner.run({ action: 'run', tableId: f.table.id, itemIds: ['paper1'] })
   await vi.waitFor(async () => expect((await f.read()).state).toBe('completed'))
   expect(await reviewed()).toMatch(/"false"$/)
-  await f.owner.run({ ...edit, expectedAttemptId: (await f.read()).cells[0].history.at(-1)!.id })
+  await f.owner.run({
+    ...edit,
+    expectedManualRevision: 1,
+    expectedAttemptId: (await f.read()).cells[0].history.at(-1)!.id
+  })
   expect(await reviewed()).toMatch(/"true"$/)
   await f.owner.run({
     action: 'rerun-field',
@@ -1573,7 +1577,11 @@ it('exports pre-extraction manual confirmation as unreviewed until the current s
   })
   await vi.waitFor(async () => expect((await f.read()).state).toBe('completed'))
   expect(await reviewed()).toMatch(/"false"$/)
-  await f.owner.run({ ...edit, expectedAttemptId: (await f.read()).cells[0].history.at(-1)!.id })
+  await f.owner.run({
+    ...edit,
+    expectedManualRevision: 2,
+    expectedAttemptId: (await f.read()).cells[0].history.at(-1)!.id
+  })
   expect(await reviewed()).toMatch(/"true"$/)
   const matrix = (await f.owner.run({ action: 'export', tableId: f.table.id, kind: 'matrix' })).csv!
   expect(matrix.split('\r\n')[1]).toMatch(/"true"$/)
@@ -2370,5 +2378,126 @@ it('releases the shared snapshot after fetching the final selected CSV', async (
     }
   } finally {
     await f.owner.dispose()
+  }
+})
+
+it('rejects a stale manual draft and allows an explicit edit of the saved version', async () => {
+  const f = await fixture()
+  try {
+    await f.owner.run({ action: 'run', tableId: f.table.id })
+    await vi.waitFor(async () => expect((await f.read()).state).toBe('completed'))
+    const cell = (await f.read()).cells[0]
+    const edit = {
+      action: 'edit-cell' as const,
+      tableId: f.table.id,
+      cellId: cell.id,
+      expectedFieldVersion: 1,
+      expectedSourceKey: 'source-1',
+      expectedManualRevision: 0
+    }
+    const receipt = await f.owner.run({
+      ...edit,
+      confirmed: true,
+      value: 'Reviewed',
+      expectedAttemptId: cell.history[0].id
+    })
+    const draft = { ...edit, confirmed: false, value: 'My draft' }
+    await expect(f.owner.run(draft)).rejects.toThrow('comparison-manual-conflict')
+    expect((await f.read()).cells[0].manual).toMatchObject({ confirmed: true, value: 'Reviewed' })
+    await f.owner.run({ ...draft, expectedManualRevision: receipt.cell!.manual!.revision })
+    expect((await f.read()).cells[0].manual).toMatchObject({ revision: 2, value: 'My draft' })
+  } finally {
+    await f.owner.dispose()
+  }
+})
+
+it('keeps other tables readable during admission and rejects a superseded launch', async () => {
+  const f = await fixture()
+  await f.owner.dispose()
+  const started = deferred<void>()
+  const release = deferred<void>()
+  const owner = new LiteratureComparisons({
+    ...f.options,
+    extractor: {
+      ...f.options.extractor,
+      checkSource: async (_table, itemId) => {
+        started.resolve()
+        await release.promise
+        return { itemId, sourceKey: 'source-1', status: 'available' }
+      }
+    }
+  })
+  await owner.start()
+  try {
+    const other = (
+      await owner.run({
+        action: 'create',
+        name: 'Other',
+        language: 'en',
+        sourcePolicy: 'abstract',
+        fields: [],
+        itemIds: []
+      })
+    ).tables[0]
+    const launch = owner.run({ action: 'run', tableId: f.table.id })
+    await started.promise
+    expect((await owner.run({ action: 'read', tableId: other.id })).tables[0].id).toBe(other.id)
+    await owner.run({ action: 'set-sample', tableId: f.table.id, itemIds: ['paper2'] })
+    release.resolve()
+    await expect(launch).rejects.toThrow('comparison-task-changed')
+    expect(f.extract).not.toHaveBeenCalled()
+  } finally {
+    release.resolve()
+    await owner.dispose()
+  }
+  const reopened = new LiteratureComparisons(f.options)
+  await reopened.start()
+  try {
+    expect(
+      (await reopened.run({ action: 'read', tableId: f.table.id })).tables[0].sampleItemIds
+    ).toEqual(['paper2'])
+  } finally {
+    await reopened.dispose()
+  }
+})
+
+it('skips a full history when rerunning a field without changing its reviewed result', async () => {
+  const f = await fixture()
+  await f.owner.run({ action: 'run', tableId: f.table.id, itemIds: ['paper1'] })
+  await vi.waitFor(async () => expect((await f.read()).state).toBe('completed'))
+  await f.owner.dispose()
+  const saved = JSON.parse(await readFile(f.path, 'utf8'))
+  const first = saved.tables[0].cells[0]
+  first.history = Array.from({ length: 30 }, (_, i) => ({
+    ...first.history[0],
+    id: 'attempt-' + i
+  }))
+  first.manual = {
+    value: 'Reviewed',
+    confirmed: true,
+    sourceKey: 'source-1',
+    fieldVersion: 1,
+    attemptId: 'attempt-29',
+    updatedAt: 'saved'
+  }
+  await writeFile(f.path, JSON.stringify(saved))
+  const owner = new LiteratureComparisons(f.options)
+  await owner.start()
+  try {
+    const launch = await owner.run({ action: 'rerun-field', tableId: f.table.id, fieldId: 'field' })
+    expect(launch.tables[0].cells[0]).toMatchObject({
+      status: 'succeeded',
+      historyLimitReached: true,
+      manual: { confirmed: true }
+    })
+    await vi.waitFor(async () =>
+      expect((await owner.run({ action: 'read', tableId: f.table.id })).tables[0].state).toBe(
+        'completed'
+      )
+    )
+    expect(f.extract.mock.calls.map(([, , id]) => id)).toEqual(['paper1', 'paper2'])
+    expect(JSON.parse(await readFile(f.path, 'utf8')).tables[0].cells[0]).toEqual(first)
+  } finally {
+    await owner.dispose()
   }
 })

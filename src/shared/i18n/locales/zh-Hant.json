@@ -8064,6 +8064,7 @@
     "Rule changed. Review the saved manual value again.": "規則已變更。請重新核查已儲存的人工修訂。",
     "Extract pending references": "批次擷取待擷取文獻",
     "Machine result": "機器結果",
+    "History limit reached": "已達歷史紀錄上限",
     "A cell reached the extraction history limit. Its saved history is retained.": "有一個儲存格已達擷取記錄上限，已儲存的記錄會保留。",
     "New comparison table": "新增比較表",
     "Field name": "欄位名稱",

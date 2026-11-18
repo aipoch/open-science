@@ -3,6 +3,7 @@ import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files
 import { z } from 'zod'
 import { ApplicationCommandError } from '../../../shared/application-command-contract'
 import {
+  COMPARISON_HISTORY_LIMIT,
   comparisonCellView,
   comparisonTaskReference,
   isUnattemptedComparisonCell,
@@ -80,6 +81,7 @@ export class LiteratureComparisons {
       throw new Error('comparison-invalid-offset')
     const cells = table.cells.slice(offset, offset + limit).map((cell) => ({
       ...cell,
+      ...(cell.history.length >= COMPARISON_HISTORY_LIMIT && { historyLimitReached: true }),
       history: cell.history.slice(-1).map((attempt) => ({ ...attempt, evidence: [] }))
     }))
     while (true) {
@@ -210,6 +212,13 @@ export class LiteratureComparisons {
     const request = comparisonRequestSchema.parse(input)
     if (this.closed || !this.started) throw new Error('comparison-owner-unavailable')
     if (this.loadError) throw new Error('comparison-storage-unavailable')
+    if (
+      request.action === 'run' ||
+      request.action === 'resume' ||
+      request.action === 'retry' ||
+      request.action === 'rerun-field'
+    )
+      return this.launch(request)
     if (request.action === 'check-sources') {
       const check = this.options.extractor.checkSource
       if (!check) throw new Error('comparison-source-check-unavailable')
@@ -441,6 +450,10 @@ export class LiteratureComparisons {
             table.taskId = randomUUID()
             table.remainingCellIds = []
           }
+        } else if (request.action === 'set-sample') {
+          if (request.itemIds.some((id) => !table.itemIds.includes(id)))
+            throw new Error('comparison-member-not-found')
+          table.sampleItemIds = [...new Set(request.itemIds)]
         } else if (request.action === 'add-members') {
           const added = [...new Set(request.itemIds)].filter((id) => !table.itemIds.includes(id))
           if (table.itemIds.length + added.length > 100) throw new Error('comparison-member-limit')
@@ -469,7 +482,14 @@ export class LiteratureComparisons {
             throw new Error('comparison-review-changed')
           if (request.confirmed && latest?.value === request.value && !request.expectedAttemptId)
             throw new Error('comparison-review-attempt-required')
+          const revision = cell.manual?.revision ?? 0
+          if ((request.expectedManualRevision ?? 0) !== revision)
+            throw new ApplicationCommandError(
+              'comparison-manual-conflict',
+              'comparison-manual-conflict'
+            )
           cell.manual = {
+            revision: revision + 1,
             attemptId: request.expectedAttemptId,
             value: request.value,
             confirmed: request.confirmed,
@@ -485,97 +505,6 @@ export class LiteratureComparisons {
           })
         } else if (request.action === 'pause') {
           if (table.state === 'running') table.state = 'paused'
-        } else if (request.action === 'resume') {
-          if (!['paused', 'interrupted'].includes(table.state))
-            throw new Error('comparison-not-paused')
-          await this.refreshAdmission(table, request)
-          const changed =
-            table.taskSources?.filter((source) => {
-              const cell = table.cells.find((cell) => cell.id === source.cellId)
-              return (
-                cell &&
-                table.remainingCellIds.includes(cell.id) &&
-                (source.sourceKey !==
-                  table.members.find((m) => m.itemId === cell.itemId)?.sourceKey ||
-                  source.fieldVersion !== table.fields.find((f) => f.id === cell.fieldId)?.version)
-              )
-            }) ?? []
-          if (changed.length && !request.useCurrentSources)
-            throw new Error('comparison-task-changed')
-          for (const source of changed) {
-            const cell = table.cells.find((cell) => cell.id === source.cellId)!
-            // The old in-flight result can be kept as history but cannot consume this new work.
-            if (cell.status === 'running') table.taskId = randomUUID()
-            source.sourceKey = table.members.find((m) => m.itemId === cell.itemId)!.sourceKey
-            source.fieldVersion = table.fields.find((f) => f.id === cell.fieldId)!.version
-            cell.status = 'pending'
-          }
-          const remaining = new Set(table.remainingCellIds)
-          const readable = await this.readableTargets(
-            table,
-            table.cells.filter((cell) => remaining.has(cell.id))
-          )
-          table.remainingCellIds = readable.map((cell) => cell.id)
-          const admitted = new Set(table.remainingCellIds)
-          table.taskSources = table.taskSources?.filter(
-            (source) => !remaining.has(source.cellId) || admitted.has(source.cellId)
-          )
-          if (readable.length) this.extractors.set(table.id, await this.options.capture())
-          table.state = readable.length ? 'running' : 'completed'
-          delete table.issue
-        } else {
-          if (
-            table.state === 'running' ||
-            table.remainingCellIds.length ||
-            table.cells.some((c) => c.status === 'running')
-          )
-            throw new Error('comparison-busy')
-          await this.refreshAdmission(table, request)
-          if ('itemIds' in request && request.itemIds?.some((id) => !table.itemIds.includes(id)))
-            throw new Error('comparison-member-not-found')
-          let targets: ComparisonCell[]
-          if (request.action === 'retry') {
-            const ids = new Set(request.cellIds)
-            targets = table.cells.filter(
-              (c) =>
-                ids.has(c.id) &&
-                (['failed', 'unavailable'].includes(c.status) ||
-                  (c.status === 'pending' &&
-                    c.history.at(-1)?.status === 'failed' &&
-                    c.history.at(-1)?.fieldVersion ===
-                      table.fields.find((f) => f.id === c.fieldId)?.version))
-            )
-            if (targets.length !== ids.size) throw new Error('invalid-retry-targets')
-          } else if (request.action === 'rerun-field') {
-            if (!table.fields.some((f) => f.id === request.fieldId))
-              throw new Error('comparison-field-not-found')
-            targets = table.cells.filter(
-              (c) =>
-                c.fieldId === request.fieldId &&
-                (!request.itemIds || request.itemIds.includes(c.itemId))
-            )
-          } else
-            targets = table.cells.filter(
-              (c) =>
-                (request.unattemptedOnly
-                  ? isUnattemptedComparisonCell(c)
-                  : isPendingComparisonCell(c)) &&
-                (!request.itemIds || request.itemIds.includes(c.itemId))
-            )
-          if (targets.some((c) => c.history.length >= 30))
-            throw new Error('comparison-history-limit')
-          targets = await this.readableTargets(table, targets)
-          for (const cell of targets) cell.status = 'pending'
-          if (targets.length) this.extractors.set(table.id, await this.options.capture())
-          table.taskId = randomUUID()
-          table.taskSources = targets.map((c) => ({
-            cellId: c.id,
-            sourceKey: table.members.find((m) => m.itemId === c.itemId)!.sourceKey,
-            fieldVersion: table.fields.find((f) => f.id === c.fieldId)!.version
-          }))
-          table.remainingCellIds = targets.map((c) => c.id)
-          table.state = targets.length ? 'running' : 'completed'
-          delete table.issue
         }
         table.revision++
         return this.project(table)
@@ -583,6 +512,116 @@ export class LiteratureComparisons {
     })
     this.kick()
     return result
+  }
+  private async launch(request: ComparisonLaunchRequest): Promise<ComparisonResult> {
+    const table = await this.queue(async () => {
+      const current = this.tables.find((entry) => entry.id === request.tableId)
+      if (!current || this.closed) throw new Error('comparison-owner-unavailable')
+      return structuredClone(current)
+    })
+    const revision = table.revision
+    if (request.action === 'resume') {
+      if (!['paused', 'interrupted'].includes(table.state)) throw new Error('comparison-not-paused')
+      await this.refreshAdmission(table, request)
+      const changed =
+        table.taskSources?.filter((source) => {
+          const cell = table.cells.find((cell) => cell.id === source.cellId)
+          return (
+            cell &&
+            table.remainingCellIds.includes(cell.id) &&
+            (source.sourceKey !== table.members.find((m) => m.itemId === cell.itemId)?.sourceKey ||
+              source.fieldVersion !== table.fields.find((f) => f.id === cell.fieldId)?.version)
+          )
+        }) ?? []
+      if (changed.length && !request.useCurrentSources) throw new Error('comparison-task-changed')
+      for (const source of changed) {
+        const cell = table.cells.find((cell) => cell.id === source.cellId)!
+        // The old in-flight result can be kept as history but cannot consume this new work.
+        if (cell.status === 'running') table.taskId = randomUUID()
+        source.sourceKey = table.members.find((m) => m.itemId === cell.itemId)!.sourceKey
+        source.fieldVersion = table.fields.find((f) => f.id === cell.fieldId)!.version
+        cell.status = 'pending'
+      }
+      const remaining = new Set(table.remainingCellIds)
+      const readable = await this.readableTargets(
+        table,
+        table.cells.filter((cell) => remaining.has(cell.id))
+      )
+      table.remainingCellIds = readable.map((cell) => cell.id)
+      const admitted = new Set(table.remainingCellIds)
+      table.taskSources = table.taskSources?.filter(
+        (source) => !remaining.has(source.cellId) || admitted.has(source.cellId)
+      )
+      table.state = readable.length ? 'running' : 'completed'
+      delete table.issue
+    } else {
+      if (
+        table.state === 'running' ||
+        table.remainingCellIds.length ||
+        table.cells.some((c) => c.status === 'running')
+      )
+        throw new Error('comparison-busy')
+      await this.refreshAdmission(table, request)
+      if ('itemIds' in request && request.itemIds?.some((id) => !table.itemIds.includes(id)))
+        throw new Error('comparison-member-not-found')
+      let targets: ComparisonCell[]
+      if (request.action === 'retry') {
+        const ids = new Set(request.cellIds)
+        targets = table.cells.filter(
+          (c) =>
+            ids.has(c.id) &&
+            (['failed', 'unavailable'].includes(c.status) ||
+              (c.status === 'pending' &&
+                c.history.at(-1)?.status === 'failed' &&
+                c.history.at(-1)?.fieldVersion ===
+                  table.fields.find((f) => f.id === c.fieldId)?.version))
+        )
+        if (targets.length !== ids.size) throw new Error('invalid-retry-targets')
+      } else if (request.action === 'rerun-field') {
+        if (!table.fields.some((f) => f.id === request.fieldId))
+          throw new Error('comparison-field-not-found')
+        targets = table.cells.filter(
+          (c) =>
+            c.fieldId === request.fieldId &&
+            (!request.itemIds || request.itemIds.includes(c.itemId))
+        )
+      } else
+        targets = table.cells.filter(
+          (c) =>
+            (request.unattemptedOnly
+              ? isUnattemptedComparisonCell(c)
+              : isPendingComparisonCell(c)) &&
+            (!request.itemIds || request.itemIds.includes(c.itemId))
+        )
+      const eligible = targets.filter((cell) => cell.history.length < COMPARISON_HISTORY_LIMIT)
+      const skipped = eligible.length !== targets.length
+      targets = await this.readableTargets(table, eligible)
+      for (const cell of targets) cell.status = 'pending'
+      table.taskId = randomUUID()
+      table.taskSources = targets.map((c) => ({
+        cellId: c.id,
+        sourceKey: table.members.find((m) => m.itemId === c.itemId)!.sourceKey,
+        fieldVersion: table.fields.find((f) => f.id === c.fieldId)!.version
+      }))
+      table.remainingCellIds = targets.map((c) => c.id)
+      table.state = targets.length ? 'running' : 'completed'
+      if (skipped) table.issue = 'comparison-history-limit'
+      else delete table.issue
+    }
+    const extractor = table.state === 'running' ? await this.options.capture() : undefined
+    return this.queue(async () => {
+      const index = this.tables.findIndex((entry) => entry.id === table.id)
+      if (this.closed) throw new Error('comparison-owner-unavailable')
+      if (this.tables[index]?.revision !== revision) throw new Error('comparison-task-changed')
+      const result = await this.mutate(undefined, async () => {
+        table.revision++
+        this.tables[index] = table
+        return this.project(table)
+      })
+      if (extractor) this.extractors.set(table.id, extractor)
+      this.kick()
+      return result
+    })
   }
   private async refreshAdmission(
     table: ComparisonTable,
@@ -782,7 +821,7 @@ export class LiteratureComparisons {
       const cell = table.cells.find(
         (c) => table.remainingCellIds.includes(c.id) && c.status === 'pending'
       )
-      if (cell && cell.history.length >= 30) {
+      if (cell && cell.history.length >= COMPARISON_HISTORY_LIMIT) {
         await this.mutate(table, async () => {
           cell.status = 'failed'
           table.remainingCellIds = table.remainingCellIds.filter((id) => id !== cell.id)

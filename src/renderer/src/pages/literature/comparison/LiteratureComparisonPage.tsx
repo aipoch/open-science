@@ -156,7 +156,7 @@ export function LiteratureComparisonPage({
   const fieldEditorRef = useRef<HTMLDivElement | null>(null)
   const [picker, setPicker] = useState(false)
   const [sampleOpen, setSampleOpen] = useState(false)
-  const [sampleIds, setSampleIds] = useState<string[]>(table?.itemIds.slice(0, 2) ?? [])
+  const sampleIds = table?.sampleItemIds ?? table?.itemIds.slice(0, 2) ?? []
   const [selection] = useState(createLiteratureSelectionStore)
   const { selectedIds } = useSyncExternalStore(selection.subscribe, selection.getSnapshot)
   const selectionHintId = useId()
@@ -576,7 +576,11 @@ export function LiteratureComparisonPage({
           (!request.itemIds || request.itemIds.includes(cell.itemId))
         )
       })
-  const readyCells = targetCells.filter((cell) =>
+  const eligibleCells = request
+    ? targetCells.filter((cell) => !cell.historyLimitReached)
+    : targetCells
+  const cappedCount = targetCells.length - eligibleCells.length
+  const readyCells = eligibleCells.filter((cell) =>
     sourceChecks?.some((source) => source.itemId === cell.itemId && source.status === 'available')
   )
   const changedRemaining =
@@ -1785,9 +1789,15 @@ export function LiteratureComparisonPage({
                   size="sm"
                   variant="outline"
                   disabled={busy || editing || reviewStatus.pending || reviewStatus.failed}
-                  onClick={() => {
-                    setSampleIds(selectedMembers.map((member) => member.itemId))
-                    selection.clear()
+                  onClick={async () => {
+                    if (
+                      await run({
+                        action: 'set-sample',
+                        tableId: table.id,
+                        itemIds: selectedMembers.map((member) => member.itemId)
+                      })
+                    )
+                      selection.clear()
                   }}
                 >
                   {t('Use selection as sample')}
@@ -2487,10 +2497,15 @@ export function LiteratureComparisonPage({
                         <CheckCircle2 aria-hidden="true" className="size-4 text-muted-foreground" />
                         {t('Ready cells')}: {readyCells.length}
                       </span>
-                      {targetCells.length > readyCells.length && (
+                      {cappedCount > 0 && (
+                        <span>
+                          {t('History limit reached')}: {cappedCount}
+                        </span>
+                      )}
+                      {eligibleCells.length > readyCells.length && (
                         <span className="inline-flex items-center gap-1.5 text-status-warning-foreground">
                           <CircleAlert aria-hidden="true" className="size-4" />
-                          {t('Waiting for source')}: {targetCells.length - readyCells.length}
+                          {t('Waiting for source')}: {eligibleCells.length - readyCells.length}
                         </span>
                       )}
                     </div>

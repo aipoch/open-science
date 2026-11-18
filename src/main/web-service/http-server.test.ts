@@ -288,6 +288,23 @@ describe('startWebHttpServer', () => {
         })
       )
       expect(await readFile(path, 'utf8')).toBe(saved)
+      const edit = {
+        action: 'edit-cell',
+        tableId: table.id,
+        cellId: table.cells[0].id,
+        expectedFieldVersion: 2,
+        expectedSourceKey: 'source',
+        expectedManualRevision: 0,
+        confirmed: false,
+        value: 'First draft'
+      }
+      expect((await post(edit)).status).toBe(200)
+      const staleDraft = await post({ ...edit, value: 'Stale draft' })
+      expect(staleDraft.status).toBe(409)
+      const staleOutcome = await staleDraft.json()
+      expect(() => unwrapApplicationCommandOutcome(staleOutcome)).toThrow(
+        'comparison-manual-conflict'
+      )
       // Ablation: removing the public error type reproduces the original lost discriminator.
       invoke.mockRejectedValueOnce(new Error('comparison-config-changed'))
       const untyped = await post(update)

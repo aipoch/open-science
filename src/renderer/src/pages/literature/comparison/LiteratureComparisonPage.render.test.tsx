@@ -2,7 +2,11 @@
 import { useRef, useState } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ComparisonResult, ComparisonTable } from '../../../../../shared/literature-comparison'
+import type {
+  ComparisonRequest,
+  ComparisonResult,
+  ComparisonTable
+} from '../../../../../shared/literature-comparison'
 import { LiteratureComparisonPage } from './LiteratureComparisonPage'
 import { ComparisonCellReview } from './ComparisonCellReview'
 import { ComparisonDestinationDialog } from './ComparisonDestinationDialog'
@@ -751,6 +755,7 @@ describe('comparison workflow', () => {
         await waitFor(() =>
           expect(command).toHaveBeenLastCalledWith({
             action: 'edit-cell',
+            expectedManualRevision: 0,
             tableId: table.id,
             cellId: 'cell',
             value: 'Protected across viewport changes',
@@ -812,6 +817,7 @@ describe('comparison workflow', () => {
         await waitFor(() =>
           expect(command).toHaveBeenCalledWith({
             action: 'edit-cell',
+            expectedManualRevision: 0,
             tableId: table.id,
             cellId: 'cell',
             value: 'Reviewed manual value',
@@ -2021,7 +2027,7 @@ describe('comparison workflow', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('keeps unrestricted matrix selection independent from the reviewed sample until explicitly replaced', () => {
+  it('keeps unrestricted matrix selection independent from the reviewed sample until explicitly replaced', async () => {
     const table = fixture()
     table.cells[0].manual = {
       value: '42 adults',
@@ -2046,7 +2052,13 @@ describe('comparison workflow', () => {
           : {})
       })
     }
-    page(table)
+    const command = page(
+      table,
+      vi.fn(async (request: ComparisonRequest) => {
+        if (request.action === 'set-sample') table.sampleItemIds = request.itemIds
+        return { tables: [table] }
+      })
+    )
     const remaining = screen.getByRole('button', { name: 'Extract remaining' }) as HTMLButtonElement
     fireEvent.click(screen.getByRole('button', { name: /Table totals/ }))
     const sampleAction = (): HTMLElement | null =>
@@ -2064,6 +2076,14 @@ describe('comparison workflow', () => {
     expect(sampleSummary.textContent).toContain('Paper, Second report')
     fireEvent.click(selections[0])
     fireEvent.click(screen.getByRole('button', { name: 'Use selection as sample' }))
+    await waitFor(() =>
+      expect(command).toHaveBeenCalledWith({
+        action: 'set-sample',
+        tableId: table.id,
+        itemIds: ['second', 'third']
+      })
+    )
+    await waitFor(() => expect(sampleAction()).toBeNull())
     fireEvent.click(screen.getByRole('button', { name: /Sample references:/ }))
     expect(
       within(screen.getByRole('dialog', { name: /Sample references:/ })).getByText(
@@ -2932,6 +2952,56 @@ describe('comparison workflow', () => {
       }
     }
   )
+  it('keeps the local draft on conflict until the user chooses to overwrite the displayed version', async () => {
+    const table = fixture()
+    const command = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('comparison-manual-conflict'))
+      .mockResolvedValue({ tables: [] })
+    const props = {
+      tableId: table.id,
+      sourceKey: 'source',
+      field: table.fields[0],
+      command,
+      onClose: vi.fn(),
+      onOpenItem: vi.fn()
+    }
+    const { rerender } = render(<ComparisonCellReview {...props} cell={table.cells[0]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Revise' }))
+    const input = screen.getByRole('textbox', { name: 'Manual value' }) as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'Local edit' } })
+    await screen.findByText('Revision conflict')
+    rerender(
+      <ComparisonCellReview
+        {...props}
+        cell={{
+          ...table.cells[0],
+          manual: {
+            revision: 1,
+            value: 'Other editor',
+            confirmed: true,
+            fieldVersion: 1,
+            sourceKey: 'source',
+            attemptId: 'attempt',
+            updatedAt: 'now'
+          }
+        }}
+      />
+    )
+    expect(screen.getByText(/Latest saved version.*Other editor/)).toBeTruthy()
+    fireEvent.change(input, { target: { value: 'Revised local edit' } })
+    expect(command).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Overwrite with my draft' }))
+    await waitFor(() =>
+      expect(command).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          value: 'Revised local edit',
+          expectedManualRevision: 1,
+          confirmed: false
+        })
+      )
+    )
+  })
   it('revalidates a changed persisted base and hydrates the still pristine draft', async () => {
     const table = fixture()
     const initial = {
@@ -3569,6 +3639,7 @@ describe('pending comparison candidates', () => {
   })
   it('lets a reopened completed sample select the confirmed reference before bulk preflight', async () => {
     const table = fixture()
+    table.sampleItemIds = ['paper']
     table.state = 'completed'
     table.taskId = 'one-reference-sample'
     table.taskSources = [{ cellId: 'cell', sourceKey: 'source', fieldVersion: 1 }]
@@ -3603,10 +3674,7 @@ describe('pending comparison candidates', () => {
           .map(({ itemId, sourceKey }) => ({ itemId, sourceKey, status: 'available' }))
       }))
     )
-    expect(screen.queryByRole('button', { name: /Extract pending references/ })).toBeNull()
     expect(command).not.toHaveBeenCalled()
-    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Select {{title}}' })[0])
-    fireEvent.click(screen.getByRole('button', { name: 'Use selection as sample' }))
     const bulk = screen.getByRole('button', {
       name: /Extract pending references/
     }) as HTMLButtonElement
@@ -3778,6 +3846,7 @@ describe('pending comparison candidates', () => {
 
   it('keeps remaining extraction disabled while a manual sample correction is pending or failed', async () => {
     const table = fixture()
+    table.sampleItemIds = ['paper']
     table.cells[0].manual = {
       value: '42 adults',
       confirmed: true,
@@ -3810,8 +3879,6 @@ describe('pending comparison candidates', () => {
           })
       )
     )
-    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Select {{title}}' })[0])
-    fireEvent.click(screen.getByRole('button', { name: 'Use selection as sample' }))
     const remaining = screen.getByRole('button', { name: 'Extract remaining' }) as HTMLButtonElement
     expect(remaining.disabled).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: /42 adults/ }))
@@ -4040,6 +4107,7 @@ describe('comparison confirmation eligibility', () => {
     await waitFor(() =>
       expect(command).toHaveBeenCalledWith({
         action: 'edit-cell',
+        expectedManualRevision: 0,
         tableId: table.id,
         cellId: cell.id,
         value: 'Human draft',
@@ -4082,6 +4150,7 @@ describe('comparison confirmation eligibility', () => {
     await waitFor(() =>
       expect(command).toHaveBeenCalledWith({
         action: 'edit-cell',
+        expectedManualRevision: 0,
         tableId: table.id,
         cellId: cell.id,
         value: '',
@@ -4444,6 +4513,7 @@ describe('comparison matrix selection and review navigation', () => {
     await waitFor(() =>
       expect(command).toHaveBeenCalledWith({
         action: 'edit-cell',
+        expectedManualRevision: 0,
         tableId: 'table',
         cellId: 'cell',
         value: '42 adults',

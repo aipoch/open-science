@@ -8410,6 +8410,7 @@
     "Rule changed. Review the saved manual value again.": "La règle a changé. Vérifiez à nouveau la valeur manuelle enregistrée.",
     "Extract pending references": "Extraire les références en attente",
     "Machine result": "Résultat du modèle",
+    "History limit reached": "Limite de l’historique atteinte",
     "A cell reached the extraction history limit. Its saved history is retained.": "Une cellule a atteint la limite de l’historique d’extraction. Son historique enregistré est conservé.",
     "New comparison table": "Nouveau tableau comparatif",
     "Field name": "Nom du champ",

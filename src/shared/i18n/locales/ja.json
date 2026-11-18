@@ -8064,6 +8064,7 @@
     "Rule changed. Review the saved manual value again.": "ルールが変更されました。保存済みの手動入力値を再確認してください。",
     "Extract pending references": "抽出待ちの文献を一括抽出",
     "Machine result": "モデルの結果",
+    "History limit reached": "履歴の上限に到達",
     "A cell reached the extraction history limit. Its saved history is retained.": "セルの抽出履歴が上限に達しました。保存済みの履歴は保持されます。",
     "New comparison table": "新しい比較表",
     "Field name": "フィールド名",

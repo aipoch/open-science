@@ -8581,6 +8581,7 @@
     "Machine history": "История модели",
     "Machine results and evidence": "Машинные результаты и исходные доказательства",
     "Machine result": "Результат модели",
+    "History limit reached": "Достигнут лимит истории",
     "A cell reached the extraction history limit. Its saved history is retained.": "Одна из ячеек достигла предельного размера истории извлечения. Сохранённая история будет сохранена.",
     "New comparison table": "Новая сравнительная таблица",
     "Field name": "Название поля",

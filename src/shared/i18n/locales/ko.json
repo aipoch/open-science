@@ -8062,6 +8062,7 @@
     "Rule changed. Review the saved manual value again.": "규칙이 변경되었습니다. 저장된 수동 값을 다시 검토하세요.",
     "Extract pending references": "대기 문헌 일괄 추출",
     "Machine result": "모델 추출 결과",
+    "History limit reached": "기록 한도에 도달함",
     "A cell reached the extraction history limit. Its saved history is retained.": "한 셀의 추출 기록이 한도에 도달했습니다. 저장된 기록은 유지됩니다.",
     "New comparison table": "새 비교표",
     "Field name": "필드 이름",

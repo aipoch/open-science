@@ -190,9 +190,10 @@ export function useComparisonTables(activeTableId?: string): {
         result = await api.literature.comparisons(request)
       } catch (error) {
         if (
-          request.action === 'update' &&
           error instanceof Error &&
-          error.message.includes('comparison-config-changed')
+          ((request.action === 'update' && error.message.includes('comparison-config-changed')) ||
+            (request.action === 'edit-cell' &&
+              error.message.includes('comparison-manual-conflict')))
         ) {
           // Refresh the projection without rebasing the editor's retained draft.
           sequence.current += 1
