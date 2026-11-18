@@ -1,3 +1,4 @@
+import { PackageWebOmissions } from './PackageWebOmissions'
 import { importSessionPackage } from '@/lib/session-package-import'
 import {
   packageOperationPresentation,
@@ -65,6 +66,11 @@ import { createSessionReplayItem } from '@/pages/workspace/workspace-session-act
 import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { forkSession } from '@/lib/session-fork'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
+
+const packageErrorText = (error: string | undefined, t: TFunction): string | undefined =>
+  error === 'Required Web execution evidence cannot be shared under the current data policy.'
+    ? t('Required Web execution evidence cannot be shared under the current data policy.')
+    : error
 
 const openPackageSession = (operation: PackageOperationSnapshot): boolean => {
   const identity = operation.result?.imported
@@ -901,7 +907,12 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
             />
           ))}
           {operation.browserReceiptOnly && error ? (
-            <ErrorNotice inline role="alert" tone="amber" description={error} />
+            <ErrorNotice
+              inline
+              role="alert"
+              tone="amber"
+              description={packageErrorText(error, t)}
+            />
           ) : null}
         </div>
       ) : null}
@@ -1049,6 +1060,15 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                               </div>
                             </div>
                             <PackageProgressMeter operation={operation} />
+                            {operation.state === 'succeeded' ? (
+                              <PackageWebOmissions
+                                omissions={
+                                  operation.result?.webOmissions ??
+                                  operation.summary?.webOmissions ??
+                                  operation.importPreview?.webOmissions
+                                }
+                              />
+                            ) : null}
                             {operation.state === 'succeeded' && operation.result?.filePath ? (
                               <p className="break-all text-sm text-muted-foreground">
                                 {operation.result.filePath}
@@ -1072,7 +1092,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                               className="min-w-0 flex-1 basis-64"
                               role="alert"
                               tone="amber"
-                              description={error ?? operation.error}
+                              description={packageErrorText(error ?? operation.error, t)}
                             />
                             {operation.state === 'failed' ? (
                               <details className="min-w-0 pt-0.5 text-xs text-muted-foreground open:basis-full">
@@ -1173,7 +1193,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                           inline
                           role="alert"
                           tone="amber"
-                          description={error ?? operation.error}
+                          description={packageErrorText(error ?? operation.error, t)}
                         />
                       ) : null}
                     </>

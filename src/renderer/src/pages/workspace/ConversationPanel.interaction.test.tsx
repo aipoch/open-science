@@ -1,3 +1,4 @@
+import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import {
   pendingWorkspaceElicitations,
   useWorkspaceElicitationFailures
@@ -724,6 +725,7 @@ const createPanelDefaults = (): PanelProps => ({
     }
   },
   conversation: {
+    runtimeInteractionInFlight: false,
     optimisticMessage: undefined,
     planProjectionRecoveryError: false,
     availability: {
@@ -981,6 +983,37 @@ const dispatchDrag = (
     target.dispatchEvent(event)
   })
 }
+
+describe('ConversationPanel Web tool cancellation', () => {
+  const activeSession: ChatSession = {
+    id: 'web-session',
+    projectId: 'web-project',
+    title: 'Read web page',
+    cwd: '/workspace',
+    status: 'idle',
+    messages: [],
+    conversationGraph: createLinearConversationGraph({
+      sessionId: 'web-session',
+      messages: [],
+      frameworkId: 'open-science-agent',
+      createdAt: 1,
+      updatedAt: 1
+    }),
+    createdAt: 1,
+    updatedAt: 1
+  }
+  it('retains Stop after remount when the runtime still owns the turn', async () => {
+    const cancel = vi.fn(async () => undefined)
+    renderPanel({
+      view: { activeSession },
+      conversation: { runtimeInteractionInFlight: true, actions: { cancel } }
+    })
+    const stop = container.querySelector<HTMLButtonElement>('[aria-label="Cancel run"]')!
+    expect(stop).not.toBeNull()
+    await act(async () => stop.click())
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+})
 
 describe('ConversationPanel header spacing', () => {
   it('opens Model settings for an unavailable Subagent configuration', () => {

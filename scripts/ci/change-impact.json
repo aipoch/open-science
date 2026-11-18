@@ -388,7 +388,8 @@
         "src/main/update/verification-process.ts",
         "src/main/agent-framework/harness.ts",
         "src/main/harness-acp/tool-receipts.ts",
-        "src/main/harness-acp/storage-cleanup.ts"
+        "src/main/harness-acp/storage-cleanup.ts",
+        "src/main/web/invocation-store.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },
@@ -680,7 +681,10 @@
       "paths": [
         "e2e/certification/*.spec.ts",
         "e2e/runtime-performance.spec.ts",
-        "e2e/startup-performance.spec.ts"
+        "e2e/startup-performance.spec.ts",
+        "e2e/builtin-web-fetch.spec.ts",
+        "e2e/builtin-web-evidence-lifecycle.spec.ts",
+        "e2e/builtin-web-package.spec.ts"
       ],
       "capabilities": ["desktop_e2e_source"]
     },

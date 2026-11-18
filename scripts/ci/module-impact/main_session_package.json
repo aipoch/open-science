@@ -76,7 +76,10 @@
     "src/main/session-package/use-case-download.test.ts",
     "src/main/session-package/research-films.ts",
     "src/main/session-package/research-films-contract.ts",
-    "src/main/session-package/research-films.test.ts"
+    "src/main/session-package/research-films.test.ts",
+    "src/main/session-package/web-evidence.ts",
+    "src/main/session-package/web-evidence.test.ts",
+    "src/main/session-package/web-evidence.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -92,7 +95,9 @@
     "src/main/session-package/literature-source.ts",
     "src/main/session-package/use-case-catalog.ts",
     "src/main/session-package/research-films.ts",
-    "src/main/session-package/research-films-contract.ts"
+    "src/main/session-package/research-films-contract.ts",
+    "src/main/session-package/web-evidence.ts",
+    "src/shared/session-package-web.ts"
   ],
   "consumerModules": ["research_video"],
   "testFiles": {
@@ -128,7 +133,9 @@
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/use-case-catalog.test.ts",
       "src/main/session-package/use-case-download.test.ts",
-      "src/main/session-package/research-films.test.ts"
+      "src/main/session-package/research-films.test.ts",
+      "src/main/session-package/web-evidence.test.ts",
+      "src/main/session-package/web-evidence.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

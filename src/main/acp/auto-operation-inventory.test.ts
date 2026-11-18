@@ -15,7 +15,7 @@ import {
 // Legacy entries require no migration of their existing authorization contract.
 const registrations: Record<
   string,
-  'allow_once' | 'inner_authorization' | 'legacy' | 'operations' | 'review'
+  'allow_once' | 'host_web' | 'inner_authorization' | 'legacy' | 'operations' | 'review'
 > = {
   "artifacts/mcp-server.ts:'write_artifact_file'": 'allow_once',
   "image-model/mcp-server.ts:'generate_image'": 'allow_once',
@@ -53,7 +53,11 @@ const registrations: Record<
   "session-plan/plan-mcp-server.ts:'update_step_status'": 'legacy',
   'side-chat/host-message-mcp-server.ts:HOST_SEND_MESSAGE_TOOL_NAME': 'legacy',
   'skills/mcp-server.ts:REQUEST_SKILL_IMPORT_TOOL_NAME': 'inner_authorization',
-  'skills/runtime-mcp-server.ts:LOAD_SKILL_TOOL_NAME': 'legacy'
+  'skills/runtime-mcp-server.ts:LOAD_SKILL_TOOL_NAME': 'legacy',
+  // Host route ownership and the current permission mode are checked before dispatch. Auto may
+  // allow these read-only capabilities; external same-name tools do not inherit that authority.
+  'web/mcp-server.ts:WEB_FETCH_TOOL_NAME': 'host_web',
+  'web/mcp-server.ts:WEB_SEARCH_TOOL_NAME': 'host_web'
 }
 const notebookOperations: Record<string, 'inner_authorization' | 'legacy' | 'operations'> = {
   ask_user_question: 'inner_authorization',
@@ -165,7 +169,8 @@ describe('Auto operation completeness against real tool registrations', () => {
       literatureDiscovery: digest(readSource(join(mainRoot, 'literature/discovery-contract.ts'))),
       planSchema: digest(z.toJSONSchema(generatePlanToolSchema)),
       planValidation: digest(readSource(join(mainRoot, '../shared/session-plan/contract.ts'))),
-      activityDeclaration: digest(readSource(join(mainRoot, '../shared/activity-groups.ts')))
+      activityDeclaration: digest(readSource(join(mainRoot, '../shared/activity-groups.ts'))),
+      webTools: digest(readSource(join(mainRoot, '../shared/web-tools.ts')))
     }
     expect({ definitions, notebookSchemas, sharedContracts }).toEqual({
       definitions: {
@@ -207,7 +212,11 @@ describe('Auto operation completeness against real tool registrations', () => {
         'session-plan/plan-mcp-server.ts':
           '1451e969ed1af4ddea333c4005f11713d39f8590083099c0ce3c73b47937d326',
         // Reviewed: import errors carry codes and next steps; the schema and preview handoff are unchanged.
-        'skills/mcp-server.ts': '75e23698e0b11be9919ae224e1516ba82241aa703a20ae29c50448c35ce1d8da'
+        'skills/mcp-server.ts': '75e23698e0b11be9919ae224e1516ba82241aa703a20ae29c50448c35ce1d8da',
+        // Reviewed: strict shared inputs enter the host-owned route. Search sends queries to
+        // anonymous Exa and returns one bounded evidence envelope. Required filters are preserved.
+        // Receipt hooks observe revocation and return the authoritative cancellation result.
+        'web/mcp-server.ts': '63e8d78a5bfeffb323139a6ad5bd5ee941c19f49fdb5fb7327f6ec27f95664ba'
       },
       notebookSchemas: {
         // Reviewed: pros/cons are optional trimmed strings capped at 4000 characters; they only
@@ -221,7 +230,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         activityDeclaration: '1739b6cfadd2912aa53f4d11bf69d908da37d5f822476a998b928e9de7ddffdc',
         literatureDiscovery: '3ded9eab859b472f0d20d7a232c8971a517f3b493db318efb0a07753278fdee6',
         planSchema: '16f6ba38e7ae9320c2fb9d1a215592c11ada256781882e5e3f16336eb303cfb7',
-        planValidation: 'fb649e539cdd8f71abd34ec329ca7ee378cf7605fcbe8d0123b7703ed7dedddb'
+        planValidation: 'fb649e539cdd8f71abd34ec329ca7ee378cf7605fcbe8d0123b7703ed7dedddb',
+        // Reviewed: strict search/fetch inputs reject provider, network and replay options.
+        // Bounded attempts, usage and provenance fields grant no permission or execution authority.
+        webTools: '21c1fa26347228145c4b4cf697bbd6f86fc936937746ba11f0125df9dd2acfdf'
       }
     })
   })
