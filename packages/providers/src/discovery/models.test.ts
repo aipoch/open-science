@@ -97,6 +97,31 @@ describe('listProviderModels', () => {
     })
   })
 
+  it.each(['declared', 'streamed'] as const)(
+    'classifies an oversized configured catalog as a resource limit (%s bytes)',
+    async (source) => {
+      const response =
+        source === 'declared'
+          ? new Response(null, { headers: { 'content-length': '10' } })
+          : new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode('{"data":'))
+                  controller.enqueue(new TextEncoder().encode('[]}'))
+                  controller.close()
+                }
+              })
+            )
+
+      const result = await listProviderModels(
+        { url: 'https://example.test/models', options: { auth: 'none' } },
+        { fetchImpl: async () => response, limits: { modelListResponseBytes: 8 } }
+      )
+
+      expect(result).toMatchObject({ ok: false, code: 'resource-limit' })
+    }
+  )
+
   it('rejects a model catalog with more than 2000 model ids', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       Response.json({

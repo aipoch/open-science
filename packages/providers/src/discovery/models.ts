@@ -1,4 +1,4 @@
-import { readBoundedResponseText, fetchProviderRequest } from '../transport'
+import { fetchProviderRequest, readBoundedResponseText, ResponseBodyLimitError } from '../transport'
 import { providerErrorDetails } from '../errors'
 import {
   CATALOG_EFFORTS,
@@ -423,6 +423,8 @@ export const listProviderModels = async (
         message:
           reason ?? (error instanceof Error ? error.message : 'Could not load the model catalog.')
       }
+    if (error instanceof ResponseBodyLimitError)
+      return { ok: false, code: 'resource-limit', message: error.message }
     return {
       ok: false,
       code: signal.aborted ? (callerSignal?.aborted ? 'network' : 'timeout') : 'network',
