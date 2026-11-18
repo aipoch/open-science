@@ -1,10 +1,13 @@
 import {
+  WORKBUDDY_PROFILE_MESSAGE,
   codeBuddyAccounts,
   codeBuddySiteForId,
   readCodeBuddyAccountRequest,
   type CodeBuddyAccountRequest,
+  type CodeBuddyAuthMode,
   type CodeBuddySite
 } from '../../shared/codebuddy-subscription'
+import { hasWorkBuddyProfile } from './codebuddy-profile'
 import { runCodeBuddyAuth } from './codebuddy-auth'
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
@@ -570,13 +573,11 @@ class ProviderAccountsModule {
         await this.auth.cleanupProviderBeforeDelete(id)
         await this.repository.deleteProvider(id, scenarioModelHandling)
       })
-    const site =
-      settings.providers.find((provider) => provider.id === id)?.type === 'codebuddy-subscription'
-        ? codeBuddySiteForId(id)
-        : undefined
+    const record = settings.providers.find((provider) => provider.id === id)
+    const site = record?.type === 'codebuddy-subscription' ? codeBuddySiteForId(id) : undefined
     if (!site) return remove()
     await this.withCodeBuddyOperation(site, 'logout', async (signal) => {
-      await this.runCodeBuddy(site, 'logout', signal)
+      if (record?.codeBuddyAuthMode !== 'shared') await this.runCodeBuddy(site, 'logout', signal)
       await remove()
     })
   }
@@ -617,17 +618,18 @@ class ProviderAccountsModule {
   private async runCodeBuddy(
     site: CodeBuddySite,
     action: Exclude<CodeBuddyAccountRequest['action'], 'cancel'>,
-    signal: AbortSignal
+    signal: AbortSignal,
+    mode: CodeBuddyAuthMode = 'isolated'
   ): ReturnType<typeof runCodeBuddyAuth> {
     const settings = await this.repository.getSettings()
     if (!this.options.resolveCodeBuddyExecutable) throw new Error('CodeBuddy runtime unavailable.')
     const executable = await this.options.resolveCodeBuddyExecutable(settings.codebuddyPath)
     signal.throwIfAborted()
-    return runCodeBuddyAuth(executable, this.options.storageRoot, site, action, signal)
+    return runCodeBuddyAuth(executable, this.options.storageRoot, site, action, signal, mode)
   }
 
   async codeBuddyAccount(input: CodeBuddyAccountRequest): Promise<ValidateProviderResult> {
-    const { site, action } = readCodeBuddyAccountRequest(input)
+    const { site, action, mode: requestedMode } = readCodeBuddyAccountRequest(input)
     if (action === 'cancel') {
       const pending = [...this.codeBuddyOperations].find(
         (op) => op.site === site && op.action === 'login'
@@ -640,18 +642,33 @@ class ProviderAccountsModule {
     }
     const identity = codeBuddyAccounts[site]
     return this.withCodeBuddyOperation(site, action, async (signal) => {
-      if (action === 'status') {
-        const { authenticated } = await this.runCodeBuddy(site, action, signal)
-        return authenticated ? { ok: true, category: 'ok' } : { ok: false, category: 'auth' }
-      }
-      this.advanceProviderValidationGeneration(identity.id)
       const before = await this.repository.getSettings()
       const prior = before.providers.find((provider) => provider.id === identity.id)
       if (prior && prior.type !== 'codebuddy-subscription')
         throw new Error('The CodeBuddy account ID is already in use.')
+      const mode = prior ? (prior.codeBuddyAuthMode ?? 'isolated') : (requestedMode ?? 'isolated')
+      if (requestedMode && requestedMode !== mode)
+        throw new Error('Provider configuration changed. Your draft has not been saved.')
+      if (prior?.disconnectedAt !== undefined && (action === 'status' || action === 'refresh'))
+        return { ok: false, category: 'auth' }
+      if (action === 'status') {
+        const { authenticated } = await this.runCodeBuddy(site, action, signal, mode)
+        return authenticated ? { ok: true, category: 'ok' } : { ok: false, category: 'auth' }
+      }
+      this.advanceProviderValidationGeneration(identity.id)
       if (action === 'login') assertProviderCapacity(before.providers.length, Boolean(prior))
       if (action === 'refresh' && !prior) return { ok: false, category: 'auth' }
-      const outcome = await this.runCodeBuddy(site, action, signal)
+      const sharedDisconnect = mode === 'shared' && action === 'logout'
+      const outcome = sharedDisconnect
+        ? { authenticated: false }
+        : await this.runCodeBuddy(site, action, signal, mode)
+      if (action === 'login' && !outcome.authenticated) {
+        return {
+          ok: false,
+          category: 'auth',
+          ...(mode === 'shared' && hasWorkBuddyProfile() && { message: WORKBUDDY_PROFILE_MESSAGE })
+        }
+      }
       if (action === 'refresh' && outcome.authenticated && !outcome.models?.length)
         return { ok: false, category: 'unknown' }
       return await this.auth.serializeAccountMutation(async () => {
@@ -669,6 +686,10 @@ class ProviderAccountsModule {
           ...existing,
           ...identity,
           type: 'codebuddy-subscription',
+          ...(mode === 'shared' && {
+            codeBuddyAuthMode: mode,
+            disconnectedAt: sharedDisconnect ? Date.now() : undefined
+          }),
           apiEndpoints: ['chat-completions'],
           model: outcome.authenticated ? (outcome.model ?? existing?.model) : undefined,
           fetchedModels: outcome.authenticated
@@ -1173,6 +1194,7 @@ class ProviderAccountsModule {
   private sameValidationTarget(left: ResolvedProvider, right: ResolvedProvider): boolean {
     return (
       left.type === right.type &&
+      left.codeBuddyAuthMode === right.codeBuddyAuthMode &&
       left.codexAuthMode === right.codexAuthMode &&
       left.codexTransport === right.codexTransport &&
       left.baseUrl === right.baseUrl &&

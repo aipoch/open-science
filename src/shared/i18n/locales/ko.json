@@ -193,6 +193,9 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "시스템 자격 증명에 접근하는 동안 시작이 중지되었습니다. 기존 자격 증명과 프로필 데이터는 보존되었습니다."
   },
   "renderer": {
+    "Use existing CodeBuddy CLI sign-in": "기존 CodeBuddy CLI 로그인 사용",
+    "WorkBuddy profile found. Sign in to the selected site in CodeBuddy CLI.": "WorkBuddy 프로필을 찾았습니다. CodeBuddy CLI에서 선택한 사이트에 로그인하세요.",
+    "Sign in to the selected site in CodeBuddy CLI.": "CodeBuddy CLI에서 선택한 사이트에 로그인하세요.",
     "Pros": "장점",
     "Cons": "제약",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "종료된 실행 기록은 최근 30개까지 보관합니다. 대화와 파일은 유지됩니다.",

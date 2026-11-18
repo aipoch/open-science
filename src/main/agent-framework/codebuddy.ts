@@ -1,4 +1,5 @@
 import {
+  sharedCodeBuddySiteMatches,
   codeBuddyAccountEnvironment,
   codeBuddyHostEnvironment
 } from '../settings/codebuddy-profile'
@@ -154,12 +155,15 @@ export const createCodeBuddyFramework = ({
   },
 
   async beforePromptDispatch({
+    codeBuddySharedSite,
     connection,
     providerSessionId,
     cwd,
     mcpServers,
     skillRuntimeAllowlist
   }): Promise<void> {
+    if (codeBuddySharedSite && !sharedCodeBuddySiteMatches(codeBuddySharedSite))
+      throw new Error('Sign in to the selected site in CodeBuddy CLI.')
     await connection.agent.request(acp.methods.agent.session.resume, {
       sessionId: providerSessionId,
       cwd,
@@ -172,8 +176,19 @@ export const createCodeBuddyFramework = ({
     const chatCompletionsUrl = resolveChatCompletionsUrl(provider)
     const account =
       provider.type === 'codebuddy-subscription' && provider.codeBuddySite
-        ? codeBuddyAccountEnvironment(ctx.storageRoot, provider.codeBuddySite)
+        ? codeBuddyAccountEnvironment(
+            ctx.storageRoot,
+            provider.codeBuddySite,
+            provider.codeBuddyAuthMode
+          )
         : undefined
+    if (
+      provider.codeBuddyAuthMode === 'shared' &&
+      provider.codeBuddySite &&
+      !sharedCodeBuddySiteMatches(provider.codeBuddySite)
+    ) {
+      throw new Error('Sign in to the selected site in CodeBuddy CLI.')
+    }
     if (!account && (!baseUrl || !chatCompletionsUrl || !provider.key || !provider.model)) {
       throw new Error('CodeBuddy requires an OpenAI-compatible base URL, API key, and model.')
     }

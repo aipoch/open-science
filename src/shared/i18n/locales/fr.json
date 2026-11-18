@@ -195,6 +195,9 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés."
   },
   "renderer": {
+    "Use existing CodeBuddy CLI sign-in": "Utiliser la connexion existante à CodeBuddy CLI",
+    "WorkBuddy profile found. Sign in to the selected site in CodeBuddy CLI.": "Un profil WorkBuddy a été trouvé. Connectez-vous au site sélectionné dans CodeBuddy CLI.",
+    "Sign in to the selected site in CodeBuddy CLI.": "Connectez-vous au site sélectionné dans CodeBuddy CLI.",
     "Pros": "Avantages",
     "Cons": "Limites",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "Jusqu’à 30 enregistrements d’exécutions terminées sont conservés. Les conversations et les fichiers sont préservés.",

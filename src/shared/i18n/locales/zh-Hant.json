@@ -193,6 +193,9 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "啟動在存取系統憑證時停止。現有憑證和設定檔資料已保留。"
   },
   "renderer": {
+    "Use existing CodeBuddy CLI sign-in": "使用現有的 CodeBuddy CLI 登入",
+    "WorkBuddy profile found. Sign in to the selected site in CodeBuddy CLI.": "偵測到 WorkBuddy 設定。請在 CodeBuddy CLI 登入所選站點。",
+    "Sign in to the selected site in CodeBuddy CLI.": "請先在 CodeBuddy CLI 登入所選站台。",
     "Pros": "優點",
     "Cons": "缺點",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "最多保留最近 30 筆已結束的執行記錄。對話和檔案會保留。",

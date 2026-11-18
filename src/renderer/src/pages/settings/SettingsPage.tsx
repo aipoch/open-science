@@ -228,6 +228,7 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
       provider.type === 'codex-shared' || provider.type === 'codex-isolated'
         ? resolveCodexSubscriptionType(provider)
         : provider.type,
+    codeBuddyAuthMode: provider.codeBuddyAuthMode,
     codeBuddySite:
       provider.type === 'codebuddy-subscription' ? codeBuddySiteForId(provider.id) : undefined,
     codexTransport: provider.codexTransport ?? 'auto',
@@ -2081,42 +2082,49 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       description={statusMessage}
                     />
                   ) : null}
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      {canTestConnection ? (
+                  {formValue.type === 'codebuddy-subscription' && formValue.codeBuddySite ? (
+                    <CodeBuddySignIn
+                      key={formValue.codeBuddySite + (formValue.codeBuddyAuthMode ?? 'isolated')}
+                      mode={formValue.codeBuddyAuthMode ?? 'isolated'}
+                      site={formValue.codeBuddySite}
+                      onAdded={finishProviderForm}
+                      onCancel={closeForm}
+                    />
+                  ) : (
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        {canTestConnection ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={!canSave}
+                            onClick={() => void handleTestConnection()}
+                          >
+                            {isTestingConnection ? (
+                              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                            ) : null}
+                            {isTestingConnection ? t('Testing…') : t('Test connection')}
+                          </Button>
+                        ) : null}
+                      </div>
+                      <div className="flex gap-2">
                         <Button
                           type="button"
-                          variant="outline"
-                          disabled={!canSave}
-                          onClick={() => void handleTestConnection()}
+                          variant="ghost"
+                          onClick={closeForm}
+                          disabled={isSaving}
                         >
-                          {isTestingConnection ? (
-                            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                          ) : null}
-                          {isTestingConnection ? t('Testing…') : t('Test connection')}
+                          {t('Cancel')}
                         </Button>
-                      ) : null}
-                    </div>
-                    <div className="flex gap-2">
-                      <Button type="button" variant="ghost" onClick={closeForm} disabled={isSaving}>
-                        {t('Cancel')}
-                      </Button>
-                      {formValue.type === 'codebuddy-subscription' && formValue.codeBuddySite ? (
-                        <CodeBuddySignIn
-                          key={formValue.codeBuddySite}
-                          site={formValue.codeBuddySite}
-                          onAdded={finishProviderForm}
-                        />
-                      ) : (
                         <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
                           {isSaving ? (
                             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                           ) : null}
                           {isSaving ? t('Saving…') : t('Save')}
                         </Button>
-                      )}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </SettingsFormFooter>
               ) : null}
             </div>

@@ -100,6 +100,7 @@ class ProviderRuntimeProjectionOwner {
       id: provider.id,
       configRevision: provider.configRevision,
       type: provider.type,
+      ...(provider.codeBuddyAuthMode && { codeBuddyAuthMode: provider.codeBuddyAuthMode }),
       codexAuthMode: provider.codexAuthMode,
       codexTransport: provider.codexTransport,
       name: provider.name,
@@ -259,6 +260,7 @@ class ProviderRuntimeProjectionOwner {
       return {
         type: provider.type,
         codeBuddySite,
+        ...(provider.codeBuddyAuthMode && { codeBuddyAuthMode: provider.codeBuddyAuthMode }),
         model: modelOverride ?? provider.model,
         apiEndpoints: ['chat-completions']
       }

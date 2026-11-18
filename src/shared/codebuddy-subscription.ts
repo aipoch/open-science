@@ -51,7 +51,13 @@ export const codeBuddyBaseModels: Record<CodeBuddySite, readonly string[]> = {
   ]
 }
 
+export const WORKBUDDY_PROFILE_MESSAGE =
+  'WorkBuddy profile found. Sign in to the selected site in CodeBuddy CLI.'
+
+export type CodeBuddyAuthMode = 'shared' | 'isolated'
+
 export type CodeBuddyAccountRequest = {
+  mode?: CodeBuddyAuthMode
   site: CodeBuddySite
   action: 'login' | 'logout' | 'cancel' | 'status' | 'refresh'
 }
@@ -69,8 +75,10 @@ export function readCodeBuddyAccountRequest(
   if (
     !input ||
     (input.site !== 'internal' && input.site !== 'external') ||
+    (input.mode !== undefined &&
+      (input.action !== 'login' || !['shared', 'isolated'].includes(input.mode))) ||
     !['login', 'logout', 'cancel', 'status', 'refresh'].includes(input.action)
   )
     throw new Error('Invalid CodeBuddy account request.')
-  return { site: input.site, action: input.action }
+  return { site: input.site, action: input.action, ...(input.mode && { mode: input.mode }) }
 }

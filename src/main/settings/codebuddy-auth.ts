@@ -3,10 +3,18 @@ import { mkdir } from 'node:fs/promises'
 import { Readable, Writable } from 'node:stream'
 import { createInterface } from 'node:readline'
 import * as acp from '@agentclientprotocol/sdk'
-import type { CodeBuddyAccountRequest, CodeBuddySite } from '../../shared/codebuddy-subscription'
+import type {
+  CodeBuddyAccountRequest,
+  CodeBuddyAuthMode,
+  CodeBuddySite
+} from '../../shared/codebuddy-subscription'
 import { collectSelectValues } from '../acp/session-config'
 import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
-import { codeBuddyAccountEnvironment, codeBuddyHostEnvironment } from './codebuddy-profile'
+import {
+  codeBuddyAccountEnvironment,
+  codeBuddyHostEnvironment,
+  sharedCodeBuddySiteMatches
+} from './codebuddy-profile'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
 type AccountSnapshot = { authenticated: boolean; model?: string; models?: string[] }
@@ -17,13 +25,20 @@ export async function runCodeBuddyAuth(
   storageRoot: string,
   site: CodeBuddySite,
   action: Exclude<CodeBuddyAccountRequest['action'], 'cancel'>,
-  cancel?: AbortSignal
+  cancel?: AbortSignal,
+  mode: CodeBuddyAuthMode = 'isolated'
 ): Promise<AccountSnapshot> {
   const signal = AbortSignal.any([
     AbortSignal.timeout(action === 'login' ? 330_000 : 20_000),
     ...(cancel ? [cancel] : [])
   ])
-  const profile = codeBuddyAccountEnvironment(storageRoot, site)
+  if (mode === 'shared') {
+    if (action === 'logout')
+      throw new Error('Disconnect the shared CodeBuddy provider from Open-Science.')
+    if (!sharedCodeBuddySiteMatches(site)) return { authenticated: false }
+  }
+  const profile = codeBuddyAccountEnvironment(storageRoot, site, mode)
+  const cwd = mode === 'shared' ? profile.CODEBUDDY_CONFIG_DIR : profile.HOME
   await mkdir(profile.CODEBUDDY_CONFIG_DIR, { recursive: true, mode: 0o700 })
   signal.throwIfAborted()
   const logout = action === 'logout'
@@ -32,7 +47,7 @@ export async function runCodeBuddyAuth(
     : ['--acp', '--strict-mcp-config', '--setting-sources', 'user']
   const shell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(executable)
   const child = spawn(shell ? `"${executable}"` : executable, args, {
-    cwd: profile.HOME,
+    cwd,
     env: { ...codeBuddyHostEnvironment(process.env), ...profile },
     shell,
     windowsHide: true,
@@ -104,7 +119,8 @@ export async function runCodeBuddyAuth(
           ).userInfo?.userId
         )
       const authenticated = await status()
-      if (action === 'status' || (action === 'refresh' && !authenticated)) return { authenticated }
+      if (action === 'status' || ((action === 'refresh' || mode === 'shared') && !authenticated))
+        return { authenticated }
       if (!authenticated) {
         if (!init.authMethods?.some((method) => method.id === site))
           throw new Error('CodeBuddy login method unavailable.')
@@ -117,7 +133,7 @@ export async function runCodeBuddyAuth(
           acp.NewSessionResponse & {
             models?: { currentModelId?: string; availableModels?: { modelId: string }[] }
           }
-        >('session/new', { cwd: profile.HOME, mcpServers: [] }),
+        >('session/new', { cwd, mcpServers: [] }),
         new Promise<never>((_, reject) => {
           catalogTimeout = setTimeout(
             () => reject(new Error('CodeBuddy model discovery timed out.')),

@@ -540,6 +540,8 @@ export class AgentBackendResolver {
     ) {
       throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
     }
+    if (target.providerType === 'codebuddy-subscription' && target.disconnectedAt !== undefined)
+      throw new Error('Connect your CodeBuddy CLI account in Settings.')
     const plan = this.planner.planBackend({
       settings,
       frameworkId,
@@ -697,6 +699,9 @@ export class AgentBackendResolver {
         framework,
         providerId: target.providerId,
         providerName: target.providerName,
+        ...(provider.codeBuddyAuthMode === 'shared' && provider.codeBuddySite
+          ? { codeBuddySharedSite: provider.codeBuddySite }
+          : {}),
         ...(codexSubscriptionTransport ? { codexSubscriptionTransport } : {}),
         backendId: `${framework.id}:${backendProviderId}`,
         modelRoute,

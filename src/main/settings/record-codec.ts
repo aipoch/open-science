@@ -281,6 +281,8 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
+  if (type === 'codebuddy-subscription' && value.codeBuddyAuthMode === 'shared')
+    provider.codeBuddyAuthMode = 'shared'
   if (keyRef) provider.keyRef = keyRef
   if (keyMask) provider.keyMask = keyMask
   if (accountEmail && type === 'xai-subscription') provider.accountEmail = accountEmail
@@ -292,7 +294,10 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (lastValidatedTarget) provider.lastValidatedTarget = lastValidatedTarget
   if (lastValidationFailure) provider.lastValidationFailure = lastValidationFailure
   if (expiresAt !== undefined) provider.expiresAt = expiresAt
-  if (disconnectedAt !== undefined && type === 'claude-shared') {
+  if (
+    disconnectedAt !== undefined &&
+    (type === 'claude-shared' || provider.codeBuddyAuthMode === 'shared')
+  ) {
     provider.disconnectedAt = disconnectedAt
   }
   if (

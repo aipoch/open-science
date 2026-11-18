@@ -7,6 +7,7 @@ import {
   SKILL_RUNTIME_ALLOWED_NAMES_ENV,
   SKILL_RUNTIME_ROOT_ENV
 } from '../skills/runtime-mcp-server'
+import * as profiles from '../settings/codebuddy-profile'
 import { createCodeBuddyFramework } from './codebuddy'
 
 const provider = {
@@ -235,6 +236,26 @@ describe('codebuddy framework', () => {
     expect(`${persistentPrompt}${setup.promptPrefix}`).not.toMatch(
       /mcp__open_science_[a-z_]+__mcp__/u
     )
+  })
+
+  it('stops a shared conversation before resuming when the CLI changes site', async () => {
+    const site = vi.spyOn(profiles, 'sharedCodeBuddySiteMatches').mockReturnValue(false)
+    const request = vi.fn()
+    try {
+      await expect(
+        createCodeBuddyFramework().beforePromptDispatch?.({
+          connection: { agent: { request } } as never,
+          providerSessionId: 'prior-session',
+          cwd: '/workspace',
+          mcpServers: [],
+          codeBuddySharedSite: 'internal'
+        })
+      ).rejects.toThrow('Sign in to the selected site')
+      expect(site).toHaveBeenCalledWith('internal')
+      expect(request).not.toHaveBeenCalled()
+    } finally {
+      site.mockRestore()
+    }
   })
 
   it('replays dynamic MCP servers when activating the target Session before a prompt', async () => {

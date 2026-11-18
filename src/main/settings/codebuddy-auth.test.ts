@@ -1,7 +1,8 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
+import { hasWorkBuddyProfile, sharedCodeBuddySiteMatches } from './codebuddy-profile'
 import { runCodeBuddyAuth } from './codebuddy-auth'
 
 vi.mock('node:child_process', async (original) => {
@@ -103,5 +104,33 @@ it('keeps a login in its site profile, reuses it on restart and clears it on log
     expect(await run('status')).toEqual({ authenticated: false })
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+it.each([
+  ['darwin', ['Library', 'Application Support']],
+  ['win32', ['AppData', 'Local']],
+  ['linux', ['.local', 'share']]
+] as const)('routes shared logins by product and site on %s', async (platform, data) => {
+  const home = await mkdtemp(join(tmpdir(), 'os-codebuddy-shared-'))
+  try {
+    const dir = join(home, ...data, 'CodeBuddyExtension', 'Data', 'Public', 'auth')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'workbuddy-desktop.info'), 'unreadable as JSON')
+    expect(hasWorkBuddyProfile(home, platform)).toBe(true)
+    expect(sharedCodeBuddySiteMatches('internal', home, platform)).toBe(false)
+    for (const [domain, site] of [
+      ['www.codebuddy.cn', 'internal'],
+      ['www.codebuddy.ai', 'external']
+    ] as const) {
+      await writeFile(
+        join(dir, 'Tencent-Cloud.coding-copilot.info'),
+        JSON.stringify({ auth: { domain } })
+      )
+      expect(sharedCodeBuddySiteMatches('internal', home, platform)).toBe(site === 'internal')
+      expect(sharedCodeBuddySiteMatches('external', home, platform)).toBe(site === 'external')
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true })
   }
 })

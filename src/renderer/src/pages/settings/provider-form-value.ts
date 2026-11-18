@@ -1,6 +1,7 @@
 import {
   codeBuddyAccounts,
   codeBuddySiteForId,
+  type CodeBuddyAuthMode,
   type CodeBuddySite
 } from '../../../../shared/codebuddy-subscription'
 import {
@@ -39,6 +40,7 @@ import {
 export type ProviderFormValue = {
   type: ProviderType
   codeBuddySite?: CodeBuddySite
+  codeBuddyAuthMode?: CodeBuddyAuthMode
   codexTransport: CodexSubscriptionTransport
   name: string
   baseUrl: string

@@ -494,7 +494,30 @@ const ProviderForm = ({
         </div>
       ) : null}
 
-      {isCodeBuddySubscription ? null : isXaiSubscription ? (
+      {isCodeBuddySubscription ? (
+        <div className="space-y-1.5">
+          <span className={fieldLabelClassName}>{t('Authentication')}</span>
+          <Select
+            value={value.codeBuddyAuthMode ?? 'isolated'}
+            disabled={disabled || !codeBuddyProviders}
+            onValueChange={(mode) =>
+              onChange({ codeBuddyAuthMode: mode === 'shared' ? 'shared' : 'isolated' })
+            }
+          >
+            <SelectTrigger aria-label={t('Authentication')}>
+              <span>
+                {value.codeBuddyAuthMode === 'shared'
+                  ? t('Use existing CodeBuddy CLI sign-in')
+                  : t('Sign in with Open-Science')}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="shared">{t('Use existing CodeBuddy CLI sign-in')}</SelectItem>
+              <SelectItem value="isolated">{t('Sign in with Open-Science')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      ) : isXaiSubscription ? (
         <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
           <p className="text-sm font-medium text-foreground">{t('One xAI login, every agent')}</p>
           <p className="text-xs text-muted-foreground">

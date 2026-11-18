@@ -1315,6 +1315,49 @@ describe('ProviderAccountsModule', () => {
     }
   })
 
+  it('disconnects and deletes shared CodeBuddy locally and requires an explicit reconnect', async () => {
+    const auth = vi.spyOn(codeBuddyAuth, 'runCodeBuddyAuth').mockResolvedValue({
+      authenticated: true,
+      model: 'model',
+      models: ['model']
+    })
+    const login = { site: 'internal', action: 'login', mode: 'shared' } as const
+    const id = codeBuddyAccounts.internal.id
+    const stored = async (): Promise<StoredSettings['providers'][number] | undefined> =>
+      (await repository.getSettings()).providers.find((p) => p.id === id)
+    try {
+      expect(await module.codeBuddyAccount(login)).toMatchObject({ ok: true })
+      expect(auth).toHaveBeenLastCalledWith(
+        'test-codebuddy',
+        expect.any(String),
+        'internal',
+        'login',
+        expect.any(AbortSignal),
+        'shared'
+      )
+      expect(await stored()).toMatchObject({
+        codeBuddyAuthMode: 'shared',
+        fetchedModels: ['model']
+      })
+      auth.mockClear()
+      await module.codeBuddyAccount({ site: 'internal', action: 'logout' })
+      expect((await stored())?.disconnectedAt).toEqual(expect.any(Number))
+      expect((await stored())?.fetchedModels).toBeUndefined()
+      expect(await module.codeBuddyAccount({ site: 'internal', action: 'status' })).toMatchObject({
+        ok: false
+      })
+      expect(auth).not.toHaveBeenCalled()
+      expect(await module.codeBuddyAccount(login)).toMatchObject({ ok: true })
+      expect((await stored())?.disconnectedAt).toBeUndefined()
+      auth.mockClear()
+      await module.deleteProvider(id)
+      expect(await stored()).toBeUndefined()
+      expect(auth).not.toHaveBeenCalled()
+    } finally {
+      auth.mockRestore()
+    }
+  })
+
   it('replaces only the refreshed CodeBuddy catalog, keeps it on failure, and clears it on logout', async () => {
     const auth = vi.spyOn(codeBuddyAuth, 'runCodeBuddyAuth')
     try {

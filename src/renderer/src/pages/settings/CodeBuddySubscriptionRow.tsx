@@ -5,9 +5,11 @@ import { useTranslation } from 'react-i18next'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/stores/settings-store'
-import type {
-  CodeBuddyAccountRequest,
-  CodeBuddySite
+import {
+  WORKBUDDY_PROFILE_MESSAGE,
+  type CodeBuddyAccountRequest,
+  type CodeBuddyAuthMode,
+  type CodeBuddySite
 } from '../../../../shared/codebuddy-subscription'
 import type { ProviderView } from '../../../../shared/settings'
 import { ProviderKindIcon } from './provider-icons'
@@ -17,7 +19,8 @@ type AccountAction = CodeBuddyAccountRequest['action']
 
 function useCodeBuddyAccount(
   site: CodeBuddySite,
-  configured: boolean
+  configured: boolean,
+  mode: CodeBuddyAuthMode = 'isolated'
 ): {
   signedIn: boolean | undefined
   pending: AccountAction | undefined
@@ -30,7 +33,7 @@ function useCodeBuddyAccount(
   const [pending, setPending] = useState<AccountAction | undefined>(
     configured ? 'status' : undefined
   )
-  const [failed, setFailed] = useState<AccountAction>()
+  const [failed, setFailed] = useState<AccountAction | 'no-shared-login' | 'workbuddy-profile'>()
   const current = useRef<{ action: AccountAction } | undefined>(undefined)
   const run = useCallback(
     async (action: AccountAction): Promise<boolean> => {
@@ -39,10 +42,16 @@ function useCodeBuddyAccount(
       setPending(action)
       setFailed(undefined)
       try {
-        const result = await account({ site, action })
+        const result = await account({ site, action, ...(action === 'login' && { mode }) })
         if (current.current !== operation) return false
         if (!result.ok && (result.category !== 'auth' || action === 'login')) {
-          setFailed(action)
+          setFailed(
+            action === 'login' && mode === 'shared' && result.category === 'auth'
+              ? result.message === WORKBUDDY_PROFILE_MESSAGE
+                ? 'workbuddy-profile'
+                : 'no-shared-login'
+              : action
+          )
         } else if (action !== 'cancel') {
           setSignedIn(result.ok && action !== 'logout')
         }
@@ -60,7 +69,7 @@ function useCodeBuddyAccount(
         }
       }
     },
-    [account, configured, site]
+    [account, configured, mode, site]
   )
   useEffect(() => {
     let mounted = true
@@ -82,11 +91,15 @@ function useCodeBuddyAccount(
       role="alert"
       level="error"
       title={
-        failed === 'refresh'
-          ? t('Could not refresh models from the vendor.')
-          : failed === 'status'
-            ? t('Could not check CodeBuddy sign-in status.')
-            : t('CodeBuddy account request failed.')
+        failed === 'workbuddy-profile'
+          ? t('WorkBuddy profile found. Sign in to the selected site in CodeBuddy CLI.')
+          : failed === 'no-shared-login'
+            ? t('Sign in to the selected site in CodeBuddy CLI.')
+            : failed === 'refresh'
+              ? t('Could not refresh models from the vendor.')
+              : failed === 'status'
+                ? t('Could not check CodeBuddy sign-in status.')
+                : t('CodeBuddy account request failed.')
       }
     />
   ) : null
@@ -95,26 +108,35 @@ function useCodeBuddyAccount(
 
 export function CodeBuddySignIn({
   site,
+  mode,
+  onCancel,
   onAdded
 }: {
   site: CodeBuddySite
+  mode: CodeBuddyAuthMode
+  onCancel: () => void
   onAdded: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const { pending, run, error } = useCodeBuddyAccount(site, false)
+  const { pending, run, error } = useCodeBuddyAccount(site, false, mode)
   return (
     <>
       {error}
-      <Button
-        type="button"
-        disabled={!!pending}
-        onClick={async () => {
-          if (await run('login')) onAdded()
-        }}
-      >
-        {pending && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
-        {t('Sign in with browser')}
-      </Button>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          {t('Cancel')}
+        </Button>
+        <Button
+          type="button"
+          disabled={!!pending}
+          onClick={async () => {
+            if (await run('login')) onAdded()
+          }}
+        >
+          {pending && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+          {mode === 'shared' ? t('Connect') : t('Sign in with browser')}
+        </Button>
+      </div>
     </>
   )
 }
@@ -129,7 +151,12 @@ export function CodeBuddySubscriptionRow({
   onDelete: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const { pending, signedIn, run, error } = useCodeBuddyAccount(site, true)
+  const { pending, signedIn, run, error } = useCodeBuddyAccount(
+    site,
+    true,
+    provider.codeBuddyAuthMode
+  )
+  const shared = provider.codeBuddyAuthMode === 'shared'
   const action =
     pending === 'login'
       ? 'cancel'
@@ -139,8 +166,8 @@ export function CodeBuddySubscriptionRow({
           ? 'logout'
           : 'login'
   const authActions = {
-    login: { label: t('Sign in'), icon: LogIn },
-    logout: { label: t('Sign out'), icon: LogOut },
+    login: { label: shared ? t('Connect') : t('Sign in'), icon: LogIn },
+    logout: { label: shared ? t('Disconnect from Open-Science') : t('Sign out'), icon: LogOut },
     cancel: { label: t('Cancel sign-in'), icon: X },
     status: { label: pending === 'status' ? t('Checking…') : t('Retry'), icon: RefreshCw }
   }
