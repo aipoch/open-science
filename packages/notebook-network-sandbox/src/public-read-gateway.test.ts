@@ -35,6 +35,7 @@ const listen = async (server: Server): Promise<number> => {
 }
 const setup = async (
   options: {
+    startAudit?: import('../runtime/src/gateway/command-gateway.js').GatewayAuditStart
     rawReply?: string
     origin?: 'wrong-host' | 'local-ca'
     upgrade?: boolean
@@ -110,6 +111,7 @@ const setup = async (
   const proxyPort = await listen(proxy)
   const blocked = vi.fn()
   const gateway = await CommandGateway.open({
+    startAudit: options.startAudit,
     credentials: { username: 'test', password: 'secret' },
     parentProxy: { https: `http://127.0.0.1:${proxyPort}` },
     decide: async (_host, _port, purpose, canResume) => {
@@ -514,4 +516,24 @@ it.each([
   expect(received).toContain(body)
   expect(received).not.toContain('secret')
   expect(received).not.toContain('abcdef')
+})
+
+it('records cancellation when authorization cannot resume an unsupported upgrade', async () => {
+  const events: import('../runtime/src/gateway/command-gateway.js').GatewayAuditEvent[] = []
+  const { open, seen } = await setup({
+    approve: async () => true,
+    startAudit: () => (event) => events.push(event)
+  })
+  const socket = await open()
+  const done = closed(socket)
+  socket.write(
+    'GET / HTTP/1.1\r\nHost: data.example\r\nUpgrade: websocket\r\nConnection: upgrade\r\n\r\n'
+  )
+  socket.resume()
+  await done
+  expect(seen).toEqual([])
+  expect(events).toEqual([
+    expect.objectContaining({ decision: 'allowed' }),
+    expect.objectContaining({ outcome: 'cancelled' })
+  ])
 })

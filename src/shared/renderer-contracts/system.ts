@@ -1,3 +1,4 @@
+import type { NotebookNetworkAuditQuery, NotebookNetworkAuditPage } from '../notebook-network-audit'
 import type { PackageOperationSnapshot } from '../session-package'
 import { RUNTIME_STARTUP_CHANNELS, type RuntimeStartupState } from '../runtime-startup'
 import {
@@ -192,6 +193,13 @@ export const logsGetStatusContracts = {
 } as const
 
 export const networkCheckConnectivityContracts = {
+  'network.queryNotebookLogs': callable<
+    (query: NotebookNetworkAuditQuery) => Promise<NotebookNetworkAuditPage>
+  >()('network', ['network:query-notebook-logs', ELECTRON]),
+  'network.setNotebookLogRetention': callable<(days: number) => Promise<number>>()('network', [
+    'network:set-notebook-log-retention',
+    ELECTRON
+  ]),
   'network.onSystemResumed': callable<(listener: () => void) => RemoveListener>()('network', [
     NETWORK_SYSTEM_RESUMED_CHANNEL,
     ELECTRON_EVENT

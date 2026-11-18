@@ -39,6 +39,7 @@ import type {
   ShellRuntimeBinding
 } from '../../shared/notebook'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import type { NotebookNetworkMode } from '../../shared/notebook-network-settings'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
 import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
@@ -176,6 +177,7 @@ type NotebookExecutionOwnerOptions = {
   shellConcurrencyLimit?: number
   shellRuntimeBinding?: ShellRuntimeBinding
   getGrantedLocalRoots?: () => Promise<readonly GrantedLocalRoot[]>
+  getNetworkMode?: () => NotebookNetworkMode | Promise<NotebookNetworkMode>
 }
 
 const errorToExecutionResult = (error: unknown, cwd: string): NotebookSessionExecutionResult => {
@@ -758,6 +760,7 @@ class NotebookExecutionOwner {
     const queuedRun: NotebookRunRecord = {
       runId,
       executionMode: request.background ? 'background' : 'foreground',
+      networkMode: (await this.options.getNetworkMode?.()) ?? 'relaxed',
       submissionIdentity,
       submissionFingerprint,
       admittedAt,
@@ -1179,6 +1182,7 @@ class NotebookExecutionOwner {
     const queuedRun: NotebookRunRecord = {
       runId: controlInvocationId,
       executionMode: request.background ? 'background' : 'foreground',
+      networkMode: (await this.options.getNetworkMode?.()) ?? 'relaxed',
       submissionIdentity,
       submissionFingerprint,
       admittedAt,
@@ -1626,6 +1630,7 @@ class NotebookExecutionOwner {
       const queuedRun: NotebookRunRecord = {
         runId,
         executionMode: request.background ? 'background' : 'foreground',
+        networkMode: (await this.options.getNetworkMode?.()) ?? 'relaxed',
         submissionIdentity,
         submissionFingerprint,
         admittedAt,

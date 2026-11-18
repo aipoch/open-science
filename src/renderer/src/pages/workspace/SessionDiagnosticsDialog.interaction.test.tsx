@@ -557,3 +557,28 @@ it.each([
     'Could not show the exported file.'
   )
 })
+
+it('keeps network logs unchecked until explicitly selected for this session', async () => {
+  inspectDiagnostics.mockResolvedValue({
+    items: [
+      {
+        id: 'network-logs',
+        name: 'logs/network/notebook.json',
+        kind: 'network-log',
+        available: true
+      }
+    ]
+  })
+  await render()
+  const network = checkbox('Notebook network logs')
+  expect(network.getAttribute('aria-checked')).toBe('false')
+  await act(async () => fireEvent.click(button('Export')))
+  expect(exportDiagnostics.mock.lastCall?.[0].selectedItems).toEqual([])
+  await act(async () => fireEvent.click(network))
+  await act(async () => fireEvent.click(button('Export')))
+  expect(exportDiagnostics.mock.lastCall?.[0]).toMatchObject({
+    projectId: 'p',
+    sessionId: 's',
+    selectedItems: ['network-logs']
+  })
+})

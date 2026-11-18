@@ -453,6 +453,7 @@ describe('notebook shell process behavior', () => {
 
       const result = await runShellCommand({
         command: 'echo hi',
+        runId: 'notebook-run-wsl',
         cwd: 'C:\\workspace',
         handoffDir: 'C:\\handoff',
         runtimeRoot: portableRuntimeRoot,
@@ -480,6 +481,7 @@ describe('notebook shell process behavior', () => {
       })
       expect(processSandbox.wrap).toHaveBeenCalledWith(
         expect.objectContaining({
+          notebookRunId: 'notebook-run-wsl',
           target: {
             kind: 'wsl2',
             profileId: 'profile-1',

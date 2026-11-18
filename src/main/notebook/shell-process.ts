@@ -481,6 +481,7 @@ const prepareShellLaunchOptions = async (
           cwd: options.cwd,
           commandText: options.command,
           ...(options.executionReference ? { executionReference: options.executionReference } : {}),
+          ...(options.runId ? { notebookRunId: options.runId } : {}),
           sessionId: options.sessionId,
           projectId: options.projectId,
           runtime: 'bash',
@@ -1320,6 +1321,7 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
               const end = preparedLaunch.sandboxed?.beginExecution?.({
                 commandText: request.command,
                 executionReference: request.executionReference,
+                notebookRunId: request.runId,
                 signal: request.signal,
                 onNetworkWaitChange
               })

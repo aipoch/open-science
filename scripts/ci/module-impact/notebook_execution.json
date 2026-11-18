@@ -140,6 +140,8 @@
     "src/main/notebook/managed-skill-read-roots.ts",
     "src/main/notebook/managed-skill-read-roots.test.ts",
     "src/main/notebook/managed-skill-read.integration.test.ts",
+    "src/main/notebook/network-audit.ts",
+    "src/main/notebook/network-audit.test.ts",
     "src/main/notebook/process-monitor.ts",
     "src/main/notebook/process-monitor.test.ts"
   ],
@@ -287,6 +289,7 @@
       "src/main/notebook/kernel-process-identity.test.ts",
       "src/main/notebook/managed-skill-read-roots.test.ts",
       "src/main/notebook/managed-skill-read.integration.test.ts",
+      "src/main/notebook/network-audit.test.ts",
       "src/main/notebook/process-monitor.test.ts"
     ],
     "contract": [

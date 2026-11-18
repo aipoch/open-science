@@ -199,6 +199,34 @@ describe('notebook run repository', () => {
     )
   })
 
+  it('rejects an invalid persisted network mode instead of treating it as relaxed', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const projectId = 'default-project'
+    const sessionId = 'session-1'
+    const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+    const document = await repository.loadOrCreate({
+      projectId,
+      sessionId,
+      lane,
+      workspaceCwd: '/workspace'
+    })
+    await repository.appendRun({
+      projectId,
+      sessionId,
+      lane,
+      run: admittedRun({ networkMode: 'strict' })
+    })
+    const path = join(document.notebookSessionRoot, 'run.json')
+    const persisted = JSON.parse(await readFile(path, 'utf8'))
+    persisted.runs[0].networkMode = 'unknown'
+    await writeFile(path, JSON.stringify(persisted))
+
+    await expect(
+      new NotebookRunRepository(root).findExisting(projectId, sessionId)
+    ).rejects.toThrow('Notebook document is corrupt.')
+  })
+
   it('preserves valid history with more than 32 loaded helper modules', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

@@ -20,6 +20,7 @@ import {
 import type { ArtifactFile } from './artifacts'
 import type { ExecutionFileEvidenceSummary } from './execution-file-evidence'
 import type { NotebookRuntimeBindings } from './notebook-runtime'
+import type { NotebookNetworkMode } from './notebook-network-settings'
 import type { OptionalProjectIdScope, ProjectIdScope } from './project-scope'
 
 export const NOTEBOOKS_DIR = 'notebooks'
@@ -381,6 +382,9 @@ export type NotebookHelperEvidenceStatus =
 export type NotebookRunRecord = {
   runId: string
   executionMode?: 'foreground' | 'background'
+  // Network policy captured when this execution was admitted. Optional keeps historical run.json
+  // documents readable; individual network audit records retain the mode used by each request.
+  networkMode?: NotebookNetworkMode
   // Stable, lane-scoped identity for durable admission. Reusing it with the same fingerprint
   // returns this canonical Run; reusing it for different submitted work is a conflict. Optional
   // keeps historical run.json documents readable.

@@ -107,6 +107,8 @@ const GENERATED_SOURCE_OMISSIONS = [
   'network.checkConnectivity',
   'network.getInfo',
   'network.onSystemResumed',
+  'network.queryNotebookLogs',
+  'network.setNotebookLogRetention',
   'notifications.getDesktopAvailability',
   'notifications.onOpenSession',
   'notifications.onViewProbe',

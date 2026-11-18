@@ -1,4 +1,5 @@
 import type { RequestNotebookNetworkAccessResult } from '../../shared/notebook'
+import type { NotebookNetworkMode } from '../../shared/notebook-network-settings'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { WindowsNotebookRuntime } from './windows-notebook-runtime'
 
@@ -60,6 +61,7 @@ export type NotebookSandboxInvocation = Readonly<{
   pathEnvironment?: NodeJS.ProcessEnv
   cwd: string
   commandText: string
+  notebookRunId?: string
   executionReference?: string
   sessionId: string
   projectId: string
@@ -104,6 +106,7 @@ export type NotebookSandboxedSpawn = Readonly<{
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
   beginExecution?: (request?: {
     commandText: string
+    notebookRunId?: string
     executionReference?: string
     signal?: AbortSignal
     onNetworkWaitChange?: (waiting: boolean) => void
@@ -149,6 +152,7 @@ export type NotebookRuntimeAccessAdmission = Readonly<{
 }>
 
 export interface NotebookProcessSandbox {
+  getNetworkMode?(): NotebookNetworkMode | Promise<NotebookNetworkMode>
   resolveWindowsRuntime?(request: {
     runtime: 'repl' | 'bash'
     binding?: ShellRuntimeBinding

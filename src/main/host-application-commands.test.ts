@@ -71,6 +71,8 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     setPreference: vi.fn(async () => ({ preference: 'en' as const, locale: 'en' as const }))
   },
   network: {
+    queryNotebookLogs: vi.fn(async () => ({ records: [], retentionDays: 90, warnings: [] })),
+    setNotebookLogRetention: vi.fn(async (days: number) => days),
     getInfo: vi.fn(async () => ({ connectionType: 'unknown' as const, ipAddress: null })),
     checkConnectivity: vi.fn(async () => true)
   },
@@ -255,7 +257,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 87 desktop request channels in their existing capability groups', () => {
+  it('defines the exact 89 desktop request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -283,7 +285,12 @@ describe('Host application commands', () => {
     })
     expected.push({
       capability: 'network',
-      channels: ['network:get-info', 'network:check-connectivity']
+      channels: [
+        'network:get-info',
+        'network:check-connectivity',
+        'network:query-notebook-logs',
+        'network:set-notebook-log-retention'
+      ]
     })
     expected.push(
       {
@@ -303,7 +310,7 @@ describe('Host application commands', () => {
       .find(({ capability }) => capability === 'notifications')!
       .channels.push('notifications:get-desktop-availability', 'notifications:send-test')
     for (const group of expected) group.channels.sort()
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(88)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(90)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -319,7 +326,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(88)
+    expect(router.dispatcher.commandNames()).toHaveLength(90)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -626,6 +633,14 @@ describe('Host application commands', () => {
     await router.dispatcher.invoke(
       hostApplicationCommands.completionHandoff.cancel,
       invocation([{ id: 'handoff', sessionId: 'session' }])
+    )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.network.queryNotebookLogs,
+      invocation([{}])
+    )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.network.setNotebookLogRetention,
+      invocation([90])
     )
     const ownerMethods = Object.values(dependencies).flatMap((owner) => Object.values(owner))
     expect(

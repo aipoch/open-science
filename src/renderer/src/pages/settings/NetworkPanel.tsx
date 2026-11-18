@@ -1,3 +1,4 @@
+import { NotebookNetworkLogs } from './NotebookNetworkLogs'
 import { readWithDeadline } from '@/lib/read-with-deadline'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { InlineNotice } from '@/components/ui/inline-notice'
@@ -301,7 +302,12 @@ const NetworkPanel = ({
       ) : null}
 
       {!isConfiguring && notebookNetworkAvailable ? (
-        <NotebookNetworkAccessSummary onOpen={() => onNavigate({ kind: 'domains' })} />
+        <div className="space-y-3">
+          <NotebookNetworkAccessSummary onOpen={() => onNavigate({ kind: 'domains' })} />
+          {typeof window.api?.network?.queryNotebookLogs === 'function' ? (
+            <NotebookNetworkLogs />
+          ) : null}
+        </div>
       ) : null}
 
       {!isConfiguring ? (
