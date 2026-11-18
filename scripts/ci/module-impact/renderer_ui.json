@@ -44,7 +44,8 @@
     "src/renderer/src/components/ui/split-button.tsx",
     "src/renderer/src/components/ui/split-button.css",
     "src/renderer/src/components/ui/split-button.test.tsx",
-    "src/renderer/src/components/ui/progress-bar.tsx"
+    "src/renderer/src/components/ui/progress-bar.tsx",
+    "src/renderer/src/components/ui/zoom-controls.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ui/badge.tsx",

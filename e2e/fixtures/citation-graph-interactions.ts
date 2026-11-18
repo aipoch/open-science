@@ -168,6 +168,14 @@ export async function verifyCitationEdgeRendering(
   await expect(reference).toHaveCount(1)
   await expect(citation).toHaveCount(0)
 
+  const referenceColor = await reference.evaluate((path) => getComputedStyle(path).stroke)
+  const referenceMark = node(page, 1100).locator('[data-node-mark]')
+  expect(await referenceMark.evaluate((mark) => getComputedStyle(mark).stroke)).toBe(referenceColor)
+  expect(
+    await currentFrame(page)
+      .locator('[data-citation-legend] .bg-chart-1')
+      .evaluate((swatch) => getComputedStyle(swatch).backgroundColor)
+  ).toBe(referenceColor)
   const ordinary = await edgeSnapshots(page)
   expect(ordinary.length).toBeGreaterThanOrEqual(2)
   for (const path of ordinary) {
@@ -208,6 +216,18 @@ export async function verifyCitationEdgeRendering(
   await expect(page.locator('[data-citation-center-title]')).toHaveText(rootTitle)
   await expect(citation).toHaveCount(1)
   await expect(reference).toHaveCount(0)
+  const citationColor = await citation.evaluate((path) => getComputedStyle(path).stroke)
+  expect(citationColor).not.toBe(referenceColor)
+  expect(
+    await node(page, 1200)
+      .locator('[data-node-mark]')
+      .evaluate((mark) => getComputedStyle(mark).stroke)
+  ).toBe(citationColor)
+  expect(
+    await currentFrame(page)
+      .locator('[data-citation-legend] .bg-chart-3')
+      .evaluate((swatch) => getComputedStyle(swatch).backgroundColor)
+  ).toBe(citationColor)
   const citationEdges = await edgeSnapshots(page)
   expect(citationEdges.length).toBeGreaterThanOrEqual(2)
   for (const path of citationEdges) {
@@ -352,36 +372,29 @@ export async function verifyCitationPointerAndHistory(page: Page): Promise<void>
   expect(after.y - before.y).toBeCloseTo(40, 0)
   await expect(selected).toHaveAttribute('aria-pressed', 'true')
 
-  // Electron converts wheel deltas at non-100% zoom. Check the actual native event,
-  // rather than assuming CDP's input units are identical to renderer CSS pixels.
-  await canvas.evaluate((element) => {
-    element.addEventListener(
-      'wheel',
-      (event) => {
-        const wheel = event as WheelEvent
-        element.setAttribute(
-          'data-e2e-wheel',
-          JSON.stringify([wheel.deltaX, wheel.deltaY, wheel.deltaMode])
-        )
-      },
-      { once: true }
-    )
-  })
-  await page.mouse.move(area.x + area.width / 2, area.y + area.height / 2)
-  await page.mouse.wheel(20, 30)
-  await expect(canvas).toHaveAttribute('data-e2e-wheel', /./)
-  const [wheelX, wheelY, mode] = JSON.parse(
-    (await canvas.getAttribute('data-e2e-wheel'))!
-  ) as number[]
-  expect(mode).toBe(0)
-  expect(wheelX).toBeGreaterThan(0)
-  expect(wheelY).toBeGreaterThan(0)
-  await expect
-    .poll(async () => Number(await svg.getAttribute('data-pan-x')))
-    .toBeCloseTo(70 - wheelX, 2)
-  await expect
-    .poll(async () => Number(await svg.getAttribute('data-pan-y')))
-    .toBeCloseTo(40 - wheelY, 2)
+  // Zoom around the pointer, including after dragging and at non-100% Electron zoom.
+  const anchor = await bounds(selected.locator('[data-node-mark]'))
+  const pointer = { x: anchor.x + anchor.width / 2, y: anchor.y + anchor.height / 2 }
+  await page.mouse.move(pointer.x, pointer.y)
+  await page.mouse.wheel(0, -100)
+  await expect.poll(async () => Number(await svg.getAttribute('data-zoom'))).toBeGreaterThan(1)
+  const anchored = await bounds(selected.locator('[data-node-mark]'))
+  expect(anchored.x + anchored.width / 2).toBeCloseTo(pointer.x, 0)
+  expect(anchored.y + anchored.height / 2).toBeCloseTo(pointer.y, 0)
+  expect(anchored.width).toBeGreaterThan(anchor.width)
+  await page.mouse.wheel(0, 10000)
+  await expect(svg).toHaveAttribute('data-zoom', '0.5')
+  await page.mouse.wheel(0, -10000)
+  await expect(svg).toHaveAttribute('data-zoom', '3')
+  const viewportWidth = await page.evaluate(() => innerWidth)
+  await page.keyboard.down('Control')
+  await page.mouse.wheel(0, 100)
+  await page.keyboard.up('Control')
+  await expect.poll(async () => Number(await svg.getAttribute('data-zoom'))).toBeLessThan(3)
+  expect(await page.evaluate(() => innerWidth)).toBe(viewportWidth)
+  await frame.getByRole('button', { name: 'Fit graph', exact: true }).first().click()
+  await expect(svg).toHaveAttribute('data-zoom', '1')
+
   await frame.getByRole('button', { name: 'Zoom in', exact: true }).click()
   await expect(svg).toHaveAttribute('data-zoom', '1.2')
   const zoomed = await bounds(selected.locator('[data-node-mark]'))

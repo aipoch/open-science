@@ -122,14 +122,17 @@ it('appends unique results while preserving selections and retries failed pages 
     .mockResolvedValueOnce(result({ records: [record('b'), record('d')] }))
   render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
   await screen.findByText('Paper b')
+  expect(screen.getByText('Loaded: 2')).toBeTruthy()
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select Paper b' }))
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await screen.findByRole('alert')
+  expect(screen.getByText('Loaded: 2')).toBeTruthy()
   expect(
     (screen.getByRole('checkbox', { name: 'Select Paper b' }) as HTMLInputElement).checked
   ).toBe(true)
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
   await screen.findByText('Paper d')
+  expect(screen.getByText('Loaded: 3')).toBeTruthy()
   expect(screen.getAllByText('Paper b')).toHaveLength(1)
   expect(screen.getByText('Paper c')).toBeTruthy()
   expect(

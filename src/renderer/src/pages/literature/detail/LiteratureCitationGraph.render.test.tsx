@@ -174,9 +174,9 @@ it('defaults to all directions and filters merged papers without moving or reque
   const originalPosition = position()
   expect(paper().querySelector('[data-node-mark]')?.getAttribute('data-node-kind')).toBe('both')
   expect(paper().querySelector('[data-node-kind="diamond"]')).toBeTruthy()
-  const legend = document.querySelector('[data-citation-legend]')!
-  expect(legend.textContent).toContain('References 1')
-  expect(legend.textContent).toContain('Cited by 2')
+  const legend = document.querySelector('[data-citation-status]')!
+  expect(legend.textContent).toContain('ReferencesLoaded: 1')
+  expect(legend.textContent).toContain('Cited byLoaded: 2')
   fireEvent.click(paper())
   fireEvent.click(screen.getByRole('tab', { name: 'References' }))
   expect(paper().getAttribute('aria-pressed')).toBe('true')
@@ -184,8 +184,8 @@ it('defaults to all directions and filters merged papers without moving or reque
   expect(position()).toEqual(originalPosition)
   expect(screen.queryByRole('button', { name: 'Select Paper c' })).toBeNull()
   expect(document.querySelectorAll('[data-source][data-target]')).toHaveLength(1)
-  expect(legend.textContent).toContain('References 1')
-  expect(legend.textContent).toContain('Cited by 0')
+  expect(legend.textContent).toContain('ReferencesLoaded: 1')
+  expect(legend.textContent).not.toContain('Cited by')
   fireEvent.click(screen.getByRole('tab', { name: 'Cited by' }))
   expect(paper().getAttribute('aria-pressed')).toBe('true')
   expect(position()).toEqual(originalPosition)
@@ -219,9 +219,12 @@ it('labels both pagination controls and loads the chosen direction in the all vi
   expect(within(citations).getByRole('heading', { name: 'Cited by' })).toBeTruthy()
   fireEvent.click(within(references).getByRole('button', { name: 'Load more' }))
   await screen.findByRole('button', { name: 'Select Paper d' })
+  expect(within(references).getByText('Loaded: 2')).toBeTruthy()
+  expect(within(citations).getByText('Loaded: 1')).toBeTruthy()
   expect(related.mock.calls.at(-1)?.[0]).toMatchObject({ direction: 'references', offset: 20 })
   fireEvent.click(within(citations).getByRole('button', { name: 'Load more' }))
   await screen.findByRole('button', { name: 'Select Paper e' })
+  expect(within(citations).getByText('Loaded: 2')).toBeTruthy()
   expect(related.mock.calls.at(-1)?.[0]).toMatchObject({ direction: 'citations', offset: 20 })
   expect(transact).not.toHaveBeenCalled()
 })
@@ -516,7 +519,14 @@ it.each(['references', 'citations'] as const)(
         screen.getByRole('group', { name: 'Citation graph' }).querySelectorAll('[data-node-mark]')
       ).toHaveLength(141)
     )
-    expect(screen.queryByRole('region', { name: otherTitle })).toBeNull()
+    expect(
+      within(screen.getByRole('region', { name: otherTitle })).queryByRole('button', {
+        name: 'Load more'
+      })
+    ).toBeNull()
+    expect(
+      within(screen.getByRole('region', { name: otherTitle })).getByText('Loaded: 40')
+    ).toBeTruthy()
     expect(screen.getAllByText(directionPageLimitMessage)).toHaveLength(1)
   }
 )
@@ -848,9 +858,12 @@ it('explores an unsaved paper, restores the parent snapshot and reuses the child
   fireEvent.click(screen.getByRole('button', { name: 'Select Paper b' }))
   fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
   const rootSvg = screen.getByRole('group', { name: 'Citation graph' })
-  const viewport = rootSvg.parentElement!
   const outer = document.querySelector<HTMLElement>('[data-citation-inspector]')!
-  fireEvent.wheel(viewport, { deltaY: 73, deltaX: 91 })
+  const canvas = rootSvg.closest<HTMLElement>('[data-citation-canvas]')!
+  attachCapture(canvas)
+  dispatchPointer(canvas, 'pointerdown')
+  dispatchPointer(canvas, 'pointermove', { clientX: -91, clientY: -73 })
+  dispatchPointer(canvas, 'pointerup')
   outer.scrollTop = 99
   fireEvent.scroll(outer)
   const zoom = rootSvg.getAttribute('data-zoom')
@@ -1121,7 +1134,11 @@ it('freezes the initial camera and existing coordinates while paging, then fits 
       'New papers are outside the current view. Fit the graph to see all loaded papers.'
     )
   ).toBeNull()
-  fireEvent.wheel(svg.closest('[data-citation-canvas]')!, { deltaX: 10000, deltaY: 0 })
+  const canvas = svg.closest<HTMLElement>('[data-citation-canvas]')!
+  attachCapture(canvas)
+  dispatchPointer(canvas, 'pointerdown')
+  dispatchPointer(canvas, 'pointermove', { clientX: 10000 })
+  dispatchPointer(canvas, 'pointerup')
   expect(
     screen.getByText(
       'New papers are outside the current view. Fit the graph to see all loaded papers.'
@@ -1178,7 +1195,7 @@ it('renders radial relationship regions with arrowheads matching edge emphasis',
     const direction = path.dataset.direction
     expect(path.getAttribute('marker-end')).toContain(`-${direction}`)
     const markerId = path.getAttribute('marker-end')!.slice(5, -1)
-    expect(svg.querySelector<SVGPathElement>(`[id="${markerId}"] path`)?.style.fill).toBe(
+    expect(svg.querySelector<SVGPathElement>(`[id="${markerId}"] path`)?.getAttribute('fill')).toBe(
       path.style.stroke
     )
   }
@@ -1187,9 +1204,9 @@ it('renders radial relationship regions with arrowheads matching edge emphasis',
   const selectedReference = paths.find((path) => path.dataset.target === paperId('b'))!
   expect(selectedReference.dataset.edgeEmphasis).toBe('related')
   const selectedMarker = selectedReference.getAttribute('marker-end')!.slice(5, -1)
-  expect(svg.querySelector<SVGPathElement>(`[id="${selectedMarker}"] path`)?.style.fill).toBe(
-    selectedReference.style.stroke
-  )
+  expect(
+    svg.querySelector<SVGPathElement>(`[id="${selectedMarker}"] path`)?.getAttribute('fill')
+  ).toBe(selectedReference.style.stroke)
   expect(Number(selectedReference.getAttribute('opacity'))).toBeGreaterThan(
     Number(paths.find((path) => path.dataset.target === paperId('a'))!.getAttribute('opacity'))
   )
@@ -1258,15 +1275,14 @@ it('renders mutual citations as one selectable paper with two differently curved
   expect(transact).not.toHaveBeenCalled()
 })
 
-it('opens source and relationship explanations from the keyboard-focusable info control', async () => {
+it('shows loaded counts beside pagination without presenting source totals', async () => {
   render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
   await screen.findByRole('button', { name: 'Select Paper c' })
-  const info = screen.getByRole('button', { name: 'About this citation graph' })
-  act(() => info.focus())
-  const tooltip = await screen.findByRole('tooltip')
-  expect(tooltip.textContent).toContain('Arrows point from the citing paper to the cited paper.')
-  expect(tooltip.textContent).toContain('Coverage may be incomplete.')
-  expect(tooltip.textContent).toContain('does not add papers to your library.')
+  const status = document.querySelector('[data-citation-status]')!
+  expect(status.textContent).toContain('ReferencesLoaded: 1')
+  expect(status.textContent).toContain('Cited byLoaded: 1')
+  expect(status.textContent).toContain('Loaded results only; source coverage may be incomplete.')
+  expect(screen.queryByRole('button', { name: 'About this citation graph' })).toBeNull()
 })
 
 it('keeps full author and missing-year descriptions while the visible pill preserves a compact label', async () => {
@@ -1434,8 +1450,9 @@ it.each(['pointerup', 'pointercancel', 'lostpointercapture'])(
     fireEvent.click(paper)
     expect(paper.getAttribute('aria-pressed')).toBe('true')
     fireEvent.wheel(viewport, { deltaX: 5, deltaY: 10 })
-    expect(svg.getAttribute('data-pan-x')).toBe('35')
-    expect(svg.getAttribute('data-pan-y')).toBe('40')
+    expect(Number(svg.getAttribute('data-zoom'))).toBeCloseTo(Math.exp(-0.02))
+    expect(Number(svg.getAttribute('data-pan-x'))).toBeCloseTo(40 * Math.exp(-0.02))
+    expect(Number(svg.getAttribute('data-pan-y'))).toBeCloseTo(50 * Math.exp(-0.02))
     expect(related).toHaveBeenCalledTimes(2)
     expect(transact).not.toHaveBeenCalled()
   }

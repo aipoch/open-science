@@ -276,10 +276,9 @@ export function citationGraphEdgeGeometry(
     const ratio = (radius + gap / scale) / Math.hypot(x, y)
     return { x: point.x + x * ratio, y: point.y + y * ratio }
   }
-  // Let the arrow tip tuck slightly under the node stroke so the relationship reads as
-  // connected at a glance. The node is painted after the edge, hiding the overlap cleanly.
+  // Leave a small screen-space gap so the arrowhead stays clear of the node stroke.
   const start = boundary(from, fromRadius, 1)
-  const end = boundary(to, toRadius, 0.5)
+  const end = boundary(to, toRadius, 3)
   return {
     start,
     control: bend ? control : { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 },

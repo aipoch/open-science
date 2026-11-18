@@ -378,6 +378,7 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
                 busy: controller.busy,
                 states: controller.states,
                 entries: controller.entries,
+                unfilteredGraph: controller.unfilteredGraph,
                 activeDirection: controller.activeDirection,
                 directionMode: controller.directionMode,
                 interactionBusy: controller.interactionBusy,

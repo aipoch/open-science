@@ -1,14 +1,16 @@
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { ChevronDown } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { CitationLookupError } from './CitationLookupError'
 import { citationDirections, type CitationGraphController } from './useCitationGraphController'
-import type { CitationDirection } from './citation-graph'
 
 export type CitationStatusModel = Pick<
   CitationGraphController,
   | 'busy'
   | 'states'
   | 'entries'
+  | 'unfilteredGraph'
   | 'activeDirection'
   | 'directionMode'
   | 'interactionBusy'
@@ -33,6 +35,7 @@ export function LiteratureCitationStatus({
     busy,
     states,
     entries,
+    unfilteredGraph,
     activeDirection,
     directionMode,
     interactionBusy,
@@ -40,14 +43,8 @@ export function LiteratureCitationStatus({
     blocked,
     load
   } = model
-  const showDirectionStatus = (direction: CitationDirection): boolean =>
-    busy === direction ||
-    states[direction].result?.state !== 'ready' ||
-    states[direction].result?.nextOffset !== undefined ||
-    Boolean(states[direction].omitted) ||
-    !entries.some((entry) => entry.direction === direction)
   const shownDirections = directionMode === 'both' ? citationDirections : [activeDirection]
-  const showStatus = shownDirections.some(showDirectionStatus) || outsideView
+  const centerId = unfilteredGraph?.nodes.find((node) => node.center)?.id
   const compactStatuses = shownDirections.every(
     (direction) =>
       states[direction].result?.state === 'ready' &&
@@ -55,7 +52,7 @@ export function LiteratureCitationStatus({
       !states[direction].omitted &&
       entries.some((entry) => entry.direction === direction)
   )
-  return showStatus ? (
+  return (
     <div
       data-citation-status
       className="min-h-0 max-h-[45%] shrink overflow-y-auto overscroll-contain border-t border-border-300 bg-background px-3 py-1"
@@ -67,7 +64,10 @@ export function LiteratureCitationStatus({
       ) : null}
       <div className="grid grid-cols-2 gap-x-4" aria-busy={busy !== undefined}>
         {shownDirections.map((direction) => {
-          if (!showDirectionStatus(direction)) return null
+          const loaded =
+            unfilteredGraph?.edges.filter((edge) =>
+              direction === 'references' ? edge.source === centerId : edge.target === centerId
+            ).length ?? 0
           const state = states[direction]
           const result = state.result
           const pageLimitReached =
@@ -79,9 +79,16 @@ export function LiteratureCitationStatus({
               className={`grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 py-2 ${compactStatuses && shownDirections.length > 1 ? '' : 'col-span-2'}`}
               aria-label={title}
             >
-              <h3 className="min-w-0 text-xs font-medium">
-                {direction === 'references' ? t('References') : t('Cited by')}
-              </h3>
+              <div className="flex min-h-7 min-w-0 flex-col justify-center text-xs leading-[14px] sm:min-h-0 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-start sm:gap-x-2 sm:gap-y-1 sm:leading-4">
+                <h3 className="font-medium">
+                  {direction === 'references' ? t('References') : t('Cited by')}
+                </h3>
+                {state.pages > 0 ? (
+                  <span className="tabular-nums text-muted-foreground">
+                    {t('Loaded: {{loaded}}', { loaded })}
+                  </span>
+                ) : null}
+              </div>
               <div className="col-start-1 row-start-2 min-w-0 space-y-1">
                 {busy === direction ? (
                   <p role="status" className="text-xs">
@@ -125,15 +132,30 @@ export function LiteratureCitationStatus({
                 ) : null}
               </div>
               {result?.state === 'ready' && result.nextOffset !== undefined ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={blocked || state.pages >= 5}
-                  className="col-start-2 row-start-1 row-span-2 w-auto shrink-0 self-center text-xs"
-                  onClick={() => void load(direction, result.nextOffset)}
-                >
-                  {t('Load more')}
-                </Button>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="sm"
+                        aria-label={t('Load more')}
+                        variant="outline"
+                        disabled={blocked || state.pages >= 5}
+                        className="col-start-2 row-start-1 row-span-2 w-auto shrink-0 self-center text-xs"
+                        onClick={() => void load(direction, result.nextOffset)}
+                      >
+                        {compactStatuses && shownDirections.length > 1 ? (
+                          <>
+                            <ChevronDown className="size-3.5 sm:hidden" aria-hidden="true" />
+                            <span className="hidden sm:inline">{t('Load more')}</span>
+                          </>
+                        ) : (
+                          t('Load more')
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t('Load more')}</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               ) : !result && !busy ? (
                 <Button
                   size="sm"
@@ -149,6 +171,9 @@ export function LiteratureCitationStatus({
           )
         })}
       </div>
+      <p className="pb-2 text-xs text-muted-foreground">
+        {t('Loaded results only; source coverage may be incomplete.')}
+      </p>
     </div>
-  ) : null
+  )
 }

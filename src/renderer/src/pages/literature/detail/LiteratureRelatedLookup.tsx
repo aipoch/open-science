@@ -14,8 +14,7 @@ import {
 } from '@aipoch/literature-discovery/contracts'
 import { Tabs } from 'radix-ui'
 import { createPortal } from 'react-dom'
-import { BookOpen, Quote, Info, LoaderCircle } from 'lucide-react'
-import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
+import { BookOpen, Quote, LoaderCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -516,25 +515,12 @@ function LiteratureRelatedList({
             )
           })}
         </Tabs.List>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label={t(
-                  'Coverage may be incomplete. Selected references go to Inbox for review.'
-                )}
-                className="flex shrink-0 items-center gap-1 rounded text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <span>{t('Source: {{source}}', { source: sourceName })}</span>
-                <Info className="size-3.5" aria-hidden="true" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-64">
-              {t('Coverage may be incomplete. Selected references go to Inbox for review.')}
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <span className="sr-only">{t('Source: {{source}}', { source: sourceName })}</span>
+        {result?.state === 'ready' ? (
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {t('Loaded: {{loaded}}', { loaded: result.records.length })}
+          </span>
+        ) : null}
       </div>
       <Tabs.Content
         forceMount
@@ -638,6 +624,11 @@ function LiteratureRelatedList({
               '{{source}} did not provide relationships for this page; the paper may still have references or citations.',
               { source: sourceName }
             )}
+          </p>
+        ) : null}
+        {result?.state === 'ready' ? (
+          <p className="mt-3 text-xs text-muted-foreground">
+            {t('Loaded results only; source coverage may be incomplete.')}
           </p>
         ) : null}
         {!busy && result?.omitted ? (

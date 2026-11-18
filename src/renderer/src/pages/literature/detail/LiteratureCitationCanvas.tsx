@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Minus, Plus, LocateFixed, Info } from 'lucide-react'
+import { Shrink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { ZoomControls } from '@/components/ui/zoom-controls'
 import { fullCreatorLabel } from '../literature-item-display'
 import {
   assignCitationGraphSlots,
@@ -200,27 +200,29 @@ export function LiteratureCitationCanvas({
     if (pending.element.hasPointerCapture?.(pending.pointerId))
       pending.element.releasePointerCapture(pending.pointerId)
   }, [])
+  useEffect(() => () => releasePan(), [visible, releasePan])
   useEffect(() => {
     const element = viewport.current
-    if (!visible || !element) {
-      releasePan()
-      return
-    }
+    if (!visible || !element) return
     const wheel = (event: WheelEvent): void => {
-      if (event.ctrlKey || event.metaKey) return
+      if (event.target instanceof Element && event.target.closest('[data-no-pan]')) return
       event.preventDefault()
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? element.clientHeight : 1
-      setPan((previous) => ({
-        x: previous.x - event.deltaX * unit,
-        y: previous.y - event.deltaY * unit
-      }))
+      const nextZoom = Math.max(0.5, Math.min(3, zoom * Math.exp(-event.deltaY * unit * 0.002)))
+      const bounds = plot.current?.getBoundingClientRect()
+      if (!bounds || nextZoom === zoom) return
+      const ratio = nextZoom / zoom
+      const x = event.clientX - bounds.left - bounds.width / 2
+      const y = event.clientY - bounds.top - bounds.height / 2
+      // Keep the point under the pointer fixed, including after dragging the graph.
+      setPan({ x: x - (x - pan.x) * ratio, y: y - (y - pan.y) * ratio })
+      setZoom(nextZoom)
     }
     element.addEventListener('wheel', wheel, { passive: false })
     return () => {
-      releasePan()
       element.removeEventListener('wheel', wheel)
     }
-  }, [visible, releasePan])
+  }, [visible, zoom, pan])
   const selectFromHit = useCallback(
     (event: React.MouseEvent<SVGRectElement>, fallback: string): void => {
       if (Date.now() < ignoreClickUntil.current) return
@@ -244,10 +246,6 @@ export function LiteratureCitationCanvas({
     },
     [positions, setSelected]
   )
-  const relationCounts = { references: 0, citations: 0 }
-  const centerId = graph?.nodes.find((node) => node.center)?.id
-  for (const edge of graph?.edges ?? [])
-    relationCounts[edge.source === centerId ? 'references' : 'citations']++
   const inspectedNode = graph?.nodes.find((node) => node.id === inspected)
   useLayoutEffect(() => {
     const canvas = viewport.current
@@ -360,85 +358,16 @@ export function LiteratureCitationCanvas({
         <div
           data-citation-toolbar
           data-no-pan
-          className="absolute bottom-6 right-2 z-20 flex max-w-[calc(100%-1.5rem)] items-center gap-0.5 rounded-md border border-border-300 bg-background p-0.5 !text-foreground sm:top-3 sm:right-3 sm:bottom-auto"
-          style={{ color: 'var(--foreground)' }}
+          className="absolute bottom-6 right-2 z-20 flex items-center gap-1 rounded-md border border-border-300/50 bg-bg-000/90 p-1 shadow-sm backdrop-blur sm:top-3 sm:right-3 sm:bottom-auto"
         >
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  className="!text-foreground hover:bg-muted/70 hover:!text-foreground"
-                  style={{ color: 'var(--foreground)' }}
-                  aria-label={t('Zoom out')}
-                  disabled={zoom <= 1}
-                  onClick={() => setZoom((value) => Math.max(1, value - 0.2))}
-                >
-                  <Minus className="size-4" aria-hidden="true" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{t('Zoom out')}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  className="!text-foreground hover:bg-muted/70 hover:!text-foreground"
-                  style={{ color: 'var(--foreground)' }}
-                  aria-label={t('Zoom in')}
-                  disabled={zoom >= 3}
-                  onClick={() => setZoom((value) => Math.min(3, value + 0.2))}
-                >
-                  <Plus className="size-4" aria-hidden="true" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{t('Zoom in')}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  className="!text-foreground hover:bg-muted/70 hover:!text-foreground"
-                  style={{ color: 'var(--foreground)' }}
-                  aria-label={t('About this citation graph')}
-                >
-                  <Info className="size-4" aria-hidden="true" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-72 space-y-2">
-                <p>{t('Source: {{source}}', { source: sourceName })}</p>
-                <p>
-                  {t(
-                    'Arrows point from the citing paper to the cited paper. Only returned relationships are shown.'
-                  )}
-                </p>
-                <p>
-                  {t('Coverage may be incomplete. Selected references go to Inbox for review.')}
-                </p>
-                <p>
-                  {t(
-                    'Exploration stays in this detail view and does not add papers to your library.'
-                  )}
-                </p>
-                <p>{t('Positions do not indicate similarity or importance.')}</p>
-                <p>{t('Closing this view clears the exploration path.')}</p>
-                <p>{t('Zoom in to read all paper labels.')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-1.5 text-xs !text-foreground hover:bg-muted/70 hover:!text-foreground sm:px-2"
-            style={{ color: 'var(--foreground)' }}
-            onClick={fitGraph}
-          >
-            <LocateFixed className="size-4" aria-hidden="true" />
-            {t('Fit graph')}
-          </Button>
+          <ZoomControls
+            onZoomIn={() => setZoom((value) => Math.min(3, value + 0.2))}
+            onZoomOut={() => setZoom((value) => Math.max(0.5, value - 0.2))}
+            onReset={fitGraph}
+            resetLabel={t('Fit graph')}
+            canZoomIn={zoom < 3}
+            canZoomOut={zoom > 0.5}
+          />
           <span className="sr-only" data-citation-source>
             {t('Source: {{source}}', { source: sourceName })}
           </span>
@@ -479,7 +408,8 @@ export function LiteratureCitationCanvas({
               : 'pointer-events-none absolute inset-x-3 bottom-2 z-10 text-center text-[10px] font-medium text-muted-foreground/80'
           }
         >
-          {t('A → B means A cites B.')}
+          {t('A → B means A cites B.')}{' '}
+          <span className="hidden xl:inline">{t('Scroll to zoom. Drag to pan.')}</span>
         </p>
         {outsideView && narrow ? (
           <div
@@ -501,7 +431,7 @@ export function LiteratureCitationCanvas({
               )}
               onClick={fitGraph}
             >
-              <LocateFixed className="size-3" aria-hidden="true" />
+              <Shrink className="size-3" aria-hidden="true" />
               {t('Fit graph')}
             </Button>
           </div>
@@ -526,12 +456,11 @@ export function LiteratureCitationCanvas({
             <span className="h-3 w-px bg-border-300" aria-hidden="true" />
             <span className="inline-flex items-center gap-1 text-muted-foreground">
               <span className="size-1.5 rounded-full bg-chart-1" aria-hidden="true" />
-              {t('Loaded')}: {t('References')}{' '}
-              {busy === 'references' ? t('Searching…') : relationCounts.references}
+              {t('References')}
             </span>
             <span className="inline-flex items-center gap-1 text-muted-foreground">
               <span className="size-1.5 rounded-full bg-chart-3" aria-hidden="true" />
-              {t('Cited by')} {busy === 'citations' ? t('Searching…') : relationCounts.citations}
+              {t('Cited by')}
             </span>
           </div>
         ) : null}
@@ -572,13 +501,13 @@ export function LiteratureCitationCanvas({
                       refX="9"
                       refY="5"
                       markerUnits="userSpaceOnUse"
-                      markerWidth={(narrow ? 7 : 4.5) / scale}
-                      markerHeight={(narrow ? 7 : 4.5) / scale}
+                      markerWidth={(emphasized ? 9 : 7) / scale}
+                      markerHeight={(emphasized ? 9 : 7) / scale}
                       orient="auto-start-reverse"
                     >
                       <path
                         d="M 0 0 L 10 5 L 0 10 z"
-                        style={{ fill: emphasized ? 'var(--primary)' : 'var(--muted-foreground)' }}
+                        fill={direction === 'references' ? 'var(--chart-1)' : 'var(--chart-3)'}
                       />
                     </marker>
                   ))
@@ -627,11 +556,13 @@ export function LiteratureCitationCanvas({
                   const bend = citationGraphEdgeBend(direction, neighbor.relation)
                   const related = selectedNode?.id === neighbor.id || inspected === neighbor.id
                   const emphasis = related ? 'related' : selectedNode?.center ? 'center' : 'ambient'
+                  const neighborRadius =
+                    citationGraphNodeRadius(false) * (neighbor.relation === 'citations' ? 1.2 : 1.1)
                   const { start, control, end } = citationGraphEdgeGeometry(
                     from,
                     to,
-                    citationGraphNodeRadius(edge.source === centerId),
-                    citationGraphNodeRadius(edge.target === centerId),
+                    edge.source === centerId ? citationGraphNodeRadius(true) : neighborRadius,
+                    edge.target === centerId ? citationGraphNodeRadius(true) : neighborRadius,
                     scale,
                     bend
                   )
@@ -646,10 +577,10 @@ export function LiteratureCitationCanvas({
                       d={`M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`}
                       fill="none"
                       style={{
-                        stroke: related ? 'var(--primary)' : 'var(--muted-foreground)'
+                        stroke: direction === 'references' ? 'var(--chart-1)' : 'var(--chart-3)'
                       }}
-                      opacity={related ? 1 : selectedNode?.center ? 0.36 : 0.24}
-                      strokeWidth={(related ? 1.9 : selectedNode?.center ? 1.2 : 1) / scale}
+                      opacity={related ? 1 : 0.8}
+                      strokeWidth={(related ? 2.2 : 1.4) / scale}
                       markerEnd={`url(#${marker}-${direction}${related ? '-emphasized' : ''})`}
                     />
                   )
@@ -787,10 +718,16 @@ export function LiteratureCitationCanvas({
                               strokeOpacity: 0.95
                             }
                           : {
-                              fill: selected ? 'var(--primary)' : 'var(--background)',
-                              fillOpacity: selected ? 1 : 0.78,
-                              stroke: selected ? 'var(--primary)' : 'var(--muted-foreground)',
-                              strokeOpacity: selected ? 0.92 : 0.8
+                              fill:
+                                node.relation === 'both'
+                                  ? `url(#${marker}-both)`
+                                  : node.relation === 'references'
+                                    ? 'var(--chart-1)'
+                                    : 'var(--chart-3)',
+                              fillOpacity: selected ? 1 : 0.25,
+                              stroke:
+                                node.relation === 'citations' ? 'var(--chart-3)' : 'var(--chart-1)',
+                              strokeOpacity: 1
                             }
                         const shapeClass =
                           'group-focus-visible:stroke-ring group-focus-visible:stroke-[3]'
@@ -826,7 +763,7 @@ export function LiteratureCitationCanvas({
                           points={`${point.x},${point.y - citationGraphNodeRadius(false) * 0.82} ${point.x + citationGraphNodeRadius(false) * 0.82},${point.y} ${point.x},${point.y + citationGraphNodeRadius(false) * 0.82} ${point.x - citationGraphNodeRadius(false) * 0.82},${point.y}`}
                           fill="var(--background)"
                           fillOpacity={selectedNode?.id === node.id ? 0.3 : 0.78}
-                          stroke="var(--muted-foreground)"
+                          stroke="var(--chart-3)"
                           strokeWidth={0.8 / scale}
                           pointerEvents="none"
                         />
