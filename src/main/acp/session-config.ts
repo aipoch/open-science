@@ -13,7 +13,7 @@ export type SessionModelSelection = {
 }
 
 // Flattens a select option's values, tolerating both the flat and grouped option shapes.
-const collectSelectValues = (options: unknown): string[] => {
+export const collectSelectValues = (options: unknown): string[] => {
   if (!Array.isArray(options)) return []
 
   const values: string[] = []

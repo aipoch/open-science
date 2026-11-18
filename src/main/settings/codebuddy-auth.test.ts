@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
@@ -49,6 +49,18 @@ vi.mock('node:child_process', async (original) => {
                 result = {}
                 break
               case 'session/new':
+                if (fs.existsSync('catalog-mode')) {
+                  const mode = fs.readFileSync('catalog-mode', 'utf8')
+                  if (mode === 'error') {
+                    send({ jsonrpc: '2.0', id: request.id, error: { code: -32603, message: 'unavailable' } })
+                    return
+                  }
+                  result = mode === 'partial'
+                    ? { sessionId: 'fixture', models: { currentModelId: 'current-only' } }
+                    : { sessionId: 'fixture', configOptions: [{ id: 'model', type: 'select', currentValue: 'new',
+                        options: [{ group: 'account', options: [{ value: 'new', name: 'New' }] }] }] }
+                  break
+                }
                 result = {
                   sessionId: 'fixture',
                   models: { currentModelId: 'model', availableModels: [{ modelId: 'model' }, { modelId: 'other' }] }
@@ -74,7 +86,13 @@ it('keeps a login in its site profile, reuses it on restart and clears it on log
   try {
     const account = await run('login')
     expect(account).toEqual({ authenticated: true, model: 'model', models: ['model', 'other'] })
-    expect(await run('login')).toEqual(account)
+    const modePath = join(root, 'codebuddy-cn', 'catalog-mode')
+    for (const mode of ['partial', 'error']) {
+      await writeFile(modePath, mode)
+      expect(await run('login')).toEqual({ authenticated: true })
+    }
+    await writeFile(modePath, 'standard')
+    expect(await run('login')).toEqual({ authenticated: true, model: 'new', models: ['new'] })
     expect(await runCodeBuddyAuth('codebuddy-auth-fixture', root, 'external', 'status')).toEqual({
       authenticated: false
     })

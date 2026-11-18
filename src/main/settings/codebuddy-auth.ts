@@ -4,6 +4,7 @@ import { Readable, Writable } from 'node:stream'
 import { createInterface } from 'node:readline'
 import * as acp from '@agentclientprotocol/sdk'
 import type { CodeBuddySite } from '../../shared/codebuddy-subscription'
+import { collectSelectValues } from '../acp/session-config'
 import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
 import { codeBuddyAccountEnvironment, codeBuddyHostEnvironment } from './codebuddy-profile'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
@@ -50,6 +51,8 @@ export async function runCodeBuddyAuth(
     child.once('error', reject)
     child.once('close', () => reject(new Error('CodeBuddy authentication process closed.')))
   })
+  let accountVerified = false
+  let catalogTimeout: ReturnType<typeof setTimeout> | undefined
   try {
     const operate = async (): Promise<AccountSnapshot> => {
       if (logout) {
@@ -108,33 +111,48 @@ export async function runCodeBuddyAuth(
         await connection.agent.request(acp.methods.agent.authenticate, { methodId: site })
         if (!(await status())) throw new Error('CodeBuddy sign-in did not complete.')
       }
-      // CodeBuddy supplies the ACP legacy model catalog alongside standard configOptions.
-      const session = await connection.agent.request<{
-        models?: { currentModelId: string; availableModels?: { modelId: string }[] }
-      }>('session/new', { cwd: profile.HOME, mcpServers: [] })
-      const model = session.models?.currentModelId
-      if (
-        typeof model !== 'string' ||
-        !model ||
-        model.length > PROVIDER_RESOURCE_LIMITS.modelIdCharacters
+      accountVerified = true
+      const session = await Promise.race([
+        connection.agent.request<
+          acp.NewSessionResponse & {
+            models?: { currentModelId?: string; availableModels?: { modelId: string }[] }
+          }
+        >('session/new', { cwd: profile.HOME, mcpServers: [] }),
+        new Promise<never>((_, reject) => {
+          catalogTimeout = setTimeout(
+            () => reject(new Error('CodeBuddy model discovery timed out.')),
+            10_000
+          )
+        })
+      ])
+      const option = session.configOptions?.find(
+        (entry) => entry.type === 'select' && (entry.category === 'model' || entry.id === 'model')
       )
-        throw new Error('CodeBuddy did not return an account model.')
-      const models = [
-        ...new Set([model, ...(session.models?.availableModels ?? []).map((m) => m.modelId)])
-      ]
-        .filter(
-          (id) =>
-            typeof id === 'string' && id && id.length <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters
-        )
-        .slice(0, PROVIDER_RESOURCE_LIMITS.fetchedModels)
+      const select = option?.type === 'select' ? option : undefined
+      const validId = (id: unknown): id is string =>
+        typeof id === 'string' &&
+        !!id.trim() &&
+        id.length <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters
+      const values = collectSelectValues(select?.options).filter(validId)
+      const ids = values.length
+        ? values
+        : (session.models?.availableModels ?? []).map((m) => m?.modelId).filter(validId)
+      if (!ids.length) return { authenticated: true }
+      const current = values.length ? select?.currentValue : session.models?.currentModelId
+      const model = current && ids.includes(current) ? current : ids[0]
+      const models = [...new Set([model, ...ids])].slice(0, PROVIDER_RESOURCE_LIMITS.fetchedModels)
       return { authenticated: true, model, models }
     }
     return await Promise.race([operate(), stopped])
   } catch {
+    cancel?.throwIfAborted()
+    // A catalog error after verified sign-in must not discard the account or a prior catalog.
+    if (accountVerified) return { authenticated: true }
     signal.throwIfAborted()
     // Vendor errors can contain the auth URL or account details. Keep them out of IPC.
     throw new Error('CodeBuddy account request failed.')
   } finally {
+    clearTimeout(catalogTimeout)
     signal.removeEventListener('abort', aborted)
     close?.()
     child.stdin.end()

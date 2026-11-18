@@ -19,6 +19,32 @@ const { ProviderRuntimeProjectionOwner } = await import('./provider-runtime-proj
 const { encryptKey } = await import('./crypto')
 
 describe('ProviderRuntimeProjectionOwner', () => {
+  it.each([
+    ['internal', 'hy3', 'default-model'],
+    ['external', 'default-model', 'hy3']
+  ] as const)(
+    'uses the %s base catalog until an account catalog is available',
+    (site, first, otherSite) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        ...codeBuddyAccounts[site],
+        type: 'codebuddy-subscription',
+        fetchedModels: []
+      }
+      const base = owner.toProviderView(provider).models
+      expect(base[0]).toBe(first)
+      expect(base).not.toContain(otherSite)
+      expect(owner.resolveActiveModel(provider)).toBe(first)
+      expect(owner.toProviderView({ ...provider, model: 'older-model' }).models).toEqual([
+        'older-model',
+        ...base
+      ])
+      const refreshed = { ...provider, fetchedModels: ['account-only'] }
+      expect(owner.toProviderView(refreshed).models).toEqual(['account-only'])
+      expect(owner.resolveActiveModel(refreshed)).toBe('account-only')
+    }
+  )
+
   it('routes the same model to the saved CodeBuddy account when both sites are configured', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const framework = getAgentFramework('codebuddy')

@@ -1,4 +1,4 @@
-import { codeBuddySiteForId } from '../../shared/codebuddy-subscription'
+import { codeBuddyBaseModels, codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
   type ModelProtocol,
   getOfficialVendor,
@@ -358,8 +358,13 @@ class ProviderRuntimeProjectionOwner {
   }
 
   private availableModels(provider: StoredProvider): string[] {
-    if (provider.type === 'codebuddy-subscription' && provider.fetchedModels?.length)
-      return provider.fetchedModels
+    if (provider.type === 'codebuddy-subscription') {
+      if (provider.fetchedModels?.length) return provider.fetchedModels
+      const site = codeBuddySiteForId(provider.id)
+      const base = site ? codeBuddyBaseModels[site] : []
+      // Older records may have only the account's current model.
+      return provider.model ? [...new Set([provider.model, ...base])] : [...base]
+    }
     if (isCodexSubscriptionProvider(provider.type)) {
       return getOfficialVendorModelIds('openai')
     }

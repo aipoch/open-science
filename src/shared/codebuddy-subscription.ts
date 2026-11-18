@@ -4,6 +4,13 @@ export const codeBuddyAccounts = {
 } as const
 
 export type CodeBuddySite = keyof typeof codeBuddyAccounts
+// Small chat-model fallback from @tencent-ai/codebuddy-code 2.138.0's
+// product.internal.json and product.json. A site's live catalog supersedes it.
+export const codeBuddyBaseModels: Record<CodeBuddySite, readonly string[]> = {
+  internal: ['hy3', 'glm-5.2', 'deepseek-v4-pro'],
+  external: ['default-model', 'gpt-5.5', 'gemini-3.1-pro']
+}
+
 export type CodeBuddyAccountRequest = {
   site: CodeBuddySite
   action: 'login' | 'logout' | 'cancel' | 'status'
