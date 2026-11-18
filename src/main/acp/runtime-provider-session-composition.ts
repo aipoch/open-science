@@ -83,6 +83,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     resolveSpecialistIdentity: options.resolveSpecialistIdentity,
     resolveSpecialistSkills: options.resolveSpecialistSkills,
     resolveProjectAgentContext: options.resolveProjectAgentContext,
+    authorizedDirectories: options.authorizedDirectories,
     registerSessionSpecialist: options.notebook?.registerSessionSpecialist,
     updateCwd,
     pushEvent: (event) => session.publication.pushEvent(event),

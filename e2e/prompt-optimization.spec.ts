@@ -101,7 +101,7 @@ test('optimizes drafts without sending and persists project-specific templates',
     true
   )
   await page.screenshot({ path: testInfo.outputPath('optimized-draft-narrow.png') })
-  await app.setMainWindowSizeAndViewport(desktopSize.width, desktopSize.height)
+  await page.setViewportSize(desktopSize)
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect(editor).toHaveText('')
   await expect(page.getByRole('button', { name: 'Undo optimization', exact: true })).toHaveCount(0)

@@ -8422,3 +8422,35 @@ it('bounds repeated Skill invalidation during admission without sending a prompt
   expect(created.every((runtime) => runtime.sendPrompt.mock.calls.length === 0)).toBe(true)
   await coordinator.disconnect()
 })
+
+it.each(['claude-code', 'opencode', 'codex', 'codebuddy', 'pi', 'open-science-agent'] as const)(
+  'creates on the current generation when a Skill refresh overlaps provider startup (%s)',
+  async (frameworkId) => {
+    const creating = createDeferred<void>()
+    const finish = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({ frameworkId, sessionIds: ['fresh'], callbacks })
+      if (created.length === 0) {
+        fake.createSession.mockImplementationOnce(async (_request, beforePublish) => {
+          creating.resolve()
+          await finish.promise
+          beforePublish?.()
+          return { sessionId: 'stale', cwd: '/workspace', frameworkId }
+        })
+      }
+      created.push(fake)
+      return fake.runtime
+    })
+    const creation = coordinator.createSession()
+    await creating.promise
+    await coordinator.requestSkillsReload()
+    finish.resolve()
+    const session = await creation
+    expect(session.sessionId).toBe('fresh')
+    await coordinator.sendPrompt({ sessionId: session.sessionId, text: 'first turn' })
+    expect(created[0].sendPrompt).not.toHaveBeenCalled()
+    expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+    await coordinator.disconnect()
+  }
+)
