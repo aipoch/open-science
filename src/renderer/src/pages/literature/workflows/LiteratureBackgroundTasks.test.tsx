@@ -408,23 +408,29 @@ it('shows comparison progress from summaries without reading table contents', as
   expect(screen.queryByRole('dialog')).toBeNull()
 })
 
-it.each([1, 0])(
-  'describes a paused comparison with %s in-flight cells accurately',
-  async (running) => {
+it.each([
+  ['paused', 1, 0, 0, 'Finishing and saving the current batch before pausing…'],
+  ['paused', 0, 0, 0, 'Paused'],
+  ['completed', 0, 1, 0, 'Failed'],
+  ['completed', 0, 0, 1, 'Waiting for source'],
+  ['completed', 0, 0, 0, 'Awaiting review']
+] as const)(
+  'describes a %s comparison with %i running, %i failed and %i unavailable cells',
+  async (state, running, failed, unavailable, label) => {
     const comparisons = vi.fn().mockResolvedValue({
       tables: [],
       summaries: [
         {
           id: 'comparison',
-          name: 'Paused comparison',
-          state: 'paused',
+          name: 'Task status',
+          state,
           memberCount: 2,
           total: 2,
-          succeeded: 1,
-          pending: 1 - running,
+          succeeded: state === 'paused' ? 1 : 2 - failed - unavailable,
+          pending: state === 'paused' ? 1 - running : 0,
           running,
-          failed: 0,
-          unavailable: 0
+          failed,
+          unavailable
         }
       ]
     })
@@ -438,10 +444,8 @@ it.each([1, 0])(
       render(<LiteratureBackgroundTasks onOpen={vi.fn()} onOpenComparison={vi.fn()} />)
     })
     fireEvent.click(await screen.findByRole('button', { name: 'Background tasks' }))
-    const row = screen.getByText('Paused comparison').closest('li')!
-    expect(row.textContent).toContain(
-      running ? 'Finishing and saving the current batch before pausing…' : 'Paused'
-    )
+    const row = screen.getByText('Task status').closest('li')!
+    expect(row.textContent).toContain(label)
     expect(within(row).queryByRole('button', { name: 'Pause after current batch' })).toBeNull()
   }
 )

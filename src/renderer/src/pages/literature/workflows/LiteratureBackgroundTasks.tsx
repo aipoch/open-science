@@ -186,6 +186,18 @@ function BackgroundTasks({
     review: t('Awaiting review'),
     completed: t('Completed')
   }
+  function comparisonStatus(table: ComparisonFeed['tables'][number]): string {
+    if (table.state === 'running') return t('Running')
+    if (table.state === 'paused') {
+      return table.running > 0
+        ? t('Finishing and saving the current batch before pausing…')
+        : t('Paused')
+    }
+    if (table.state === 'interrupted') return t('Interrupted')
+    if (table.failed > 0) return t('Failed')
+    if (table.unavailable > 0) return t('Waiting for source')
+    return t('Awaiting review')
+  }
   const pending = jobs.filter(
     (job) => job.state !== 'completed' || job.failed > 0 || job.ready > 0 || job.checked < job.total
   )
@@ -351,17 +363,7 @@ function BackgroundTasks({
                           <p className="font-medium">{table.name}</p>
                         )}
                         <p className="text-xs text-muted-foreground">
-                          {t('Comparison table')} ·{' '}
-                          {table.state === 'running'
-                            ? t('Running')
-                            : table.state === 'paused'
-                              ? table.running > 0
-                                ? t('Finishing and saving the current batch before pausing…')
-                                : t('Paused')
-                              : table.state === 'interrupted'
-                                ? t('Interrupted')
-                                : t('Awaiting review')}{' '}
-                          ·{' '}
+                          {t('Comparison table')} · {comparisonStatus(table)} ·{' '}
                           {t('Completed cells: {{done}} / {{total}}', {
                             done: table.succeeded,
                             total: table.total
