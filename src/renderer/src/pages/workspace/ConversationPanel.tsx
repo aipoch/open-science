@@ -1,5 +1,6 @@
 import { usePromptOptimization } from './composer/use-prompt-optimization'
 
+import { ScheduleCardsProvider } from './schedules/ScheduleMessageCard'
 import { ResearchVideoButton } from '../../components/research-video-button'
 import type { TFunction } from 'i18next'
 import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
@@ -1838,7 +1839,8 @@ const ConversationPanel = ({
           </button>
         </header>
 
-        {isNewConversation ? null : activeSession?.contentLoaded === false ? (
+        {isNewConversation ? null : activeSession?.contentLoaded === false &&
+          !activeSession.historyPage ? (
           sessionLoadError ? (
             <div className="flex min-h-0 flex-1 items-center justify-center p-6">
               <SessionPersistenceAlert
@@ -1853,74 +1855,81 @@ const ConversationPanel = ({
             <SessionSwitchSkeleton />
           )
         ) : (
-          <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
-            <WorkspaceMessageScroller
-              activeSession={activeSession}
-              sessionImport={sessionImport}
-              onStartResearch={
-                canEditDraft &&
-                !draftDoc.nodes.some((node) => node.type !== 'text' || node.text.trim())
-                  ? (prompt) => {
-                      onValidatedDraftDocChange(docFromText(prompt))
-                      window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
-                    }
-                  : undefined
-              }
-              onOpenLibraryMention={layout.onOpenLibraryMention}
-              forkSourceContent={
-                activeSession?.branchSource && sessionTools.openSession ? (
-                  <div className="mb-2 flex items-center gap-2 text-xs">
-                    <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                    <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
-                    <button
-                      type="button"
-                      className="text-primary hover:underline"
-                      onClick={() =>
-                        sessionTools.openSession?.(activeSession.branchSource!.sessionId)
+          <ScheduleCardsProvider
+            projectId={activeSession?.projectId}
+            sessionId={activeSession?.id}
+            messages={activeSession?.messages}
+            activities={sessionActivities}
+          >
+            <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
+              <WorkspaceMessageScroller
+                activeSession={activeSession}
+                sessionImport={sessionImport}
+                onStartResearch={
+                  canEditDraft &&
+                  !draftDoc.nodes.some((node) => node.type !== 'text' || node.text.trim())
+                    ? (prompt) => {
+                        onValidatedDraftDocChange(docFromText(prompt))
+                        window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
                       }
-                    >
-                      {sourceSessionNumber !== undefined
-                        ? t('Continued from chat #{{number}}', { number: sourceSessionNumber })
-                        : t('Continued from chat')}
-                    </button>
-                    <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                  </div>
-                ) : null
-              }
-              credentialPending={pendingCredentialRequest !== undefined}
-              visiblePermissionPending={!isImported && pendingPermissions.length > 0}
-              optimisticMessage={optimisticMessage}
-              isResumingSession={isResuming}
-              sendPreparing={view.sendPreparing}
-              notebookReference={notebookReference}
-              onSendEditedMessage={onSendEditedMessage}
-              canBranchInNewSession={canBranchInNewSession}
-              onBranchInNewSession={onBranchFromAgentMessage}
-              pendingElicitations={sessionPendingElicitations}
-              pendingElicitationControl={
-                canRevealElicitation && pendingElicitationRequest
-                  ? {
-                      activityId: pendingElicitationRequest.toolCallId,
-                      onReveal: () =>
-                        setElicitationPresentation((current) => ({
-                          key: elicitationPresentationKey,
-                          collapsed: false,
-                          focusRequestId: current.focusRequestId + 1
-                        }))
-                    }
-                  : undefined
-              }
-              handoffLifecycleSource={workspaceHandoffLifecycleClient}
-              onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
-              reportPresentationRevealing
-              turnOutcomeActions={turnOutcomeActions}
-              annotations={annotations}
-              onAddAnnotation={handleAddTranscriptAnnotation}
-              onUpdateAnnotationNote={handleUpdateTranscriptAnnotation}
-              onRemoveAnnotation={onRemoveAnnotation}
-              onAnnotationError={handleTranscriptAnnotationError}
-            />
-          </WorkspaceMessageEditStateProvider>
+                    : undefined
+                }
+                onOpenLibraryMention={layout.onOpenLibraryMention}
+                forkSourceContent={
+                  activeSession?.branchSource && sessionTools.openSession ? (
+                    <div className="mb-2 flex items-center gap-2 text-xs">
+                      <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                      <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
+                      <button
+                        type="button"
+                        className="text-primary hover:underline"
+                        onClick={() =>
+                          sessionTools.openSession?.(activeSession.branchSource!.sessionId)
+                        }
+                      >
+                        {sourceSessionNumber !== undefined
+                          ? t('Continued from chat #{{number}}', { number: sourceSessionNumber })
+                          : t('Continued from chat')}
+                      </button>
+                      <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                    </div>
+                  ) : null
+                }
+                credentialPending={pendingCredentialRequest !== undefined}
+                visiblePermissionPending={!isImported && pendingPermissions.length > 0}
+                optimisticMessage={optimisticMessage}
+                isResumingSession={isResuming}
+                sendPreparing={view.sendPreparing}
+                notebookReference={notebookReference}
+                onSendEditedMessage={onSendEditedMessage}
+                canBranchInNewSession={canBranchInNewSession}
+                onBranchInNewSession={onBranchFromAgentMessage}
+                pendingElicitations={sessionPendingElicitations}
+                pendingElicitationControl={
+                  canRevealElicitation && pendingElicitationRequest
+                    ? {
+                        activityId: pendingElicitationRequest.toolCallId,
+                        onReveal: () =>
+                          setElicitationPresentation((current) => ({
+                            key: elicitationPresentationKey,
+                            collapsed: false,
+                            focusRequestId: current.focusRequestId + 1
+                          }))
+                      }
+                    : undefined
+                }
+                handoffLifecycleSource={workspaceHandoffLifecycleClient}
+                onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
+                reportPresentationRevealing
+                turnOutcomeActions={turnOutcomeActions}
+                annotations={annotations}
+                onAddAnnotation={handleAddTranscriptAnnotation}
+                onUpdateAnnotationNote={handleUpdateTranscriptAnnotation}
+                onRemoveAnnotation={onRemoveAnnotation}
+                onAnnotationError={handleTranscriptAnnotationError}
+              />
+            </WorkspaceMessageEditStateProvider>
+          </ScheduleCardsProvider>
         )}
 
         <div
@@ -2346,6 +2355,7 @@ const ConversationPanel = ({
                               {t('View replay')}
                             </Button>
                             <ResearchVideoButton
+                              preferSavedFilm
                               key={`${activeSession.id}:${activeSession.conversationGraph?.frames.find((frame) => frame.id === activeSession.conversationGraph?.rootFrameId)?.activeBranchId ?? ''}`}
                               projectId={activeSession.projectId}
                               sessionId={activeSession.id}
@@ -3445,8 +3455,8 @@ const ConversationPanel = ({
                               onCompact={onCompactContext}
                             />
 
-                            {/* Give wrapping the picker's icon width; its label uses the remaining space. */}
-                            <div className="flex min-w-0 max-w-[220px] flex-[1_1_3.75rem] justify-end empty:hidden">
+                            {/* Reserve the icon width when wrapping; grow only as wide as the picker. */}
+                            <div className="flex min-w-0 max-w-max flex-[1_1_3.75rem] justify-end empty:hidden">
                               <ComposerModelPicker
                                 configuration={modelConfiguration}
                                 unavailable={modelUnavailable}

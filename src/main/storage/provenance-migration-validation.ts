@@ -5,9 +5,11 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { validateConversationGraph } from '../../shared/conversation-graph'
 import { NOTEBOOK_RUN_FILE } from '../../shared/notebook'
-import { normalizeSessionFile } from '../../shared/session-persistence'
+import { MAX_PERSISTED_SESSION_BYTES, normalizeSessionFile } from '../../shared/session-persistence'
+import { SessionJournalStore } from '../session-persistence/journal'
 import { operationJournalPath, RuntimeOperationJournal } from '@aipoch/environment'
 import { parseNotebookEnvironmentLock } from '@aipoch/environment'
+import { NotebookRunRepository } from '../notebook/repository'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
 import { resolveContentStorageKey } from './content-repository'
@@ -211,7 +213,12 @@ const validateReferencedEnvironmentManifests = async (
       if (projectId !== project.name || document.sessionId !== session.name) {
         throw new Error(`Notebook run ownership is invalid: ${project.name}/${session.name}`)
       }
-      const runs = Array.isArray(document.runs) ? document.runs : []
+      const runs =
+        document.version === 2
+          ? (await new NotebookRunRepository(root).findExisting(project.name, session.name))!.runs
+          : Array.isArray(document.runs)
+            ? document.runs
+            : []
       for (const rawRun of runs) {
         const run = recordValue(rawRun)
         if (!run) throw new Error(`Notebook run record is invalid: ${project.name}/${session.name}`)
@@ -331,15 +338,29 @@ const validateArtifactVersions = async (
 
 const validateSessionGraphs = async (authorityRoot: string): Promise<void> => {
   const sessionsRoot = join(authorityRoot, 'sessions')
+  const journal = new SessionJournalStore({
+    maxBytes: MAX_PERSISTED_SESSION_BYTES,
+    maxCacheEntries: 0
+  })
   for (const project of await readEntries(sessionsRoot)) {
     if (!project.isDirectory()) continue
+    const seen = new Set<string>()
     for (const entry of await readEntries(join(sessionsRoot, project.name))) {
-      if (!entry.isFile() || !entry.name.endsWith('.json') || entry.name.includes('.tmp')) continue
-      const path = join(sessionsRoot, project.name, entry.name)
-      const session = normalizeSessionFile(JSON.parse(await readFile(path, 'utf8')) as unknown, {
+      if (
+        !entry.isFile() ||
+        !(/\.jsonl?$/.test(entry.name) || entry.name.endsWith('.legacy-json.backup'))
+      )
+        continue
+      const logicalName = entry.name
+        .replace(/\.jsonl$/, '.json')
+        .replace(/\.legacy-json\.backup$/, '.json')
+      if (seen.has(logicalName)) continue
+      seen.add(logicalName)
+      const path = join(sessionsRoot, project.name, logicalName)
+      const session = normalizeSessionFile((await journal.read(path))?.document, {
         preserveLegacyUploadPaths: true
       })
-      const expectedSessionId = entry.name.slice(0, -'.json'.length)
+      const expectedSessionId = logicalName.slice(0, -'.json'.length)
       if (!session || session.id !== expectedSessionId || !session.conversationGraph) {
         throw new Error(`Session graph ownership is invalid: ${project.name}/${entry.name}`)
       }

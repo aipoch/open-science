@@ -398,7 +398,7 @@ test('renders archived research with shared workspace messages, grouped tools an
   await expect(figure).not.toBeVisible()
   await group.getByTestId('tool-group-header').click()
   await expect(figure).toBeVisible()
-  await page.setViewportSize({ width: 1280, height: 960 })
+  await app.setMainWindowSize(1280, 960)
   await replay.getByRole('button', { name: 'Enter full screen', exact: true }).click()
   const conversationPane = replay.getByRole('region', { name: 'Historical conversation' })
   const notebookPane = replay.getByRole('region', { name: 'Research materials' })
@@ -479,7 +479,7 @@ test('renders archived research with shared workspace messages, grouped tools an
       path: testInfo.outputPath(`replay-workspace-transcript-${width}.png`)
     })
   }
-  await page.setViewportSize({ width: 1280, height: 1050 })
+  await app.setMainWindowSize(1280, 1050)
   await replay.evaluate((element) => {
     element.style.width = '1024px'
   })

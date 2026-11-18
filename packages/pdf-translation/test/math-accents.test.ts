@@ -117,3 +117,11 @@ it.each(
 )('$name', ({ font, text, bounds, expected }) => {
   expect(nativeMathSymbolText({ text, bounds }, font)).toBe(expected)
 })
+
+it('resolves the Planck constant only with matching native ink and source intent', () => {
+  const glyph = { text: '~', bounds: [0, 0, 5.9, 8.4] as [number, number, number, number] }
+  expect(nativeMathSymbolText(glyph, 'MSBM10', true)).toBe('ℏ')
+  expect(nativeMathSymbolText(glyph, 'MSBM10')).toBe('~')
+  expect(nativeMathSymbolText(glyph, 'OtherMath10', true)).toBe('~')
+  expect(nativeMathSymbolText({ text: '~', bounds: [0, 0, 5.9, 1.8] }, 'MSBM10', true)).toBe('~')
+})

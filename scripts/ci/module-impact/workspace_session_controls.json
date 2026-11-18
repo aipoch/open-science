@@ -15,7 +15,8 @@
     "src/renderer/src/pages/workspace/workspace-agent-control-availability.ts",
     "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.availability.test.ts",
     "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.test.tsx",
-    "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts"
+    "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts",
+    "src/renderer/src/pages/workspace/ConversationPicker.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/AgentControlMenuItemTooltip.tsx",
@@ -24,7 +25,8 @@
     "src/renderer/src/pages/workspace/agent-control-tooltip-side.ts",
     "src/renderer/src/pages/workspace/session-action-menu.ts",
     "src/renderer/src/pages/workspace/workspace-agent-control-availability.ts",
-    "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts"
+    "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts",
+    "src/renderer/src/pages/workspace/ConversationPicker.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -172,9 +174,12 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
       "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/workspace/previews/LibraryChatButton.test.tsx",
+      "src/renderer/src/pages/workspace/schedules/ScheduleDialog.test.tsx"
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The shared conversation picker expands the reviewed session controls boundary and is consumed by scheduled tasks and library destinations; retain full CI validation until the extracted interface and consumer contracts are reviewed."
 }

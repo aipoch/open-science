@@ -283,6 +283,75 @@ test('bounds mounted marks for thousands of runs while preserving sequential key
   )
 })
 
+for (const edge of ['top', 'bottom'] as const) {
+  test(`keeps the ${edge} visible mark under the pointer until click completes`, async ({
+    page
+  }) => {
+    await page.goto('/run-marks.html?count=100')
+    const conversation = page.getByRole('region', { name: 'Conversation' })
+    const rail = page.getByRole('navigation', { name: 'Run marks' }).locator('ol')
+    if (edge === 'top') {
+      await conversation.evaluate((element) => {
+        element.scrollTop = 30000
+      })
+      await expect.poll(() => rail.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
+    }
+    const bounds = (await rail.boundingBox())!
+    const x = bounds.x + 12
+    const y = edge === 'top' ? bounds.y + 4 : bounds.y + bounds.height - 4
+    const index = await page.evaluate(
+      ({ x, y }) => document.elementFromPoint(x, y)!.closest('button')!.dataset.runIndex!,
+      { x, y }
+    )
+    const mark = rail.locator(`button[data-run-index="${index}"]`)
+    await page.mouse.move(x, y)
+    const before = await rail.evaluate((element) => element.scrollTop)
+    await page.mouse.down()
+    // Focus happens between down/up; sample across frames while the pointer is stationary.
+    const positions = await rail.evaluate(async (element) => {
+      const samples: number[] = []
+      for (let frame = 0; frame < 10; frame++) {
+        await new Promise(requestAnimationFrame)
+        samples.push(element.scrollTop)
+      }
+      return samples
+    })
+    await page.mouse.up()
+    expect.soft(positions.every((position) => position === before)).toBe(true)
+    await expect(mark).toHaveAttribute('aria-current', 'location')
+    await expect
+      .poll(() =>
+        conversation.evaluate((element, index) => {
+          const target = element.querySelector(`[data-message-id="user-${index}"]`)!
+          return Math.round(
+            target.getBoundingClientRect().top - element.getBoundingClientRect().top
+          )
+        }, index)
+      )
+      .toBe(8)
+  })
+
+  test(`keeps the wave stable during brief ${edge} edge exits`, async ({ page }) => {
+    await page.goto('/run-marks.html?count=60')
+    const rail = page.getByRole('navigation', { name: 'Run marks' }).locator('ol')
+    const mark = rail.getByRole('button').nth(edge === 'top' ? 0 : 59)
+    const box = (await rail.boundingBox())!
+    const inside = edge === 'top' ? box.y + 1 : box.y + box.height - 1
+    const outside = edge === 'top' ? box.y - 1 : box.y + box.height + 1
+    await page.mouse.move(box.x + 12, inside)
+    const scale = (): Promise<string> =>
+      mark.locator('span').evaluate((element) => element.style.scale)
+    await expect.poll(scale).toBe('1')
+    await page.mouse.move(box.x + 12, outside)
+    expect(await scale()).toBe('1')
+    await page.mouse.move(box.x + 12, inside)
+    await expect.poll(scale).toBe('1')
+    await page.mouse.move(box.x + 400, outside)
+    await expect(page.locator('[data-slot="run-mark-preview"][data-open]')).toHaveCount(0)
+    await expect.poll(scale).toBe('0.4 1')
+  })
+}
+
 test('keeps a virtualized rail and its preview on the correct side in RTL', async ({ page }) => {
   await page.goto('/run-marks.html?count=2000')
   await page.locator('html').evaluate((element) => {

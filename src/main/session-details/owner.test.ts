@@ -1601,6 +1601,38 @@ describe('SessionDetailsOwner', () => {
     expect(store.current()).toEqual(edited)
   })
 
+  it('renames using only the title baseline while preserving the current description and transcript', async () => {
+    const session = queuedSession({
+      description: '  A newer description preserved verbatim  ',
+      revision: 42,
+      sessionDetailsGeneration: undefined,
+      sessionDetailsSource: 'manual'
+    })
+    const { owner, store } = harness([session])
+    const renamed = await owner.rename({
+      projectId: session.projectId,
+      sessionId: session.id,
+      expectedTitle: session.title,
+      title: '  A new title  '
+    })
+    expect(renamed).toMatchObject({
+      title: 'A new title',
+      description: session.description,
+      messages: session.messages,
+      sessionDetailsSource: 'manual',
+      revision: 43
+    })
+    await expect(
+      owner.rename({
+        projectId: session.projectId,
+        sessionId: session.id,
+        expectedTitle: session.title,
+        title: 'Stale title'
+      })
+    ).rejects.toMatchObject({ code: 'session-details-conflict' })
+    expect(store.current()).toEqual(renamed)
+  })
+
   it('rejects a stale manual edit when the same detail changed in another window', async () => {
     const session = queuedSession({
       sessionDetailsGeneration: undefined,

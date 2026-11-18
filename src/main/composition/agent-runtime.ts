@@ -43,12 +43,14 @@ import { createDefaultUploadRepository } from '../uploads/ipc'
 import { WslSetupSessionOwner } from '../wsl/wsl-setup-session-owner'
 
 export async function composeAgentRuntime({
+  schedules,
   wslSetupSessions,
   getAvailableShellRuntimeBinding,
   settingsService,
   notificationInbox,
   uploadRepository,
   managedFileVersionService,
+  pptxAgent,
   sideChatOwnerRef,
   recordAuxiliaryUsage,
   artifactRepository,
@@ -93,6 +95,7 @@ export async function composeAgentRuntime({
   notificationInbox: ReturnType<typeof createNotificationInboxController>
   uploadRepository: ReturnType<typeof createDefaultUploadRepository>
   managedFileVersionService: ManagedFileVersionService
+  pptxAgent: import('../pptx-edit/agent-handler').PptxAgentHandler
   sideChatOwnerRef: { current: SideChatRuntimeOwner | undefined }
   recordAuxiliaryUsage: (record: SessionAuxiliaryTurnUsageRecord) => Promise<void>
   artifactRepository: ReturnType<typeof createDefaultArtifactRepository>
@@ -116,6 +119,7 @@ export async function composeAgentRuntime({
   literatureDocumentReader: LiteratureDocumentReader
   mainPromptSideChatRelay: ReturnType<typeof createMainPromptSideChatRelay>
   backendTeardownOwnedByCoordinator: { current: boolean }
+  schedules?: import('../schedules/mcp').ScheduleMcp
   notebookService: NotebookRuntimeService
   specialistService: SpecialistService
   memoryService: MemoryService
@@ -159,6 +163,7 @@ export async function composeAgentRuntime({
       runRegistry: artifactRunRegistry,
       provenanceRepository: artifactProvenanceRepository,
       managedFileVersions: managedFileVersionService,
+      pptxAgent,
       uploadRepository,
       notebookRpcServer,
       wslSetupSessions,
@@ -206,6 +211,7 @@ export async function composeAgentRuntime({
       afterSessionDelete: (sessionId, retained) =>
         computeIpcModule.handlers.approvalFinishSessionDeletion(sessionId, retained),
       initializationBarrier: initialConnectorSkillsReady,
+      schedules,
       specialistService,
       sessionPersistenceCoordinator,
       sandboxNetworkApprovalOwner,

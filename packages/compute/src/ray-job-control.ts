@@ -268,6 +268,36 @@ export async function stopRayJob(
   }
 }
 
+/** Delete a terminal Ray Job and its Dashboard metadata. Missing jobs are already cleaned. */
+export async function deleteRayJob(
+  target: RayJobsTarget,
+  claim: RayJobClaim,
+  signal?: AbortSignal
+): Promise<void> {
+  target = { ...target }
+  claim = { ...claim, metadata: { ...claim.metadata } }
+  try {
+    const observation = await inspectRayJob(target, claim, signal)
+    if (
+      observation.status !== 'SUCCEEDED' &&
+      observation.status !== 'FAILED' &&
+      observation.status !== 'STOPPED'
+    )
+      throw new Error('Ray job is not terminal.')
+  } catch (error) {
+    if (!(error instanceof RayJobsHttpError) || error.status !== 404) throw error
+    return
+  }
+  try {
+    const result = await readJson(
+      await rayJobsRequest(target, jobPath(claim), { method: 'DELETE', signal })
+    )
+    if (result.deleted !== true) throw new Error('Ray Job deletion was not confirmed.')
+  } catch (error) {
+    if (!(error instanceof RayJobsHttpError) || error.status !== 404) throw error
+  }
+}
+
 /** The byte budget applies to the full JSON response, including JSON escaping. */
 export async function readRayJobLogs(
   target: RayJobsTarget,

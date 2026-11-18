@@ -18,6 +18,7 @@ export const LOCAL_FS_READ_PREVIEW_CHANNEL = 'local-fs:read-preview'
 export const LOCAL_FS_GET_ROOTS_CHANNEL = 'local-fs:get-roots'
 export const LOCAL_FS_REVEAL_CHANNEL = 'local-fs:reveal'
 export const LOCAL_FS_OPEN_PATH_CHANNEL = 'local-fs:open-path'
+export const LOCAL_FS_OPEN_IN_BROWSER_CHANNEL = 'local-fs:open-in-browser'
 // Granted-roots channels: the renderer manages the list, main validates and persists.
 export const LOCAL_FS_GRANTED_ROOTS_LIST_CHANNEL = 'local-fs:granted-roots:list'
 export const LOCAL_FS_GRANT_ROOT_CHANNEL = 'local-fs:grant-root'
@@ -43,6 +44,9 @@ export const registerLocalFsIpcHandlers = (
   )
   ipcMainHandle(LOCAL_FS_OPEN_PATH_CHANNEL, (_event, path: string): Promise<string> =>
     service.openPath(path)
+  )
+  ipcMainHandle(LOCAL_FS_OPEN_IN_BROWSER_CHANNEL, (_event, path: string): Promise<void> =>
+    service.openInBrowser(path)
   )
   ipcMainHandle(LOCAL_FS_GRANTED_ROOTS_LIST_CHANNEL, (): Promise<GrantedLocalRoot[]> =>
     service.listGrantedRoots()

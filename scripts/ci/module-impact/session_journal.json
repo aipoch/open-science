@@ -1,0 +1,35 @@
+{
+  "ownerPaths": [
+    "src/main/session-persistence/journal-codec.test.ts",
+    "src/main/session-persistence/journal-codec.ts",
+    "src/main/session-persistence/journal-history.test.ts",
+    "src/main/session-persistence/journal-prepared-write.test.ts",
+    "src/main/session-persistence/journal-text-events.test.ts",
+    "src/main/session-persistence/journal.test.ts",
+    "src/main/session-persistence/journal.ts",
+    "src/main/session-persistence/session-record-codec.test.ts",
+    "src/main/session-persistence/session-record-codec.ts",
+    "src/main/session-persistence/session-record-text-events.test.ts"
+  ],
+  "interfacePaths": [
+    "src/main/session-persistence/journal.ts",
+    "src/main/session-persistence/journal-codec.ts",
+    "src/main/session-persistence/session-record-codec.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/main/session-persistence/journal-codec.test.ts",
+      "src/main/session-persistence/journal-history.test.ts",
+      "src/main/session-persistence/journal-prepared-write.test.ts",
+      "src/main/session-persistence/journal-text-events.test.ts",
+      "src/main/session-persistence/journal.test.ts",
+      "src/main/session-persistence/session-record-codec.test.ts",
+      "src/main/session-persistence/session-record-text-events.test.ts"
+    ],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
+    "consumer": []
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

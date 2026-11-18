@@ -5,10 +5,12 @@ import {
   desktopBackendDependencies,
   desktopBackendPeerDependencies,
   desktopBundledDependencies,
+  desktopExternalClosure,
   generatedPrismaIncludes,
   inlineDesktopDependencyMaps,
   isBackendRuntimeDependency,
   isElectronPackage,
+  missingOptionalDependencies,
   prismaEngineFilenames
 } from './backend-dependencies.mjs'
 import { prepareBackendStage } from './build-notebook-host.mjs'
@@ -17,6 +19,7 @@ import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
 import { parseArgs } from 'node:util'
 import { stageDesktopPdfLib } from './desktop-pdf-lib.mjs'
+import { syncFileEvidenceCodec } from './sync-file-evidence-codec.mjs'
 import {
   assertPrivateDependencyChain,
   stageDesktopDependencyChain
@@ -32,9 +35,14 @@ const cliManifest = JSON.parse(
 )
 const forbidden = isElectronPackage
 const metadata = JSON.parse(await readFile(join(backend, 'dependencies.json'), 'utf8'))
-const bundledDependencies = desktopBundledDependencies(metadata)
+const bundledDependencies = desktopBundledDependencies(metadata, undefined, root)
 const dependencyRoots = values.desktop
-  ? desktopBackendDependencies(manifest.dependencies, metadata)
+  ? desktopBackendDependencies(
+      manifest.dependencies,
+      metadata,
+      new Set([...desktopExternalClosure(root), ...missingOptionalDependencies(root, metadata)]),
+      root
+    )
   : Object.keys(manifest.dependencies)
 await prepareBackendStage({ stage, removeStage: rm })
 await mkdir(stage, { recursive: true })
@@ -49,6 +57,10 @@ await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
 await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,
   filter: (path) => !relative(join(root, 'resources'), path).split(sep).includes('bin')
+})
+await syncFileEvidenceCodec({
+  root,
+  target: join(stage, 'resources/notebook/file_evidence_codec.mjs')
 })
 const platformDirectory = { darwin: 'mac', win32: 'win', linux: 'linux' }[process.platform]
 const micromamba = process.platform === 'win32' ? 'micromamba.exe' : 'micromamba'
@@ -181,8 +193,11 @@ for (const name of dependencyRoots) {
   dependencies[name] = installed.get(join(stage, 'node_modules', name))
 }
 // This HTTP implementation is a direct standalone dependency, independent of incidental hoisting.
-await copyDependency('undici', root)
-dependencies.undici = installed.get(join(stage, 'node_modules/undici'))
+// The desktop backend may compile it into the bundle instead; then it has no installed copy.
+if (!bundledDependencies.has('undici')) {
+  await copyDependency('undici', root)
+  dependencies.undici = installed.get(join(stage, 'node_modules/undici'))
+}
 // Fail if a new peer edge reintroduces development tooling into a shipped dependency closure.
 for (const name of ['prisma', '@prisma/engines', 'typescript']) {
   if ([...installed.keys()].some((path) => path.endsWith(join('node_modules', name))))

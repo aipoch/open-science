@@ -692,6 +692,97 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     ).rejects.toThrow('Artifact Literature manifest is corrupt')
   })
 
+  it.each(['artifact', 'upload'] as const)(
+    'publishes a %s binary edit with actor metadata and replays it idempotently',
+    async (source) => {
+      const fixture = await createFixture(source)
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const content = Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0, 255, 128])
+      const request = {
+        source,
+        projectId: 'project-1',
+        fileId: fixture.fileId,
+        basedOnVersionId: fixture.versionIds[1],
+        expectedHeadVersionId: fixture.versionIds[1],
+        operationId: `binary-edit-${source}`,
+        content,
+        actor: 'agent' as const,
+        summary: 'setText x2',
+        opCount: 2
+      }
+      const result = await service.saveBinaryEdit(request)
+
+      if (result.kind !== 'created') throw new Error('Expected a created version.')
+      expect(result.replayed).toBe(false)
+      const operation = await client.managedFileVersionWriteOperation.findUniqueOrThrow({
+        where: { operationId: request.operationId }
+      })
+      expect(JSON.parse(operation.textFormatJson)).toEqual({
+        kind: 'binary-edit',
+        actor: 'agent',
+        summary: 'setText x2',
+        opCount: 2
+      })
+      const stored = await readFile(join(storageRoot, ...operation.contentStorageKey.split('/')))
+      expect(Uint8Array.from(stored)).toEqual(content)
+
+      await expect(service.saveBinaryEdit(request)).resolves.toMatchObject({
+        kind: 'created',
+        replayed: true,
+        version: { id: result.version.id }
+      })
+      await expect(service.saveBinaryEdit({ ...request, actor: 'user' })).rejects.toMatchObject({
+        code: 'OPERATION_REUSED'
+      })
+      const inspected = await service.inspect({
+        source,
+        projectId: 'project-1',
+        fileId: fixture.fileId
+      })
+      expect(inspected.headVersion).toMatchObject({ author: 'agent', summary: 'setText x2' })
+      expect(inspected.versions.find((version) => version.id === result.version.id)).toMatchObject({
+        author: 'agent',
+        summary: 'setText x2'
+      })
+    }
+  )
+
+  it('reports a head conflict and treats unchanged bytes as a no-op for binary edits', async () => {
+    const fixture = await createFixture('upload')
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const base = {
+      source: 'upload' as const,
+      projectId: 'project-1',
+      fileId: fixture.fileId,
+      basedOnVersionId: fixture.versionIds[1],
+      actor: 'user' as const,
+      summary: 'setText x1',
+      opCount: 1
+    }
+    await expect(
+      service.saveBinaryEdit({
+        ...base,
+        expectedHeadVersionId: fixture.versionIds[0],
+        operationId: 'binary-conflict',
+        content: Uint8Array.from([1, 2, 3])
+      })
+    ).resolves.toMatchObject({ kind: 'conflict', actualHead: { id: fixture.versionIds[1] } })
+    await expect(
+      service.saveBinaryEdit({
+        ...base,
+        expectedHeadVersionId: fixture.versionIds[1],
+        operationId: 'binary-noop',
+        content: Buffer.from('second\n')
+      })
+    ).resolves.toMatchObject({ kind: 'noop', headVersionId: fixture.versionIds[1] })
+  })
+
   it('creates a Node version file operator by default without a platform capability gate', async () => {
     const fixture = await createFixture('upload')
     const service = new ManagedFileVersionService({

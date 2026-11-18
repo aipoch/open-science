@@ -838,6 +838,56 @@ it('reforks Notebook files without copying the previous publication ownership ma
   ).resolves.toBeDefined()
 })
 
+it('preserves large immutable Notebook output through fork, refork and archive import', async () => {
+  const { fixture, service } = await setup()
+  const source = { projectId: 'project-1', sessionId: 'session-1' }
+  const lane = createFrameNotebookLane(source.projectId, source.sessionId, 'root-frame')
+  const document = await fixture.notebookRepository.loadOrCreate({
+    ...source,
+    lane,
+    workspaceCwd: fixture.storageRoot
+  })
+  const stdout = 'Research result\n'.repeat(10000)
+  await fixture.notebookRepository.appendRun({
+    ...source,
+    lane,
+    run: {
+      runId: 'large-run',
+      cellId: 'large-cell',
+      source: 'agent',
+      kernelKind: 'python',
+      script: 'print("Research result")',
+      status: 'completed',
+      startedAt: 1,
+      endedAt: 2,
+      text: { stdout, stderr: '', traceback: '', plain: [] },
+      outputs: [],
+      artifacts: [],
+      workingFiles: []
+    }
+  })
+  expect(
+    JSON.parse(await readFile(join(document.notebookSessionRoot, 'run.json'), 'utf8')).version
+  ).toBe(2)
+  const first = await service.fork(source)
+  const second = await service.fork(first)
+  const archive = join(fixture.storageRoot, 'large-output.science')
+  await service.exportTo(second, archive)
+  const imported = await service.importFrom(archive, undefined, undefined, undefined, {
+    projectId: source.projectId
+  })
+  for (const target of [first, second, imported]) {
+    const root = join(fixture.storageRoot, 'notebooks', target.projectId, target.sessionId)
+    const paths = await fileSystem.readdir(root, { recursive: true })
+    expect(paths.some((path) => path.includes('.run-records'))).toBe(false)
+    const runPath = paths.find((path) => path.endsWith('run.json'))!
+    const stored = JSON.parse(await readFile(join(root, runPath), 'utf8'))
+    expect(stored.version).toBe(1)
+    expect(stored.runs[0].text.stdout).toBe(stdout)
+    expect(stored.runs[0].runId).not.toBe('large-run')
+  }
+})
+
 it('numbers sibling forks and nests the direct source title', async () => {
   const { repository, service } = await setup()
   const source = { projectId: 'project-1', sessionId: 'session-1' }

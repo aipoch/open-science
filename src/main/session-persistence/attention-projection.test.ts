@@ -1,5 +1,5 @@
 import { SessionProjectionAfterCommitError } from './save-session'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -13,6 +13,7 @@ import {
   type SessionSummary
 } from '../../shared/session-persistence'
 import { SessionRepository } from './repository'
+import { SessionJournalStore } from './journal'
 import { SessionPersistenceCoordinator, type SessionFileIndex } from './coordinator'
 import { buildSessionProjection } from './projection'
 import { initDataRoot } from '../storage-root'
@@ -157,10 +158,12 @@ describe('Main Session Attention facts', () => {
       'runtime-transcript'
     )
     expect(save.mock.calls.at(-1)?.[0]).not.toHaveProperty('recordProblems')
-    expect(
-      JSON.parse(await readFile(join(h.root, 'sessions', 'project', 'session.json'), 'utf8'))
-        .session
-    ).not.toHaveProperty('recordProblems')
+    const stored = await new SessionJournalStore({ maxBytes: 1024 * 1024 }).read(
+      join(h.root, 'sessions', 'project', 'session.json')
+    )
+    expect(stored).toBeDefined()
+    expect(stored!.document).toHaveProperty('session')
+    expect(Reflect.get(stored!.document as object, 'session')).not.toHaveProperty('recordProblems')
   })
 
   it('clears a size fact when JSON committed despite a derived catalog error', async () => {

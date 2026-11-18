@@ -321,6 +321,29 @@ it.each(['unrelated', 'mismatched', 'outcome'])(
           await rename(other + '.tmp', other)
           await assert.rejects(rename(source, destination), {code:'EIO'})
           assert.equal((await fs.readFile(join(root, 'e2e-session-outcome-hits'),'utf8')).trim(), String(process.pid))
+          const journal = destination + 'l'
+          const snapshot = JSON.stringify({type:'session_snapshot', document:JSON.parse(contents)}) + '\\n'
+          await fs.writeFile(journal + '.tmp', snapshot)
+          await assert.rejects(rename(journal + '.tmp', journal), {code:'EIO'})
+          await fs.writeFile(journal, snapshot)
+          const { appendFile } = await import('node:fs/promises')
+          const update = JSON.stringify({type:'session_update', revision:2, records:[
+            {type:'metadata', session:{id:'session'}},
+            {type:'entities',collection:'graphMessages',upserts:[{id:'prompt',role:'user',content:'reject me'}]}
+          ]}) + '\\n'
+          await assert.rejects(appendFile(journal, update), {code:'EIO'})
+          assert.equal(await fs.readFile(journal,'utf8'), snapshot)
+          await fs.writeFile(join(root, 'e2e-session-outcome-fault.json'), JSON.stringify({
+            kind:'terminal', projectId:'project', sessionId:'session', promptMessageId:'prompt',
+            executionId:'run', startedAt:10, dataRoot:root
+          }))
+          const terminal = JSON.stringify({type:'session_update', revision:2, records:[
+            {type:'metadata',session:{id:'session',runtimeSessionAdmissions:[{executionId:'run',promptMessageId:'prompt'}],
+              runtimeTranscriptLastRun:{promptMessageId:'prompt',startedAt:10}}}
+          ]}) + '\\n'
+          await assert.rejects(appendFile(journal, terminal), {code:'EIO'})
+          assert.equal(await fs.readFile(journal,'utf8'), snapshot)
+          await appendFile(journal, terminal.replace('"startedAt":10', '"startedAt":11'))
           await fs.rm(join(root, 'e2e-session-outcome-fault.json'))
         }
         await fs.rename(source, destination)

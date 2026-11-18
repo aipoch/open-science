@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
-import { LAB_PROVIDER_ID } from '../../shared/settings'
+import { LAB_PROVIDER_ID } from '../../shared/settings-runtime'
 import { buildLabProviderRecord } from './lab-provider'
 import { ProviderRuntimeProjectionOwner } from './provider-runtime-projection'
 import type { StoredProvider } from './types'

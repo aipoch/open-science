@@ -86,6 +86,7 @@ const channels = [
   'sessions:load-usage',
   'sessions:search-messages',
   'sessions:load-one',
+  'sessions:load-history-page',
   'sessions:list-runtime-terminal-failures',
   'sessions:save-session',
   'sessions:save-manifest',

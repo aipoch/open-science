@@ -1,4 +1,9 @@
 import {
+  scheduleToolDescriptions,
+  scheduleToolInputs,
+  SCHEDULE_MCP_NAME
+} from '../../shared/session-schedules'
+import {
   listPdfAnnotationsInput,
   locatePdfAnnotationInput,
   createPdfAnnotationInput
@@ -40,6 +45,12 @@ import {
 import { requestSkillImportToolSchema } from '../skills/mcp-server'
 import type { ResponsesNamespacedTool } from '@aipoch/providers/protocol'
 import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
+import { proposePptxOperationsInput, readPptxOutlineInput } from '../pptx-edit/agent-tools'
+import {
+  PPTX_MCP_SERVER_NAME,
+  PROPOSE_PPTX_OPERATIONS_DESCRIPTION,
+  READ_PPTX_OUTLINE_DESCRIPTION
+} from '../pptx-edit/mcp-server'
 
 const jsonSchema = (schema: z.ZodType): ResponsesNamespacedTool['parameters'] =>
   z.toJSONSchema(schema, { target: 'draft-7' }) as ResponsesNamespacedTool['parameters']
@@ -250,6 +261,21 @@ const literatureTools = (
     : [])
 ]
 
+const PPTX_TOOLS: ResponsesNamespacedTool[] = [
+  tool(
+    PPTX_MCP_SERVER_NAME,
+    'read_pptx_outline',
+    READ_PPTX_OUTLINE_DESCRIPTION,
+    readPptxOutlineInput
+  ),
+  tool(
+    PPTX_MCP_SERVER_NAME,
+    'propose_pptx_operations',
+    PROPOSE_PPTX_OPERATIONS_DESCRIPTION,
+    proposePptxOperationsInput
+  )
+]
+
 const ARTIFACT_TOOLS: ResponsesNamespacedTool[] = [
   tool(
     ARTIFACT_MCP_SERVER_NAME,
@@ -271,6 +297,7 @@ const notebookTools = (options: NotebookToolEnvironmentOptions): ResponsesNamesp
   }))
 
 export const createCodexBridgeMcpTools = (options: {
+  schedules?: boolean
   notebook?: NotebookToolEnvironmentOptions
   skillImport?: boolean
   library?:
@@ -283,9 +310,21 @@ export const createCodexBridgeMcpTools = (options: {
       }
   literature?: boolean | { elements?: boolean; annotations?: boolean }
   artifacts?: boolean
+  pptx?: boolean
 }): ResponsesNamespacedTool[] => {
   const tools = [
+    ...(options.schedules
+      ? Object.entries(scheduleToolInputs).map(([name, schema]) =>
+          tool(
+            SCHEDULE_MCP_NAME,
+            name,
+            scheduleToolDescriptions[name as keyof typeof scheduleToolInputs],
+            schema
+          )
+        )
+      : []),
     ...(options.artifacts ? ARTIFACT_TOOLS : []),
+    ...(options.pptx ? PPTX_TOOLS : []),
     ...(options.notebook ? notebookTools(options.notebook) : []),
     ...(options.skillImport ? SKILL_IMPORT_TOOLS : []),
     ...(options.library

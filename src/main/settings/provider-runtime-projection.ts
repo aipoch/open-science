@@ -33,7 +33,7 @@ import {
   isXaiSubscriptionProvider,
   providerEndpoints,
   requiresChatCompletionsBridge
-} from '../../shared/settings'
+} from '../../shared/settings-runtime'
 import type { AgentFrameworkId } from '../agent-framework'
 import { frameworkRequiresStreaming } from '../../shared/agent-framework-id'
 import { isOfficialOpenAiResponsesBase } from '../agent-framework/codex'

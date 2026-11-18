@@ -6,12 +6,12 @@ import type {
 import { resolveModelContextWindow } from '../../../../shared/provider-model-policy'
 import { buildSessionHistoryReplay } from '../../../../shared/session-history-replay'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
-import {
-  requiresChatCompletionsBridge,
-  type AgentFrameworkId,
-  type AgentFrameworkView,
-  type ProviderView
+import type {
+  AgentFrameworkId,
+  AgentFrameworkView,
+  ProviderView
 } from '../../../../shared/settings'
+import { requiresChatCompletionsBridge } from '../../../../shared/settings-runtime'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { ChatMessage } from '../../stores/session-store-contract'
 

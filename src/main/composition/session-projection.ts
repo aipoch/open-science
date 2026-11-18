@@ -276,6 +276,14 @@ export function composeSessionProjection({
         )
       )
     },
+    loadHistoryPage: async (request) => {
+      const recovery = await recoverProjectDeletionsForSessionRead(
+        projectDeletionCoordinator,
+        sessionPersistenceCoordinator
+      )
+      if (!recovery.isComplete) return undefined
+      return sessionRepository.loadSessionHistoryPage(request)
+    },
     saveSession: async (session, options, authority) => {
       const created =
         (await sessionRepository.loadSession(session.projectId, session.id)) === undefined

@@ -43,12 +43,15 @@ module.exports = async (context) => {
   // Use the same configured signing identity as the installer. Unsigned development builds
   // retain electron-builder's normal behavior; never mutate the shared downloaded binary.
   await context.packager.signIf(tool)
-  const helper = path.join(directory, 'windows-install-publication.dll')
-  require('./compile-windows-install-publication.cjs')(
-    path.join(__dirname, 'windows-install-publication.cs'),
-    helper
-  )
-  await context.packager.signIf(helper)
+  // Embedded only in the installer; replaces the per-phase powershell.exe launches on the
+  // install path. Both helpers compile windows-install-publication.cs in, so no DLL ships.
+  const installHelper = path.join(directory, 'windows-install-helper.exe')
+  require('./compile-windows-install-publication.cjs').installHelper(installHelper)
+  await context.packager.signIf(installHelper)
+  // Embedded only in the uninstaller; replaces per-script powershell.exe launches.
+  const uninstallHelper = path.join(directory, 'windows-uninstall-helper.exe')
+  require('./compile-windows-install-publication.cjs').uninstallHelper(uninstallHelper)
+  await context.packager.signIf(uninstallHelper)
   await fs.writeFile(path.join(directory, '7zip-LICENSE.txt'), license)
   const resources = path.join(context.appOutDir, 'resources')
   await fs.mkdir(resources, { recursive: true })

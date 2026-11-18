@@ -1,6 +1,6 @@
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
-import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings'
+import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings-runtime'
 import type {
   ConnectorTemplateSelectionResult,
   ExportCustomServerTemplateRequest,

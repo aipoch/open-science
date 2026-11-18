@@ -1076,6 +1076,23 @@ describe('HeadlessTaskApi adapter', () => {
         return { sessions: [session], manifest: { version: 1 } }
       }
       if (channel === 'artifacts:resolve-version-descriptors') return []
+      if (channel === 'managed-file-versions:inspect') {
+        const request = args[0] as { versionNumber?: number }
+        return {
+          ok: true,
+          value: {
+            projectId: project.id,
+            selectedVersion: {
+              id: 'artifact-query-version',
+              fileId: 'artifact-query',
+              versionNumber: request.versionNumber ?? 1,
+              displayName: 'query.csv',
+              contentType: 'text/csv'
+            },
+            versions: []
+          }
+        }
+      }
       if (channel === 'preview-resources:acquire') {
         return {
           id: 'resource-query',
@@ -1107,11 +1124,17 @@ describe('HeadlessTaskApi adapter', () => {
     ])
     await expect(api.getSession(session.id)).resolves.toMatchObject({ title: session.title })
     await expect(api.listArtifacts(session.id)).resolves.toEqual(session.artifacts)
-    await expect(api.acquireArtifact('artifact-query')).resolves.toMatchObject({
+    const acquired = await api.acquireArtifact('artifact-query')
+    expect(acquired).toMatchObject({
       resourceId: 'resource-query',
       name: 'query.csv'
     })
-    await api.releaseArtifact('resource-query')
+    for (const selection of [{ projectId: project.id }, { versionNumber: 2 }]) {
+      const preview = await api.acquireArtifact('artifact-query', selection)
+      expect(preview).toMatchObject({ resourceId: 'resource-query', name: 'query.csv' })
+      await preview.release()
+    }
+    await acquired.release()
 
     expect(invoke).toHaveBeenCalledWith(
       'artifacts:resolve-version-descriptors',
@@ -1123,7 +1146,15 @@ describe('HeadlessTaskApi adapter', () => {
         source: 'artifact',
         projectId: 'project-1',
         fileId: 'artifact-query',
+        versionId: 'artifact-query-version',
         mimeType: 'text/csv'
+      }
+    ])
+    expect(invoke).toHaveBeenCalledWith('managed-file-versions:inspect', taskCallerContext(), [
+      {
+        source: 'artifact',
+        fileId: 'artifact-query',
+        versionNumber: 2
       }
     ])
     expect(invoke).toHaveBeenCalledWith('preview-resources:release', taskCallerContext(), [
@@ -1432,14 +1463,6 @@ describe('HeadlessTaskApi adapter', () => {
       { onProviderPromptAccepted: expect.any(Function) }
     )
     expect(context.isAuthorizationCurrent()).toBe(false)
-
-    await api.runWithCallerContext(context, () => api.releaseArtifact('resource-context'))
-    expect(invoke).toHaveBeenLastCalledWith(
-      'preview-resources:release',
-      expect.objectContaining({ location: 'local', actionOrigin: 'automation' }),
-      [{ resourceId: 'resource-context' }]
-    )
-    expect(invoke.mock.calls.at(-1)?.[1].isAuthorizationCurrent()).toBe(true)
   })
 
   it('does not enter the direct Agent port after captured remote authorization expires', async () => {

@@ -43,7 +43,7 @@ import {
   providerEndpoints,
   requiresChatCompletionsBridge,
   xaiSubscriptionProviderIdentity
-} from '../../shared/settings'
+} from '../../shared/settings-runtime'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,

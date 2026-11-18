@@ -83,7 +83,17 @@ const normalizeOptions = (value: unknown): ElicitationField['options'] | undefin
     const label = readString(candidate.title)
     if (!optionValue || !label) return []
     const description = readString(candidate.description)
-    return [{ value: optionValue, label, ...(description ? { description } : {}) }]
+    const pros = readString(candidate.pros)
+    const cons = readString(candidate.cons)
+    return [
+      {
+        value: optionValue,
+        label,
+        ...(description ? { description } : {}),
+        ...(pros ? { pros } : {}),
+        ...(cons ? { cons } : {})
+      }
+    ]
   })
 
   return options.length === value.length &&

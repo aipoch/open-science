@@ -22,6 +22,7 @@ import type {
   PdfNativeAnnotationImportProgress
 } from '../shared/pdf-annotations'
 import type { PermissionGrantsChangedEvent } from '../shared/permission-grants'
+import type { PptxDraftChangedEvent } from '../shared/pptx-draft'
 import type { ProjectFilesChangedEvent } from '../shared/project-files'
 import type {
   ReviewSessionRequest,
@@ -68,6 +69,7 @@ export type ApplicationEventMap = {
   'notebook-env:progress': ProvisionProgress
   'runtime:policy-changed': undefined
   'notifications:changed': NotificationInboxChanged
+  'schedules:changed': { projectId: string; sessionId: string | null }
   'background-result-delivery:changed': ProjectBackgroundActivityChangedEvent
   'project:created': Project
   'project:updated': Project
@@ -82,6 +84,7 @@ export type ApplicationEventMap = {
   'permissions:changed': PermissionGrantsChangedEvent
   'literature:changed': LiteratureChangedEvent
   'pdf-annotations:changed': PdfAnnotationsChangedEvent
+  'pptx-draft:changed': PptxDraftChangedEvent
   'pdf-annotations:import-progress': PdfNativeAnnotationImportProgress
   'tags:changed': TagsChangedEvent
   'memory:changed': MemoryChangedEvent

@@ -2,14 +2,11 @@ import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 
+import { runVerificationProcess } from '../update/verification-process'
 import type { ClaudeDetectResult } from '../../shared/settings'
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
 import { augmentedPathEnv, withNpmBinFallback } from './shell-path'
-
-const execFileAsync = promisify(execFile)
 
 // Detects a runnable claude executable across the locations a GUI app might miss because its PATH
 // differs from the user's login shell. Injectable deps (including the host platform) keep the probe
@@ -157,15 +154,11 @@ const runClaudeVersion =
   (platform: NodeJS.Platform) =>
   async (path: string, signal?: AbortSignal): Promise<string | undefined> => {
     try {
-      const { stdout } =
-        platform === 'win32'
-          ? await execFileAsync(`"${path}"`, ['--version'], {
-              timeout: 10_000,
-              shell: true,
-              windowsHide: true,
-              signal
-            })
-          : await execFileAsync(path, ['--version'], { timeout: 10_000, signal })
+      const { stdout } = await runVerificationProcess(
+        platform === 'win32' ? `"${path}"` : path,
+        ['--version'],
+        { timeoutMs: 10_000, maxBytes: 1024 * 1024, shell: platform === 'win32', signal }
+      )
 
       return parseVersion(stdout)
     } catch {
@@ -181,20 +174,13 @@ const resolveNpmBinDirs =
   (platform: NodeJS.Platform) =>
   async (signal?: AbortSignal): Promise<string[]> => {
     try {
-      const { stdout } =
-        platform === 'win32'
-          ? await execFileAsync('npm', ['prefix', '-g'], {
-              timeout: 10_000,
-              shell: true,
-              windowsHide: true,
-              env: augmentedPathEnv(),
-              signal
-            })
-          : await execFileAsync('npm', ['prefix', '-g'], {
-              timeout: 10_000,
-              env: augmentedPathEnv(),
-              signal
-            })
+      const { stdout } = await runVerificationProcess('npm', ['prefix', '-g'], {
+        timeoutMs: 10_000,
+        maxBytes: 1024 * 1024,
+        shell: platform === 'win32',
+        env: augmentedPathEnv(),
+        signal
+      })
       const prefix = stdout.trim()
 
       if (!prefix) return []

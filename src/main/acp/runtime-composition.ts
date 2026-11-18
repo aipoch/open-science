@@ -26,7 +26,7 @@ import {
 } from '../../shared/lifecycle-events'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings-runtime'
 import { filterSpecialistConnectorSkills } from '../../shared/specialist'
 import { imageAttachmentMimeType } from '../../shared/uploads'
 import type { ResolvedAgentBackend } from '../agent-framework'
@@ -139,6 +139,7 @@ type AcpRuntimeArtifacts = {
 }
 
 type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
+  schedules?: import('../schedules/mcp').ScheduleMcp
   appVersion: string
   mcpEntryPath: string
   uploadRepository: UploadRepository
@@ -175,6 +176,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     import('../managed-file-versions/service').ManagedFileVersionService,
     'openLatest' | 'openVersion' | 'openUnpublishedVersion'
   >
+  pptxAgent?: import('../pptx-edit/agent-handler').PptxAgentHandler
   onSessionTurnStarted?: (sessionId: string, turnToken: string) => void
   onSessionTurnEnded?: (sessionId: string, turnToken: string) => void
   onSkillImportAttachmentEligible?: (
@@ -263,12 +265,14 @@ const isPdfAttachmentVersion = (version: { filename: string; contentType: string
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
 const createAcpRuntime = ({
+  schedules,
   appVersion,
   mcpEntryPath,
   repository,
   runRegistry,
   provenanceRepository,
   managedFileVersions,
+  pptxAgent,
   uploadRepository,
   notebookRpcServer,
   wslSetupSessions,
@@ -359,8 +363,8 @@ const createAcpRuntime = ({
               scope.projectId,
               scope.sessionId
             ),
-          mutateSession: (scope, mutate, onJsonCommitted) =>
-            sessionPersistenceCoordinator.mutateRuntimeSession(scope, mutate, onJsonCommitted),
+          mutateSession: (scope, mutate, options) =>
+            sessionPersistenceCoordinator.mutateRuntimeSession(scope, mutate, options),
           finalizeArtifacts: finalizeRuntimeArtifacts,
           onTerminalCommitExhausted: (_scope, event, retry, waitForWriteRelease) =>
             sessionPersistenceCoordinator.recordRuntimeTerminalFailure?.(
@@ -496,10 +500,12 @@ const createAcpRuntime = ({
         ...(spawnAgent ? { spawnAgent } : {}),
         ...(spawnProcess ? { spawnProcess } : {}),
         ...(registerOpenCodeStoreRelease ? { registerOpenCodeStoreRelease } : {}),
+        schedules: delegatedNotebookConnection ? undefined : schedules,
         mcpHttpHost: new AgentMcpHttpHost({
           receiptDirectory: join(dataRoot, 'open-science-agent', 'tool-receipts')
         }),
         wslSetupSessions,
+        ...(pptxAgent ? { pptx: { agent: pptxAgent } } : {}),
         ...(literatureReader && literatureAttachments && sessionPersistenceCoordinator
           ? {
               literature: {

@@ -322,6 +322,11 @@ export const PreviewToolContent = ({
 }): React.JSX.Element | null => {
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const { t } = useTranslation()
+  useEffect(() => {
+    if (!isActive || item.toolKind !== 'schedule' || !activeProjectId) return
+    if (usePreviewWorkbenchStore.getState().removeItem(item.id))
+      useNavigationStore.getState().openSchedule(activeProjectId)
+  }, [activeProjectId, isActive, item.id, item.toolKind])
 
   if (item.toolKind === 'replay')
     return (
@@ -374,8 +379,9 @@ export const PreviewToolContent = ({
     )
   }
 
+  if (item.toolKind === 'schedule') return null
   if (item.toolKind === 'compute') {
-    return <ProjectComputeInbox key={activeProjectId ?? 'no-active-project'} />
+    return <ProjectComputeInbox key={activeProjectId ?? 'no-active-project'} isActive={isActive} />
   }
 
   if (item.toolKind === 'reviewer') {

@@ -163,7 +163,7 @@ import type {
   ValidateProviderResult,
   VisionModelConfiguration as VisionModel
 } from '../../shared/settings'
-import { isCodexSubscriptionProvider } from '../../shared/settings'
+import { isCodexSubscriptionProvider } from '../../shared/settings-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type {
   InstallMissingWslDependenciesRequest,

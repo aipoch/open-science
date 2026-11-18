@@ -34,7 +34,7 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isLabProvider
-} from '../../../../shared/settings'
+} from '../../../../shared/settings-runtime'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { errorDetail } from '@/lib/error-detail'
 import { ActiveModelSelect } from './ActiveModelSelect'

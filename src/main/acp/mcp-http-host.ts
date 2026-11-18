@@ -9,44 +9,30 @@ import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { McpServer } from '@agentclientprotocol/sdk'
 import {
-  createSkillRuntimeMcpServer,
+  type SkillRuntimeEnvironment,
   environmentFromProcess,
-  isOwnedSkillRuntimeAcpServer,
-  type SkillRuntimeEnvironment
-} from '../skills/runtime-mcp-server'
+  isOwnedSkillRuntimeAcpServer
+} from '../skills/runtime-mcp-config'
 
 import type { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { CancelledNotificationSchema, isJSONRPCRequest } from '@modelcontextprotocol/sdk/types.js'
 
-import { createArtifactMcpServer, type ArtifactMcpEnvironment } from '../artifacts/mcp-server'
-import { ArtifactRepository } from '../artifacts/repository'
-import { createNotebookMcpServer, type NotebookMcpEnvironment } from '../notebook/mcp-server'
-import {
-  createLiteratureLibraryMcpServer,
-  type LiteratureLibraryMcpHandler
-} from '../literature/library-mcp-server'
-import { createLiteratureMcpServer, type LiteratureMcpHandler } from '../literature/mcp-server'
-import {
-  callGitHubSkillImportRpc,
-  callSkillImportRpc,
-  createSkillImportMcpServer,
-  type SkillImportMcpEnvironment
-} from '../skills/mcp-server'
-import {
-  createPlanMcpServerForEnvironment,
-  type PlanMcpEnvironment
-} from '../session-plan/plan-mcp-server'
-import {
-  createHostMessageMcpServer,
-  type HostMessageMcpHandler
-} from '../side-chat/host-message-mcp-server'
+import type { ArtifactMcpEnvironment } from '../artifacts/mcp-server'
+import type { NotebookMcpEnvironment } from '../notebook/mcp-server'
+import type { LiteratureLibraryMcpHandler } from '../literature/library-mcp-server'
+import type { LiteratureMcpHandler } from '../literature/mcp-server'
+import type { PptxMcpHandler } from '../pptx-edit/mcp-server'
+import type { SkillImportMcpEnvironment } from '../skills/mcp-server'
+import type { PlanMcpEnvironment } from '../session-plan/plan-mcp-server'
+import type { HostMessageMcpHandler } from '../side-chat/host-message-mcp-server'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
   LOCAL_RESOURCE_BUDGETS,
   ResourceBudgetExceededError,
   readBoundedJsonBody
 } from '../resource-budget'
+
+type StreamableHTTPServerTransport =
+  import('@modelcontextprotocol/sdk/server/streamableHttp.js').StreamableHTTPServerTransport
 
 const log = createLogger('mcp-http-host')
 
@@ -63,8 +49,10 @@ const SERVER_KINDS = [
   'skills',
   'plan',
   'host-message',
+  'schedule',
   'library',
-  'literature'
+  'literature',
+  'pptx'
 ] as const
 type ServerKind = (typeof SERVER_KINDS)[number]
 
@@ -80,9 +68,11 @@ type SessionEntry = {
   skillImport?: SkillImportMcpEnvironment
   plan?: PlanMcpEnvironment
   planRouteToken?: string
+  schedule?: { token: string; server: () => ModelContextProtocolServer }
   hostMessage?: HostMessageMcpHandler
   library?: { handler: LiteratureLibraryMcpHandler; token: symbol }
   literature?: { handler: LiteratureMcpHandler; token: symbol }
+  pptx?: { handler: PptxMcpHandler; token: symbol }
 }
 
 const RECEIPT_AUTHORITY_KEYS = {
@@ -92,8 +82,10 @@ const RECEIPT_AUTHORITY_KEYS = {
   skills: 'skills',
   plan: 'planRouteToken',
   'host-message': 'hostMessage',
+  schedule: 'schedule',
   library: 'library',
-  literature: 'literature'
+  literature: 'literature',
+  pptx: 'pptx'
 } as const
 const receiptAuthority = (entry: SessionEntry | undefined, kind: ServerKind): unknown =>
   entry?.[RECEIPT_AUTHORITY_KEYS[kind]]
@@ -295,6 +287,44 @@ class AgentMcpHttpHost {
     }
   }
 
+  registerSchedule(
+    routingId: string,
+    create: (ownsRoute: () => boolean) => ModelContextProtocolServer
+  ): string {
+    const entry = this.sessions.get(routingId) ?? {}
+    const token = randomUUID()
+    entry.schedule = {
+      token,
+      server: () => create(() => this.sessions.get(routingId)?.schedule?.token === token)
+    }
+    this.sessions.set(routingId, entry)
+    return this.urlFor('schedule', routingId) + '?token=' + encodeURIComponent(token)
+  }
+
+  captureScheduleRoute(routingId: string): (() => void) | undefined {
+    const entry = this.sessions.get(routingId)
+    const schedule = entry?.schedule
+    if (!schedule) return
+    const scope = entry.receiptScopes?.schedule
+    return () => {
+      const restored = this.sessions.get(routingId) ?? {}
+      restored.schedule = schedule
+      if (scope) restored.receiptScopes = { ...restored.receiptScopes, schedule: scope }
+      this.sessions.set(routingId, restored)
+    }
+  }
+
+  registerPptx(routingId: string, handler: PptxMcpHandler): () => void {
+    const entry = this.sessions.get(routingId) ?? {}
+    const token = Symbol('pptx')
+    entry.pptx = { handler, token }
+    this.sessions.set(routingId, entry)
+    return () => {
+      const current = this.sessions.get(routingId)
+      if (current?.pptx?.token === token) delete current.pptx
+    }
+  }
+
   registerLiteratureLibrary(routingId: string, handler: LiteratureLibraryMcpHandler): () => void {
     this.cancelLiteratureRoute('library', routingId)
     const entry = this.sessions.get(routingId) ?? {}
@@ -371,11 +401,18 @@ class AgentMcpHttpHost {
     const entry = this.sessions.get(routingId)
 
     if (!entry) return undefined
-    if (kind === 'skills')
-      return entry.skills ? createSkillRuntimeMcpServer(entry.skills) : undefined
+    if (kind === 'skills') {
+      if (!entry.skills) return undefined
+      const { createSkillRuntimeMcpServer } = await import('../skills/runtime-mcp-server')
+      return createSkillRuntimeMcpServer(entry.skills)
+    }
 
     if (kind === 'artifact') {
       if (!entry.artifact) return undefined
+      const [{ createArtifactMcpServer }, { ArtifactRepository }] = await Promise.all([
+        import('../artifacts/mcp-server'),
+        import('../artifacts/repository')
+      ])
 
       return createArtifactMcpServer(
         new ArtifactRepository(entry.artifact.storageRoot),
@@ -385,29 +422,49 @@ class AgentMcpHttpHost {
 
     if (kind === 'notebook') {
       if (!entry.notebook) return undefined
+      const { createNotebookMcpServer } = await import('../notebook/mcp-server')
 
       return createNotebookMcpServer(entry.notebook)
     }
 
     if (kind === 'plan') {
       if (!entry.plan || !routeToken || routeToken !== entry.planRouteToken) return undefined
+      const { createPlanMcpServerForEnvironment } = await import('../session-plan/plan-mcp-server')
       return createPlanMcpServerForEnvironment(entry.plan)
     }
 
     if (kind === 'host-message') {
-      return entry.hostMessage ? createHostMessageMcpServer(entry.hostMessage) : undefined
+      if (!entry.hostMessage) return undefined
+      const { createHostMessageMcpServer } = await import('../side-chat/host-message-mcp-server')
+      return createHostMessageMcpServer(entry.hostMessage)
     }
 
     if (kind === 'literature') {
-      return entry.literature ? createLiteratureMcpServer(entry.literature.handler) : undefined
+      if (!entry.literature) return undefined
+      const { createLiteratureMcpServer } = await import('../literature/mcp-server')
+      return createLiteratureMcpServer(entry.literature.handler)
+    }
+
+    if (kind === 'schedule')
+      return entry.schedule && entry.schedule.token === routeToken
+        ? entry.schedule.server()
+        : undefined
+    if (kind === 'pptx') {
+      if (!entry.pptx) return undefined
+      const { createPptxMcpServer } = await import('../pptx-edit/mcp-server')
+      return createPptxMcpServer(entry.pptx.handler)
     }
 
     if (kind === 'library') {
-      return entry.library ? createLiteratureLibraryMcpServer(entry.library.handler) : undefined
+      if (!entry.library) return undefined
+      const { createLiteratureLibraryMcpServer } = await import('../literature/library-mcp-server')
+      return createLiteratureLibraryMcpServer(entry.library.handler)
     }
 
     const skillImportEnvironment = entry.skillImport
     if (!skillImportEnvironment) return undefined
+    const { callGitHubSkillImportRpc, callSkillImportRpc, createSkillImportMcpServer } =
+      await import('../skills/mcp-server')
 
     return createSkillImportMcpServer({
       requestImport: (attachmentUri, turnToken) =>
@@ -452,6 +509,12 @@ class AgentMcpHttpHost {
       writeJson(response, 404, { error: `No registered ${kind} MCP session: ${routingId}` })
       return
     }
+
+    const [{ StreamableHTTPServerTransport }, { CancelledNotificationSchema, isJSONRPCRequest }] =
+      await Promise.all([
+        import('@modelcontextprotocol/sdk/server/streamableHttp.js'),
+        import('@modelcontextprotocol/sdk/types.js')
+      ])
 
     if (this.receipts) {
       server.server.registerCapabilities({ experimental: { [HARNESS_RECEIPTS]: {} } })

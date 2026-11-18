@@ -5,10 +5,9 @@ import {
   isCodexSubscriptionProvider,
   isLabProvider,
   preferredEndpoint
-} from '../../shared/settings'
+} from '../../shared/settings-runtime'
 import { isLabDeploymentUrl, labModelWireId, mapLabGatewayError } from '../../shared/lab'
 import { LabApiError } from './lab-api'
-
 import type {
   ProviderFailureObservation,
   ProviderFailureObserver

@@ -27,6 +27,11 @@ import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { sha256 } from '../artifacts/provenance-canonical'
 import { createPngBytes } from '../artifacts/artifact-test-fixtures'
 import { SessionRepository } from '../session-persistence/repository'
+import { SessionJournalStore } from '../session-persistence/journal'
+import {
+  MAX_PERSISTED_SESSION_BYTES,
+  type PersistedSessionFile
+} from '../../shared/session-persistence'
 import { SessionProjectionAfterCommitError } from '../session-persistence/save-session'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import {
@@ -965,6 +970,20 @@ it.each(['commit', 'rollback'] as const)(
       )
       expect(reviews).toHaveLength(1)
       expect(reviews[0].checks).toHaveLength(2400)
+      const filmSession = await new SessionRepository(target.storageRoot).loadSession(
+        imported.projectId,
+        imported.sessionId
+      )
+      const filmEvidence = await new SessionPackageService({
+        storageRoot: target.storageRoot,
+        getClient: async () => client
+      }).readFilmEvidence(filmSession!)
+      expect(filmEvidence.reviews[0]).toMatchObject({
+        id: reviews[0].id,
+        messageId: reviews[0].turnMessageId,
+        status: reviews[0].outcome ?? reviews[0].lifecycle
+      })
+      expect(filmEvidence.reviews[0].text).toContain('Finding 2399')
       // A connection-occupancy budget, independent of batch sizes or SQL formatting. The old
       // publisher makes 2,400 round trips for these findings while holding the sole connection.
       expect(
@@ -1279,9 +1298,16 @@ it('forwards imported historical Plan state while retaining runtime admission an
     imported.projectId,
     `${imported.sessionId}.json`
   )
-  const envelope = JSON.parse(await readFile(historicalPath, 'utf8'))
+  const historicalJournal = new SessionJournalStore({ maxBytes: MAX_PERSISTED_SESSION_BYTES })
+  const authority = await historicalJournal.read(historicalPath)
+  if (!authority) throw new Error('Missing historical Session authority')
+  const envelope = structuredClone(authority.document) as unknown as PersistedSessionFile
   envelope.session.runtimeContext = historical.runtimeContext
-  await writeFile(historicalPath, JSON.stringify(envelope))
+  envelope.session.revision = authority.revision + 1
+  await historicalJournal.write(historicalPath, {
+    document: envelope,
+    expectedRevision: authority.revision
+  })
   const forwarded = join(target.storageRoot, 'forwarded.science')
   isSessionActive.mockReturnValue(true)
   await expect(importer.assertExportIdle(imported)).rejects.toThrow('active')
@@ -1827,6 +1853,15 @@ it('keeps terminal Task and Compute results as evidence without installing jobs 
     taskRuns: [{ status: 'completed', output: 'Task result' }],
     computeJobs: [{ status: 'success', stdout: '42' }]
   })
+  const importedSession = await new SessionRepository(target.storageRoot).loadSession(
+    imported.projectId,
+    imported.sessionId
+  )
+  const filmEvidence = await importer.readFilmEvidence(importedSession!)
+  expect(filmEvidence.jobs).toEqual([
+    expect.objectContaining({ status: 'success', text: expect.stringContaining('42') })
+  ])
+  expect(filmEvidence.jobs[0].id).toBe(origin.identities['job-1'] ?? 'job-1')
   const fork = await importer.fork(imported)
   expect((await importer.readOrigin(fork)).history).toEqual(origin.history)
   const refork = await importer.fork(fork)
@@ -4992,12 +5027,24 @@ it.each(['inactive branch', 'task history'] as const)(
                 request.projectId,
                 `${request.sessionId}.json`
               )
-              const document = JSON.parse(await readFile(path, 'utf8'))
-              document.session.conversationGraph.messages.find(
-                (message: { id: string }) => message.id === 'question'
-              ).content += ' changed'
-              // Leave active projection, revision, title and timestamps untouched.
-              await writeFile(path, JSON.stringify(document))
+              const journal = new SessionJournalStore({ maxBytes: MAX_PERSISTED_SESSION_BYTES })
+              const authority = await journal.read(path)
+              if (!authority) throw new Error('Missing export Session authority')
+              const document = structuredClone(
+                authority.document
+              ) as unknown as PersistedSessionFile
+              const inactiveMessage = document.session.conversationGraph.messages.find(
+                (message) => message.id === 'question'
+              )
+              if (!inactiveMessage) throw new Error('Missing inactive branch message')
+              inactiveMessage.content += ' changed'
+              // Keep active projection, title and timestamps untouched. Journal commits advance
+              // revision, which exportRelevantSession excludes from its research-state comparison.
+              document.session.revision = authority.revision + 1
+              await journal.write(path, {
+                document,
+                expectedRevision: authority.revision
+              })
             } else {
               await new FileTaskRunJournal(source.storageRoot).replace([
                 {

@@ -224,7 +224,7 @@ const redactSensitiveText = (value: string): string =>
     .replace(/\bBearer\s+[^\s"']+/gi, `Bearer ${REDACTED_MARKER}`)
     .replace(/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g, REDACTED_MARKER)
     .replace(
-      /\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,}|sk-[A-Za-z0-9_-]{8,})\b/g,
+      /\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,}|schedule-turn-[0-9a-f-]{36}|sk-[A-Za-z0-9_-]{8,})\b/g,
       REDACTED_MARKER
     )
 

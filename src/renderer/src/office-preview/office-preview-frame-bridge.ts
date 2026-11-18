@@ -1,6 +1,7 @@
 import type {
   OfficePreviewRuntimeStart,
-  OfficePreviewRuntimeState
+  OfficePreviewRuntimeState,
+  OfficePreviewSlideView
 } from '../../../shared/office-preview'
 import {
   isOfficePreviewHostMessage,
@@ -32,6 +33,8 @@ type CreateOfficePreviewFrameBridgeOptions = {
 type OfficePreviewFrameBridge = {
   onStart: (listener: (start: OfficePreviewRuntimeStart) => void) => () => void
   onFind: (listener: () => void) => () => void
+  onGotoSlide: (listener: (slideIndex: number) => void) => () => void
+  reportSlideView: (view: Omit<OfficePreviewSlideView, 'sessionId'>) => void
   reportState: (state: OfficePreviewRuntimeState) => void
   dispose: () => void
 }
@@ -41,6 +44,7 @@ const createOfficePreviewFrameBridge = (
 ): OfficePreviewFrameBridge => {
   const listeners = new Set<(start: OfficePreviewRuntimeStart) => void>()
   const findListeners = new Set<() => void>()
+  const gotoSlideListeners = new Set<(slideIndex: number) => void>()
   let disposed = false
 
   // The direct parent window is the only accepted sender; session validation rejects stale frames.
@@ -56,7 +60,10 @@ const createOfficePreviewFrameBridge = (
       return
     }
     if (event.data.type === 'find') findListeners.forEach((listener) => listener())
-    else listeners.forEach((listener) => listener(event.data.start))
+    else if (event.data.type === 'goto-slide') {
+      const { slideIndex } = event.data
+      gotoSlideListeners.forEach((listener) => listener(slideIndex))
+    } else listeners.forEach((listener) => listener(event.data.start))
   }
   options.runtimeWindow.addEventListener('message', handleMessage)
 
@@ -92,6 +99,22 @@ const createOfficePreviewFrameBridge = (
       findListeners.add(listener)
       return () => findListeners.delete(listener)
     },
+    onGotoSlide: (listener) => {
+      gotoSlideListeners.add(listener)
+      return () => gotoSlideListeners.delete(listener)
+    },
+    reportSlideView: (view) => {
+      if (disposed) return
+      options.runtimeWindow.parent.postMessage(
+        {
+          channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
+          version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
+          type: 'slide-view',
+          slideView: { ...view, sessionId: options.sessionId }
+        },
+        '*'
+      )
+    },
     reportState: (state) => {
       if (disposed || state.sessionId !== options.sessionId) return
       options.runtimeWindow.parent.postMessage(
@@ -109,6 +132,7 @@ const createOfficePreviewFrameBridge = (
       disposed = true
       listeners.clear()
       findListeners.clear()
+      gotoSlideListeners.clear()
       options.runtimeWindow.removeEventListener('message', handleMessage)
       options.runtimeWindow.removeEventListener('contextmenu', handleContextMenu, true)
     }

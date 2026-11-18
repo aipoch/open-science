@@ -10,6 +10,10 @@
     "src/main/composition/agent-controls.ts",
     "src/main/composition/agent-runtime.ts",
     "src/main/composition/artifact-surfaces.ts",
+    "src/main/artifacts/browser.test.ts",
+    "src/main/artifacts/browser.ts",
+    "src/main/web-service/artifact-url.test.ts",
+    "src/main/web-service/artifact-url.ts",
     "src/main/composition/backend-lifecycle.ts",
     "src/main/composition/background-results.ts",
     "src/main/composition/background-results.integration.test.ts",
@@ -253,7 +257,8 @@
     "scripts/ocr/build.mjs",
     "scripts/ocr/worker.mjs",
     "src/main/composition/research-film.ts",
-    "src/main/composition/research-film.test.ts"
+    "src/main/composition/research-film.test.ts",
+    "src/main/composition/notebook-approvals.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -346,6 +351,8 @@
       "src/main/windows-protocol-registration.test.ts",
       "scripts/windows-protocol-registration.test.ts",
       "src/main/data-content-application-commands.test.ts",
+      "src/main/artifacts/browser.test.ts",
+      "src/main/web-service/artifact-url.test.ts",
       "src/main/error-message.test.ts",
       "src/main/file-save.test.ts",
       "src/main/find-overlay.test.ts",
@@ -453,7 +460,8 @@
       "src/main/service-process-recovery.integration.test.ts",
       "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/composition/research-film.test.ts",
-      "src/main/composition/background-results.integration.test.ts"
+      "src/main/composition/background-results.integration.test.ts",
+      "src/main/composition/notebook-approvals.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

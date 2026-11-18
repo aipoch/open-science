@@ -1,3 +1,4 @@
+import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
 import * as acp from '@agentclientprotocol/sdk'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
@@ -51,6 +52,19 @@ const DELTA_SAFETY = 0.8
 const ENVELOPE_TOKENS = 64
 
 const hash = (text: string): string => createHash('sha256').update(text).digest('base64')
+
+// ACP requires every Agent to accept resource links in prompts. Keep the reference visible to the
+// model without fetching it: the host may send private file URIs, and the harness deliberately does
+// not grant arbitrary filesystem or network access to model adapters.
+const formatResourceLink = (name: string | undefined, uri: string): string => {
+  const displayName =
+    name && name.length > 0
+      ? name
+      : uri.startsWith('file://')
+        ? (uri.replace('file://', '').split('/').pop() ?? uri)
+        : undefined
+  return displayName ? `[@${displayName}](${uri})` : uri
+}
 
 const snapshot = (request: Pick<ModelRequest, 'instructions' | 'tools' | 'messages'>): Snapshot => {
   const texts = request.messages.map((message) => JSON.stringify(message))
@@ -210,6 +224,7 @@ export function createToolResultClearing(
 }
 
 type Entry = {
+  setScheduleTurn(ref: string | undefined): void
   session: AgentSession
   /** True once per provider context-overflow rejection observed since the last call. */
   takeOverflow(): boolean
@@ -569,6 +584,7 @@ export function createHarnessAcpAgent(directory: string): {
       signal.throwIfAborted()
       entries.set(id, {
         session,
+        setScheduleTurn: mcp.setScheduleTurn,
         takeOverflow: () => {
           const observed = overflow
           overflow = false
@@ -680,8 +696,16 @@ export function createHarnessAcpAgent(directory: string): {
             }
             if (block.type === 'resource' && 'text' in block.resource)
               return { type: 'text', text: block.resource.text }
+            if (block.type === 'resource_link')
+              return { type: 'text', text: formatResourceLink(block.name, block.uri) }
             throw new Error('Unsupported prompt content; host must resolve references')
           })
+          const references = context.params.prompt.flatMap((block) => {
+            const ref = block._meta?.[SCHEDULE_TURN_META]
+            return typeof ref === 'string' && ref.length <= 100 ? [ref] : []
+          })
+          if (references.length > 1) throw new Error('Ambiguous Schedule turn context')
+          entry.setScheduleTurn(references[0])
           entry.active = true
           entry.cancelled = false
           try {
@@ -754,6 +778,7 @@ export function createHarnessAcpAgent(directory: string): {
               }
             }
           } finally {
+            entry.setScheduleTurn(undefined)
             entry.active = false
           }
         })()

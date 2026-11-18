@@ -15,7 +15,7 @@ import {
   type HostedJobTarget
 } from './hugging-face-job-journal'
 import { getManualStagedCleanup } from './manual-staged-cleanup'
-import { initialRayJournal, type RayJobTarget } from './ray-job-journal'
+import { initialRayJournal, readRayJournal, type RayJobTarget } from './ray-job-journal'
 import {
   initialModalJournal,
   MODAL_CREATION_UNCONFIRMED,
@@ -1157,6 +1157,54 @@ export class ComputeJobRepository {
     })
   }
 
+  async settleRayCleanup(job: ComputeJob): Promise<ComputeJob> {
+    return this.runMutation(async () => {
+      const client = await this.getClient()
+      const existing = await client.computeJob.findUnique({ where: { id: job.job_id } })
+      if (!existing) throw new Error('Ray Job cleanup scope does not match.')
+      const current = this.toJob(existing)
+      if (
+        existing.executionMode !== 'ray_jobs' ||
+        existing.providerId !== job.provider_id ||
+        existing.projectId !== job.project_id ||
+        existing.sessionId !== job.session_id ||
+        current.remote_handle !== job.remote_handle
+      )
+        throw new Error('Ray Job cleanup scope does not match.')
+      if (existing.remoteCleanupDisposition === 'cleaned') return this.toJob(existing)
+      if (existing.remoteCleanupDisposition !== 'pending')
+        throw new Error('Ray Job remote cleanup is already settled.')
+      const journal = readRayJournal(current)
+      const noRemoteJob = !journal.launch
+      if (
+        !current.harvested_at ||
+        (!noRemoteJob &&
+          (!['success', 'failed', 'timeout'].includes(current.status) || current.harvest_error))
+      )
+        throw new Error('Ray Job cleanup requires completed harvest.')
+      const changed = await client.computeJob.updateMany({
+        where: {
+          id: existing.id,
+          providerId: existing.providerId,
+          projectId: existing.projectId,
+          sessionId: existing.sessionId,
+          executionMode: 'ray_jobs',
+          status: existing.status,
+          remoteHandle: existing.remoteHandle,
+          remoteCleanupDisposition: 'pending'
+        },
+        data: { remoteCleanupDisposition: 'cleaned', lastPollError: null }
+      })
+      if (changed.count !== 1) throw new Error('Ray Job changed while settling cleanup.')
+      return this.toJob(
+        await client.computeJob.findUniqueOrThrow({
+          where: { id: existing.id },
+          include: { operations: { where: { kind: 'cancel' } } }
+        })
+      )
+    })
+  }
+
   // Returns notified jobs whose automatic analysis is still pending or dispatched, optionally
   // scoped to one Session. Failed/cancelled outcomes stay unconsumed but are terminal and observable
   // through normal Job reads, so the restart scan does not repeatedly requeue them.
@@ -1342,7 +1390,6 @@ export class ComputeJobRepository {
     const rows = await client.computeJob.findMany({
       where: {
         executionMode: mode,
-        ...(mode === 'ray_jobs' && { harvestedAt: null }),
         remoteCleanupDisposition: 'pending',
         status: { in: ['submitted', 'running', 'success', 'timeout', 'failed'] },
         operations: { none: { kind: 'cancel', phase: 'active' } }
@@ -1394,7 +1441,8 @@ export class ComputeJobRepository {
         errorCode: 'dispatch_failed',
         errorMessage: `Ray rejected the submission (HTTP ${status}). Check the cluster configuration before submitting again.`,
         lastPollError: null,
-        finishedAt: new Date()
+        finishedAt: new Date(),
+        remoteCleanupDisposition: 'cleaned'
       },
       false
     )
@@ -1667,6 +1715,8 @@ export class ComputeJobRepository {
     const data: ComputeJobUpdateData = {}
 
     if (updates.status !== undefined) data.status = updates.status
+    if (updates.remoteCleanupDisposition !== undefined)
+      data.remoteCleanupDisposition = updates.remoteCleanupDisposition
     if (updates.remoteHandle !== undefined)
       data.remoteHandle = this.protectJson(updates.remoteHandle, 'object', sensitiveDataEncrypted)
     if (updates.remoteWorkdir !== undefined)

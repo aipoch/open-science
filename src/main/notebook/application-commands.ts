@@ -43,6 +43,16 @@ const notebookProjectActivityCommand = defineApplicationCommand<
   WorkflowArgs<'projectActivity'>,
   WorkflowResult<'projectActivity'>
 >('notebook:project-activity')
+const notebookProcessMonitorCommand = defineApplicationCommand<
+  'notebook:process-monitor',
+  WorkflowArgs<'processMonitor'>,
+  WorkflowResult<'processMonitor'>
+>('notebook:process-monitor')
+const notebookTerminateMonitoredProcessCommand = defineApplicationCommand<
+  'notebook:terminate-monitored-process',
+  WorkflowArgs<'terminateMonitoredProcess'>,
+  WorkflowResult<'terminateMonitoredProcess'>
+>('notebook:terminate-monitored-process')
 const notebookInspectNamespaceCommand = defineApplicationCommand<
   'notebook:inspect-namespace',
   WorkflowArgs<'inspectNamespace'>,
@@ -123,6 +133,8 @@ const notebookApplicationCommands = defineApplicationCommandGroup('notebook', [
   notebookRunIndexCommand,
   notebookStateCommand,
   notebookProjectActivityCommand,
+  notebookProcessMonitorCommand,
+  notebookTerminateMonitoredProcessCommand,
   notebookInspectNamespaceCommand,
   notebookReferenceCommand,
   notebookBeginCodeCellCommand,
@@ -151,6 +163,14 @@ const installNotebookApplicationCommands = (
       'notebook:state': (invocation) => dependencies.workflows.state(invocation.args[0]),
       'notebook:project-activity': (invocation) =>
         dependencies.workflows.projectActivity(invocation.args[0]),
+      'notebook:process-monitor': (invocation) => {
+        assertLocalCaller(invocation.callerContext, notebookProcessMonitorCommand.name)
+        return dependencies.workflows.processMonitor(invocation.args[0])
+      },
+      'notebook:terminate-monitored-process': (invocation) => {
+        assertLocalCaller(invocation.callerContext, notebookTerminateMonitoredProcessCommand.name)
+        return dependencies.workflows.terminateMonitoredProcess(invocation.args[0])
+      },
       'notebook:inspect-namespace': (invocation) =>
         dependencies.workflows.inspectNamespace(invocation.args[0]),
       'notebook:reference': (invocation) => dependencies.workflows.reference(invocation.args[0]),
@@ -202,6 +222,8 @@ export {
   notebookGetBackgroundRunCommand,
   notebookInspectNamespaceCommand,
   notebookProjectActivityCommand,
+  notebookProcessMonitorCommand,
+  notebookTerminateMonitoredProcessCommand,
   notebookReadInputPreviewCommand,
   notebookReferenceCommand,
   notebookRestartCommand,

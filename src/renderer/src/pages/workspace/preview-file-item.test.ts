@@ -10,6 +10,7 @@ import {
   createPreviewFileItemFromPdfContext,
   createPreviewFileItemFromUpload,
   createPreviewFileItemForArtifactVersion,
+  createPreviewFileItemForManagedVersion,
   createProjectFileResolveRequest,
   refreshPreviewFileItemFromProjectFile,
   resolveArtifactVersionDescriptor
@@ -280,6 +281,39 @@ describe('preview file item helpers', () => {
         }
       })
     ).toMatchObject({ selectedVersionId: 'artifact-version-2', versionNumber: 2 })
+  })
+
+  it('carries a managed Version MIME type into extensionless preview items', () => {
+    const item = createPreviewFileItem({
+      id: 'artifact-lineage-1',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      path: '/legacy/report',
+      name: 'report',
+      artifactId: 'artifact-lineage-1',
+      managedFileId: 'artifact-lineage-1'
+    })
+
+    expect(
+      createPreviewFileItemForManagedVersion({
+        item,
+        version: {
+          id: 'artifact-version-2',
+          source: 'artifact',
+          fileId: 'artifact-lineage-1',
+          versionNumber: 2,
+          displayName: 'report',
+          originKind: 'agent_generated',
+          basedOnVersionId: null,
+          contentType: 'text/html; charset=UTF-8',
+          sizeBytes: 20,
+          checksum: 'checksum-2',
+          createdAt: '2026-07-27T20:00:00.000Z'
+        },
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+    ).toMatchObject({ name: 'report', mimeType: 'text/html; charset=UTF-8' })
   })
 
   it('uses artifact mime type when the file name has no previewable extension', () => {

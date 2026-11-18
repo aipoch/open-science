@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/renderer/src/pages/workspace/ElicitationOptionDetails.tsx",
     "src/renderer/src/pages/workspace/ChoiceKindChip.tsx",
     "src/renderer/src/pages/workspace/HighlightedCodeLines.tsx",
     "src/renderer/src/pages/workspace/WorkspaceActivityIcon.tsx",
@@ -13,6 +14,7 @@
     "src/renderer/src/pages/workspace/WorkspaceToolSummaryCard.tsx"
   ],
   "interfacePaths": [
+    "src/renderer/src/pages/workspace/ElicitationOptionDetails.tsx",
     "src/renderer/src/pages/workspace/ChoiceKindChip.tsx",
     "src/renderer/src/pages/workspace/HighlightedCodeLines.tsx",
     "src/renderer/src/pages/workspace/WorkspaceActivityIcon.tsx",
@@ -178,5 +180,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Shared option trade-off details add a renderer source beyond the reviewed tool-block boundary; retain full validation until the expanded ownership and consumers are reviewed and reclassified."
 }

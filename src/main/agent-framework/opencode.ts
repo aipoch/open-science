@@ -12,7 +12,7 @@ import {
   type PermissionProfileApplication
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import { preferredEndpoint } from '../../shared/settings'
+import { preferredEndpoint } from '../../shared/settings-runtime'
 import type { ModelReasoningEffort } from '@aipoch/providers'
 import {
   resolveMessagesBaseUrl,

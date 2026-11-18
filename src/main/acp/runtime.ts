@@ -63,7 +63,8 @@ import type {
   PlanResponseCommand,
   PlanResponseIdentity
 } from '../../shared/session-plan/contract'
-import { isCodexSubscriptionProviderId, type AgentFrameworkId } from '../../shared/settings'
+import type { AgentFrameworkId } from '../../shared/settings'
+import { isCodexSubscriptionProviderId } from '../../shared/settings-runtime'
 import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
 import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
@@ -931,13 +932,11 @@ class AcpRuntime {
   }
 
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
-  async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(async () => {
-      const created = await this.providerSessionCreator.create(request)
-      const session = this.activeSessionFor(created.sessionId)
-      if (session) await this.options.authorizedDirectories?.initialize(session)
-      return created
-    })
+  async createSession(
+    request: AcpCreateSessionRequest = {},
+    beforePublish?: () => void
+  ): Promise<AcpCreateSessionResponse> {
+    return this.withOperationLease(() => this.providerSessionCreator.create(request, beforePublish))
   }
 
   getSessionReasoningEffort(sessionId: string): ResolvedReasoningEffort | undefined {
@@ -1663,6 +1662,7 @@ class AcpRuntime {
     attribution: MessageAttribution,
     options?: {
       promptAttemptId?: string
+      beforeSessionWrite?: () => Promise<void>
       // Runs under prompt ownership, before prompt events, Artifact opening or provider dispatch.
       // Throwing rejects this application turn without emitting a user-visible prompt.
       onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
@@ -1674,6 +1674,7 @@ class AcpRuntime {
         {
           kind: 'application',
           attribution,
+          beforeSessionWrite: options?.beforeSessionWrite,
           ...(options?.promptAttemptId === undefined
             ? {}
             : { promptAttemptId: options.promptAttemptId })
@@ -1744,6 +1745,7 @@ class AcpRuntime {
       | Readonly<{
           kind: 'application'
           attribution: MessageAttribution
+          beforeSessionWrite?: () => Promise<void>
           promptAttemptId?: string
         }>
       | Readonly<{
@@ -2379,7 +2381,9 @@ class AcpRuntime {
             options: question.options.map((option) => ({
               value: option.label,
               label: option.label,
-              ...(option.description ? { description: option.description } : {})
+              ...(option.description ? { description: option.description } : {}),
+              ...(option.pros ? { pros: option.pros } : {}),
+              ...(option.cons ? { cons: option.cons } : {})
             }))
           },
           {
@@ -2417,7 +2421,9 @@ class AcpRuntime {
                     anyOf: question.options.map((option) => ({
                       const: option.label,
                       title: option.label,
-                      ...(option.description ? { description: option.description } : {})
+                      ...(option.description ? { description: option.description } : {}),
+                      ...(option.pros ? { pros: option.pros } : {}),
+                      ...(option.cons ? { cons: option.cons } : {})
                     }))
                   }
                 }
@@ -2426,7 +2432,9 @@ class AcpRuntime {
                   oneOf: question.options.map((option) => ({
                     const: option.label,
                     title: option.label,
-                    ...(option.description ? { description: option.description } : {})
+                    ...(option.description ? { description: option.description } : {}),
+                    ...(option.pros ? { pros: option.pros } : {}),
+                    ...(option.cons ? { cons: option.cons } : {})
                   }))
                 })
           }

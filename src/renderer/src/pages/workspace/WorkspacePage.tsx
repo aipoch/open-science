@@ -1,3 +1,6 @@
+import type { ScheduleSummary } from '../../../../shared/session-schedules'
+import { ScheduleStarterPanel } from './schedules/ScheduleStarterPanel'
+import { ScheduleRunPanel } from './schedules/ScheduleRunPanel'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import {
   LibraryReferenceActionsContext,
@@ -29,6 +32,7 @@ import {
   saveSessionInOrder
 } from '@/lib/session-persistence/session-persistence'
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
+import { ensureSessionContentLoaded } from '@/lib/session-persistence/session-history'
 import { exportSessionPackage, sessionPackageExportAvailable } from '@/lib/session-package-export'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { createSessionActionBindings, isImportedSession } from './session-action-menu'
@@ -205,6 +209,23 @@ const WorkspacePage = ({
   // The store starts disabled, so new conversations fail closed until the global setting loads.
   const isGlobalMemoryEnabled = memoryGloballyEnabled
   const scopedProjectId = activeProjectId ?? ''
+  const navigationRevision = useNavigationStore((state) => state.explicitNavigationRevision)
+  const [scheduleSelection, setScheduleSelection] = useState<{
+    task: ScheduleSummary
+    navigationRevision: number
+  }>()
+  const scheduleDetail =
+    scheduleSelection?.navigationRevision === navigationRevision
+      ? scheduleSelection.task
+      : undefined
+  const setScheduleDetail = (task?: ScheduleSummary): void =>
+    setScheduleSelection(
+      task
+        ? { task, navigationRevision: useNavigationStore.getState().explicitNavigationRevision }
+        : undefined
+    )
+  const scheduleScope = useNavigationStore((state) => state.scheduleScope)
+  const scheduleProject = scheduleScope?.projectId
   const activeProject = useProjectStore((state) =>
     state.projects.find((project) => project.id === scopedProjectId)
   )
@@ -1442,7 +1463,18 @@ const WorkspacePage = ({
       return
     }
 
-    setAutoReviewEnabled(activeSession.id, enabled)
+    if (activeSession.contentLoaded === false) {
+      void ensureSessionContentLoaded({
+        projectId: activeSession.projectId,
+        sessionId: activeSession.id
+      })
+        .then((loaded) => {
+          if (loaded && !loaded.packageOrigin) setAutoReviewEnabled(loaded.id, enabled)
+        })
+        .catch((error: unknown) =>
+          setAttachmentError(error instanceof Error ? error.message : String(error))
+        )
+    } else setAutoReviewEnabled(activeSession.id, enabled)
   }
 
   const changeMemoryEnabled = (enabled: boolean): void => {
@@ -1458,10 +1490,6 @@ const WorkspacePage = ({
   const requestManualReview = (): void => {
     if (!activeSession || isReviewHistoryUnavailable) return
 
-    const request = assembleReviewRunRequest(activeSession.id)
-
-    if (!request) return
-
     const sessionId = activeSession.id
     if (manualReviewPendingSessionIdsRef.current.has(sessionId)) return
 
@@ -1475,6 +1503,10 @@ const WorkspacePage = ({
     void (async () => {
       let error: string | null = null
       try {
+        if (activeSession.contentLoaded === false)
+          await ensureSessionContentLoaded({ projectId: activeSession.projectId, sessionId })
+        const request = assembleReviewRunRequest(sessionId)
+        if (!request) return
         const result = await window.api.reviewer.run({ ...request, origin: 'manual' })
         if (!result.started && result.reason !== 'already-in-flight') {
           error = t('Review could not start. Try again.')
@@ -1571,6 +1603,12 @@ const WorkspacePage = ({
     return usePreviewWorkbenchStore.getState().activeItemId === PROJECT_LIBRARY_PREVIEW_ID
   }
 
+  const toggleSchedule = (): void => {
+    setScheduleDetail(undefined)
+    const navigation = useNavigationStore.getState()
+    if (scheduleScope?.projectId === scopedProjectId) navigation.closeSchedule()
+    else navigation.openSchedule(scopedProjectId)
+  }
   const openComputePreview = (): void => {
     if (!isSessionPersistenceReady) return
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectComputePreviewItem())
@@ -1661,6 +1699,9 @@ const WorkspacePage = ({
         >
           <WorkspacePanelLayout
             hasPreviewItems={previewItems.length > 0}
+            sidebarOpenRequest={
+              scheduleProject === scopedProjectId ? scheduleScope?.revision : undefined
+            }
             isPreviewPresentationActive={isPreviewPresentationActive}
             onPdfContextError={setAttachmentError}
             restoredPlanResponder={{
@@ -1695,6 +1736,15 @@ const WorkspacePage = ({
                 onOpenLiterature={openLibraryPreview}
                 isMarketplaceOpen={activePreviewItemId === PROJECT_MARKETPLACE_PREVIEW_ID}
                 onOpenMarketplace={isSessionPersistenceReady ? openMarketplacePreview : undefined}
+                scheduleDetailId={
+                  scheduleDetail?.target.projectId === scopedProjectId
+                    ? scheduleDetail.id
+                    : undefined
+                }
+                onScheduleDetail={setScheduleDetail}
+                isScheduleOpen={scheduleProject === scopedProjectId}
+                scheduleSessionId={scheduleScope?.sessionId}
+                onOpenSchedule={isSessionPersistenceReady ? toggleSchedule : undefined}
                 isComputeOpen={
                   canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
                 }
@@ -1771,6 +1821,15 @@ const WorkspacePage = ({
                       }
                     : undefined
                 }
+                scheduleDetailId={
+                  scheduleDetail?.target.projectId === scopedProjectId
+                    ? scheduleDetail.id
+                    : undefined
+                }
+                onScheduleDetail={setScheduleDetail}
+                isScheduleOpen={scheduleProject === scopedProjectId}
+                scheduleSessionId={scheduleScope?.sessionId}
+                onOpenSchedule={isSessionPersistenceReady ? toggleSchedule : undefined}
                 isComputeOpen={
                   canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
                 }
@@ -1875,192 +1934,222 @@ const WorkspacePage = ({
               isPreviewPanelCollapsed,
               togglePreviewPanel: togglePreviewPanelFromLayout,
               openMobileSidebar
-            }) => (
-              <ConversationPanel
-                key={JSON.stringify([scopedProjectId, panelIdentity.generation])}
-                submissions={conversationSubmissions}
-                view={{
-                  activeSession,
-                  sessionLoadError: activeSessionLoadError ? t(activeSessionLoadError) : undefined,
-                  onRetrySessionLoad:
-                    activeSession && activeSessionLoadError && retrySessionLoad
-                      ? () => retrySessionLoad(activeSession.projectId, activeSession.id)
+            }) => {
+              if (
+                scheduleProject === scopedProjectId &&
+                scheduleDetail?.target.projectId === scopedProjectId
+              )
+                return (
+                  <ScheduleRunPanel
+                    key={scheduleDetail.id}
+                    task={scheduleDetail}
+                    openMobileSidebar={openMobileSidebar}
+                    onOpenSession={() => setScheduleDetail(undefined)}
+                  />
+                )
+              const conversationPanel = (
+                <ConversationPanel
+                  key={JSON.stringify([scopedProjectId, panelIdentity.generation])}
+                  submissions={conversationSubmissions}
+                  view={{
+                    activeSession,
+                    sessionLoadError: activeSessionLoadError
+                      ? t(activeSessionLoadError)
                       : undefined,
-                  composerFocusKey: currentDraftKey,
-                  canEditDraft,
-                  canEditLocalDraft,
-                  sendPreparing: activeSessionHasSendPreparation,
-                  persistenceBlocked: persistenceBlockedSessionIds.includes(
-                    activeSession?.id ?? ''
-                  ),
-                  persistenceIssue: persistenceWriteIssues.find(
-                    ({ sessionId }) => sessionId === activeSession?.id
-                  ),
-                  actionError: visibleActionError,
-                  authenticationRecovery,
-                  sideChatDisabledReason,
-                  sessionImport: {
-                    projectId: scopedProjectId,
-                    projectName: activeProject?.name ?? t('Project'),
-                    canImport: canImportSessionPackage
-                  }
-                }}
-                composer={composer}
-                conversation={conversation}
-                sideChat={sideChat}
-                specialist={sessionController}
-                layout={{
-                  isPreviewPanelCollapsed,
-                  togglePreviewPanel: togglePreviewPanelFromLayout,
-                  openSidebar: openMobileSidebar,
-                  onOpenLibraryMention
-                }}
-                permissions={{
-                  requests: visiblePermissionRequests,
-                  credentialRequests: visibleCredentialRequests,
-                  permissionProfile: activePermissionProfile,
-                  permissionProfileState: activePermissionProfileState,
-                  permissionGrants: activePermissionGrants,
-                  canChangePermissionProfile,
-                  respond: respondToVisiblePermission,
-                  changeProfile: changePermissionProfile,
-                  revokeGrant: revokeActivePermissionGrant,
-                  clearGrants: clearActivePermissionGrants
-                }}
-                elicitation={{
-                  requests: visibleElicitationRequests,
-                  respond: respondToElicitation
-                }}
-                agentControls={{
-                  ...agentControlAvailability,
-                  canChangeMemory:
-                    agentControlAvailability.canChangeMemory && isGlobalMemoryEnabled,
-                  modelConfiguration: activeAgentConfiguration,
-                  modelUnavailable: agentConfigurationUnavailable,
-                  changeModelConfiguration: changeAgentConfiguration,
-                  autoReviewEnabled: activeAutoReviewEnabled,
-                  memoryEnabled: activeMemoryEnabled,
-                  delegationEnabled: delegationControl.enabled,
-                  delegationPending: delegationControl.pending,
-                  delegationHasLiveAttempts: delegationControl.hasLiveDelegatedAttempts,
-                  canChangeDelegation:
-                    isSessionPersistenceReady &&
-                    delegationControl.frameworkSupported &&
-                    delegationControl.sessionAuthoritative,
-                  delegationDisabledReason: delegationControl.frameworkSupported
-                    ? undefined
-                    : t('The selected agent framework does not support delegated work.'),
-                  memoryDisabledReason: isGlobalMemoryEnabled
-                    ? undefined
-                    : t(
-                        'Memory is off in Settings. Turn it on to use Memory in this conversation.'
-                      ),
-                  enabledComputeHosts: computeHostAccess.enabledProviderIds,
-                  selectedComputeHosts: computeHostAccess.selectedProviderIds,
-                  toggleAutoReview: changeAutoReviewEnabled,
-                  toggleMemory: changeMemoryEnabled,
-                  toggleDelegation: delegationControl.change,
-                  setComputeHostEnabled: computeHostAccess.setHostEnabled,
-                  setComputeHostSelected: computeHostAccess.setHostSelected
-                }}
-                contextWindow={{
-                  usage: activeContextUsage,
-                  canCompact: canCompactContext,
-                  compactDisabledReason: compactContextDisabledReason,
-                  compact: compactActiveContext
-                }}
-                workflows={{
-                  artifactFinalization: {
-                    running: artifactFinalizationRetry !== undefined,
-                    retryingPromptMessageId:
-                      artifactFinalizationRetry?.sessionId === activeSession?.id
-                        ? artifactFinalizationRetry?.promptMessageId
+                    onRetrySessionLoad:
+                      activeSession && activeSessionLoadError && retrySessionLoad
+                        ? () => retrySessionLoad(activeSession.projectId, activeSession.id)
                         : undefined,
-                    request: requestArtifactFinalizationRetry
-                  },
-                  review: {
-                    disabled: isRequestReviewDisabled,
-                    running: isReviewBusy,
-                    request: requestManualReview
-                  },
-                  saveAsSkill: {
-                    disabled: !saveAsSkillAvailability.enabled,
-                    disabledReason: saveAsSkillAvailability.disabledReason,
-                    running: activeSessionSaveAsSkillRunning,
-                    request: requestSaveAsSkill
-                  },
-                  wslSetup: {
-                    start: () => startWslSetupConversation(scopedProjectId, t)
-                  }
-                }}
-                sessionTools={{
-                  newConversation: openNewConversation,
-                  reviewPersistence: onReviewPersistence,
-                  menuBindings: createSessionActionBindings({
-                    canMutateConversations: isSessionPersistenceReady,
-                    canDeleteConversations: false,
-                    canDownloadArtifacts: false,
-                    canTogglePin: !activeSession || !isImportedSession(activeSession),
-                    canArchiveSession,
-                    packageBusy,
-                    onTogglePin: sessionController.actions.togglePin,
-                    onRenameSession: (session) => {
-                      sessionInfoReturnFocusRef.current = document.querySelector<HTMLElement>(
-                        '[data-testid="session-header-menu-trigger"]'
-                      )
-                      sessionController.actions.openEdit(session)
+                    composerFocusKey: currentDraftKey,
+                    canEditDraft,
+                    canEditLocalDraft,
+                    sendPreparing: activeSessionHasSendPreparation,
+                    persistenceBlocked: persistenceBlockedSessionIds.includes(
+                      activeSession?.id ?? ''
+                    ),
+                    persistenceIssue: persistenceWriteIssues.find(
+                      ({ sessionId }) => sessionId === activeSession?.id
+                    ),
+                    actionError: visibleActionError,
+                    authenticationRecovery,
+                    sideChatDisabledReason,
+                    sessionImport: {
+                      projectId: scopedProjectId,
+                      projectName: activeProject?.name ?? t('Project'),
+                      canImport: canImportSessionPackage
+                    }
+                  }}
+                  composer={composer}
+                  conversation={conversation}
+                  sideChat={sideChat}
+                  specialist={sessionController}
+                  layout={{
+                    isPreviewPanelCollapsed,
+                    togglePreviewPanel: togglePreviewPanelFromLayout,
+                    openSidebar: openMobileSidebar,
+                    onOpenLibraryMention
+                  }}
+                  permissions={{
+                    requests: visiblePermissionRequests,
+                    credentialRequests: visibleCredentialRequests,
+                    permissionProfile: activePermissionProfile,
+                    permissionProfileState: activePermissionProfileState,
+                    permissionGrants: activePermissionGrants,
+                    canChangePermissionProfile,
+                    respond: respondToVisiblePermission,
+                    changeProfile: changePermissionProfile,
+                    revokeGrant: revokeActivePermissionGrant,
+                    clearGrants: clearActivePermissionGrants
+                  }}
+                  elicitation={{
+                    requests: visibleElicitationRequests,
+                    respond: respondToElicitation
+                  }}
+                  agentControls={{
+                    ...agentControlAvailability,
+                    canChangeMemory:
+                      agentControlAvailability.canChangeMemory && isGlobalMemoryEnabled,
+                    modelConfiguration: activeAgentConfiguration,
+                    modelUnavailable: agentConfigurationUnavailable,
+                    changeModelConfiguration: changeAgentConfiguration,
+                    autoReviewEnabled: activeAutoReviewEnabled,
+                    memoryEnabled: activeMemoryEnabled,
+                    delegationEnabled: delegationControl.enabled,
+                    delegationPending: delegationControl.pending,
+                    delegationHasLiveAttempts: delegationControl.hasLiveDelegatedAttempts,
+                    canChangeDelegation:
+                      isSessionPersistenceReady &&
+                      delegationControl.frameworkSupported &&
+                      delegationControl.sessionAuthoritative,
+                    delegationDisabledReason: delegationControl.frameworkSupported
+                      ? undefined
+                      : t('The selected agent framework does not support delegated work.'),
+                    memoryDisabledReason: isGlobalMemoryEnabled
+                      ? undefined
+                      : t(
+                          'Memory is off in Settings. Turn it on to use Memory in this conversation.'
+                        ),
+                    enabledComputeHosts: computeHostAccess.enabledProviderIds,
+                    selectedComputeHosts: computeHostAccess.selectedProviderIds,
+                    toggleAutoReview: changeAutoReviewEnabled,
+                    toggleMemory: changeMemoryEnabled,
+                    toggleDelegation: delegationControl.change,
+                    setComputeHostEnabled: computeHostAccess.setHostEnabled,
+                    setComputeHostSelected: computeHostAccess.setHostSelected
+                  }}
+                  contextWindow={{
+                    usage: activeContextUsage,
+                    canCompact: canCompactContext,
+                    compactDisabledReason: compactContextDisabledReason,
+                    compact: compactActiveContext
+                  }}
+                  workflows={{
+                    artifactFinalization: {
+                      running: artifactFinalizationRetry !== undefined,
+                      retryingPromptMessageId:
+                        artifactFinalizationRetry?.sessionId === activeSession?.id
+                          ? artifactFinalizationRetry?.promptMessageId
+                          : undefined,
+                      request: requestArtifactFinalizationRetry
                     },
-                    onForkSession: sessionForkAvailable() ? forkSession : undefined,
-                    onExportSession:
-                      typeof window.api.sessions?.exportConversation === 'function'
-                        ? sessionController.actions.openExportConversation
-                        : undefined,
-                    onExportPackage: sessionPackageExportAvailable()
-                      ? openPackageExport
-                      : undefined,
-                    onExportDiagnostics: sessionDiagnosticsAvailable()
-                      ? openDiagnostics
-                      : undefined,
-                    onArchiveSession: sessionController.actions.archive
-                  }),
-                  exportDiagnostics: sessionDiagnosticsAvailable() ? openDiagnostics : undefined,
-                  togglePin: isSessionPersistenceReady
-                    ? sessionController.actions.togglePin
-                    : undefined,
-                  editSession: isSessionPersistenceReady
-                    ? (session) => {
-                        sessionInfoReturnFocusRef.current = document.activeElement as HTMLElement
+                    review: {
+                      disabled: isRequestReviewDisabled,
+                      running: isReviewBusy,
+                      request: requestManualReview
+                    },
+                    saveAsSkill: {
+                      disabled: !saveAsSkillAvailability.enabled,
+                      disabledReason: saveAsSkillAvailability.disabledReason,
+                      running: activeSessionSaveAsSkillRunning,
+                      request: requestSaveAsSkill
+                    },
+                    wslSetup: {
+                      start: () => startWslSetupConversation(scopedProjectId, t)
+                    }
+                  }}
+                  sessionTools={{
+                    newConversation: openNewConversation,
+                    reviewPersistence: onReviewPersistence,
+                    menuBindings: createSessionActionBindings({
+                      canMutateConversations: isSessionPersistenceReady,
+                      canDeleteConversations: false,
+                      canDownloadArtifacts: false,
+                      canTogglePin: !activeSession || !isImportedSession(activeSession),
+                      canArchiveSession,
+                      packageBusy,
+                      onTogglePin: sessionController.actions.togglePin,
+                      onRenameSession: (session) => {
+                        sessionInfoReturnFocusRef.current = document.querySelector<HTMLElement>(
+                          '[data-testid="session-header-menu-trigger"]'
+                        )
                         sessionController.actions.openEdit(session)
-                      }
-                    : undefined,
-                  openSession: (sessionId) => void openForkSource(sessionId),
-                  notebookReference: activeNotebookReference,
-                  openNotebook: openNotebookPreview,
-                  openJobs: sessionController.actions.openJobList,
-                  openJob: sessionController.actions.openJob
-                }}
-                subagents={{
-                  unavailable: activeSession
-                    ? delegatedWorkUnavailableBySession[activeSession.id]
-                    : undefined,
-                  stop: async () => {
-                    if (!activeSession) return
-                    // Main selects the Stop scope from the durable branch, so commit the visible
-                    // selection before cancellation can overtake the coalesced background save.
-                    await saveSessionInOrder(
-                      toPersistedSession(
-                        activeSession,
-                        useSessionStore.getState().streamingMessages
+                      },
+                      onForkSession: sessionForkAvailable() ? forkSession : undefined,
+                      onExportSession:
+                        typeof window.api.sessions?.exportConversation === 'function'
+                          ? sessionController.actions.openExportConversation
+                          : undefined,
+                      onExportPackage: sessionPackageExportAvailable()
+                        ? openPackageExport
+                        : undefined,
+                      onExportDiagnostics: sessionDiagnosticsAvailable()
+                        ? openDiagnostics
+                        : undefined,
+                      onArchiveSession: sessionController.actions.archive
+                    }),
+                    exportDiagnostics: sessionDiagnosticsAvailable() ? openDiagnostics : undefined,
+                    togglePin: isSessionPersistenceReady
+                      ? sessionController.actions.togglePin
+                      : undefined,
+                    editSession: isSessionPersistenceReady
+                      ? (session) => {
+                          sessionInfoReturnFocusRef.current = document.activeElement as HTMLElement
+                          sessionController.actions.openEdit(session)
+                        }
+                      : undefined,
+                    openSession: (sessionId) => void openForkSource(sessionId),
+                    notebookReference: activeNotebookReference,
+                    openNotebook: openNotebookPreview,
+                    openJobs: sessionController.actions.openJobList,
+                    openJob: sessionController.actions.openJob
+                  }}
+                  subagents={{
+                    unavailable: activeSession
+                      ? delegatedWorkUnavailableBySession[activeSession.id]
+                      : undefined,
+                    stop: async () => {
+                      if (!activeSession) return
+                      // Main selects the Stop scope from the durable branch, so commit the visible
+                      // selection before cancellation can overtake the coalesced background save.
+                      await saveSessionInOrder(
+                        toPersistedSession(
+                          activeSession,
+                          useSessionStore.getState().streamingMessages
+                        )
                       )
-                    )
-                    await window.api.acp.cancel({
-                      sessionId: activeSession.id,
-                      scope: 'subagents'
-                    })
+                      await window.api.acp.cancel({
+                        sessionId: activeSession.id,
+                        scope: 'subagents'
+                      })
+                    }
+                  }}
+                />
+              )
+              return (
+                <ScheduleStarterPanel
+                  key={scopedProjectId}
+                  active={
+                    scheduleProject === scopedProjectId &&
+                    scheduleScope?.revision === navigationRevision
                   }
-                }}
-              />
-            )}
+                  projectId={scopedProjectId}
+                  openMobileSidebar={openMobileSidebar}
+                  onOpenTask={setScheduleDetail}
+                >
+                  {conversationPanel}
+                </ScheduleStarterPanel>
+              )
+            }}
           />
 
           <EditSessionDialog

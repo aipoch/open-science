@@ -79,6 +79,7 @@ export type AcpRuntimeCallbacks = {
 }
 
 export type AcpRuntimeOptions = {
+  schedules?: import('../schedules/mcp').ScheduleMcp
   prepareSessionReading?: PrepareSessionReading
   classifySkills?: import('../../shared/classification').ClassifySkills
   classifyReadingRoute?: import('../../shared/classification').ClassifyReadingRoute
@@ -183,6 +184,9 @@ export type AcpRuntimeOptions = {
       promptMessageId: string
       input: LiteratureReadDocumentRequest
     }) => Promise<unknown>
+  }>
+  pptx?: Readonly<{
+    agent: import('../pptx-edit/agent-handler').PptxAgentHandler
   }>
   literatureLibrary?: Readonly<{
     acquirePdf?: (request: {

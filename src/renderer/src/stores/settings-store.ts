@@ -1,4 +1,4 @@
-import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../shared/settings'
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../shared/settings-runtime'
 import { ApplicationCommandError } from '../../../shared/application-command-contract'
 import { projectRendererFailure } from '../renderer-diagnostics'
 import {
@@ -57,7 +57,7 @@ import {
   DEFAULT_SHOW_NOTIFICATION_CONTENT,
   isCodexSubscriptionProvider,
   parseSettingsSnapshot
-} from '../../../shared/settings'
+} from '../../../shared/settings-runtime'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import {

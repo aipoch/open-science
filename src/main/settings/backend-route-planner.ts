@@ -18,7 +18,7 @@ import {
   providerValidationRoute,
   shareProviderTransportFamily,
   usesAppProviderTransport
-} from '../../shared/settings'
+} from '../../shared/settings-runtime'
 import {
   REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
   REQUEST_SKILL_IMPORT_TOOL_NAME,

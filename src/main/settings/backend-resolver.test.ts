@@ -9,7 +9,7 @@ import { SideChatRuntimeOwner } from '../side-chat/runtime-owner'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
 import type { ResolvedAgentBackend } from '../agent-framework'
 
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import { SETTINGS_FILE_VERSION } from '../../shared/settings-runtime'
 import type { AgentConfigFile, AgentFrameworkId } from '../agent-framework'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
@@ -1286,6 +1286,22 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     await expect(harness.resolver.resolveActiveModelChangeTarget()).resolves.toMatchObject({
       route: 'opencode-openai'
     })
+  })
+
+  it('uses loadable skill names as directory IDs for OpenCode 2.x', async () => {
+    const harness = makeHarness({ settings: makeSettings({ agentFrameworkId: 'opencode' }) })
+    harness.runtime.probeOpencodeVersion.mockResolvedValue('2.2.7')
+
+    const backend = await harness.resolver.resolveActiveBackend()
+
+    expect(harness.runtime.prepareAgentSkillDiscovery).toHaveBeenCalledWith(
+      expect.anything(),
+      join('/storage', 'opencode', 'config', 'opencode'),
+      expect.any(Set),
+      undefined,
+      { directoryLayout: 'agent-facing-shared' }
+    )
+    await backend.providerTransportLease?.release()
   })
 
   it('does not pass removed listener flags to OpenCode 2.x ACP', async () => {

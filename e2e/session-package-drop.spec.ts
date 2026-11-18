@@ -129,7 +129,7 @@ test('drops native packages into Workspace and Home and restores a child discuss
     }
   }
   await homeCdp.detach()
-  await page.setViewportSize({ width: 1280, height: 900 })
+  await app.setMainWindowSizeAndViewport(1280, 900)
   await page.screenshot({ path: testInfo.outputPath('home-package-project-selection.png') })
   await importing.getByRole('radio', { name: 'Research exchange', exact: true }).check()
   await importing.getByRole('button', { name: 'Continue', exact: true }).click()

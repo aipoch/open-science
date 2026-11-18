@@ -33,6 +33,12 @@ import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { SessionRepository } from '../session-persistence/repository'
 import { startWebHttpServer } from './http-server'
 import { HeadlessTaskApi } from './task-api'
+import { createApplicationCommandRouter } from '../application-command-router'
+import {
+  dataContentApplicationCommands,
+  registerDataContentApplicationCommands
+} from '../data-content-application-commands'
+import { createManagedFileVersionHandlers } from '../managed-file-versions/ipc'
 
 it.each(['historical', 'native'] as const)(
   'downloads a %s Task artifact by its listed Version id through HTTP',
@@ -96,15 +102,29 @@ it.each(['historical', 'native'] as const)(
     })
     const owners = createManagedPreviewOwnerRegistry(resources)
     const acquiredIds: string[] = []
+    const router = createApplicationCommandRouter()
+    const installation = registerDataContentApplicationCommands(router.registrar, {
+      managedFileVersions: createManagedFileVersionHandlers(versions, {
+        withDataRootWrite: (operation) => operation()
+      })
+    } as never)
     const tasks = new HeadlessTaskApi({
       commands: {
         commandNames: () => [],
-        invoke: async (name, { args, callerLease }) => {
+        invoke: async (name, invocation) => {
+          const { args, callerLease } = invocation
           if (name === 'sessions:load-all') return sessions.loadAll()
           if (name === 'artifacts:resolve-version-descriptors') {
             return provenance.resolveVersionDescriptors(
               args[0] as ResolveArtifactVersionDescriptorsRequest
             )
+          }
+          if (name === 'managed-file-versions:inspect') {
+            // Preserve the production identity guard between HTTP and the managed service.
+            return router.dispatcher.invoke(dataContentApplicationCommands.managedFileInspect, {
+              ...invocation,
+              args: [args[0] as Parameters<typeof versions.inspect>[0]]
+            })
           }
           if (name === 'preview-resources:acquire') {
             const resource = await owners.acquire(
@@ -141,7 +161,7 @@ it.each(['historical', 'native'] as const)(
         projectId: session.projectId,
         sessionId: session.id,
         runId: 'run-1',
-        filename: 'report.md',
+        filename: 'report.html',
         source: { kind: 'inline', content, encoding: 'utf8' }
       })
       const version = await provenance.createVersion({
@@ -152,8 +172,8 @@ it.each(['historical', 'native'] as const)(
         writeOperationId: 'write-1',
         writeRequestChecksum: 'a'.repeat(64),
         ...context,
-        filename: 'report.md',
-        contentType: 'text/markdown'
+        filename: 'report.html',
+        contentType: 'text/html'
       })
       const finalization = {
         projectId: session.projectId,
@@ -190,7 +210,7 @@ it.each(['historical', 'native'] as const)(
         projectId: session.projectId,
         sessionId: session.id,
         runId: 'run-2',
-        filename: 'report.md',
+        filename: 'report.html',
         source: { kind: 'inline', content: 'newer content', encoding: 'utf8' }
       })
       const newer = await provenance.createVersion({
@@ -201,8 +221,8 @@ it.each(['historical', 'native'] as const)(
         writeOperationId: 'write-2',
         writeRequestChecksum: 'b'.repeat(64),
         ...context,
-        filename: 'report.md',
-        contentType: 'text/markdown'
+        filename: 'report.html',
+        contentType: 'text/html'
       })
       const newerFinalization = {
         ...finalization,
@@ -214,8 +234,14 @@ it.each(['historical', 'native'] as const)(
       expect(newer.artifactId).toBe(version.artifactId)
       expect(await readFile(version.path, 'utf8')).toBe(content)
       const emptyCommands = { commandNames: () => [], invoke: async () => undefined }
+      let pairedCurrent = true
+      let revokeOnOpen = false
       server = await startWebHttpServer({
-        fetchPreview: protocol,
+        fetchPreview: async (request) => {
+          const upstream = await protocol(request)
+          if (revokeOnOpen) pairedCurrent = false
+          return upstream
+        },
         host: '127.0.0.1',
         port: 0,
         token: 'synthetic-download-token',
@@ -223,6 +249,17 @@ it.each(['historical', 'native'] as const)(
         applicationCommands: {
           localWeb: emptyCommands,
           remoteWeb: { ...emptyCommands, rejectedCommandNames: () => [] }
+        },
+        externalAccess: {
+          authorizeHttp: async (request) =>
+            request.headers.authorization === 'Bearer paired-fixture'
+              ? {
+                  kind: 'authorized',
+                  principalId: 'paired-fixture',
+                  isCurrent: () => pairedCurrent
+                }
+              : 'denied',
+          authorizeWebSocket: async () => undefined
         },
         applicationEvents: new ApplicationEventHub(),
         tasks,
@@ -250,7 +287,7 @@ it.each(['historical', 'native'] as const)(
       expect(listed).toHaveLength(1)
       expect(listed[0].id).toBe(version.versionId)
       const httpResponse = await fetch(`${baseUrl}/api/v1/artifacts/${listed[0].id}/content`, {
-        headers: { authorization: 'Bearer synthetic-download-token' }
+        headers: { authorization: 'Bearer paired-fixture' }
       })
       const httpBody = await httpResponse.text()
       expect({ status: httpResponse.status, body: httpBody }).toEqual({
@@ -261,7 +298,7 @@ it.each(['historical', 'native'] as const)(
       const bytes = Buffer.from(await response.arrayBuffer())
       expect(bytes.toString()).toBe(content)
       expect(createHash('sha256').update(bytes).digest('hex')).toBe(version.checksum)
-      expect(response.headers.get('content-disposition')).toContain('report.md')
+      expect(response.headers.get('content-disposition')).toContain('report.html')
       const output = join(fixture.storageRoot, 'downloaded-report.md')
       await runTaskCommand(
         {
@@ -277,13 +314,108 @@ it.each(['historical', 'native'] as const)(
       for (const resourceId of acquiredIds) {
         await expect(resources.resolveProtocolResource(resourceId)).rejects.toThrow()
       }
+      // The head is absent from the Task list, but browser previews resolve its exact managed identity.
+      const inlineUrl = (versionNumber?: number, fileId = version.artifactId): string =>
+        `${baseUrl}/api/v1/artifacts/${fileId}/content?disposition=inline${versionNumber === undefined ? '' : `&version=${versionNumber}`}&token=synthetic-download-token`
+      for (const [versionNumber, expected] of [
+        [version.versionNumber, content],
+        [newer.versionNumber, 'newer content']
+      ] as Array<[number, string]>) {
+        const inline = await fetch(inlineUrl(versionNumber))
+        expect(inline.status).toBe(200)
+        expect(await inline.text()).toBe(expected)
+        expect(inline.headers.get('content-type')).toBe('text/html; charset=utf-8')
+        expect(inline.headers.get('content-disposition')).toBe('inline')
+        expect(inline.headers.get('referrer-policy')).toBe('no-referrer')
+        const head = await fetch(inlineUrl(versionNumber), { method: 'HEAD' })
+        expect(head.status).toBe(200)
+        for (const header of [
+          'content-type',
+          'content-disposition',
+          'content-length',
+          'referrer-policy'
+        ]) {
+          expect(head.headers.get(header)).toBe(inline.headers.get(header))
+        }
+      }
+      const latestInline = await fetch(inlineUrl())
+      expect(latestInline.status).toBe(200)
+      expect(await latestInline.text()).toBe('newer content')
+      const latestHead = await fetch(inlineUrl(), { method: 'HEAD' })
+      expect(latestHead.status).toBe(200)
+      for (const header of [
+        'content-type',
+        'content-disposition',
+        'content-length',
+        'referrer-policy'
+      ]) {
+        expect(latestHead.headers.get(header)).toBe(latestInline.headers.get(header))
+      }
+      // Web tabs use the existing login cookie, without copying credentials into the new URL.
+      const login = await fetch(`${baseUrl}/?token=synthetic-download-token`, {
+        redirect: 'manual'
+      })
+      expect(login.status).toBe(302)
+      const cookie = login.headers.get('set-cookie')!.split(';')[0]
+      for (const [versionNumber, expected] of [
+        [undefined, 'newer content'],
+        [version.versionNumber, content]
+      ] as const) {
+        const webUrl = new URL(inlineUrl(versionNumber))
+        webUrl.searchParams.delete('token')
+        for (const method of ['HEAD', 'GET']) {
+          const webPreview = await fetch(webUrl, { method, headers: { cookie } })
+          expect(webPreview.status).toBe(200)
+          expect(webPreview.headers.get('content-type')).toBe('text/html; charset=utf-8')
+          expect(webPreview.headers.get('content-disposition')).toBe('inline')
+          expect(await webPreview.text()).toBe(method === 'GET' ? expected : '')
+        }
+      }
+      for (const url of [inlineUrl(newer.versionNumber, 'missing-file'), inlineUrl(99)]) {
+        expect((await fetch(url)).ok).toBe(false)
+      }
+      for (const method of ['GET', 'HEAD']) {
+        for (const value of ['0', 'not-a-number']) {
+          const malformed = new URL(inlineUrl())
+          malformed.searchParams.set('version', value)
+          expect((await fetch(malformed, { method })).status).toBe(400)
+        }
+      }
+      const downloadWithScope = await fetch(
+        inlineUrl(newer.versionNumber).replace('disposition=inline', 'disposition=attachment')
+      )
+      expect(downloadWithScope.status).toBe(404)
+      for (const resourceId of acquiredIds) {
+        await expect(resources.resolveProtocolResource(resourceId)).rejects.toThrow()
+      }
+      // Losing authorization after opening the file must still retire its remote owner's resource.
+      for (const endpoint of [
+        `${baseUrl}/api/v1/artifacts/${listed[0].id}/content`,
+        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline`,
+        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&version=${version.versionNumber}`
+      ]) {
+        const beforeRevocation = acquiredIds.length
+        pairedCurrent = true
+        revokeOnOpen = true
+        const revoked = await fetch(endpoint, {
+          headers: { authorization: 'Bearer paired-fixture' }
+        })
+        expect(revoked.status).toBe(401)
+        expect(acquiredIds).toHaveLength(beforeRevocation + 1)
+        await expect(
+          resources.resolveProtocolResource(acquiredIds[beforeRevocation])
+        ).rejects.toThrow()
+      }
+      revokeOnOpen = false
+      const successfulAcquisitions = acquiredIds.length
       // The same Session record must not make finalized-but-unpublished bytes downloadable.
       await fixture.client.artifactVersion.update({
         where: { id: version.versionId },
         data: { managedVisibleAt: null }
       })
       await expect(client.downloadArtifact(listed[0].id)).rejects.toMatchObject({ status: 500 })
-      expect(acquiredIds).toHaveLength(3)
+      expect((await fetch(inlineUrl(version.versionNumber))).ok).toBe(false)
+      expect(acquiredIds).toHaveLength(successfulAcquisitions)
       await fixture.client.artifactVersion.update({
         where: { id: version.versionId },
         data: { managedVisibleAt: new Date() }
@@ -298,7 +430,11 @@ it.each(['historical', 'native'] as const)(
       })
       // A listed id and a known path cannot grant access across the Session's Project boundary.
       await expect(client.downloadArtifact(listed[0].id)).rejects.toMatchObject({ status: 500 })
-      expect(acquiredIds).toHaveLength(3)
+      expect(acquiredIds).toHaveLength(successfulAcquisitions)
+      // Browser URLs resolve the globally unique artifactId without exposing project identity.
+      const movedInline = await fetch(inlineUrl(version.versionNumber))
+      expect(movedInline.status).toBe(200)
+      expect(await movedInline.text()).toBe(content)
       // Download must not repair historical records by writing back to Session storage.
       expect((await sessions.loadSession(session.projectId, session.id))?.artifacts).toEqual(
         session.artifacts
@@ -306,6 +442,8 @@ it.each(['historical', 'native'] as const)(
     } finally {
       await server?.close()
       await tasks.dispose()
+      installation.uninstall()
+      router.dispose()
       await fixture.dispose()
     }
   },

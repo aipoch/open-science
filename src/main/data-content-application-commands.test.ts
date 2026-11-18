@@ -29,6 +29,7 @@ import {
 } from './data-content-application-commands'
 import {
   materializeSessionConversationGraph,
+  sessionMetadataReceipt,
   SessionDetailsConflictError,
   SessionRevisionConflictError,
   SessionSizeLimitError,
@@ -37,6 +38,7 @@ import {
   type SessionDeletionResult
 } from '../shared/session-persistence'
 import { ApplicationCommandError } from '../shared/application-command-contract'
+import { SessionHistoryCursorStaleError } from '../shared/session-history'
 import * as Artifacts from '../shared/artifacts'
 import { MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID } from '../shared/lifecycle-events'
 import { ApplicationEventHub } from './application-events'
@@ -182,6 +184,7 @@ const createDependencies = () => {
     finalizeRunArtifacts: vi.fn(async () => []),
     reconcilePendingArtifacts: vi.fn(async () => []),
     openFile: vi.fn(async () => undefined),
+    openInBrowser: vi.fn(async () => undefined),
     readPreview: vi.fn(async () => ({
       content: '',
       encoding: 'utf8' as const,
@@ -202,6 +205,7 @@ const createDependencies = () => {
   const managedFileVersions = {
     inspect: vi.fn(async () => ({ ok: false })),
     saveTextEdit: vi.fn(async () => ({ ok: false })),
+    saveBinaryEdit: vi.fn(async () => ({ ok: false })),
     diffText: vi.fn(async () => ({ ok: false })),
     cancelDiff: vi.fn(() => ({ ok: true, value: { cancelled: false } }))
   }
@@ -269,6 +273,8 @@ const createDependencies = () => {
     retryRuntimeTerminalCommit: vi.fn(async () => undefined),
     searchMessages: vi.fn(),
     editDetails: vi.fn(async () => session),
+    rename: vi.fn(async () => sessionMetadataReceipt(session)),
+    setPinned: vi.fn(async () => sessionMetadataReceipt(session)),
     filterPdfContextCandidates: vi.fn(async () => ({
       sources: [],
       pendingAttachmentIds: []
@@ -278,6 +284,7 @@ const createDependencies = () => {
     list: vi.fn(),
     loadAll: vi.fn(),
     loadOne: vi.fn(),
+    loadHistoryPage: vi.fn(),
     loadUsage: vi.fn(),
     saveSession: vi.fn(async () => ({ created: true, session })),
     bindTaskSession: vi.fn(async () => session),
@@ -335,6 +342,17 @@ const createDependencies = () => {
       close: vi.fn(),
       reportState: vi.fn(),
       dispose: vi.fn()
+    },
+    pptxEditCommands: {
+      open: vi.fn(),
+      apply: vi.fn(),
+      save: vi.fn(),
+      close: vi.fn()
+    },
+    pptxDraftCommands: {
+      get: vi.fn(),
+      accept: vi.fn(),
+      reject: vi.fn()
     },
     fileSaveCommands: {
       'file:artifact-save-progress': vi.fn(),
@@ -412,6 +430,7 @@ const WRAPPED_COMMAND_KEYS = [
   'previewResearchVideoProgress',
   'artifactFinalizeRun',
   'artifactOpenFile',
+  'artifactOpenInBrowser',
   'lifecycleClientId',
   'runtimeWriterClaim',
   'projectCreate',
@@ -440,6 +459,7 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionList',
   'sessionLoadAll',
   'sessionLoadOne',
+  'sessionLoadHistoryPage',
   'sessionListRuntimeTerminalFailures',
   'sessionRetryRuntimeTerminalCommit',
   'sessionSearchMessages',
@@ -557,6 +577,44 @@ describe('Data and content application commands', () => {
     expect(deps.dependencies.orgCases.cancelImport).toHaveBeenCalledWith('case_1')
   })
 
+  it('loads bounded history pages and transports stale cursors without falling back to full reads', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const request = { projectId: 'project-1', sessionId: 'session-1', limit: 80 }
+    const page = {
+      ...request,
+      revision: 1,
+      session: deps.session,
+      hasMore: false,
+      totalItems: 0
+    }
+    deps.sessions.loadHistoryPage.mockResolvedValueOnce(page)
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionLoadHistoryPage,
+        invocation([request])
+      )
+    ).resolves.toBe(page)
+    expect(deps.sessions.loadHistoryPage).toHaveBeenCalledExactlyOnceWith(request)
+    expect(deps.withDataRootWrite).toHaveBeenCalledOnce()
+    deps.sessions.loadHistoryPage.mockRejectedValueOnce(new SessionHistoryCursorStaleError())
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionLoadHistoryPage,
+        invocation([{ ...request, beforeCursor: 'stale' }])
+      )
+    ).rejects.toMatchObject({ code: 'SESSION_HISTORY_CURSOR_STALE' })
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionLoadHistoryPage,
+        invocation([{ ...request, limit: 201 }])
+      )
+    ).rejects.toThrow()
+    expect(deps.sessions.loadHistoryPage).toHaveBeenCalledTimes(2)
+    expect(deps.sessions.loadOne).not.toHaveBeenCalled()
+  })
+
   it('routes manual catalog reloads to a fresh fetch and rejects remote callers', async () => {
     const deps = createDependencies()
     const refresh = vi.fn(async () => [])
@@ -641,6 +699,7 @@ describe('Data and content application commands', () => {
         'artifacts:get-version-provenance',
         'artifacts:get-version-review',
         'artifacts:open-file',
+        'artifacts:open-in-browser',
         'artifacts:read-preview',
         'artifacts:reconcile-pending',
         'artifacts:resolve-version-descriptors',
@@ -682,6 +741,8 @@ describe('Data and content application commands', () => {
         'sessions:delete-session',
         'sessions:delete-recovery-file',
         'sessions:edit-details',
+        'sessions:rename',
+        'sessions:set-pinned',
         'sessions:export-conversation',
         'sessions:inspect-diagnostics',
         'sessions:export-diagnostics',
@@ -701,6 +762,7 @@ describe('Data and content application commands', () => {
         'sessions:list',
         'sessions:load-all',
         'sessions:load-one',
+        'sessions:load-history-page',
         'sessions:list-runtime-terminal-failures',
         'sessions:retry-runtime-terminal-commit',
         'sessions:search-messages',
@@ -730,6 +792,7 @@ describe('Data and content application commands', () => {
         'uploads:transfer-status',
         'managed-file-versions:inspect',
         'managed-file-versions:save-text-edit',
+        'managed-file-versions:save-binary-edit',
         'managed-file-versions:diff-text',
         'managed-file-versions:cancel-diff',
         'artifacts:session-reproducibility',
@@ -755,7 +818,14 @@ describe('Data and content application commands', () => {
         'office-preview:open',
         'office-preview:attach-frame',
         'office-preview:close',
-        'office-preview:report-state'
+        'office-preview:report-state',
+        'pptx-edit:open',
+        'pptx-edit:apply',
+        'pptx-edit:save',
+        'pptx-edit:close',
+        'pptx-draft:get',
+        'pptx-draft:accept',
+        'pptx-draft:reject'
       ].map((name) => expect.objectContaining({ name }))
     )
   })
@@ -814,6 +884,48 @@ describe('Data and content application commands', () => {
         key: 'officePreviewReportState',
         args: ['session-1', { sessionId: 'session-1', phase: 'ready' }],
         owner: deps.dependencies.officePreviewCommands.reportState,
+        passInvocation: true
+      },
+      {
+        key: 'pptxEditOpen',
+        args: [{ source: 'upload', projectId: 'p', fileId: 'f', versionId: 'v' }],
+        owner: deps.dependencies.pptxEditCommands.open,
+        passInvocation: true
+      },
+      {
+        key: 'pptxEditApply',
+        args: [{ sessionId: 's', operations: [] }],
+        owner: deps.dependencies.pptxEditCommands.apply,
+        passInvocation: true
+      },
+      {
+        key: 'pptxEditSave',
+        args: [{ sessionId: 's', operations: [], expectedHeadVersionId: 'v', operationId: 'o' }],
+        owner: deps.dependencies.pptxEditCommands.save,
+        passInvocation: true
+      },
+      {
+        key: 'pptxEditClose',
+        args: ['s'],
+        owner: deps.dependencies.pptxEditCommands.close,
+        passInvocation: true
+      },
+      {
+        key: 'pptxDraftGet',
+        args: [{ source: 'upload', projectId: 'p', fileId: 'f' }],
+        owner: deps.dependencies.pptxDraftCommands.get,
+        passInvocation: true
+      },
+      {
+        key: 'pptxDraftAccept',
+        args: [{ identity: { source: 'upload', projectId: 'p', fileId: 'f' }, draftId: 'd' }],
+        owner: deps.dependencies.pptxDraftCommands.accept,
+        passInvocation: true
+      },
+      {
+        key: 'pptxDraftReject',
+        args: [{ identity: { source: 'upload', projectId: 'p', fileId: 'f' }, draftId: 'd' }],
+        owner: deps.dependencies.pptxDraftCommands.reject,
         passInvocation: true
       },
       {
@@ -948,6 +1060,11 @@ describe('Data and content application commands', () => {
         owner: deps.managedFileVersions.saveTextEdit
       },
       {
+        key: 'managedFileSaveBinaryEdit',
+        args: [request('save')],
+        owner: deps.managedFileVersions.saveBinaryEdit
+      },
+      {
         key: 'managedFileDiffText',
         args: [request('diff')],
         owner: deps.managedFileVersions.diffText,
@@ -1013,6 +1130,20 @@ describe('Data and content application commands', () => {
         key: 'artifactResolveVersionDescriptors',
         args: [request('artifact-version-descriptors')],
         owner: deps.artifacts.resolveVersionDescriptors
+      },
+      {
+        key: 'sessionRename',
+        args: [
+          { projectId: 'project-1', sessionId: 'session-1', expectedTitle: 'Session', title: 'New' }
+        ],
+        owner: deps.sessions.rename
+      },
+      {
+        key: 'sessionSetPinned',
+        args: [
+          { projectId: 'project-1', sessionId: 'session-1', expectedPinned: false, pinned: true }
+        ],
+        owner: deps.sessions.setPinned
       },
       { key: 'previewDelete', args: [request('preview-delete')], owner: deps.preview.delete },
       { key: 'previewLoad', args: [request('preview-load')], owner: deps.preview.load },
@@ -1831,6 +1962,46 @@ describe('Data and content application commands', () => {
       expect(dependencies.events.publish, mutation.label).not.toHaveBeenCalled()
     }
   })
+
+  it.each([
+    {
+      command: 'sessionRename' as const,
+      owner: 'rename' as const,
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedTitle: 'Before',
+        title: 'After'
+      }
+    },
+    {
+      command: 'sessionSetPinned' as const,
+      owner: 'setPinned' as const,
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedPinned: false,
+        pinned: true
+      }
+    }
+  ])(
+    'keeps a narrow $command request and preserves its field conflict',
+    async ({ command, owner, request }) => {
+      const router = createApplicationCommandRouter()
+      const deps = createDependencies()
+      registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+      await expect(dispatchCommand(router, command, [request]).result).resolves.toEqual(
+        sessionMetadataReceipt(deps.session)
+      )
+      expect(deps.sessions.loadOne).not.toHaveBeenCalled()
+      expect(deps.sessions.saveSession).not.toHaveBeenCalled()
+      deps.sessions[owner].mockRejectedValueOnce(new SessionDetailsConflictError())
+      await expect(dispatchCommand(router, command, [request]).result).rejects.toMatchObject({
+        name: 'ApplicationCommandError',
+        code: 'session-details-conflict'
+      })
+    }
+  )
 
   it('preserves the Session details conflict code across the application command boundary', async () => {
     const router = createApplicationCommandRouter()

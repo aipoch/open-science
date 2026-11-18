@@ -1,14 +1,16 @@
 import type { ModelProtocol, OfficialVendorId } from '@aipoch/providers'
+import type {
+  AgentFrameworkId,
+  ProviderType,
+  ProviderValidationTarget,
+  ValidateProviderResult
+} from '../../shared/settings'
 import {
   DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
   providerValidationRoute,
-  providerValidationTargetMatches,
-  type AgentFrameworkId,
-  type ProviderType,
-  type ProviderValidationTarget,
-  type ValidateProviderResult
-} from '../../shared/settings'
+  providerValidationTargetMatches
+} from '../../shared/settings-runtime'
 import type { StoredProvider } from './types'
 
 type ProviderValidationPatch = Pick<

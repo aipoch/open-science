@@ -90,6 +90,50 @@ describe('ClaudeCodeSkillMaterializer', () => {
     expect(await listSkillDirs(configDir)).toEqual([])
   })
 
+  it('migrates shared public names incrementally while preserving connector documents', async () => {
+    const configDir = await skillsDir()
+    const skill = await makeSkill('abstract-summarizer')
+    skill.id = 'imported-abstract-summarizer'
+    skill.compatibility = 'release-1'
+    await writeFile(
+      join(skill.sourceDir, 'SKILL.md'),
+      '---\nname: abstract-summarizer\ndescription: Summarize abstracts.\n---\nRelease one.'
+    )
+    const materializer = new ClaudeCodeSkillMaterializer()
+    await materializer.sync(configDir, [skill])
+    const connectorDir = join(configDir, 'skills', 'mcp-pubmed')
+    await mkdir(connectorDir)
+    await writeFile(join(connectorDir, 'SKILL.md'), 'Connector document')
+    const connectorBefore = await stat(join(connectorDir, 'SKILL.md'))
+    const options = { directoryLayout: 'agent-facing-shared' as const }
+
+    await materializer.sync(configDir, [skill], options)
+    expect((await listSkillDirs(configDir)).sort()).toEqual(['abstract-summarizer', 'mcp-pubmed'])
+    const projected = join(configDir, 'skills', 'abstract-summarizer', 'SKILL.md')
+    expect(await readFile(projected, 'utf8')).toContain('name: abstract-summarizer')
+    const before = await stat(projected)
+    await materializer.sync(configDir, [skill], options)
+    expect((await stat(projected)).mtimeMs).toBe(before.mtimeMs)
+    expect((await stat(projected)).ino).toBe(before.ino)
+    expect((await stat(join(connectorDir, 'SKILL.md'))).mtimeMs).toBe(connectorBefore.mtimeMs)
+
+    skill.compatibility = 'release-2'
+    await writeFile(join(skill.sourceDir, 'SKILL.md'), '# Release two')
+    await materializer.sync(configDir, [skill], options)
+    expect(await readFile(projected, 'utf8')).toContain('Release two')
+    expect(await readFile(projected, 'utf8')).toContain('name: abstract-summarizer')
+
+    // Returning to OpenCode 1.x must not leave duplicate public and prefixed projections.
+    await materializer.sync(configDir, [skill])
+    expect((await listSkillDirs(configDir)).sort()).toEqual([
+      'mcp-pubmed',
+      'os-imported-abstract-summarizer'
+    ])
+    await materializer.sync(configDir, [skill], options)
+    await materializer.sync(configDir, [], options)
+    expect(await listSkillDirs(configDir)).toEqual(['mcp-pubmed'])
+  })
+
   it.each(['---', 'a--b', 'a'.repeat(65), 'os-private', 'mcp-private'])(
     'rejects non-canonical Agent-facing Skill name %s',
     async (name) => {

@@ -1,3 +1,6 @@
+import { createServer, type ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 import { describe, expect, it, vi } from 'vitest'
 import { bufferChatCompletionsToolNames } from '@aipoch/providers/protocol'
 
@@ -764,6 +767,67 @@ describe('ProviderTransportOwner harness leases', () => {
 })
 
 describe('ProviderTransportOwner generations', () => {
+  it.each(['headers', 'body'] as const)(
+    'releases a real CodeBuddy selector still waiting for upstream %s',
+    async (phase) => {
+      const active = new Set<ServerResponse>()
+      const upstream = createServer((request, response) => {
+        request.resume()
+        active.add(response)
+        response.once('close', () => active.delete(response))
+        if (phase === 'body') {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.write('{')
+        }
+      })
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+      const { port } = upstream.address() as AddressInfo
+      const baseUrl = `http://127.0.0.1:${port}/v1`
+      const target = makeTarget()
+      const caller = new AbortController()
+      const owner = new ProviderTransportOwner({
+        // Use actual Node fetch; Electron net is unavailable in this Node-only test process.
+        createResponsesToChatCompletionsBridge: (target, options) =>
+          new ResponsesToChatCompletionsBridge(target, fetch, options)
+      })
+      const generation = await owner.acquire({
+        activeTarget: {
+          ...target,
+          provider: { ...target.provider, baseUrl, chatCompletionsBaseUrl: baseUrl, key: '' }
+        },
+        plan: { ...makePlan({ kind: 'direct' }), modelRoute: 'codebuddy-openai' }
+      })
+      let settled = false
+      const selecting = generation.providerTransportLease!.selectSkills!(
+        'analyze numerical data',
+        [{ name: 'statistics', description: 'Analyze numerical datasets', path: '/statistics' }],
+        caller.signal
+      ).finally(() => {
+        settled = true
+      })
+      // Observe rejection immediately, including on the pre-fix cleanup path.
+      const outcome = selecting.catch(() => undefined)
+      try {
+        await vi.waitFor(() => expect(active.size).toBe(1), { timeout: 1_000 })
+        await generation.release()
+        await vi.waitFor(
+          () => {
+            expect(active.size).toBe(0)
+            expect(settled).toBe(true)
+          },
+          { timeout: 1_000 }
+        )
+        await expect(selecting).resolves.toEqual([])
+      } finally {
+        caller.abort()
+        await outcome
+        await generation.release()
+        upstream.closeAllConnections()
+        await new Promise<void>((resolve) => upstream.close(() => resolve()))
+      }
+    }
+  )
+
   it('routes only CodeBuddy model traffic through its image-normalizing bridge', async () => {
     const selector = makeResponsesToChatCompletionsBridge(0)
     const bridge = makeOpenAiBridge(0)

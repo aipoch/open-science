@@ -221,7 +221,7 @@ test('links a multi-page PDF upload as Reading context in a new project', async 
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
-  await page.setViewportSize({ width: 1440, height: 900 })
+  await app.setMainWindowSize(1440, 900)
   const captureChinese = async (name: string): Promise<void> => {
     await page.keyboard.press('Escape')
     await page.mouse.move(5, 5)
@@ -919,6 +919,11 @@ test('reviews an uploaded PowerPoint without remounting its paged surface', asyn
   expect(zoomInBounds!.x).toBeLessThan(findBounds!.x)
   expect(findBounds!.x - zoomInBounds!.x - zoomInBounds!.width).toBeLessThan(20)
   expect(Math.abs(navigationBounds!.y - findBounds!.y)).toBeLessThan(2)
+  // A wide, short desktop fits the slide by height. Exercise horizontal overflow with
+  // a width-limited stage so the same 125% zoom checks horizontal panning on every host.
+  await stage.evaluate((element) => {
+    element.style.maxWidth = `${element.clientHeight}px`
+  })
   await officeFrame.getByRole('button', { name: 'Zoom in' }).click()
   await expect(officeFrame.getByRole('button', { name: 'Reset zoom' })).toHaveText('125%')
   await expect(stage).toHaveAttribute('tabindex', '0')
@@ -940,6 +945,9 @@ test('reviews an uploaded PowerPoint without remounting its paged surface', asyn
         .evaluate((element) => element.getBoundingClientRect().height)
     )
     .toBeLessThan(170)
+  await stage.evaluate((element) => {
+    element.style.maxWidth = ''
+  })
   await expect(root).toHaveCount(1)
   await officeFrame.getByRole('button', { name: 'Find', exact: true }).click()
   await expect(toolbar.locator(':scope > button').first()).toHaveAttribute(
@@ -981,4 +989,55 @@ test('reviews an uploaded PowerPoint without remounting its paged surface', asyn
   await expect(find).toBeFocused()
   await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
   await officeFrame.getByRole('button', { name: 'Close search' }).click()
+})
+
+test('edits, restores and compares PowerPoint versions', async ({ app }) => {
+  test.setTimeout(180_000)
+  const fileName = 'edit-fixture.pptx'
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: fileName,
+    mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    buffer: createPreviewPptx()
+  })
+  await sendPrompt(page, 'Keep the attached presentation.', 'Deterministic reply:')
+  await app.showMainWindow()
+  await page.getByRole('button', { name: 'Files', exact: true }).click()
+  await page.getByRole('button', { name: `Preview uploaded file ${fileName}`, exact: true }).click()
+  const preview = page.getByRole('dialog', { name: `Preview ${fileName}`, exact: true })
+  await expect(preview.locator('[data-office-preview-state="ready"]')).toBeVisible({
+    timeout: 90_000
+  })
+
+  // Edit the speaker notes of slide 1 and save them as a new version.
+  await preview.getByRole('button', { name: `Edit ${fileName}`, exact: true }).click()
+  const surface = preview.getByTestId('pptx-edit-surface')
+  await expect(surface).toBeVisible()
+  await surface.getByRole('button', { name: 'Edit speaker notes' }).click()
+  await surface.getByRole('textbox', { name: 'Speaker notes' }).fill('Rewritten notes.')
+  await surface.getByRole('button', { name: 'Apply', exact: true }).click()
+  await preview.getByRole('button', { name: 'Save changes' }).click()
+  const history = preview.getByTestId('pptx-version-history')
+  await expect(history).toContainText('You · Speaker notes', { timeout: 30_000 })
+
+  // The page-level comparison names the changed slide and previews both versions.
+  await history.getByRole('button', { name: 'Compare with previous version' }).click()
+  const compare = preview.getByTestId('pptx-version-compare')
+  await expect(compare.getByRole('list', { name: 'Changed slides' })).toContainText(
+    'Slide 1Speaker notes'
+  )
+  await expect(compare.getByRole('region')).toHaveCount(2)
+  await compare.getByRole('button', { name: 'Close comparison' }).click()
+
+  // Restoring the first version saves its bytes again as a third version.
+  await history.getByRole('button', { name: 'Version history' }).click()
+  const versions = history.getByRole('list', { name: 'Version history' })
+  await versions.getByRole('button').filter({ hasText: /^v1/ }).click()
+  await preview.getByRole('button', { name: `Edit ${fileName}`, exact: true }).click()
+  const restore = preview.getByRole('button', { name: 'Save changes' })
+  await expect(restore).toHaveText('Restore as new version')
+  await restore.click()
+  await expect(history).toContainText('You · Restored an earlier version', { timeout: 30_000 })
 })

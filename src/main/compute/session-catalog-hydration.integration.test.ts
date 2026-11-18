@@ -112,7 +112,10 @@ describe('production Session catalog hydration wiring', () => {
       projectRecovery: { recoverPendingDeletions: async () => undefined },
       sessionLoader: coordinator
     })
-    const compute = new AgentComputeService({ list: async () => [computeHost] } as never, registry)
+    const compute = new AgentComputeService(
+      { list: async () => [computeHost], listExternalTargets: async () => [] } as never,
+      registry
+    )
 
     const loading = hydration.loadAll()
     await snapshotCaptured.promise

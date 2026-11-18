@@ -216,8 +216,10 @@ describe('Project-owned data catalog architecture', () => {
       'permission-grants',
       'project-preview-state',
       'session-replay',
+      'session-history-index',
       'vision-evidence',
       'session-metadata-usage-history',
+      'session-schedules',
       'background-result-delivery',
       'notification-inbox-history',
       'literature-inbox-provenance',
@@ -266,8 +268,58 @@ describe('Project-owned data catalog architecture', () => {
       'project-session-json-delete',
       'provenance-tail',
       'review-tail',
+      'schedule-target-delete',
       'side-chat-profile-tail'
     ])
+  })
+
+  it('proves Session history projection cleanup follows Session and Project deletion', () => {
+    expect(
+      PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'session-history-index')
+    ).toMatchObject({
+      medium: 'sqlite',
+      resources: ['SessionHistoryIndex', 'SessionHistoryItem'],
+      policy: {
+        kind: 'coordinator-cleanup',
+        effect: 'hard-delete',
+        path: 'project-session-json-delete',
+        operation: 'SessionHistoryProjectionRepository.delete and deleteProjectHistory'
+      }
+    })
+
+    const sessionItemRelation = Prisma.dmmf.datamodel.models
+      .find((model) => model.name === 'SessionHistoryItem')
+      ?.fields.find((field) => field.kind === 'object' && field.name === 'history')
+    expect(sessionItemRelation).toMatchObject({
+      type: 'SessionHistoryIndex',
+      relationFromFields: ['sessionId'],
+      relationOnDelete: 'Cascade'
+    })
+
+    expectCall(
+      classMethod(
+        'src/main/session-persistence/projection.ts',
+        'SessionProjectionRepository',
+        'commitDelete'
+      ),
+      'this.history.delete'
+    )
+    expectCall(
+      classMethod(
+        'src/main/session-persistence/projection.ts',
+        'SessionProjectionRepository',
+        'deleteProjectHistory'
+      ),
+      '(await this.client()).sessionHistoryIndex.deleteMany'
+    )
+    expectCall(
+      classMethod(
+        'src/main/session-persistence/history-projection.ts',
+        'SessionHistoryProjectionRepository',
+        'delete'
+      ),
+      '(transaction ?? (await this.prisma())).sessionHistoryIndex.deleteMany'
+    )
   })
 
   it('catalogs current and legacy execution evidence roots as Project-owned data', () => {

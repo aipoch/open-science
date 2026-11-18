@@ -6,7 +6,7 @@ import type {
   LabView
 } from '../../shared/lab'
 import { getLabServerUrlError, labModelSummaries, normalizeLabServerUrl } from '../../shared/lab'
-import { LAB_PROVIDER_ID } from '../../shared/settings'
+import { LAB_PROVIDER_ID } from '../../shared/settings-runtime'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
 
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'

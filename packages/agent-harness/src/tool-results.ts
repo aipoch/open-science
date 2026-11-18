@@ -52,6 +52,47 @@ const transportFits = (blocks: readonly ContentBlock[]): boolean => {
   return true
 }
 
+// Tool protocols commonly put continuation state (for example an order ID) after a
+// large user-facing payload. Keep that state in the model-facing preview even when
+// the payload itself must be shortened. The original result remains authoritative
+// and is still available through read_tool_result.
+const continuationMetadata = (blocks: readonly ContentBlock[]): ContentBlock | undefined => {
+  for (const block of blocks) {
+    if (block.type !== 'text') continue
+    try {
+      const value: unknown = JSON.parse(block.text)
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+      const handoff = (value as { _handoff?: unknown })._handoff
+      if (handoff === undefined) continue
+      return { type: 'text', text: JSON.stringify({ _handoff: handoff }) }
+    } catch {
+      // Human-readable tool output is allowed; only structured JSON can expose
+      // continuation metadata without guessing at its syntax.
+    }
+  }
+  return undefined
+}
+
+const compactStructuredContent = (blocks: readonly ContentBlock[]): ContentBlock[] | undefined => {
+  if (blocks.length !== 1 || blocks[0]?.type !== 'text') return undefined
+  try {
+    const value: unknown = JSON.parse(blocks[0].text)
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const root = value as { data?: unknown }
+    if (!root.data || typeof root.data !== 'object' || Array.isArray(root.data)) return undefined
+    const data = root.data as { outline?: unknown; stream?: unknown }
+    if (typeof data.outline !== 'string' || !data.stream || typeof data.stream !== 'object')
+      return undefined
+    const stream = data.stream as { outline?: unknown }
+    if (stream.outline !== data.outline) return undefined
+    const compact = structuredClone(value) as { data: { stream: { outline?: unknown } } }
+    delete compact.data.stream.outline
+    return [{ type: 'text', text: JSON.stringify(compact) }]
+  } catch {
+    return undefined
+  }
+}
+
 /** Frozen at admission, not recalculated as old messages age. Media stays byte-for-byte intact. */
 export function toolResultView(
   original: ToolResult,
@@ -62,6 +103,8 @@ export function toolResultView(
   const fits = (content: ContentBlock[]): boolean =>
     transportFits(content) && measure(content) <= budget
   if (fits(original.content)) return undefined
+  const compacted = compactStructuredContent(original.content)
+  if (compacted && fits(compacted)) return compacted
   const lengths = original.content.map((block) => (block.type === 'text' ? length(block.text) : 0))
   const total = lengths.reduce((a, b) => a + b, 0)
   if (!total) return undefined
@@ -69,6 +112,7 @@ export function toolResultView(
     type: 'text',
     text: `\n[Tool output shortened. Original text: ${total + Math.max(0, original.content.filter((block) => block.type === 'text').length - 1)} characters. If the visible evidence is sufficient, continue without reading more. If required information is missing, use ${TOOL_RESULT_READER} with invocationId=${JSON.stringify(invocationId)} and the relevant offset/limit. Follow nextOffset only while needed information is still missing. Do not repeat the original tool to retrieve its result.]`
   }
+  const metadata = continuationMetadata(original.content)
   const candidate = (count: number): ContentBlock[] => {
     const leading = Math.ceil(count * 0.8),
       trailingStart = total - (count - leading)
@@ -90,7 +134,7 @@ export function toolResultView(
           text: head(block.text, first) + '\n[…]\n' + tail(block.text, last)
         })
     })
-    return [...view, marker]
+    return metadata ? [metadata, ...view, marker] : [...view, marker]
   }
   let low = 0,
     high = Math.min(total - 1, MAX_BYTES)

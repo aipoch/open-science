@@ -320,3 +320,74 @@ it('preserves a thin native link border through PDFium float32 serialization', a
   })
   expect(after.url).toBe(before.url)
 })
+
+it('fits linked prose with native rows closer than the initial target font size', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRoman),
+    page = pdf.addPage([600, 800]),
+    size = 6.4,
+    top = 700,
+    next = top - 7.7,
+    x = 40,
+    first = 'The collected measurements are ready for review.',
+    prefix = 'See ',
+    label = 'Atlas',
+    suffix = ' for the final report.',
+    uri = 'https://example.invalid/help',
+    linkX = x + font.widthOfTextAtSize(prefix, size),
+    linkRight = linkX + font.widthOfTextAtSize(label, size)
+  page.drawText(first, { x, y: top, font, size })
+  page.drawText(prefix, { x, y: next, font, size })
+  page.drawText(label, { x: linkX, y: next, font, size })
+  page.drawText(suffix, { x: linkRight, y: next, font, size })
+  page.node.set(
+    PDFName.of('Annots'),
+    pdf.context.obj([
+      pdf.context.register(
+        pdf.context.obj({
+          Type: 'Annot',
+          Subtype: 'Link',
+          Rect: [linkX - 0.02, next - 1, linkRight + 0.02, next + 5.5],
+          Border: [0, 0, 0],
+          A: { S: 'URI', URI: PDFString.of(uri) }
+        })
+      )
+    ])
+  )
+  const data = new Uint8Array(await pdf.save()),
+    original = getDocument({ data: data.slice(), useSystemFonts: true }),
+    registry = new TestCallerRegistry(),
+    caller = registry.acquire({ leaseId: 'compact-linked-prose', surface: 'electron' }),
+    unit = {
+      source: `${first} ${prefix}${label}${suffix}`,
+      translation: '测量数据已整理，参见 Atlas 的最终报告。',
+      fragments: [
+        { pageNumber: 1, rect: { x: 39 / 600, y: 90 / 800, width: 280 / 600, height: 22 / 800 } }
+      ]
+    }
+  onTestFinished(() => original.destroy())
+  onTestFinished(() => registry.dispose())
+  const result = await new PdfTranslationWriter(() =>
+    resolve('resources/worker.mjs')
+  ).generateDetailed(
+    {
+      id: 'compact-linked-prose',
+      data,
+      pages: [{ width: 600, height: 800 }],
+      units: [unit],
+      preserveUnsupported: true,
+      preserveUnmatched: true
+    },
+    caller.lease
+  )
+  expect(result?.layoutFailures).toEqual([])
+  const output = getDocument({ data: result!.data.slice(), useSystemFonts: true })
+  onTestFinished(() => output.destroy())
+  const [before, target] = await Promise.all([original.promise, output.promise]),
+    placement = await verifyPdfUnits(target, [{ ...unit, sourceIndex: 0 }], [], before),
+    preservation = await verifyPdfPreservation(before, target, [unit], [], [1])
+  expect(placement[0].translationFound).toBe(true)
+  expect(preservation.pages.flatMap((entry) => entry.failures)).toEqual([])
+  expect(preservation.pages[0].pixels!.changedPixels).toBe(0)
+  expect((await (await target.getPage(1)).getAnnotations()).map((link) => link.url)).toEqual([uri])
+})

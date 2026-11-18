@@ -1,5 +1,6 @@
 import { indexReplayRun, type ReplayRunIndex } from '../../shared/replay'
-import { mkdir, readdir, rm, stat } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { lstat, mkdir, readdir, rm, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
@@ -19,6 +20,8 @@ import type { NotebookRuntimeBindings } from '../../shared/notebook-runtime'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
   DurableJsonRecoveryBarrierError,
+  isRecoverableDurableJsonTemporaryFile,
+  readFileWithinLimit,
   readDurableJsonFile,
   recoverDurableJsonDirectory,
   writeDurableJsonFile
@@ -26,7 +29,8 @@ import {
 import { decodeVersionedJson } from '../storage/versioned-json-decoder'
 import {
   decodeRunDocumentDataPaths,
-  encodeRunDocumentDataPaths
+  encodeRunDocumentDataPaths,
+  encodeNotebookRunDataPaths
 } from './run-document-data-path-codec'
 import { decodeNotebookHelperEvidence } from './helper-evidence'
 import {
@@ -37,6 +41,127 @@ import {
 } from './lane-identity'
 import { isRecord } from '../value-guards'
 import { ensureNotebookInputRoot } from './input-staging'
+
+const RECORDS_DIRECTORY = '.run-records'
+const INLINE_BYTES = 64 * 1024
+const digestPattern = /^[a-f0-9]{64}$/
+
+type RunReference = { storage: 'file'; runId: string; sha256: string; bytes: number }
+type StoredNotebookRun = NotebookRunRecord | RunReference
+
+const isNotebookRunReference = (value: unknown): value is RunReference => {
+  if (!value || typeof value !== 'object') return false
+  const ref = value as RunReference
+  return (
+    ref.storage === 'file' &&
+    typeof ref.runId === 'string' &&
+    typeof ref.sha256 === 'string' &&
+    digestPattern.test(ref.sha256) &&
+    Number.isSafeInteger(ref.bytes) &&
+    ref.bytes > 0
+  )
+}
+
+const digest = (contents: string): string => createHash('sha256').update(contents).digest('hex')
+
+// Immutable records land before the manifest. Only startup, before admission, removes orphans.
+class NotebookRunRecordStorage {
+  private readonly references = new WeakMap<
+    NotebookRunRecord,
+    { directory: string; ref: RunReference }
+  >()
+
+  private async directory(root: string, create = false): Promise<string> {
+    const directory = join(root, RECORDS_DIRECTORY)
+    if (create) await mkdir(directory, { recursive: true })
+    const info = await lstat(directory)
+    if (!info.isDirectory() || info.isSymbolicLink())
+      throw new Error('Invalid Notebook record directory.')
+    return directory
+  }
+
+  remember(runs: NotebookRunRecord[], stored: StoredNotebookRun[], directory: string): void {
+    stored.forEach((ref, index) => {
+      if (isNotebookRunReference(ref)) this.references.set(runs[index], { directory, ref })
+    })
+  }
+
+  async read(root: string, runs: StoredNotebookRun[]): Promise<NotebookRunRecord[]> {
+    const result: NotebookRunRecord[] = []
+    let directory: string | undefined
+    for (const entry of runs) {
+      if (!isNotebookRunReference(entry)) {
+        result.push(entry)
+        continue
+      }
+      directory ??= await this.directory(root)
+      const path = join(directory, `${entry.sha256}.json`)
+      const info = await lstat(path)
+      if (!info.isFile() || info.isSymbolicLink() || info.size !== entry.bytes)
+        throw new Error('Invalid Notebook record file.')
+      const contents = await readFileWithinLimit(path, entry.bytes)
+      if (digest(contents) !== entry.sha256) throw new Error('Notebook record checksum mismatch.')
+      const run = JSON.parse(contents) as NotebookRunRecord
+      if (run?.runId !== entry.runId) throw new Error('Notebook record identity mismatch.')
+      result.push(run)
+    }
+    return result
+  }
+
+  async write(
+    root: string,
+    runs: NotebookRunRecord[],
+    encode: (run: NotebookRunRecord) => NotebookRunRecord
+  ): Promise<StoredNotebookRun[]> {
+    const stored: StoredNotebookRun[] = []
+    let directory: string | undefined
+    for (const run of runs) {
+      const known = this.references.get(run)
+      if (known?.directory === root) {
+        stored.push(known.ref)
+        continue
+      }
+      const encoded = encode(run)
+      const contents = JSON.stringify(encoded)
+      const bytes = Buffer.byteLength(contents)
+      if (bytes < INLINE_BYTES) {
+        stored.push(encoded)
+        continue
+      }
+      directory ??= await this.directory(root, true)
+      const ref: RunReference = {
+        storage: 'file',
+        runId: run.runId,
+        sha256: digest(contents),
+        bytes
+      }
+      await writeDurableJsonFile(join(directory, `${ref.sha256}.json`), contents)
+      this.references.set(run, { directory: root, ref })
+      stored.push(ref)
+    }
+    return stored
+  }
+
+  async prune(root: string, runs: StoredNotebookRun[]): Promise<void> {
+    let directory: string
+    try {
+      directory = await this.directory(root)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+    const retained = new Set(runs.filter(isNotebookRunReference).map((ref) => `${ref.sha256}.json`))
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (!entry.isFile()) continue
+      const canonical = /^[a-f0-9]{64}\.json$/.test(entry.name)
+      const base = /^[a-f0-9]{64}\.json/.exec(entry.name)?.[0]
+      const abandoned =
+        base && isRecoverableDurableJsonTemporaryFile(join(directory, base), entry.name)
+      if ((canonical && !retained.has(entry.name)) || abandoned)
+        await rm(join(directory, entry.name))
+    }
+  }
+}
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const EXECUTION_FILE_EVIDENCE_DIR = 'execution-file-evidence'
@@ -360,16 +485,32 @@ function assertNotebookDocumentShape(value: unknown): asserts value is NotebookR
   }
 }
 
-const decodeNotebookDocument = (contents: string): NotebookRunDocument => {
+type StoredNotebookDocument = Omit<NotebookRunDocument, 'version' | 'runs'> & {
+  version: 1 | 2
+  runs: StoredNotebookRun[]
+}
+
+const decodeNotebookDocument = (contents: string): StoredNotebookDocument => {
   const decoded = decodeVersionedJson(contents, {
-    currentVersion: 1,
+    currentVersion: 2,
+    legacyVersions: [1],
     readVersion: (value) =>
       typeof value === 'object' && value !== null && 'version' in value ? value.version : undefined,
     decode: notebookDocumentCandidate
   })
   if (decoded.status === 'unsupported') throw new UnsupportedNotebookDocumentVersionError()
   if (decoded.status === 'corrupt') throw new CorruptNotebookDocumentError()
-  return decoded.value
+  return decoded.value as unknown as StoredNotebookDocument
+}
+
+const assertStoredNotebookDocumentShape = (document: StoredNotebookDocument): void => {
+  assertNotebookDocumentShape({
+    ...document,
+    runs:
+      document.version === 2
+        ? document.runs.filter((run) => !isNotebookRunReference(run))
+        : document.runs
+  })
 }
 
 // The physical notebooks/<projectId>/<sessionId>/run.json path is the ownership boundary. Validate
@@ -660,10 +801,11 @@ const normalizeDocument = (
 
 // Owns durable run.json persistence for one app storage root.
 class NotebookRunRepository {
+  private readonly records = new NotebookRunRecordStorage()
   private saveQueue: Promise<void> = Promise.resolve()
   private readonly documentCache = new Map<
     string,
-    { mtimeMs: number; size: number; ino: number; document: NotebookRunDocument }
+    { mtimeMs: number; size: number; ino: number; weight: number; document: NotebookRunDocument }
   >()
   private documentCacheBytes = 0
   // ponytail: reuse the bounded document cache; cold/oversized JSON still needs a full read.
@@ -708,6 +850,24 @@ class NotebookRunRepository {
 
   constructor(private readonly storageRoot: string) {}
 
+  private async hydrate(
+    filePath: string,
+    stored: StoredNotebookDocument
+  ): Promise<NotebookRunDocument> {
+    try {
+      const document = {
+        ...stored,
+        version: 1 as const,
+        runs: await this.records.read(dirname(filePath), stored.runs)
+      }
+      assertNotebookDocumentShape(document)
+      return document
+    } catch {
+      // A missing record is corruption, never an absent Notebook that may be recreated.
+      throw new CorruptNotebookDocumentError()
+    }
+  }
+
   // Loads an existing history file or creates the directory skeleton and first run.json.
   async loadOrCreate(request: LoadNotebookRunDocumentRequest): Promise<NotebookRunDocument> {
     if (!request.lane) throw new Error('Notebook writes require an explicit Frame lane.')
@@ -718,15 +878,18 @@ class NotebookRunRepository {
     const read = await readDurableJsonFile(filePath, (contents) => {
       const document = decodeNotebookDocument(contents)
       assertNotebookDocumentOwnership(document, projectId, sessionId)
-      assertNotebookDocumentShape(document)
+      assertStoredNotebookDocumentShape(document)
       return document
     })
     if (read.status === 'found') {
       // Decode $DATA sentinels against the current data root before recomputing session roots,
       // so a relocated data root and the decoded working-file paths agree.
-      const decoded = decodeRunDocumentDataPaths(read.value, this.storageRoot)
+      const hydrated = await this.hydrate(filePath, read.value)
+      const decoded = decodeRunDocumentDataPaths(hydrated, this.storageRoot)
       await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
-      return normalizeDocument(this.storageRoot, request, decoded)
+      const normalized = normalizeDocument(this.storageRoot, request, decoded)
+      this.records.remember(normalized.runs, read.value.runs, dirname(filePath))
+      return normalized
     }
 
     const document = normalizeDocument(this.storageRoot, request, {
@@ -1384,7 +1547,7 @@ class NotebookRunRepository {
         const recovered = await readDurableJsonFile(filePath, (contents) => {
           const document = decodeNotebookDocument(contents)
           assertNotebookDocumentOwnership(document, safeProjectId, safeSessionId)
-          assertNotebookDocumentShape(document)
+          assertStoredNotebookDocumentShape(document)
           return document
         })
         if (recovered.status === 'missing') throw error
@@ -1401,12 +1564,13 @@ class NotebookRunRepository {
       const read = await readDurableJsonFile(filePath, (contents) => {
         const document = decodeNotebookDocument(contents)
         assertNotebookDocumentOwnership(document, safeProjectId, safeSessionId)
-        assertNotebookDocumentShape(document)
+        assertStoredNotebookDocumentShape(document)
         return document
       })
       if (read.status === 'missing') throw new Error(`Notebook document disappeared: ${filePath}`)
       // Decode before normalization for the same reason as loadOrCreate above.
-      const decoded = decodeRunDocumentDataPaths(read.value, this.storageRoot)
+      const hydrated = await this.hydrate(filePath, read.value)
+      const decoded = decodeRunDocumentDataPaths(hydrated, this.storageRoot)
 
       const normalized = normalizeDocument(
         this.storageRoot,
@@ -1417,6 +1581,7 @@ class NotebookRunRepository {
         },
         decoded
       )
+      this.records.remember(normalized.runs, read.value.runs, dirname(filePath))
       const currentInfo = await stat(filePath)
       if (!sameDocumentFileIdentity(fileInfo, currentInfo)) {
         // An atomic replacement landed between read and stat. Retry once so old bytes can never be
@@ -1429,6 +1594,12 @@ class NotebookRunRepository {
         mtimeMs: currentInfo.mtimeMs,
         size: currentInfo.size,
         ino: currentInfo.ino,
+        weight:
+          currentInfo.size +
+          read.value.runs.reduce(
+            (bytes, run) => bytes + (isNotebookRunReference(run) ? run.bytes : 0),
+            0
+          ),
         document: normalized
       })
       return normalized
@@ -1496,6 +1667,12 @@ class NotebookRunRepository {
         recovered.set(run.runId, run)
       }
     }
+    const manifest = await readDurableJsonFile(
+      join(document.notebookSessionRoot, NOTEBOOK_RUN_FILE),
+      decodeNotebookDocument
+    )
+    if (manifest.status === 'found')
+      await this.records.prune(document.notebookSessionRoot, manifest.value.runs)
     return [...recovered.values()].map((run) => ({ projectId, sessionId, run }))
   }
 
@@ -1576,18 +1753,24 @@ class NotebookRunRepository {
   // again instead of pinning complete text and image payloads for the process lifetime.
   private rememberDocument(
     filePath: string,
-    entry: { mtimeMs: number; size: number; ino: number; document: NotebookRunDocument }
+    entry: {
+      mtimeMs: number
+      size: number
+      ino: number
+      weight: number
+      document: NotebookRunDocument
+    }
   ): void {
     const previous = this.documentCache.get(filePath)
     if (previous) {
       this.documentCache.delete(filePath)
-      this.documentCacheBytes -= previous.size
+      this.documentCacheBytes -= previous.weight
     }
 
-    if (entry.size > MAX_DOCUMENT_CACHE_BYTES) return
+    if (entry.weight > MAX_DOCUMENT_CACHE_BYTES) return
 
     this.documentCache.set(filePath, entry)
-    this.documentCacheBytes += entry.size
+    this.documentCacheBytes += entry.weight
     while (
       this.documentCache.size > MAX_DOCUMENT_CACHE_ENTRIES ||
       this.documentCacheBytes > MAX_DOCUMENT_CACHE_BYTES
@@ -1596,7 +1779,7 @@ class NotebookRunRepository {
       if (typeof oldestPath !== 'string') break
       const oldest = this.documentCache.get(oldestPath)
       this.documentCache.delete(oldestPath)
-      this.documentCacheBytes -= oldest?.size ?? 0
+      this.documentCacheBytes -= oldest?.weight ?? 0
     }
   }
 
@@ -1623,13 +1806,24 @@ class NotebookRunRepository {
     // Encode only the serialized copy: `directory` above must stay derived from the absolute in-memory
     // `document.notebookSessionRoot`, never from the $DATA-sentinel-encoded copy, so run.json stores
     // portable "$DATA/..." paths that survive a data-root relocation.
-    const encoded = encodeRunDocumentDataPaths(document, this.storageRoot)
+    const header = encodeRunDocumentDataPaths({ ...document, runs: [] }, this.storageRoot)
+    const runs = await this.records.write(directory, document.runs, (run) =>
+      encodeNotebookRunDataPaths(run, this.storageRoot)
+    )
+    const encoded = {
+      ...header,
+      version: runs.some(isNotebookRunReference) ? 2 : 1,
+      runs
+    }
     await writeDurableJsonFile(filePath, `${JSON.stringify(encoded, null, 2)}\n`)
     const fileInfo = await stat(filePath)
     this.rememberDocument(filePath, {
       mtimeMs: fileInfo.mtimeMs,
       size: fileInfo.size,
       ino: fileInfo.ino,
+      weight:
+        fileInfo.size +
+        runs.reduce((bytes, run) => bytes + (isNotebookRunReference(run) ? run.bytes : 0), 0),
       document
     })
   }

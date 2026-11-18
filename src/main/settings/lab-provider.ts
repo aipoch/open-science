@@ -10,7 +10,7 @@ import {
   labProtocolsToEndpoints,
   labProviderApiEndpoints
 } from '../../shared/lab'
-import { LAB_PROVIDER_ID, labProviderIdentity } from '../../shared/settings'
+import { LAB_PROVIDER_ID, labProviderIdentity } from '../../shared/settings-runtime'
 import type { LabModelCapabilities } from '../../shared/lab'
 import type { StoredProvider } from './types'
 

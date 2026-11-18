@@ -8,7 +8,7 @@ import {
   createPdfStructureNodeRuntime
 } from '@aipoch/pdf-structure'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../../process-tree'
+import { trackOwnedPosixProcessTree, terminateProcessTree } from '../../process-tree'
 import { createPdfStructureEngine } from './engine'
 
 vi.mock('@aipoch/pdf-structure', async (importOriginal) => {
@@ -19,8 +19,9 @@ vi.mock('@aipoch/pdf-structure', async (importOriginal) => {
     createPdfStructureEngine: vi.fn(() => ({}))
   }
 })
-vi.mock('../../process-tree', () => ({
-  registerOwnedPosixProcessGroup: vi.fn(),
+vi.mock('../../process-tree', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../process-tree')>()),
+  trackOwnedPosixProcessTree: vi.fn(),
   terminateProcessTree: vi.fn()
 }))
 const platform = Object.getOwnPropertyDescriptor(process, 'platform')!,
@@ -63,8 +64,8 @@ it('keeps application environment, POSIX registration and confirmed fallback in 
     expect.objectContaining({ detached: process.platform !== 'win32', env: expect.any(Object) })
   )
   if (process.platform !== 'win32')
-    expect(registerOwnedPosixProcessGroup).toHaveBeenCalledWith(child)
-  else expect(registerOwnedPosixProcessGroup).not.toHaveBeenCalled()
+    expect(trackOwnedPosixProcessTree).toHaveBeenCalledWith(child, expect.any(String))
+  else expect(trackOwnedPosixProcessTree).not.toHaveBeenCalled()
   vi.mocked(terminateProcessTree).mockResolvedValue({ reaped: false })
   await expect(owned.stop(child)).rejects.toThrow('termination is unconfirmed')
   vi.mocked(terminateProcessTree).mockResolvedValue({ reaped: true })
@@ -97,7 +98,7 @@ it.each(['ipc', 'stdout', 'missing'])(
     expect(createPdfStructureNodeRuntime).toHaveBeenCalledWith(
       expect.objectContaining({ detached: false })
     )
-    expect(registerOwnedPosixProcessGroup).not.toHaveBeenCalled()
+    expect(trackOwnedPosixProcessTree).not.toHaveBeenCalled()
   }
 )
 it('does not use another host acknowledgement to certify an unexpectedly killed Windows host', async () => {
@@ -110,3 +111,63 @@ it('does not use another host acknowledgement to certify an unexpectedly killed 
   await expect(owned.stop(bad)).rejects.toThrow('termination is unconfirmed')
   expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(bad, 'SIGTERM')
 })
+
+it.skipIf(process.platform === 'win32')(
+  'reaps escaped PDF descendants without stopping a concurrent job after cooperative close',
+  async () => {
+    const actual = await vi.importActual<typeof import('../../process-tree')>('../../process-tree')
+    vi.mocked(trackOwnedPosixProcessTree).mockImplementation(actual.trackOwnedPosixProcessTree)
+    vi.mocked(terminateProcessTree).mockImplementation(actual.terminateProcessTree)
+    const owned = runtime()
+    const root = await mkdtemp(join(tmpdir(), 'pdf-adapter-concurrent-'))
+    roots.push(root)
+    const entry = join(root, 'host.mjs')
+    await writeFile(
+      entry,
+      `
+      import { spawn } from 'node:child_process';
+      const worker = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'],
+        { detached: true, stdio: 'ignore' });
+      worker.unref();
+      process.stdout.write(JSON.stringify({ worker: worker.pid,
+        marker: process.env.OPEN_SCIENCE_PROCESS_TREE_ID }) + '\\n');
+      process.on('message', () => process.send({ type: 'pdf:stopped' }, () => process.exit(0)));
+    `
+    )
+    const workers: number[] = []
+    try {
+      const launch = async (): Promise<{
+        child: ChildProcessWithoutNullStreams
+        marker: string
+      }> => {
+        const child = owned.spawn(entry)
+        children.push(child)
+        const [data] = await once(child.stdout, 'data')
+        const { worker, marker } = JSON.parse(data.toString())
+        workers.push(worker)
+        return { child, marker }
+      }
+      const first = await launch()
+      const second = await launch()
+      expect(first.marker).toEqual(expect.any(String))
+      expect(second.marker).toEqual(expect.any(String))
+      expect(first.marker).not.toBe(second.marker)
+      await owned.stop(first.child)
+      expect(() => process.kill(workers[0], 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+      expect(() => process.kill(second.child.pid!, 0)).not.toThrow()
+      expect(() => process.kill(workers[1], 0)).not.toThrow()
+      await owned.stop(second.child)
+      expect(() => process.kill(workers[1], 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+    } finally {
+      for (const pid of workers) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          /* Production already reaped this fixture. */
+        }
+      }
+      vi.mocked(trackOwnedPosixProcessTree).mockReset()
+      vi.mocked(terminateProcessTree).mockReset()
+    }
+  }
+)

@@ -1,10 +1,7 @@
 import { useCallback, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
-import {
-  hydratePersistedSessionIfPresent,
-  loadPersistedSession
-} from '@/lib/session-persistence/session-persistence'
+import { loadSessionHistoryPage } from '@/lib/session-persistence/session-history'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
@@ -67,15 +64,12 @@ const WorkspaceSidebarContainer = ({
         .sessions.find(
           (candidate) => candidate.id === sessionId && candidate.projectId === projectId
         )
-      if (!session || session.contentLoaded !== false) return
+      if (!session || session.contentLoaded !== false || session.historyPage) return
 
       const pending = previewLoadsRef.current.get(sessionId)
       if (pending) return pending
 
-      const load = loadPersistedSession({ projectId, sessionId })
-        .then((persisted) => {
-          if (persisted) hydratePersistedSessionIfPresent(persisted)
-        })
+      const load = loadSessionHistoryPage({ projectId, sessionId })
         .catch(() => undefined)
         .finally(() => {
           previewLoadsRef.current.delete(sessionId)

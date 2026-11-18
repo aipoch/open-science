@@ -30,6 +30,7 @@ import {
   carryNativeTerminalPlotScope
 } from '../../src/reader/native-source-geometry.js'
 import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
+import { groupPdfTranslationPages, type PdfLayoutPage } from '../../src/reader/layout.js'
 import { applyPdfContentFirstPolicy } from '../../src/reader/content-policy.js'
 import { createPdfTranslationSource, type PdfTranslationSource } from '../../src/reader/source.js'
 import {
@@ -2055,3 +2056,146 @@ it.each([
   )
   expect(JSON.stringify(source)).toBe(before)
 })
+
+it.each(['complete', 'ordinal gap'] as const)(
+  'protects a native bibliography continuing above its left-column heading: %s',
+  (shape) => {
+    const native = (
+        str: string,
+        x: number,
+        y: number,
+        width: number,
+        font = 8,
+        name = 'Citation'
+      ) => ({
+        ...text(str, x, y, width, font, name),
+        fontAscent: 0.8,
+        fontDescent: -0.2,
+        fontVertical: false
+      }),
+      tail = 'Quarterly Methods, 2020.',
+      items = [
+        native('An original ordinary observation belongs to the body.', 55, 70, 213, 10, 'Body'),
+        native('References', 55, 246, 63, 10, 'Heading')
+      ]
+    for (let number = 1; number <= 8; number++) {
+      if (number === 5) items.push(native(tail, 333, 61, 124))
+      const left = number <= 4,
+        y = left ? 264 + (number - 1) * 19 : 83 + (number - 5) * 19,
+        x = left ? 58 : 321,
+        ordinal = shape === 'ordinal gap' && number === 6 ? 9 : number
+      items.push({ ...native(`[${ordinal}]`, x, y, 9), hasEOL: false })
+      items.push(
+        native(
+          number === 4
+            ? 'A. Reader. The long title continues in'
+            : 'A. Reader. An independent publication, 2020.',
+          x + 13,
+          y,
+          190
+        )
+      )
+    }
+    const page: PdfLayoutPage = {
+      page: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items,
+      nativeReferenceEvidence: {
+        complete: true,
+        rules: [],
+        fonts: Object.fromEntries(
+          ['Citation', 'Heading', 'Body'].map((name) => [
+            name,
+            { nativeMetrics: true, vertical: false, ascent: 0.8, descent: -0.2 } as const
+          ])
+        )
+      }
+    }
+    const { units } = groupPdfTranslationPages({ pages: [page], pageCount: 1 })
+    const continued = units.find((unit) => unit.originalStrings.includes(tail))
+    expect(continued).toBeDefined()
+    expect(continued?.preserve).toBe(shape === 'complete' ? 'reference' : undefined)
+    expect(Boolean(continued?.sourceOnly)).toBe(shape === 'complete')
+    const adjacent = units.find((unit) =>
+      unit.source.startsWith('An original ordinary observation')
+    )
+    expect(adjacent).toBeDefined()
+    expect(adjacent?.sourceOnly).toBeUndefined()
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(items.map((_, n) => `1:${n}`).sort())
+  }
+)
+
+it.each(['closed', 'missing URL', 'lost indent'] as const)(
+  'protects a continuous linked bibliography in the right column (%s)',
+  (kind) => {
+    const native = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      size = 8,
+      name = 'Reference'
+    ) => ({
+      ...text(str, x, y, width, size, name),
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false
+    })
+    const tail =
+      kind === 'missing URL'
+        ? 'The section continues with another observation.'
+        : 'https://example.org/records/four'
+    const items = [
+      native('The measured sample was stable across all trials.', 55, 95, 230, 10, 'Body'),
+      native('References', 55, 650, 63, 10, 'Title'),
+      native('[1] Sample archive [n. d.]. https://example.org/archive', 58, 680, 228),
+      ...[2, 3, 4].flatMap((n) => {
+        const y = 695 + (n - 2) * 21
+        return [
+          { ...native(`[${n}]`, 58, y, 9), hasEOL: false },
+          native(
+            n === 4
+              ? 'Ada Reader. 2022. A report available at'
+              : 'Ali Field. 2022. https://example.org/study',
+            71,
+            y,
+            200
+          )
+        ]
+      }),
+      native(tail, kind === 'lost indent' ? 342 : 334, 76, 190),
+      ...[5, 6].flatMap((n) => {
+        const y = 92 + (n - 5) * 25
+        return [
+          { ...native(`[${n}]`, 321, y, 9), hasEOL: false },
+          native('Tess North. 2023. https://example.org/results', 334, y, 201)
+        ]
+      })
+    ]
+    const page: PdfLayoutPage = {
+      page: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items,
+      nativeReferenceEvidence: {
+        complete: true,
+        rules: [],
+        fonts: Object.fromEntries(
+          ['Reference', 'Title', 'Body'].map((name) => [
+            name,
+            { nativeMetrics: true, vertical: false, ascent: 0.8, descent: -0.2 } as const
+          ])
+        )
+      }
+    }
+    const { units } = groupPdfTranslationPages({ pages: [page], pageCount: 1 })
+    expect(units.find((u) => u.originalStrings.includes(tail))?.preserve).toBe(
+      kind === 'closed' ? 'reference' : undefined
+    )
+    expect(units.find((u) => u.originalStrings.includes(items[0].str))?.sourceOnly).toBeUndefined()
+    expect(units.flatMap((u) => u.items).sort()).toEqual(items.map((_, n) => `1:${n}`).sort())
+  }
+)

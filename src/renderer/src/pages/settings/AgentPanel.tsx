@@ -17,7 +17,7 @@ import {
   getClaudeInstallSources,
   getCodexInstallSources,
   getOpencodeInstallSources
-} from '../../../../shared/settings'
+} from '../../../../shared/settings-runtime'
 import {
   isSupportedCodexAcpVersion,
   isSupportedCodexCliVersion,

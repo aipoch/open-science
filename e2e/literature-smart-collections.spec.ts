@@ -377,7 +377,7 @@ test('reviews classified papers in the library table using a local fixture servi
     const page = await app.completeOnboarding()
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
     // Keep the decision rail scrollable on developer screens as well as Mac CI.
-    await page.setViewportSize({ width: 1100, height: 720 })
+    await app.setMainWindowSize(1100, 720)
     const papers = [
       'Randomized trial of rehabilitation after stroke',
       'Blood pressure treatment in adults: a randomized trial',
@@ -760,7 +760,7 @@ test('reviews classified papers in the library table using a local fixture servi
     ).toBeVisible()
     await page.setViewportSize({ width: 1024, height: 768 })
     await page.screenshot({ path: testInfo.outputPath('smart-collection-compact.png') })
-    await page.setViewportSize({ width: 1440, height: 1048 })
+    await app.setMainWindowSizeAndViewport(1440, 1048)
     await page.getByRole('tab', { name: 'Included 3', exact: true }).click()
     const decisionSource = page.getByRole('combobox', { name: 'Decision source', exact: true })
     await decisionSource.click()

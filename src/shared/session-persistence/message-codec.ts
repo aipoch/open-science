@@ -105,7 +105,30 @@ export const isAgentResultDeliveryAttribution = (
   )
 }
 
+export const isScheduledWakeAttribution = (
+  value: unknown
+): value is Extract<MessageAttribution, { feature: 'schedule' }> =>
+  isRecord(value) &&
+  hasOnlyFields(value, [
+    'kind',
+    'feature',
+    'purpose',
+    'scheduleId',
+    'occurrenceId',
+    'scheduledAt'
+  ]) &&
+  value.kind === 'application' &&
+  value.feature === 'schedule' &&
+  value.purpose === 'scheduled-wake' &&
+  typeof value.scheduleId === 'string' &&
+  !!value.scheduleId &&
+  typeof value.occurrenceId === 'string' &&
+  !!value.occurrenceId &&
+  typeof value.scheduledAt === 'number' &&
+  Number.isSafeInteger(value.scheduledAt)
+
 export const sanitizeMessageAttribution = (value: unknown): MessageAttribution | undefined => {
+  if (isScheduledWakeAttribution(value)) return { ...value }
   if (isReviewerCorrectionAttribution(value)) {
     return {
       kind: value.kind,

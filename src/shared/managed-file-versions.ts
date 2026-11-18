@@ -57,6 +57,10 @@ type ManagedFileVersionDescriptor = {
   sizeBytes: number
   checksum: string
   createdAt: string
+  /** Who produced the version, when the history records it. */
+  author?: ManagedFileVersionBinaryEditActor
+  /** Short description saved with a binary edit. */
+  summary?: string
 }
 
 type ManagedFileVersionInspectResult = {
@@ -112,8 +116,10 @@ type ManagedFileVersionErrorShape = {
 type ManagedFileVersionIpcResult<Value> =
   { ok: true; value: Value } | { ok: false; error: ManagedFileVersionErrorShape }
 
-type ManagedFileVersionInspectRequest = ManagedFileIdentity & {
+type ManagedFileVersionInspectRequest = Omit<ManagedFileIdentity, 'projectId'> & {
+  projectId?: string
   versionId?: string
+  versionNumber?: number
   cursor?: string
 }
 type ManagedFileVersionDiffRequest = ManagedFileIdentity & { versionId: string; requestId: string }
@@ -155,6 +161,19 @@ type ManagedFileVersionSaveTextEditRequest = ManagedFileIdentity & {
   expectedHeadVersionId: string
   content: string
   operationId: string
+}
+
+type ManagedFileVersionBinaryEditActor = 'user' | 'agent'
+
+type ManagedFileVersionSaveBinaryEditRequest = ManagedFileIdentity & {
+  restore?: boolean
+  basedOnVersionId: string
+  expectedHeadVersionId: string
+  operationId: string
+  content: Uint8Array
+  actor: ManagedFileVersionBinaryEditActor
+  summary: string
+  opCount: number
 }
 
 type SaveTextEditResult =
@@ -291,6 +310,8 @@ export {
   type ManagedFileVersionInspectRequest,
   type ManagedFileVersionOriginKind,
   type ManagedFileVersionSaveTextEditRequest,
+  type ManagedFileVersionSaveBinaryEditRequest,
+  type ManagedFileVersionBinaryEditActor,
   type ManagedTextEditEligibility,
   type ManagedTextEditUnavailableReason,
   type ManagedTextFormat,

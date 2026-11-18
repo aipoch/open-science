@@ -80,15 +80,15 @@ export function ResearchVideoProgressLine({
           <>
             <div className="flex items-baseline justify-between gap-2">
               <p className="text-sm font-medium text-foreground">
-                {
-                  [
-                    t('Preparing research materials…'),
-                    t('Writing research film…'),
-                    t('Generating animations…'),
-                    t('Generating narration and aligning captions…'),
-                    t('Building player and source package…')
-                  ][filmStep - 1]
-                }
+                {terminal
+                  ? labels[progress.phase]
+                  : [
+                      t('Preparing research materials…'),
+                      t('Writing research film…'),
+                      t('Generating animations…'),
+                      t('Generating narration and aligning captions…'),
+                      t('Building player and source package…')
+                    ][filmStep - 1]}
               </p>
               <span className="shrink-0 tabular-nums">
                 {t('Step {{current}} of {{total}}', { current: filmStep, total: 5 })}

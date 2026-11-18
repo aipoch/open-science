@@ -36,7 +36,7 @@ import type {
   SubagentModelConfiguration,
   VisionModelConfiguration
 } from '../../shared/settings'
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import { SETTINGS_FILE_VERSION } from '../../shared/settings-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type { LocalShellRuntimePreference, WslSelection } from '../../shared/wsl-setup'
 type StoredClassificationService = {

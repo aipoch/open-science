@@ -409,7 +409,7 @@ const useWorkspaceSessionController = ({
         .sessions.find((candidate) => candidate.id === sessionId)
       if (
         !session ||
-        session.contentLoaded === false ||
+        (session.contentLoaded === false && !session.historyPage) ||
         session.specialistBindingPending === true ||
         isWorkspaceSpecialistBarrierInFlight(sessionId)
       )
@@ -424,7 +424,7 @@ const useWorkspaceSessionController = ({
       )
     }
     if (!activeSession) return !newConversationSpecialistUnavailable
-    if (activeSession.contentLoaded === false) return false
+    if (activeSession.contentLoaded === false && !activeSession.historyPage) return false
     if (activeSession.specialistBindingPending === true) return false
     if (isWorkspaceSpecialistBarrierInFlight(activeSession.id)) return false
     if (activeSession.specialistId === undefined) return specialistSendAvailable

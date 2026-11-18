@@ -31,19 +31,20 @@ import {
   type SessionSetupContext
 } from './types'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
-import { CODEX_SUBSCRIPTION_PROVIDER_ID, isCodexSubscriptionProvider } from '../../shared/settings'
+import {
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
+  isCodexSubscriptionProvider
+} from '../../shared/settings-runtime'
 import { prepareCodexRuntimeHomeAuthentication } from '../settings/codex-auth'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../settings/codex-paths'
 import { CODEX_VERSION, spawnCodexWithInstallAdmission } from '../settings/managed-codex'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { clearSystemProxyEnvironment } from '../settings/system-proxy'
-import { registerOwnedPosixProcessGroup } from '../process-tree'
+import { createPosixProcessTreeOwnership, trackOwnedPosixProcessTree } from '../process-tree'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
 import { modelFacingAppMcpToolName } from './app-mcp-names'
-import {
-  createSkillRuntimeAcpServerConfig,
-  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
-} from '../skills/runtime-mcp-server'
+import { createSkillRuntimeAcpServerConfig } from '../skills/runtime-mcp-config'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 
 const CODEX_PROVIDER_ID = 'open-science'
 // Catalog model used only for Codex's local metadata; the Responses bridge rewrites it to the selected
@@ -124,7 +125,11 @@ const CODEX_CHAT_BRIDGE_FEATURES = Object.freeze({
   // Plan namespace in each request when that MCP capability is actually registered; the bridge
   // still exposes no Plan tools for Sessions whose request does not contain this namespace.
   code_mode: {
-    direct_only_tool_namespaces: ['mcp__skills', CODEX_PLAN_BRIDGE_NAMESPACE]
+    direct_only_tool_namespaces: [
+      'mcp__skills',
+      CODEX_PLAN_BRIDGE_NAMESPACE,
+      'mcp__open_science_schedule'
+    ]
   }
 })
 const CODEX_DISABLED_NATIVE_MEMORY = Object.freeze({
@@ -506,12 +511,16 @@ export const createCodexFramework = ({
         ? `"${input.executablePath}"`
         : input.executablePath
     const args = isJavaScript ? [input.executablePath, ...input.args] : input.args
+    const ownership = createPosixProcessTreeOwnership(
+      buildSpawnEnvironment(input, sourceEnv),
+      platform
+    )
 
     const child = spawnCodexWithInstallAdmission(
       [input.executablePath, ...(input.env.CODEX_PATH ? [input.env.CODEX_PATH] : [])],
       () =>
         (input.spawnProcess ?? spawnProcess)(command, args, {
-          env: buildSpawnEnvironment(input, sourceEnv),
+          env: ownership.env,
           stdio: 'pipe',
           // Keep a terminal/dev-runner SIGINT aimed at the Electron application's foreground process
           // group from killing Codex before the app's awaited ACP teardown can mark and reap it. Piped
@@ -523,7 +532,7 @@ export const createCodexFramework = ({
           shell: needsShell
         })
     )
-    if (platform !== 'win32') registerOwnedPosixProcessGroup(child)
+    if (platform !== 'win32') trackOwnedPosixProcessTree(child, ownership.token)
     return child
   },
 

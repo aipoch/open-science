@@ -818,6 +818,7 @@ it('connects committed deletion to the same credential broker used by approval s
     jobRepository: {},
     hostRepository: {},
     notebookInputRegistry: {},
+    pptxDrafts: { subscribe: vi.fn() },
     delegatedWorkRef: {},
     literatureCatalog: { getMany: vi.fn() },
     detectSessionExportBlockingSessions: vi.fn(),

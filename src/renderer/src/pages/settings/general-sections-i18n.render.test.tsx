@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useUpdateStore } from '@/stores/update-store'
-import { APP_ICON_VARIANT_INFOS } from '../../../../shared/settings'
+import { APP_ICON_VARIANT_INFOS } from '../../../../shared/settings-runtime'
 import { AppIconSection } from './AppIconSection'
 import { AppVersionSection } from './AppVersionSection'
 
