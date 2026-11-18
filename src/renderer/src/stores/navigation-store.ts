@@ -241,16 +241,20 @@ const navigationState = (
 const findMostRecentSessionId = (projectId: string): string | undefined =>
   findMostRecentProjectSessionId(useSessionStore.getState().sessions, projectId)
 
-const requestSessionDetailsRecovery = (session: {
+const selectSessionForNavigation = (session: {
   projectId: string
   id: string
   contentLoaded?: boolean
 }): void => {
   const request = { projectId: session.projectId, sessionId: session.id }
   if (session.contentLoaded === false) {
-    useSessionStore.getState().requestSessionDetailsRecovery(request)
+    useSessionStore.setState({
+      selectedSessionId: session.id,
+      sessionDetailsRecoveryRequest: request
+    })
     return
   }
+  useSessionStore.getState().selectSession(session.id)
   useSessionStore.setState({ sessionDetailsRecoveryRequest: undefined })
   const loadOne = typeof window === 'undefined' ? undefined : window.api?.sessions?.loadOne
   if (typeof loadOne !== 'function') return
@@ -465,8 +469,8 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         const session = useSessionStore
           .getState()
           .sessions.find((candidate) => candidate.id === mostRecentSessionId)
-        useSessionStore.getState().selectSession(mostRecentSessionId)
-        if (session && origin !== 'automatic') requestSessionDetailsRecovery(session)
+        if (session && origin !== 'automatic') selectSessionForNavigation(session)
+        else useSessionStore.getState().selectSession(mostRecentSessionId)
       } else {
         useSessionStore.getState().clearSelection()
       }
@@ -493,8 +497,8 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         .sessions.find(
           (candidate) => candidate.projectId === projectId && candidate.id === sessionId
         )
-      useSessionStore.getState().selectSession(sessionId)
-      if (session && origin !== 'automatic') requestSessionDetailsRecovery(session)
+      if (session && origin !== 'automatic') selectSessionForNavigation(session)
+      else useSessionStore.getState().selectSession(sessionId)
 
       if (origin === 'user') recordLastOpenedProject(projectId)
 
