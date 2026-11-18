@@ -3558,11 +3558,10 @@ const useSessionPersistence = (): SessionPersistenceState => {
       catalogRefreshPending.current = true
       return
     }
-    const selectedSessionId = useSessionStore.getState().selectedSessionId
     const result = await loadPersistedSessions(
       window.api.sessions,
       () => true,
-      () => ({ sessionId: selectedSessionId }),
+      () => ({ sessionId: useSessionStore.getState().selectedSessionId }),
       true
     )
     if (!result) return

@@ -25,6 +25,7 @@ import {
   SESSION_MANIFEST_VERSION,
   SessionRevisionConflictError,
   type LoadAllSessionsResult,
+  type ListSessionSummariesResult,
   type PersistedChatSession,
   type SessionSummary
 } from '../../../../shared/session-persistence'
@@ -726,6 +727,46 @@ describe('renderer session persistence bridge', () => {
       { id: 'session-1', contentLoaded: false, messages: [] },
       { id: 'session-2', contentLoaded: false, activeMessageCount: 12, messages: [] }
     ])
+  })
+
+  it('uses the current selection when a summary refresh resolves after navigation', async () => {
+    const deferred = createDeferred<ListSessionSummariesResult>()
+    const first = createPersistedSession({ id: 'session-1' })
+    const second = createPersistedSession({ id: 'session-2' })
+    const summary = (session: PersistedChatSession, number: number): SessionSummary => ({
+      number,
+      id: session.id,
+      projectId: session.projectId,
+      title: session.title,
+      status: session.status,
+      presentedStatus: session.status,
+      pinned: false,
+      revision: 1,
+      activeMessageCount: 0,
+      artifactCount: 0,
+      filesRevision: 0,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      needsStartupRecovery: false
+    })
+    const api = createApi({ list: vi.fn().mockReturnValue(deferred.promise) })
+    useSessionStore.setState({ selectedSessionId: first.id })
+
+    const load = loadPersistedSessions(
+      api,
+      () => true,
+      () => ({ sessionId: useSessionStore.getState().selectedSessionId }),
+      true
+    )
+    useSessionStore.setState({ selectedSessionId: second.id })
+    deferred.resolve({
+      sessions: [summary(first, 1), summary(second, 2)],
+      manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: first.id }
+    })
+
+    await load
+
+    expect(useSessionStore.getState().selectedSessionId).toBe(second.id)
   })
 
   it('also hydrates unopened Sessions that require startup recovery', async () => {
