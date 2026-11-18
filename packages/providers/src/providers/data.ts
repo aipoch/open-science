@@ -1025,8 +1025,7 @@ const definitions: readonly OfficialVendor[] = [
     apiEndpoints: ['chat-completions'],
     baseUrl: 'https://opencode.ai/zen/go/v1',
     apiKeyUrl: 'https://opencode.ai/zen',
-    // OpenCode documents one protocol per model. Keep the catalog bundled so deprecated and temporary
-    // free entries do not appear through the broader live model endpoint.
+    // Offline defaults. Online discovery can add new Go models with supported routes.
     models: [
       { id: 'kimi-k2.7-code', contextWindow: 262_144 },
       {
@@ -1183,7 +1182,8 @@ const definitions: readonly OfficialVendor[] = [
     apiEndpoints: ['chat-completions'],
     baseUrl: 'https://opencode.ai/zen/v1',
     apiKeyUrl: 'https://opencode.ai/zen',
-    // Zen also mixes protocols. Exclude Google-native, deprecated, and explicitly
+    // Online discovery uses the protocols advertised for each Zen model.
+    // For the bundled defaults, exclude Google-native, deprecated, and explicitly
     // product-excluded models while preserving the existing Kimi default. Legacy lower-tier
     // models are not backfilled, and the transient limited-time free entries stay out (the
     // two grandfathered free models at the tail predate that policy).
@@ -1869,18 +1869,6 @@ const definitions: readonly OfficialVendor[] = [
   // Requesty is also a multi-vendor gateway, so it follows OpenRouter at the end of the picker.
   {
     id: 'requesty',
-    modelsListUrl: 'https://router.requesty.ai/v1/models',
-    modelsList: {
-      ...publicCatalog,
-      fields: {
-        contextWindow: 'context_window',
-        maxOutputTokens: 'max_output_tokens',
-        supportsImageInput: 'supports_vision',
-        supportsTools: 'supports_tool_calling',
-        supportsReasoning: 'supports_reasoning',
-        efforts: 'reasoning.supported_efforts'
-      }
-    },
     label: 'Requesty',
     // Like OpenRouter, each curated entry declares its own capability and unknown ids stay
     // conservative.

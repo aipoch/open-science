@@ -207,7 +207,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
     const stored: StoredProvider = {
       id: 'directory',
       type: 'official',
-      vendorId: 'requesty',
+      vendorId: 'opencode',
       name: 'Directory',
       modelCatalog: {
         fetchedAt: 1,
@@ -224,27 +224,35 @@ describe('ProviderRuntimeProjectionOwner', () => {
     expect(readModels).toHaveBeenCalledTimes(1)
   })
 
-  it('excludes a historical full OpenRouter snapshot from views and runtime targets', () => {
-    const owner = new ProviderRuntimeProjectionOwner()
-    const stored: StoredProvider = {
-      id: 'or',
-      name: 'OpenRouter',
-      type: 'official',
-      vendorId: 'openrouter'
+  it.each(['openrouter', 'requesty'] as const)(
+    'excludes a historical full %s snapshot from views and runtime targets',
+    (vendorId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const stored: StoredProvider = {
+        id: vendorId,
+        name: vendorId,
+        type: 'official',
+        vendorId
+      }
+      const models = owner.toProviderView(stored).models
+      const historical = {
+        ...stored,
+        fetchedModels: ['directory-only'],
+        modelCatalogStatus: { attemptedAt: 1, ok: true },
+        modelCatalog: { fetchedAt: 1, models: [{ id: 'directory-only' }] }
+      }
+      expect(owner.toProviderView(historical)).toMatchObject({
+        models,
+        modelCatalog: undefined,
+        modelCatalogStatus: undefined
+      })
+      expect(
+        owner
+          .resolveRuntimeModelCatalog(historical, getAgentFramework('codex'))
+          .map((target) => target.effectiveModel)
+      ).toEqual(models)
     }
-    const models = owner.toProviderView(stored).models
-    const historical = {
-      ...stored,
-      fetchedModels: ['directory-only'],
-      modelCatalog: { fetchedAt: 1, models: [{ id: 'directory-only' }] }
-    }
-    expect(owner.toProviderView(historical)).toMatchObject({ models, modelCatalog: undefined })
-    expect(
-      owner
-        .resolveRuntimeModelCatalog(historical, getAgentFramework('codex'))
-        .map((target) => target.effectiveModel)
-    ).toEqual(models)
-  })
+  )
 
   it('projects DeepSeek native Responses traffic to its documented origin', () => {
     const owner = new ProviderRuntimeProjectionOwner()

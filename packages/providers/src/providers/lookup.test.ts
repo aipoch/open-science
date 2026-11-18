@@ -787,7 +787,7 @@ describe('provider registry', () => {
     expect(resolveVendorBaseUrl('requesty')).toBe('https://router.requesty.ai')
     expect(resolveVendorChatCompletionsBaseUrl('requesty')).toBe('https://router.requesty.ai/v1')
     expect(resolveVendorApiKeyUrl('requesty')).toBe('https://app.requesty.ai/api-keys')
-    expect(resolveVendorModelsUrl('requesty')).toBe('https://router.requesty.ai/v1/models')
+    expect(resolveVendorModelsUrl('requesty')).toBeUndefined()
     expect(usesVendorMessagesApiKeyHeader('requesty')).toBe(false)
 
     expect(getVendorModelContextWindow('requesty', 'openai/gpt-5.4-mini')).toBe(400_000)

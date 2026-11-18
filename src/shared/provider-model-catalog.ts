@@ -22,13 +22,16 @@ export type OfficialCatalogSource = {
   modelCatalog?: CatalogSnapshot
 }
 
+export const usesBundledModelCatalog = (vendorId: OfficialVendorId | undefined): boolean =>
+  vendorId === 'openrouter' || vendorId === 'requesty'
+
 /** Membership comes from the latest complete snapshot; bundled values only fill missing metadata. */
 export function resolveOfficialModelCatalog(source: OfficialCatalogSource): CatalogModel[] {
   const { vendorId, region, modelCatalog } = source
   if (!vendorId) return []
   const vendor = getOfficialVendor(vendorId)
   if (!vendor) return []
-  const curated = vendorId === 'openrouter'
+  const curated = usesBundledModelCatalog(vendorId)
   const live = new Map(
     (curated ? undefined : modelCatalog)?.models.map((model) => [model.id, model])
   )

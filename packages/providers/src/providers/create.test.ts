@@ -529,6 +529,23 @@ it.each([
   }
 )
 
+it.each(['opencode', 'opencode-go'])('discovers a new routable chat model on %s', async (id) => {
+  const route = 'https://opencode.ai/inference/v1'
+  const fetch: typeof globalThis.fetch = async () =>
+    Response.json({
+      data: [
+        { id: 'new-chat', type: 'chat', api: { responses: { base_url: route } } },
+        { id: 'new-embedding', type: 'embedding' }
+      ]
+    })
+  const result = await createProvider({ id, fetch }).listModels()
+  expect(result).toMatchObject({
+    ok: true,
+    models: ['new-chat'],
+    catalog: [{ id: 'new-chat', routes: { responses: route } }]
+  })
+})
+
 it('enriches only listed xAI language models with their reported context windows', async () => {
   const fetch = vi
     .fn<typeof globalThis.fetch>()

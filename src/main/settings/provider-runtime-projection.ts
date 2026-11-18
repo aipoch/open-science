@@ -2,7 +2,8 @@ import { codeBuddyBaseModels, codeBuddySiteForId } from '../../shared/codebuddy-
 import {
   catalogModelApiEndpoints,
   resolveOfficialModelCatalog,
-  isCatalogModelAvailable
+  isCatalogModelAvailable,
+  usesBundledModelCatalog
 } from '../../shared/provider-model-catalog'
 import {
   type ModelProtocol,
@@ -105,6 +106,7 @@ class ProviderRuntimeProjectionOwner {
   }
 
   toProviderView(provider: StoredProvider, activeModel?: string): ProviderView {
+    const bundled = usesBundledModelCatalog(provider.vendorId)
     const hasKey = Boolean(provider.keyRef)
     const needsKey = hasKey && tryDecryptKey(provider.keyRef) === undefined
 
@@ -130,9 +132,8 @@ class ProviderRuntimeProjectionOwner {
       vendorId: provider.vendorId,
       region: provider.region,
       models: this.availableModels(provider),
-      modelCatalog: provider.vendorId === 'openrouter' ? undefined : provider.modelCatalog,
-      modelCatalogStatus:
-        provider.vendorId === 'openrouter' ? undefined : provider.modelCatalogStatus,
+      modelCatalog: bundled ? undefined : provider.modelCatalog,
+      modelCatalogStatus: bundled ? undefined : provider.modelCatalogStatus,
       catalogParameters: provider.catalogParameters,
       maskedKey: hardenKeyMask(provider.keyMask),
       accountEmail: provider.accountEmail,

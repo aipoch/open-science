@@ -7,13 +7,12 @@ import {
 } from '@aipoch/providers'
 import { createProvider } from '@aipoch/providers/client'
 import type {
-  ProviderDraft,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult
 } from '../../shared/settings'
 import { isXaiSubscriptionProvider } from '../../shared/settings-runtime'
 import { netFetchStandard } from '../network-fetch'
-import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
+import { assertProviderDraftLimits, PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import {
   decodeCatalogParameters,
   decodeModelCatalog,
@@ -92,6 +91,14 @@ export class ProviderModelCatalogOwner {
 
   async refresh(request: RefreshProviderModelsRequest): Promise<RefreshProviderModelsResult> {
     const start = Date.now()
+    const draft = request.draft
+    if (draft) {
+      try {
+        assertProviderDraftLimits(draft)
+      } catch {
+        return { ok: false, category: 'unknown', code: 'resource-limit' }
+      }
+    }
     const stored = request.providerId
       ? (await this.repository.getSettings()).providers.find((p) => p.id === request.providerId)
       : undefined
@@ -102,7 +109,6 @@ export class ProviderModelCatalogOwner {
       request.expectedConfigRevision !== (stored?.configRevision ?? 0)
     )
       return { ok: false, category: 'unknown', code: 'stale' }
-    const draft: ProviderDraft | undefined = request.draft
     if (draft && draft.type !== 'official')
       return { ok: false, category: 'unknown', code: 'unsupported' }
     const target = draft

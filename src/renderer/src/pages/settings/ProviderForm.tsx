@@ -1164,9 +1164,13 @@ const ProviderForm = ({
                     <span className={fieldLabelClassName}>{t('Supported models')}</span>
                     <FieldHelp
                       label={t('Supported models')}
-                      content={t(
-                        'Bundled with the app. Refresh from the vendor to pull the latest. Choose one from the Active model selector after adding.'
-                      )}
+                      content={
+                        catalog
+                          ? t(
+                              'Bundled with the app. Refresh from the vendor to pull the latest. Choose one from the Active model selector after adding.'
+                            )
+                          : modelCatalogErrorMessage('unsupported', t)
+                      }
                     />
                   </div>
                   {catalog ? (

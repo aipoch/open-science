@@ -2223,6 +2223,26 @@ describe('ProviderAccountsModule', () => {
     expect(xaiOAuth.quiesce).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    { key: 'é'.repeat(8193) },
+    { name: 'n'.repeat(129) },
+    { catalogDraftToken: 't'.repeat(37) },
+    { region: 'r'.repeat(129) }
+  ])('rejects oversized refresh inputs before discovery', async (input) => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    try {
+      expect(
+        await module.refreshProviderModels({
+          draft: { type: 'official', vendorId: 'opencode', ...input }
+        })
+      ).toEqual({ ok: false, category: 'unknown', code: 'resource-limit' })
+      expect(fetch).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('returns bounded failures for missing model catalogs', async () => {
     await expect(module.refreshProviderModels({ providerId: 'missing-provider' })).resolves.toEqual(
       {

@@ -106,36 +106,44 @@ test('accepts public catalogs and reports missing discovery prerequisites', asyn
   await app.captureMainLog('model-catalog.log')
 })
 
-test('shows only the curated OpenRouter catalog and offers no online refresh', async ({
-  app
-}, testInfo) => {
-  const page = await app.completeOnboarding()
-  const result = await page.evaluate(async () => {
-    const draft = {
-      type: 'official' as const,
-      vendorId: 'openrouter' as const,
-      name: 'OpenRouter',
-      key: 'synthetic-local-key'
-    }
-    const refresh = await window.api.settings.refreshProviderModels({ draft })
-    const saved = await window.api.settings.upsertProvider(draft)
-    return {
-      refresh,
-      models: saved.providers.find((provider) => provider.vendorId === 'openrouter')!.models
-    }
+for (const [vendorId, name] of [
+  ['openrouter', 'OpenRouter'],
+  ['requesty', 'Requesty']
+] as const) {
+  test(`shows only the curated ${name} catalog and offers no online refresh`, async ({
+    app
+  }, testInfo) => {
+    const page = await app.completeOnboarding()
+    const result = await page.evaluate(
+      async ({ vendorId, name }) => {
+        const draft = {
+          type: 'official' as const,
+          vendorId,
+          name,
+          key: 'synthetic-local-key'
+        }
+        const refresh = await window.api.settings.refreshProviderModels({ draft })
+        const saved = await window.api.settings.upsertProvider(draft)
+        return {
+          refresh,
+          models: saved.providers.find((provider) => provider.vendorId === vendorId)!.models
+        }
+      },
+      { vendorId, name }
+    )
+    expect(result.refresh).toMatchObject({ ok: false, code: 'unsupported' })
+    const settings = await openSettingsPage(page, 'Model')
+    await settings
+      .locator('[data-slot="settings-list-row"]')
+      .filter({ hasText: name })
+      .getByRole('button')
+      .nth(1)
+      .click()
+    await expect(settings.getByText(result.models[0], { exact: true }).first()).toBeVisible()
+    await expect(settings.getByRole('button', { name: 'Refresh model list' })).toHaveCount(0)
+    await settings.screenshot({ path: testInfo.outputPath(`${vendorId}-curated.png`) })
   })
-  expect(result.refresh).toMatchObject({ ok: false, code: 'unsupported' })
-  const settings = await openSettingsPage(page, 'Model')
-  await settings
-    .locator('[data-slot="settings-list-row"]')
-    .filter({ hasText: 'OpenRouter' })
-    .getByRole('button')
-    .nth(1)
-    .click()
-  await expect(settings.getByText(result.models[0], { exact: true }).first()).toBeVisible()
-  await expect(settings.getByRole('button', { name: 'Refresh model list' })).toHaveCount(0)
-  await settings.screenshot({ path: testInfo.outputPath('openrouter-curated.png') })
-})
+}
 
 test('clears the previous vendor key and workspace when switching provider', async ({
   app
