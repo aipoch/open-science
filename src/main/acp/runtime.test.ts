@@ -5994,13 +5994,11 @@ describe('ACP runtime session management', () => {
       scheduleDelivery: (expectedCommandId) =>
         (
           runtime as unknown as {
-            scheduleQueuedPlanDelivery: (
-              projectId: string,
-              sessionId: string,
-              expectedCommandId?: string
-            ) => void
+            planContinuations: {
+              schedule: (projectId: string, sessionId: string, expectedCommandId?: string) => void
+            }
           }
-        ).scheduleQueuedPlanDelivery('project-1', 'restored-plan-session', expectedCommandId)
+        ).planContinuations.schedule('project-1', 'restored-plan-session', expectedCommandId)
     }
   }
 
@@ -9996,6 +9994,7 @@ describe('ACP runtime session management', () => {
         'end-while-running',
         'timeout',
         'unknown',
+        'opaque-code',
         'post-dispatch',
         'prepared',
         'prepared-attachment-failed-write',
@@ -10065,7 +10064,7 @@ describe('ACP runtime session management', () => {
               admissionEntered = true
               await admission.promise
             } else {
-              throw Object.assign(new Error('temporary admission failure'), {
+              const error = Object.assign(new Error('temporary admission failure'), {
                 code:
                   scenario === 'timeout'
                     ? 'ETIMEDOUT'
@@ -10073,6 +10072,14 @@ describe('ACP runtime session management', () => {
                       ? undefined
                       : 'EAGAIN'
               })
+              if (scenario === 'opaque-code') {
+                Object.defineProperty(error, 'code', {
+                  get() {
+                    throw new Error('Unreadable provider error code')
+                  }
+                })
+              }
+              throw error
             }
           }
           return structuredClone(persisted)
@@ -10304,10 +10311,13 @@ describe('ACP runtime session management', () => {
         expect(persisted.status).toBe('waiting-for-user')
         expect(persisted.activities?.[0].elicitation?.state).toBe('answered')
         expect(persisted.activities?.[0].elicitation?.continuationRecovery?.retryable).toBe(
-          scenario === 'timeout' || scenario === 'unknown' ? undefined : true
+          ['timeout', 'unknown', 'opaque-code'].includes(scenario) ? undefined : true
         )
       })
-      if (scenario === 'timeout' || scenario === 'unknown') {
+      if (['timeout', 'unknown', 'opaque-code'].includes(scenario)) {
+        await vi.waitFor(() =>
+          expect(runtime.resourceDiagnosticSnapshot().additionalActivity).toBe(false)
+        )
         await expect(
           coordinator.respondToElicitation({ ...response, retryContinuation: true })
         ).rejects.toThrow('cannot be retried safely')
