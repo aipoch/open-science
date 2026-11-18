@@ -2334,7 +2334,13 @@ const loadPersistedSessions = async (
     const selected = selection?.sessionId ? hydratedSessions.get(selection.sessionId) : undefined
     useSessionStore
       .getState()
-      .hydrateSessionSummaries(result.sessions, selected, result.manifest, selection)
+      .hydrateSessionSummaries(
+        result.sessions,
+        selected,
+        result.manifest,
+        selection,
+        preserveLocalDrafts
+      )
     for (const hydrated of hydratedSessions.values()) {
       if (hydrated && hydrated.id !== selected?.id) {
         useSessionStore.getState().upsertPersistedSession(hydrated)
@@ -4187,12 +4193,17 @@ const useSessionPersistence = (): SessionPersistenceState => {
         ) {
           presentOutstandingWriteFailures()
         }
-        const selected = state.sessions.find(
-          (session) =>
+        const recoveryRequest = state.sessionDetailsRecoveryRequest
+        const selected = state.sessions.find((session) => {
+          const needsSessionDetailsRecovery =
+            recoveryRequest?.projectId === session.projectId &&
+            recoveryRequest.sessionId === session.id
+          return (
             session.id === state.selectedSessionId &&
             session.contentLoaded === false &&
-            !session.historyPage
-        )
+            (!session.historyPage || needsSessionDetailsRecovery)
+          )
+        })
         if (selected && !loadingSessionContent.has(selected.id)) {
           loadingSessionContent.add(selected.id)
           const sessionLoadKey = `${selected.projectId}\0${selected.id}`
@@ -4211,33 +4222,34 @@ const useSessionPersistence = (): SessionPersistenceState => {
             if (pending?.projectId === selected.projectId && pending.sessionId === selected.id)
               useSessionStore.setState({ sessionDetailsRecoveryRequest: undefined })
           }
-          void (
-            supportsPages
-              ? loadSessionHistoryPage({
+          const initialLoad = supportsPages
+            ? recoverSessionDetails
+              ? Promise.resolve()
+              : loadSessionHistoryPage({
                   projectId: selected.projectId,
                   sessionId: selected.id
-                }).then(async () => {
-                  if (!recoverSessionDetails) return
-                  await ensureSessionContentLoaded(
-                    {
-                      projectId: selected.projectId,
-                      sessionId: selected.id,
-                      recoverSessionDetails: true
-                    },
-                    window.api.sessions
-                  )
-                  clearRecoveryRequest()
                 })
-              : loadPersistedSession(
-                  { projectId: selected.projectId, sessionId: selected.id },
-                  undefined,
-                  recoverSessionDetails ? { recoverSessionDetails: true } : undefined
-                ).then((session) => {
-                  if (recoverSessionDetails && session) clearRecoveryRequest()
-                  return session
-                })
-          )
-            .then((session) => {
+            : loadPersistedSession(
+                { projectId: selected.projectId, sessionId: selected.id },
+                undefined,
+                recoverSessionDetails ? { recoverSessionDetails: true } : undefined
+              ).then((session) => {
+                if (recoverSessionDetails && session) clearRecoveryRequest()
+                return session
+              })
+          void initialLoad
+            .then(async (session) => {
+              if (recoverSessionDetails && supportsPages) {
+                await ensureSessionContentLoaded(
+                  {
+                    projectId: selected.projectId,
+                    sessionId: selected.id,
+                    recoverSessionDetails: true
+                  },
+                  window.api.sessions
+                )
+                clearRecoveryRequest()
+              }
               if (!isMounted || !isCurrentSessionLoad()) return
               setSessionLoadErrorsBySession((current) => {
                 const next = { ...current }

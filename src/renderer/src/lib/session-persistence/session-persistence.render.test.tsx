@@ -261,6 +261,42 @@ describe('session persistence startup', () => {
     expect(displayed.historyPage?.hasMore).toBe(true)
   })
 
+  it('recovers Session Details when an existing history page is reopened', async () => {
+    const persisted = createPersistedSession({ number: 1 })
+    const loadOne = installHistory([persisted])
+    window.api.sessions.loadHistoryPage = vi.fn().mockResolvedValue({
+      projectId: persisted.projectId,
+      sessionId: persisted.id,
+      revision: 0,
+      session: persisted,
+      totalItems: 1,
+      hasMore: false
+    })
+    await act(async () => root.render(<Probe />))
+    await act(async () => {
+      useSessionStore.getState().selectSession(persisted.id)
+      await Promise.resolve()
+    })
+    expect(useSessionStore.getState().sessions[0].historyPage).toBeDefined()
+    expect(loadOne).not.toHaveBeenCalled()
+
+    await act(async () => {
+      useSessionStore.getState().requestSessionDetailsRecovery({
+        projectId: persisted.projectId,
+        sessionId: persisted.id
+      })
+      await Promise.resolve()
+    })
+
+    expect(loadOne).toHaveBeenCalledWith({
+      projectId: persisted.projectId,
+      sessionId: persisted.id,
+      recoverSessionDetails: true
+    })
+    expect(useSessionStore.getState().sessionDetailsRecoveryRequest).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].contentLoaded).not.toBe(false)
+  })
+
   it('reclaims inactive history pages under the existing sixteen-session retention limit', async () => {
     const histories = Array.from({ length: 17 }, (_, index) =>
       createPersistedSession({
