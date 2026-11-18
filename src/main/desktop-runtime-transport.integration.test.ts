@@ -907,6 +907,33 @@ describe('native desktop requests over the authenticated connection', () => {
     }
   })
 
+  it('allows a progressing 4K render to cross one hour', async () => {
+    const started = Promise.withResolvers<void>()
+    const output = Promise.withResolvers<string>()
+    const value = await nativeSetup(async () => {
+      started.resolve()
+      return output.promise
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const htmlPath = '/film/player.html'
+      const pending = value.server.requestNative({
+        operation: 'research-video-mp4',
+        htmlPath,
+        encoderPath: '/tools/encoder',
+        probePath: '/tools/probe',
+        resolution: '4k'
+      })
+      await started.promise
+      await vi.advanceTimersByTimeAsync(3_602_000)
+      output.resolve(htmlPath + '.mp4')
+      await expect(pending).resolves.toBe(htmlPath + '.mp4')
+    } finally {
+      vi.useRealTimers()
+      value.client.close()
+    }
+  })
+
   it('times out native dialogs, cancels the client operation and retains the command connection', async () => {
     let signal: AbortSignal | undefined
     const value = await nativeSetup(async (_request, callerSignal) => {

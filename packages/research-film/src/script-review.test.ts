@@ -76,10 +76,13 @@ it('requires an introduction on both tracks even when the model passes all nine 
     score: 8,
     findings: [expect.stringContaining('hook, line 0')]
   })
+  draft.scenes[0].lines.pop()
   draft.scenes[0].lines[0] = {
     caption: 'How close did an Open-Science agent come?',
     say: 'How close did the agent come?'
   }
+  expect((await scoreFilmScript(draft, review, signal)).score).toBe(8)
+  draft.scenes[0].lines[0].say = 'How close did it come?'
   expect((await scoreFilmScript(draft, review, signal)).score).toBe(8)
   draft.scenes[0].lines = [
     { caption: 'How close did an Open-Science agent come?' },

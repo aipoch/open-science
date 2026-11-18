@@ -308,11 +308,18 @@ it('seeks in the live player for visual defects without starting an encoder', as
     await writeFile(htmlPath, '<meta name="open-science-research-video" content="1">')
     const issues = [{ scene: 'setup', script: 'anims/setup.js', message: 'Overlapping labels' }]
     electron.executeJavaScript
+      .mockResolvedValueOnce({ W: 1080, H: 1920, duration: 3 })
+      .mockResolvedValueOnce({ issues: [], frames: [{ scene: 'setup', time: 1.5 }] })
       .mockResolvedValueOnce({ W: 1920, H: 1080, duration: 3 })
       .mockResolvedValueOnce({ issues, frames: [{ scene: 'setup', time: 1.5 }] })
     await expect(
       checkResearchVideoHtml({ htmlPath, includeFrames: true }, new AbortController().signal)
-    ).resolves.toEqual({ issues, frames: [] })
+    ).resolves.toEqual({
+      issues: [{ ...issues[0], message: '16x9: Overlapping labels' }],
+      frames: []
+    })
+    expect(electron.loadURL).toHaveBeenNthCalledWith(1, expect.stringContaining('ar=9x16'))
+    expect(electron.loadURL).toHaveBeenNthCalledWith(2, expect.stringContaining('ar=16x9'))
     expect(electron.executeJavaScript).toHaveBeenCalledWith('window.__checkFilm()')
     expect(encode).not.toHaveBeenCalled()
   } finally {

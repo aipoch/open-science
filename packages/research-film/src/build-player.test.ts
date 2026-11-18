@@ -79,6 +79,9 @@ describe('research video source boundaries', () => {
     expect(JSON.parse(Buffer.from(liveSources['manifest.json']).toString()).provenance).toEqual(
       provenance
     )
+    expect((await readFile(live.playerPath, 'utf8')).slice(0, 96)).toContain(
+      '<!--open-science-film-card:9:live-->'
+    )
     expect(await readFile(live.playerPath, 'utf8')).toContain('"scriptScore":9')
     await writeFile(options.specPath, JSON.stringify({ ...spec, session: 'engine/js/stage.js' }))
     await expect(buildResearchVideoPlayer(options)).rejects.toThrow(

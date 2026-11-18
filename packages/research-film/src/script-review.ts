@@ -71,17 +71,23 @@ function filmNarration(spec: VideoSpec): FilmNarration {
 function agentIntroductionIssue(narration: FilmNarration): string | undefined {
   // Check the listener's script as well as the viewer's. Keep references to other
   // kinds of agents (for example, a contrast agent) in their scientific context.
+  const lines = narration.flatMap((scene) =>
+    scene.lines.map((line, i) => ({ ...line, scene: scene.id, i }))
+  )
+  const branded = /\bOpen[- ]Science agent\b/i
+  const introduction = lines.find(
+    (line) => branded.test(line.caption) || branded.test(line.say ?? '')
+  )
+  if (!introduction) return
   for (const track of ['caption', 'say'] as const) {
-    const lines = narration.flatMap((scene) =>
-      scene.lines.map((line, i) => ({ text: line[track] ?? line.caption, scene: scene.id, i }))
-    )
-    if (!lines.some(({ text }) => /\bOpen[- ]Science agent\b/i.test(text))) continue
-    for (const { text, scene, i } of lines) {
+    for (const line of lines) {
       const first =
-        /\b(?:an Open[- ]Science agent|(?:the )?Open[- ]Science agent|the agent)\b/i.exec(text)
-      if (!first) continue
-      if (/^an Open[- ]Science agent$/i.test(first[0])) break
-      return `In ${scene}, line ${i}, introduce “An Open-Science agent” at its first mention. Use “the agent” or “it” afterwards.`
+        /\b(?:an Open[- ]Science agent|(?:the )?Open[- ]Science agent|the agent)\b/i.exec(
+          line[track] ?? line.caption
+        )
+      if (first && /^an Open[- ]Science agent$/i.test(first[0])) break
+      if (first || line === introduction)
+        return `In ${line.scene}, line ${line.i}, introduce “An Open-Science agent” at its first mention. Use “the agent” or “it” afterwards.`
     }
   }
 }

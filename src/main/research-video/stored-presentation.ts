@@ -1,7 +1,7 @@
 import { createLogger } from '@aipoch/diagnostics/node'
 import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from '@aipoch/research-film/contracts'
 import { createHash } from 'node:crypto'
-import { lstat, readdir, rm, rmdir } from 'node:fs/promises'
+import { open, lstat, readdir, rm, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DurableJsonReadLimitError, readFileWithinLimit } from '@aipoch/durable-files'
 import { z } from 'zod'
@@ -81,6 +81,27 @@ export async function readResearchFilmReceipt(
   }
 }
 
+/** Read only the bounded marker emitted by the player builder, never load or execute the film. */
+export async function readResearchFilmCard(
+  playerPath: string
+): Promise<Pick<ResearchVideoPresentation, 'scriptScore' | 'sessionAppMode'>> {
+  const handle = await open(playerPath, 'r')
+  try {
+    const prefix = Buffer.alloc(96)
+    const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0)
+    const match = /^<!doctype html><!--open-science-film-card:(9?):(live|drawn|)-->/.exec(
+      prefix.toString('utf8', 0, bytesRead)
+    )
+    const mode = match?.[2]
+    return {
+      ...(match?.[1] && { scriptScore: 9 }),
+      ...((mode === 'live' || mode === 'drawn') && { sessionAppMode: mode })
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
 export async function readStoredResearchFilm(
   root: string,
   request: ResearchVideoPresentationRequest,
@@ -102,9 +123,11 @@ export async function readStoredResearchFilm(
   if (!receipt) return undefined
   const directory = join(base, receipt.id)
   if (!(await hasResearchFilmOutputs(directory))) return undefined
+  const playerPath = join(directory, 'output', 'player.html')
   return {
     ...receipt,
-    playerPath: join(directory, 'output', 'player.html'),
+    ...(await readResearchFilmCard(playerPath)),
+    playerPath,
     sourcePath: join(directory, 'output', 'sources.zip')
   }
 }

@@ -306,7 +306,10 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
                 {researchVideoResolutionSchema.options.map((resolution) => (
                   <DropdownMenuItem
                     key={resolution}
-                    onSelect={() => void exportVideo(resolution, installBytes !== undefined)}
+                    onSelect={() => {
+                      if (installBytes !== undefined) setExportResolution(resolution)
+                      else void exportVideo(resolution)
+                    }}
                   >
                     {resolutionLabel(resolution)}
                   </DropdownMenuItem>
@@ -379,6 +382,7 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
     document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true' && (
       <div className="flex min-w-0 shrink-0 items-center gap-3 border-b border-border-300 bg-bg-000 px-3 py-2">
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          {RESEARCH_VIDEO_EXPORT_OPTIONS[exportResolution].label} ·{' '}
           {t('Video export components required: {{size}} MiB', {
             size: (installBytes / 1024 / 1024).toFixed(1)
           })}

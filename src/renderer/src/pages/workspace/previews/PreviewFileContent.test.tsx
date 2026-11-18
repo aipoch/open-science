@@ -813,6 +813,8 @@ describe('PreviewFileContent', () => {
     })
     await chooseVideoResolution(button('Render video (MP4)'), '4K')
     expect(window.api.localModels.install).not.toHaveBeenCalled()
+    await chooseVideoResolution(button('Render video (MP4)'), '1080p')
+    expect(window.api.localModels.install).not.toHaveBeenCalled()
     await act(async () => button('Install and export').click())
     expect(window.api.localModels.install).toHaveBeenCalledExactlyOnceWith('video-export')
     expect(window.api.previewResources.exportResearchVideo).toHaveBeenCalledTimes(1)
@@ -821,7 +823,7 @@ describe('PreviewFileContent', () => {
     expect(window.api.previewResources.exportResearchVideo).toHaveBeenCalledTimes(2)
     expect(window.api.previewResources.exportResearchVideo).toHaveBeenLastCalledWith({
       resourceId: expect.any(String),
-      resolution: '4k'
+      resolution: '1080p'
     })
     expect(button('Render video (MP4)')).toBeDefined()
     vi.useRealTimers()

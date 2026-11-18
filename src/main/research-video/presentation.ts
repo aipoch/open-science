@@ -730,6 +730,7 @@ export function createResearchVideoPresentationOwner(options: {
         const generated = await filmAttempt.run(attemptContext, () =>
           generateResearchFilm({
             source,
+            drawnSessionApp: sessionAppMode === 'drawn',
             directory: job!,
             author: options,
             signal,
@@ -768,6 +769,8 @@ export function createResearchVideoPresentationOwner(options: {
           })
         )
         if (source.sessionApp) sessionAppMode = generated.usedSessionApp ? 'live' : 'drawn'
+        if (source.sessionApp && !generated.usedSessionApp)
+          await diskStep(() => rm(join(job!, 'libs'), { recursive: true, force: true }))
         saved.built = {
           id,
           title: generated.title,
@@ -794,7 +797,8 @@ export function createResearchVideoPresentationOwner(options: {
       if (!(await diskStep(() => hasResearchFilmOutputs(pendingDirectory ? job! : outputJob))))
         throw new Error('Missing or empty research presentation output.')
       if (pendingDirectory) await diskStep(() => rename(job!, outputJob))
-      const receipt = JSON.stringify(saved.built)
+      const { id: filmId, title, duration } = saved.built!
+      const receipt = JSON.stringify({ id: filmId, title, duration })
       signal.throwIfAborted()
       await diskStep(() => writeDurableJsonFile(join(publishBase, 'latest.json'), receipt), true)
       completedResult = {

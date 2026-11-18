@@ -1,3 +1,4 @@
+import { researchVideoExportTimeout } from '@aipoch/research-film/contracts'
 import { processBirthIdentity } from './process-birth-identity'
 import {
   serviceStopDeadline,
@@ -324,7 +325,7 @@ export async function startDesktopRuntimeTransport(options: {
               timer = setTimeout(
                 abort,
                 request.operation === 'research-video-mp4'
-                  ? 3_601_000
+                  ? researchVideoExportTimeout(request.resolution ?? '720p', 3600) + 120_000
                   : request.operation === 'conversation-pdf'
                     ? request.timeoutMs + 1000
                     : request.operation === 'reviewer-render'

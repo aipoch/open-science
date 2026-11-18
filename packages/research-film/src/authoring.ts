@@ -240,6 +240,8 @@ export async function authorResearchFilmSource(options: {
           if (panel.type !== revisedPanel.type) throw new Error(cueError)
           panel.at = revisedPanel.at
           panel.until = revisedPanel.until
+          for (const field of ['note_at', 'badge_at', 'total_at', 'foot_at'])
+            panel[field] = revisedPanel[field]
           for (const field of ['items', 'rows', 'marks', 'elements'] as const) {
             const items = panel[field]
             if (!items) continue
@@ -404,6 +406,7 @@ export async function generateResearchFilm(
     generate: import('./generation.js').ResearchVideoGenerate
     modelDirectory: string
     modelRevision: string
+    drawnSessionApp?: boolean
     engineDirectory: string
     onProgress?: (progress: import('./progress.js').ResearchVideoStep) => void
     reviewPlayer?: (
@@ -457,6 +460,7 @@ export async function generateResearchFilm(
           ...options.source.provenance,
           kind: 'session-source-snapshot',
           ...(scriptScore !== undefined && { scriptScore }),
+          ...(options.drawnSessionApp && { sessionAppMode: 'drawn' }),
           modelRevision: options.modelRevision
         }
       },

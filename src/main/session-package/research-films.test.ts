@@ -121,7 +121,7 @@ async function saveFilm(
   )
   await writeFile(
     join(directory, 'output/player.html'),
-    `<html><body>${title}<audio controls></audio></body></html>`
+    `<!doctype html>${title === 'Branch 0' ? '<!--open-science-film-card:9:drawn-->' : ''}<html><body>${title}<audio controls></audio></body></html>`
   )
   await writeFile(
     join(directory, 'output/sources.zip'),
@@ -205,6 +205,9 @@ it('round-trips all branches, plays without generation, forwards opt-in films an
     for (const [index, branch] of branches.entries()) {
       const status = await owner.status({ ...imported, branchId: origin.identities[branch.id] })
       expect(status.result?.title).toBe(`Branch ${index}`)
+      if (index === 0)
+        expect(status.result).toMatchObject({ scriptScore: 9, sessionAppMode: 'drawn' })
+      else expect(status.result?.scriptScore).toBeUndefined()
       expect(await readFile(status.result!.playerPath, 'utf8')).toContain(`Branch ${index}`)
     }
     expect(acquireUse).not.toHaveBeenCalled()

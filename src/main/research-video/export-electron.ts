@@ -111,11 +111,12 @@ async function withFilmPlayer<T>(
     setupSignal: AbortSignal,
     viewport: FilmViewport
   ) => Promise<T>,
-  resolution?: ResearchVideoResolution
+  resolution?: ResearchVideoResolution,
+  aspect: '16x9' | '9x16' = '16x9'
 ): Promise<T> {
   await acquireRenderSlot(signal)
   try {
-    return await openFilmPlayer(htmlPath, signal, inspectPlayer, resolution)
+    return await openFilmPlayer(htmlPath, signal, inspectPlayer, resolution, aspect)
   } finally {
     const next = renderWaiters.values().next().value
     if (next) next()
@@ -132,7 +133,8 @@ async function openFilmPlayer<T>(
     setupSignal: AbortSignal,
     viewport: FilmViewport
   ) => Promise<T>,
-  resolution?: ResearchVideoResolution
+  resolution?: ResearchVideoResolution,
+  aspect: '16x9' | '9x16' = '16x9'
 ): Promise<T> {
   signal.throwIfAborted()
   const setupSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
@@ -147,7 +149,9 @@ async function openFilmPlayer<T>(
   const isolated = (renderSession ??= createRenderSession())
   if (needsReset) await resetRenderSession(isolated, signal)
   signal.throwIfAborted()
-  const playerUrl = `https://research-video.invalid/player?render&ratio=16x9&job=${randomUUID()}`
+  const width = aspect === '9x16' ? 1080 : 1920
+  const height = aspect === '9x16' ? 1920 : 1080
+  const playerUrl = `https://research-video.invalid/player?render&ar=${aspect}&job=${randomUUID()}`
   let activeWindow: BrowserWindow | undefined
   needsReset = true
   try {
@@ -167,8 +171,8 @@ async function openFilmPlayer<T>(
     activePlayerUrl = playerUrl
     const window = (activeWindow = new BrowserWindow({
       show: false,
-      width: 1920,
-      height: 1080,
+      width,
+      height,
       useContentSize: true,
       webPreferences: {
         session: isolated,
@@ -187,7 +191,7 @@ async function openFilmPlayer<T>(
     const zoom = resolution
       ? Math.max(1, RESEARCH_VIDEO_EXPORT_OPTIONS[resolution].width / (1920 * displayScale))
       : 1
-    const viewport = { width: Math.ceil(1920 * zoom), height: Math.ceil(1080 * zoom) }
+    const viewport = { width: Math.ceil(width * zoom), height: Math.ceil(height * zoom) }
     if (zoom > 1) window.setContentSize(viewport.width, viewport.height)
     window.webContents.setZoomFactor(zoom)
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -203,8 +207,8 @@ async function openFilmPlayer<T>(
       H: number
     }
     if (
-      metadata.W !== 1920 ||
-      metadata.H !== 1080 ||
+      metadata.W !== width ||
+      metadata.H !== height ||
       !Number.isFinite(metadata.duration) ||
       metadata.duration <= 0 ||
       metadata.duration > 3600
@@ -223,34 +227,50 @@ export async function checkResearchVideoHtml(
   request: { htmlPath: string; includeFrames: boolean },
   parentSignal: AbortSignal
 ): Promise<FilmVisualResult> {
-  const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(120_000)])
-  return withFilmPlayer(request.htmlPath, signal, async (window, stage) => {
-    const inspect = <T>(work: () => Promise<T>): Promise<T> => waitForFilmStep(signal, work)
-    const result = filmVisualCheckSchema.parse(
-      await inspect(() => window.webContents.executeJavaScript('window.__checkFilm()'))
+  const check = (aspect: '16x9' | '9x16'): Promise<FilmVisualResult> => {
+    const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(120_000)])
+    return withFilmPlayer(
+      request.htmlPath,
+      signal,
+      async (window, stage) => {
+        const inspect = <T>(work: () => Promise<T>): Promise<T> => waitForFilmStep(signal, work)
+        const result = filmVisualCheckSchema.parse(
+          await inspect(() => window.webContents.executeJavaScript('window.__checkFilm()'))
+        )
+        const frames: FilmVisualResult['frames'] = []
+        if (aspect === '16x9' && request.includeFrames && !result.issues.length) {
+          for (const { scene, time } of result.frames) {
+            if (time > stage.duration) throw new Error('Invalid film review time')
+            await inspect(() =>
+              window.webContents.executeJavaScript(
+                `window.__seek(${time}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
+              )
+            )
+            const image = await inspect(() =>
+              window.webContents.capturePage({ x: 0, y: 0, width: stage.W, height: stage.H })
+            )
+            if (image.isEmpty()) throw new Error('The HTML review frame was empty.')
+            const jpeg = image
+              .resize({ width: 960, height: 540, quality: 'best' })
+              .toJPEG(78)
+              .toString('base64')
+            frames.push({ scene, time, jpeg })
+          }
+        }
+        return {
+          issues: result.issues.map((issue) => ({
+            ...issue,
+            message: (aspect + ': ' + issue.message).slice(0, 500)
+          })),
+          frames
+        }
+      },
+      undefined,
+      aspect
     )
-    const frames: FilmVisualResult['frames'] = []
-    if (request.includeFrames && !result.issues.length) {
-      for (const { scene, time } of result.frames) {
-        if (time > stage.duration) throw new Error('Invalid film review time')
-        await inspect(() =>
-          window.webContents.executeJavaScript(
-            `window.__seek(${time}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
-          )
-        )
-        const image = await inspect(() =>
-          window.webContents.capturePage({ x: 0, y: 0, width: stage.W, height: stage.H })
-        )
-        if (image.isEmpty()) throw new Error('The HTML review frame was empty.')
-        const jpeg = image
-          .resize({ width: 960, height: 540, quality: 'best' })
-          .toJPEG(78)
-          .toString('base64')
-        frames.push({ scene, time, jpeg })
-      }
-    }
-    return { issues: result.issues, frames }
-  })
+  }
+  const portrait = await check('9x16')
+  return portrait.issues.length ? portrait : check('16x9')
 }
 
 export async function renderResearchVideoMp4(

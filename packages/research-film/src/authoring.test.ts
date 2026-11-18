@@ -208,6 +208,8 @@ it('preserves repaired visuals while applying later narration and cue correction
           panels: [
             {
               type: 'stats',
+              total: 'Total',
+              total_at: '0:uncertain',
               items: [{ value: '?', label: 'Evidence', at: '0:uncertain' }]
             },
             {
@@ -233,6 +235,7 @@ it('preserves repaired visuals while applying later narration and cue correction
     const rewritten = structuredClone(original)
     rewritten.scenes[0].lines = [{ caption: 'What does the evidence establish?' }]
     rewritten.scenes[1].lines = [{ caption: 'The evidence is inconclusive.' }]
+    rewritten.scenes[1].panels[0].total_at = '0:inconclusive'
     rewritten.scenes[1].panels[0].items![0].at = '0:inconclusive'
     rewritten.scenes[1].panels[0].items![0].value = 'Unrequested new value'
     rewritten.scenes[1].panels[1].right!.at = '0:inconclusive'
