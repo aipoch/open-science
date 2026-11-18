@@ -157,7 +157,14 @@ export async function composeComputeRecovery({
           // Session Details recovery is local to the Session the user opens. Compute Host access
           // is different: headless and early runtime paths can resolve targets before a renderer
           // catalog read, so restore that per-Session authority before polling.
-          await hydrateSessionComputeHosts()
+          try {
+            await hydrateSessionComputeHosts()
+          } catch (error) {
+            createLogger('compute:session-hydration').warn(
+              'Session Compute Host hydration failed; Compute polling will continue.',
+              diagnosticErrorFields(error)
+            )
+          }
           await jobPoller.start()
         },
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,

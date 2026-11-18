@@ -471,7 +471,10 @@ const mergeSessionSummaryWithLiveState = (
   summary: ChatSession,
   current: ChatSession
 ): ChatSession => {
-  const preservesActiveStatus = current.activeRun !== undefined || current.status === 'running'
+  const preservesActiveStatus =
+    current.activeRun !== undefined ||
+    current.status === 'running' ||
+    current.status.startsWith('waiting-')
   return {
     ...summary,
     ...current,
@@ -498,6 +501,7 @@ const mergeSessionSummaryWithLiveState = (
 const hasLocalSessionWork = (session: ChatSession): boolean =>
   session.activeRun !== undefined ||
   session.status === 'running' ||
+  session.status.startsWith('waiting-') ||
   session.unsavedTitle === true ||
   session.firstPromptDraft !== undefined ||
   session.elicitationEditDrafts !== undefined

@@ -6126,6 +6126,44 @@ describe('passive summary hydration', () => {
     )
   })
 
+  it('preserves waiting session state while applying refreshed summary metadata', () => {
+    const base = createPersistedSession({
+      revision: 4,
+      status: 'waiting-permission'
+    })
+    useSessionStore.getState().hydrateSessions([base])
+
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: base.id,
+          projectId: base.projectId,
+          title: base.title,
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: base.pinned,
+          revision: 5,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt + 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-permission',
+      revision: 5
+    })
+  })
+
   it('does not save an idle transcript after a newer summary revision arrives', async () => {
     const base = createPersistedSession({
       revision: 4,
