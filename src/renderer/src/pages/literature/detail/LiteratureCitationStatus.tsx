@@ -41,6 +41,9 @@ export function LiteratureCitationStatus({
   const nextOffset = result?.state === 'ready' ? result.nextOffset : undefined
   const pageLimitReached = state.pages >= 5 && nextOffset !== undefined
   const canPage = nextOffset !== undefined && !pageLimitReached
+  const loadedLabel = t('Loaded: {{loaded}}', { loaded })
+  const footerClass =
+    'sticky bottom-0 flex shrink-0 items-center justify-between gap-2 border-t border-border-300 bg-card px-3 py-2 text-xs text-muted-foreground sm:px-4'
   const title = direction === 'references' ? t('References') : t('Papers citing this paper')
   return (
     <section
@@ -54,13 +57,15 @@ export function LiteratureCitationStatus({
         <h3 className="font-medium">
           {direction === 'references' ? t('References') : t('Cited by')}
         </h3>
-        {state.pages > 0 && !canPage ? (
-          <span className="tabular-nums text-muted-foreground">
-            {t('Loaded: {{loaded}}', { loaded })}
-          </span>
+        {state.pages > 0 && !canPage && result?.state !== 'unavailable' ? (
+          <span className="tabular-nums text-muted-foreground">{loadedLabel}</span>
         ) : null}
       </div>
-      <div className="flex-1 px-3 pt-3 sm:px-4">
+      <div
+        className={
+          state.pages || result?.state !== 'unavailable' ? 'flex-1 px-3 pt-3 sm:px-4' : 'hidden'
+        }
+      >
         {renderRecords(direction)}
         <div className="mt-2 min-w-0 space-y-2">
           {result?.state === 'ready' &&
@@ -93,42 +98,50 @@ export function LiteratureCitationStatus({
           {t('Loaded results only; source coverage may be incomplete.')}
         </p>
       </div>
-      {canPage || busy === direction || result?.state === 'unavailable' ? (
-        <div className="sticky bottom-0 border-t border-border-300 bg-card px-3 py-2 sm:px-4">
-          {result?.state === 'unavailable' ? (
-            <CitationLookupError
-              result={result}
-              loading={busy === direction}
-              sourceName={sourceName}
-              disabled={interactionBusy || (invalidated && result.issue !== 'expired')}
-              onRetry={() =>
-                result.issue === 'expired'
-                  ? onRestart()
-                  : void load(direction, state.pages ? (state.nextOffset ?? 0) : 0)
-              }
-            />
+      {result?.state === 'unavailable' ? (
+        <CitationLookupError
+          className="mx-3 my-2 sm:mx-4"
+          result={result}
+          loading={busy === direction}
+          sourceName={sourceName}
+          disabled={interactionBusy || (invalidated && result.issue !== 'expired')}
+          onRetry={() =>
+            result.issue === 'expired' ? onRestart() : void load(direction, state.nextOffset)
+          }
+          renderRetry={
+            state.pages
+              ? (button) => (
+                  <div className={footerClass}>
+                    <span className="tabular-nums">{loadedLabel}</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={button.onClick}
+                      disabled={button.disabled || button.loading}
+                      aria-busy={button.loading || undefined}
+                    >
+                      {button.loading ? t('Loading…') : button.label}
+                    </Button>
+                  </div>
+                )
+              : undefined
+          }
+        />
+      ) : canPage || busy === direction ? (
+        <div className={footerClass}>
+          {state.pages > 0 ? <span className="tabular-nums">{loadedLabel}</span> : null}
+          {canPage ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={blocked}
+              aria-busy={busy === direction || undefined}
+              onClick={() => void load(direction, nextOffset)}
+            >
+              {busy === direction ? t('Loading…') : t('Load more')}
+            </Button>
           ) : (
-            <div className="flex items-center justify-between gap-2">
-              {state.pages > 0 ? (
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {t('Loaded: {{loaded}}', { loaded })}
-                </span>
-              ) : null}
-              {busy === direction ? (
-                <span role="status" className="text-xs">
-                  {t('Searching…')}
-                </span>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={blocked}
-                  onClick={() => void load(direction, nextOffset)}
-                >
-                  {t('Load more')}
-                </Button>
-              )}
-            </div>
+            <span role="status">{t('Searching…')}</span>
           )}
         </div>
       ) : !result && !busy ? (

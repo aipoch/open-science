@@ -836,7 +836,7 @@ export function LiteratureCitationCanvas({
               role="status"
               className="flex h-full items-center justify-center p-4 text-sm text-muted-foreground"
             >
-              {busy ? t('Searching…') : centerTitle}
+              {busy && !initialSearchSettled ? t('Searching…') : centerTitle}
             </div>
           )}
         </div>

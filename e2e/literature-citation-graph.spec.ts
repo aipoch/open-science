@@ -103,6 +103,34 @@ test('Electron graph desktop canvas, details and independent paper list', async 
   await captureGraph(graphApp, info, 'electron-graph-desktop-selected')
 })
 
+test('Electron keeps a failed citation page readable and retries in place', async ({
+  page
+}, info) => {
+  await openCitationGraph(page, url + '&fail-next-page')
+  const frame = page.locator('[data-current-frame="true"]')
+  const papers = frame.getByRole('region', { name: 'Paper list', exact: true })
+  const more = papers.getByRole('button', { name: 'Load more' })
+  const before = await more.boundingBox()
+  await more.click()
+  const retry = papers.getByRole('button', { name: 'Retry' })
+  const notice = papers.getByRole('alert')
+  await expect(retry).toBeInViewport({ ratio: 1 })
+  await expect(notice).not.toBeInViewport()
+  expect((await retry.boundingBox())!.y).toBeCloseTo(before!.y, 0)
+  const last = papers.locator('[data-citation-paper-id]').last()
+  await last.scrollIntoViewIfNeeded()
+  await last.click()
+  await expect(last).toHaveAttribute('aria-pressed', 'true')
+  await expect(retry).toBeInViewport({ ratio: 1 })
+  await page.screenshot({ path: info.outputPath('citation-page-retry.png') })
+  await retry.click()
+  await expect(papers.locator('[data-citation-paper-id]')).toHaveCount(40)
+  await expect(papers.locator('[data-citation-paper-id][aria-pressed="true"]')).toContainText(
+    'Graph paper 1119'
+  )
+  await expect(notice).toHaveCount(0)
+})
+
 test('Electron graph preserves selected paper and camera across detail disclosure return', async ({
   page
 }) => {

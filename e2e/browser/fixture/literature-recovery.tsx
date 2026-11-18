@@ -124,6 +124,7 @@ let fileItem: LiteratureItemView = {
   updatedAt: 1
 }
 const fileRequests: object[] = []
+let failedCitationPage = false
 Object.assign(window, { literatureFiles: { requests: fileRequests } })
 window.api = {
   platform: 'darwin',
@@ -204,12 +205,25 @@ window.api = {
     cancelRelated: async () => {},
     related: async (request: LiteratureRelatedRequest) => {
       fileRequests.push(request)
-      if (params.has('citation-graph'))
+      if (params.has('citation-graph')) {
+        if (params.has('fail-next-page') && request.offset && !failedCitationPage) {
+          failedCitationPage = true
+          return {
+            itemId: request.itemId,
+            metadataRevision: request.expectedMetadataRevision,
+            provider: 'europe-pmc',
+            direction: request.direction,
+            state: 'unavailable',
+            records: [],
+            issue: 'response-invalid'
+          }
+        }
         return citationGraphResult(
           request,
           params.has('empty-references'),
           params.has('mutual-paper')
         )
+      }
       if (new URLSearchParams(location.search).has('citation-loading'))
         await new Promise<void>((resolve) =>
           Object.assign(window, { finishCitationLookup: resolve })

@@ -303,8 +303,8 @@ function LiteratureRelatedList({
       inFlight.current = true
       setBusyVisible(false)
       setBusy(true)
-      setLoadError(undefined)
       if (!nextOffset) {
+        setLoadError(undefined)
         setPageCount(0)
         setSelected(new Set())
         setResult((previous) => (previous?.state === 'unavailable' ? previous : undefined))
@@ -331,7 +331,10 @@ function LiteratureRelatedList({
         )
           throw new Error('Citation discovery identity mismatch.')
         if (current === generation.current) {
-          if (response.state === 'ready') setPageCount((count) => count + 1)
+          if (response.state === 'ready') {
+            setPageCount((count) => count + 1)
+            setLoadError(undefined)
+          }
           if (response.issue === 'reference-changed') onReferenceChanged?.()
           if (nextOffset && response.state === 'unavailable') setLoadError(response)
           else

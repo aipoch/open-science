@@ -116,21 +116,31 @@ it('reports duplicates, dismissed candidates and partial failures without auto-r
   expect(transact).toHaveBeenCalledTimes(4)
 })
 it('appends unique results while preserving selections and retries failed pages in place', async () => {
+  let finishRetry!: (value: LiteratureRelatedResult) => void
   related
     .mockResolvedValueOnce(result({ nextOffset: 20 }))
     .mockResolvedValueOnce(result({ state: 'unavailable', records: [], issue: 'rate-limited' }))
-    .mockResolvedValueOnce(result({ records: [record('b'), record('d')] }))
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRetry = resolve
+        })
+    )
   render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
   await screen.findByText('Paper b')
   expect(screen.getByText('Loaded: 2')).toBeTruthy()
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select Paper b' }))
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
-  await screen.findByRole('alert')
+  const alert = await screen.findByRole('alert')
   expect(screen.getByText('Loaded: 2')).toBeTruthy()
   expect(
     (screen.getByRole('checkbox', { name: 'Select Paper b' }) as HTMLInputElement).checked
   ).toBe(true)
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(screen.getByRole('alert')).toBe(alert)
+  expect(screen.getByRole('checkbox', { name: 'Select Paper b' })).toHaveProperty('checked', true)
+  expect(screen.queryByText('Searching…')).toBeNull()
+  await act(async () => finishRetry(result({ records: [record('b'), record('d')] })))
   await screen.findByText('Paper d')
   expect(screen.getByText('Loaded: 3')).toBeTruthy()
   expect(screen.getAllByText('Paper b')).toHaveLength(1)

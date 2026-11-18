@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LiteratureRelatedResult } from '@aipoch/literature-discovery/contracts'
-import { ErrorNotice } from '@/components/error-notice'
+import { ErrorNotice, type ErrorNoticeButton } from '@/components/error-notice'
 
 export function CitationLookupError({
   result,
@@ -9,6 +9,8 @@ export function CitationLookupError({
   disabled,
   loading,
   onRetry,
+  className,
+  renderRetry,
   inline = true
 }: {
   result: LiteratureRelatedResult
@@ -16,6 +18,8 @@ export function CitationLookupError({
   disabled?: boolean
   loading?: boolean
   onRetry(): void
+  className?: string
+  renderRetry?(button: ErrorNoticeButton): React.ReactNode
   inline?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -39,28 +43,32 @@ export function CitationLookupError({
     ),
     unavailable: t('Citation discovery is temporarily unavailable. Try again.')
   }
+  const retry =
+    result.issue === 'reference-changed'
+      ? undefined
+      : {
+          label: coolingDown ? t('Retry in {{seconds}}s', { seconds }) : t('Retry'),
+          disabled: disabled || coolingDown,
+          loading,
+          onClick: () => {
+            if (!disabled && !loading && (result.retryAt ?? 0) <= Date.now()) onRetry()
+          }
+        }
   return (
-    <ErrorNotice
-      inline={inline}
-      role="alert"
-      description={messages[result.issue ?? 'unavailable']}
-      content={
-        result.issue === 'no-match'
-          ? t('Check the paper identifiers or choose another citation source.')
-          : undefined
-      }
-      primaryButton={
-        result.issue === 'reference-changed'
-          ? undefined
-          : {
-              label: coolingDown ? t('Retry in {{seconds}}s', { seconds }) : t('Retry'),
-              disabled: disabled || coolingDown,
-              loading,
-              onClick: () => {
-                if (!disabled && !loading && (result.retryAt ?? 0) <= Date.now()) onRetry()
-              }
-            }
-      }
-    />
+    <>
+      <ErrorNotice
+        inline={inline}
+        className={className}
+        role="alert"
+        description={messages[result.issue ?? 'unavailable']}
+        content={
+          result.issue === 'no-match'
+            ? t('Check the paper identifiers or choose another citation source.')
+            : undefined
+        }
+        primaryButton={renderRetry ? undefined : retry}
+      />
+      {retry && renderRetry?.(retry)}
+    </>
   )
 }
