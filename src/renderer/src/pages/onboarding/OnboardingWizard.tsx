@@ -13,6 +13,7 @@ import {
   type ProviderFormValue
 } from '../settings/provider-form-value'
 import { AgentStep } from './AgentStep'
+import { AgentPanel } from '../settings/AgentPanel'
 import { EnvironmentStep } from './EnvironmentStep'
 import { LocationStep, type LocationDraft } from './LocationStep'
 import { NotebookStep } from './NotebookStep'
@@ -129,14 +130,24 @@ const resolveWindowsStorageDefault = async (
   }
 }
 
-// Keeps the five-step sequence visible without turning the lightweight setup flow into navigation.
-const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element => {
+// The modal groups runtime and provider selection; the standalone recovery flow keeps its order.
+const OnboardingProgress = ({
+  step,
+  compact = false
+}: {
+  step: WizardStep
+  compact?: boolean
+}): React.JSX.Element => {
   const { t } = useTranslation()
-  const currentIndex = STEP_ORDER.indexOf(step)
+  const steps: WizardStep[] = compact ? ['location', 'provider', 'notebook'] : STEP_ORDER
+  const currentIndex = steps.indexOf(compact && step === 'agent' ? 'provider' : step)
 
   return (
-    <ol aria-label={t('Setup progress')} className="mt-7 space-y-3">
-      {STEP_ORDER.map((wizardStep, index) => {
+    <ol
+      aria-label={t('Setup progress')}
+      className={compact ? 'onboarding-advanced-progress' : 'mt-7 space-y-3'}
+    >
+      {steps.map((wizardStep, index) => {
         const state = index < currentIndex ? 'done' : index === currentIndex ? 'active' : 'upcoming'
 
         return (
@@ -161,7 +172,11 @@ const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element =
             >
               {state === 'done' ? <Check className="size-3" strokeWidth={2.4} /> : index + 1}
             </span>
-            <span>{t(STEP_LABELS[wizardStep])}</span>
+            <span>
+              {compact && wizardStep === 'provider'
+                ? t('Model and Agent')
+                : t(STEP_LABELS[wizardStep])}
+            </span>
           </li>
         )
       })}
@@ -190,6 +205,12 @@ const OnboardingWizard = ({
   const [step, setStep] = useState<WizardStep>('environment')
   const [entryPhase, setEntryPhase] = useState<EntryPhase>(showWelcome ? 'welcome' : 'advanced')
   const [entryMethod, setEntryMethod] = useState<'account' | 'api-key'>('account')
+  const [isAdvancedProviderBusy, setIsAdvancedProviderBusy] = useState(false)
+  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const runtimeReady =
+    !isCheckingEnvironment &&
+    environmentCheck?.ready === true &&
+    environmentCheck.agentFrameworkId === agentFrameworkId
   const [isSkipping, setIsSkipping] = useState(false)
   const [skipError, setSkipError] = useState<string | undefined>(undefined)
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -254,11 +275,11 @@ const OnboardingWizard = ({
   const suppressStorageResume = useCallback((): void => {
     didResolveStorageResume.current = true
   }, [])
-  const leaveLocation = useCallback((nextStep: 'environment' | 'agent'): void => {
+  const leaveLocation = useCallback((nextStep: 'environment' | 'agent' | 'provider'): void => {
     // Leaving freezes the displayed choice. The effect cleanup stops the renderer-side probe, and
     // marking it resolved prevents Back/return loops from accumulating uncancellable IPC requests.
     didResolveStorageResume.current = true
-    if (nextStep === 'agent') locationDraftTouched.current = true
+    if (nextStep !== 'environment') locationDraftTouched.current = true
     setDidResolveStorageDefault(true)
     setStep(nextStep)
   }, [])
@@ -311,7 +332,7 @@ const OnboardingWizard = ({
   }, [showWelcome])
 
   useEffect(() => {
-    if (!showWelcome || entryPhase === 'advanced') return
+    if (!showWelcome) return
 
     const dialog = dialogRef.current
     if (!dialog) return
@@ -324,14 +345,14 @@ const OnboardingWizard = ({
         dialog.querySelectorAll<HTMLElement>(
           'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
         )
-      )
-    const firstFocusable = focusable()[0]
-    ;(firstFocusable ?? dialog).focus()
+      ).filter((element) => !element.closest('[inert]'))
+    // Entry focus belongs to the shell, not the first provider action (which reveals its card).
+    dialog.focus()
 
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        void skipEntry()
+        if (entryPhase !== 'advanced') void skipEntry()
         return
       }
       if (event.key !== 'Tab') return
@@ -343,7 +364,10 @@ const OnboardingWizard = ({
       }
       const first = items[0]
       const last = items[items.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || document.activeElement === dialog)
+      ) {
         event.preventDefault()
         last.focus()
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -359,19 +383,22 @@ const OnboardingWizard = ({
   const didRequestCheck = useRef(false)
   const didKickEnv = useRef(false)
   // Fetch the current data location once, up front, for Location display and relaunch resume.
-  const handleDataRootInfoSuccess = useCallback((info: StorageInfo): void => {
-    setDataRootInfo(info)
-    setDataRootError(undefined)
-    // A non-default root is the durable resume signal after Location persisted the selected drive
-    // and relaunched. No separate onboarding-step field is needed: continue at Agent, after the two
-    // steps the user already completed before the restart.
-    if (!didResolveStorageResume.current) {
-      didResolveStorageResume.current = true
-      if (!info.isDefault && !info.dataRootMissing && !locationDraftTouched.current) {
-        setStep('agent')
+  const handleDataRootInfoSuccess = useCallback(
+    (info: StorageInfo): void => {
+      setDataRootInfo(info)
+      setDataRootError(undefined)
+      // A non-default root is the durable resume signal after Location persisted the selected drive
+      // and relaunched. No separate onboarding-step field is needed: continue at Agent, after the two
+      // steps the user already completed before the restart.
+      if (!didResolveStorageResume.current) {
+        didResolveStorageResume.current = true
+        if (!info.isDefault && !info.dataRootMissing && !locationDraftTouched.current) {
+          setStep(showWelcome ? 'provider' : 'agent')
+        }
       }
-    }
-  }, [])
+    },
+    [showWelcome]
+  )
   const handleDataRootInfoFailure = useCallback((error: unknown): void => {
     setDataRootError(
       onboardingErrorMessage(error, 'Could not load the default data location. Please try again.')
@@ -443,6 +470,64 @@ const OnboardingWizard = ({
     void envInit()
   }, [envInit])
 
+  const stepContent = (
+    <>
+      {/* Each step owns its validation gate and advances only through its callback. The shell
+          owns cross-step drafts so Back/Continue never discards provider or location input. */}
+      {step === 'environment' ? (
+        <EnvironmentStep onContinue={() => setStep('location')} />
+      ) : step === 'location' ? (
+        <LocationStep
+          dataRootInfo={dataRootInfo}
+          dataRootError={dataRootError}
+          locationDraft={locationDraft}
+          onLocationDraftChange={handleLocationDraftChange}
+          relaunchError={relaunchError}
+          onRelaunchErrorChange={setRelaunchError}
+          onRetryDataRootInfo={retryDataRootInfo}
+          onInteractionStart={suppressStorageResume}
+          onBack={() => {
+            leaveLocation('environment')
+            if (showWelcome) setEntryPhase('connect')
+          }}
+          onContinue={() => leaveLocation(showWelcome ? 'provider' : 'agent')}
+          isResolvingDefaultLocation={isResolvingStorageDefault}
+          setIsRelaunching={setIsRelaunching}
+        />
+      ) : step === 'agent' ? (
+        <AgentStep onBack={() => setStep('location')} onContinue={() => setStep('provider')} />
+      ) : step === 'provider' ? (
+        <>
+          <ProviderStep
+            formValue={providerDraft.value}
+            setFormValue={setFormValue}
+            providerId={providerDraft.providerId}
+            onProviderSaved={recordSavedProvider}
+            onBack={() => setStep(showWelcome ? 'location' : 'agent')}
+            onAdvance={handleAdvancedProviderAdvance}
+            canContinue={!showWelcome || runtimeReady}
+            onBusyChange={showWelcome ? setIsAdvancedProviderBusy : undefined}
+          >
+            {showWelcome ? (
+              <div className="onboarding-advanced-agent" inert={isAdvancedProviderBusy}>
+                <AgentPanel
+                  variant="onboarding"
+                  title={t('Set up the agent runtime')}
+                  description={null}
+                />
+              </div>
+            ) : null}
+          </ProviderStep>
+        </>
+      ) : step === 'notebook' ? (
+        <NotebookStep
+          onBack={() => setStep('provider')}
+          onComplete={showWelcome ? () => setEntryPhase('ready') : undefined}
+        />
+      ) : null}
+    </>
+  )
+
   if (isRelaunching) {
     return (
       <main className="flex h-svh items-center justify-center bg-bg-10 text-text-000">
@@ -451,7 +536,7 @@ const OnboardingWizard = ({
     )
   }
 
-  if (showWelcome && entryPhase !== 'advanced') {
+  if (showWelcome) {
     return (
       <main className="onboarding-entry-root">
         <div className="onboarding-entry-scrim" aria-hidden="true" />
@@ -463,7 +548,8 @@ const OnboardingWizard = ({
           tabIndex={-1}
           className={cn(
             'onboarding-entry-shell',
-            entryPhase === 'connect' && 'is-wide',
+            (entryPhase === 'connect' || entryPhase === 'advanced') && 'is-wide',
+            entryPhase === 'advanced' && 'is-advanced',
             entryPhase === 'ready' && 'is-ready'
           )}
         >
@@ -483,6 +569,16 @@ const OnboardingWizard = ({
               isSkipping={isSkipping}
               skipError={skipError}
             />
+          ) : entryPhase === 'advanced' ? (
+            <section className="onboarding-advanced" data-onboarding-entry="advanced">
+              <header className="onboarding-advanced-header">
+                <h1>{t('Advanced options')}</h1>
+                <OnboardingProgress step={step} compact />
+              </header>
+              <div ref={stepCard} className="onboarding-advanced-content">
+                {stepContent}
+              </div>
+            </section>
           ) : (
             <OnboardingReadyStep
               method={entryMethod}
@@ -532,45 +628,7 @@ const OnboardingWizard = ({
             ref={stepCard}
             className="min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card ring-1 ring-border-200"
           >
-            {/* Each step owns its validation gate and advances only through its callback. The shell
-                owns cross-step drafts so Back/Continue never discards provider or location input. */}
-            {step === 'environment' ? (
-              <EnvironmentStep onContinue={() => setStep('location')} />
-            ) : step === 'location' ? (
-              <LocationStep
-                dataRootInfo={dataRootInfo}
-                dataRootError={dataRootError}
-                locationDraft={locationDraft}
-                onLocationDraftChange={handleLocationDraftChange}
-                relaunchError={relaunchError}
-                onRelaunchErrorChange={setRelaunchError}
-                onRetryDataRootInfo={retryDataRootInfo}
-                onInteractionStart={suppressStorageResume}
-                onBack={() => leaveLocation('environment')}
-                onContinue={() => leaveLocation('agent')}
-                isResolvingDefaultLocation={isResolvingStorageDefault}
-                setIsRelaunching={setIsRelaunching}
-              />
-            ) : step === 'agent' ? (
-              <AgentStep
-                onBack={() => setStep('location')}
-                onContinue={() => setStep('provider')}
-              />
-            ) : step === 'provider' ? (
-              <ProviderStep
-                formValue={providerDraft.value}
-                setFormValue={setFormValue}
-                providerId={providerDraft.providerId}
-                onProviderSaved={recordSavedProvider}
-                onBack={() => setStep('agent')}
-                onAdvance={handleAdvancedProviderAdvance}
-              />
-            ) : step === 'notebook' ? (
-              <NotebookStep
-                onBack={() => setStep('provider')}
-                onComplete={showWelcome ? () => setEntryPhase('ready') : undefined}
-              />
-            ) : null}
+            {stepContent}
           </Card>
         </div>
       </div>

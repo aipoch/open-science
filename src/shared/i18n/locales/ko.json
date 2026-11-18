@@ -193,6 +193,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "시스템 자격 증명에 접근하는 동안 시작이 중지되었습니다. 기존 자격 증명과 프로필 데이터는 보존되었습니다."
   },
   "renderer": {
+    "Model and Agent": "모델 및 에이전트",
     "Pros": "장점",
     "Cons": "제약",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "종료된 실행 기록은 최근 30개까지 보관합니다. 대화와 파일은 유지됩니다.",
@@ -8148,7 +8149,7 @@
     "Delete task": "작업 삭제",
     "Step 2 of 3": "3단계 중 2단계",
     "Connect an account to start your research in Open-Science.": "계정을 연결하여 Open-Science에서 연구를 시작하세요.",
-    "25 provider presets plus custom gateways are available in Open-Science.": "Open-Science에서 25개의 모델 제공업체 사전 설정과 사용자 지정 게이트웨이를 사용할 수 있습니다.",
+    "{{providerCount}} provider presets plus custom gateways are available in Open-Science.": "Open-Science에서 {{providerCount}}개의 모델 제공업체 사전 설정과 사용자 지정 게이트웨이를 사용할 수 있습니다.",
     "Enter your API key": "API 키 입력",
     "Test connection and connect": "연결 테스트 및 연결",
     "Use an account instead": "대신 계정 사용",
@@ -8169,7 +8170,6 @@
     "Open an example and explore a complete research workflow.": "예제를 열고 전체 연구 워크플로를 탐색하세요.",
     "Guide 1 of 2": "가이드 1/2",
     "You can adjust your setup at any time in Settings.": "설정에서 언제든지 구성을 조정할 수 있습니다.",
-    "More providers": "더 많은 모델 제공업체",
     "Start exploring": "탐색 시작",
     "Your next discovery starts here.": "다음 발견은 여기에서 시작됩니다.",
     "Recent conversations": "최근 대화",

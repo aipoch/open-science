@@ -196,6 +196,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены."
   },
   "renderer": {
+    "Model and Agent": "Модель и агент",
     "Pros": "Преимущества",
     "Cons": "Ограничения",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "Сохраняются записи о последних 30 завершённых запусках. Диалоги и файлы сохраняются.",
@@ -8649,7 +8650,7 @@
     "Delete task": "Удалить задачу",
     "Step 2 of 3": "Шаг 2 из 3",
     "Connect an account to start your research in Open-Science.": "Подключите аккаунт, чтобы начать исследование в Open-Science.",
-    "25 provider presets plus custom gateways are available in Open-Science.": "В Open-Science доступны 25 готовых поставщиков и пользовательские шлюзы.",
+    "{{providerCount}} provider presets plus custom gateways are available in Open-Science.": "В Open-Science доступны {{providerCount}} готовых поставщиков и пользовательские шлюзы.",
     "Enter your API key": "Введите API-ключ",
     "Test connection and connect": "Проверить и подключить",
     "Use an account instead": "Использовать аккаунт",
@@ -8670,7 +8671,6 @@
     "Open an example and explore a complete research workflow.": "Откройте пример и изучите полный исследовательский процесс.",
     "Guide 1 of 2": "Руководство 1 из 2",
     "You can adjust your setup at any time in Settings.": "Настройки можно изменить в любое время.",
-    "More providers": "Другие поставщики",
     "Start exploring": "Начать исследование",
     "Your next discovery starts here.": "Ваше следующее открытие начинается здесь.",
     "Recent conversations": "Недавние диалоги",

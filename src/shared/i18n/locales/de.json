@@ -194,6 +194,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten."
   },
   "renderer": {
+    "Model and Agent": "Modell und Agent",
     "Pros": "Vorteile",
     "Cons": "Einschränkungen",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "Bis zu 30 abgeschlossene Ausführungsprotokolle werden aufbewahrt. Konversationen und Dateien bleiben erhalten.",
@@ -8320,7 +8321,7 @@
     "Delete task": "Aufgabe löschen",
     "Step 2 of 3": "Schritt 2 von 3",
     "Connect an account to start your research in Open-Science.": "Verbinden Sie ein Konto, um Ihre Recherche in Open-Science zu beginnen.",
-    "25 provider presets plus custom gateways are available in Open-Science.": "In Open-Science stehen 25 Anbieter-Voreinstellungen plus benutzerdefinierte Gateways zur Verfügung.",
+    "{{providerCount}} provider presets plus custom gateways are available in Open-Science.": "In Open-Science stehen {{providerCount}} Anbieter-Voreinstellungen plus benutzerdefinierte Gateways zur Verfügung.",
     "Enter your API key": "Geben Sie Ihren API-Schlüssel ein.",
     "Test connection and connect": "Verbindung testen und verbinden",
     "Use an account instead": "Stattdessen ein Konto verwenden",
@@ -8341,7 +8342,6 @@
     "Open an example and explore a complete research workflow.": "Öffnen Sie ein Beispiel und erkunden Sie einen vollständigen Forschungsablauf.",
     "Guide 1 of 2": "Anleitung 1 von 2",
     "You can adjust your setup at any time in Settings.": "Sie können Ihre Einrichtung jederzeit in den Einstellungen anpassen.",
-    "More providers": "Weitere Anbieter",
     "Start exploring": "Erkundung starten",
     "Your next discovery starts here.": "Ihre nächste Entdeckung beginnt hier.",
     "Recent conversations": "Letzte Konversationen",

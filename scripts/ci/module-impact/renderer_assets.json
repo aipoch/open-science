@@ -5,6 +5,7 @@
     "src/renderer/src/assets/electron.svg",
     "src/renderer/src/assets/installation-assistant.css",
     "src/renderer/src/assets/logo-dark.png",
+    "src/renderer/src/assets/logo-symbol.svg",
     "src/renderer/src/assets/logo.png",
     "src/renderer/src/assets/main.css",
     "src/renderer/src/assets/pdf-text-layer.test.ts",

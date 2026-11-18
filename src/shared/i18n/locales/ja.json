@@ -193,6 +193,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。"
   },
   "renderer": {
+    "Model and Agent": "モデルとエージェント",
     "Pros": "利点",
     "Cons": "制約",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "終了した実行記録を最新30件まで保持します。会話とファイルは保持されます。",
@@ -8150,7 +8151,7 @@
     "Delete task": "タスクを削除",
     "Step 2 of 3": "3 段階中 2 段階",
     "Connect an account to start your research in Open-Science.": "アカウントを接続して Open-Science で研究を始めましょう。",
-    "25 provider presets plus custom gateways are available in Open-Science.": "Open-Science では 25 個のプロバイダー設定とカスタムゲートウェイを利用できます。",
+    "{{providerCount}} provider presets plus custom gateways are available in Open-Science.": "Open-Science では {{providerCount}} 個のプロバイダー設定とカスタムゲートウェイを利用できます。",
     "Enter your API key": "API キーを入力",
     "Test connection and connect": "接続をテストして接続",
     "Use an account instead": "アカウントを使う",
@@ -8171,7 +8172,6 @@
     "Open an example and explore a complete research workflow.": "例を開いて研究ワークフロー全体を探索します。",
     "Guide 1 of 2": "ガイド 1/2",
     "You can adjust your setup at any time in Settings.": "設定からいつでも構成を変更できます。",
-    "More providers": "その他のプロバイダー",
     "Start exploring": "探索を始める",
     "Your next discovery starts here.": "次の発見はここから始まります。",
     "Recent conversations": "最近の会話",

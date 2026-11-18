@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Settings2, Zap } from 'lucide-react'
+import { OFFICIAL_VENDORS, type OfficialVendorId } from '@aipoch/providers'
 
 import { Button } from '@/components/ui/button'
+import { ProviderSilkBackground } from '@/components/react-bits/ProviderSilkBackground'
 import { ErrorNotice } from '@/components/error-notice'
 import { CardContent, CardDescription, CardFooter, CardHeader } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
@@ -70,6 +72,9 @@ type ProviderStepProps = {
   onBack: () => void
   onAdvance: (method?: 'account' | 'api-key') => void
   variant?: 'form' | 'quick'
+  children?: React.ReactNode
+  canContinue?: boolean
+  onBusyChange?: (busy: boolean) => void
   onAdvanced?: () => void
   onSkip?: () => void | Promise<void>
   isSkipping?: boolean
@@ -86,53 +91,76 @@ type QuickProviderCard = {
   accent: string
 }
 
-const QUICK_PROVIDER_CARDS: QuickProviderCard[] = [
-  {
-    id: 'openai',
-    kindKey: 'official:openai',
+const PROVIDER_ACCENTS: Partial<Record<OfficialVendorId, string>> = {
+  openai: '#111111',
+  anthropic: '#d97757',
+  xai: '#dce3ea',
+  apodex: '#437dc4',
+  deepseek: '#5786fe',
+  bailian: '#7347ff',
+  bailianplan: '#7347ff',
+  zhipu: '#3d5afe',
+  glmcodingplan: '#3d5afe',
+  kimi: '#5d51e8',
+  kimiforcode: '#5d51e8',
+  minimax: '#e73562',
+  stepfun: '#0160ff',
+  stepplan: '#0160ff',
+  xiaomimimo: '#ff6900',
+  sensenova: '#5b29da',
+  volcengine: '#006eff',
+  tencent: '#006eff',
+  tencentcodingplan: '#006eff',
+  tencenttokenplan: '#006eff',
+  nvidia: '#76b900',
+  'opencode-go': '#b9b9b9',
+  opencode: '#b9b9b9',
+  openrouter: '#7624f4',
+  requesty: '#1677ff'
+}
+
+const QUICK_SUBSCRIPTIONS: Partial<
+  Record<
+    OfficialVendorId,
+    Pick<QuickProviderCard, 'subscriptionKind' | 'description' | 'subscription'>
+  >
+> = {
+  openai: {
     subscriptionKind: 'codex-subscription',
-    title: 'OpenAI',
     description: 'Use an existing Codex profile or sign in with a separate Open-Science profile.',
-    subscription: 'Use your eligible ChatGPT subscription',
-    accent: '#111111'
+    subscription: 'Use your eligible ChatGPT subscription'
   },
-  {
-    id: 'anthropic',
-    kindKey: 'official:anthropic',
+  anthropic: {
     subscriptionKind: 'claude-subscription',
-    title: 'Anthropic',
     description: 'Use an existing Claude profile or sign in with a separate Open-Science profile.',
-    subscription: 'Use your eligible Claude subscription',
-    accent: '#d97757'
+    subscription: 'Use your eligible Claude subscription'
   },
-  {
-    id: 'xai',
-    kindKey: 'official:xai',
+  xai: {
     subscriptionKind: 'xai-subscription',
-    title: 'xAI',
     description: 'Sign in to your xAI subscription with a browser device code.',
-    subscription: 'Sign in with your xAI account',
-    accent: '#dce3ea'
-  },
+    subscription: 'Sign in with your xAI account'
+  }
+}
+
+const QUICK_PROVIDER_CARDS: QuickProviderCard[] = [
+  ...OFFICIAL_VENDORS.map((vendor) => ({
+    id: vendor.id,
+    kindKey: `official:${vendor.id}`,
+    title: vendor.label,
+    description: 'API key — models provided',
+    subscription: '',
+    accent: PROVIDER_ACCENTS[vendor.id] ?? '#dce3ea',
+    ...QUICK_SUBSCRIPTIONS[vendor.id]
+  })),
   {
     id: 'more',
     kindKey: 'custom',
-    title: 'More providers',
+    title: 'Custom Gateway',
     description: 'Use a compatible endpoint or connect another model provider.',
-    subscription: 'Custom Gateway',
+    subscription: '',
     accent: '#dbe8ff'
   }
 ]
-
-const isQuickSubscriptionAvailable = (
-  card: QuickProviderCard,
-  agentFrameworkId: string | undefined
-): boolean =>
-  card.subscriptionKind === 'codex-subscription'
-    ? agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent'
-    : card.subscriptionKind === 'claude-subscription'
-      ? agentFrameworkId === 'claude-code'
-      : Boolean(card.subscriptionKind)
 
 // Model provider step: configure and validate the provider new research sessions will use. Reuses
 // the settings page's ProviderForm so both surfaces stay in sync.
@@ -144,6 +172,9 @@ const ProviderStep = ({
   onBack,
   onAdvance,
   variant = 'form',
+  children,
+  canContinue = true,
+  onBusyChange,
   onAdvanced,
   onSkip,
   isSkipping = false,
@@ -191,7 +222,18 @@ const ProviderStep = ({
   const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
   const [validationOk, setValidationOk] = useState(false)
   const [quickCardId, setQuickCardId] = useState<string>()
+  const [hoveredQuickCardId, setHoveredQuickCardId] = useState<string>()
   const [quickMode, setQuickMode] = useState<'key' | undefined>()
+  const [quickKeys, setQuickKeys] = useState<Record<string, string>>(() =>
+    formValue.type === 'official' && formValue.vendorId
+      ? { [formValue.vendorId]: formValue.key }
+      : {}
+  )
+  // Combined advanced setup locks runtime selection while its provider is being tested.
+  useEffect(() => {
+    onBusyChange?.(isSaving)
+    return () => onBusyChange?.(false)
+  }, [isSaving, onBusyChange])
   const customApiEndpoint = defaultCustomApiEndpoint(frameworkEndpoints)
   const activeFramework = useSettingsStore(selectActiveAgentFramework)
   // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
@@ -281,7 +323,11 @@ const ProviderStep = ({
   }
 
   const handleSaveProvider = async (valueOverride?: ProviderFormValue): Promise<void> => {
+    if (!canContinue) return
     const value = valueOverride ?? formValue
+    // Quick subscription selection may have just switched frameworks; use the persisted snapshot.
+    const currentSettings = useSettingsStore.getState()
+    const currentFrameworkEndpoints = selectFrameworkApiEndpoints(currentSettings)
     const valueFormErrors = getProviderFormErrors(value)
     // First submit attempt surfaces any missing required fields instead of testing an incomplete draft.
     if (hasProviderFormErrors(valueFormErrors)) {
@@ -293,7 +339,7 @@ const ProviderStep = ({
       value.type === 'official'
         ? {
             ...value,
-            model: providerFormModelForFramework(value, frameworkEndpoints) ?? value.model
+            model: providerFormModelForFramework(value, currentFrameworkEndpoints) ?? value.model
           }
         : value
 
@@ -303,10 +349,11 @@ const ProviderStep = ({
     if (
       !isProviderUsableByFramework(
         { apiEndpoints: providerFormApiEndpoints(providerValue), type: providerValue.type },
-        { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+        { id: currentSettings.agentFrameworkId, supportedApiTypes: currentFrameworkEndpoints }
       )
     ) {
-      const label = activeFramework?.displayName ?? t('The selected agent')
+      const label =
+        selectActiveAgentFramework(currentSettings)?.displayName ?? t('The selected agent')
       setValidationOk(false)
       setValidationMessage(
         t(
@@ -491,7 +538,10 @@ const ProviderStep = ({
     }
   }
 
-  const chooseQuickProvider = (card: QuickProviderCard, mode: 'account' | 'key'): void => {
+  const chooseQuickProvider = async (
+    card: QuickProviderCard,
+    mode: 'account' | 'key'
+  ): Promise<void> => {
     if (card.kindKey === 'custom') {
       onAdvanced?.()
       return
@@ -502,15 +552,47 @@ const ProviderStep = ({
 
     const nextValue = {
       ...createEmptyProviderFormValue(providerKindPatch(kindKey)),
+      key: mode === 'key' ? (quickKeys[card.id] ?? '') : '',
       providerFormTouched: true
     }
     setQuickCardId(card.id)
     setQuickMode(mode === 'key' ? 'key' : undefined)
     setFormValue(nextValue)
-    if (mode === 'account') void handleSaveProvider(nextValue)
+    if (mode !== 'account') return
+
+    // Quick setup chooses the provider first, so resolve its subscription runtime before login.
+    setIsSaving(true)
+    setValidationMessage(undefined)
+    try {
+      const settings = useSettingsStore.getState()
+      const targetFramework =
+        card.subscriptionKind === 'claude-subscription'
+          ? 'claude-code'
+          : card.subscriptionKind === 'codex-subscription' &&
+              settings.agentFrameworkId !== 'open-science-agent'
+            ? 'codex'
+            : settings.agentFrameworkId
+      if (targetFramework !== settings.agentFrameworkId) {
+        await settings.setAgentFramework(targetFramework)
+      }
+      if (mounted.current) await handleSaveProvider(nextValue)
+    } catch (error) {
+      if (!mounted.current) return
+      setValidationOk(false)
+      setValidationMessage(
+        error instanceof Error
+          ? localizeProviderResourceMessage(error.message, tSettings)
+          : t('Could not save provider.')
+      )
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   const handleQuickKeyChange = (card: QuickProviderCard, key: string): void => {
+    setQuickKeys((current) => ({ ...current, [card.id]: key }))
+    setQuickCardId(card.id)
+    setQuickMode('key')
     const nextValue = {
       ...createEmptyProviderFormValue(providerKindPatch(card.kindKey)),
       key,
@@ -520,9 +602,11 @@ const ProviderStep = ({
   }
 
   const handleQuickKeySubmit = (card: QuickProviderCard): void => {
+    if (isSaving) return
+    setQuickCardId(card.id)
     const nextValue = {
       ...createEmptyProviderFormValue(providerKindPatch(card.kindKey)),
-      key: formValue.key,
+      key: quickKeys[card.id] ?? '',
       providerFormTouched: true
     }
     setFormValue(nextValue)
@@ -534,13 +618,13 @@ const ProviderStep = ({
       <section className="onboarding-quick-connect" data-onboarding-entry="connect">
         <header className="onboarding-quick-header">
           <div>
-            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-              {t('Step 2 of 3')}
-            </p>
             <h1>{t('Bring the AI you already use.')}</h1>
             <p>{t('Connect an account to start your research in Open-Science.')}</p>
             <p className="onboarding-provider-count">
-              {t('25 provider presets plus custom gateways are available in Open-Science.')}
+              {t(
+                '{{providerCount}} provider presets plus custom gateways are available in Open-Science.',
+                { providerCount: OFFICIAL_VENDORS.length }
+              )}
             </p>
           </div>
           <div className="onboarding-step-dots" aria-label={t('Step 2 of 3')}>
@@ -554,8 +638,7 @@ const ProviderStep = ({
           <div className="onboarding-provider-track">
             {QUICK_PROVIDER_CARDS.map((card) => {
               const isKeyMode = quickCardId === card.id && quickMode === 'key'
-              const isSavingThisCard = isSaving && quickCardId === card.id
-              const subscriptionAvailable = isQuickSubscriptionAvailable(card, agentFrameworkId)
+              const subscriptionAvailable = Boolean(card.subscriptionKind)
               const showKeyForm = isKeyMode || (card.id !== 'more' && !subscriptionAvailable)
 
               return (
@@ -567,10 +650,16 @@ const ProviderStep = ({
                     isKeyMode && 'is-key-mode'
                   )}
                   style={{ '--provider-accent': card.accent } as React.CSSProperties}
+                  onMouseEnter={() => setHoveredQuickCardId(card.id)}
+                  onMouseLeave={() => setHoveredQuickCardId(undefined)}
                 >
+                  <ProviderSilkBackground
+                    color={card.accent}
+                    active={hoveredQuickCardId === card.id}
+                  />
                   <div className="onboarding-provider-card-body">
                     <ProviderKindIcon kindKey={card.kindKey} className="size-9" />
-                    <h2>{card.id === 'more' ? t('More providers') : card.title}</h2>
+                    <h2>{card.id === 'more' ? t('Custom Gateway') : card.title}</h2>
                     <p>{t(card.description)}</p>
                   </div>
                   <div className="onboarding-provider-card-actions">
@@ -587,7 +676,8 @@ const ProviderStep = ({
                           <input
                             id={`onboarding-key-${card.id}`}
                             type="password"
-                            value={formValue.key}
+                            value={quickKeys[card.id] ?? ''}
+                            disabled={isSaving}
                             onChange={(event) => handleQuickKeyChange(card, event.target.value)}
                             placeholder={t('Enter your API key')}
                             autoComplete="off"
@@ -598,12 +688,12 @@ const ProviderStep = ({
                             size="icon"
                             aria-label={t('Test connection and connect')}
                             title={t('Test connection and connect')}
-                            disabled={isSavingThisCard}
+                            disabled={isSaving}
                           >
                             <Zap aria-hidden="true" />
                           </Button>
                         </div>
-                        {showProviderErrors && formErrors.key ? (
+                        {quickCardId === card.id && showProviderErrors && formErrors.key ? (
                           <p className="text-xs text-destructive">{t(formErrors.key)}</p>
                         ) : null}
                         {subscriptionAvailable ? (
@@ -625,7 +715,7 @@ const ProviderStep = ({
                         {subscriptionAvailable ? (
                           <Button
                             type="button"
-                            onClick={() => chooseQuickProvider(card, 'account')}
+                            onClick={() => void chooseQuickProvider(card, 'account')}
                             disabled={isSaving}
                             className="w-full"
                           >
@@ -635,7 +725,7 @@ const ProviderStep = ({
                         <button
                           type="button"
                           className="onboarding-provider-card-link"
-                          onClick={() => chooseQuickProvider(card, 'key')}
+                          onClick={() => void chooseQuickProvider(card, 'key')}
                           disabled={isSaving}
                         >
                           {t('Have an API key?')}
@@ -771,7 +861,13 @@ const ProviderStep = ({
           ) : null}
         </section>
       </CardContent>
+      {children}
       <CardFooter className="sticky bottom-0 z-10 mt-auto flex-wrap justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
+        {!canContinue ? (
+          <p className="mr-auto text-xs text-text-100">
+            {t('Complete every required item above to continue.')}
+          </p>
+        ) : null}
         {isSaving && formValue.type === 'codex-isolated' ? (
           <Button type="button" variant="outline" onClick={() => void cancelCodexLogin()}>
             {t('Cancel sign-in')}
@@ -811,7 +907,7 @@ const ProviderStep = ({
         <Button
           type="button"
           onClick={() => void handleSaveProvider()}
-          disabled={isSaving}
+          disabled={isSaving || !canContinue}
           className="px-4"
           aria-busy={Boolean(isSaving)}
         >

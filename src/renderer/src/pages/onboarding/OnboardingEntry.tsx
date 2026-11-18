@@ -1,9 +1,9 @@
 import { ArrowRight, Check, KeyRound, Settings2 } from 'lucide-react'
 import type { AnimationItem } from 'lottie-web'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
+import logoUrl from '@/assets/logo-symbol.svg'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import welcomeAnimation from '@/assets/onboarding/welcome.json'
@@ -29,7 +29,12 @@ const WelcomeAnimation = ({ onComplete }: WelcomeAnimationProps): React.JSX.Elem
   const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
   const completionSentRef = useRef(false)
-  const [useFallback, setUseFallback] = useState(false)
+  const [useFallback, setUseFallback] = useState(
+    () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  )
+  const [isFinished, setIsFinished] = useState(
+    () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  )
 
   useEffect(() => {
     const container = containerRef.current
@@ -40,12 +45,16 @@ const WelcomeAnimation = ({ onComplete }: WelcomeAnimationProps): React.JSX.Elem
     let cancelled = false
     let fallbackTimer: number | undefined
     const complete = (): void => {
-      if (completionSentRef.current) return
+      if (cancelled || completionSentRef.current) return
       completionSentRef.current = true
+      setIsFinished(true)
       if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer)
       onComplete()
     }
     const fallback = (): void => {
+      if (cancelled || completionSentRef.current || fallbackTimer !== undefined) return
+      animation?.destroy()
+      animation = undefined
       setUseFallback(true)
       // CSS animationend is the normal fallback completion signal. The bounded timer is only a
       // safety net for embedded webviews that do not dispatch CSS animation events.
@@ -69,12 +78,25 @@ const WelcomeAnimation = ({ onComplete }: WelcomeAnimationProps): React.JSX.Elem
       try {
         const { default: lottie } = await import('lottie-web')
         if (cancelled) return
+        const animationData = structuredClone(welcomeAnimation)
+        animationData.assets = animationData.assets.map((asset) =>
+          asset.id === 'center' ? { ...asset, p: logoUrl, u: '', e: 0 } : asset
+        )
+        animationData.layers = animationData.layers.map((layer) => {
+          if (layer.refId !== 'center') return layer
+          // Enlarge the symbol throughout convergence, so completion never swaps its size.
+          for (const frame of layer.ks.s.k) {
+            frame.s = frame.s.map((value, index) => (index < 2 ? value * 1.36 : value))
+            frame.e = frame.e.map((value, index) => (index < 2 ? value * 1.36 : value))
+          }
+          return { ...layer, cl: 'onboarding-lottie-logo' }
+        })
         animation = lottie.loadAnimation({
           container,
           renderer: 'svg',
           loop: false,
           autoplay: true,
-          animationData: welcomeAnimation,
+          animationData,
           rendererSettings: { preserveAspectRatio: 'xMidYMid meet' }
         })
         animation.addEventListener('complete', complete)
@@ -105,7 +127,13 @@ const WelcomeAnimation = ({ onComplete }: WelcomeAnimationProps): React.JSX.Elem
         role="img"
         aria-label={t('Providers converge into Agent frameworks, then into the Open-Science logo')}
       />
-      {useFallback ? (
+      {useFallback && isFinished ? (
+        <div className="onboarding-welcome-fallback">
+          <div className="onboarding-welcome-logo">
+            <img src={logoUrl} alt="" />
+          </div>
+        </div>
+      ) : useFallback ? (
         <div
           className="onboarding-welcome-fallback"
           role="img"
@@ -115,6 +143,7 @@ const WelcomeAnimation = ({ onComplete }: WelcomeAnimationProps): React.JSX.Elem
           onAnimationEnd={(event) => {
             if (!(event.target instanceof HTMLElement)) return
             if (!event.target.classList.contains('onboarding-ring-convergence')) return
+            setIsFinished(true)
             completeAnimation(onComplete, completionSentRef)
           }}
         >
@@ -131,7 +160,7 @@ const WelcomeAnimation = ({ onComplete }: WelcomeAnimationProps): React.JSX.Elem
           </div>
           <div className="onboarding-ring onboarding-ring-convergence" aria-hidden="true" />
           <div className="onboarding-welcome-logo">
-            <OpenScienceLogoLoader />
+            <img src={logoUrl} alt="" />
           </div>
         </div>
       ) : null}
@@ -149,6 +178,8 @@ const OnboardingWelcome = ({ onNext }: OnboardingWelcomeProps): React.JSX.Elemen
     () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
   )
 
+  const finishWelcome = useCallback(() => setIsComplete(true), [])
+
   return (
     <section
       aria-labelledby="onboarding-welcome-title"
@@ -156,12 +187,12 @@ const OnboardingWelcome = ({ onNext }: OnboardingWelcomeProps): React.JSX.Elemen
       className={cn('onboarding-welcome', isComplete && 'is-complete')}
     >
       <div className="onboarding-entry-brand">
-        <span className="onboarding-entry-brand-mark" aria-hidden="true" />
+        <img className="onboarding-entry-brand-mark" src={logoUrl} alt="" />
         <span>Open-Science</span>
       </div>
 
       <div className="onboarding-welcome-art">
-        <WelcomeAnimation onComplete={() => setIsComplete(true)} />
+        <WelcomeAnimation onComplete={finishWelcome} />
       </div>
 
       <div className="onboarding-welcome-copy" aria-live="polite">
@@ -217,7 +248,7 @@ const GuideArtwork = ({
         />
       ) : null}
       <div className="onboarding-guide-browser-bar">
-        <span className="onboarding-guide-brand-mark" />
+        <img className="onboarding-guide-brand-mark" src={logoUrl} alt="" />
         <span>Open-Science</span>
         <span className="onboarding-guide-window-action">＋ {t('New project')}</span>
       </div>
@@ -277,7 +308,7 @@ const OnboardingReadyStep = ({
       className="onboarding-ready"
     >
       <div className="onboarding-entry-brand">
-        <span className="onboarding-entry-brand-mark" aria-hidden="true" />
+        <img className="onboarding-entry-brand-mark" src={logoUrl} alt="" />
         <span>Open-Science</span>
       </div>
       <h1 id="onboarding-ready-title">{t('You’re ready to explore.')}</h1>

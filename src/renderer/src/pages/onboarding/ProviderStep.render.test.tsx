@@ -4,12 +4,17 @@ import { createRoot, type Root } from 'react-dom/client'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { resolveVendorModelApiEndpoints } from '@aipoch/providers'
+import { OFFICIAL_VENDORS, resolveVendorModelApiEndpoints } from '@aipoch/providers'
+import { fireEvent } from '@testing-library/react'
 import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
 import type { ValidateProviderResult, XaiOAuthLoginResult } from '../../../../shared/settings'
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ProviderStep } from './ProviderStep'
+
+vi.mock('@/components/react-bits/Silk', () => ({
+  default: () => <div data-testid="silk" />
+}))
 import {
   clickButton,
   codexReadyState,
@@ -116,26 +121,131 @@ const submitClaudeFallbackToken = async (token: string): Promise<void> => {
 }
 
 describe('ProviderStep', () => {
-  it('shows only the Anthropic API-key path when open-science-agent has no subscription route', async () => {
-    useSettingsStore.setState({
-      agentFrameworkId: 'open-science-agent',
-      agentFrameworks: [
-        {
-          id: 'open-science-agent',
-          displayName: 'Open-Science Agent',
-          supportedApiTypes: ['chat-completions', 'messages'],
-          supportsSkills: true
-        }
-      ]
-    })
-
+  it('lists every official vendor as a distinct quick-connect card', async () => {
     await renderStep({ variant: 'quick' })
 
-    const anthropic = container.querySelector<HTMLElement>('.onboarding-provider-card-anthropic')
-    expect(anthropic).not.toBeNull()
-    expect(anthropic?.textContent).not.toContain('Use your eligible Claude subscription')
-    expect(anthropic?.textContent).not.toContain('Use an account instead')
-    expect(anthropic?.querySelector('input[placeholder="Enter your API key"]')).not.toBeNull()
+    for (const vendor of OFFICIAL_VENDORS) {
+      const cards = container.querySelectorAll(`.onboarding-provider-card-${vendor.id}`)
+      expect(cards, vendor.label).toHaveLength(1)
+      expect(cards[0].querySelector('h2')?.textContent).toBe(vendor.label)
+    }
+    expect(container.querySelectorAll('.onboarding-provider-card')).toHaveLength(
+      OFFICIAL_VENDORS.length + 1
+    )
+    expect(container.textContent).toContain('Custom Gateway')
+  })
+
+  it('mounts provider silk only while the card is hovered', async () => {
+    await renderStep({ variant: 'quick' })
+
+    const card = container.querySelector<HTMLElement>('.onboarding-provider-card-openai')!
+    expect(card.querySelector('[data-testid="silk"]')).toBeNull()
+
+    fireEvent.mouseEnter(card)
+    expect(card.querySelector('[data-testid="silk"]')).not.toBeNull()
+
+    fireEvent.mouseLeave(card)
+    expect(card.querySelector('[data-testid="silk"]')).toBeNull()
+  })
+
+  it('keeps quick-connect API keys separate and submits the selected vendor', async () => {
+    readyClaudeEnvironment()
+    const saveAndActivateProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: 'p1', validation: { ok: true, category: 'ok' } })
+    useSettingsStore.setState({ saveAndActivateProvider })
+    await renderStep({ variant: 'quick' })
+    const deepseek = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')
+    const minimax = container.querySelector<HTMLInputElement>('#onboarding-key-minimax')
+    expect(deepseek).not.toBeNull()
+    expect(minimax).not.toBeNull()
+    await act(async () => {
+      fireEvent.change(deepseek!, { target: { value: 'test-deepseek-key' } })
+      fireEvent.change(minimax!, { target: { value: 'test-minimax-key' } })
+    })
+    expect(deepseek!.value).toBe('test-deepseek-key')
+    expect(minimax!.value).toBe('test-minimax-key')
+    await act(async () => fireEvent.submit(deepseek!.closest('form')!))
+    expect(saveAndActivateProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'official', vendorId: 'deepseek', key: 'test-deepseek-key' })
+    )
+  })
+
+  it('offers Claude subscription and switches to Claude Code before signing in', async () => {
+    const setAgentFramework = vi.fn(async () => {
+      useSettingsStore.setState({ agentFrameworkId: 'claude-code' })
+    })
+    const persistProvider = vi.fn().mockResolvedValue('claude-account')
+    const loginSharedClaude = vi.fn(async () => {
+      expect(useSettingsStore.getState().agentFrameworkId).toBe('claude-code')
+      return { ok: true, category: 'ok' as const }
+    })
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      agentFrameworkId: 'open-science-agent',
+      setAgentFramework,
+      persistProvider,
+      loginSharedClaude,
+      setActiveProvider
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    const card = container.querySelector('.onboarding-provider-card-anthropic')!
+    expect(card.textContent).toContain('Use your eligible Claude subscription')
+    expect(card.querySelector('input')).toBeNull()
+    await clickButton(/Continue with Anthropic/)
+    expect(setAgentFramework).toHaveBeenCalledWith('claude-code')
+    expect(persistProvider).toHaveBeenCalledWith(expect.objectContaining({ type: 'claude-shared' }))
+    expect(loginSharedClaude).toHaveBeenCalledOnce()
+    expect(setActiveProvider).toHaveBeenCalledWith('claude-account')
+    expect(onAdvance).toHaveBeenCalledWith('account')
+  })
+
+  it('stops subscription login if the compatible framework cannot be selected', async () => {
+    const persistProvider = vi.fn()
+    const loginSharedClaude = vi.fn()
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      agentFrameworkId: 'open-science-agent',
+      setAgentFramework: vi.fn().mockRejectedValue(new Error('framework save failed')),
+      persistProvider,
+      loginSharedClaude
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    await clickButton(/Continue with Anthropic/)
+    expect(container.textContent).toContain('framework save failed')
+    expect(persistProvider).not.toHaveBeenCalled()
+    expect(loginSharedClaude).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    expect(container.querySelector('button:disabled')).toBeNull()
+  })
+
+  it('can choose an OpenAI subscription after selecting Claude Code', async () => {
+    const setAgentFramework = vi.fn(async () => {
+      useSettingsStore.setState({ agentFrameworkId: 'codex' })
+    })
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({ agentFrameworkId: 'claude-code', setAgentFramework })
+    await renderStep({ variant: 'quick', onAdvance })
+    await clickButton(/Continue with OpenAI/)
+    expect(setAgentFramework).toHaveBeenCalledWith('codex')
+    expect(useSettingsStore.getState().saveAndActivateProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'codex-shared' })
+    )
+    expect(onAdvance).toHaveBeenCalledWith('account')
+  })
+
+  it('keeps the Claude API-key option without changing the framework', async () => {
+    const setAgentFramework = vi.fn()
+    useSettingsStore.setState({ agentFrameworkId: 'open-science-agent', setAgentFramework })
+    await renderStep({ variant: 'quick' })
+    const card = container.querySelector('.onboarding-provider-card-anthropic')!
+    const keyButton = Array.from(card.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Have an API key?'
+    )!
+    await act(async () => keyButton.click())
+    expect(card.querySelector('input')).not.toBeNull()
+    expect(setAgentFramework).not.toHaveBeenCalled()
   })
 
   it('offers OpenCode Go and Zen when OpenCode is the active framework', async () => {

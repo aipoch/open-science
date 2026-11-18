@@ -193,6 +193,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "启动在访问系统凭据时停止。现有凭据和配置文件数据已保留。"
   },
   "renderer": {
+    "Model and Agent": "模型与智能体",
     "Pros": "优点",
     "Cons": "缺点",
     "Up to 30 settled run records are kept. Conversations and files are retained.": "最多保留最近 30 条已结束的运行记录。对话和文件会保留。",
@@ -8150,7 +8151,7 @@
     "Delete task": "删除任务",
     "Step 2 of 3": "第 2 步，共 3 步",
     "Connect an account to start your research in Open-Science.": "连接账户，开始在 Open-Science 中进行研究。",
-    "25 provider presets plus custom gateways are available in Open-Science.": "Open-Science 提供 25 个提供商预设和自定义网关。",
+    "{{providerCount}} provider presets plus custom gateways are available in Open-Science.": "Open-Science 提供 {{providerCount}} 个提供商预设和自定义网关。",
     "Enter your API key": "输入 API 密钥",
     "Test connection and connect": "测试连接并连接",
     "Use an account instead": "改用账户",
@@ -8171,7 +8172,6 @@
     "Open an example and explore a complete research workflow.": "打开示例，探索完整的科研工作流。",
     "Guide 1 of 2": "指南 1/2",
     "You can adjust your setup at any time in Settings.": "随时可以在设置中调整配置。",
-    "More providers": "更多提供商",
     "Start exploring": "开始探索",
     "Your next discovery starts here.": "你的下一项发现从这里开始。",
     "Recent conversations": "最近对话",
