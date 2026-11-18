@@ -3427,3 +3427,196 @@ it.each(['aligned neighboring bullet', 'misaligned neighboring bullet'])(
       expect(units[0].source).toContain('module to reduce')
   }
 )
+
+it.each(['ordinary', 'font', 'gap', 'column', 'complete'])(
+  'keeps a witnessed body-column return with %s geometry',
+  (variant) => {
+    const runs = [
+      item('A neighboring complete sentence describes these ordinary results.', 100, 80, 400, 10),
+      item('A second complete sentence checks the same experimental setup.', 100, 91, 400, 10),
+      item(
+        variant === 'complete'
+          ? 'The quantity uses a frozen state for these remaining parameters.'
+          : 'the quantity uses a frozen state for the remaining',
+        270,
+        130,
+        230,
+        10
+      ),
+      item(
+        'parameters. The next measurement uses the same common configuration.',
+        variant === 'column' ? 330 : 100,
+        variant === 'gap' ? 180 : 141,
+        400,
+        10,
+        variant === 'font' ? 'caption' : 'body'
+      ),
+      item(
+        'The final observation confirms these independent results.',
+        100,
+        variant === 'gap' ? 191 : 152,
+        330,
+        10
+      )
+    ]
+    const result = extract(
+        runs.map((run) => ({ ...run, fontVertical: false, fontAscent: 0.75, fontDescent: -0.2 }))
+      ),
+      head = result.units.find((unit) => unit.items.includes('1:2'))!
+    expect(head.items.includes('1:3')).toBe(variant === 'ordinary')
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      runs.map((_, index) => `1:${index}`).sort()
+    )
+  }
+)
+
+it.each(['ordinary', 'font', 'gap', 'peer', 'complete'])(
+  'keeps a short hanging bullet continuation with %s evidence',
+  (variant) => {
+    const runs = [
+      item('• Another complete item describes the shared test process.', 100, 100, 400, 10),
+      item(
+        'The same process is used for these independent observations.',
+        variant === 'peer' ? 125 : 108.5,
+        111,
+        390,
+        10
+      ),
+      item(
+        variant === 'complete'
+          ? '• A new approach works with several previous methods.'
+          : '• A new approach works with several previous methods, such',
+        100,
+        130,
+        400,
+        10
+      ),
+      item(
+        'as feature-sharing. A separate check confirms the result.',
+        108.5,
+        variant === 'gap' ? 180 : 141,
+        280,
+        10,
+        variant === 'font' ? 'caption' : 'body',
+        false
+      )
+    ]
+    const result = extract(
+        runs.map((run) => ({ ...run, fontVertical: false, fontAscent: 0.75, fontDescent: -0.2 }))
+      ),
+      head = result.units.find((unit) => unit.items.includes('1:2'))!
+    expect(head.source.includes('such as feature-sharing.')).toBe(variant === 'ordinary')
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      runs.map((_, index) => `1:${index}`).sort()
+    )
+  }
+)
+
+it.each(['ordinary', 'unwitnessed', 'gap', 'column'])(
+  'joins a hyphenated paragraph tail only with %s evidence',
+  (variant) => {
+    const runs = [
+      item(
+        'A relatively small sample establishes the complete word independently.',
+        100,
+        80,
+        400,
+        10
+      ),
+      item('A second complete sentence calibrates the ordinary body type.', 100, 91, 400, 10),
+      item(
+        'This ordinary paragraph contains several words and a ' +
+          (variant === 'unwitnessed' ? 'custom-' : 'rela-'),
+        100,
+        130,
+        400,
+        10
+      ),
+      item(
+        'tively small number of tests provides sufficient coverage of these parameters.',
+        variant === 'column' ? 300 : 100,
+        variant === 'gap' ? 180 : 141,
+        400,
+        10
+      ),
+      item(
+        'The complete final sentence retains all of its original native ownership.',
+        100,
+        variant === 'gap' ? 191 : 152,
+        400,
+        10
+      )
+    ]
+    const result = extract(
+        runs.map((run) => ({ ...run, fontVertical: false, fontAscent: 0.75, fontDescent: -0.2 }))
+      ),
+      head = result.units.find((unit) => unit.items.includes('1:2'))!
+    expect(head.source.includes('relatively small')).toBe(variant === 'ordinary')
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      runs.map((_, index) => `1:${index}`).sort()
+    )
+  }
+)
+
+it.each([
+  'closed record',
+  'no peer',
+  'foreign font',
+  'wide gap',
+  'different column',
+  'mathematical tail'
+])('keeps a short numbered label with only its witnessed hanging question (%s)', (proof) => {
+  const runs = [
+    item('1. Prompt:', 80, 100, 50, 10.9091, 'body', false),
+    item('Does method need such', 140, 100, 160),
+    item(
+      proof === 'mathematical tail'
+        ? 'a + b = c'
+        : 'a sufficiently large set of independent observations',
+      proof === 'different column' ? 350 : 93,
+      proof === 'wide gap' ? 130 : 113,
+      207,
+      10.9091,
+      proof === 'foreign font' ? 'foreign' : 'body'
+    ),
+    item('before recording the final response?', 93, 126, 160),
+    item('Reply: The separate complete response remains an independent paragraph.', 93, 148, 207),
+    ...(proof === 'no peer'
+      ? []
+      : [
+          item('2. Prompt: Does this method converge', 80, 180, 220),
+          item('more slowly when the prior result changes', 93, 193, 207),
+          item('between the independent evaluations?', 93, 206, 170),
+          item('Reply: This separate response remains unchanged.', 93, 228, 207)
+        ])
+  ]
+  const { units } = extract(runs)
+  const head = units.find((unit) => unit.items.includes('1:0'))!
+  expect(head.items.includes('1:2')).toBe(proof === 'closed record')
+  expect(head.items).not.toContain('1:4')
+  if (proof === 'closed record') {
+    expect(head.source).toContain('such a sufficiently large set')
+    expect(head.source).toContain('final response?')
+    const peer = units.find((unit) => unit.items.includes('1:5'))!
+    expect(peer.source).toContain('converge more slowly')
+    expect(peer.items).not.toContain('1:8')
+  }
+  expect(units.flatMap((unit) => unit.items).sort()).toEqual(
+    runs.map((_, index) => `1:${index}`).sort()
+  )
+})
+
+it('retains several complete sentences within a numbered method record', () => {
+  const runs = [
+    item('1. Method: The apparatus records several independent readings', 80, 100, 220),
+    item('during each trial before a new reference is measured.', 93, 113, 207),
+    item('It then compares these readings with another stable reference.', 93, 126, 207),
+    item('2. Method: The apparatus records several independent control readings', 80, 154, 220),
+    item('before the independent comparison is completed.', 93, 167, 207)
+  ]
+  const { units } = extract(runs)
+  const first = units.find((unit) => unit.items.includes('1:0'))!
+  expect(first.items).toEqual(['1:0', '1:1', '1:2'])
+  expect(first.source).toContain('measured. It then compares')
+  expect(first.items).not.toContain('1:3')
+})

@@ -3,6 +3,8 @@ export type ScientificScriptMarker = Readonly<{
   label: string
   scale: number
   rise: number
+  baseline?: number
+  fontName?: string
   sourceIndices: readonly number[]
   bounds?: readonly [number, number, number, number]
 }>

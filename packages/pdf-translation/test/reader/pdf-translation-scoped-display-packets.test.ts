@@ -17,6 +17,7 @@ import {
   nativeClosedMathGrammar
 } from '../../src/reader/native-display-packets.js'
 import { getPdfTranslationTextContent } from '../../src/reader/text-content.js'
+import { nativeLiteralMathOwners } from '../../src/reader/native-literal-math.js'
 
 type Request = Parameters<typeof nativeAlgorithmInkRegions>
 
@@ -202,8 +203,37 @@ it.each(['', 'text-in-clip', 'foreign-paint', 'no-sequence'])(
           u.fragments.some((f) => f.items.some((i) => i.text === 'in'))
         )!
       expect(formula).toBeDefined()
-      expect(formula.sourceOnly === true).toBe(fault === '')
-      if (!fault) expect(formula.preserve).toBe('formula')
+      expect(formula.sourceOnly === true).toBe(fault !== 'no-sequence')
+      expect(formula.preserve).toBe(
+        !fault ? 'formula' : fault === 'no-sequence' ? undefined : 'literal'
+      )
+      const page = await document.getPage(1),
+        content = await getPdfTranslationTextContent(page),
+        viewport = page.getViewport({ scale: 1 }),
+        units = extraction.source.units.map((owner) => {
+          if (owner.id !== formula.id) return owner
+          const copy = { ...owner }
+          delete copy.sourceOnly
+          delete copy.preserve
+          return copy
+        }),
+        before = structuredClone(units),
+        positive = await nativeScopedDisplayOwners(units, page, content, viewport, 1, {
+          read: async (): Promise<undefined> => undefined,
+          dispose: async (): Promise<void> => undefined
+        }),
+        negative = await nativeLiteralMathOwners(units, page, content, viewport, 1)
+      // A literal fallback never upgrades a failed native paint certificate.
+      expect(positive.has(formula.id)).toBe(fault === '')
+      expect(units).toEqual(before)
+      if (fault === 'text-in-clip' || fault === 'foreign-paint') {
+        expect(negative.has(formula.id)).toBe(true)
+        expect({
+          ...units.find((owner) => owner.id === formula.id),
+          sourceOnly: true,
+          preserve: 'literal'
+        }).toEqual(formula)
+      }
       expect(
         extraction.source.units.find((u) => u.source.startsWith('The following'))?.sourceOnly
       ).not.toBe(true)
