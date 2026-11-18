@@ -31,6 +31,7 @@ import type { AcpCreateSessionResponse, AcpStateSnapshot } from '../../shared/ac
 import type { AcpRuntimeOptions } from '../acp/runtime'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
 import type { AgentModelConfig, ResolvedAgentBackend } from '../agent-framework'
+import { codeBuddyFramework } from '../agent-framework/codebuddy'
 import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codexFramework } from '../agent-framework/codex'
 import { opencodeFramework } from '../agent-framework/opencode'
@@ -308,6 +309,31 @@ describe('Side chat restricted backend profile', () => {
         }
       }
     })
+  })
+
+  it('preserves the regional subscription login and disables native tools in a Side chat', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'codebuddy-side-chat-'))
+    const source = join(temporaryRoot, 'account')
+    await mkdir(source)
+    await writeFile(join(source, 'settings.json'), '{}')
+    const prepared = await prepareSideChatBackend(
+      {
+        ...backend(codeBuddyFramework, {
+          HOME: source,
+          USERPROFILE: source,
+          CODEBUDDY_CONFIG_DIR: source,
+          CODEBUDDY_INTERNET_ENVIRONMENT: 'external'
+        }),
+        modelRoute: 'codebuddy-subscription',
+        args: ['--tools', 'Read,Write']
+      },
+      join(temporaryRoot, 'chat')
+    )
+    expect(prepared.env.CODEBUDDY_CONFIG_DIR).toBe(
+      join(temporaryRoot, 'chat', 'codebuddy', 'external')
+    )
+    expect(prepared.env.HOME).toBe(source)
+    expect(prepared.args).toEqual(['--tools', ''])
   })
 
   it('keeps Claude resumable with no built-in tool-loading surface', async () => {

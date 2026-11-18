@@ -22,6 +22,11 @@ const labels =
 // descendants and ranges are not interchangeable link identities.
 const sections =
   /(?<![\p{Script=Latin}\p{Script=Greek}\p{N}\p{M}_])(?:Section\s+|Sec\.?\s*|§\s*)(?:\d+|[A-Za-z][.．]\d+)(?:[.．]\d+)*(?![\p{Script=Latin}\p{Script=Greek}\p{N}\p{M}_]|[.．,，–—−-]\s*\d)|第\s*(?:\d+|[A-Za-z][.．]\d+)(?:[.．]\d+)*\s*[节節](?![\p{N}\p{M}_]|\s*(?:[–—−-]|至)\s*第?(?:\d|[A-Za-z][.．]\d))/giu
+// Every mathematical alphanumeric symbol occupies two UTF-16 code units.
+function mathematicalAlphabetAt(text, index) {
+  const point = text.codePointAt(index)
+  return point >= 0x1d400 && point <= 0x1d7ff
+}
 function* sectionMatches(text) {
   for (const match of text.matchAll(sections)) {
     const before = text.slice(0, match.index),
@@ -32,8 +37,8 @@ function* sectionMatches(text) {
         after
       ) ||
       /^[.．][\p{L}\p{N}\p{M}_]/u.test(after) ||
-      /[\u{1d400}-\u{1d7ff}]$/u.test(before) ||
-      /^[\u{1d400}-\u{1d7ff}]/u.test(after)
+      mathematicalAlphabetAt(before, before.length - 2) ||
+      mathematicalAlphabetAt(after, 0)
     )
       continue
     yield match
@@ -57,8 +62,9 @@ function* appendixMatches(text) {
       ) ||
       /^\s*[.．]\s*\d/u.test(after) ||
       /^[.．(（][\p{L}\p{N}\p{M}_]/u.test(after) ||
-      /[\u{1d400}-\u{1d7ff}]$/u.test(before) ||
-      /^[\u{1d400}-\u{1d7ff}′″‴']/u.test(after)
+      mathematicalAlphabetAt(before, before.length - 2) ||
+      mathematicalAlphabetAt(after, 0) ||
+      /^[′″‴']/u.test(after)
     )
       continue
     yield match

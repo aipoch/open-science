@@ -286,7 +286,9 @@ const composeAcpRuntimePromptOwners = (
     if (!input.framework.beforePromptDispatch) return
     const connection = base.connectionResources.connection
     if (!connection) throw new Error('ACP connection is not available.')
+    const { codeBuddySharedSite } = base.backendGeneration.current.adapter
     await input.framework.beforePromptDispatch({
+      ...(codeBuddySharedSite && { codeBuddySharedSite }),
       connection,
       providerSessionId: input.providerSessionId,
       cwd: input.cwd,

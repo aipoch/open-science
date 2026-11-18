@@ -1,3 +1,4 @@
+import { codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import { z } from 'zod'
 import {
   imageServiceSchema,
@@ -57,6 +58,7 @@ const PROVIDER_TYPES = new Set<ProviderType>([
   'official',
   'codex-shared',
   'codex-isolated',
+  'codebuddy-subscription',
   'xai-subscription'
 ])
 
@@ -192,6 +194,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     characterCount(name) > PROVIDER_RESOURCE_LIMITS.nameCharacters
   )
     return undefined
+  if (type === 'codebuddy-subscription' && !codeBuddySiteForId(id)) return undefined
   if (!PROVIDER_TYPES.has(type)) {
     log.warn('dropping stored provider with unknown type', { id, type })
     return undefined
@@ -286,6 +289,8 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
+  if (type === 'codebuddy-subscription' && value.codeBuddyAuthMode === 'shared')
+    provider.codeBuddyAuthMode = 'shared'
   if (keyRef) provider.keyRef = keyRef
   if (keyMask) provider.keyMask = keyMask
   if (accountEmail && type === 'xai-subscription') provider.accountEmail = accountEmail
@@ -297,7 +302,10 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (lastValidatedTarget) provider.lastValidatedTarget = lastValidatedTarget
   if (lastValidationFailure) provider.lastValidationFailure = lastValidationFailure
   if (expiresAt !== undefined) provider.expiresAt = expiresAt
-  if (disconnectedAt !== undefined && type === 'claude-shared') {
+  if (
+    disconnectedAt !== undefined &&
+    (type === 'claude-shared' || provider.codeBuddyAuthMode === 'shared')
+  ) {
     provider.disconnectedAt = disconnectedAt
   }
   if (

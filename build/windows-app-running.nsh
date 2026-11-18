@@ -9,19 +9,42 @@ Var pid
 # openScienceInstallProcesses check. Every Stop-Process call there terminated the process, so
 # both stop passes terminate here as well. An unavailable inventory counts as running: files are
 # never removed on an unverified process list.
+# Re-checks for at most TIMEOUT ms of wall time instead of sleeping the full TIMEOUT: an update
+# hands off after the application has already quit, so the fixed waits were usually idle. One
+# inventory takes about 0.2 s, so the deadline uses GetTickCount rather than summed sleeps. Leaves
+# the last find result in $R0, so callers keep electron-builder's decision after the same budget.
+!macro openScienceWaitForInstallProcesses TIMEOUT
+  !define _OSW_ID ${__LINE__}
+  Push $R2
+  Push $R3
+  System::Call 'kernel32::GetTickCount()i.R2'
+  IntOp $R2 $R2 + ${TIMEOUT}
+  wait_${_OSW_ID}:
+    !insertmacro openScienceInstallProcesses "$INSTDIR" find $R0
+    ${if} $R0 != 1
+      System::Call 'kernel32::GetTickCount()i.R3'
+      IntOp $R3 $R2 - $R3
+      ${if} $R3 > 0
+        Sleep 50
+        Goto wait_${_OSW_ID}
+      ${endIf}
+    ${endIf}
+  Pop $R3
+  Pop $R2
+  !undef _OSW_ID
+!macroend
+
 !macro openScienceCheckAppRunning
   ${GetProcessInfo} 0 $pid $1 $2 $3 $4
   ${if} $3 != "${APP_EXECUTABLE_FILENAME}"
     ${if} ${isUpdated}
       # allow app to exit without explicit kill
-      Sleep 300
+      !insertmacro openScienceWaitForInstallProcesses 1300
+    ${else}
+      !insertmacro openScienceInstallProcesses "$INSTDIR" find $R0
     ${endIf}
-
-    !insertmacro openScienceInstallProcesses "$INSTDIR" find $R0
     ${if} $R0 != 1
       ${if} ${isUpdated}
-        # allow app to exit without explicit kill
-        Sleep 1000
         Goto openScienceStopProcess
       ${endIf}
       MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "$(appRunning)" /SD IDOK IDOK openScienceStopProcess
@@ -32,16 +55,17 @@ Var pid
       DetailPrint "$(appClosing)"
 
       !insertmacro openScienceInstallProcesses "$INSTDIR" stop $R0
-      # to ensure that files are not "in-use"
-      Sleep 300
+      # to ensure that files are not "in-use"; TerminateProcess returns before the exit completes
+      !insertmacro openScienceWaitForInstallProcesses 300
 
       # Retry counter
       StrCpy $R1 0
+      Goto openScienceStopChecked
 
       openScienceStopLoop:
-        IntOp $R1 $R1 + 1
-
         !insertmacro openScienceInstallProcesses "$INSTDIR" find $R0
+      openScienceStopChecked:
+        IntOp $R1 $R1 + 1
         ${if} $R0 != 1
           # wait to give a chance to exit gracefully
           Sleep 1000

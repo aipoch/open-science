@@ -243,3 +243,25 @@ for (const namespace of ['Delegation', 'Notebook'])
       }
     }
   )
+
+test('terminates a process only when its recorded birth still matches', windows, async () => {
+  const child = spawn(
+    process.execPath,
+    ['-e', 'process.stdout.write("ready");setInterval(()=>{},1000)'],
+    { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }
+  )
+  const exited = once(child, 'exit')
+  try {
+    await once(child.stdout, 'data')
+    const birth = native.getWindowsProcessCreationTime(child.pid)
+    assert.equal(native.windowsTerminateProcessByBirth(child.pid, '1'), false)
+    assert.equal(child.exitCode, null)
+    assert.equal(native.windowsTerminateProcessByBirth(child.pid, birth), true)
+    const [code] = await exited
+    assert.equal(code, 1)
+    assert.equal(native.windowsTerminateProcessByBirth(child.pid, birth), false)
+    assert.equal(native.windowsTerminateProcessByBirth(4294967295, birth), false)
+  } finally {
+    child.kill()
+  }
+})

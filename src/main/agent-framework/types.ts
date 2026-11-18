@@ -1,3 +1,4 @@
+import type { CodeBuddySite } from '../../shared/codebuddy-subscription'
 import type { AgentProcessSpawner } from '../node-process-host'
 import type { ClientConnection, McpServer, SessionModeState } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -265,6 +266,7 @@ export interface AgentFramework<FrameworkId extends string = AgentFrameworkId> {
   // Some ACP servers keep process-global current-session state. When present, the prompt workflow
   // calls this immediately before session.prompt() for the target provider session.
   beforePromptDispatch?(input: {
+    codeBuddySharedSite?: CodeBuddySite
     connection: ClientConnection
     providerSessionId: string
     cwd: string
@@ -320,6 +322,7 @@ export interface AgentFramework<FrameworkId extends string = AgentFrameworkId> {
 // inputs (executable + env + args). Produced by the settings layer at connect time so a framework or
 // provider switch takes effect on reconnect.
 export type ResolvedAgentBackend = {
+  codeBuddySharedSite?: CodeBuddySite
   framework: AgentFramework
   // Stable app provider/account identity used for usage attribution. This remains separate from
   // backendId because a framework may normalize provider selections onto one session store.

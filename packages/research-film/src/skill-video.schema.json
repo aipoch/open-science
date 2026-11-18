@@ -131,12 +131,12 @@
                 "caption": {
                   "type": "string",
                   "maxLength": 5000,
-                  "description": "on-screen words"
+                  "description": "on-screen words, shown in single-row phrases; newly authored lines use up to 220 characters"
                 },
                 "say": {
                   "type": "string",
                   "maxLength": 5000,
-                  "description": "spoken words; numbers and units in words"
+                  "description": "spoken words with numbers and units expanded; newly authored lines use up to 320 characters"
                 }
               },
               "required": ["caption"],
@@ -160,12 +160,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -190,7 +190,7 @@
                     },
                     "note_at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     }
                   },
@@ -207,12 +207,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -255,7 +255,7 @@
                           },
                           "at": {
                             "type": "string",
-                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                             "description": "when it appears (see cue syntax)"
                           },
                           "weight": {
@@ -278,7 +278,7 @@
                     },
                     "total_at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     }
                   },
@@ -295,12 +295,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -337,7 +337,7 @@
                           },
                           "at": {
                             "type": "string",
-                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                             "description": "when it appears (see cue syntax)"
                           }
                         },
@@ -360,7 +360,7 @@
                     },
                     "badge_at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "note": {
@@ -370,7 +370,7 @@
                     },
                     "note_at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     }
                   },
@@ -387,12 +387,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -531,7 +531,7 @@
                         },
                         "at": {
                           "type": "string",
-                          "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                          "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                           "description": "when it appears (see cue syntax)"
                         }
                       },
@@ -554,7 +554,7 @@
                           },
                           "at": {
                             "type": "string",
-                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                             "description": "when it appears (see cue syntax)"
                           }
                         },
@@ -586,12 +586,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -627,7 +627,7 @@
                           },
                           "at": {
                             "type": "string",
-                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                             "description": "when it appears (see cue syntax)"
                           }
                         },
@@ -646,7 +646,7 @@
                     },
                     "foot_at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     }
                   },
@@ -663,12 +663,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -697,7 +697,7 @@
                           },
                           "at": {
                             "type": "string",
-                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                             "description": "when it appears (see cue syntax)"
                           }
                         },
@@ -716,7 +716,7 @@
                     },
                     "foot_at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     }
                   },
@@ -733,12 +733,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -769,7 +769,7 @@
                     },
                     "note_at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     }
                   },
@@ -786,12 +786,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -848,12 +848,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -885,12 +885,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -920,7 +920,7 @@
                           },
                           "at": {
                             "type": "string",
-                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                             "description": "when it appears (see cue syntax)"
                           }
                         },
@@ -946,12 +946,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -1015,7 +1015,7 @@
                         },
                         "at": {
                           "type": "string",
-                          "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                          "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                           "description": "when it appears (see cue syntax)"
                         }
                       },
@@ -1042,12 +1042,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -1084,12 +1084,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -1128,7 +1128,7 @@
                           },
                           "at": {
                             "type": "string",
-                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                             "description": "when it appears (see cue syntax)"
                           }
                         },
@@ -1154,12 +1154,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -1189,12 +1189,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {
@@ -1248,12 +1248,12 @@
                     },
                     "at": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "until": {
                       "type": "string",
-                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+(?:-[^\\s+\\d-][^\\s+\\-]*)*)?)([+\\-]\\d+(\\.\\d+)?)?$",
                       "description": "when it appears (see cue syntax)"
                     },
                     "box": {

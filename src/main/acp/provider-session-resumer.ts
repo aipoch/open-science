@@ -174,6 +174,7 @@ export class AcpProviderSessionResumer {
         checkpoint()
         if (backend.framework.beforePromptDispatch) {
           await backend.framework.beforePromptDispatch({
+            codeBuddySharedSite: backend.adapter.codeBuddySharedSite,
             connection,
             providerSessionId: attachment.providerSessionId,
             cwd: input.cwd,

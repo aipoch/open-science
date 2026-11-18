@@ -161,6 +161,10 @@ describe('computePreflight', () => {
   })
 
   it('is not provider-ready when the active provider key is unusable', () => {
+    expect(run({ isProviderKeyUsable: () => undefined })).toMatchObject({
+      activeProviderReady: false,
+      providerReadiness: { status: 'not_ready', reason: 'unknown' }
+    })
     expect(run({ isProviderKeyUsable: () => false })).toMatchObject({
       activeProviderReady: false,
       providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }

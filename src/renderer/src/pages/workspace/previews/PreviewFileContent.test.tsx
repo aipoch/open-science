@@ -152,6 +152,17 @@ const installPdbLayoutMocks = (): (() => void) => {
   }
 }
 
+async function chooseVideoResolution(button: HTMLButtonElement, label = '720p'): Promise<void> {
+  await act(async () =>
+    button.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  )
+  const option = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) =>
+    item.textContent?.startsWith(label)
+  )
+  expect(option).toBeDefined()
+  await act(async () => option!.click())
+}
+
 describe('PreviewFileContent', () => {
   let container: HTMLDivElement
   let root: Root
@@ -453,7 +464,100 @@ describe('PreviewFileContent', () => {
     }
   })
 
-  it('only enables MP4 export after a message from the current player frame, and cancels the pending export', async () => {
+  it.each([
+    {
+      duration: 81.2,
+      labels: ['720p (allow 3–9 min)', '1080p (allow 5–14 min)', '4K (allow 9–33 min)']
+    },
+    {
+      duration: undefined,
+      labels: [
+        '720p (allow 2–6 min per minute of film)',
+        '1080p (allow 3–10 min per minute of film)',
+        '4K (allow 6–24 min per minute of film)'
+      ]
+    }
+  ])(
+    'offers three resolutions with estimates for duration $duration, and waits for a choice',
+    async ({ duration, labels }) => {
+      await renderFile(
+        createFileItem({ format: 'html', name: 'player.html', projectId: 'project-1' })
+      )
+      const frame = container.querySelector('iframe')!
+      await act(async () =>
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'open-science-research-video-ready', duration },
+            source: frame.contentWindow
+          })
+        )
+      )
+      const button = [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Render video (MP4)'
+      )!
+      await act(async () =>
+        button.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      )
+      expect(
+        [...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent)
+      ).toEqual(labels)
+      expect(window.api.previewResources.exportResearchVideo).not.toHaveBeenCalled()
+      await act(async () =>
+        document
+          .querySelector('[role="menu"]')!
+          .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      )
+      expect(document.querySelector('[role="menu"]')).toBeNull()
+      expect(window.api.previewResources.exportResearchVideo).not.toHaveBeenCalled()
+      await chooseVideoResolution(button, '1080p')
+      expect(window.api.previewResources.exportResearchVideo).toHaveBeenCalledWith({
+        resourceId: expect.any(String),
+        resolution: '1080p'
+      })
+    }
+  )
+
+  it('announces a saved video and opens that exact file, surfacing player errors in the dialog', async () => {
+    window.api.localFs = {
+      openPath: vi.fn(async () => 'No player available'),
+      reveal: vi.fn(async () => {})
+    } as unknown as Window['api']['localFs']
+    vi.mocked(window.api.previewResources.exportResearchVideo).mockResolvedValue({
+      canceled: false,
+      filePath: '/chosen/film.mp4'
+    })
+    await renderFile(
+      createFileItem({ format: 'html', name: 'player.html', projectId: 'project-1' })
+    )
+    await act(async () =>
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'open-science-research-video-ready', duration: 81.2 },
+          source: container.querySelector('iframe')!.contentWindow
+        })
+      )
+    )
+    const render = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Render video (MP4)'
+    )!
+    await chooseVideoResolution(render, '1080p')
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain('Video ready')
+    expect(dialog.textContent).toContain('Your 1080p video has been saved.')
+    expect(dialog.textContent).toContain('/chosen/film.mp4')
+    const button = (label: string): HTMLButtonElement =>
+      [...dialog.querySelectorAll('button')].find((button) => button.textContent === label)!
+    await act(async () => button('Play video').click())
+    expect(window.api.localFs.openPath).toHaveBeenCalledWith('/chosen/film.mp4')
+    expect(dialog.textContent).toContain('No player available')
+    await act(async () => button('Show in folder').click())
+    expect(window.api.localFs.reveal).toHaveBeenCalledWith('/chosen/film.mp4')
+    expect(dialog.textContent).not.toContain('No player available')
+    await act(async () => button('Done').click())
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('offers video and HTML after the current player is ready, and cancels the pending video export', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
       content: '<main>player</main>',
       encoding: 'utf8',
@@ -465,9 +569,10 @@ describe('PreviewFileContent', () => {
     )
     const button = (): HTMLButtonElement | undefined =>
       [...container.querySelectorAll('button')].find(
-        (button) => button.textContent === 'Export MP4'
+        (button) => button.textContent === 'Render video (MP4)'
       )
     expect(button()).toBeUndefined()
+    expect(container.querySelector('[aria-label="Save shareable HTML"]')).toBeNull()
     await act(async () =>
       window.dispatchEvent(
         new MessageEvent('message', {
@@ -477,6 +582,7 @@ describe('PreviewFileContent', () => {
       )
     )
     expect(button()).toBeUndefined()
+    expect(container.querySelector('[aria-label="Save shareable HTML"]')).toBeNull()
     const frame = container.querySelector('iframe')!
     await act(async () =>
       window.dispatchEvent(
@@ -487,6 +593,11 @@ describe('PreviewFileContent', () => {
       )
     )
     expect(button()).toBeDefined()
+    expect(container.querySelector('[aria-label="Save shareable HTML"]')).not.toBeNull()
+    const oldProgress = Promise.withResolvers<{ phase: 'encoding'; startedAt: number }>()
+    vi.mocked(window.api.previewResources.researchVideoExportProgress).mockReturnValueOnce(
+      oldProgress.promise
+    )
     let finish!: () => void
     vi.mocked(window.api.previewResources.exportResearchVideo).mockImplementationOnce(
       () =>
@@ -494,9 +605,10 @@ describe('PreviewFileContent', () => {
           finish = () => resolve({ canceled: true })
         })
     )
-    await act(async () => button()!.click())
+    await chooseVideoResolution(button()!)
     expect(window.api.previewResources.exportResearchVideo).toHaveBeenCalledWith({
-      resourceId: expect.any(String)
+      resourceId: expect.any(String),
+      resolution: '720p'
     })
     expect(container.querySelector('[data-research-video-export-status]')).not.toBeNull()
     expect(
@@ -512,6 +624,7 @@ describe('PreviewFileContent', () => {
     })
     await act(async () => finish())
     expect(button()).toBeDefined()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
 
     vi.mocked(window.api.previewResources.exportResearchVideo).mockImplementationOnce(
       () =>
@@ -519,7 +632,11 @@ describe('PreviewFileContent', () => {
           finish = () => resolve({ canceled: true })
         })
     )
-    await act(async () => button()!.click())
+    await chooseVideoResolution(button()!)
+    await act(async () => oldProgress.resolve({ phase: 'encoding', startedAt: Date.now() }))
+    expect(container.querySelector('[data-research-video-export-status]')?.textContent).toContain(
+      'Exporting MP4…'
+    )
     await act(async () =>
       root.render(
         <PreviewFileContent
@@ -546,6 +663,51 @@ describe('PreviewFileContent', () => {
     await act(async () => finish())
     expect(button()).toBeDefined()
   })
+
+  it.each(['local', 'artifact', 'upload'] as const)(
+    'saves the previewed %s film as shareable HTML without starting video rendering',
+    async (source) => {
+      const save = vi.fn().mockResolvedValue({ saved: true })
+      window.api.saveManagedFile = save
+      const item = createFileItem({
+        source,
+        format: 'html',
+        name: 'Paris-research-film.html',
+        path: '/films/Paris/player.html',
+        selectedVersionId: source === 'local' ? undefined : 'version-2'
+      })
+      await renderFile(item)
+      await act(async () =>
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'open-science-research-video-ready' },
+            source: container.querySelector('iframe')!.contentWindow
+          })
+        )
+      )
+      const button = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Save shareable HTML"]'
+      )!
+      expect(
+        document.getElementById(button.getAttribute('aria-describedby')!)?.textContent
+      ).toContain('runnable app code')
+      await act(async () => button.click())
+      expect(save).toHaveBeenCalledExactlyOnceWith(
+        source === 'local'
+          ? { source, path: item.path, suggestedName: item.name }
+          : {
+              source,
+              projectId: 'project-1',
+              fileId: 'file-1',
+              versionId: 'version-2',
+              suggestedName: item.name
+            }
+      )
+      expect(button.textContent).toBe('Saved')
+      expect(window.api.previewResources.exportResearchVideo).not.toHaveBeenCalled()
+      expect(container.querySelector('iframe')).not.toBeNull()
+    }
+  )
 
   it.each(['complete', 'cancel', 'fail'] as const)(
     'retains an export in source mode until %s and hides idle source export controls',
@@ -575,9 +737,10 @@ describe('PreviewFileContent', () => {
         )
       }
       await switchMode('Show HTML source')
-      expect(button('Export MP4')).toBeUndefined()
+      expect(button('Render video (MP4)')).toBeUndefined()
+      expect(container.querySelector('[aria-label="Save shareable HTML"]')).toBeNull()
       await switchMode('Show rendered HTML')
-      expect(button('Export MP4')).toBeDefined()
+      expect(button('Render video (MP4)')).toBeDefined()
       let finish!: () => void
       vi.mocked(window.api.previewResources.exportResearchVideo).mockImplementationOnce(
         () =>
@@ -588,13 +751,15 @@ describe('PreviewFileContent', () => {
                 : resolve({ canceled: outcome === 'cancel' })
           })
       )
-      await act(async () => button('Export MP4')!.click())
-      const request = vi.mocked(window.api.previewResources.exportResearchVideo).mock.calls[0][0]
+      await chooseVideoResolution(button('Render video (MP4)')!)
+      const { resourceId } = vi.mocked(window.api.previewResources.exportResearchVideo).mock
+        .calls[0][0]
+      const request = { resourceId }
       await switchMode('Show HTML source')
       expect(container.querySelector('iframe')).toBeNull()
       expect(container.textContent).toContain('Exporting MP4…')
       expect(button('Cancel')).toBeDefined()
-      expect(button('Export MP4')).toBeUndefined()
+      expect(button('Render video (MP4)')).toBeUndefined()
       expect(window.api.previewResources.cancelResearchVideoExport).not.toHaveBeenCalled()
       expect(window.api.previewResources.release).not.toHaveBeenCalledWith(request)
       if (outcome === 'cancel') {
@@ -606,11 +771,11 @@ describe('PreviewFileContent', () => {
       }
       await act(async () => finish())
       expect(window.api.previewResources.release).toHaveBeenCalledWith(request)
-      expect(button('Export MP4')).toBeUndefined()
+      expect(button('Render video (MP4)')).toBeUndefined()
       expect(button('Cancel')).toBeUndefined()
       if (outcome === 'fail') expect(container.textContent).toContain('Encoding failed')
       await switchMode('Show rendered HTML')
-      expect(button('Export MP4')).toBeDefined()
+      expect(button('Render video (MP4)')).toBeDefined()
     }
   )
 
@@ -657,15 +822,62 @@ describe('PreviewFileContent', () => {
       canceled: false,
       needsInstallation: { downloadBytes: 1024 }
     })
-    await act(async () => button('Export MP4').click())
+    await chooseVideoResolution(button('Render video (MP4)'), '4K')
+    expect(window.api.localModels.install).not.toHaveBeenCalled()
+    await chooseVideoResolution(button('Render video (MP4)'), '1080p')
     expect(window.api.localModels.install).not.toHaveBeenCalled()
     await act(async () => button('Install and export').click())
     expect(window.api.localModels.install).toHaveBeenCalledExactlyOnceWith('video-export')
     expect(window.api.previewResources.exportResearchVideo).toHaveBeenCalledTimes(1)
+
+    // A second preview joins the same download, cancels its export, then closes.
+    const other = document.createElement('div')
+    document.body.appendChild(other)
+    const otherRoot = createRoot(other)
+    try {
+      await act(async () =>
+        otherRoot.render(
+          <PreviewFileContent
+            item={createFileItem({
+              format: 'html',
+              name: 'second.html',
+              path: '/second.html',
+              projectId: 'project-1'
+            })}
+          />
+        )
+      )
+      await act(async () =>
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'open-science-research-video-ready' },
+            source: other.querySelector('iframe')!.contentWindow
+          })
+        )
+      )
+      const otherButton = (text: string): HTMLButtonElement =>
+        [...other.querySelectorAll('button')].find((entry) => entry.textContent === text)!
+      vi.mocked(window.api.previewResources.exportResearchVideo).mockResolvedValueOnce({
+        canceled: false,
+        needsInstallation: { downloadBytes: 1024 }
+      })
+      await chooseVideoResolution(otherButton('Render video (MP4)'))
+      await act(async () => otherButton('Install and export').click())
+      await act(async () => otherButton('Cancel').click())
+    } finally {
+      await act(async () => otherRoot.unmount())
+      other.remove()
+    }
+    expect(window.api.localModels.cancel).not.toHaveBeenCalled()
+    expect(window.api.previewResources.cancelResearchVideoExport).not.toHaveBeenCalled()
     await act(async () => vi.advanceTimersByTimeAsync(500))
     expect(getSnapshot).toHaveBeenCalledWith('video-export')
-    expect(window.api.previewResources.exportResearchVideo).toHaveBeenCalledTimes(2)
-    expect(button('Export MP4')).toBeDefined()
+    expect(window.api.previewResources.exportResearchVideo).toHaveBeenCalledTimes(3)
+    expect(window.api.previewResources.exportResearchVideo).toHaveBeenLastCalledWith({
+      resourceId: expect.any(String),
+      resolution: '1080p'
+    })
+    expect(button('Render video (MP4)')).toBeDefined()
     vi.useRealTimers()
   })
 

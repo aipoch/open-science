@@ -10,6 +10,7 @@ import { prepareCodexRuntimeHomeAuthentication } from '../settings/codex-auth'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 
 type RestrictedRuntimeProfile = Readonly<{
+  allowCodeBuddySubscription?: boolean
   taskOnly?: boolean
   agentName: string
   description: string
@@ -217,7 +218,7 @@ const prepareCodeBuddyBackend = async (
   }
   return {
     ...backend,
-    env: await isolateCodeBuddyEnvironment(backend.env, configDir),
+    env: await isolateCodeBuddyEnvironment(backend, configDir, profile.allowCodeBuddySubscription),
     args: [...args, '--tools', ''],
     sessionOptions: removeSkillRuntimeCapability(backend.sessionOptions),
     systemPromptAppends: [profile.systemPrompt],

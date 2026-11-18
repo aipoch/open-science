@@ -956,10 +956,30 @@ describe('standalone dependency boundary', () => {
     'electron',
     'electron/main',
     'electron-updater',
+    'electron-to-chromium-extra',
     '@electron-toolkit/utils',
     '@electron/remote'
   ])('forbids %s in the package closure', (name) => {
     expect(isElectronPackage(name)).toBe(true)
+  })
+  it.each([
+    'electron-to-chromium',
+    'electron-to-chromium/versions',
+    'electron-to-chromium/versions.js'
+  ])('allows Babel version mapping data from %s without an Electron runtime', (name) => {
+    expect(isElectronPackage(name)).toBe(false)
+    expect(() =>
+      assertBackendImports(
+        [
+          {
+            inputs: { 'node_modules/browserslist/index.js': { imports: [{ path: name }] } },
+            outputs: { 'index.cjs': { imports: [{ path: name, external: true }] } }
+          }
+        ],
+        {},
+        new Set(['electron-to-chromium'])
+      )
+    ).not.toThrow()
   })
   it('rejects an Electron import in any reachable worker or transitive source', () => {
     expect(() =>

@@ -1,5 +1,6 @@
 import { readStoredImageTasks, withImageTaskSnapshot } from '../image-model/stored-tasks'
 import { imageTaskIsActive, type ImageTaskScope, type ImageTask } from '../../shared/image-task'
+import { readResearchFilmCard } from '../research-video/stored-presentation'
 import { indexPortableEvidence } from '../artifacts/execution-evidence-log'
 import { ReviewRepository } from '../reviewer/repository'
 import { ComputeJobRepository } from '../compute/job-repository'
@@ -2488,11 +2489,13 @@ export class SessionPackageService {
           throw new Error('Research presentation is unavailable.')
       }
     }
+    const playerPath = join(this.options.storageRoot, film.playerStorageKey)
     return {
+      ...(!options.includeUnavailable && (await readResearchFilmCard(playerPath))),
       id: film.id,
       title: film.title,
       duration: film.duration,
-      playerPath: join(this.options.storageRoot, film.playerStorageKey),
+      playerPath,
       sourcePath: join(this.options.storageRoot, film.sourceStorageKey)
     }
   }

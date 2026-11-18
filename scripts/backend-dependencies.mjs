@@ -53,6 +53,8 @@ export async function inlineDesktopDependencyMaps(manifest, directory) {
 }
 
 export const isElectronPackage = (name) =>
+  // Browserslist uses this data-only version map; it does not load the Electron runtime.
+  !/^electron-to-chromium(?:$|\/)/.test(name) &&
   /^(?:electron(?:$|\/|-)|@electron(?:-toolkit)?\/)/.test(name)
 
 // Claude always uses the detected executable; Prisma's optional peers generate clients at build time.

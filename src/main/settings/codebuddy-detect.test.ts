@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { CODEBUDDY_VERSION } from './codebuddy-install'
 import { detectCodeBuddy, type CodeBuddyDetectDeps } from './codebuddy-detect'
 
 const deps = (installed: Record<string, string>): CodeBuddyDetectDeps => ({
@@ -13,26 +14,28 @@ const deps = (installed: Record<string, string>): CodeBuddyDetectDeps => ({
 
 describe('codebuddy detection', () => {
   it('finds the primary command on PATH', async () => {
-    await expect(detectCodeBuddy(deps({ '/usr/local/bin/codebuddy': '2.138.0' }))).resolves.toEqual(
-      { resolvedPath: '/usr/local/bin/codebuddy', version: '2.138.0' }
-    )
+    await expect(
+      detectCodeBuddy(deps({ '/usr/local/bin/codebuddy': CODEBUDDY_VERSION }))
+    ).resolves.toEqual({ resolvedPath: '/usr/local/bin/codebuddy', version: CODEBUDDY_VERSION })
   })
 
   it('accepts the package command alias from npm global bin', async () => {
-    await expect(detectCodeBuddy(deps({ '/npm/bin/codebuddy-code': '2.138.0' }))).resolves.toEqual({
+    await expect(
+      detectCodeBuddy(deps({ '/npm/bin/codebuddy-code': CODEBUDDY_VERSION }))
+    ).resolves.toEqual({
       resolvedPath: '/npm/bin/codebuddy-code',
-      version: '2.138.0'
+      version: CODEBUDDY_VERSION
     })
   })
 
   it('passes cancellation through directory and version probes', async () => {
     const controller = new AbortController()
     const resolveNpmBinDirs = vi.fn().mockResolvedValue(['/npm/bin'])
-    const getVersion = vi.fn().mockResolvedValue('2.138.0')
+    const getVersion = vi.fn().mockResolvedValue(CODEBUDDY_VERSION)
 
     await detectCodeBuddy(
       {
-        ...deps({ '/npm/bin/codebuddy': '2.138.0' }),
+        ...deps({ '/npm/bin/codebuddy': CODEBUDDY_VERSION }),
         resolveNpmBinDirs,
         getVersion
       },

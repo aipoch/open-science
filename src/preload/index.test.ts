@@ -727,6 +727,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.cancelNotebookNetworkSetup',
       'settings.cancelXaiOAuthLogin',
       'settings.checkEnvironment',
+      'settings.codeBuddyAccount',
       'settings.createDeviceCredential',
       'settings.createSkill',
       'settings.createWslSupportHandoff',

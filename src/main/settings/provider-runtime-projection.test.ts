@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+import { codeBuddyAccounts } from '../../shared/codebuddy-subscription'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -17,6 +19,60 @@ const { ProviderRuntimeProjectionOwner } = await import('./provider-runtime-proj
 const { encryptKey } = await import('./crypto')
 
 describe('ProviderRuntimeProjectionOwner', () => {
+  it.each([
+    ['internal', 'hy4std', 'default-model'],
+    ['external', 'default-model', 'hy4std']
+  ] as const)(
+    'uses the %s base catalog until an account catalog is available',
+    (site, first, otherSite) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        ...codeBuddyAccounts[site],
+        type: 'codebuddy-subscription',
+        fetchedModels: []
+      }
+      const base = owner.toProviderView(provider).models
+      expect(base[0]).toBe(first)
+      expect(base).not.toContain(otherSite)
+      expect(owner.resolveActiveModel(provider)).toBe(first)
+      expect(owner.toProviderView({ ...provider, model: 'older-model' }).models).toEqual([
+        'older-model',
+        ...base
+      ])
+      const refreshed = { ...provider, fetchedModels: ['account-only'] }
+      expect(owner.toProviderView(refreshed).models).toEqual(['account-only'])
+      expect(owner.resolveActiveModel(refreshed)).toBe('account-only')
+    }
+  )
+
+  it('routes the same model to the saved CodeBuddy account when both sites are configured', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const framework = getAgentFramework('codebuddy')
+    const targets = (['internal', 'external'] as const).map((site) => {
+      const record: StoredProvider = {
+        ...codeBuddyAccounts[site],
+        type: 'codebuddy-subscription',
+        model: 'same-model',
+        apiEndpoints: ['chat-completions']
+      }
+      const selection = { kind: 'required', model: 'same-model' } as const
+      expect(
+        owner.resolveRuntimeTarget(record, selection, getAgentFramework('codex'))
+          .frameworkCompatible
+      ).toBe(false)
+      const target = owner.resolveRuntimeTarget(record, selection, framework)
+      expect(target.providerId).toBe(record.id)
+      const config = framework.prepareModelConfig(target.provider, {
+        storageRoot: 'profiles',
+        executablePath: 'codebuddy'
+      })
+      expect(config.env?.CODEBUDDY_INTERNET_ENVIRONMENT).toBe(site)
+      expect(config.env).not.toHaveProperty('CODEBUDDY_API_KEY')
+      expect(config.configFiles?.some((file) => file.path.endsWith('models.json'))).toBe(false)
+      return config.env?.HOME
+    })
+    expect(targets).toEqual([join('profiles', 'codebuddy-cn'), join('profiles', 'codebuddy-intl')])
+  })
   it.each([
     { type: 'codex-shared', codexAuthMode: undefined },
     { type: 'codex-isolated', codexAuthMode: 'imported' },
@@ -232,10 +288,10 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
 
     expect(owner.toProviderView(openai).models).toEqual(
-      expect.arrayContaining(['gpt-6-sol', 'gpt-6-luna'])
+      expect.arrayContaining(['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6-sol', 'gpt-6-luna'])
     )
     expect(owner.toProviderView(codex).models).toEqual(
-      expect.arrayContaining(['gpt-6-sol', 'gpt-6-luna'])
+      expect.arrayContaining(['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6-sol', 'gpt-6-luna'])
     )
   })
 
@@ -250,7 +306,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
         name: 'OpenAI',
         apiEndpoints: ['responses']
       }
-      const model = 'gpt-6.1-sol'
+      const model = 'gpt-6.2-sol'
 
       expect(owner.toProviderView(provider).models).toContain(model)
       expect(owner.resolveActiveModel(provider)).toBe(type === 'official' ? model : undefined)
