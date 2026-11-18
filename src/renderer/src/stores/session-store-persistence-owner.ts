@@ -495,6 +495,38 @@ const mergeSessionSummaryWithLiveState = (
   }
 }
 
+const hasLocalSessionWork = (session: ChatSession): boolean =>
+  session.activeRun !== undefined ||
+  session.status === 'running' ||
+  session.unsavedTitle === true ||
+  session.firstPromptDraft !== undefined ||
+  session.elicitationEditDrafts !== undefined
+
+const replaceIdleSessionWithNewerSummary = (
+  summary: ChatSession,
+  current: ChatSession
+): ChatSession => {
+  if (
+    current.contentLoaded === false ||
+    hasLocalSessionWork(current) ||
+    (summary.revision ?? 0) <= (current.revision ?? 0)
+  )
+    return mergeSessionSummaryWithLiveState(summary, current)
+
+  const authority = {
+    ...toPersistedSession(current),
+    title: summary.title,
+    status: summary.status,
+    pinned: summary.pinned,
+    ...(summary.archivedAt !== undefined ? { archivedAt: summary.archivedAt } : {}),
+    revision: summary.revision,
+    filesRevision: summary.filesRevision,
+    updatedAt: summary.updatedAt
+  }
+  markExternallyHydratedSession(summary, authority)
+  return summary
+}
+
 const matchesPersistedPlanProjection = (
   projection: ActivePlanProjection | undefined,
   session: PersistedChatSession
@@ -766,7 +798,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           const summarySession = hydrateSessionSummary(summary)
           const current = preserveLiveState ? currentById.get(summary.id) : undefined
           return current
-            ? mergeSessionSummaryWithLiveState(summarySession, current)
+            ? replaceIdleSessionWithNewerSummary(summarySession, current)
             : summarySession
         })
       const hasExplicitSelection = selection !== undefined

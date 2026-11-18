@@ -6125,6 +6125,61 @@ describe('passive summary hydration', () => {
       'Keep this loaded message'
     )
   })
+
+  it('does not save an idle transcript after a newer summary revision arrives', async () => {
+    const base = createPersistedSession({
+      revision: 4,
+      pinned: false,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Older loaded message',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: base.id,
+          projectId: base.projectId,
+          title: base.title,
+          status: 'idle',
+          presentedStatus: 'idle',
+          revision: 5,
+          pinned: false,
+          activeMessageCount: 2,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt + 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+
+    const refreshed = useSessionStore.getState().sessions[0]
+    expect(refreshed.contentLoaded).toBe(false)
+    expect(refreshed.messages).toEqual([])
+    expect(isExternallyHydratedSession(refreshed)).toBe(true)
+
+    await save(useSessionStore.getState())
+
+    expect(api.saveSession).not.toHaveBeenCalled()
+  })
 })
 
 describe('desktop disconnect write admission', () => {
