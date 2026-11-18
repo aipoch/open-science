@@ -32,6 +32,21 @@ const table = {
   state: 'running'
 }
 describe('comparison subscriptions', () => {
+  it('reopens storage on explicit retry and keeps automatic reads passive', async () => {
+    comparisons
+      .mockRejectedValueOnce(new Error('comparison-storage-unavailable'))
+      .mockResolvedValue({ tables: [], summaries: [] })
+    const { result } = renderHook(() => useComparisonTables())
+    await waitFor(() => expect(result.current.error).toBe(true))
+    await act(() => result.current.retryLoad())
+    expect(result.current.error).toBe(false)
+    await act(() => result.current.refresh())
+    expect(comparisons.mock.calls.map(([request]) => request)).toEqual([
+      { action: 'list' },
+      { action: 'list', retryStorage: true },
+      { action: 'list' }
+    ])
+  })
   it('uses the same pending scope for summaries from older hosts', async () => {
     const cells = [
       { id: 'revised', itemId: 'revised', status: 'pending', history: [{ id: 'old' }] },

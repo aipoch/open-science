@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 
 const id = z.string().trim().min(1).max(256)
-const offset = z.number().int().min(0).max(20_000_000).optional()
+const offset = z.number().int().min(0).optional()
 const text = z.string().trim().min(1).max(4000)
 export const comparisonFieldSchema = z
   .object({
@@ -114,7 +114,7 @@ const launchChecks = {
 }
 
 export const comparisonRequestSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('list') }).strict(),
+  z.object({ action: z.literal('list'), retryStorage: z.literal(true).optional() }).strict(),
   z.object({ action: z.literal('read'), tableId: id, offset, readToken: id.optional() }).strict(),
   z.object({ action: z.literal('delete'), tableId: id }).strict(),
   z

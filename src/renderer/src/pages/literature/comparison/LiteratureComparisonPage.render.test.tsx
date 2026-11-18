@@ -2444,6 +2444,52 @@ describe('comparison workflow', () => {
     )
   })
 
+  it.each([false, true])(
+    'rechecks a selected column only when its scope changes (field changed: %s)',
+    async (fieldChanged) => {
+      const table = fixture()
+      const command = vi.fn().mockResolvedValue({
+        tables: [],
+        sourceChecks: [{ itemId: 'paper', sourceKey: 'source', status: 'available' }]
+      })
+      const props = {
+        command,
+        onChooseReferences: vi.fn(),
+        onOpenItem: vi.fn(),
+        onOpenDiscovery: vi.fn(),
+        onOpenComparison: vi.fn()
+      }
+      const { rerender } = render(<LiteratureComparisonPage table={table} {...props} />)
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select {{title}}' }))
+      fireEvent.click(columnMenuItem('Rerun column'))
+      const start = await screen.findByRole<HTMLButtonElement>('button', {
+        name: 'Confirm and start'
+      })
+      await waitFor(() => expect(start.disabled).toBe(false))
+      rerender(
+        <LiteratureComparisonPage
+          table={{
+            ...table,
+            revision: table.revision + 1,
+            name: 'New name',
+            fields: fieldChanged
+              ? table.fields.map((f) => ({ ...f, version: f.version + 1 }))
+              : table.fields
+          }}
+          {...props}
+        />
+      )
+      expect(start.disabled).toBe(fieldChanged)
+      if (!fieldChanged) {
+        fireEvent.click(start)
+        await waitFor(() =>
+          expect(command).toHaveBeenCalledWith(
+            expect.objectContaining({ action: 'rerun-field', expectedRevision: table.revision + 1 })
+          )
+        )
+      }
+    }
+  )
   it('reruns the selected references in the chosen column', async () => {
     const table = fixture()
     const command = page(

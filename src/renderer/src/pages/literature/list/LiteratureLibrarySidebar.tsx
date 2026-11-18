@@ -1,3 +1,5 @@
+import { comparisonStorageMessage } from '../comparison/comparison-display'
+import { ErrorNotice } from '@/components/error-notice'
 import type { ComparisonTableSummary } from '../../../../../shared/literature-comparison'
 import { useLiteratureHost } from '../renderer-host'
 import { SmartCollectionIcon } from '@/components/app-icons/custom-glyphs'
@@ -74,6 +76,7 @@ export function LiteratureLibrarySidebar({
   comparisons?: {
     tables: ComparisonTableSummary[]
     selectedId?: string
+    storageRetry?: () => void
     onCreate: () => void
     onOpen: (id: string, action?: 'configure' | 'export') => void
     onDelete: (table: ComparisonTableSummary) => void
@@ -470,6 +473,13 @@ export function LiteratureLibrarySidebar({
                     </LiteratureSidebarHint>
                   )}
                 />
+                {comparisons?.storageRetry && !comparisons.selectedId && (
+                  <ErrorNotice
+                    inline
+                    title={comparisonStorageMessage('comparison-storage-unavailable', t)}
+                    primaryButton={{ label: t('Retry'), onClick: comparisons.storageRetry }}
+                  />
+                )}
                 {comparisons && (
                   <LiteratureSidebarGroup
                     collapsed={sidebarCollapsed}
@@ -489,6 +499,7 @@ export function LiteratureLibrarySidebar({
                           size="icon-lg"
                           className="text-muted-foreground hover:text-foreground transition-none"
                           aria-label={t('New comparison table')}
+                          disabled={Boolean(comparisons.storageRetry)}
                           onClick={comparisons.onCreate}
                         >
                           <Plus className="size-4" aria-hidden="true" />

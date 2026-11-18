@@ -9,8 +9,14 @@ export function comparisonStorageMessage(
   t: (key: string) => string
 ): string | undefined {
   if (issue?.includes('comparison-storage-limit') || issue?.includes('comparison-table-limit'))
-    return t('Comparison storage is full. Export a table before deleting it to free space.')
-  if (issue?.includes('comparison-storage-unavailable') || issue === 'checkpoint-failed')
+    return t(
+      'Comparison storage is full. Back up literature/comparisons-v1.json from your data folder before deleting a table.'
+    )
+  if (issue?.includes('comparison-storage-unavailable'))
+    return t(
+      'Check literature/comparisons-v1.json in your data folder. Restore a valid backup if needed, then retry.'
+    )
+  if (issue === 'checkpoint-failed')
     return t('File storage is unavailable. Check the storage location and try again.')
   return undefined
 }

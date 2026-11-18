@@ -120,6 +120,68 @@ function SourceCheckProgress({ done, total }: { done: number; total: number }): 
   )
 }
 
+const targetsFor = (table: ComparisonTable, request?: ComparisonLaunchRequest): ComparisonCell[] =>
+  table.cells.filter((cell) => {
+    if (!request) return true
+    if (request.action === 'resume') return table.remainingCellIds.includes(cell.id)
+    if (request.action === 'retry') return request.cellIds.includes(cell.id)
+    if (request.action === 'rerun-field')
+      return (
+        cell.fieldId === request.fieldId &&
+        (!request.itemIds || request.itemIds.includes(cell.itemId))
+      )
+    return (
+      request.action === 'run' &&
+      (request.unattemptedOnly
+        ? isUnattemptedComparisonCell(cell)
+        : isPendingComparisonCell(cell)) &&
+      (!request.itemIds || request.itemIds.includes(cell.itemId))
+    )
+  })
+
+// A selection can survive unrelated changes. Full-table and resume confirmations keep their original revision.
+function sameLaunchScope(
+  before: ComparisonTable,
+  after: ComparisonTable,
+  request?: ComparisonLaunchRequest
+): boolean {
+  if (before.id !== after.id) return false
+  if (before.revision === after.revision) return true
+  if (
+    !request ||
+    !(request.action === 'retry' || ('itemIds' in request && request.itemIds)) ||
+    before.state !== after.state ||
+    before.taskId !== after.taskId ||
+    before.sourcePolicy !== after.sourcePolicy
+  )
+    return false
+  const previous = targetsFor(before, request)
+  const current = targetsFor(after, request)
+  if (previous.length !== current.length) return false
+  const fields = new Set(current.map((cell) => cell.fieldId))
+  const members = new Set(current.map((cell) => cell.itemId))
+  return (
+    before.fields
+      .filter((field) => fields.has(field.id))
+      .every((field) =>
+        after.fields.some((next) => field.id === next.id && field.version === next.version)
+      ) &&
+    before.members
+      .filter((member) => members.has(member.itemId))
+      .every((member) =>
+        after.members.some(
+          (next) => member.itemId === next.itemId && member.sourceKey === next.sourceKey
+        )
+      ) &&
+    previous.every(
+      (cell, i) =>
+        cell.id === current[i].id &&
+        cell.status === current[i].status &&
+        cell.history.at(-1)?.id === current[i].history.at(-1)?.id &&
+        cell.manual?.revision === current[i].manual?.revision
+    )
+  )
+}
 export function LiteratureComparisonPage({
   table,
   loadingTableName,
@@ -267,7 +329,7 @@ export function LiteratureComparisonPage({
   const [confirmation, setConfirmation] = useState<{
     request?: ComparisonLaunchRequest
     singleCell?: boolean
-    revision: number
+    baseline: ComparisonTable
   }>()
   const [sourceChecks, setSourceChecks] = useState<ComparisonResult['sourceChecks']>()
   const [sourceCheckProgress, setSourceCheckProgress] = useState<{ done: number; total: number }>()
@@ -400,6 +462,11 @@ export function LiteratureComparisonPage({
     <ErrorNotice
       level={error || loadError ? 'error' : 'warning'}
       title={issueTitle()}
+      secondaryButton={
+        settingsPanel && onOpenSettings && loadError
+          ? { label: t('Retry'), onClick: () => onRetryLoad?.() }
+          : undefined
+      }
       primaryButton={
         settingsPanel && onOpenSettings
           ? {
@@ -503,15 +570,14 @@ export function LiteratureComparisonPage({
     setTotalsOpen(false)
     if (draftStatus.current.exportBusy) return
     const generation = ++checkGeneration.current
-    if (request?.action !== 'resume')
-      setConfirmation({ request, revision: table.revision, singleCell })
+    if (request?.action !== 'resume') setConfirmation({ request, baseline: table, singleCell })
     setSourceChecks(undefined)
     setSourceCheckProgress(undefined)
     setBusy(true)
     setError(undefined)
     try {
       const ids = request
-        ? [...new Set(targetsFor(request).map((cell) => cell.itemId))]
+        ? [...new Set(targetsFor(table, request).map((cell) => cell.itemId))]
         : table.itemIds
       const checks: NonNullable<ComparisonResult['sourceChecks']> = []
       setSourceCheckProgress({ done: 0, total: ids.length })
@@ -576,14 +642,14 @@ export function LiteratureComparisonPage({
           )
             taskStatus.current?.focus()
         } else {
-          setConfirmation({ request, revision: table.revision })
+          setConfirmation({ request, baseline: table })
         }
       }
     } catch (error) {
       if (mounted.current && generation === checkGeneration.current) {
         setError(error instanceof Error ? error.message || 'command-failed' : 'command-failed')
         if (request?.action === 'resume') {
-          setConfirmation({ request, revision: table.revision })
+          setConfirmation({ request, baseline: table })
           onRetryLoad?.()
         }
       }
@@ -592,25 +658,8 @@ export function LiteratureComparisonPage({
     }
   }
   const request = confirmation?.request
-  const targetsFor = (request?: ComparisonLaunchRequest): ComparisonCell[] =>
-    table.cells.filter((cell) => {
-      if (!request) return true
-      if (request.action === 'resume') return table.remainingCellIds.includes(cell.id)
-      if (request.action === 'retry') return request.cellIds.includes(cell.id)
-      if (request.action === 'rerun-field')
-        return (
-          cell.fieldId === request.fieldId &&
-          (!request.itemIds || request.itemIds.includes(cell.itemId))
-        )
-      return (
-        request.action === 'run' &&
-        (request.unattemptedOnly
-          ? isUnattemptedComparisonCell(cell)
-          : isPendingComparisonCell(cell)) &&
-        (!request.itemIds || request.itemIds.includes(cell.itemId))
-      )
-    })
-  const targetCells = confirmation ? targetsFor(request) : []
+  const scopeChanged = confirmation && !sameLaunchScope(confirmation.baseline, table, request)
+  const targetCells = confirmation ? targetsFor(table, request) : []
   const eligibleCells = request
     ? targetCells.filter((cell) => !cell.historyLimitReached)
     : targetCells
@@ -2601,7 +2650,7 @@ export function LiteratureComparisonPage({
                     )}
                   />
                 )}
-                {confirmation.revision !== table.revision && (
+                {scopeChanged && (
                   <ErrorNotice
                     level="warning"
                     title={t('The table changed. Close this dialog and check the scope again.')}
@@ -2623,14 +2672,14 @@ export function LiteratureComparisonPage({
                       (request.action !== 'resume' && launchBlocked) ||
                       !sourceChecks ||
                       !(request.action === 'resume' ? targetCells.length : readyCells.length) ||
-                      confirmation.revision !== table.revision ||
+                      scopeChanged ||
                       reviewStatus.pending ||
                       reviewStatus.failed
                     }
                     onClick={() =>
                       void run({
                         ...request,
-                        expectedRevision: confirmation.revision,
+                        expectedRevision: table.revision,
                         expectedSources: sourceChecks
                           ?.filter((source) =>
                             targetCells.some((cell) => cell.itemId === source.itemId)

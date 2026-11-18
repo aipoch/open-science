@@ -34,6 +34,7 @@ export function useComparisonTables(activeTableId?: string): {
   error: boolean
   loadIssue?: string
   refresh: () => Promise<void>
+  retryLoad: () => Promise<void>
   command: (request: ComparisonRequest) => Promise<ComparisonResult>
   loadCellHistory: (tableId: string, cellId: string) => Promise<ComparisonCell>
 } {
@@ -58,12 +59,18 @@ export function useComparisonTables(activeTableId?: string): {
   const [failure, setFailure] = useState<{ tableId?: string; issue?: string }>()
   const sequence = useRef(0)
   const inFlight = useRef<{ sequence: number; promise: Promise<void> } | undefined>(undefined)
+  const retryStorage = useRef(false)
   const refresh = useCallback((): Promise<void> => {
     const generation = sequence.current
     if (inFlight.current?.sequence === generation) return inFlight.current.promise
+    const retry = retryStorage.current
+    retryStorage.current = false
     const promise = Promise.resolve().then(async () => {
       try {
-        const result = await api.literature.comparisons({ action: 'list' })
+        const result = await api.literature.comparisons({
+          action: 'list',
+          ...(retry && { retryStorage: true })
+        })
         if (generation !== sequence.current) return
         // Compatibility with older hosts; only summaries enter list consumers.
         const summaries =
@@ -283,6 +290,11 @@ export function useComparisonTables(activeTableId?: string): {
     error: Boolean(failure && failure.tableId === activeTableId),
     loadIssue: failure?.tableId === activeTableId ? failure?.issue : undefined,
     refresh,
+    retryLoad: () => {
+      retryStorage.current = true
+      sequence.current++
+      return refresh()
+    },
     command,
     loadCellHistory
   }

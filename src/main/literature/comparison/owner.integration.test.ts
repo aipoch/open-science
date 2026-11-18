@@ -462,7 +462,7 @@ it('drains four-way disposal and resumes only unfinished cells after restart', a
   expect(capture).toHaveBeenCalledTimes(1)
 })
 
-it('exports the selected matrix without generating an oversized unselected evidence CSV', async () => {
+it('pages a large evidence CSV from a valid store and keeps the matrix independently replayable', async () => {
   const path = await location()
   const members = Array.from({ length: 5 }, (_, index) => ({
     itemId: `paper-${index}`,
@@ -484,6 +484,13 @@ it('exports the selected matrix without generating an oversized unselected evide
       itemId: member.itemId,
       fieldId: 'field',
       status: 'succeeded',
+      manual: {
+        value: 'm'.repeat(8000),
+        confirmed: false,
+        fieldVersion: 1,
+        sourceKey: 'source',
+        updatedAt: 'now'
+      },
       history: Array.from({ length: 30 }, (_, index) => ({
         id: `attempt-${index}`,
         fieldVersion: 1,
@@ -516,14 +523,32 @@ it('exports the selected matrix without generating an oversized unselected evide
   const matrix = await owner.run({ action: 'export', tableId: table.id, kind: 'matrix' })
   expect(matrix.csv!.split('\r\n')).toHaveLength(6)
   expect(matrix.nextOffset).toBeUndefined()
-  await expect(
-    owner.run({
+  let offset: number | undefined
+  let length = 0
+  let rowCount = 0
+  let manualRows = 0
+  let carry = ''
+  do {
+    const page = await owner.run({
       action: 'export',
       tableId: table.id,
       kind: 'evidence',
-      exportToken: matrix.exportToken
+      exportToken: matrix.exportToken,
+      offset
     })
-  ).rejects.toThrow('export-limit')
+    comparisonResultSchema.parse(page)
+    const chunk = page.csv!
+    length += chunk.length
+    const lines = (carry + chunk).split('\r\n')
+    carry = lines.pop()!
+    rowCount += lines.length
+    manualRows += lines.filter((line) => line.includes('m'.repeat(8000))).length
+    offset = page.nextOffset
+    if (offset !== undefined) expect(offset).toBe(length)
+  } while (offset !== undefined)
+  expect(manualRows + Number(carry.includes('m'.repeat(8000)))).toBe(members.length)
+  expect(length).toBeGreaterThan(20_000_000)
+  expect(rowCount + 1).toBe(1 + 5 * 30 * 12)
   const replay = await owner.run({
     action: 'export',
     tableId: table.id,

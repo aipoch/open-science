@@ -1,10 +1,11 @@
+import { ComparisonCsvReader } from './export'
 import { randomUUID } from 'node:crypto'
 import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 import { z } from 'zod'
 import { ApplicationCommandError } from '../../../shared/application-command-contract'
 import {
   COMPARISON_HISTORY_LIMIT,
-  comparisonCellView,
+  comparisonCellSchema,
   comparisonTaskReference,
   isUnattemptedComparisonCell,
   isPendingComparisonCell,
@@ -61,7 +62,7 @@ export class LiteratureComparisons {
     {
       tableId: string
       table: ComparisonTable
-      csv: Partial<Record<'matrix' | 'evidence', string>>
+      readers: Partial<Record<'matrix' | 'evidence', ComparisonCsvReader>>
       expiresAt: number
       expiry: ReturnType<typeof setTimeout>
     }
@@ -111,6 +112,7 @@ export class LiteratureComparisons {
       Date.now() - this.lastSourceScan.at >= 60_000
     )
   }
+  private readonly serializedHistories = new WeakMap<ComparisonCell['history'], string>()
   private readonly serializedTables = new WeakMap<
     ComparisonTable,
     { revision: number; json: string }
@@ -127,47 +129,45 @@ export class LiteratureComparisons {
   }
   async start(): Promise<void> {
     if (this.started || this.closed) return
-    await runDataRootStartupRecovery(() =>
-      this.queue(() =>
-        withDataRootWrite(async () => {
-          if (this.closed) return
-          try {
-            const saved = await readDurableJsonFile(
-              this.options.path(),
-              (text) => envelope.parse(JSON.parse(text)),
-              {},
-              { maxBytes: MAX_BYTES }
-            )
-            if (saved.status === 'found') this.tables = saved.value.tables
-            let changed = false
-            for (const table of this.tables)
-              if (
-                table.state === 'running' ||
-                (['paused', 'interrupted'].includes(table.state) &&
-                  table.cells.some((cell) => cell.status === 'running')) ||
-                (!table.remainingCellIds.length && ['paused', 'interrupted'].includes(table.state))
-              ) {
-                table.state = !table.remainingCellIds.length
-                  ? 'completed'
-                  : table.state === 'paused'
-                    ? 'paused'
-                    : 'interrupted'
-                table.revision++
-                for (const cell of table.cells)
-                  if (cell.status === 'running') cell.status = 'pending'
-                changed = true
-              }
-            if (changed) await this.save()
-          } catch (error) {
-            // A damaged optional feature must not stop application startup or replace its bytes.
-            this.loadError = true
-            this.tables = []
-            this.options.onError?.(error)
-          }
-        })
-      )
-    )
+    await runDataRootStartupRecovery(() => this.queue(() => withDataRootWrite(() => this.load())))
     this.started = true
+  }
+  private async load(): Promise<void> {
+    if (this.closed) return
+    try {
+      const saved = await readDurableJsonFile(
+        this.options.path(),
+        (text) => envelope.parse(JSON.parse(text)),
+        {},
+        { maxBytes: MAX_BYTES }
+      )
+      if (this.loadError && saved.status !== 'found') throw new Error('comparison-backup-missing')
+      this.loadError = false
+      if (saved.status === 'found') this.tables = saved.value.tables
+      let changed = false
+      for (const table of this.tables)
+        if (
+          table.state === 'running' ||
+          (['paused', 'interrupted'].includes(table.state) &&
+            table.cells.some((cell) => cell.status === 'running')) ||
+          (!table.remainingCellIds.length && ['paused', 'interrupted'].includes(table.state))
+        ) {
+          table.state = !table.remainingCellIds.length
+            ? 'completed'
+            : table.state === 'paused'
+              ? 'paused'
+              : 'interrupted'
+          table.revision++
+          for (const cell of table.cells) if (cell.status === 'running') cell.status = 'pending'
+          changed = true
+        }
+      if (changed) await this.save()
+    } catch (error) {
+      // A damaged optional feature must not stop application startup or replace its bytes.
+      this.loadError = true
+      this.tables = []
+      this.options.onError?.(error)
+    }
   }
   private async save(signal?: AbortSignal): Promise<void> {
     if (this.loadError)
@@ -179,7 +179,26 @@ export class LiteratureComparisons {
     const parts = this.tables.map((table) => {
       const cached = this.serializedTables.get(table)
       if (cached?.revision === table.revision) return cached.json
-      const json = JSON.stringify(comparisonTableSchema.parse(table))
+      // History is append-only and replaced on append. Reuse validated evidence bytes on edits.
+      const { cells, ...metadata } = comparisonTableSchema.parse({
+        ...table,
+        cells: table.cells.map((cell) => ({ ...cell, history: [] }))
+      })
+      const records = cells.map((cell, index) => {
+        const history = table.cells[index].history
+        let encoded = this.serializedHistories.get(history)
+        if (encoded === undefined) {
+          encoded = JSON.stringify(comparisonCellSchema.shape.history.parse(history))
+          this.serializedHistories.set(history, encoded)
+        }
+        return (
+          JSON.stringify({ ...cell, history: undefined }).slice(0, -1) +
+          ',"history":' +
+          encoded +
+          '}'
+        )
+      })
+      const json = JSON.stringify(metadata).slice(0, -1) + ',"cells":[' + records.join(',') + ']}'
       this.serializedTables.set(table, { revision: table.revision, json })
       return json
     })
@@ -210,7 +229,7 @@ export class LiteratureComparisons {
     const index = table.cells.findIndex((cell) => cell.id === cellId)
     if (index < 0) throw new Error('comparison-cell-not-found')
     const original = table.cells[index]
-    const cell = { ...original, history: [...original.history] }
+    const cell = { ...original }
     const updated = { ...table, cells: [...table.cells] }
     updated.cells[index] = cell
     return this.mutate(undefined, async () => {
@@ -243,6 +262,11 @@ export class LiteratureComparisons {
   async run(input: ComparisonRequest): Promise<ComparisonResult> {
     const request = comparisonRequestSchema.parse(input)
     if (this.closed || !this.started) throw new Error('comparison-owner-unavailable')
+    if (this.loadError && request.action === 'list' && request.retryStorage) {
+      await this.queue(async () => {
+        if (this.loadError) await withDataRootWrite(() => this.load())
+      })
+    }
     if (this.loadError)
       throw new ApplicationCommandError(
         'comparison-storage-unavailable',
@@ -417,7 +441,6 @@ export class LiteratureComparisons {
             throw new Error('comparison-export-limit')
           await this.refreshSources(table.id)
           const captured = structuredClone(this.tables.find((current) => current.id === table.id)!)
-          const csv = this.export(captured, request.kind)
           token = randomUUID()
           const snapshotToken = token
           const expiry = setTimeout(() => this.releaseExportSnapshot(snapshotToken), 300_000)
@@ -425,24 +448,21 @@ export class LiteratureComparisons {
           this.exportSnapshots.set(token, {
             tableId: table.id,
             table: captured,
-            csv: { [request.kind]: csv },
+            readers: {},
             expiresAt: Date.now() + 300_000,
             expiry
           })
         }
         const snapshot = token ? this.exportSnapshots.get(token) : undefined
         if (!snapshot || snapshot.tableId !== table.id) throw new Error('comparison-export-expired')
-        const content = (snapshot.csv[request.kind] ??= this.export(snapshot.table, request.kind))
-        if (offset >= content.length) throw new Error('comparison-invalid-offset')
-        const csv = content.slice(offset, offset + 100_000)
-        if (request.releaseOnComplete && offset + csv.length === content.length && token)
+        const reader = (snapshot.readers[request.kind] ??= new ComparisonCsvReader(
+          snapshot.table,
+          request.kind
+        ))
+        const page = reader.read(offset)
+        if (request.releaseOnComplete && page.nextOffset === undefined && token)
           this.releaseExportSnapshot(token)
-        return this.bounded({
-          tables: [],
-          csv,
-          exportToken: token,
-          ...(offset + csv.length < content.length ? { nextOffset: offset + csv.length } : {})
-        })
+        return { tables: [], exportToken: token, ...page }
       }
       if (request.action === 'update' && request.expectedRevision !== table.revision)
         throw new ApplicationCommandError('comparison-config-changed', 'comparison-config-changed')
@@ -698,7 +718,18 @@ export class LiteratureComparisons {
   ): Promise<void> {
     if (request.expectedRevision !== undefined && request.expectedRevision !== table.revision)
       throw new ApplicationCommandError('comparison-task-changed', 'comparison-task-changed')
-    const changed = await this.refreshTable(table, request.expectedSources)
+    const selectedCells =
+      request.action === 'retry'
+        ? new Set(request.cellIds)
+        : request.action === 'resume'
+          ? new Set(table.remainingCellIds)
+          : undefined
+    const itemIds = selectedCells
+      ? new Set(table.cells.filter((cell) => selectedCells.has(cell.id)).map((cell) => cell.itemId))
+      : 'itemIds' in request && request.itemIds
+        ? new Set(request.itemIds)
+        : undefined
+    const changed = await this.refreshTable(table, request.expectedSources, undefined, itemIds)
     // A source update can add formerly reviewed cells to the pending scope.
     if (changed && request.action !== 'resume' && request.expectedRevision !== undefined)
       throw new ApplicationCommandError('comparison-task-changed', 'comparison-task-changed')
@@ -743,12 +774,17 @@ export class LiteratureComparisons {
   private async refreshTable(
     table: ComparisonTable,
     expectedSources?: ComparisonLaunchRequest['expectedSources'],
-    beforeChange?: () => void
+    beforeChange?: () => void,
+    itemIds?: ReadonlySet<string>
   ): Promise<boolean> {
     const expected = new Map(expectedSources?.map(({ itemId, sourceKey }) => [itemId, sourceKey]))
     let changed = false
     for (let i = 0; i < table.members.length; i++) {
       const member = table.members[i]
+      if (itemIds && !itemIds.has(member.itemId)) {
+        expected.delete(member.itemId)
+        continue
+      }
       let sourceKey = ''
       try {
         const current = await this.options.extractor.member(member.itemId)
@@ -1006,17 +1042,20 @@ export class LiteratureComparisons {
             current.state = 'interrupted'
             return
           }
-          target.history.push({
-            ...extraction,
-            id: randomUUID(),
-            at: now(),
-            fieldVersion: field.version,
-            fieldSnapshot: { ...field },
-            sourcePolicy: table.sourcePolicy,
-            ...(extraction.status === 'succeeded' && extraction.value === null
-              ? { issue: 'insufficient-evidence' }
-              : {})
-          })
+          target.history = [
+            ...target.history,
+            {
+              ...extraction,
+              id: randomUUID(),
+              at: now(),
+              fieldVersion: field.version,
+              fieldSnapshot: { ...field },
+              sourcePolicy: table.sourcePolicy,
+              ...(extraction.status === 'succeeded' && extraction.value === null
+                ? { issue: 'insufficient-evidence' }
+                : {})
+            }
+          ]
           if (current.taskId !== table.taskId) return
           const freshField = current.fields.find((f) => f.id === field.id)
           if (freshField?.version === field.version)
@@ -1046,123 +1085,6 @@ export class LiteratureComparisons {
     return false
   }
   private readonly extractors = new Map<string, Awaited<ReturnType<Options['capture']>>>()
-  private export(table: ComparisonTable, kind: 'matrix' | 'evidence'): string {
-    const csv = (value: unknown): string =>
-      '"' +
-      String(value ?? '')
-        .replaceAll('"', '""')
-        .replace(/^(\s*)([=+@\-\t\r])/, "'$1$2") +
-      '"'
-    const current = (cell: ComparisonCell): boolean => {
-      const field = table.fields.find((f) => f.id === cell.fieldId)
-      const member = table.members.find((m) => m.itemId === cell.itemId)
-      return !!field && comparisonCellView(cell, field, member?.sourceKey).confirmed
-    }
-    const rows: unknown[][] =
-      kind === 'matrix'
-        ? [
-            [
-              'itemId',
-              'title',
-              // Identity is independent of user labels and cannot collide with metadata columns.
-              // JSON encoding also preserves unusual IDs without URI encoding failures.
-              ...table.fields.flatMap((field) =>
-                ['value', 'machine value', 'manual value', 'status', 'reviewed'].map(
-                  (role) => `field:${JSON.stringify([field.id, role])} ${field.name}`
-                )
-              )
-            ]
-          ]
-        : [
-            [
-              'itemId',
-              'cellId',
-              'cellStatus',
-              'fieldId',
-              'field',
-              'rule',
-              'sourcePolicy',
-              'fieldVersion',
-              'attempt',
-              'status',
-              'value',
-              'coverage',
-              'sourceKey',
-              'model',
-              'issue',
-              'pageStart',
-              'pageEnd',
-              'quote',
-              'manual',
-              'manualFieldVersion',
-              'manualSourceKey',
-              'confirmedCurrent'
-            ]
-          ]
-    if (kind === 'matrix')
-      for (const member of table.members)
-        rows.push([
-          member.itemId,
-          member.title,
-          ...table.fields.flatMap((f) => {
-            const c = table.cells.find((c) => c.itemId === member.itemId && c.fieldId === f.id)!
-            const latest = c.history
-              .filter((h) => h.fieldVersion === f.version && h.sourceKey === member.sourceKey)
-              .at(-1)
-            const machine = c.history.at(-1)
-            const view = comparisonCellView(c, f, member.sourceKey)
-            return [
-              c.manual?.value ?? latest?.value ?? '',
-              machine?.value ?? '',
-              c.manual?.value ?? '',
-              c.status +
-                (view.stale ? ': outdated' : '') +
-                (view.needsReview ? ': manual-needs-review' : '') +
-                (machine?.issue ? ': ' + machine.issue : ''),
-              view.confirmed
-            ]
-          })
-        ])
-    else
-      for (const cell of table.cells) {
-        const field = table.fields.find((f) => f.id === cell.fieldId)
-        for (const attempt of cell.history.length ? cell.history : [undefined]) {
-          // Older attempts without a snapshot cannot inherit a newer definition.
-          const knownCurrent = !attempt || attempt.fieldVersion === field?.version
-          const historicalField = attempt?.fieldSnapshot ?? (knownCurrent ? field : undefined)
-          const sourcePolicy =
-            attempt?.sourcePolicy ?? (knownCurrent ? table.sourcePolicy : undefined)
-          for (const evidence of attempt?.evidence.length ? attempt.evidence : [undefined])
-            rows.push([
-              cell.itemId,
-              cell.id,
-              cell.status,
-              cell.fieldId,
-              historicalField?.name,
-              historicalField?.rule,
-              sourcePolicy,
-              attempt?.fieldVersion,
-              attempt?.id,
-              attempt?.status,
-              attempt?.value,
-              attempt?.coverage,
-              attempt?.sourceKey,
-              attempt?.model,
-              attempt?.issue,
-              evidence?.pageStart,
-              evidence?.pageEnd,
-              evidence?.quote,
-              cell.manual?.value,
-              cell.manual?.fieldVersion,
-              cell.manual?.sourceKey,
-              current(cell)
-            ])
-        }
-      }
-    const content = '\uFEFF' + rows.map((row) => row.map(csv).join(',')).join('\r\n')
-    if (content.length > 20_000_000) throw new Error('comparison-export-limit')
-    return content
-  }
   async dispose(): Promise<void> {
     this.closed = true
     this.lifetime.abort()

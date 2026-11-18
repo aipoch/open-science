@@ -1335,8 +1335,24 @@ it.each(['{broken JSON', JSON.stringify({ version: 999, tables: [] })])(
     expect(onError).toHaveBeenCalledOnce()
     expect(await readFile(path, 'utf8')).toBe(content)
     expect(extract).not.toHaveBeenCalled()
-    await expect(owner.dispose()).resolves.toBeUndefined()
+    const retry = { action: 'list', retryStorage: true } as const
+    await expect(owner.run(retry)).rejects.toThrow('comparison-storage-unavailable')
     expect(await readFile(path, 'utf8')).toBe(content)
+    await rm(path)
+    await expect(owner.run(retry)).rejects.toThrow('comparison-storage-unavailable')
+    await writeFile(path, JSON.stringify({ version: 1, tables: [] }))
+    await expect(owner.run(retry)).resolves.toMatchObject({ summaries: [] })
+    await expect(
+      owner.run({
+        action: 'create',
+        name: 'Recovered',
+        itemIds: [],
+        fields: [],
+        language: 'en',
+        sourcePolicy: 'abstract'
+      })
+    ).resolves.toMatchObject({ tables: [{ name: 'Recovered' }] })
+    await owner.dispose()
   }
 )
 
@@ -1782,6 +1798,39 @@ it.each([
     }
   }
 )
+
+it('admits a selected reference when only an unselected source changed after preflight', async () => {
+  const f = await fixture()
+  try {
+    const original = f.options.extractor.member
+    const member = vi.fn(async (id: string) => ({
+      ...(await original(id)),
+      sourceKey: id === 'paper2' ? 'source-2' : 'source-1'
+    }))
+    f.options.extractor.member = member
+    const request = {
+      action: 'run' as const,
+      tableId: f.table.id,
+      expectedRevision: f.table.revision,
+      expectedSources: [{ itemId: 'paper1', sourceKey: 'source-1' }],
+      itemIds: ['paper1']
+    }
+    await expect(
+      f.owner.run({
+        ...request,
+        itemIds: ['paper2'],
+        expectedSources: [{ itemId: 'paper2', sourceKey: 'source-1' }]
+      })
+    ).rejects.toThrow('comparison-task-changed')
+    member.mockClear()
+    await f.owner.run(request)
+    expect(member.mock.calls.flat()).not.toContain('paper2')
+    await vi.waitFor(async () => expect((await f.read()).state).toBe('completed'))
+    expect(f.extract.mock.calls.map((call) => call[2])).toEqual(['paper1'])
+  } finally {
+    await f.owner.dispose()
+  }
+})
 
 it('checks configuration revisions inside the owner queue when clients submit together', async () => {
   const f = await fixture()
