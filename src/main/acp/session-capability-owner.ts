@@ -17,11 +17,9 @@ import {
 import { IMAGE_MCP_SERVER_NAME, createImageMcpServerConfig } from '../image-model/mcp-server'
 import { getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
-import {
-  LITERATURE_LIBRARY_MCP_SERVER_NAME,
-  type LiteratureLibraryMcpHandler
-} from '../literature/library-mcp-server'
-import { LITERATURE_MCP_SERVER_NAME, type LiteratureMcpHandler } from '../literature/mcp-server'
+import { type LiteratureLibraryMcpHandler } from '../literature/library-mcp-server'
+import { LITERATURE_LIBRARY_MCP_SERVER_NAME } from '../literature/library-mcp-contract'
+import { LITERATURE_MCP_SERVER_NAME, type LiteratureMcpHandler } from '../literature/mcp-contract'
 import {
   NOTEBOOK_MCP_SERVER_NAME,
   NOTEBOOK_RPC_TOOLS,
