@@ -1911,7 +1911,11 @@ describe('native Responses compatibility', () => {
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ error: { message: privateUpstreamDetail } }), {
           status: 502,
-          headers: { 'content-type': 'application/json' }
+          headers: {
+            'content-type': 'application/json',
+            'x-open-science-upstream-status': 'vendor-metadata',
+            'x-open-science-provider-failure': 'vendor-metadata'
+          }
         })
       )
     )
@@ -1938,6 +1942,8 @@ describe('native Responses compatibility', () => {
         })
       })
       expect(response.status).toBe(502)
+      expect(response.headers.has('x-open-science-upstream-status')).toBe(false)
+      expect(response.headers.has('x-open-science-provider-failure')).toBe(false)
       await response.text()
 
       const received = logSpies.info.mock.calls.find(

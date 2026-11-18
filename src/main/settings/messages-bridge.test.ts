@@ -81,7 +81,8 @@ describe('MessagesBridge', () => {
           }
           response.writeHead(502, {
             'content-type': 'application/json',
-            'x-open-science-provider-failure': 'connection'
+            'x-open-science-provider-failure': 'connection',
+            'x-open-science-upstream-status': 'vendor-metadata'
           })
           response.end('{"error":{"message":"Upstream gateway unavailable"}}')
         })
@@ -104,6 +105,7 @@ describe('MessagesBridge', () => {
         body: JSON.stringify({ messages: [], stream: true })
       })
       expect(response.status).toBe(502)
+      expect(response.headers.has('x-open-science-upstream-status')).toBe(false)
       expect(response.headers.get('x-open-science-provider-failure')).toBe(
         disconnected ? 'connection' : null
       )

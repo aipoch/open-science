@@ -38,6 +38,8 @@ import {
 
 import {
   writeProviderLoopbackJson as json,
+  copyProviderResponseHeaders,
+  PROVIDER_HOP_BY_HOP_HEADERS,
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   type ProviderLoopbackHttpRequest
@@ -222,19 +224,6 @@ const responsesUrl = (baseUrl: string): string =>
     .replace(/\/+$/, '')
     .replace(/\/responses$/i, '')}/responses`
 
-const HOP_BY_HOP_HEADERS = new Set([
-  'connection',
-  'content-length',
-  'host',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade'
-])
-
 const upstreamHeaders = (
   request: ProviderLoopbackHttpRequest,
   key: string | undefined
@@ -244,7 +233,7 @@ const upstreamHeaders = (
     // Node fetch adds Fetch Metadata headers to the loopback request. Chromium owns these headers and
     // rejects callers that pass them explicitly to Electron net.fetch with ERR_INVALID_ARGUMENT.
     if (
-      HOP_BY_HOP_HEADERS.has(name) ||
+      PROVIDER_HOP_BY_HOP_HEADERS.has(name) ||
       // Fetch decodes upstream responses, so it must negotiate its own supported encodings.
       name === 'accept-encoding' ||
       name === 'authorization' ||
@@ -257,16 +246,6 @@ const upstreamHeaders = (
   }
   headers['content-type'] = 'application/json'
   if (key) headers.authorization = `Bearer ${key}`
-  return headers
-}
-
-const copyResponseHeaders = (upstream: Response): Record<string, string> => {
-  const headers: Record<string, string> = {}
-  upstream.headers.forEach((value, name) => {
-    // Fetch decodes compressed bodies. Forwarding the original encoding after rewriting would make
-    // Codex try to decompress already-decoded bytes.
-    if (!HOP_BY_HOP_HEADERS.has(name) && name !== 'content-encoding') headers[name] = value
-  })
   return headers
 }
 
@@ -573,7 +552,7 @@ const streamResponse = async (
 
   const writeHeaders = (): void => {
     if (headersWritten) return
-    response.writeHead(upstream.status, copyResponseHeaders(upstream))
+    response.writeHead(upstream.status, copyProviderResponseHeaders(upstream.headers))
     headersWritten = true
   }
   const flushEvent = (): void => {
@@ -1124,7 +1103,7 @@ export class NativeResponsesCompatibilityProxy {
               })
             )
         const headers = {
-          ...copyResponseHeaders(upstream),
+          ...copyProviderResponseHeaders(upstream.headers),
           ...(bodyIsReplayable ? {} : { 'content-type': 'application/json' }),
           'content-length': String(bodyToReplay.byteLength),
           'x-open-science-upstream-status': String(upstream.status)
@@ -1170,7 +1149,7 @@ export class NativeResponsesCompatibilityProxy {
             )
           )
         )
-        response.writeHead(upstream.status, copyResponseHeaders(upstream))
+        response.writeHead(upstream.status, copyProviderResponseHeaders(upstream.headers))
         response.end(JSON.stringify(payload))
       } else {
         const body = await readBoundedResponseBytes(
@@ -1178,7 +1157,7 @@ export class NativeResponsesCompatibilityProxy {
           responseLimit(this.options.maxResponseBytes, DEFAULT_MAX_PROVIDER_RESPONSE_BYTES),
           'Native Responses upstream binary response'
         )
-        response.writeHead(upstream.status, copyResponseHeaders(upstream))
+        response.writeHead(upstream.status, copyProviderResponseHeaders(upstream.headers))
         response.end(body)
       }
       log.info('native Responses compatibility request completed', {
