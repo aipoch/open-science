@@ -15,7 +15,7 @@ export type JournalAgentStoreOptions = {
   /** Successful payload writes, not physical disk blocks. Observer errors cannot affect commits. */
   onWrite?: (event: { kind: 'journal' | 'snapshot'; bytes: number }) => void
 }
-const arrays = ['messages', 'compactions', 'requests', 'pending', 'inbox'] as const
+const arrays = ['messages', 'compactions', 'requests', 'pending', 'inbox', 'deferred'] as const
 type ArrayKey = (typeof arrays)[number]
 type Delta = {
   kind: 'delta'

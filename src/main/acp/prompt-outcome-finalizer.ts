@@ -29,7 +29,7 @@ type LogFields = Record<string, unknown>
 type LogLevel = 'error' | 'info' | 'warn'
 type RuntimeEventInput = AcpRuntimeEventInput
 export type AcpPromptFinalizationOutcome =
-  ProviderPromptOutcome | Readonly<{ kind: 'failed'; error: unknown }>
+  ProviderPromptOutcome | Readonly<{ kind: 'failed'; error: unknown; execution?: 'not-started' }>
 export type AcpPromptFinalizationHandles = Readonly<{
   sessionId: string
   promptMessageId?: string
@@ -359,6 +359,7 @@ export class AcpPromptOutcomeFinalizer {
       const failureEvent: RuntimeEventInput = {
         kind: 'error',
         level: 'error',
+        ...(outcome.kind === 'failed' && outcome.execution ? { execution: outcome.execution } : {}),
         recoverable,
         failure,
         sessionId,

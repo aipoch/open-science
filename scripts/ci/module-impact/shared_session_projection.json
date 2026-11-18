@@ -14,7 +14,9 @@
     "src/shared/runtime-session-projection.test.ts",
     "src/shared/session-conversation-command.test.ts",
     "src/shared/delegated-work-projection.test.ts",
-    "src/shared/artifact-visibility.test.ts"
+    "src/shared/artifact-visibility.test.ts",
+    "src/shared/conversation-recovery.ts",
+    "src/shared/conversation-recovery.test.ts"
   ],
   "interfacePaths": [
     "src/shared/runtime-session-projection.ts",
@@ -27,7 +29,8 @@
     "src/shared/session-pdf-context.ts",
     "src/shared/delegated-work-projection.ts",
     "src/shared/artifact-visibility.ts",
-    "src/shared/runtime-writer.ts"
+    "src/shared/runtime-writer.ts",
+    "src/shared/conversation-recovery.ts"
   ],
   "consumerModules": [
     "shared_application_contracts",
@@ -41,7 +44,8 @@
       "src/shared/runtime-session-projection.test.ts",
       "src/shared/session-conversation-command.test.ts",
       "src/shared/delegated-work-projection.test.ts",
-      "src/shared/artifact-visibility.test.ts"
+      "src/shared/artifact-visibility.test.ts",
+      "src/shared/conversation-recovery.test.ts"
     ],
     "contract": [],
     "consumer": [

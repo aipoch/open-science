@@ -62,6 +62,7 @@ export function draftCheckpoint(value: AgentCheckpoint): AgentCheckpoint {
     compactions: [...value.compactions],
     requests: value.requests.map((request) => ({ ...request })),
     pending: structuredClone(value.pending),
+    ...(value.deferred ? { deferred: structuredClone(value.deferred) } : {}),
     inbox: [...(value.inbox ?? [])],
     ...(value.run ? { run: { ...value.run } } : {})
   }
@@ -250,6 +251,22 @@ export function checkState(state: AgentCheckpoint, sessionId: string): void {
       (!message.invocationId || !unresolved.delete(message.invocationId))
     )
       throw new Error('Orphan tool result')
+  }
+  if (state.deferred !== undefined) {
+    if (!Array.isArray(state.deferred)) throw new Error('Invalid deferred tools')
+    const deferredIds = new Set<string>()
+    for (const deferred of state.deferred) {
+      if (
+        deferred.status !== 'unknown' ||
+        !deferred.invocationId ||
+        deferredIds.has(deferred.invocationId) ||
+        !deferred.call?.name ||
+        !deferred.call.id
+      )
+        throw new Error('Invalid deferred tool')
+      json(deferred.call.arguments)
+      deferredIds.add(deferred.invocationId)
+    }
   }
   const pendingIds = new Set<string>()
   for (const pending of state.pending) {

@@ -1,3 +1,7 @@
+import {
+  recoverableConversationPrompt,
+  canResendConversationPrompt
+} from '../../shared/conversation-recovery'
 import { isDeepStrictEqual } from 'node:util'
 
 import type {
@@ -76,21 +80,12 @@ const requireInterruptedTurn = (
   session: PersistedChatSession,
   request: AcpContinueInterruptedTurnRequest
 ): NonNullable<PersistedChatSession['messages'][number]> => {
-  if (
-    session.resumeRecovery?.kind !== 'resume-required' ||
-    session.resumeRecovery.promptMessageId !== request.promptMessageId
-  ) {
+  const prompt = recoverableConversationPrompt(session, request.promptMessageId)
+  if (!prompt)
     throw new Error(
       'Resume no longer matches the interrupted turn on the active Conversation Branch.'
     )
-  }
 
-  const prompt = session.messages.find((message) => message.id === request.promptMessageId)
-  if (prompt?.role !== 'user') {
-    throw new Error(
-      'Resume no longer matches the interrupted turn on the active Conversation Branch.'
-    )
-  }
   return prompt
 }
 
@@ -127,6 +122,8 @@ const buildContinuationRequest = (
   request: AcpContinueInterruptedTurnRequest,
   livePrompt: AcpPromptRequest | undefined
 ): AcpPromptRequest => {
+  const resendOriginal =
+    prompt.turnIntent !== 'save-as-skill' && canResendConversationPrompt(session, prompt)
   const skillIds = prompt.parts?.flatMap((part) => (part.type === 'skill' ? [part.id] : []))
   const referencedArtifacts = (prompt.parts ?? []).reduce<
     NonNullable<AcpPromptRequest['referencedArtifacts']>
@@ -174,7 +171,9 @@ const buildContinuationRequest = (
     }
   }
   const preparedAnnotations = prepareAnnotationsForAgent(
-    buildContinuationPrompt(prompt, Boolean(request.contextReset)),
+    resendOriginal
+      ? prompt.content
+      : buildContinuationPrompt(prompt, Boolean(request.contextReset)),
     prompt.annotations ?? [],
     livePrompt?.referencedArtifacts?.length ? livePrompt.referencedArtifacts : referencedArtifacts
   )
@@ -186,7 +185,10 @@ const buildContinuationRequest = (
         ? resolveActiveConversationMessages(session.conversationGraph)
         : session.messages
       )
-        .filter((message) => !isHiddenControlMessage(message))
+        .filter(
+          (message) =>
+            !isHiddenControlMessage(message) && !(resendOriginal && message.id === prompt.id)
+        )
         .map((message) =>
           message.role === 'agent' &&
           message.responseToMessageId === request.promptMessageId &&
@@ -217,15 +219,16 @@ const buildContinuationRequest = (
             contextReset.supportsImageInput
           )
       : undefined
-  if (contextReset && !replay) {
+  if (contextReset && !replay && !resendOriginal) {
     throw new Error('Interrupted conversation history could not be replayed after context reset.')
   }
-  const attachments = contextReset
-    ? undefined
-    : livePrompt?.attachments?.length
-      ? livePrompt.attachments
-      : prompt.uploads?.map((upload) => toRuntimeUploadedAttachment(upload, session.projectId))
-  const retainedPromptImages = contextReset ? undefined : prompt.images
+  const attachments =
+    contextReset && !resendOriginal
+      ? undefined
+      : livePrompt?.attachments?.length
+        ? livePrompt.attachments
+        : prompt.uploads?.map((upload) => toRuntimeUploadedAttachment(upload, session.projectId))
+  const retainedPromptImages = contextReset && !resendOriginal ? undefined : prompt.images
 
   return {
     sessionId: request.sessionId,
@@ -258,11 +261,13 @@ const buildContinuationRequest = (
     ...(preparedAnnotations.images?.length ? { currentImages: preparedAnnotations.images } : {}),
     ...(replay?.historyPreamble ? { historyPreamble: replay.historyPreamble } : {}),
     ...(replay?.historyAttachments.length ? { historyAttachments: replay.historyAttachments } : {}),
-    ...(replay?.historyImages.length
-      ? { historyImages: replay.historyImages }
-      : retainedPromptImages?.length
-        ? { historyImages: retainedPromptImages }
-        : {}),
+    ...(resendOriginal && retainedPromptImages?.length
+      ? { historyImages: [...(replay?.historyImages ?? []), ...retainedPromptImages] }
+      : replay?.historyImages.length
+        ? { historyImages: replay.historyImages }
+        : retainedPromptImages?.length
+          ? { historyImages: retainedPromptImages }
+          : {}),
     ...(contextReset ? { contextReset: true } : {})
   }
 }

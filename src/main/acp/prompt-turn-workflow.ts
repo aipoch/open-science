@@ -577,6 +577,7 @@ class AcpPromptTurnWorkflow {
     let skillStarted = false
     let skillFinalized = false
     let userMessageEmitted = false
+    let everDispatched = false
     let sideChatRelay: ReturnType<NonNullable<typeof env.sideChatRelays>['claim']>
     let sideChatRelaySettled = false
     const notebookWorkingFiles = new NotebookWorkingFileObserver()
@@ -794,6 +795,7 @@ class AcpPromptTurnWorkflow {
             const dispatch = await this.checkpoint(interaction)
             // Mark the boundary before calling the adapter: a synchronous throw from
             // session.prompt cannot prove that no request left the process.
+            if (dispatch !== 'cancelled') everDispatched = true
             if (dispatch !== 'cancelled' && turn.mode.kind === 'app-continuation') {
               turn.mode.onProviderDispatched?.()
             }
@@ -801,6 +803,7 @@ class AcpPromptTurnWorkflow {
           },
           onDispatched: () => {
             providerDispatched = true
+            everDispatched = true
           },
           captureStop: (response) => {
             if (plan.isProviderPaused?.(interaction)) {
@@ -947,7 +950,11 @@ class AcpPromptTurnWorkflow {
     try {
       outcome = await execute()
     } catch (error) {
-      outcome = Object.freeze({ kind: 'failed', error })
+      outcome = Object.freeze({
+        kind: 'failed',
+        error,
+        ...(!everDispatched ? { execution: 'not-started' as const } : {})
+      })
     } finally {
       scheduleTurn?.close()
     }

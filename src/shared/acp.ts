@@ -435,6 +435,7 @@ type AcpRuntimeEventBase = {
   failure?: ClassifiedFailure
   // A post-terminal Artifact failure still belongs to the original prompt.
   artifactFailure?: true
+  execution?: 'not-started'
   // Main has durably committed this event's Message/Artifact projection before publication.
   publicationOwner?: 'main'
   sessionId?: string

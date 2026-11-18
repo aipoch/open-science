@@ -249,7 +249,7 @@ describe('ACP Session resume policy', () => {
   })
 
   it.each(['codex-responses', 'codex-responses-compatibility'] as const)(
-    'classifies a legacy %s Unknown error as adoptable',
+    'keeps a legacy %s Unknown error authoritative',
     (currentModelRoute) => {
       const policy = new AcpSessionResumePolicy()
 
@@ -263,13 +263,13 @@ describe('ACP Session resume policy', () => {
           }
         )
       ).toEqual({
-        disposition: 'adoptable',
-        reason: 'legacy-codex-session-unavailable'
+        disposition: 'authoritative',
+        reason: 'non-internal-error'
       })
     }
   )
   it.each(['opencode-anthropic', 'opencode-openai'] as const)(
-    'classifies a legacy %s Unknown error as adoptable',
+    'keeps a legacy %s Unknown error authoritative',
     (currentModelRoute) => {
       const policy = new AcpSessionResumePolicy()
 
@@ -283,8 +283,8 @@ describe('ACP Session resume policy', () => {
           }
         )
       ).toEqual({
-        disposition: 'adoptable',
-        reason: 'legacy-opencode-session-unavailable'
+        disposition: 'authoritative',
+        reason: 'non-internal-error'
       })
     }
   )
@@ -350,7 +350,7 @@ describe('ACP Session resume policy', () => {
   )
 
   it.each(['codex-responses', 'codex-responses-compatibility'] as const)(
-    'classifies a persisted %s Unknown error as adoptable',
+    'keeps a persisted %s Unknown error authoritative',
     (currentModelRoute) => {
       const policy = new AcpSessionResumePolicy()
 
@@ -364,8 +364,8 @@ describe('ACP Session resume policy', () => {
           }
         )
       ).toEqual({
-        disposition: 'adoptable',
-        reason: 'legacy-codex-session-unavailable'
+        disposition: 'authoritative',
+        reason: 'non-internal-error'
       })
     }
   )
@@ -388,7 +388,7 @@ describe('ACP Session resume policy', () => {
     })
   })
 
-  it('treats the provider session-service marker as an adoptable failure', () => {
+  it('keeps a generic session-service failure authoritative', () => {
     const policy = new AcpSessionResumePolicy()
 
     expect(
@@ -398,8 +398,8 @@ describe('ACP Session resume policy', () => {
         data: { service: 'session' }
       })
     ).toEqual({
-      disposition: 'adoptable',
-      reason: 'session-service-failure'
+      disposition: 'authoritative',
+      reason: 'non-internal-error'
     })
   })
 
@@ -408,8 +408,8 @@ describe('ACP Session resume policy', () => {
     'conversation_not_found',
     'Session Missing',
     'conversation-missing',
-    'session_resume_failed',
-    'conversation restore failed'
+    'session_invalid',
+    'conversation invalid'
   ])('recognizes the structured unresumable error kind %s', (errorKind) => {
     const policy = new AcpSessionResumePolicy()
 
@@ -443,24 +443,23 @@ describe('ACP Session resume policy', () => {
     })
   })
 
-  it.each([
-    'Failed to restore the previous conversation',
-    'The session identifier was not found',
-    'No saved session is available'
-  ])('recognizes a narrow legacy unresumable detail: %s', (details) => {
-    const policy = new AcpSessionResumePolicy()
+  it.each(['The session identifier was not found', 'No saved session is available'])(
+    'recognizes a narrow legacy unresumable detail: %s',
+    (details) => {
+      const policy = new AcpSessionResumePolicy()
 
-    expect(
-      policy.classifyFailure({
-        code: -32603,
-        message: 'Internal error',
-        data: { details }
+      expect(
+        policy.classifyFailure({
+          code: -32603,
+          message: 'Internal error',
+          data: { details }
+        })
+      ).toEqual({
+        disposition: 'adoptable',
+        reason: 'legacy-unresumable-details'
       })
-    ).toEqual({
-      disposition: 'adoptable',
-      reason: 'legacy-unresumable-details'
-    })
-  })
+    }
+  )
 
   it('classifies Codex missing-rollout details as adoptable', () => {
     const policy = new AcpSessionResumePolicy()
@@ -633,4 +632,24 @@ describe('ACP Session resume policy', () => {
       })
     }
   })
+})
+
+it.each([
+  'Failed to resume session',
+  'Could not restore conversation',
+  'Unable to reattach session',
+  'Unknown error',
+  'Internal error'
+])('does not discard provider context after an ordinary recovery failure: %s', (message) => {
+  const policy = new AcpSessionResumePolicy()
+  expect(
+    policy.classifyFailure(
+      { code: -32603, message: 'Internal error', data: { details: message } },
+      {
+        currentFrameworkId: 'codex',
+        currentModelRoute: 'codex-responses',
+        providerSessionIdPersisted: true
+      }
+    ).disposition
+  ).toBe('authoritative')
 })

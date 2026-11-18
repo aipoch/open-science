@@ -20,6 +20,10 @@ export const useComposerNotices = (input: {
   authenticationResolved?: boolean
   compacting?: boolean
   turn?: { promptMessageId: string; outcome: Exclude<TurnOutcome, { kind: 'completed' }> }
+  publicationFailures?: readonly {
+    promptMessageId: string
+    outcome: Extract<TurnOutcome, { kind: 'failed' }>
+  }[]
   recovery?: { error?: string; cause?: string }
   legacy?: { error?: string; failure?: ClassifiedFailure; updatedAt?: number }
   operations: readonly ComposerOperationFailure[]
@@ -38,7 +42,7 @@ export const useComposerNotices = (input: {
       source: 'session',
       recoveryCause: recovery.cause,
       occurredAt: turn?.outcome.settledAt ?? 0,
-      blocksSend: true,
+      blocksSend: false,
       failure: classifyFailure({ origin: 'session', text: recovery.error })
     })
   if (turn?.outcome.kind === 'failed')
@@ -56,6 +60,20 @@ export const useComposerNotices = (input: {
         }
       }
     })
+  for (const publication of input.publicationFailures ?? []) {
+    if (publication.promptMessageId === turn?.promptMessageId) continue
+    notices.push({
+      id: `${prefix}:turn:${publication.promptMessageId}:${publication.outcome.settledAt}`,
+      source: 'turn',
+      occurredAt: publication.outcome.settledAt,
+      promptMessageId: publication.promptMessageId,
+      recovery: 'retry-artifact-publication',
+      failure: publication.outcome.failure ?? {
+        category: 'environment',
+        diagnostics: { raw: publication.outcome.error }
+      }
+    })
+  }
   if (legacy)
     notices.push({
       id: `${prefix}:legacy:${legacy.error}`,

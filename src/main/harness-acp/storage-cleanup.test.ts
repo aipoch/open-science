@@ -199,3 +199,24 @@ it('excludes native admission in both orderings and retains failed-open ownershi
   expect(unrelated).toBeTypeOf('function')
   unrelated?.()
 })
+
+it('cleans only the deleted Session owner index after durable stores are cleaned', async () => {
+  const f = await fixture()
+  await f.add(a, 'deleted')
+  await f.add(b, 'retained')
+  const directory = join(f.options.sessionDirectory, 'owners')
+  await mkdir(directory)
+  const path = (id: string): string =>
+    join(
+      directory,
+      `${createHash('sha256')
+        .update(JSON.stringify(['project', id]))
+        .digest('hex')}.json`
+    )
+  await writeFile(path('deleted'), JSON.stringify([a]))
+  await writeFile(path('retained'), JSON.stringify([b]))
+  const owner = new HarnessStorageCleanup(f.options)
+  await owner.commit(['deleted'])
+  await expect(readFile(path('deleted'))).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(JSON.parse(await readFile(path('retained'), 'utf8'))).toEqual([b])
+})

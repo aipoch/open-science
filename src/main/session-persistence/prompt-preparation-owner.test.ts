@@ -574,7 +574,11 @@ describe('Main prompt preparation rollback authority', () => {
     const prepared = commit(owner, original, [prepare('resume'), start('old')])
     expect(prepared.status).toBe('running')
     const restored = commit(owner, prepared, [rollback()])
-    expect(restored.messages).toEqual(original.messages)
+    expect(restored.messages[0]).toMatchObject(original.messages[0])
+    expect(restored.messages[0].turnOutcome).toMatchObject({
+      kind: 'interrupted',
+      cause: 'app-restart'
+    })
     expect(restored.status).toBe(original.status)
     expect(restored.error).toBe(original.error)
     expect(restored.resumeRecovery).toEqual(original.resumeRecovery)

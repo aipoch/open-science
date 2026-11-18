@@ -182,6 +182,12 @@ const harness = (contextReset = false, withRoutedMessages = false) => {
     saveSession,
     receiveSaveResponse,
     admission,
+    retry: (promptMessageId = 'prompt-1') =>
+      owner.resume(runtime as never, 'session-1', async () => {}, {
+        flushPersistence: flush,
+        promptMessageId,
+        rejectOnFailure: true
+      }),
     resume: (drain = async (): Promise<void> => {}) =>
       owner.resume(runtime as never, 'session-1', drain, { flushPersistence: flush })
   }
@@ -517,16 +523,22 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     }
   )
 
-  it('preserves Main outcome when attachment has no recovery marker', async () => {
+  it('recovers a legacy failed turn when attachment has no recovery marker', async () => {
     const h = harness(true)
     delete h.durable().resumeRecovery
     useSessionStore.setState({
       sessions: [{ ...useSessionStore.getState().sessions[0], resumeRecovery: undefined }]
     })
+    const call = h.continuation.getMockImplementation()!
+    h.continuation.mockImplementationOnce(async (request) => {
+      expect(h.durable().messages[0].turnOutcome).toMatchObject({ kind: 'failed' })
+      return call(request)
+    })
     await h.resume()
     expect(h.runtime.resumeSession).toHaveBeenCalledOnce()
-    expect(h.continuation).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().sessions[0].status).toBe('error')
+    expect(h.continuation).toHaveBeenCalledOnce()
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toBeUndefined()
+    expect(h.providerDispatch.mock.calls[0][0].text).toContain('Continue the interrupted turn')
   })
 
   it.each([false, true])(
@@ -671,4 +683,183 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     expect(rollbackCommands).toEqual([])
     expect(h.durable().promptPreparation).toBeUndefined()
   })
+})
+
+describe('ordinary failure recovery uses durable execution evidence', () => {
+  beforeEach(() => {
+    resetSessionPersistenceWriteFailuresForTests()
+    resetWorkspacePromptRollbacksForTests()
+    resetSessionConversationIntentsForTests()
+    useWorkspaceOperationErrors.setState({ errors: {} })
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  const fail = (h: ReturnType<typeof harness>, notStarted = false): void => {
+    delete h.durable().resumeRecovery
+    for (const prompt of [h.durable().messages[0], h.durable().conversationGraph!.messages[0]])
+      prompt.turnOutcome = {
+        kind: 'failed',
+        settledAt: 2,
+        error: 'Internal error',
+        ...(notStarted ? { execution: 'not-started' } : {})
+      }
+    useSessionStore.setState({ sessions: [structuredClone(h.durable()) as ChatSession] })
+  }
+
+  it.each([false, true])(
+    'keeps original message and branch while recovering (safe resend=%s)',
+    async (notStarted) => {
+      const h = harness()
+      fail(h, notStarted)
+      const branch = h.durable().conversationGraph!.branches[0].id
+      await h.retry()
+      expect(h.providerDispatch).toHaveBeenCalledOnce()
+      const dispatched = h.providerDispatch.mock.calls[0][0]
+      expect(dispatched.text).toBe(
+        notStarted
+          ? 'Continue research'
+          : 'Continue the interrupted turn from where it stopped. Do not repeat completed work or completed tool calls unless needed to finish the original request.\n\nOriginal user request:\nContinue research'
+      )
+      expect(dispatched.provenanceContext?.promptMessageId).toBe('prompt-1')
+      expect(dispatched.suppressUserMessage).toBe(true)
+      expect(h.durable().conversationGraph!.branches.map(({ id }) => id)).toEqual([branch])
+      expect(h.durable().messages.map(({ id }) => id)).toEqual(['prompt-1'])
+    }
+  )
+
+  it('retains original upload and image bytes when a safe resend replaces its provider context', async () => {
+    const h = harness(true)
+    fail(h, true)
+    for (const prompt of [h.durable().messages[0], h.durable().conversationGraph!.messages[0]]) {
+      prompt.uploads = [
+        {
+          id: 'input-data',
+          sessionId: 'session-1',
+          name: 'data.csv',
+          originalName: 'data.csv',
+          size: 12,
+          versionId: 'data-version',
+          versionNumber: 1
+        }
+      ]
+      prompt.images = [{ id: 'input-image', mimeType: 'image/png', data: 'YQ==', byteLength: 1 }]
+    }
+    useSessionStore.setState({ sessions: [structuredClone(h.durable()) as ChatSession] })
+    await h.retry()
+    expect(h.providerDispatch).toHaveBeenCalledOnce()
+    expect(h.providerDispatch.mock.calls[0][0]).toMatchObject({
+      text: 'Continue research',
+      attachments: [{ id: 'input-data', versionId: 'data-version' }],
+      historyImages: [{ mimeType: 'image/png', data: 'YQ==', byteLength: 1 }],
+      contextReset: true
+    })
+  })
+
+  it('reconstructs the authored Save as skill instruction after a pre-dispatch failure', async () => {
+    const h = harness()
+    fail(h, true)
+    for (const prompt of [h.durable().messages[0], h.durable().conversationGraph!.messages[0]]) {
+      prompt.turnIntent = 'save-as-skill'
+      prompt.content = 'Save as skill'
+    }
+    useSessionStore.setState({ sessions: [structuredClone(h.durable()) as ChatSession] })
+    await h.retry()
+    expect(h.providerDispatch).toHaveBeenCalledOnce()
+    expect(h.providerDispatch.mock.calls[0][0].text).toContain(
+      'Distill this session into a reusable Skill'
+    )
+    expect(h.providerDispatch.mock.calls[0][0].text).toContain('evidence')
+  })
+
+  it('rejects stale Retry identities without attaching or dispatching', async () => {
+    const h = harness()
+    fail(h)
+    await expect(h.retry('old-prompt')).rejects.toThrow('Recovery no longer matches')
+    expect(h.runtime.resumeSession).not.toHaveBeenCalled()
+    expect(h.providerDispatch).not.toHaveBeenCalled()
+  })
+
+  it('preserves the failure and rejects ordinary recovery errors without resetting context', async () => {
+    const h = harness()
+    fail(h)
+    h.runtime.resumeSession.mockRejectedValueOnce(new Error('temporary transport failure'))
+    await expect(h.retry()).rejects.toThrow('temporary transport failure')
+    expect(h.runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(h.durable().messages[0].turnOutcome?.kind).toBe('failed')
+    expect(h.providerDispatch).not.toHaveBeenCalled()
+    await h.retry()
+    expect(h.providerDispatch).toHaveBeenCalledOnce()
+  })
+})
+
+it('retains one accepted new instruction and its attachment across a lost acknowledgement and restart', async () => {
+  resetSessionPersistenceWriteFailuresForTests()
+  resetWorkspacePromptRollbacksForTests()
+  resetSessionConversationIntentsForTests()
+  const h = harness()
+  delete h.durable().resumeRecovery
+  for (const message of [h.durable().messages[0], h.durable().conversationGraph!.messages[0]])
+    message.turnOutcome = { kind: 'failed', settledAt: 2, error: 'Unknown failure' }
+  useSessionStore.setState({ sessions: [structuredClone(h.durable()) as ChatSession] })
+  h.runtime.resumeSession.mockRejectedValueOnce(new Error('ordinary recovery failure'))
+  await expect(h.retry()).rejects.toThrow('ordinary recovery failure')
+  expect(h.runtime.resetSessionContext).not.toHaveBeenCalled()
+  h.runtime.sendPrompt.mockImplementationOnce(async (...args: unknown[]) => {
+    const provenance = args[9] as NonNullable<AcpPromptRequest['provenanceContext']>
+    await h.admission.begin({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      executionId: 'instruction-execution',
+      promptMessageId: provenance.promptMessageId,
+      agentFrameId: provenance.agentFrameId!,
+      messageBranchId: provenance.messageBranchId!,
+      runtimeSegmentId: provenance.runtimeSegmentId!
+    })
+    throw new Error('Accepted response was lost')
+  })
+  const branch = h.durable().conversationGraph!.branches[0].id
+  const appended = vi.fn()
+  const accepted = vi.fn()
+  const attachment = {
+    id: 'data',
+    sessionId: 'session-1',
+    name: 'data.csv',
+    originalName: 'data.csv',
+    path: 'upload-version:project-1/session-1/data/version-1',
+    fileUrl: '',
+    size: 10,
+    mimeType: 'text/csv',
+    versionId: 'version-1',
+    versionNumber: 1
+  }
+  const instruction = {
+    sessionId: 'session-1',
+    projectId: 'project-1',
+    messageId: 'instruction-1',
+    text: 'Use the second dataset instead',
+    attachments: [attachment],
+    onMessageAppended: appended,
+    onPromptAccepted: accepted
+  }
+  await sendWorkspaceMessage(h.runtime as never, instruction, {
+    flushPersistence: h.flush,
+    awaitPromptAdmission: true
+  })
+  // Rehydrate only durable state: no in-memory draft or optimistic identity can authorize a replay.
+  useSessionStore.setState({ sessions: [structuredClone(h.durable()) as ChatSession] })
+  await sendWorkspaceMessage(h.runtime as never, instruction, {
+    flushPersistence: h.flush,
+    awaitPromptAdmission: true
+  })
+  expect(h.runtime.sendPrompt).toHaveBeenCalledOnce()
+  expect(appended).toHaveBeenCalledOnce()
+  expect(accepted).not.toHaveBeenCalled() // a lost response never clears the unsent draft on speculation
+  expect(h.durable().messages.filter(({ id }) => id === 'instruction-1')).toHaveLength(1)
+  expect(h.durable().messages.find(({ id }) => id === 'instruction-1')?.uploads).toMatchObject([
+    { id: 'data', versionId: 'version-1' }
+  ])
+  expect(h.durable().conversationGraph!.branches.map(({ id }) => id)).toEqual([branch])
 })

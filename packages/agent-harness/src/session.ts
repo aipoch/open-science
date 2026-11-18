@@ -91,6 +91,8 @@ export type AgentSession = {
   respond(invocationId: string, result: ToolResult): Promise<void>
   /** Only after verifying the external effect. Never automatically re-executes a tool. */
   reconcile(invocationId: string, result: ToolResult): Promise<void>
+  /** Set aside an unverified effect; identical operations stay blocked across restarts. */
+  defer(invocationId: string): Promise<void>
   /** Explicit takeover after the host has stopped the previous worker. Fences its late commits. */
   recover(expectedRunId: string): Promise<void>
   readToolResult(invocationId: string, offset?: number, limit?: number): Promise<ToolResultPage>
@@ -210,6 +212,19 @@ export async function openAgentSession(options: AgentSessionOptions): Promise<Ag
       throw new Error('Session creation conflict')
   }
   checkState(state, sessionId)
+  const inherited =
+    options.deferredTools?.filter(
+      (entry) => !state!.deferred?.some((known) => known.invocationId === entry.invocationId)
+    ) ?? []
+  if (inherited.length) {
+    const next = structuredClone(state)
+    next.deferred = [...(next.deferred ?? []), ...structuredClone(inherited)]
+    next.revision += 1
+    checkState(next, sessionId)
+    if (!(await store.commit(sessionId, state.revision, frozen(next))))
+      throw new Error('Unverified tool inheritance conflict')
+    state = next
+  }
   state = immutableCheckpoint(state, sessionId)
   state = seal({ ...state, inbox: state.inbox ?? [] })
   let disposed = false
@@ -355,7 +370,34 @@ export async function openAgentSession(options: AgentSessionOptions): Promise<Ag
       ...(options.useProviderOutputDefault ? { useProviderOutputDefault: true as const } : {})
     })
   }
+  const canonical = (value: Json): string => {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+    if (value !== null && typeof value === 'object')
+      return `{${Object.keys(value)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+        .join(',')}}`
+    return JSON.stringify(value)
+  }
   const processTools = async (signal: AbortSignal): Promise<'waiting' | 'blocked' | undefined> => {
+    // A fresh model call ID cannot grant permission to replay an unresolved external effect.
+    for (const pending of [...state!.pending]) {
+      if (
+        pending.status === 'planned' &&
+        state!.deferred?.some(
+          (deferred) =>
+            deferred.call.name === pending.call.name &&
+            canonical(deferred.call.arguments) === canonical(pending.call.arguments)
+        )
+      ) {
+        await finishTool(
+          pending.invocationId,
+          failureResult(
+            'This operation was set aside because its earlier effect is unverified. Check the existing result; do not repeat the operation. Independent work may continue.'
+          )
+        )
+      }
+    }
     const planned = state!.pending.filter((entry) => entry.status === 'planned')
     const parallel = planned.slice(0, maxParallelTools).map((pending) => ({
       pending,
@@ -1050,6 +1092,7 @@ export async function openAgentSession(options: AgentSessionOptions): Promise<Ag
         revision: checkpoint.revision,
         ...(checkpoint.run ? { run: checkpoint.run } : {}),
         pending: checkpoint.pending,
+        ...(checkpoint.deferred ? { deferred: checkpoint.deferred } : {}),
         requestCount: checkpoint.requests.length,
         requests: requestsFrom === undefined ? [] : checkpoint.requests.slice(requestsFrom)
       })
@@ -1143,6 +1186,25 @@ export async function openAgentSession(options: AgentSessionOptions): Promise<Ag
     continue: () => turn(),
     respond: (id, result) => answer(id, frozen(result), 'waiting'),
     reconcile: (id, result) => answer(id, frozen(result), 'unknown'),
+    defer: (invocationId) =>
+      exclusive(async () => {
+        const pending = state!.pending.find((entry) => entry.invocationId === invocationId)
+        if (!pending && state!.deferred?.some((entry) => entry.invocationId === invocationId))
+          return
+        if (pending?.status !== 'unknown') throw new Error('Unknown tool identity changed')
+        // First persist the guard. If the following result write fails, recovery remains fail closed.
+        await write((next) => {
+          next.deferred ??= []
+          if (!next.deferred.some((entry) => entry.invocationId === invocationId))
+            next.deferred.push(structuredClone(pending))
+        })
+        await finishTool(
+          invocationId,
+          failureResult(
+            'The result of this operation is unverified. It has been set aside without repeating it. Check the affected resource before attempting it again; continue independent work.'
+          )
+        )
+      }),
     configure(next) {
       available()
       config = withResultReader(next)
@@ -1192,7 +1254,7 @@ export async function openAgentSession(options: AgentSessionOptions): Promise<Ag
       }, expectedRunId),
     fork: (id, throughMessageId) =>
       exclusive(async () => {
-        if (!id.trim() || id === sessionId || state!.pending.length)
+        if (!id.trim() || id === sessionId || state!.pending.length || state!.deferred?.length)
           throw new Error('Cannot fork unresolved history')
         const end =
           throughMessageId === undefined

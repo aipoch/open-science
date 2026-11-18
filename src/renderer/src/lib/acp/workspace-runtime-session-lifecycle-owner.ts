@@ -1,4 +1,9 @@
 import {
+  resolveTurnOutcome,
+  setTurnOutcome
+} from '../../../../shared/session-persistence/turn-outcome'
+import { recoverableConversationPrompt } from '../../../../shared/conversation-recovery'
+import {
   attemptWorkspacePromptRollback,
   describeWorkspacePromptRollbackFailure,
   hasPendingWorkspacePromptRollback,
@@ -44,6 +49,8 @@ type ResumeInterruptedWorkspaceSessionOptions = {
   historyReplayDescriptor?: HistoryReplayDescriptor
   supportsImageInput?: boolean
   agentTarget?: AcpSessionAgentTarget
+  promptMessageId?: string
+  rejectOnFailure?: boolean
   flushPersistence?: (target?: string) => Promise<void>
 }
 
@@ -132,8 +139,23 @@ const continueInterruptedWorkspaceTurn = async (
     ReturnType<typeof useSessionStore.getState>['prepareInterruptedTurnContinuation']
   >[2]
 ): Promise<boolean> => {
-  const source = workspaceSession(sessionId)
+  let source = workspaceSession(sessionId)
   if (!source) return false
+  const prompt = source.messages.find(({ id }) => id === promptMessageId)
+  if (!prompt?.turnOutcome) {
+    const outcome = resolveTurnOutcome(source, promptMessageId)
+    if (outcome) {
+      const frozen = setTurnOutcome(source, promptMessageId, outcome)
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) =>
+          session === source
+            ? { ...session, messages: frozen.messages, conversationGraph: frozen.conversationGraph }
+            : session
+        )
+      }))
+      source = workspaceSession(sessionId)!
+    }
+  }
   // Capture provider adoption and replay intent before the asynchronous Main preparation witness.
   // If that write fails, the renderer can retry the same attached runtime with the original
   // provider identity and history target still recorded in its local projection.
@@ -263,6 +285,7 @@ const resumeInterruptedWorkspaceSession = async (
     const { failure } = await retryPendingWorkspacePromptRollback(sessionId)
     if (failure !== undefined) {
       reportWorkspaceOperationError(sessionId, failure)
+      if (options?.rejectOnFailure) throw new Error(failure)
       return
     }
   }
@@ -326,13 +349,19 @@ const resumeInterruptedWorkspaceSession = async (
       await confirmPendingDelegationPolicyAuthority(session)
     } catch (error) {
       reportWorkspaceOperationError(sessionId, getResumeFailureMessage(error))
+      if (options?.rejectOnFailure) throw error
       return
     }
   }
 
   const runtimeAlreadyAttached =
     runtime.state.sessionIds.includes(sessionId) && !options?.agentTarget
-  const originalPromptMessageId = session.resumeRecovery?.promptMessageId
+  const originalPromptMessageId =
+    session.resumeRecovery?.promptMessageId ??
+    recoverableConversationPrompt(session, options?.promptMessageId)?.id
+  if (options?.promptMessageId && originalPromptMessageId !== options.promptMessageId)
+    throw new Error('Recovery no longer matches the active conversation turn.')
+  if (runtime.state.promptInFlightSessionIds.includes(sessionId)) return
   const originalFrameId = session.conversationGraph?.activeFrameId
   const originalBranchId = session.conversationGraph?.frames.find(
     (frame) => frame.id === originalFrameId
@@ -366,7 +395,7 @@ const resumeInterruptedWorkspaceSession = async (
       currentFrameId !== originalFrameId ||
       (currentBranchId !== originalBranchId && !removedPromptSettled) ||
       (originalPromptMessageId !== undefined &&
-        current.resumeRecovery?.promptMessageId !== originalPromptMessageId &&
+        !recoverableConversationPrompt(current, originalPromptMessageId) &&
         !removedPromptSettled)
     )
       return undefined
@@ -386,6 +415,7 @@ const resumeInterruptedWorkspaceSession = async (
       rawError: error,
       providerTarget: options?.agentTarget ?? session.agentConfiguration
     })
+    if (options?.rejectOnFailure) throw error
     return
   }
 
@@ -394,7 +424,8 @@ const resumeInterruptedWorkspaceSession = async (
       await drainRuntimeEvents?.(sessionId)
       const current = currentRecoverySession()
       if (!current) return
-      const promptMessageId = current.resumeRecovery?.promptMessageId
+      const promptMessageId =
+        current.resumeRecovery?.promptMessageId ?? recoverableConversationPrompt(current)?.id
       if (promptMessageId) {
         if (
           !(await continueInterruptedWorkspaceTurn(
@@ -416,6 +447,7 @@ const resumeInterruptedWorkspaceSession = async (
         rawError: error,
         providerTarget: options?.agentTarget ?? session.agentConfiguration
       })
+      if (options?.rejectOnFailure) throw error
     }
     return
   }
@@ -450,7 +482,8 @@ const resumeInterruptedWorkspaceSession = async (
     // save acknowledgement omitted the marker, so choose the prompt only after that lane drains.
     const current = currentRecoverySession()
     if (!current) return
-    const promptMessageId = current.resumeRecovery?.promptMessageId
+    const promptMessageId =
+      current.resumeRecovery?.promptMessageId ?? recoverableConversationPrompt(current)?.id
     const providerUpdate = resumeResult
       ? {
           agentFrameworkId: resumeResult.frameworkId,
@@ -497,6 +530,7 @@ const resumeInterruptedWorkspaceSession = async (
       rawError: error,
       providerTarget: options?.agentTarget ?? session.agentConfiguration
     })
+    if (options?.rejectOnFailure) throw error
   }
 }
 

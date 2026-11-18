@@ -1571,7 +1571,12 @@ class SessionPersistenceStateOwner {
               saveAuthority.callerSignal
             ),
             authority,
-            false
+            false,
+            options.conversationCommands.some(
+              (command) =>
+                command.kind === 'resume-run' ||
+                (command.kind === 'prepare-prompt' && command.mode === 'resume')
+            )
           )
         } catch (error) {
           // A renderer edit can arrive after the UI becomes idle but before Main commits the
@@ -1656,7 +1661,12 @@ class SessionPersistenceStateOwner {
             saveAuthority.callerSignal
           ),
           authority,
-          false
+          false,
+          options.conversationCommands.some(
+            (command) =>
+              command.kind === 'resume-run' ||
+              (command.kind === 'prepare-prompt' && command.mode === 'resume')
+          )
         )
       } catch (error) {
         if (!(error instanceof SessionConversationCommandDeferredError)) throw error

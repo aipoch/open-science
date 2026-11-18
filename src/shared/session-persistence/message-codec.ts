@@ -474,6 +474,20 @@ export const sanitizeMessage = (
   if (role === 'user') {
     const outcome = sanitizeTurnOutcome(message.turnOutcome)
     if (outcome) sanitized.turnOutcome = outcome
+    if (Array.isArray(message.failureHistory)) {
+      const history = message.failureHistory
+        .map(sanitizeTurnOutcome)
+        .filter(
+          (attempt): attempt is Exclude<NonNullable<typeof attempt>, { kind: 'completed' }> =>
+            attempt !== undefined && attempt.kind !== 'completed'
+        )
+      if (history.length) sanitized.failureHistory = history
+      if (
+        history.length !== message.failureHistory.length &&
+        sanitized.turnOutcome?.kind === 'failed'
+      )
+        sanitized.turnOutcome = { ...sanitized.turnOutcome, execution: undefined }
+    }
   }
   if (role === 'user' && message.interrupted === true) sanitized.interrupted = true
   if (role === 'user') {

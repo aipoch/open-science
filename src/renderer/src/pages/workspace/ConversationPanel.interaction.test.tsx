@@ -9871,9 +9871,21 @@ describe('ConversationPanel unified failure notices', () => {
     expect(action('report')).toBeNull()
   })
 
-  it('retries a service failure through the existing revision command and preserves the current draft', async () => {
+  it('retries a failed prompt through the recovery owner and preserves the draft and attachments', async () => {
     const revise = vi.fn().mockResolvedValue({ ok: true, disposition: 'sent' })
     const resume = vi.fn()
+    const retry = vi.fn().mockResolvedValue(undefined)
+    const changeDoc = vi.fn(),
+      removeAttachment = vi.fn()
+    const attachment = {
+      id: 'retained-file',
+      sessionId: 'session-err',
+      originalName: 'cohort.csv',
+      name: 'cohort.csv',
+      path: '/cohort.csv',
+      size: 23,
+      mimeType: 'text/csv'
+    }
     const prompt = {
       ...planOriginMessages()[0],
       content: 'Retry this prompt',
@@ -9885,13 +9897,167 @@ describe('ConversationPanel unified failure notices', () => {
     }
     renderPanel({
       view: { activeSession: { ...errorSession, messages: [prompt] } },
-      composer: { view: { doc: docFromText('Keep unsent draft') } },
-      conversation: { availability: { revise: true }, actions: { revise, resume } }
+      composer: {
+        view: { doc: docFromText('Keep unsent draft'), attachments: [attachment] },
+        actions: { changeDoc, removeAttachment }
+      },
+      conversation: {
+        availability: { revise: false, resume: true },
+        actions: { revise, resume, retry }
+      }
     })
     await act(async () => action('retry')?.click())
-    expect(revise).toHaveBeenCalledWith(prompt.id, docFromText(prompt.content), [])
+    expect(retry).toHaveBeenCalledExactlyOnceWith(prompt.id)
+    expect(revise).not.toHaveBeenCalled()
+    expect(changeDoc).not.toHaveBeenCalled()
+    expect(removeAttachment).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('cohort.csv')
     expect(resume).not.toHaveBeenCalled()
     expect(getComposerEditor().textContent).toBe('Keep unsent draft')
+  })
+
+  it('keeps authentication-gated drafts editable while blocking mouse and keyboard sends', () => {
+    const submit = vi.fn(),
+      changeDoc = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, status: 'idle', error: undefined },
+        authenticationRecovery: { required: true, openSettings: vi.fn() },
+        canEditDraft: true
+      },
+      composer: {
+        view: { doc: docFromText('Keep editing during sign-in') },
+        actions: { changeDoc }
+      },
+      conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } }
+    })
+    const form = getComposerForm()
+    expect(form.hasAttribute('inert')).toBe(false)
+    expect(form.getAttribute('aria-hidden')).not.toBe('true')
+    expect(form.classList.contains('invisible')).toBe(false)
+    const editor = getComposerEditor()
+    expect(editor.getAttribute('contenteditable')).toBe('true')
+    expect(editor.textContent).toBe('Keep editing during sign-in')
+    const send = container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!
+    expect(send.disabled).toBe(true)
+    act(() => {
+      send.click()
+      editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(submit).not.toHaveBeenCalled()
+    expect(changeDoc).not.toHaveBeenCalled()
+  })
+
+  it('does not offer prompt Retry when the recovery command capability is missing', () => {
+    const revise = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          messages: [
+            {
+              ...planOriginMessages()[0],
+              turnOutcome: {
+                kind: 'failed',
+                settledAt: 2,
+                failure: { category: 'service', diagnostics: {} }
+              }
+            }
+          ]
+        }
+      },
+      conversation: { actions: { revise, retry: undefined } }
+    })
+    expect(action('retry')).toBeNull()
+    expect(revise).not.toHaveBeenCalled()
+  })
+
+  it('keeps failed recovery available after rejection without editing or accepting the unsent draft', async () => {
+    const retry = vi.fn().mockRejectedValue(new Error('Recovery attempt failed'))
+    const revise = vi.fn(),
+      changeDoc = vi.fn()
+    const prompt = {
+      ...planOriginMessages()[0],
+      turnOutcome: {
+        kind: 'failed' as const,
+        settledAt: 2,
+        failure: { category: 'service' as const, diagnostics: {} }
+      }
+    }
+    renderPanel({
+      view: { activeSession: { ...errorSession, messages: [prompt] } },
+      composer: { view: { doc: docFromText('Still not delivered') }, actions: { changeDoc } },
+      conversation: { actions: { retry, revise } }
+    })
+    await act(async () => action('retry')?.click())
+    expect(retry).toHaveBeenCalledExactlyOnceWith(prompt.id)
+    expect(action('retry')?.disabled).toBe(false)
+    expect(slot()?.textContent).toContain('The action could not be completed.')
+    expect(getComposerEditor().textContent).toBe('Still not delivered')
+    expect(changeDoc).not.toHaveBeenCalled()
+    expect(revise).not.toHaveBeenCalled()
+  })
+
+  it('retains an older failed publication after a new instruction completes and retries only saving', async () => {
+    const request = vi.fn(),
+      retry = vi.fn(),
+      revise = vi.fn()
+    const olderPrompt = {
+      ...planOriginMessages()[0],
+      id: 'save-results',
+      turnOutcome: {
+        kind: 'failed' as const,
+        settledAt: 2,
+        error: 'EACCES while saving completed results',
+        failure: {
+          category: 'environment' as const,
+          reason: 'environment/filesystem' as const,
+          diagnostics: { raw: 'EACCES while saving completed results' }
+        },
+        recovery: 'retry-artifact-publication' as const
+      }
+    }
+    const laterPrompt = {
+      ...planOriginMessages()[0],
+      id: 'new-instruction',
+      content: 'Explain the findings',
+      createdAt: 3,
+      turnOutcome: { kind: 'completed' as const, settledAt: 4 }
+    }
+    const activeSession = {
+      ...errorSession,
+      status: 'idle' as const,
+      error: undefined,
+      messages: [olderPrompt, laterPrompt]
+    }
+    const original = structuredClone(activeSession)
+    renderPanel({
+      view: { activeSession },
+      conversation: { actions: { retry, revise } },
+      workflows: { artifactFinalization: { request } }
+    })
+    expect(slot()?.getAttribute('data-prompt-message-id')).toBe('save-results')
+    expect(slot()?.textContent).toContain('EACCES while saving completed results')
+    await act(async () => action('retry')?.click())
+    expect(request).toHaveBeenCalledExactlyOnceWith(activeSession.id, 'save-results')
+    expect(retry).not.toHaveBeenCalled()
+    expect(revise).not.toHaveBeenCalled()
+    expect(activeSession).toEqual(original)
+  })
+
+  it('routes a legacy failure with a recorded prompt through the synthesized recovery target', async () => {
+    const resume = vi.fn().mockResolvedValue(undefined),
+      retry = vi.fn(),
+      revise = vi.fn()
+    renderPanel({
+      view: { activeSession: { ...errorSession, messages: planOriginMessages() } },
+      conversation: { availability: { resume: true }, actions: { resume, retry, revise } }
+    })
+    expect(action('retry')?.disabled).toBe(false)
+    await act(async () => action('retry')?.click())
+    expect(retry).toHaveBeenCalledExactlyOnceWith('plan-origin')
+    expect(resume).not.toHaveBeenCalled()
+    expect(revise).not.toHaveBeenCalled()
   })
 
   it('deduplicates the same composer and operation error', () => {

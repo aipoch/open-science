@@ -97,8 +97,8 @@ const UNRESUMABLE_ERROR_KINDS = new Set([
   'conversation_not_found',
   'session_missing',
   'conversation_missing',
-  'session_resume_failed',
-  'conversation_restore_failed'
+  'session_invalid',
+  'conversation_invalid'
 ])
 
 const isUnresumableErrorKind = (value: unknown): boolean =>
@@ -132,18 +132,7 @@ const describesUnresumableSession = (details: unknown): boolean => {
       details
     ) ||
     /\bno\s+rollout\s+found\s+for\s+thread\s+id\b/i.test(details)
-  const describesFailedResume =
-    /\b(?:failed|unable|cannot|can't|could not)\s+to\s+(?:resume|restore|reopen|reattach)\b.{0,80}\b(?:session|conversation)\b/i.test(
-      details
-    ) ||
-    /\b(?:session|conversation)\b.{0,40}\b(?:failed|was unable)\s+to\s+(?:resume|restore|reopen|reattach)\b/i.test(
-      details
-    ) ||
-    /\b(?:session|conversation)\b.{0,40}\b(?:could not|cannot|can't)\s+be\s+(?:resumed|restored|reopened|reattached)\b/i.test(
-      details
-    )
-
-  return describesMissingSession || describesFailedResume
+  return describesMissingSession
 }
 
 const adoptableFailure = (
@@ -153,13 +142,6 @@ const adoptableFailure = (
 const authoritativeFailure = (
   reason: AcpSessionResumeAuthoritativeFailureReason
 ): AcpSessionResumeFailureClassification => Object.freeze({ disposition: 'authoritative', reason })
-
-const isCodexResponsesResumeContext = (
-  context: AcpSessionResumeFailureContext | undefined
-): boolean =>
-  context?.currentFrameworkId === 'codex' &&
-  (context.currentModelRoute === 'codex-responses' ||
-    context.currentModelRoute === 'codex-responses-compatibility')
 
 const hasNoStructuredErrorData = (value: unknown): boolean => {
   if (value === undefined) return true
@@ -297,8 +279,8 @@ class AcpSessionResumePolicy {
 
     const service = readProperty(data.value, 'service')
     if (!service.readable) return authoritativeFailure('uninspectable-error')
-    if (service.value === 'session') return adoptableFailure('session-service-failure')
-    if (service.value !== undefined) return authoritativeFailure('non-session-service-failure')
+    if (service.value !== undefined && service.value !== 'session')
+      return authoritativeFailure('non-session-service-failure')
 
     const errorKind = readProperty(data.value, 'errorKind')
     if (!errorKind.readable) return authoritativeFailure('uninspectable-error')
@@ -312,20 +294,6 @@ class AcpSessionResumePolicy {
       /resource not found|session not found|no rollout found for thread id/i.test(message.value)
     ) {
       return adoptableFailure('session-not-found-message')
-    }
-
-    if (typeof message.value === 'string' && /^unknown error\.?$/i.test(message.value.trim())) {
-      if (isCodexResponsesResumeContext(context)) {
-        return adoptableFailure('legacy-codex-session-unavailable')
-      }
-      if (
-        context?.providerSessionIdPersisted === false &&
-        context.currentFrameworkId === 'opencode' &&
-        (context.currentModelRoute === 'opencode-anthropic' ||
-          context.currentModelRoute === 'opencode-openai')
-      ) {
-        return adoptableFailure('legacy-opencode-session-unavailable')
-      }
     }
 
     if (typeof message.value !== 'string' || !/^internal error\.?$/i.test(message.value.trim())) {
@@ -348,9 +316,6 @@ class AcpSessionResumePolicy {
     }
     if (describesUnresumableSession(details.value)) {
       return adoptableFailure('legacy-unresumable-details')
-    }
-    if (hasNoStructuredErrorData(data.value) && isCodexResponsesResumeContext(context)) {
-      return adoptableFailure('legacy-codex-session-unavailable')
     }
     return authoritativeFailure('unrelated-internal-error')
   }
