@@ -1,3 +1,4 @@
+import { imageTaskEvidenceMatches } from '../../shared/image-task'
 import { validateResearchFilms } from './research-films'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -201,6 +202,7 @@ export const validatePackageRecords = async (
         await transaction.project.create({ data: { id, name: 'Package validation' } })
       await publishRecords(transaction)
     })
+    const tasksById = new Map(records.imageTasks?.map((task) => [task.id, task]))
     for (const task of records.imageTasks ?? []) {
       if (
         task.projectId !== manifest.source.projectId ||
@@ -265,6 +267,12 @@ export const validatePackageRecords = async (
       }
       if (version.originKind === 'agent_generated') {
         const result = await repository.getVersionProvenance(identity)
+        const task = tasksById.get(String(version.artifactRunId))
+        if (
+          task &&
+          !imageTaskEvidenceMatches(result.evidence, task.id, task.edit.source.sourceVersionId)
+        )
+          throw new Error('Image task output does not match its source Version.')
         if (
           result.contentStatus.state !== 'available' &&
           !excluded.has(String(version.contentStorageKey))

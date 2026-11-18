@@ -1,4 +1,8 @@
-import { ImageTaskIntegrityError, type ImageTask } from '../../shared/image-task'
+import {
+  imageTaskEvidenceMatches,
+  ImageTaskIntegrityError,
+  type ImageTask
+} from '../../shared/image-task'
 import { ProvenanceIntegrityError } from '../../shared/provenance-read-result'
 import type { ArtifactVersionEvidence } from '../../shared/artifact-provenance'
 import { persistentContentReferences } from '../storage/prisma-content-references'
@@ -613,10 +617,10 @@ class ArtifactProvenanceRepository {
   }
 
   async verifyImageTaskResults(
-    tasks: readonly Pick<
+    tasks: readonly (Pick<
       ImageTask,
       'id' | 'projectId' | 'sessionId' | 'frameId' | 'branchId' | 'state' | 'result'
-    >[]
+    > & { edit: { source: Pick<ImageTask['edit']['source'], 'sourceVersionId'> } })[]
   ): Promise<void> {
     const completed = tasks.filter((task) => task.state === 'succeeded' && task.result)
     if (!completed.length) return
@@ -658,7 +662,7 @@ class ArtifactProvenanceRepository {
         row.messageBranchId !== task.branchId ||
         row.checksum !== result.checksum ||
         row.sizeBytes !== BigInt(result.size) ||
-        evidence?.image_task_id !== task.id
+        !imageTaskEvidenceMatches(evidence, task.id, task.edit.source.sourceVersionId)
       )
         invalid.push(task.id)
     }
@@ -779,7 +783,7 @@ class ArtifactProvenanceRepository {
       })
       if (
         core.contentStatus.state !== 'available' ||
-        core.evidence.image_task_id !== request.taskId
+        !imageTaskEvidenceMatches(core.evidence, request.taskId, request.sourceVersionId)
       )
         throw new ImageTaskIntegrityError([request.taskId])
       const version = await client.$transaction(async (tx) => {
@@ -796,7 +800,10 @@ class ArtifactProvenanceRepository {
           throw new ImageTaskIntegrityError([request.taskId])
         requireGeneratedArtifactVersion(row)
         const evidence = JSON.parse(row.evidenceJson!) as ArtifactVersionEvidence
-        if (evidence.image_task_id !== request.taskId || row.promptMessageId !== null)
+        if (
+          !imageTaskEvidenceMatches(evidence, request.taskId, request.sourceVersionId) ||
+          row.promptMessageId !== null
+        )
           throw new ImageTaskIntegrityError([request.taskId])
         const published = await tx.artifactVersion.update({
           where: { id: row.id },

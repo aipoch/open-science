@@ -32,6 +32,7 @@ import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { NotebookInputRegistry } from '../notebook/input-registry'
 import { ManagedFileIndexRepository } from '../project-files/repository'
+import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { UploadRepository } from '../uploads/repository'
 
 type Fixture = Awaited<ReturnType<typeof createProvenanceTestFixture>>
@@ -752,6 +753,31 @@ it('publishes a validated Host image above the tool inline byte limit', async ()
 it('publishes an image task without a prompt and recovers its result without advancing a newer head', async () => {
   const value = await fixture()
   await value.client.project.create({ data: { id: 'project-1', name: 'Image task owner' } })
+  const authority = new ImmutableInputAuthority({
+    storageRoot: value.storageRoot,
+    managedFileVersions: new ManagedFileVersionService({
+      storageRoot: value.storageRoot,
+      getClient: async () => value.client
+    })
+  })
+  const uploads = new UploadRepository(value.storageRoot, { getClient: async () => value.client })
+  const staged = await stageUploadFixtures(uploads, {
+    files: [
+      {
+        name: 'source.png',
+        mimeType: 'image/png',
+        content: createPngBytes('source').toString('base64')
+      }
+    ]
+  })
+  const [upload] = await uploads.finalizePendingSessionUploads('session-1', staged, 'project-1')
+  const sourceVersionId = upload.versionId!
+  const source = await authority.resolveVersion({
+    projectId: 'project-1',
+    sourceKind: 'upload-version',
+    expectedSourceFileId: upload.id,
+    inputFileVersionId: sourceVersionId
+  })
   const taskId = crypto.randomUUID()
   const request = {
     projectId: 'project-1',
@@ -774,7 +800,8 @@ it('publishes an image task without a prompt and recovers its result without adv
       toolId: 'edit_image',
       invocationId: taskId,
       implementationVersion: '1',
-      normalizedArguments: { imageTaskId: taskId }
+      normalizedArguments: { imageTaskId: taskId, sourceVersionId },
+      inputFiles: [source!]
     }
   }
   const interrupted = new ArtifactProvenanceRepository({
@@ -800,7 +827,7 @@ it('publishes an image task without a prompt and recovers its result without adv
     projectId: 'project-1',
     appSessionId: 'session-1',
     taskId,
-    sourceVersionId: 'upload-source'
+    sourceVersionId
   }
   const stagedPath = join(
     value.storageRoot,
@@ -819,6 +846,12 @@ it('publishes an image task without a prompt and recovers its result without adv
     'staging content is corrupt'
   )
   await writeFile(stagedPath, stagedBytes)
+  await expect(
+    value.repository.recoverImageTaskVersion({ ...recovery, sourceVersionId: 'other-version' })
+  ).rejects.toMatchObject({ name: 'ImageTaskIntegrityError', taskIds: [taskId] })
+  expect(
+    await value.client.artifactLineage.findUniqueOrThrow({ where: { id: output.artifactId } })
+  ).toMatchObject({ currentVersionId: null })
   const published = (await value.repository.recoverImageTaskVersion(recovery))!
   expect(published.versionId).toBe(output.versionId)
   expect(published.isPublished).toBe(true)
@@ -831,13 +864,15 @@ it('publishes an image task without a prompt and recovers its result without adv
     frameId: 'root-frame-1',
     branchId: 'branch-1',
     state: 'succeeded' as const,
-    result: published
+    result: published,
+    edit: { source: { sourceVersionId } }
   }
   const query = vi.spyOn(value.client.artifactVersion, 'findMany')
   await value.repository.verifyImageTaskResults([task, task])
   expect(query).toHaveBeenCalledTimes(1)
   for (const invalid of [
     { ...task, id: 'another-task' },
+    { ...task, edit: { source: { sourceVersionId: 'other-version' } } },
     { ...task, projectId: 'another-project' },
     { ...task, sessionId: 'another-session' },
     { ...task, branchId: 'another-branch' },
@@ -861,9 +896,16 @@ it('publishes an image task without a prompt and recovers its result without adv
       projectId: 'project-1',
       appSessionId: 'session-1',
       taskId,
-      sourceVersionId: 'upload-source'
+      sourceVersionId
     })
   ).toMatchObject({ versionId: output.versionId, isPublished: true })
+  const input = await authority.resolveVersion({
+    projectId: 'project-1',
+    sourceKind: 'artifact-version',
+    inputFileVersionId: published.versionId,
+    expectedSourceFileId: published.artifactId
+  })
+  expect(input).toBeDefined()
   const laterId = crypto.randomUUID()
   const later = await value.repository.writeAppGeneratedVersion({
     ...request,
@@ -873,7 +915,8 @@ it('publishes an image task without a prompt and recovers its result without adv
     producer: {
       ...request.producer,
       invocationId: laterId,
-      normalizedArguments: { imageTaskId: laterId }
+      normalizedArguments: { imageTaskId: laterId, sourceVersionId: output.versionId },
+      inputFiles: [input!]
     }
   })
   await value.repository.publishImageTaskVersion({
@@ -887,28 +930,13 @@ it('publishes an image task without a prompt and recovers its result without adv
     projectId: 'project-1',
     appSessionId: 'session-1',
     taskId,
-    sourceVersionId: 'upload-source'
+    sourceVersionId
   })
   expect(
     (await value.client.artifactLineage.findUniqueOrThrow({ where: { id: output.artifactId } }))
       .currentVersionId
   ).toBe(later.versionId)
   expect(await value.client.artifactVersion.count()).toBe(2)
-
-  const authority = new ImmutableInputAuthority({
-    storageRoot: value.storageRoot,
-    managedFileVersions: new ManagedFileVersionService({
-      storageRoot: value.storageRoot,
-      getClient: async () => value.client
-    })
-  })
-  const input = await authority.resolveVersion({
-    projectId: 'project-1',
-    sourceKind: 'artifact-version',
-    inputFileVersionId: published.versionId,
-    expectedSourceFileId: published.artifactId
-  })
-  expect(input).toBeDefined()
 
   for (const filename of ['image.png', 'different-image.png']) {
     const conversationRequest = {
@@ -969,22 +997,21 @@ it('publishes an image task without a prompt and recovers its result without adv
     sourceVersionId: published.versionId
   })
   for (const anchor of [published, crossFile]) {
-    await expect(
-      value.repository.getLineage({
-        projectId: request.projectId,
-        appSessionId: request.appSessionId,
-        artifactId: anchor.artifactId,
-        versionId: anchor.versionId,
-        imageSourceKind: 'artifact-version'
-      })
-    ).resolves.toMatchObject({
-      imageDependencies: [
-        {
-          output: { versionId: crossFile.versionId },
-          input: { sourceFileId: published.artifactId, sourceVersionId: published.versionId }
-        }
-      ]
+    const lineage = await value.repository.getLineage({
+      projectId: request.projectId,
+      appSessionId: request.appSessionId,
+      artifactId: anchor.artifactId,
+      versionId: anchor.versionId,
+      imageSourceKind: 'artifact-version'
     })
+    const edges = lineage!.imageDependencies!.map(({ input, output }) => [
+      input.sourceVersionId,
+      output.versionId
+    ])
+    const expected = [[published.versionId, crossFile.versionId]]
+    if (anchor === published)
+      expected.push([sourceVersionId, published.versionId], [published.versionId, later.versionId])
+    expect(edges.sort()).toEqual(expected.sort())
   }
 
   const historyRequest = {
@@ -994,7 +1021,7 @@ it('publishes an image task without a prompt and recovers its result without adv
     versionId: published.versionId,
     imageSourceKind: 'artifact-version' as const
   }
-  const outputs = new Set([crossFile.versionId])
+  const outputs = new Set([published.versionId, later.versionId, crossFile.versionId])
   for (let i = 0; i < 32; i++) {
     const id = crypto.randomUUID()
     const result = await value.repository.writeAppGeneratedVersion({
@@ -1026,7 +1053,7 @@ it('publishes an image task without a prompt and recovers its result without adv
     imageCursor: first.nextImageCursor
   }))!
   expect(second.nextImageCursor).toBeUndefined()
-  expect(second.imageDependencies).toHaveLength(1)
+  expect(second.imageDependencies).toHaveLength(3)
   expect(
     new Set(
       [...first.imageDependencies!, ...second.imageDependencies!].map(
@@ -1070,7 +1097,7 @@ it('publishes an image task without a prompt and recovers its result without adv
       producer: {
         ...request.producer,
         invocationId: id,
-        normalizedArguments: { imageTaskId: id },
+        normalizedArguments: { imageTaskId: id, sourceVersionId: published.versionId },
         inputFiles: [input!]
       }
     })

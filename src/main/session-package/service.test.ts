@@ -16,7 +16,8 @@ import { c as createTar, x as extractTar } from 'tar'
 import { fileChecksum, packageEntry, readPackageArchive } from './archive'
 import { readNotebookFileGenerations } from '../notebook/analysis-file-evidence'
 import { readLoggedEvidence, readNativeEvidence } from '../artifacts/execution-evidence-log'
-import { remapStorageKey } from './native-snapshot'
+import { parseNativeRecords, remapStorageKey } from './native-snapshot'
+import { validatePackageRecords } from './validation'
 import { ProjectRepository } from '../projects/repository'
 import { migrateApplicationDatabase } from '../projects/prisma-client'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -49,6 +50,7 @@ import {
   deleteWorkingFileEvidenceProject,
   ensureWorkingFileEvidenceProject
 } from '../notebook/working-file-observer'
+import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { FileTaskRunJournal } from '../tasks/task-run-journal'
 import {
@@ -4097,6 +4099,19 @@ it.each([
     color: string,
     prompt: string
   ): Promise<ImageTaskResult> => {
+    const authority = new ImmutableInputAuthority({
+      storageRoot: source.storageRoot,
+      managedFileVersions: new ManagedFileVersionService({
+        storageRoot: source.storageRoot,
+        getClient: async () => source.client
+      })
+    })
+    const inputFile = await authority.resolveVersion({
+      projectId: input.projectId,
+      sourceKind: input.sourceKind,
+      expectedSourceFileId: input.sourceFileId,
+      inputFileVersionId: input.sourceVersionId
+    })
     const jpeg = await pixel(color).jpeg().toBuffer()
     const id = crypto.randomUUID()
     const output = await source.repository.writeAppGeneratedVersion({
@@ -4119,7 +4134,12 @@ it.each([
         toolId: 'edit_image',
         invocationId: id,
         implementationVersion: '1',
-        normalizedArguments: { imageTaskId: id, imageServiceId: 'version-1' }
+        normalizedArguments: {
+          imageTaskId: id,
+          imageServiceId: 'version-1',
+          sourceVersionId: input.sourceVersionId
+        },
+        inputFiles: [inputFile!]
       }
     })
     await source.repository.publishImageTaskVersion({
@@ -4255,6 +4275,25 @@ it.each([
   await exporter.prepareExport({ projectId: 'project-1', sessionId: 'session-1' })
   await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
   expect(recovered).toHaveBeenCalledTimes(kind === 'image-task-restart' ? 1 : 0)
+  if (kind === 'image-task') {
+    const directory = join(source.storageRoot, 'mismatched-source')
+    const manifest = await readPackageArchive(archive, directory)
+    const records = parseNativeRecords(
+      JSON.parse(await readFile(join(directory, 'records.json'), 'utf8'))
+    )
+    const first = records.imageTasks!.find(
+      (task) => task.edit.source.sourceKind === 'upload-version'
+    )!
+    const child = records.imageTasks!.find(
+      (task) => task.edit.source.sourceKind === 'artifact-version'
+    )!
+    child.state = 'outcome-unknown'
+    child.result = undefined
+    child.edit.source = first.edit.source
+    await expect(validatePackageRecords(directory, manifest, records)).rejects.toThrow(
+      'Image task output does not match its source Version.'
+    )
+  }
   await taskOwner.close()
   const readImportedTasks = vi.fn(async () => {
     throw new Error('Imported history is read-only')
@@ -4372,6 +4411,30 @@ it.each([
     if (annotation.source.kind === 'project-file')
       expect(annotation.source.path).toContain(forkVersion.id)
     else expect(annotation.source).toMatchObject({ versionId: forkVersion.id })
+  }
+  if (kind === 'image-task-restart') {
+    const edge = await source.client.artifactVersionInput.findFirstOrThrow({
+      where: { sourceUploadVersionId: 'version-1' }
+    })
+    const query = {
+      projectId: 'project-1',
+      versionId: edge.artifactVersionId,
+      direction: 'up'
+    } as const
+    await source.client.artifactVersionInput.update({
+      where: { id: edge.id },
+      data: { sourceCreatedAt: null }
+    })
+    await expect(source.repository.readDependencyRelations(query)).resolves.toMatchObject([
+      { dependsOnVersionId: 'version-1' }
+    ])
+    await source.client.artifactVersionInput.update({
+      where: { id: edge.id },
+      data: { sourceCreatedAt: new Date(0) }
+    })
+    await expect(source.repository.readDependencyRelations(query)).rejects.toThrow(
+      'Artifact dependency relation is corrupt'
+    )
   }
 })
 

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { ArtifactVersionEvidence } from './artifact-provenance'
 import { imageModelErrorSchema, type ImageErrorDetail } from './image-model-error'
 import { imageEditSnapshotSchema } from './image-edit-contract'
 
@@ -43,6 +44,16 @@ export const matchesImageTaskSource = (
   task.frameId === source.frameId &&
   task.branchId === source.branchId &&
   task.edit.source.sourceVersionId === source.sourceVersionId
+
+export const imageTaskEvidenceMatches = (
+  evidence: ArtifactVersionEvidence | undefined,
+  taskId: string,
+  sourceVersionId: string
+): boolean =>
+  evidence?.image_task_id === taskId &&
+  evidence.connector_execution?.normalized_arguments?.sourceVersionId === sourceVersionId &&
+  evidence.inputs?.length === 1 &&
+  evidence.inputs[0]?.input_file_version_id === sourceVersionId
 
 export class ImageTaskIntegrityError extends Error {
   constructor(readonly taskIds: readonly string[]) {
