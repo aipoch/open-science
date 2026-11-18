@@ -195,7 +195,7 @@ export type WindowsCacheAcl = {
 
 type WindowsCacheAclRule = NonNullable<WindowsCacheAcl['Rules']>[number]
 
-// Keep this complete dangerous-rights set in sync with windows-runtime-cache-uninstall.ps1.
+// Keep this complete dangerous-rights set in sync with build/windows-uninstall-helper.cs.
 // A foreign principal that can write, delete, change permissions, or take ownership can replace
 // the cache contents or grant itself full control.
 export const WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES = [

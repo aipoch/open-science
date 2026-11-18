@@ -5,10 +5,12 @@ import {
   desktopBackendDependencies,
   desktopBackendPeerDependencies,
   desktopBundledDependencies,
+  desktopExternalClosure,
   generatedPrismaIncludes,
   inlineDesktopDependencyMaps,
   isBackendRuntimeDependency,
   isElectronPackage,
+  missingOptionalDependencies,
   prismaEngineFilenames
 } from './backend-dependencies.mjs'
 import { prepareBackendStage } from './build-notebook-host.mjs'
@@ -33,9 +35,14 @@ const cliManifest = JSON.parse(
 )
 const forbidden = isElectronPackage
 const metadata = JSON.parse(await readFile(join(backend, 'dependencies.json'), 'utf8'))
-const bundledDependencies = desktopBundledDependencies(metadata)
+const bundledDependencies = desktopBundledDependencies(metadata, undefined, root)
 const dependencyRoots = values.desktop
-  ? desktopBackendDependencies(manifest.dependencies, metadata)
+  ? desktopBackendDependencies(
+      manifest.dependencies,
+      metadata,
+      new Set([...desktopExternalClosure(root), ...missingOptionalDependencies(root, metadata)]),
+      root
+    )
   : Object.keys(manifest.dependencies)
 await prepareBackendStage({ stage, removeStage: rm })
 await mkdir(stage, { recursive: true })
@@ -186,8 +193,11 @@ for (const name of dependencyRoots) {
   dependencies[name] = installed.get(join(stage, 'node_modules', name))
 }
 // This HTTP implementation is a direct standalone dependency, independent of incidental hoisting.
-await copyDependency('undici', root)
-dependencies.undici = installed.get(join(stage, 'node_modules/undici'))
+// The desktop backend may compile it into the bundle instead; then it has no installed copy.
+if (!bundledDependencies.has('undici')) {
+  await copyDependency('undici', root)
+  dependencies.undici = installed.get(join(stage, 'node_modules/undici'))
+}
 // Fail if a new peer edge reintroduces development tooling into a shipped dependency closure.
 for (const name of ['prisma', '@prisma/engines', 'typescript']) {
   if ([...installed.keys()].some((path) => path.endsWith(join('node_modules', name))))

@@ -1,14 +1,19 @@
+import {
+  loadSessionHistoryPageRequestSchema,
+  type LoadSessionHistoryPageRequest,
+  type SessionHistoryPage
+} from '../../shared/session-history'
 import type { SessionComputePolicy } from '@aipoch/compute'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
-import { constants as fsConstants } from 'node:fs'
-import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { packageOriginSchema } from '../../shared/session-package'
 import { isSessionPackagePending } from '../storage/session-package-state'
 import { decodeSessionComputePolicy } from './compute-policy'
 import { preserveImportedSession } from './imported-session'
-import { SessionProjectionAfterCommitError } from './save-session'
+import { SessionProjectionAfterCommitError, type MainSessionSaveOptions } from './save-session'
+import { createRuntimeSessionFile } from './runtime-session-file'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import {
@@ -21,6 +26,7 @@ import {
   SessionSizeLimitError,
   createEmptySessionManifest,
   createSessionFile,
+  decodeSessionEnvelope,
   decodeSessionFile,
   normalizeSessionManifest,
   sanitizeSessionUploadedAttachments,
@@ -50,6 +56,19 @@ import {
   type SessionProjectionRepository
 } from './projection'
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
+import {
+  sessionJournalPath,
+  sessionLegacyBackupPath,
+  SessionJournalStore,
+  SessionJournalCorruptionError,
+  SessionJournalVersionError,
+  SessionJournalSizeError,
+  SessionJournalRevisionError,
+  type SessionJournalDependencies,
+  type SessionJournalPreparedWrite,
+  type SessionJournalRead
+} from './journal'
+import { journalValueByteLength, normalizeJournalValue, type JournalValue } from './journal-codec'
 
 const SESSIONS_DIR = 'sessions'
 const DELETED_SESSIONS_DIR = 'deleted-sessions'
@@ -178,7 +197,10 @@ export type SessionIdentityCatalog = {
 type PreparedSessionWrite = {
   sanitizedSession: PersistedChatSession
   document: ReturnType<typeof createSessionFile>
-  contents: string
+  contents?: string
+  journalWrite?: SessionJournalPreparedWrite
+  runtimeChanges?: import('../../shared/runtime-session-projection').RuntimeSessionChanges
+  runtimeSourceFingerprint?: string
 }
 
 type SessionLoadDiagnostics = {
@@ -248,6 +270,7 @@ type SessionRepositoryDependencies = {
   hasActiveRuntimePrompt(projectId: string, sessionId: string): boolean
   hasLiveRuntimeSession(projectId: string, sessionId: string): boolean
   maxSessionBytes: number
+  journalDependencies?: SessionJournalDependencies
   remove(path: string, options: { force: boolean; recursive: boolean }): Promise<void>
   readDirectoryEntries(path: string): Promise<SessionDirectoryEntry[]>
   readManifestFile(path: string): Promise<string>
@@ -339,9 +362,9 @@ const assertSafeSegment = (segment: unknown): string => {
   return segment
 }
 
-// Owns per-session durable reads/writes: one file per Session under sessions/<projectId>/<id>.json,
-// plus a small manifest for the last-open selection. Writes are atomic (temp + rename) and serialized
-// at their Project/Session scope, while malformed JSON is backed up for later recovery.
+// Existing sessions/<projectId>/<id>.json files retain their atomic snapshot reads/writes.
+// New Sessions use append-only JSONL. Both paths serialize at the Project/Session scope.
+// A separate manifest tracks the last-open selection; damaged authority is retained for recovery.
 class SessionRepository {
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
   private catalogGeneration = 0
@@ -364,6 +387,9 @@ class SessionRepository {
     | undefined
   private backupSequence = 0
   private readonly dependencies: SessionRepositoryDependencies
+  private readonly journal: SessionJournalStore
+  // Bind Main's reducer evidence to the existing file identity without retaining old documents.
+  private readonly runtimeAuthorityFingerprints = new WeakMap<PersistedChatSession, string>()
 
   constructor(
     private readonly storageDir: string,
@@ -377,6 +403,7 @@ class SessionRepository {
       hasLiveRuntimeSession:
         dependencies.hasLiveRuntimeSession ?? DEFAULT_DEPENDENCIES.hasLiveRuntimeSession,
       maxSessionBytes: dependencies.maxSessionBytes ?? DEFAULT_DEPENDENCIES.maxSessionBytes,
+      journalDependencies: dependencies.journalDependencies,
       remove: (path, options) =>
         this.mutateCatalog(() =>
           (dependencies.remove ?? DEFAULT_DEPENDENCIES.remove)(path, options)
@@ -402,6 +429,16 @@ class SessionRepository {
         ),
       wait: dependencies.wait ?? DEFAULT_DEPENDENCIES.wait
     }
+    this.journal = new SessionJournalStore({
+      maxBytes: this.dependencies.maxSessionBytes,
+      dependencies: {
+        readFileWithinLimit: this.dependencies.readSessionFileWithinLimit,
+        rename: this.dependencies.renameFile,
+        remove: this.dependencies.remove,
+        wait: this.dependencies.wait,
+        ...this.dependencies.journalDependencies
+      }
+    })
   }
 
   private async mutateCatalog(operation: () => Promise<void>): Promise<void> {
@@ -483,7 +520,10 @@ class SessionRepository {
         throw new Error('Cannot discard recovery files for a live Session.')
       }
       const primaryPath = this.sessionFilePath(projectId, sessionId)
-      if ((await this.inspectFileBoundary(primaryPath)) !== 'missing') {
+      if (
+        (await this.inspectFileBoundary(primaryPath)) !== 'missing' ||
+        (await this.journal.inspectStorage(primaryPath)).paths.length > 0
+      ) {
         throw new Error(
           'The saved conversation changed. Recheck before deleting its recovery files.'
         )
@@ -551,8 +591,12 @@ class SessionRepository {
     }
   }
 
-  private async inspectActiveProjectBoundary(projectId: string): Promise<FilesystemBoundaryState> {
-    if (await isSessionPackagePending(this.storageDir, projectId)) return 'missing'
+  private async inspectActiveProjectBoundary(
+    projectId: string,
+    includePendingImport = false
+  ): Promise<FilesystemBoundaryState> {
+    if (!includePendingImport && (await isSessionPackagePending(this.storageDir, projectId)))
+      return 'missing'
     const sessions = await this.inspectDirectoryBoundary(this.sessionsDir)
     if (sessions !== 'valid') return sessions
     return this.inspectDirectoryBoundary(this.projectDir(projectId))
@@ -1023,6 +1067,78 @@ class SessionRepository {
     ).session
   }
 
+  async loadSessionHistoryPage(
+    request: LoadSessionHistoryPageRequest
+  ): Promise<SessionHistoryPage | undefined> {
+    const input = loadSessionHistoryPageRequestSchema.parse(request)
+    const projectId = assertSafeSegment(input.projectId)
+    const sessionId = assertSafeSegment(input.sessionId)
+    if ((await this.inspectActiveProjectBoundary(projectId)) !== 'valid') return undefined
+    const completePage = (session: PersistedChatSession): SessionHistoryPage => ({
+      projectId,
+      sessionId,
+      revision: session.revision ?? 0,
+      complete: true,
+      session,
+      hasMore: false,
+      totalItems: session.messages.length + (session.activities?.length ?? 0)
+    })
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+      if (
+        (await this.inspectFileBoundary(
+          sessionJournalPath(this.sessionFilePath(projectId, sessionId))
+        )) === 'missing'
+      ) {
+        // Old JSON already stores the full conversation. Keep its original read path without
+        // creating a display index or rewriting the file just to open it.
+        const session = await this.loadSession(projectId, sessionId)
+        return session ? completePage(session) : undefined
+      }
+      if (!this.projection) return undefined
+      const fingerprint = await this.historySourceFingerprint(projectId, sessionId)
+      if (!fingerprint) return undefined
+      const page = await this.projection!.history.readPage(input, fingerprint)
+      if (
+        page &&
+        (this.hasLiveRuntimeSession(projectId, sessionId) ||
+          ((page.session.status === 'idle' || page.session.status === 'error') &&
+            page.session.messages.every((message) => message.status !== 'streaming')))
+      )
+        return page
+      // Missing/stale JSONL indexes are admitted once through the existing full decoder.
+      // Subsequent display pages query only their indexed rows.
+      const session = await this.loadSession(projectId, sessionId)
+      if (!session) return undefined
+      const currentFingerprint = await this.historySourceFingerprint(projectId, sessionId)
+      if (!currentFingerprint || currentFingerprint !== fingerprint)
+        throw new SessionJournalCorruptionError('Session changed while building its history index.')
+      const graph = session.conversationGraph
+      // Keep the existing complete graph for revision/Frame controls. Linear conversations
+      // alone can use display pages, which intentionally omit that navigation state.
+      if (graph && (graph.frames.length !== 1 || graph.branches.length !== 1))
+        return completePage(session)
+      await this.projection!.history.sync(session, fingerprint)
+      return this.projection!.history.readPage(input, fingerprint)
+    })
+  }
+
+  private async historySourceFingerprint(
+    projectId: string,
+    sessionId: string
+  ): Promise<string | undefined> {
+    // Only JSONL has a paginated display index. Saving a legacy snapshot must not build one.
+    const logicalPath = this.sessionFilePath(projectId, sessionId)
+    const path = sessionJournalPath(logicalPath)
+    if ((await this.inspectFileBoundary(path)) !== 'valid') return undefined
+    const file = await lstat(path)
+    // Use the same proof as journal.authorityFingerprint so runtime saves can compare their
+    // already-read predecessor without another filesystem read. Older derived indexes rebuild.
+    return JSON.stringify([
+      logicalPath,
+      `journal:${file.dev}:${file.ino}:${file.size}:${file.mtimeMs}:${file.ctimeMs}`
+    ])
+  }
+
   hasLiveRuntimeSession(projectId: string, sessionId: string): boolean {
     return this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
   }
@@ -1043,9 +1159,47 @@ class SessionRepository {
     sessionId: string,
     options: SessionScanOptions = {}
   ): Promise<SessionLoadDiagnostic> {
+    return this.readSessionAuthority(projectId, sessionId, options)
+  }
+
+  private async loadSessionSaveAuthority(
+    projectId: string,
+    sessionId: string,
+    includePendingImport: boolean,
+    runtimeAuthority?: PersistedChatSession
+  ): Promise<SessionLoadDiagnostic> {
+    const reusableAuthority =
+      !includePendingImport &&
+      runtimeAuthority &&
+      this.runtimeAuthorityFingerprints.has(runtimeAuthority)
+        ? runtimeAuthority
+        : undefined
+    if (!includePendingImport && !reusableAuthority)
+      return loadSessionMutationAuthority(this, projectId, sessionId)
+    // The pending import directory hides publication from ordinary readers, not from its
+    // serialized writer's CAS. Recovery must compare against already committed physical history.
+    return this.readSessionAuthority(
+      projectId,
+      sessionId,
+      { mode: 'read-only', preserveRuntimeState: true },
+      includePendingImport,
+      reusableAuthority
+    )
+  }
+
+  private async readSessionAuthority(
+    projectId: string,
+    sessionId: string,
+    options: SessionScanOptions,
+    includePendingImport = false,
+    runtimeAuthority?: PersistedChatSession
+  ): Promise<SessionLoadDiagnostic> {
     const safeProjectId = assertSafeSegment(projectId)
     const safeSessionId = assertSafeSegment(sessionId)
-    const projectBoundary = await this.inspectActiveProjectBoundary(safeProjectId)
+    const projectBoundary = await this.inspectActiveProjectBoundary(
+      safeProjectId,
+      includePendingImport
+    )
     if (projectBoundary === 'invalid') return { status: 'unreadable' }
     if (projectBoundary === 'missing') return { status: 'missing' }
     const read = await this.readSessionFile(
@@ -1053,7 +1207,8 @@ class SessionRepository {
       safeProjectId,
       {
         quarantineInvalidFiles: options.mode !== 'read-only',
-        preserveRuntimeState: options.preserveRuntimeState
+        preserveRuntimeState: options.preserveRuntimeState,
+        runtimeAuthority
       }
     )
     if (!read.isComplete || read.wasQuarantined) return { status: 'unreadable' }
@@ -1094,6 +1249,21 @@ class SessionRepository {
       const entries = await this.dependencies.readDirectoryEntries(this.projectDir(projectId))
       if (entries.some((entry) => temporarySessionPrimaryName(entry.name) === fileName))
         return { status: 'repair-required' }
+      const journalPath = sessionJournalPath(filePath)
+      if ((await this.inspectFileBoundary(journalPath)) === 'valid') {
+        const readStartedAt = performance.now()
+        const current = await this.journal.read(filePath)
+        if (!current) return { status: 'repair-required' }
+        metrics.authorityReadMs = performance.now() - readStartedAt
+        metrics.sessionBytes = current.storageBytes
+        const decoded = this.decodeSessionDocument(
+          filePath,
+          projectId,
+          current.document,
+          current.storageBytes
+        )
+        return { status: 'found', session: decoded.session, metrics }
+      }
       const before = await lstat(filePath)
       if (!before.isFile() || before.isSymbolicLink()) return { status: 'unreadable' }
       const readStartedAt = performance.now()
@@ -1292,28 +1462,10 @@ class SessionRepository {
       if ((await this.inspectActiveProjectBoundary(projectId)) !== 'valid')
         return { status: 'blocked', reason: 'unavailable' }
       const path = this.sessionFilePath(projectId, sessionId)
-      const boundary = await this.inspectFileBoundary(path)
-      if (boundary !== 'valid')
-        return { status: 'blocked', reason: boundary === 'missing' ? 'missing' : 'unavailable' }
-      const before = await lstat(path)
-      const contents = await this.dependencies.readSessionFileWithinLimit(
-        path,
-        this.dependencies.maxSessionBytes
-      )
-      const after = await lstat(path)
-      if (
-        !after.isFile() ||
-        after.isSymbolicLink() ||
-        before.dev !== after.dev ||
-        before.ino !== after.ino ||
-        before.size !== after.size ||
-        before.mtimeMs !== after.mtimeMs ||
-        before.ctimeMs !== after.ctimeMs
-      ) {
-        return { status: 'blocked', reason: 'unavailable' }
-      }
-      // Project identity follows the owning directory, just as the full Session decoder does.
-      return decodeSessionComputePolicy(JSON.parse(contents), sessionId)
+      const current = await this.journal.read(path)
+      if (!current) return { status: 'blocked', reason: 'missing' }
+      const document = current.document
+      return decodeSessionComputePolicy(document, sessionId)
     } catch {
       return { status: 'blocked', reason: 'unavailable' }
     }
@@ -1419,10 +1571,10 @@ class SessionRepository {
   async saveSession(
     session: PersistedChatSession,
     expectedRevision?: number,
-    onJsonCommitted?: (session: PersistedChatSession) => void
+    options: MainSessionSaveOptions = {}
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(session.projectId, session.id, () =>
-      this.saveSessionNow(session, expectedRevision, false, onJsonCommitted)
+      this.saveSessionNow(session, expectedRevision, false, options)
     )
   }
 
@@ -1458,20 +1610,42 @@ class SessionRepository {
     session: PersistedChatSession,
     expectedRevision?: number,
     preserveBindingBackup = false,
-    onJsonCommitted?: (session: PersistedChatSession) => void
+    options: MainSessionSaveOptions = {}
   ): Promise<PersistedChatSession> {
+    // Reject an exhausted caller revision even when importing into a missing authority. A stale
+    // in-memory high-water mark is never used as the durable journal's base revision.
+    nextSessionRevision(sessionRevision(session))
     // Imported IDs keep the readonly authority check off ordinary Session save hot paths,
     // including when imported history belongs to an existing Project.
+    const pendingImport = await isSessionPackagePending(
+      this.storageDir,
+      assertSafeSegment(session.projectId)
+    )
     const importedAuthority =
       session.id.startsWith('import-') || session.projectId.startsWith('import-')
-        ? await loadSessionMutationAuthority(this, session.projectId, session.id)
+        ? await this.loadSessionSaveAuthority(
+            session.projectId,
+            session.id,
+            pendingImport,
+            options.runtimeChanges?.previous
+          )
         : undefined
     if (importedAuthority?.status === 'unreadable')
       throw new Error('Cannot modify unreadable imported research history.')
     if (importedAuthority?.status === 'found')
-      session = preserveImportedSession(importedAuthority.session, session)
+      session = preserveImportedSession(
+        importedAuthority.session,
+        pendingImport
+          ? {
+              ...session,
+              // Projection assigns this local number on first publication. A retained import
+              // stage predates that assignment; recovery keeps the authoritative number.
+              number: importedAuthority.session.number
+            }
+          : session
+      )
     const key = `${session.projectId}:${session.id}`
-    let actualRevision = Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0)
+    let actualRevision = 0
     if (
       expectedRevision !== undefined &&
       (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
@@ -1481,17 +1655,22 @@ class SessionRepository {
     const hadPrimaryAuthority = await this.assertExistingSessionWithinLimit(
       this.sessionFilePath(session.projectId, session.id)
     )
-    if (expectedRevision !== undefined) {
+    {
       // Both checks own the same serialized save lane. Reuse this operation's authority read;
       // the next save must load again so revision and readonly checks never use a stale cache.
       const current =
         importedAuthority ??
-        (await loadSessionMutationAuthority(this, session.projectId, session.id))
+        (await this.loadSessionSaveAuthority(
+          session.projectId,
+          session.id,
+          pendingImport,
+          options.runtimeChanges?.previous
+        ))
       if (current.status === 'unreadable') {
         throw new Error('Cannot compare Session revision because durable JSON is unreadable.')
       }
       actualRevision = current.status === 'found' ? sessionRevision(current.session) : 0
-      if (actualRevision !== expectedRevision) {
+      if (expectedRevision !== undefined && actualRevision !== expectedRevision) {
         throw new SessionRevisionConflictError(expectedRevision, actualRevision)
       }
     }
@@ -1510,10 +1689,22 @@ class SessionRepository {
     // Admission must precede prepareSave because that call reserves projection metadata. A new
     // Session is measured with the largest possible assigned number, so the final payload cannot
     // cross the limit when projection allocation adds that field.
+    const filePath = this.sessionFilePath(session.projectId, session.id)
+    const legacyJson =
+      (await this.inspectFileBoundary(sessionJournalPath(filePath))) === 'missing' &&
+      (await this.inspectFileBoundary(filePath)) === 'valid'
+    // Legacy authority was already read and decoded above. Reuse the released JSON writer;
+    // reading it again through JournalStore would parse, freeze and measure all history again.
+    const previousWriteAuthority = legacyJson ? undefined : await this.journal.read(filePath)
+    if (!legacyJson && (previousWriteAuthority?.revision ?? 0) !== actualRevision)
+      throw new SessionRevisionConflictError(actualRevision, previousWriteAuthority?.revision ?? 0)
     const unprojectedWrite = this.prepareSessionWrite(
       projectionWillAssignNumber
         ? { ...unprojectedDurableSession, number: Number.MAX_SAFE_INTEGER }
-        : unprojectedDurableSession
+        : unprojectedDurableSession,
+      previousWriteAuthority,
+      options.runtimeChanges,
+      legacyJson
     )
 
     if (this.projection && this.projectionWritesSuspended) {
@@ -1532,15 +1723,26 @@ class SessionRepository {
     try {
       let preparedWrite = unprojectedWrite
       if (unprojectedWrite.document.session.number !== durableSession.number) {
-        const document = {
+        const numberedDocument = {
           ...unprojectedWrite.document,
           session: { ...unprojectedWrite.document.session, number: durableSession.number }
         }
+        const document = legacyJson
+          ? numberedDocument
+          : (normalizeJournalValue(numberedDocument) as unknown as ReturnType<
+              typeof createSessionFile
+            >)
         preparedWrite = {
           ...unprojectedWrite,
           document,
-          contents: this.serializeJsonForWrite(document, this.dependencies.maxSessionBytes)
+          contents: legacyJson
+            ? this.serializeJsonForWrite(document, this.dependencies.maxSessionBytes)
+            : undefined,
+          // Allocation changed the admitted document. The ordinary write path derives a fresh
+          // checked batch rather than publishing the preparation for the provisional number.
+          journalWrite: undefined
         }
+        if (!legacyJson) this.assertDocumentWithinLimit(document)
       }
       await this.writeSession(durableSession, preparedWrite)
     } catch (error) {
@@ -1559,10 +1761,11 @@ class SessionRepository {
       }
       throw error
     }
-    // Only the atomic JSON replacement proves a transcript durable. Catalog projection still
-    // runs in this lane before the next write can enter.
+    // Only a completed durable publication (atomic JSON replacement or fsynced JSONL append)
+    // proves a transcript durable. Catalog projection still runs in this lane before the next
+    // write can enter.
     try {
-      onJsonCommitted?.(durableSession)
+      options.onJsonCommitted?.(durableSession)
     } catch (error) {
       createLogger('session-persistence').warn(
         'Session JSON commit observer failed',
@@ -1576,7 +1779,21 @@ class SessionRepository {
       })
     } else {
       try {
-        await this.projection?.commitSave(durableSession)
+        const sourceFingerprint =
+          this.projection && !legacyJson
+            ? await this.historySourceFingerprint(session.projectId, session.id)
+            : undefined
+        await this.projection?.commitSave(
+          durableSession,
+          preparedProjection,
+          sourceFingerprint
+            ? {
+                sourceFingerprint,
+                changes: unprojectedWrite.runtimeChanges,
+                previousSourceFingerprint: unprojectedWrite.runtimeSourceFingerprint
+              }
+            : undefined
+        )
       } catch (error) {
         createLogger('session-persistence').error('derived catalog commit failed', {
           ...diagnosticErrorFields(error)
@@ -1596,13 +1813,23 @@ class SessionRepository {
       }
       await this.ensureDirectoryBoundary(this.deletedSessionsDir, 'Deleted Session root')
       const key = `${session.projectId}:${session.id}`
+      const authority = await this.journal.read(
+        join(this.deletedProjectDir(session.projectId), `${assertSafeSegment(session.id)}.json`)
+      )
       const durableSession: PersistedChatSession = {
         ...session,
-        revision: nextSessionRevision(
-          Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0)
-        )
+        revision: nextSessionRevision(authority?.revision ?? 0)
       }
-      await this.writeSessionToDirectory(durableSession, this.deletedProjectDir(session.projectId))
+      await this.writeSessionToDirectory(
+        durableSession,
+        this.deletedProjectDir(session.projectId),
+        this.prepareSessionWrite(
+          durableSession,
+          undefined,
+          undefined,
+          authority?.format === 'legacy'
+        )
+      )
       if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
       this.sessionRevisions.set(key, durableSession.revision!)
     })
@@ -1708,6 +1935,11 @@ class SessionRepository {
       // explicit Session deletion. Remove every candidate first so any failure leaves that proof in
       // place and the operation safely retryable; only then remove the current primary.
       const primaryPath = this.sessionFilePath(safeProjectId, safeSessionId)
+      // Validate owned files before cleanup; the live primary is always removed last.
+      const authorityFiles = await this.journal.inspectStorage(primaryPath)
+      const livePrimary = authorityFiles.paths.includes(sessionJournalPath(primaryPath))
+        ? sessionJournalPath(primaryPath)
+        : primaryPath
       const entries = await this.dependencies.readDirectoryEntries(this.projectDir(safeProjectId))
       for (const entry of entries) {
         if (entry.isFile() && temporarySessionPrimaryName(entry.name) === basename(primaryPath)) {
@@ -1733,10 +1965,19 @@ class SessionRepository {
           recursive: false
         })
       }
-      await this.dependencies.remove(primaryPath, {
-        force: true,
-        recursive: false
-      })
+      // The sole live JSONL is sufficient for recovery until its final unlink. Remove retained
+      // legacy files first, so an interrupted cleanup always leaves readable authority.
+      for (const file of authorityFiles.paths) {
+        if (file !== livePrimary)
+          await this.dependencies.remove(file, { force: true, recursive: false })
+      }
+      await this.dependencies.remove(livePrimary, { force: true, recursive: false })
+      this.journal.invalidate(primaryPath)
+      try {
+        await defaultFileDurability.syncDirectory(dirname(primaryPath))
+      } catch (error) {
+        throw new SessionDeletionCommittedError(error)
+      }
     }
     this.sessionRevisions.delete(revisionKey)
     try {
@@ -1865,6 +2106,7 @@ class SessionRepository {
 
   async completeProjectSessionDeletion(projectId: string): Promise<void> {
     await this.operationScheduler.runProject(projectId, async () => {
+      await this.projection?.deleteProjectHistory(assertSafeSegment(projectId))
       const safeProjectId = assertSafeSegment(projectId)
       const deletedSessionsBoundary = await this.inspectDirectoryBoundary(this.deletedSessionsDir)
       if (deletedSessionsBoundary === 'missing') return
@@ -1917,8 +2159,15 @@ class SessionRepository {
     return this.operationScheduler.runManifest(() => this.writeManifest(request))
   }
 
-  // Writes through a unique temp file, then atomically replaces the target session file.
-  private prepareSessionWrite(session: PersistedChatSession): PreparedSessionWrite {
+  // Existing JSON uses the released codec/serialization and atomic replacement. Only JSONL
+  // needs immutable journal values and incremental business-record preparation.
+  private prepareSessionWrite(
+    session: PersistedChatSession,
+    previous?: SessionJournalRead,
+    runtimeChanges?: MainSessionSaveOptions['runtimeChanges'],
+    legacyJson = previous?.format === 'legacy'
+  ): PreparedSessionWrite {
+    let sanitizedSession = session
     const messages = [...session.messages, ...(session.conversationGraph?.messages ?? [])]
     const legacyUpload = messages
       .flatMap((message) => message.uploads ?? [])
@@ -1928,18 +2177,70 @@ class SessionRepository {
         `Session upload must be upgraded to an immutable Version before persistence: ${legacyUpload.id}`
       )
     }
-    const sanitizedSession = sanitizeSessionUploadedAttachments(session)
-    const document = createSessionFile(encodeSessionDataPaths(sanitizedSession))
+    if (legacyJson) {
+      const sanitizedSession = sanitizeSessionUploadedAttachments(session)
+      const document = createSessionFile(encodeSessionDataPaths(sanitizedSession))
+      return {
+        sanitizedSession,
+        document,
+        contents: this.serializeJsonForWrite(document, this.dependencies.maxSessionBytes)
+      }
+    }
+    const sourceFingerprint = runtimeChanges
+      ? this.runtimeAuthorityFingerprints.get(runtimeChanges.previous)
+      : undefined
+    if (
+      sourceFingerprint &&
+      previous &&
+      sourceFingerprint !== this.journal.authorityFingerprint(previous)
+    )
+      throw new SessionJournalCorruptionError('Runtime Session authority changed after its read.')
+    const runtimeDocument = createRuntimeSessionFile(
+      session,
+      previous,
+      sourceFingerprint ? runtimeChanges : undefined
+    )
+    let rawDocument = runtimeDocument
+    if (!rawDocument) {
+      sanitizedSession = sanitizeSessionUploadedAttachments(session)
+      rawDocument = createSessionFile(encodeSessionDataPaths(sanitizedSession))
+    }
+    // Reuse unchanged durable records for business changes and byte accounting.
+    let journalWrite: SessionJournalPreparedWrite | undefined
+    try {
+      journalWrite = previous
+        ? this.journal.prepareWrite(
+            this.sessionFilePath(session.projectId, session.id),
+            rawDocument,
+            previous,
+            runtimeDocument ? { textEvents: runtimeChanges?.changes.textEvents } : undefined
+          )
+        : undefined
+    } catch (error) {
+      if (error instanceof SessionJournalSizeError)
+        throw new SessionSizeLimitError(this.dependencies.maxSessionBytes)
+      throw error
+    }
+    const document = (journalWrite?.document ??
+      normalizeJournalValue(rawDocument)) as unknown as ReturnType<typeof createSessionFile>
+    this.assertDocumentWithinLimit(document)
     return {
       sanitizedSession,
       document,
-      contents: this.serializeJsonForWrite(document, this.dependencies.maxSessionBytes)
+      journalWrite,
+      runtimeChanges: runtimeDocument ? runtimeChanges?.changes : undefined,
+      runtimeSourceFingerprint: runtimeDocument ? sourceFingerprint : undefined
     }
+  }
+
+  private assertDocumentWithinLimit(document: unknown): void {
+    if (journalValueByteLength(document as JournalValue) > this.dependencies.maxSessionBytes)
+      throw new SessionSizeLimitError(this.dependencies.maxSessionBytes)
   }
 
   private async writeSession(
     session: PersistedChatSession,
-    preparedWrite = this.prepareSessionWrite(session)
+    preparedWrite: PreparedSessionWrite
   ): Promise<void> {
     await this.ensureDirectoryBoundary(this.sessionsDir, 'Active Session root')
     await this.writeSessionToDirectory(session, this.projectDir(session.projectId), preparedWrite)
@@ -1948,10 +2249,10 @@ class SessionRepository {
   private async writeSessionToDirectory(
     session: PersistedChatSession,
     projectDirectory: string,
-    preparedWrite = this.prepareSessionWrite(session)
+    preparedWrite: PreparedSessionWrite
   ): Promise<void> {
     const filePath = join(projectDirectory, `${assertSafeSegment(session.id)}.json`)
-    const { sanitizedSession, contents } = preparedWrite
+    const { sanitizedSession, document } = preparedWrite
 
     await this.ensureDirectoryBoundary(projectDirectory, 'Session Project directory')
     await this.assertFileBoundary(filePath, 'Session file')
@@ -1960,10 +2261,33 @@ class SessionRepository {
     await this.preservePreSubagentModelBackup(filePath, sanitizedSession)
     await this.ensureDirectoryBoundary(projectDirectory, 'Session Project directory')
     await this.assertFileBoundary(filePath, 'Session file')
-    await this.atomicWriteContents(filePath, contents)
+    if (preparedWrite.contents !== undefined) {
+      if ((await this.inspectFileBoundary(sessionJournalPath(filePath))) !== 'missing')
+        throw new SessionJournalCorruptionError('Session format changed before JSON replacement.')
+      this.journal.invalidate(filePath)
+      await this.atomicWriteContents(filePath, preparedWrite.contents)
+      return
+    }
+    try {
+      const identity = { expectedRevision: sessionRevision(session) - 1 }
+      await this.mutateCatalog(async () => {
+        if (preparedWrite.journalWrite)
+          await this.journal.writePrepared(filePath, preparedWrite.journalWrite, identity)
+        else await this.journal.write(filePath, { document, ...identity })
+      })
+    } catch (error) {
+      if (error instanceof SessionJournalSizeError)
+        throw new SessionSizeLimitError(this.dependencies.maxSessionBytes)
+      if (error instanceof SessionJournalRevisionError)
+        throw new SessionRevisionConflictError(error.expectedRevision, error.actualRevision)
+      throw error
+    }
   }
 
   private async assertExistingSessionWithinLimit(filePath: string): Promise<boolean> {
+    const logBoundary = await this.inspectFileBoundary(sessionJournalPath(filePath))
+    if (logBoundary === 'invalid') throw new SessionJournalCorruptionError('Invalid Session JSONL.')
+    if (logBoundary === 'valid') return true
     try {
       if ((await lstat(filePath)).size > this.dependencies.maxSessionBytes) {
         throw new SessionSizeLimitError(this.dependencies.maxSessionBytes)
@@ -1980,7 +2304,14 @@ class SessionRepository {
       const entries = await this.dependencies.readDirectoryEntries(this.projectDir(projectId))
       const primary = `${assertSafeSegment(sessionId)}.json`
       // Retain evidence even when only a temporary, backup, or quarantined file remains.
-      return !entries.some(({ name }) => name === primary || name.startsWith(`${primary}.`))
+      return !entries.some(
+        ({ name }) =>
+          name === primary ||
+          name.startsWith(`${primary}.`) ||
+          name === basename(sessionJournalPath(primary)) ||
+          name === basename(sessionLegacyBackupPath(primary)) ||
+          name.startsWith(`${basename(sessionJournalPath(primary))}.`)
+      )
     } catch (error) {
       if (isMissingFileError(error) || (error as NodeJS.ErrnoException).code === 'ENOTDIR')
         return true
@@ -1990,15 +2321,18 @@ class SessionRepository {
 
   private async readSessionFileForBackup(filePath: string): Promise<string | undefined> {
     try {
+      if ((await this.inspectFileBoundary(sessionJournalPath(filePath))) !== 'missing') {
+        const current = await this.journal.read(filePath)
+        return current ? `${JSON.stringify(current.document)}\n` : undefined
+      }
       return await this.dependencies.readSessionFileWithinLimit(
         filePath,
         this.dependencies.maxSessionBytes
       )
     } catch (error) {
       if (isMissingFileError(error)) return undefined
-      if (error instanceof DurableJsonReadLimitError) {
+      if (error instanceof DurableJsonReadLimitError || error instanceof SessionJournalSizeError)
         throw new SessionSizeLimitError(this.dependencies.maxSessionBytes)
-      }
       throw error
     }
   }
@@ -2014,7 +2348,7 @@ class SessionRepository {
     const backupPath = `${filePath}.pre-artifact-binding-${checksum}.backup`
     await this.assertFileBoundary(backupPath, 'Session binding repair backup')
     try {
-      await copyFile(filePath, backupPath, fsConstants.COPYFILE_EXCL)
+      await writeFile(backupPath, original, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
     } catch (error) {
       if (!(
         typeof error === 'object' &&
@@ -2045,16 +2379,14 @@ class SessionRepository {
     )
     if (!writesS2Attempt) return
 
-    const currentRaw = await this.readSessionFileForBackup(filePath)
-    if (currentRaw === undefined) return
-    let current: unknown
-    try {
-      current = JSON.parse(currentRaw) as unknown
-    } catch {
-      // The normal read path owns corrupt-file quarantine. Never replace unreadable authority while
-      // attempting the version-gated backup.
-      throw new Error('Cannot preserve the pre-S2 Session backup from unreadable JSON.')
-    }
+    const legacyJson = (await this.inspectFileBoundary(sessionJournalPath(filePath))) === 'missing'
+    const legacyContents = legacyJson ? await this.readSessionFileForBackup(filePath) : undefined
+    const current = legacyJson
+      ? legacyContents === undefined
+        ? undefined
+        : (JSON.parse(legacyContents) as unknown)
+      : (await this.journal.read(filePath))?.document
+    if (current === undefined) return
     const currentWritesS2Attempt = hasS2AttemptSchema(current)
     const backupPath = `${filePath}${PRE_S2_BACKUP_SUFFIX}`
     if (currentWritesS2Attempt) {
@@ -2069,8 +2401,11 @@ class SessionRepository {
         throw error
       }
     }
+    const currentRaw = legacyContents ?? (await this.readSessionFileForBackup(filePath))
+    if (currentRaw === undefined)
+      throw new Error('Cannot preserve the pre-S2 Session backup from missing authority.')
     try {
-      await copyFile(filePath, backupPath, fsConstants.COPYFILE_EXCL)
+      await writeFile(backupPath, currentRaw, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
     } catch (error) {
       if (
         typeof error === 'object' &&
@@ -2092,14 +2427,14 @@ class SessionRepository {
       record.attempts.some((attempt) => attempt.executionModel !== undefined)
     )
     if (!writesModelSnapshot) return
-    const currentRaw = await this.readSessionFileForBackup(filePath)
-    if (currentRaw === undefined) return
-    let current: unknown
-    try {
-      current = JSON.parse(currentRaw) as unknown
-    } catch {
-      throw new Error('Cannot preserve the pre-Subagent-model Session backup from unreadable JSON.')
-    }
+    const legacyJson = (await this.inspectFileBoundary(sessionJournalPath(filePath))) === 'missing'
+    const legacyContents = legacyJson ? await this.readSessionFileForBackup(filePath) : undefined
+    const current = legacyJson
+      ? legacyContents === undefined
+        ? undefined
+        : (JSON.parse(legacyContents) as unknown)
+      : (await this.journal.read(filePath))?.document
+    if (current === undefined) return
     const backupPath = `${filePath}${PRE_SUBAGENT_MODEL_BACKUP_SUFFIX}`
     if (hasSubagentModelAttemptSchema(current)) {
       if (isSamePublishedPackageCopy(current, nextSession)) return
@@ -2115,8 +2450,13 @@ class SessionRepository {
         throw error
       }
     }
+    const currentRaw = legacyContents ?? (await this.readSessionFileForBackup(filePath))
+    if (currentRaw === undefined)
+      throw new Error(
+        'Cannot preserve the pre-Subagent-model Session backup from missing authority.'
+      )
     try {
-      await copyFile(filePath, backupPath, fsConstants.COPYFILE_EXCL)
+      await writeFile(backupPath, currentRaw, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
     } catch (error) {
       if (
         typeof error === 'object' &&
@@ -2315,11 +2655,12 @@ class SessionRepository {
     try {
       await recoverDurableJsonDirectory(
         projectDir,
-        (filePath, contents) => this.decodeSessionContents(filePath, projectId, contents),
+        (filePath, contents) => this.decodeSessionPrimary(filePath, projectId, contents),
         {
           readDirectoryEntries: this.dependencies.readDirectoryEntries,
-          readFile: this.dependencies.readSessionFile,
-          readFileWithinLimit: this.dependencies.readSessionFileWithinLimit,
+          readFile: (path) => this.readLegacySessionRecoveryFile(path),
+          readFileWithinLimit: (path, maxBytes) =>
+            this.readLegacySessionRecoveryFile(path, maxBytes),
           remove: this.dependencies.remove,
           rename: this.dependencies.renameFile,
           wait: this.dependencies.wait
@@ -2383,6 +2724,7 @@ class SessionRepository {
       quarantineInvalidFiles?: boolean
       scanMetrics?: SessionScanMetrics
       preserveRuntimeState?: boolean
+      runtimeAuthority?: PersistedChatSession
     } = {}
   ): Promise<{
     session?: PersistedChatSession
@@ -2402,43 +2744,84 @@ class SessionRepository {
         }
       }
     }
-    const readContents = async (path: string, maxBytes?: number): Promise<string> => {
-      const startedAt = performance.now()
-      try {
-        return await (maxBytes === undefined
-          ? this.dependencies.readSessionFile(path)
-          : this.dependencies.readSessionFileWithinLimit(path, maxBytes))
-      } finally {
-        if (options.scanMetrics)
-          options.scanMetrics.authorityReadMs += performance.now() - startedAt
-      }
-    }
     let read:
       | { status: 'found'; value: { session: PersistedChatSession; bytes: number } }
       | { status: 'missing' }
     try {
-      read = await readDurableJsonFile(
-        filePath,
-        (contents) =>
-          this.decodeSessionContents(
-            filePath,
-            projectId,
-            contents,
-            options.preserveRuntimeState,
-            options.scanMetrics
-          ),
-        {
-          readDirectoryEntries: this.dependencies.readDirectoryEntries,
-          readFile: (path) => readContents(path),
-          readFileWithinLimit: readContents,
-          remove: this.dependencies.remove,
-          rename: this.dependencies.renameFile,
-          wait: this.dependencies.wait
-        },
-        { maxBytes: this.dependencies.maxSessionBytes }
-      )
+      const logBoundary = await this.inspectFileBoundary(sessionJournalPath(filePath))
+      if (logBoundary === 'invalid')
+        throw new SessionJournalCorruptionError('Session JSONL is not a regular file.')
+      if (logBoundary === 'valid') {
+        const current = await this.journal.read(filePath)
+        if (!current) throw new SessionJournalCorruptionError('Session JSONL disappeared.')
+        // The reducer already decoded this authority. Reuse it only within its save, after
+        // the ordinary boundary checks and a fresh journal fingerprint check. External changes
+        // and all other reads still run the full decoder, including tool-result redaction.
+        const prior = options.runtimeAuthority
+        const envelope = prior ? decodeSessionEnvelope(current.document) : undefined
+        const value =
+          options.preserveRuntimeState === true &&
+          current.format === 'journal' &&
+          prior &&
+          // Imported projects also contain writable forks. The durable origin, not a mutable
+          // caller object, decides whether the full imported-history comparison is required.
+          envelope?.status === 'ok' &&
+          envelope.session.packageOrigin === undefined &&
+          prior.packageOrigin === undefined &&
+          prior.id === basename(filePath, '.json') &&
+          prior.projectId === projectId &&
+          sessionRevision(prior) === current.revision &&
+          this.runtimeAuthorityFingerprints.get(prior) ===
+            this.journal.authorityFingerprint(current)
+            ? { session: prior, bytes: current.storageBytes }
+            : this.decodeSessionDocument(
+                filePath,
+                projectId,
+                current.document,
+                current.storageBytes,
+                options.preserveRuntimeState
+              )
+        if (options.preserveRuntimeState === true)
+          this.runtimeAuthorityFingerprints.set(
+            value.session,
+            this.journal.authorityFingerprint(current)
+          )
+        read = { status: 'found', value }
+      } else {
+        const readRecoveryFile = async (path: string, maxBytes?: number): Promise<string> => {
+          const startedAt = performance.now()
+          try {
+            return maxBytes === undefined
+              ? await this.readLegacySessionRecoveryFile(path)
+              : await this.readLegacySessionRecoveryFile(path, maxBytes)
+          } finally {
+            if (options.scanMetrics)
+              options.scanMetrics.authorityReadMs += performance.now() - startedAt
+          }
+        }
+        read = await readDurableJsonFile(
+          filePath,
+          (contents) =>
+            this.decodeSessionContents(
+              filePath,
+              projectId,
+              contents,
+              options.preserveRuntimeState,
+              options.scanMetrics
+            ),
+          {
+            readDirectoryEntries: this.dependencies.readDirectoryEntries,
+            readFile: readRecoveryFile,
+            readFileWithinLimit: readRecoveryFile,
+            remove: this.dependencies.remove,
+            rename: this.dependencies.renameFile,
+            wait: this.dependencies.wait
+          },
+          { maxBytes: this.dependencies.maxSessionBytes }
+        )
+      }
     } catch (error) {
-      if (error instanceof DurableJsonReadLimitError) {
+      if (error instanceof DurableJsonReadLimitError || error instanceof SessionJournalSizeError) {
         return {
           isComplete: false,
           warning: {
@@ -2449,11 +2832,38 @@ class SessionRepository {
           }
         }
       }
-      if (error instanceof UnsupportedSessionFileError) {
+      if (
+        error instanceof UnsupportedSessionFileError ||
+        error instanceof SessionJournalVersionError
+      ) {
         return {
           isComplete: false,
           warning: {
             kind: 'unsupported-version',
+            projectId,
+            fileName: basename(filePath),
+            recovered: false
+          }
+        }
+      }
+      // Preserve a corrupt JSONL and its retained legacy backup. Moving only the live log could
+      // hide research history and allow this ID to be recreated against an older document.
+      let malformedJournalPrimary = false
+      if (error instanceof SyntaxError) {
+        try {
+          malformedJournalPrimary = (await this.journal.inspectStorage(filePath)).paths.some(
+            (path) => path !== filePath
+          )
+        } catch {
+          // Unreadable ownership evidence cannot authorize moving the primary out of the way.
+          malformedJournalPrimary = true
+        }
+      }
+      if (error instanceof SessionJournalCorruptionError || malformedJournalPrimary) {
+        return {
+          isComplete: false,
+          warning: {
+            kind: 'corrupt',
             projectId,
             fileName: basename(filePath),
             recovered: false
@@ -2495,6 +2905,30 @@ class SessionRepository {
       }
     }
     if (read.status === 'missing') {
+      try {
+        // A missing primary beside retained legacy history is unknown authority, not empty.
+        const storage = await this.journal.inspectStorage(filePath)
+        if (storage.paths.some((path) => path !== filePath))
+          return {
+            isComplete: false,
+            warning: {
+              kind: 'corrupt',
+              projectId,
+              fileName: basename(filePath),
+              recovered: false
+            }
+          }
+      } catch {
+        return {
+          isComplete: false,
+          warning: {
+            kind: 'unreadable',
+            projectId,
+            fileName: basename(filePath),
+            recovered: false
+          }
+        }
+      }
       if (!options.missingIsIncomplete) {
         const files = await this.listSessionFileNames(dirname(filePath))
         if (files.isComplete && !files.names.includes(basename(filePath))) {
@@ -2511,7 +2945,11 @@ class SessionRepository {
         }
       }
     }
-    if (initialBoundary === 'missing' && (await this.inspectFileBoundary(filePath)) !== 'valid') {
+    if (
+      initialBoundary === 'missing' &&
+      (await this.inspectFileBoundary(filePath)) !== 'valid' &&
+      (await this.inspectFileBoundary(sessionJournalPath(filePath))) !== 'valid'
+    ) {
       return {
         isComplete: false,
         warning: {
@@ -2524,6 +2962,45 @@ class SessionRepository {
     }
     if (options.scanMetrics) options.scanMetrics.sessionBytes += read.value.bytes
     return { session: read.value.session, isComplete: true }
+  }
+
+  private async readLegacySessionRecoveryFile(
+    path: string,
+    maxBytes = this.dependencies.maxSessionBytes
+  ): Promise<string> {
+    const primaryName = temporarySessionPrimaryName(basename(path))
+    if (primaryName) {
+      const primary = join(dirname(path), primaryName)
+      if (
+        (await this.inspectFileBoundary(primary)) === 'missing' &&
+        (await this.inspectFileBoundary(sessionJournalPath(primary))) !== 'valid'
+      ) {
+        // A retained migration backup or unfinished JSONL publication is evidence of unknown
+        // authority. Check before the legacy reader can promote or clean up an older temp.
+        const storage = await this.journal.inspectStorage(primary)
+        if (storage.paths.some((file) => file !== primary))
+          throw new SessionJournalCorruptionError(
+            'Cannot recover a legacy Session temp while JSONL history lacks its primary.'
+          )
+      }
+    }
+    return this.dependencies.readSessionFileWithinLimit(path, maxBytes)
+  }
+
+  private decodeSessionPrimary(
+    filePath: string,
+    projectId: string,
+    contents: string,
+    preserveRuntimeState?: boolean,
+    scanMetrics?: Pick<SessionScanMetrics, 'jsonParseMs'>
+  ): { session: PersistedChatSession; bytes: number } {
+    return this.decodeSessionContents(
+      filePath,
+      projectId,
+      contents,
+      preserveRuntimeState,
+      scanMetrics
+    )
   }
 
   private decodeSessionContents(
@@ -2540,7 +3017,23 @@ class SessionRepository {
     } finally {
       if (scanMetrics) scanMetrics.jsonParseMs += performance.now() - parseStartedAt
     }
-    const decoded = decodeSessionFile(parsed, {
+    return this.decodeSessionDocument(
+      filePath,
+      projectId,
+      parsed,
+      Buffer.byteLength(contents, 'utf8'),
+      preserveRuntimeState
+    )
+  }
+
+  private decodeSessionDocument(
+    filePath: string,
+    projectId: string,
+    document: unknown,
+    bytes: number,
+    preserveRuntimeState?: boolean
+  ): { session: PersistedChatSession; bytes: number } {
+    const decoded = decodeSessionFile(document, {
       preserveLegacyUploadPaths: true,
       preserveRuntimeState:
         preserveRuntimeState !== undefined
@@ -2565,7 +3058,7 @@ class SessionRepository {
 
     return {
       session: decodeSessionDataPaths({ ...decoded.session, projectId }),
-      bytes: Buffer.byteLength(contents, 'utf8')
+      bytes
     }
   }
 
@@ -2623,6 +3116,15 @@ class SessionRepository {
       return {
         hasRecoveryEvidence: entries.some((entry) => {
           if (temporarySessionPrimaryName(entry.name) !== undefined) return true
+          // JSONL publication writes a sibling temporary. It carries an unpublished identity even
+          // when the live primary still exists, so an identity cleanup snapshot is not complete.
+          if (/^.*\.jsonl\..*\.tmp$/u.test(entry.name)) return true
+          // A retained pre-migration legacy backup is unknown authority only when neither its JSON
+          // nor JSONL primary survives. With a primary, the backup cannot hide another identity.
+          if (entry.name.endsWith('.legacy-json.backup')) {
+            const primary = `${entry.name.slice(0, -'.legacy-json.backup'.length)}.json`
+            return !primaryFiles.has(primary) && !primaryFiles.has(`${primary}l`)
+          }
           const quarantine = /^(.*\.json)\.invalid-\d+-\d+$/u.exec(entry.name)
           return quarantine !== null && !primaryFiles.has(quarantine[1])
         }),
@@ -2637,6 +3139,11 @@ class SessionRepository {
               ) {
                 return [entry.name]
               }
+              if (entry.name.endsWith('.jsonl')) return [`${entry.name.slice(0, -6)}.json`]
+              if (entry.name.endsWith('.legacy-json.backup'))
+                return [`${entry.name.slice(0, -'.legacy-json.backup'.length)}.json`]
+              const jsonlTemporary = entry.name.match(/^(.*)\.jsonl\..*\.tmp$/u)
+              if (jsonlTemporary) return [`${jsonlTemporary[1]}.json`]
               const primary = temporarySessionPrimaryName(entry.name)
               return primary ? [primary] : []
             })

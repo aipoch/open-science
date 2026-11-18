@@ -1,5 +1,5 @@
 import type { ResearchVideoTriggerState } from '@/components/research-video-button'
-import { Ellipsis, MessageCircleMore, Video } from 'lucide-react'
+import { Ellipsis, MessageCircleMore } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -24,8 +24,7 @@ import { projectPresentedSessionActionability } from './session-wait-reason'
 
 const catalog = {
   ...SESSION_ACTION_CATALOG,
-  'new-side-chat': { labelKey: 'New side chat', icon: MessageCircleMore },
-  'research-explanation': { labelKey: 'Research film', icon: Video }
+  'new-side-chat': { labelKey: 'New side chat', icon: MessageCircleMore }
 }
 const recipe = [
   { kind: 'action', action: 'edit' },

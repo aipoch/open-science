@@ -29,8 +29,8 @@ export const isSessionSizeLimitError = (
 export class SessionDetailsConflictError extends Error {
   readonly code = SESSION_DETAILS_CONFLICT_ERROR_CODE
 
-  constructor() {
-    super('Session details changed elsewhere. Reopen the editor and try again.')
+  constructor(message = 'Session details changed elsewhere. Reopen the editor and try again.') {
+    super(message)
     this.name = 'SessionDetailsConflictError'
   }
 }

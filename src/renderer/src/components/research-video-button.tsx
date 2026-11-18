@@ -7,6 +7,7 @@ import {
 import {
   RESEARCH_VIDEO_STATUS_TIMEOUT_MS,
   RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE,
+  RESEARCH_FILM_BUSY_MESSAGE,
   researchVideoFilename
 } from '../../../shared/research-video-presentation'
 import { dialogBodyClassName, dialogFooterClassName } from './ui/dialog-chrome'
@@ -20,7 +21,12 @@ import {
   AudioLines,
   RotateCcw,
   MoreHorizontal,
-  Trash2
+  Trash2,
+  BookOpen,
+  ListVideo,
+  MessageSquare,
+  Terminal,
+  FileCheck2
 } from 'lucide-react'
 import { Trans, useTranslation } from 'react-i18next'
 import { Button } from './ui/button'
@@ -31,9 +37,10 @@ import { localModelDownloadProgress, type LocalModelSnapshot } from '../../../sh
 import type {
   ResearchVideoPresentation,
   ResearchVideoPresentationRequest,
-  ResearchVideoPresentationStatus
+  ResearchVideoPresentationStatus,
+  ResearchFilmMode
 } from '../../../shared/research-video-presentation'
-import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
+import { isDesktopRenderer } from '@/lib/interface-scale'
 import { useSettingsStore } from '@/stores/settings-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
@@ -55,7 +62,12 @@ function readFilmStatus(
   request: ResearchVideoPresentationRequest,
   checkReadiness = false
 ): Promise<ResearchVideoPresentationStatus> {
-  const scope = JSON.stringify([request.projectId, request.sessionId, request.branchId])
+  const scope = JSON.stringify([
+    request.projectId,
+    request.sessionId,
+    request.branchId,
+    request.mode ?? 'research-explanation'
+  ])
   const existing = filmStatusReads.get(scope)
   if (existing)
     return checkReadiness && !existing.checkReadiness
@@ -123,19 +135,99 @@ function FilmErrorNotice({
   )
 }
 
-export function ResearchVideoButton({
-  renderTrigger,
-  ...request
-}: ResearchVideoPresentationRequest & {
+type FilmButtonProps = ResearchVideoPresentationRequest & {
+  preferSavedFilm?: boolean
   renderTrigger?: (
     open: (() => void) | undefined,
     state: ResearchVideoTriggerState
   ) => React.ReactNode
-}): React.JSX.Element | null {
+}
+
+const filmModes = ['research-explanation', 'operation-replay'] as const
+
+function FilmModeIllustration({ mode }: { mode: ResearchFilmMode }): React.JSX.Element {
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-24 items-center justify-center rounded-md border border-border bg-card px-3 text-primary"
+    >
+      {mode === 'research-explanation' ? (
+        <span className="grid w-full max-w-40 grid-cols-2 items-center gap-3">
+          <span className="flex h-14 items-end justify-center gap-1.5 border-b border-border pb-1">
+            <span className="h-1/3 w-2.5 rounded-t-sm bg-primary/25" />
+            <span className="h-3/5 w-2.5 rounded-t-sm bg-primary/45" />
+            <span className="h-full w-2.5 rounded-t-sm bg-primary/70" />
+          </span>
+          <span className="grid gap-2">
+            <span className="h-1.5 w-3/4 rounded-full bg-primary/60" />
+            <span className="h-1 rounded-full bg-muted-foreground/25" />
+            <span className="h-1 w-2/3 rounded-full bg-muted-foreground/25" />
+          </span>
+        </span>
+      ) : (
+        <span className="relative grid w-full max-w-36 gap-1.5">
+          <span className="absolute inset-y-2 left-[9px] w-px bg-primary/30" />
+          {[MessageSquare, Terminal, FileCheck2].map((Icon, index) => (
+            <span key={index} className="relative flex items-center gap-2">
+              <Icon className="size-[18px] rounded bg-card p-0.5" />
+              <span className="flex h-4 flex-1 items-center rounded-sm bg-muted px-2">
+                <span className="h-1 w-3/4 rounded-full bg-muted-foreground/30" />
+              </span>
+            </span>
+          ))}
+        </span>
+      )}
+    </span>
+  )
+}
+
+function filmRequest(
+  projectId: string,
+  sessionId: string,
+  branchId: string | undefined,
+  mode: ResearchFilmMode
+): ResearchVideoPresentationRequest {
+  return { projectId, sessionId, branchId, ...(mode === 'operation-replay' ? { mode } : {}) }
+}
+
+export function ResearchVideoButton(props: FilmButtonProps): React.JSX.Element | null {
+  return (
+    <ResearchVideoModeButton
+      key={JSON.stringify([props.projectId, props.sessionId, props.branchId])}
+      {...props}
+    />
+  )
+}
+
+export function ResearchVideoDialog(
+  props: ResearchVideoPresentationRequest & { onDismiss: () => void }
+): React.JSX.Element {
+  return <ResearchVideoModeButton {...props} renderTrigger={() => null} />
+}
+
+function ResearchVideoModeButton({
+  preferSavedFilm = false,
+  onDismiss,
+  renderTrigger,
+  projectId,
+  sessionId,
+  branchId,
+  mode: initialMode = 'research-explanation'
+}: FilmButtonProps & { onDismiss?: () => void }): React.JSX.Element | null {
   const { t } = useTranslation()
-  const { projectId, sessionId, branchId } = request
-  const [open, setOpen] = useState(false)
-  const deletionScope = JSON.stringify([projectId, sessionId, branchId])
+  const [statuses, setStatuses] = useState<
+    Partial<Record<ResearchFilmMode, ResearchVideoPresentationStatus>>
+  >({})
+  const [selectedMode, setMode] = useState<ResearchFilmMode>()
+  const mode =
+    selectedMode ??
+    (preferSavedFilm && !statuses[initialMode]?.result
+      ? (filmModes.find((candidate) => statuses[candidate]?.result) ?? initialMode)
+      : initialMode)
+
+  const [open, setOpen] = useState(Boolean(onDismiss))
+  const request = filmRequest(projectId, sessionId, branchId, mode)
+  const deletionScope = mode
   const [deletionTarget, setDeletionTarget] = useState<string>()
   const confirmDeletion = deletionTarget === deletionScope
   const setConfirmDeletion = (confirm: boolean): void =>
@@ -150,26 +242,43 @@ export function ResearchVideoButton({
     wasDeleting.current = confirmDeletion
   }, [confirmDeletion])
   const confirmationDescriptionId = useId()
-  const [status, setStatus] = useState<ResearchVideoPresentationStatus>({})
-  const [statusLoadedScope, setStatusLoadedScope] = useState<string>()
+  const modeDescriptionId = useId()
+  const status = statuses[mode] ?? {}
+  const statusLoaded = statuses[mode] !== undefined
   const [model, setModel] = useState<LocalModelSnapshot>()
   const [pending, setPending] = useState(false)
   const installing = Boolean(status.narrationDownload)
-  const [error, setError] = useState<string>()
+  const [errors, setErrors] = useState<Partial<Record<ResearchFilmMode, string>>>({})
+  const [readErrors, setReadErrors] = useState<Partial<Record<ResearchFilmMode, string>>>({})
+  const error = errors[mode] ?? readErrors[mode]
+  const setError = (next: string | undefined): void =>
+    setErrors((current) => ({ ...current, [mode]: next }))
   const triggerRef = useRef<HTMLSpanElement>(null)
   const regenerateRef = useRef<HTMLButtonElement>(null)
   const cancelRegenerationRef = useRef<HTMLButtonElement>(null)
+  const wasRegenerating = useRef(false)
   useLayoutEffect(() => {
     if (confirmRegeneration) cancelRegenerationRef.current?.focus()
-    else regenerateRef.current?.focus()
+    else if (wasRegenerating.current) regenerateRef.current?.focus()
+    wasRegenerating.current = confirmRegeneration
   }, [confirmRegeneration])
   const settingsAfterClose = useRef(false)
-  const statusVersion = useRef(0)
+  const statusVersion = useRef<Record<ResearchFilmMode, number>>({
+    'research-explanation': 0,
+    'operation-replay': 0
+  })
   const live = useRef(true)
-  const statusLoaded = statusLoadedScope === deletionScope
+  const setStatus = (next: ResearchVideoPresentationStatus): void => {
+    statusVersion.current[mode]++
+    setReadErrors((current) =>
+      current[mode] === undefined ? current : { ...current, [mode]: undefined }
+    )
+    setStatuses((current) => ({ ...current, [mode]: next }))
+  }
   const busy =
     status.progress && !['completed', 'failed', 'cancelled'].includes(status.progress.phase)
-  const duration = Math.max(0, Math.round(status.result?.duration ?? 0))
+  const playableResult = busy || installing || pending ? undefined : status.result
+  const duration = Math.max(0, Math.round(playableResult?.duration ?? 0))
   const blockMessages = {
     unavailable: t('This session is unavailable.'),
     empty: t('Add conversation content before generating.'),
@@ -177,6 +286,7 @@ export function ResearchVideoButton({
     busy: t('Wait for the current response to finish before generating.')
   }
   const preflightMessages: Record<string, string> = {
+    [RESEARCH_FILM_BUSY_MESSAGE]: t('Another film is being generated. Wait for it to finish.'),
     [missingModel]: t('Select a model in Settings before generating a research film.'),
     'The selected provider credentials are unavailable. Check them in Settings.': t(
       'The selected provider credentials are unavailable. Check them in Settings.'
@@ -221,20 +331,23 @@ export function ResearchVideoButton({
     !status.generationBlock &&
     status.preflightError &&
     status.preflightError !== missingRuntime &&
+    status.preflightError !== RESEARCH_FILM_BUSY_MESSAGE &&
     knownPreflight
+  const loadingTrigger =
+    !statusLoaded ||
+    (preferSavedFilm &&
+      !selectedMode &&
+      !status.result &&
+      filmModes.some((candidate) => statuses[candidate] === undefined))
   const triggerState: ResearchVideoTriggerState = {
-    label: !statusLoaded
+    label: loadingTrigger
       ? t('Loading…')
       : busy || installing || pending
         ? t('View generation progress')
         : status.result
           ? t('View research film')
           : t('Generate research film'),
-    disabledReason: !statusLoaded
-      ? t('Loading…')
-      : !status.result && !busy && !installing && !pending && status.generationBlock
-        ? blocked
-        : undefined
+    disabledReason: loadingTrigger ? t('Loading…') : undefined
   }
   const renderSettingsButton = (label?: string): React.JSX.Element => (
     <button
@@ -248,45 +361,105 @@ export function ResearchVideoButton({
       {label}
     </button>
   )
-  const desktop = document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true'
-  const wasInstalling = useEffectEvent(() => installing)
+  const desktop = isDesktopRenderer()
+  const wasInstalling = useEffectEvent((target: ResearchFilmMode) => mode === target && installing)
+  const watching = Object.values(statuses).some(
+    (next) =>
+      next.narrationDownload ||
+      (next.progress && !['completed', 'failed', 'cancelled'].includes(next.progress.phase))
+  )
+  const pollingDelay = useEffectEvent((next: ResearchVideoPresentationStatus): number =>
+    next.narrationDownload ||
+    (next.progress && !['completed', 'failed', 'cancelled'].includes(next.progress.phase))
+      ? 750
+      : open
+        ? 5_000
+        : 30_000
+  )
   useEffect(() => {
+    if (!desktop) return
     live.current = true
-    let timer: ReturnType<typeof setTimeout>
     let subscribed = true
-    const poll = async (): Promise<void> => {
-      if (!desktop) return
-      const version = statusVersion.current
-      let delay = 750
-      try {
-        const next = await readFilmStatus({ projectId, sessionId, branchId })
-        const refreshedModel =
-          subscribed && wasInstalling() && !next.narrationDownload
-            ? await window.api.localModels.getSnapshot('research-narration')
-            : undefined
-        if (subscribed && version === statusVersion.current) {
-          if (refreshedModel) setModel(refreshedModel)
-          setStatus(next)
-          setStatusLoadedScope(deletionScope)
+    // Each mode can settle independently. A slow read for one film does not block the other.
+    const stopPolling = filmModes.map((target) => {
+      let timer: ReturnType<typeof setTimeout>
+      let failures = 0
+      const targetRequest = filmRequest(projectId, sessionId, branchId, target)
+      const poll = async (): Promise<void> => {
+        const version = statusVersion.current[target]
+        let delay = 750
+        try {
+          const next = await readFilmStatus(targetRequest)
+          failures = 0
+          delay = pollingDelay(next)
+          const refreshedModel =
+            subscribed && wasInstalling(target) && !next.narrationDownload
+              ? await window.api.localModels.getSnapshot('research-narration')
+              : undefined
+          if (subscribed && version === statusVersion.current[target]) {
+            setReadErrors((current) =>
+              current[target] === undefined ? current : { ...current, [target]: undefined }
+            )
+            if (refreshedModel) setModel(refreshedModel)
+            setStatuses((current) => ({ ...current, [target]: next }))
+          }
+        } catch (error) {
+          delay = Math.min(30_000, 5_000 * 2 ** Math.min(failures++, 3))
+          if (subscribed && version === statusVersion.current[target]) {
+            setReadErrors((current) => ({
+              ...current,
+              [target]: error instanceof Error ? error.message : String(error)
+            }))
+            setStatuses((current) =>
+              current[target] === undefined ? { ...current, [target]: {} } : current
+            )
+          }
         }
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          error.message.includes(RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE)
-        ) {
-          if (subscribed) setStatusLoadedScope(deletionScope)
-          delay = 5_000
-        }
+        if (subscribed) timer = setTimeout(() => void poll(), delay)
       }
-      if (subscribed) timer = setTimeout(() => void poll(), delay)
-    }
-    void poll()
+      void poll()
+      return () => clearTimeout(timer)
+    })
     return () => {
       live.current = false
       subscribed = false
-      clearTimeout(timer)
+      stopPolling.forEach((stop) => stop())
     }
-  }, [projectId, sessionId, branchId, deletionScope, desktop])
+  }, [projectId, sessionId, branchId, desktop, open, watching])
+  const checkSelectedReadiness = useEffectEvent(() => {
+    let current = true
+    const version = ++statusVersion.current[mode]
+    void readFilmStatus(request, true)
+      .then((next) => {
+        if (current && version === statusVersion.current[mode]) {
+          setStatus(next)
+          setError(undefined)
+        }
+      })
+      .catch((error: unknown) => {
+        if (current && version === statusVersion.current[mode])
+          setReadErrors((previous) => ({
+            ...previous,
+            [mode]: error instanceof Error ? error.message : String(error)
+          }))
+      })
+    return () => {
+      current = false
+    }
+  })
+  useEffect(() => {
+    if (open && desktop) return checkSelectedReadiness()
+    return undefined
+  }, [open, desktop])
+  const selectMode = (next: ResearchFilmMode): void => {
+    if (next === mode) return
+    wasDeleting.current = false
+    wasRegenerating.current = false
+    setConfirmDeletion(false)
+    setConfirmRegeneration(false)
+    setModel(undefined)
+    setMode(next)
+  }
   const generate = async (regenerate = false, resume = false): Promise<void> => {
     if (pending || busy || installing) {
       setOpen(true)
@@ -338,7 +511,6 @@ export function ResearchVideoButton({
         ...(status.canResume ? { resume: true } : {})
       })
       if (live.current) {
-        statusVersion.current++
         setStatus(next)
       }
     } catch (caught) {
@@ -367,7 +539,6 @@ export function ResearchVideoButton({
     try {
       const result = status.result
       const next = await window.api.researchVideo.remove(request)
-      statusVersion.current++
       if (!live.current) return
       if (result)
         usePreviewWorkbenchStore.getState().removeItem(`research-video-${result.id}-player`)
@@ -395,13 +566,16 @@ export function ResearchVideoButton({
     setConfirmRegeneration(false)
     setOpen(false)
   }
+  const openDialog = (): void => {
+    setMode(mode)
+    setOpen(true)
+  }
   if (!desktop) return renderTrigger ? <>{renderTrigger(undefined, triggerState)}</> : null
   return (
     <>
       <span ref={triggerRef} className="contents">
         {renderTrigger ? (
-          // eslint-disable-next-line react-hooks/refs -- The factory binds this event handler; it never runs generation during render.
-          renderTrigger(() => void generate(), triggerState)
+          renderTrigger(openDialog, triggerState)
         ) : (
           <Button
             type="button"
@@ -409,9 +583,9 @@ export function ResearchVideoButton({
             size="sm"
             disabled={pending || Boolean(triggerState.disabledReason)}
             title={triggerState.disabledReason}
-            onClick={() => void generate()}
+            onClick={openDialog}
           >
-            {!statusLoaded || busy || installing ? (
+            {loadingTrigger || busy || installing ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             ) : (
               <Video className="size-4" aria-hidden="true" />
@@ -423,11 +597,7 @@ export function ResearchVideoButton({
       {open && (
         <WorkflowDialogFrame
           title={t('Research film')}
-          description={
-            status.result || status.filmStep
-              ? undefined
-              : t('Create a short film from this conversation.')
-          }
+          stage={statusLoaded ? mode : 'loading'}
           descriptionClassName="truncate"
           busy={false}
           onClose={() => {
@@ -438,18 +608,28 @@ export function ResearchVideoButton({
           onCloseAutoFocus={(event) => {
             event.preventDefault()
             triggerRef.current?.querySelector('button')?.focus()
+            onDismiss?.()
             if (settingsAfterClose.current) {
               useSettingsStore.getState().openSettingsToPanel('model')
               settingsAfterClose.current = false
             }
           }}
-          className="w-[min(480px,calc(100vw-2rem))]"
+          // Let the panel reveal the full layout without shrinking the scroll area mid-transition.
+          className="w-[min(480px,calc(100vw-2rem))] *:h-auto *:flex-none"
           footer={
-            (busy ||
-              installing ||
-              status.canResume ||
-              status.result ||
-              model?.availability === 'ready') && (
+            !statusLoaded ? (
+              !diagnostic && (
+                <footer className={dialogFooterClassName}>
+                  <span
+                    role="status"
+                    className="inline-flex min-h-8 items-center gap-2 text-sm text-muted-foreground"
+                  >
+                    <Loader2 aria-hidden="true" className="size-4 motion-safe:animate-spin" />
+                    {t('Loading…')}
+                  </span>
+                </footer>
+              )
+            ) : (
               <footer className={`${dialogFooterClassName} justify-between gap-2`}>
                 {busy || installing ? (
                   <>
@@ -529,7 +709,9 @@ export function ResearchVideoButton({
                   </div>
                 ) : (
                   <>
-                    {(status.canResume || status.result || model?.availability === 'ready') && (
+                    {(status.result ||
+                      status.canResume ||
+                      (!blocked && (!model || narrationReady(model)))) && (
                       <Button
                         ref={regenerateRef}
                         variant={status.canResume || status.result ? 'ghost' : 'default'}
@@ -537,14 +719,20 @@ export function ResearchVideoButton({
                         disabled={pending || Boolean(blocked)}
                         title={blocked}
                         className="ml-auto"
-                        onClick={() => setConfirmRegeneration(true)}
+                        onClick={() =>
+                          status.canResume || status.result
+                            ? setConfirmRegeneration(true)
+                            : void generate()
+                        }
                       >
                         {pending ? (
                           <Loader2 className="animate-spin" aria-hidden="true" />
                         ) : (
                           <RotateCcw aria-hidden="true" />
                         )}
-                        {t('Generate again')}
+                        {status.canResume || status.result
+                          ? t('Generate again')
+                          : t('Start generation')}
                       </Button>
                     )}
                     {status.canResume && (
@@ -590,6 +778,50 @@ export function ResearchVideoButton({
         >
           <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`} data-workflow-body>
             <div className="space-y-4" data-workflow-content>
+              <div
+                className="grid gap-3 min-[420px]:grid-cols-2"
+                role="group"
+                aria-label={t('Film mode')}
+              >
+                {filmModes.map((value) => {
+                  const isExplanation = value === 'research-explanation'
+                  const label = isExplanation ? t('Research explanation') : t('Operation replay')
+                  const description = isExplanation
+                    ? t('Explains the research question, methods, and findings with visuals.')
+                    : t('Replays the conversation, actions, and results in order.')
+                  const Icon = isExplanation ? BookOpen : ListVideo
+                  const descriptionId = `${modeDescriptionId}-${value}`
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      disabled={pending || Boolean(busy || installing)}
+                      aria-pressed={value === mode}
+                      aria-label={label}
+                      aria-describedby={descriptionId}
+                      className={`flex min-w-0 flex-col gap-2 rounded-xl border p-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60 ${value === mode ? 'border-primary bg-primary/5 text-primary' : 'border-border hover:bg-muted'}`}
+                      onClick={() => selectMode(value)}
+                    >
+                      <FilmModeIllustration mode={value} />
+                      <span className="flex items-start gap-1.5 text-sm leading-snug font-medium [overflow-wrap:anywhere]">
+                        <Icon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                        {label}
+                      </span>
+                      <span
+                        id={descriptionId}
+                        className="text-xs leading-relaxed text-muted-foreground"
+                      >
+                        {description}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t(
+                  'Generating a film uses your token quota, and its quality depends on the model you select.'
+                )}
+              </p>
               {blocked && !busy && !diagnostic && (
                 <ErrorNotice
                   inline
@@ -619,11 +851,11 @@ export function ResearchVideoButton({
                   }
                 />
               )}
-              {status.result && (
+              {playableResult && (
                 <section className="space-y-4" aria-label={t('Research film ready')}>
                   <div className="space-y-2">
                     <h3 className="text-lg font-medium leading-snug text-foreground">
-                      {status.result.title}
+                      {playableResult.title}
                     </h3>
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                       <span className="inline-flex items-center gap-1.5 tabular-nums">
@@ -638,7 +870,7 @@ export function ResearchVideoButton({
                   </div>
                   <Button
                     className="min-h-10 w-full whitespace-normal"
-                    onClick={() => preview(status.result!)}
+                    onClick={() => preview(playableResult)}
                   >
                     <Play className="size-4" aria-hidden="true" />
                     {t('Play research film')}

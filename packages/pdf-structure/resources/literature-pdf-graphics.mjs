@@ -1991,7 +1991,7 @@ function decodedWhiteBorderRect(decoded, matrix, viewport) {
     left = 0,
     right = width - 1
   while (top <= bottom && emptyRow(top)) top++
-  if (top > bottom) return
+  if (top > bottom) return null
   while (emptyRow(bottom)) bottom--
   const emptyColumn = (x) => {
     for (let y = top; y <= bottom; y++) if (!unpainted(x, y)) return false
@@ -2253,9 +2253,25 @@ export function collectGraphicsBounds(renderTask, boxes) {
     viewport = renderTask._internalRenderTask.params?.viewport
   const envelopeContext = imageEnvelopeRenderContext(renderTask._internalRenderTask, operators)
   const groupClips = nativeRecordedGroupPaintEnvelopes(renderTask)
+  const colorStack = []
+  let fillColor
+  const ordinaryPaint = !operators.fnArray.some((op) =>
+    [
+      OPS.setGState,
+      OPS.beginGroup,
+      OPS.endGroup,
+      OPS.paintFormXObjectBegin,
+      OPS.paintFormXObjectEnd
+    ].includes(op)
+  )
   let invalidGraphicsBounds = 0
   for (const [index, operation] of operators.fnArray.entries()) {
     const args = operators.argsArray[index]
+    if (operation === OPS.save) colorStack.push(fillColor)
+    else if (operation === OPS.restore) fillColor = colorStack.pop()
+    else if (operation === OPS.setFillRGBColor) fillColor = args?.[0]
+    else if ([OPS.setFillColorN, OPS.setFillCMYKColor, OPS.setFillGray].includes(operation))
+      fillColor = undefined
     if (operation === OPS.save) transforms.push([...transform])
     else if (operation === OPS.restore) transform = transforms.pop() ?? [1, 0, 0, 1, 0, 0]
     else if (operation === OPS.transform) transform = Util.transform(transform, args)
@@ -2288,7 +2304,7 @@ export function collectGraphicsBounds(renderTask, boxes) {
     if (normalizedRect[2] <= normalizedRect[0] || normalizedRect[3] <= normalizedRect[1]) continue
     // Compare decoded pixels, not per-page object IDs or bounding boxes. Hash
     // decoded images within a bounded budget, including manuscript watermarks.
-    let imageHash, paintedNormalizedRect, imageEnvelopeNormalizedRect
+    let imageHash, paintedNormalizedRect, imageEnvelopeNormalizedRect, allWhiteRaster
     if (image) {
       const source = operators.argsArray[index]?.[0]
       const task = renderTask._internalRenderTask
@@ -2316,6 +2332,8 @@ export function collectGraphicsBounds(renderTask, boxes) {
           Util.transform(viewport.transform, transform),
           viewport
         )
+        allWhiteRaster =
+          ordinaryPaint && painted === null && decoded.kind === 2 && Boolean(imageHash)
         if (
           painted?.every(Number.isFinite) &&
           painted[2] > painted[0] &&
@@ -2340,6 +2358,16 @@ export function collectGraphicsBounds(renderTask, boxes) {
       kind: image ? 'image' : 'path',
       normalizedRect,
       ...(imageHash ? { imageHash } : {}),
+      ...(allWhiteRaster ? { allWhiteRaster } : {}),
+      ...(!image &&
+      ordinaryPaint &&
+      args?.[0] === OPS.fill &&
+      fillColor === '#ffffff' &&
+      transform[1] === 0 &&
+      transform[2] === 0 &&
+      imageEnvelopeRectangularClip(args?.[1]?.[0])
+        ? { whiteRectangle: true }
+        : {}),
       ...(paintedNormalizedRect ? { paintedNormalizedRect } : {}),
       ...(imageEnvelopeNormalizedRect ? { imageEnvelopeNormalizedRect } : {})
     }

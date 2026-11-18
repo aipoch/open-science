@@ -21,7 +21,7 @@
     "src/main/managed-preview-handler.ts",
     "src/main/managed-preview-owner-registry.ts"
   ],
-  "consumerModules": [],
+  "consumerModules": ["research_video", "desktop_composition"],
   "testFiles": {
     "owner": [
       "src/main/image-preview-resize.test.ts",
@@ -873,9 +873,14 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/research-video/lifecycle.test.ts",
+      "src/main/research-video/presentation.test.ts",
+      "src/main/research-video/export-control.test.ts",
+      "src/main/composition/research-film.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Film retention adds research-video consumers and file-lifetime coordination beyond the reviewed preview boundary; retain full validation until the expanded contracts are reviewed."
 }

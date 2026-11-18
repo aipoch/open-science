@@ -2,6 +2,7 @@ import { SettingsDocumentStore } from '../settings/document-store'
 import { NotebookRunRepository, getNotebookRunJsonPath } from '../notebook/repository'
 import { createFrameNotebookLane, createRootNotebookLane } from '../notebook/lane-identity'
 import { SessionRepository } from '../session-persistence/repository'
+import { sessionJournalPath } from '../session-persistence/journal'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { initDataRoot } from '../storage-root'
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
@@ -103,7 +104,7 @@ it.each(['root', 'frame'] as const)(
     })
     const sourcePaths = [
       join(configRoot, 'settings.json'),
-      join(configRoot, 'sessions/p/s.json'),
+      sessionJournalPath(join(configRoot, 'sessions/p/s.json')),
       getNotebookRunJsonPath(dataRoot, 'p', 's', lane)
     ]
     const before = await Promise.all(sourcePaths.map((path) => readFile(path)))

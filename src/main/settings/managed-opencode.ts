@@ -1,10 +1,13 @@
-import { execFile, spawnSync } from 'node:child_process'
+import {
+  runVerificationProcess,
+  VerificationProcessExitError
+} from '../update/verification-process'
+import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { constants, readFileSync, type Dirent, type Stats } from 'node:fs'
 import { chmod, cp, lstat, mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { promisify } from 'node:util'
 
 import type { ClaudeInstallEvent } from '../../shared/settings'
 import {
@@ -17,8 +20,6 @@ import {
   type FetchTarball,
   type ManagedInstallOutcome
 } from './managed-claude'
-
-const execFileAsync = promisify(execFile)
 
 // App-managed OpenCode installer. opencode ships per-platform native packages
 // (`opencode-<os>-<arch>[-musl]`) as optionalDependencies of the `opencode-ai` wrapper, with the binary
@@ -343,17 +344,20 @@ export type VersionProbeSpawn = (
 
 const spawnVersionProbe: VersionProbeSpawn = async (command, args, options) => {
   try {
-    await execFileAsync(command, args, options)
+    await runVerificationProcess(command, [...args], {
+      timeoutMs: options.timeout,
+      maxBytes: 1024 * 1024,
+      signal: options.signal
+    })
     return { status: 0 }
   } catch (error) {
-    const failure = error as Error & { code?: string | number; signal?: NodeJS.Signals }
-    if (failure.signal) return { signal: failure.signal }
-    if (typeof failure.code === 'number') return { status: failure.code }
-    return { error: failure }
+    if (error instanceof VerificationProcessExitError)
+      return { status: error.exitCode, signal: error.signal }
+    return { error: error as Error }
   }
 }
 
-// Runs the installed binary with `--version`. The injectable spawn (defaulting to the real spawnSync)
+// Runs the installed binary with `--version`. The injectable spawn (defaulting to the owned process runner)
 // lets tests lock the exact args and timeout without a real process.
 export const runVersionProbe = (
   binPath: string,

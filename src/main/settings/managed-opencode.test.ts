@@ -1087,6 +1087,49 @@ describe('isManagedOpencodePath / uninstallManagedOpencode', () => {
 })
 
 describe('runVersionProbe', () => {
+  it.skipIf(process.platform === 'win32').each(['version'] as const)(
+    'releases real OpenCode %s descendants before returning',
+    async (scenario) => {
+      const directory = await mkdtemp(join(tmpdir(), 'claude-resource-probe-'))
+      const executable = join(directory, scenario === 'version' ? 'claude' : 'npm')
+      const pidFile = join(directory, 'pids.json')
+      let pids: number[] = []
+      try {
+        await writeFile(
+          executable,
+          `#!${process.execPath}\n` +
+            "const { spawn } = require('node:child_process');\n" +
+            "const { writeFileSync } = require('node:fs');\n" +
+            "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });\n" +
+            `writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify([process.pid, child.pid]));\n` +
+            "child.unref(); console.log('2.1.3');\n"
+        )
+        await chmod(executable, 0o755)
+        expect(await runVersionProbe(executable)).toEqual({ status: 0 })
+        pids = JSON.parse(await readFile(pidFile, 'utf8'))
+        for (const pid of pids)
+          expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+      } finally {
+        if (!pids.length) {
+          try {
+            pids = JSON.parse(await readFile(pidFile, 'utf8'))
+          } catch {
+            /* No spawn. */
+          }
+        }
+        for (const pid of pids) {
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch {
+            /* Already reaped. */
+          }
+        }
+        vi.unstubAllEnvs()
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('hides the Windows console when probing the binary with `--version`', () => {
     const spawn = vi.fn(() => ({ status: 0 }))
     runVersionProbe('/path/to/opencode', spawn)
@@ -1199,10 +1242,15 @@ describe('defaultVerifyBinary', () => {
     await expect(defaultVerifyBinary(process.execPath)).resolves.toEqual({ ok: true })
   })
 
-  it('reports a spawn error (unrunnable) when the binary path does not exist', async () => {
+  it('reports an unrunnable target when the binary path does not exist', async () => {
     const result = await defaultVerifyBinary(join(tmpdir(), 'no-such-opencode-binary-xyz'))
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.reason).toMatch(/spawn error/)
+    if (!result.ok) {
+      // Darwin admits the target through an owned shell, so exec failure is an exit diagnostic.
+      expect(result.reason).toMatch(
+        process.platform === 'darwin' ? /exited with code (126|127)/ : /spawn error/
+      )
+    }
   })
 
   // A non-zero `--version` exit classifies as unrunnable. Uses a chmod'd shell script, so it is skipped

@@ -46,10 +46,15 @@ import {
 } from './revision-conflict'
 import { mergeMainOwnedRelayProjection } from './relay-projection'
 import { loadSessionMutationAuthority as loadAuthority } from './repository'
-import { saveSessionWithRevision, SessionProjectionAfterCommitError } from './save-session'
+import {
+  saveSessionWithRevision,
+  SessionProjectionAfterCommitError,
+  type MainSessionSaveOptions
+} from './save-session'
 import { isDeepStrictEqual } from 'node:util'
 import { preserveImportedSession } from './imported-session'
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { RuntimeSessionMutationOptions } from './runtime-session-mutation'
 
 export type RuntimeTerminalCommitRequest = Readonly<{
   projectId: string
@@ -110,7 +115,7 @@ type SessionStateRepository = {
   saveSession(
     session: PersistedChatSession,
     expectedRevision?: number,
-    onJsonCommitted?: (session: PersistedChatSession) => void
+    options?: MainSessionSaveOptions
   ): Promise<PersistedChatSession>
 }
 
@@ -930,7 +935,7 @@ class SessionPersistenceStateOwner {
   async mutateRuntimeSession(
     scope: { projectId: string; sessionId: string },
     mutate: (session: PersistedChatSession) => PersistedChatSession,
-    onJsonCommitted?: () => void
+    options: RuntimeSessionMutationOptions = {}
   ): Promise<PersistedChatSession> {
     this.options.assertMutable(scope.projectId, scope.sessionId, 'mutate')
     const loaded = await loadAuthority(this.options.repository, scope.projectId, scope.sessionId)
@@ -951,24 +956,38 @@ class SessionPersistenceStateOwner {
       throw new Error(`Cannot update a ${loaded.status} runtime Session.`)
     }
     const previous = loaded.session
-    const mutation = mutate(structuredClone(previous))
+    const mutation = mutate(
+      options.immutableCanonicalTranscript ? previous : structuredClone(previous)
+    )
     const transcriptUnchanged =
-      isDeepStrictEqual(mutation.conversationGraph, previous.conversationGraph) &&
-      isDeepStrictEqual(mutation.messages, previous.messages) &&
-      isDeepStrictEqual(mutation.activities, previous.activities) &&
-      isDeepStrictEqual(mutation.activityGroups, previous.activityGroups)
-    const candidate = transcriptUnchanged ? mutation : materializeSessionConversationGraph(mutation)
+      options.immutableCanonicalTranscript ||
+      (isDeepStrictEqual(mutation.conversationGraph, previous.conversationGraph) &&
+        isDeepStrictEqual(mutation.messages, previous.messages) &&
+        isDeepStrictEqual(mutation.activities, previous.activities) &&
+        isDeepStrictEqual(mutation.activityGroups, previous.activityGroups))
+    const candidate = {
+      ...(transcriptUnchanged ? mutation : materializeSessionConversationGraph(mutation)),
+      runtimeTranscriptOwner: 'main' as const
+    }
     if (candidate.id !== previous.id || candidate.projectId !== previous.projectId) {
       throw new Error('Runtime mutation changed its Session identity.')
     }
-    candidate.runtimeTranscriptOwner = 'main'
     if (
       previous.activeRun &&
       !candidate.activeRun &&
       !this.promptPreparations.hasUnadmittedRun(previous)
     )
       candidate.runtimeTranscriptLastRun = previous.activeRun
-    if (isDeepStrictEqual(candidate, previous)) return previous
+    const changes = options.immutableCanonicalTranscript
+      ? options.getChanges?.(candidate)
+      : undefined
+    const changedEntities =
+      changes &&
+      (changes.messages.length ||
+        changes.activities.length ||
+        changes.activityGroups.length ||
+        changes.branches.length)
+    if (!changedEntities && isDeepStrictEqual(candidate, previous)) return previous
     const validation = await validateFinalizedArtifactBindings(
       this.options.provenance,
       candidate,
@@ -981,16 +1000,26 @@ class SessionPersistenceStateOwner {
       this.recordSession(session)
       this.invalidateBindingTopology(scope.projectId, scope.sessionId)
       recorded = true
-      onJsonCommitted?.()
+      options.onJsonCommitted?.()
+    }
+    const mutationOptions: MainSessionSaveOptions = {
+      ...(changes ? { runtimeChanges: { previous, changes } } : {}),
+      ...(options.onJsonCommitted ? { onJsonCommitted: recordJsonCommit } : {})
     }
     try {
-      persisted = onJsonCommitted
-        ? await this.options.repository.saveSession(
-            candidate,
-            previous.revision ?? 0,
-            recordJsonCommit
-          )
-        : await saveSessionWithRevision(this.options.repository, candidate, previous.revision ?? 0)
+      persisted =
+        changes || options.onJsonCommitted
+          ? await saveSessionWithRevision(
+              this.options.repository,
+              candidate,
+              previous.revision ?? 0,
+              mutationOptions
+            )
+          : await saveSessionWithRevision(
+              this.options.repository,
+              candidate,
+              previous.revision ?? 0
+            )
     } catch (error) {
       if (!(error instanceof SessionProjectionAfterCommitError)) throw error
       persisted = error.committedSession

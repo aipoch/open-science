@@ -268,7 +268,7 @@ type WorkspacePanelLayout = {
   mobileSidebar: {
     isOpen: boolean
     open: () => void
-    close: () => void
+    close: () => HTMLElement | null
   }
   sidebar: AnimatedResizablePanel & {
     state: ResizablePanelState
@@ -323,7 +323,10 @@ const useWorkspacePanelLayout = (
     rememberMobileSidebarReturnFocus()
     setIsMobileSidebarOpen(true)
   }, [rememberMobileSidebarReturnFocus])
-  const closeMobileSidebar = useCallback((): void => setIsMobileSidebarOpen(false), [])
+  const closeMobileSidebar = useCallback((): HTMLElement | null => {
+    setIsMobileSidebarOpen(false)
+    return mobileSidebarReturnFocusRef.current
+  }, [])
   const toggleMobileSidebar = useCallback((): void => {
     if (!isMobileSidebarOpen) rememberMobileSidebarReturnFocus()
     setIsMobileSidebarOpen(!isMobileSidebarOpen)
@@ -567,7 +570,10 @@ type WorkspacePanelLayoutProps = {
     }
     sidebarToggleRef: React.RefObject<HTMLButtonElement | null>
   }) => React.ReactNode
-  renderMobileSidebar: (options: { isOpen: boolean; close: () => void }) => React.ReactNode
+  renderMobileSidebar: (options: {
+    isOpen: boolean
+    close: () => HTMLElement | null
+  }) => React.ReactNode
   renderConversation: (options: {
     isPreviewPanelCollapsed: boolean
     togglePreviewPanel: () => void

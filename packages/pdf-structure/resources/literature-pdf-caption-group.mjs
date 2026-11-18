@@ -5625,6 +5625,121 @@ function findNativeTwoThirdFigureCaption(start, runs, page) {
 // Panel explanations can form their own paragraph below a one- or two-line
 // title. Require native sequential inline keys (or an explicit complete key
 // range), independently calibrated leading, and one adjacent raster.
+// A line can finish a panel description or end at an abbreviation. The
+// physically attached raster keys determine where the hanging caption ends.
+function findNativeHangingRasterPanelCaption(start, runs, page, rules) {
+  const em = start.fontSize
+  if (
+    captionKind(start.text) !== 'figure' ||
+    !/\(a\)\s+\p{L}/u.test(start.text) ||
+    !(em > 0) ||
+    page.invalidGraphicsBounds !== 0 ||
+    !Array.isArray(page.graphicsBounds)
+  )
+    return
+  const inLane = (line) => line.x < start.right && line.right > start.x
+  const keys = runs.filter(
+    (line) =>
+      inLane(line) &&
+      line.x >= start.x &&
+      line.right <= start.right &&
+      line.bottom <= start.y &&
+      start.y - line.bottom <= em * 1.4 &&
+      line.fontSize < em * 0.9 &&
+      /^\([a-h]\)(?:\s+\([a-h]\))+$/u.test(line.text)
+  )
+  if (keys.length !== 1) return
+  const key = keys[0]
+  const lastPanel = key.text.at(-2).charCodeAt(0)
+  const rasterPanels = page.graphicsBounds
+    .filter((graphic) => graphic.kind === 'image' && graphic.normalizedRect?.length === 4)
+    .map(({ normalizedRect }) =>
+      normalizedRect.map((value, axis) => value * (axis % 2 ? page.height : page.width))
+    )
+    .filter(
+      ([left, top, right, bottom]) =>
+        left >= start.x - em &&
+        right <= start.right + em &&
+        right - left > em * 4 &&
+        bottom - top > em * 3 &&
+        Math.abs(bottom - key.y) <= em
+    )
+    .sort((a, b) => a[0] - b[0])
+  if (
+    rasterPanels.length !== key.text.split(/\s+/u).length ||
+    rasterPanels.some((panel, i) => i && panel[0] < rasterPanels[i - 1][2] - em * 0.5) ||
+    key.x < rasterPanels[0][0] ||
+    key.right > rasterPanels.at(-1)[2]
+  )
+    return
+  const following = runs
+    .filter((line) => line.y > start.y && inLane(line))
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+  const first = following[0]
+  if (!first || Math.abs(first.x - start.x - 2 * em) > em * 0.05) return
+  const leading = first.y - start.y
+  if (leading < em || leading > em * 1.3) return
+  const tail = []
+  for (const line of following.slice(0, 7)) {
+    const prior = tail.at(-1) ?? start
+    if (
+      Math.abs(line.y - prior.y - leading) > em * 0.05 ||
+      Math.abs(line.x - first.x) > em * 0.05 ||
+      line.right > start.right + em * 0.05 ||
+      Math.abs(line.fontSize - em) > em * 0.015 ||
+      captionKind(line.text)
+    )
+      break
+    tail.push(line)
+  }
+  const last = tail.at(-1)
+  if (
+    !last ||
+    !/[.!?]$/u.test(last.text.trim()) ||
+    last.right - last.x >= (start.right - start.x) * 0.85 ||
+    (following[tail.length] && following[tail.length].y - last.bottom < em * 0.65)
+  )
+    return
+  const rows = [start, ...tail]
+  const markers = [
+    ...rows
+      .map((row) => row.text)
+      .join(' ')
+      .matchAll(/\(([a-h])\)\s+\p{L}/gu)
+  ]
+  if (
+    markers.length !== lastPanel - 96 ||
+    markers.some((match, i) => match[1].charCodeAt(0) !== 97 + i) ||
+    !key.text.trim().endsWith(
+      markers
+        .slice(-rasterPanels.length)
+        .map((m) => `(${m[1]})`)
+        .join(' ')
+    )
+  )
+    return
+  const crossesRows = ([left, top, right, bottom]) =>
+    left < start.right && right > start.x && top < last.bottom && bottom > start.y
+  if (
+    rules.some(
+      (rule) =>
+        rule[0] < start.right &&
+        rule[2] > start.x &&
+        Math.min(rule[1], rule[3]) <= last.bottom &&
+        Math.max(rule[1], rule[3]) >= start.y
+    ) ||
+    page.graphicsBounds.some(
+      ({ normalizedRect }) =>
+        !normalizedRect?.every(Number.isFinite) ||
+        crossesRows(
+          normalizedRect.map((value, axis) => value * (axis % 2 ? page.height : page.width))
+        )
+    )
+  )
+    return
+  return tail
+}
+
 function findNativePanelCaptionParagraph(start, runs, page) {
   const em = start.fontSize
   if (captionKind(start.text) !== 'figure' || !(em > 0)) return
@@ -7276,6 +7391,11 @@ function isNativeBodyReferenceContinuation(start, runs, page, rules, completeRul
       }
     }
   }
+  const figureHowReference = /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+how\s+\p{L}/u.test(start.text)
+  const figureObservationReference =
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+we observe that\s+\p{L}/u.test(start.text)
+  const proseFigureReference = figureHowReference || figureObservationReference
+  if (proseFigureReference && page.invalidGraphicsBounds !== 0) return false
   const tableForReference = /^Table\s+[A-Z]?\d+\s+for\s/u.test(start.text)
   const decimalCommaReference = /^(?:Fig\.?|Figure)\s+\d+(?:\.\d+)+,\s+\p{L}/u.test(start.text)
   // A comparison's object can wrap after "of". The relational continuation,
@@ -7296,6 +7416,7 @@ function isNativeBodyReferenceContinuation(start, runs, page, rules, completeRul
     )
   ) {
     if (
+      !proseFigureReference &&
       !tableForReference &&
       !decimalCommaReference &&
       !comparisonReference &&
@@ -7304,16 +7425,24 @@ function isNativeBodyReferenceContinuation(start, runs, page, rules, completeRul
       return false
   }
   const em = start.fontSize
+  const precedingCue = figureObservationReference
+    ? /[.!?]\s+From$/u
+    : figureHowReference
+      ? /\b(?:show|describe|illustrate|explain) in$/u
+      : comparisonReference
+        ? /\bof$/u
+        : /(?:\bin(?: the)?|\(see)$/u
   const before = runs.filter(
     (l) =>
       l !== start &&
       l.text.length >= 30 &&
-      (comparisonReference ? /\bof$/u : /(?:\bin(?: the)?|\(see)$/u).test(l.text.trim()) &&
-      (!(comparisonReference || coordinatedReference) ||
+      precedingCue.test(l.text.trim()) &&
+      (!(comparisonReference || coordinatedReference || proseFigureReference) ||
         Math.abs(l.right - start.right) < em * 0.05) &&
       !captionKind(l.text) &&
       Math.abs(l.fontSize - em) < em * 0.015 &&
       (Math.abs(l.x - start.x) < em * 0.05 ||
+        (figureHowReference && l.x > start.x && l.x - start.x < em * 1.8) ||
         (/^Fig\.\s+[A-Z]?\d+[a-z]\.\s/u.test(start.text) &&
           Math.abs(l.x - start.x - em) < em * 0.015 &&
           Math.abs(l.right - start.right) < em * 0.05 &&
@@ -7335,6 +7464,19 @@ function isNativeBodyReferenceContinuation(start, runs, page, rules, completeRul
   )
   if (before.length !== 1) return false
   const previous = before[0]
+  if (
+    proseFigureReference &&
+    runs.filter(
+      (row) =>
+        Math.abs(row.y - 2 * start.y + previous.y) < em * 0.015 &&
+        Math.abs(row.x - start.x) < em * 0.05 &&
+        Math.abs(row.right - start.right) < em * 0.05 &&
+        Math.abs(row.fontSize - em) < em * 0.015 &&
+        row.text.length >= 30 &&
+        !captionKind(row.text)
+    ).length !== 1
+  )
+    return false
   if (decimalCommaReference) {
     const step = start.y - previous.y
     const earlier = runs.filter(
@@ -8881,6 +9023,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
   )
   const candidates = []
   for (const page of pages) {
+    const previousPage = pages.find((other) => other.pageNumber === page.pageNumber - 1)
     const runs = groupPageLines(page, separators.get(page.pageNumber) ?? [])
     const ownedRuns = new Set()
     const completedCaptionRuns = new Set()
@@ -8960,7 +9103,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
     )) {
       if (
         nativeConditionalFigureReference(start, runs, page) ||
-        nativePrintedCaptionBodyReference(start, runs, page, candidates) ||
+        nativePrintedCaptionBodyReference(start, runs, page, candidates, previousPage) ||
         nativePrintedTableBodyReference(
           start,
           runs,
@@ -9216,7 +9359,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       // A reference wrapped after "listed in" is part of the same paragraph.
       // Require its preceding source line, matching typography and tight leading.
       if (
-        (/^(?:Table|Tab\.)\s+\d+\s+(?:for\s+[a-z]|The\s+)/.test(start.text) ||
+        (/^(?:Table|Tab\.)\s+\d+\s+(?:for\s+[a-z]|throughout\s+[a-z]|The\s+)/.test(start.text) ||
           /^(?:(?:Supplementary|Supplemental)\s+)?(?:(?:Figure|Fig\.)\s+\d+|(?:Table|Tab\.)\s+(?:\d+|[IVXLCDM]+))[.:]\s+\p{L}/u.test(
             start.text
           )) &&
@@ -9502,7 +9645,14 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
         page,
         rulesByPage.get(page.pageNumber) ?? []
       )
+      const hangingPanelParagraph = findNativeHangingRasterPanelCaption(
+        start,
+        runs,
+        page,
+        rulesByPage.get(page.pageNumber) ?? []
+      )
       let nativeParagraph =
+        hangingPanelParagraph ??
         findFollowingRasterCaptionParagraph(start, runs, page, pages) ??
         findNativeRasterStripCaption(start, runs, page, rulesByPage.get(page.pageNumber) ?? []) ??
         findNativeCenteredRuledTitle(start, runs, page, separators.get(page.pageNumber) ?? []) ??
@@ -9558,6 +9708,10 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       // A wrapped numbered reference is an interior caption row only when
       // the complete single-spaced proof survives. Keep the ordinary generic
       // paragraph fallbacks from reattaching that row after a proof mutation.
+      // Facing captions may begin on the same visual row. Later independent
+      // captions still delimit the existing short raster-caption fallback.
+      const facingCaptionRow = (line) =>
+        line.y < start.bottom && (line.x >= start.right || line.right <= start.x)
       const referenceRow = runs.find((line) => {
         if (!/\b(?:in|from)$/iu.test(start.text.trim())) return false
         if (
@@ -9565,12 +9719,17 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             line.text
           ) ||
           line === start ||
+          facingCaptionRow(line) ||
           line.y <= start.y
         )
           return false
         const previous = runs
           .filter(
-            (candidate) => candidate !== line && candidate.y < line.y && candidate.y >= start.y
+            (candidate) =>
+              candidate !== line &&
+              !facingCaptionRow(candidate) &&
+              candidate.y < line.y &&
+              candidate.y >= start.y
           )
           .sort((a, b) => b.y - a.y)[0]
         return /\b(?:and|by|for|from|in|of|to|with)$/iu.test(previous?.text.trim() ?? '')
@@ -9595,6 +9754,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       const anyNumberedReferenceRow = runs.find(
         (line) =>
           line !== start &&
+          !facingCaptionRow(line) &&
           line.y > start.y &&
           /^(?:Fig\.?|Figure|Tab\.?|Table)\s+[A-Z]?\d+(?:\.\d+)*[.:]/iu.test(line.text)
       )

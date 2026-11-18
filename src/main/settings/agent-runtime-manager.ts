@@ -2,12 +2,11 @@ import { providerValidationRoute } from '../../shared/settings-runtime'
 import { installManagedPi, uninstallManagedPi } from './managed-pi'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
-import { execFile } from 'node:child_process'
+import { runVerificationProcess } from '../update/verification-process'
 import { constants, existsSync } from 'node:fs'
 import { access, mkdir, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { createServer } from 'node:net'
-import { promisify } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
 import {
   CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
@@ -135,7 +134,6 @@ import type { SkillCatalogModule } from '../skills/catalog'
 import type { ConnectorSettingsModule } from './connector-settings'
 import type { StoredCodexInfo, StoredSettings } from './types'
 
-const execFileAsync = promisify(execFile)
 const log = createLogger('agent-runtime-manager')
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000
 const RUNTIME_PROBE_REUSE_WINDOW_MS = 2_000
@@ -158,13 +156,13 @@ const executeClaudeProbe: ExecuteClaudeProbe = async (executablePath, env, runti
   const resolvedPath = resolveClaudeExecutableForSpawn(executablePath)
   const isScript = /\.(js|mjs)$/i.test(resolvedPath)
   // Match the auth controllers: resolve npm shims and preserve argument boundaries without a shell.
-  await execFileAsync(
+  await runVerificationProcess(
     isScript ? process.execPath : resolvedPath,
     [...(isScript ? [resolvedPath] : []), ...runtimeArgs, '-p', 'ok'],
     {
       env: isScript ? { ...env, ...nodeRuntimeEnvironment() } : env,
-      timeout: CLAUDE_PROBE_TIMEOUT_MS,
-      windowsHide: true
+      timeoutMs: CLAUDE_PROBE_TIMEOUT_MS,
+      maxBytes: 1024 * 1024
     }
   )
 }
@@ -178,10 +176,10 @@ const runCodexAdapterVersion = async (
   if (!/\.[cm]?js$/i.test(adapterPath)) return fallback(adapterPath, signal)
 
   try {
-    const { stdout } = await execFileAsync(process.execPath, [adapterPath, '--version'], {
+    const { stdout } = await runVerificationProcess(process.execPath, [adapterPath, '--version'], {
       env: { ...process.env, ...nodeRuntimeEnvironment(), NO_BROWSER: '1' },
-      timeout: 5_000,
-      windowsHide: true,
+      timeoutMs: 5_000,
+      maxBytes: 1024 * 1024,
       signal
     })
     return stdout
@@ -1204,7 +1202,9 @@ export class AgentRuntimeManager {
         path: join(
           configRoot,
           'skills',
-          options.directoryLayout === 'agent-facing' ? skill.name : `${OS_SKILL_PREFIX}${skill.id}`,
+          options.directoryLayout && options.directoryLayout !== 'app-owned'
+            ? skill.name
+            : `${OS_SKILL_PREFIX}${skill.id}`,
           'SKILL.md'
         ),
         enabled: isSkillEffectivelyEnabled(skill, disabled)

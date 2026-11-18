@@ -11,29 +11,44 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 export async function formPage(fault = '', disableFontFace = true): Promise<PDFDocumentProxy> {
   const pdf = await PDFDocument.create()
   pdf.registerFontkit(fontkit)
-  const font = await pdf.embedFont(
-    await readFile(
-      join(
-        dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),
-        'standard_fonts/LiberationSans-Regular.ttf'
-      )
+  const fontDir = join(
+      dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),
+      'standard_fonts'
     ),
-    { subset: false }
-  )
+    font = await pdf.embedFont(await readFile(join(fontDir, 'LiberationSans-Regular.ttf')), {
+      subset: false
+    }),
+    exteriorFont =
+      fault.startsWith('clipped-font') && fault !== 'clipped-font-shared-outside'
+        ? await pdf.embedFont(await readFile(join(fontDir, 'LiberationSans-Bold.ttf')))
+        : font
+  const explicitPaths: Record<string, string> = {
+    'clipped-font-rectangle': '0 30 200 70 re W n',
+    'clipped-font-triangle': '0 30 m 200 30 l 100 100 l h W n',
+    'clipped-font-restored-rectangle': 'q 0 30 200 70 re W n Q',
+    'clipped-font-unclipped-rectangle': '0 30 200 70 re n'
+  }
+  const explicitPath = explicitPaths[fault] ?? ''
   const page = pdf.addPage([300, 220])
-  page.drawText('Visible caption', { x: 20, y: 70, size: 12, font })
+  page.drawText('Visible caption', { x: 20, y: 70, size: 12, font: exteriorFont })
   const fontKey = page.node.Resources()!.lookup(PDFName.of('Font'), PDFDict).keys()[0].toString(),
     label = font.encodeText('Panel label').toString(),
-    text = `BT /FixtureFont 12 Tf 10 ${fault === 'visible' ? 45 : fault === 'partial' ? 25 : 10} Td ${label} Tj ET`,
+    text = fault.startsWith('clipped-font')
+      ? `BT /FixtureFont 12 Tf 10 10 Td [${font.encodeText('Hidden heading')} -4500 ${font.encodeText('record')}] TJ ET` +
+        (fault === 'clipped-font-with-visible-form-text'
+          ? ` BT /FixtureFont 12 Tf 10 72 Td ${font.encodeText('Visible note')} Tj ET`
+          : '')
+      : `BT /FixtureFont 12 Tf 10 ${fault === 'visible' ? 45 : fault === 'partial' ? 25 : 10} Td ${label} Tj ET`,
     form = pdf.context.register(
       pdf.context.flateStream(
-        `${fault === 'path-clip' ? '0 30 m 200 30 l 100 100 l h W n ' : ''}${fault === 'white' ? '1 1 1 rg' : '0 0 0 rg'} ${text}`,
+        `${fault === 'path-clip' ? '0 30 m 200 30 l 100 100 l h W n' : explicitPath} ${fault === 'white' ? '1 1 1 rg' : '0 0 0 rg'} ${text}`,
         {
           Type: 'XObject',
           Subtype: 'Form',
-          BBox: ['no-clip', 'nested', 'path-clip'].includes(fault)
-            ? [0, 0, 200, 100]
-            : [0, 30, 200, 100],
+          BBox:
+            explicitPath || ['no-clip', 'nested', 'path-clip'].includes(fault)
+              ? [0, 0, 200, 100]
+              : [0, 30, 200, 100],
           Resources: { Font: { FixtureFont: font.ref } }
         }
       )
@@ -52,7 +67,7 @@ export async function formPage(fault = '', disableFontFace = true): Promise<PDFD
   page.node.set(
     PDFName.of('Resources'),
     pdf.context.obj({
-      Font: { [fontKey.slice(1)]: font.ref },
+      Font: { [fontKey.slice(1)]: exteriorFont.ref },
       XObject: { Panel: panel }
     })
   )
@@ -73,8 +88,8 @@ export async function formPage(fault = '', disableFontFace = true): Promise<PDFD
   }
   const matrix = fault === 'rotation' ? '0 1 -1 0 200 100' : '0.5 0 0 0.5 20 100',
     invoke = `q ${matrix} cm /Panel Do Q`,
-    visible = `BT ${fontKey} 12 Tf 20 70 Td ${label} Tj ET`,
-    caption = `BT ${fontKey} 12 Tf 20 ${fault === 'roundtrip' ? 110 : 50} Td ${font.encodeText('Visible caption').toString()} Tj ET`
+    visible = fault.startsWith('clipped-font') ? '' : `BT ${fontKey} 12 Tf 20 70 Td ${label} Tj ET`,
+    caption = `BT ${fontKey} 12 Tf 20 ${fault === 'roundtrip' ? 110 : 50} Td ${exteriorFont.encodeText('Visible caption')} Tj ET`
   page.node.set(
     PDFName.of('Contents'),
     pdf.context.register(

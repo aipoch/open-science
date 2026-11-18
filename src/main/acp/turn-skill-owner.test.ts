@@ -1,3 +1,19 @@
+// Keep real processes and native cleanup; pause only the parent after spawn to expose fast exits.
+const spawnProbe = vi.hoisted(() => ({ pauseAfterSpawnMs: 0 }))
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...actual,
+    spawn: (...args: Parameters<typeof actual.spawn>) => {
+      const child = actual.spawn(...args)
+      if (spawnProbe.pauseAfterSpawnMs > 0) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, spawnProbe.pauseAfterSpawnMs)
+      }
+      return child
+    }
+  }
+})
+
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -933,9 +949,9 @@ describe('AcpTurnSkillOwner', () => {
     expect(result.exitCode).toBe(0)
   })
 
-  it.skipIf(process.platform === 'win32')(
-    'reads CodeBuddy Skill resources in the WSL guest without replacing the native host root',
-    async () => {
+  it.skipIf(process.platform === 'win32').each(process.platform === 'darwin' ? [0, 25] : [0])(
+    'reads CodeBuddy Skill resources with a %i ms parent pause without replacing the native host root',
+    async (pauseAfterSpawnMs) => {
       const root = await mkdtemp(join(tmpdir(), 'codebuddy-wsl-resource-'))
       onTestFinished(() => rm(root, { recursive: true, force: true }))
       const skillDir = join(root, '.claude', 'skills', 'paper-review')
@@ -973,6 +989,10 @@ describe('AcpTurnSkillOwner', () => {
       const hostResourceRoot = guidance.match(/ resource-root="([^"]+)"/)![1]
       const shellResourceRoot =
         guidance.match(/ shell-resource-root="([^"]+)"/)?.[1] ?? hostResourceRoot
+      spawnProbe.pauseAfterSpawnMs = pauseAfterSpawnMs
+      onTestFinished(() => {
+        spawnProbe.pauseAfterSpawnMs = 0
+      })
       const result = await runShellCommand({
         command: `cat "${shellResourceRoot}/probe.txt"`,
         cwd: root,

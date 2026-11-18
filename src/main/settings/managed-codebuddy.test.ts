@@ -1,5 +1,16 @@
 import { createHash } from 'node:crypto'
-import { access, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+  type FileHandle
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -7,13 +18,29 @@ import { gzipSync } from 'node:zlib'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const extractionFault = vi.hoisted(() => ({
+  opened: undefined as ((file: FileHandle) => Promise<void>) | undefined
+}))
+vi.mock('node:fs/promises', async (importActual) => {
+  const actual = await importActual<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const file = await actual.open(...args)
+      if (String(args[0]).endsWith('cancelled-entry')) await extractionFault.opened?.(file)
+      return file
+    }
+  }
+})
+
 import {
   CODEBUDDY_VERSION,
   installManagedCodeBuddy,
   isManagedCodeBuddyPath,
   managedCodeBuddyBinary,
   managedCodeBuddyRoot,
-  uninstallManagedCodeBuddy
+  uninstallManagedCodeBuddy,
+  verifyCodeBuddyVersion
 } from './managed-codebuddy'
 
 const tarEntry = (name: string, content: Buffer, type = '0'): Buffer => {
@@ -52,7 +79,8 @@ const installFixture = async (
   dataRoot: string,
   tgz: Buffer,
   verifiedVersion: string | undefined = CODEBUDDY_VERSION,
-  renamePath?: typeof rename
+  renamePath?: typeof rename,
+  signal?: AbortSignal
 ): Promise<{
   onEvent: ReturnType<typeof vi.fn>
   outcome: Awaited<ReturnType<typeof installManagedCodeBuddy>>
@@ -80,6 +108,7 @@ const installFixture = async (
     },
     fetchTarball: async () => ({ stream: Readable.from(tgz), totalBytes: tgz.length }),
     verify: async () => verifiedVersion,
+    signal,
     ...(renamePath ? { renamePath } : {})
   })
   return { onEvent, outcome }
@@ -89,8 +118,82 @@ describe('managed CodeBuddy runtime', () => {
   let dataRoot: string | undefined
 
   afterEach(async () => {
+    extractionFault.opened = undefined
     if (dataRoot) await rm(dataRoot, { recursive: true, force: true })
     dataRoot = undefined
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'reaps CodeBuddy version descendants before cancellation completes',
+    async () => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'codebuddy-version-tree-'))
+      const script = join(dataRoot, 'version-tree')
+      const childPidFile = join(dataRoot, 'child-pid')
+      await writeFile(
+        script,
+        [
+          `#!${process.execPath}`,
+          "const { spawn } = require('node:child_process')",
+          "const { writeFileSync } = require('node:fs')",
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })",
+          `writeFileSync(${JSON.stringify(childPidFile)}, String(child.pid))`,
+          'setInterval(() => {}, 1000)'
+        ].join('\n')
+      )
+      await chmod(script, 0o755)
+      const controller = new AbortController()
+      const probe = verifyCodeBuddyVersion(script, process.platform, undefined, controller.signal)
+      let childPid: number | undefined
+      try {
+        await vi.waitFor(async () => {
+          childPid = Number(await readFile(childPidFile, 'utf8'))
+          expect(childPid).toBeGreaterThan(0)
+        })
+        controller.abort()
+        await expect(probe).resolves.toBeUndefined()
+        expect(() => process.kill(childPid!, 0)).toThrow()
+      } finally {
+        controller.abort()
+        await probe
+        if (childPid) {
+          try {
+            process.kill(childPid, 'SIGKILL')
+          } catch {
+            /* Already reaped. */
+          }
+        }
+      }
+    }
+  )
+
+  it('closes an archive file opened while extraction is being cancelled', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'managed-codebuddy-cancel-'))
+    const tgz = buildTgz([{ name: 'package/cancelled-entry', content: 'x'.repeat(64 * 1024) }])
+    const controller = new AbortController()
+    const opened = Promise.withResolvers<FileHandle>()
+    const resume = Promise.withResolvers<void>()
+    extractionFault.opened = async (file) => {
+      opened.resolve(file)
+      await resume.promise
+    }
+    const installation = installFixture(
+      dataRoot,
+      tgz,
+      CODEBUDDY_VERSION,
+      undefined,
+      controller.signal
+    )
+    const file = await opened.promise
+    try {
+      controller.abort()
+      resume.resolve()
+      expect((await installation).outcome.result.ok).toBe(false)
+      await expect(file.stat()).rejects.toThrow()
+    } finally {
+      resume.resolve()
+      await installation
+      await file.close()
+    }
   })
 
   it('installs the pinned package into the app-owned runtime and writes a login-free shim', async () => {

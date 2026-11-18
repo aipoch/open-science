@@ -1861,3 +1861,17 @@ it.each([
   expect(translatedPdfLinkFragment('3(b) and 3(c)', target, '3', 0)).toBeNull()
   expect(translatedPdfLinkFragment('3, which uses a model.', target, '3', 0)).toBeNull()
 })
+
+it.each([
+  ['引用［31，42-45］。', true],
+  ['引用［31，42，45］。', false],
+  ['引用［31–42，45］。', false],
+  ['引用［31，45–42］。', false]
+] as const)('keeps range boundaries in a mixed closed citation: %s', (target, accepted) => {
+  const source = 'See [31, 42–45].'
+  for (const label of ['31', '42', '45']) {
+    const proof = translatedPdfBracketedReference(source, target, label, source.indexOf(label))
+    if (accepted) expect(target.slice(proof!.start, proof!.end)).toBe(label)
+    else expect(proof).toBeNull()
+  }
+})

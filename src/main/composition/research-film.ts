@@ -20,6 +20,7 @@ import {
   RESEARCH_NARRATION_MODELS,
   RESEARCH_VIDEO_SCREENPLAY_PROMPT,
   RESEARCH_VIDEO_ANIMATION_PROMPT,
+  REPLAY_AUTHORING_PROMPT,
   VIDEO_EXPORT_REVISIONS
 } from '@aipoch/research-film'
 import {
@@ -42,6 +43,8 @@ import type { SessionPersistenceCommands } from '../session-persistence/coordina
 import type { createDefaultSessionRepository } from '../session-persistence/ipc'
 import type { SettingsService } from '../settings/service'
 import { resolveDataRoot } from '../storage-root'
+import type { ManagedPreviewResources } from '../managed-preview-resources'
+import { NotebookRunRepository } from '../notebook/repository'
 
 /** Button-owned generation: no conversation tools, Artifact publication or Notebook transport. */
 export async function composeResearchFilm({
@@ -51,6 +54,7 @@ export async function composeResearchFilm({
   sessionPersistenceCoordinator,
   sessionPackageService,
   researchFilmLifecycle,
+  previewResources,
   recordAuxiliaryUsage,
   modules
 }: {
@@ -58,8 +62,12 @@ export async function composeResearchFilm({
   settingsService: SettingsService
   sessionRepository: ReturnType<typeof createDefaultSessionRepository>
   sessionPersistenceCoordinator: Pick<SessionPersistenceCommands, 'runSessionMutation'>
-  sessionPackageService: Pick<SessionPackageService, 'readResearchFilm'>
+  sessionPackageService: Pick<
+    SessionPackageService,
+    'readResearchFilm' | 'readFilmEvidence' | 'withFilmRetention'
+  >
   researchFilmLifecycle: ResearchFilmLifecycle
+  previewResources: Pick<ManagedPreviewResources, 'withUnusedFiles'>
   recordAuxiliaryUsage(record: SessionAuxiliaryTurnUsageRecord): Promise<void>
   modules: ApplicationModuleBuilder
 }): Promise<{
@@ -187,7 +195,12 @@ export async function composeResearchFilm({
       requestId,
       sessionId: source.provenance.sessionId,
       activeBranchId: source.provenance.branchId,
-      phase: systemPrompt === RESEARCH_VIDEO_SCREENPLAY_PROMPT ? 'screenplay' : 'animation',
+      phase:
+        systemPrompt === REPLAY_AUTHORING_PROMPT
+          ? 'replay'
+          : systemPrompt === RESEARCH_VIDEO_SCREENPLAY_PROMPT
+            ? 'screenplay'
+            : 'animation',
       purpose: correction ? 'correction' : undefined,
       frameworkId: target.frameworkId,
       providerId: target.providerId
@@ -199,8 +212,11 @@ export async function composeResearchFilm({
           target,
           prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
           systemPrompt,
-          agentName: 'Research explanation',
-          description: 'Generate a research explanation from a frozen session',
+          agentName:
+            source.provenance.mode === 'operation-replay'
+              ? 'Operation replay'
+              : 'Research explanation',
+          description: 'Generate a research film from a frozen session',
           signal: AbortSignal.any([signal, AbortSignal.timeout(300_000)])
         })
       )
@@ -273,12 +289,44 @@ export async function composeResearchFilm({
       )
     return response.text
   }
+  let replayNotebook: NotebookRunRepository | undefined
+  let replayNotebookRoot: string | undefined
   const researchVideoPresentation = createResearchVideoPresentationOwner({
     mutate: (request, work) =>
       sessionPersistenceCoordinator.runSessionMutation(request.projectId, request.sessionId, work),
     lifecycle: researchFilmLifecycle,
+    withUnusedFilmFiles: (paths, remove) =>
+      sessionPackageService.withFilmRetention(() =>
+        previewResources.withUnusedFiles(paths, remove)
+      ),
     loadImportedFilm: (request, options) =>
       sessionPackageService.readResearchFilm(request, options),
+    loadReplayRecords: async (session) => {
+      const root = resolveDataRoot()
+      if (!replayNotebook || replayNotebookRoot !== root) {
+        replayNotebook = new NotebookRunRepository(root)
+        replayNotebookRoot = root
+      }
+      const [evidence, runs] = await Promise.all([
+        sessionPackageService.readFilmEvidence(session),
+        replayNotebook.readSessionRuns(session.projectId, session.id)
+      ])
+      return {
+        ...evidence,
+        runs: runs.map((run) => ({
+          id: run.runId,
+          messageId: run.promptMessageId,
+          branchId: run.messageBranchId,
+          status: run.status,
+          code: run.script,
+          output: [run.text.stdout, run.text.stderr, run.text.traceback, ...run.text.plain]
+            .filter(Boolean)
+            .join('\n'),
+          language: run.kernelKind,
+          recordedAt: run.startedAt
+        }))
+      }
+    },
     dataRoot: resolveDataRoot,
     models: researchNarrationModels,
     checkReadiness: async (signal) => {
@@ -318,7 +366,12 @@ export async function composeResearchFilm({
       const budget = researchFilmInputBudget(provider, model)
       if (
         budget <
-        Math.max(count(RESEARCH_VIDEO_SCREENPLAY_PROMPT), count(animationInstructions)) + 512
+        Math.max(
+          count(RESEARCH_VIDEO_SCREENPLAY_PROMPT),
+          count(animationInstructions),
+          count(REPLAY_AUTHORING_PROMPT)
+        ) +
+          512
       )
         throw new Error(
           'The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.'

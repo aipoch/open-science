@@ -48,6 +48,12 @@ import {
 
 type PdfTranslationPdfRequest = Omit<CachedPdfRequest, 'cache'>
 
+class PdfWorkerMemoryError extends PdfGenerationError {
+  constructor() {
+    super({ code: 'worker-failed' })
+  }
+}
+
 // One live worker per request, including bounded recovery. Input/output remain memory-only.
 export class PdfTranslationWriter {
   private readonly active = new Map<
@@ -209,11 +215,36 @@ export class PdfTranslationWriter {
     caller: ApplicationCallerLease,
     timeout: number
   ): Promise<PdfTranslationPdfResult | null> {
+    const deadline = performance.now() + timeout
+    try {
+      return await this.startWorker(input, caller, timeout, false)
+    } catch (error) {
+      const remaining = Math.floor(deadline - performance.now())
+      if (
+        !(error instanceof PdfWorkerMemoryError) ||
+        !input.preserveUnsupported ||
+        input.layout === 'reflow' ||
+        remaining <= 0
+      )
+        throw error
+      if (caller.signal.aborted || !caller.isCurrent()) return null
+      // Nested forms are an optional second pass. Retry at the same heap
+      // limit and keep its regions native if the complete pass ran out of heap.
+      return this.startWorker(input, caller, remaining, true)
+    }
+  }
+
+  private async startWorker(
+    input: PdfTranslationPdfRequest,
+    caller: ApplicationCallerLease,
+    timeout: number,
+    skipFormLabels: boolean
+  ): Promise<PdfTranslationPdfResult | null> {
     const startedAt = performance.now()
     let worker: Worker
     try {
       worker = new Worker(this.entry(), {
-        workerData: input,
+        workerData: { ...input, skipFormLabels },
         resourceLimits: { maxOldGenerationSizeMb: 256 }
       })
     } catch (error) {
@@ -230,7 +261,11 @@ export class PdfTranslationWriter {
       let reflow: PdfTranslationPdfResult['reflow']
       let measurements: Omit<z.infer<typeof workerDiagnostics>, 'retained'> | undefined
       let settled = false
-      const finish = (data: Uint8Array | null, failure?: PdfGenerationFailure): void => {
+      const finish = (
+        data: Uint8Array | null,
+        failure?: PdfGenerationFailure,
+        memoryExhausted = false
+      ): void => {
         if (settled) return
         settled = true
         const fields = {
@@ -243,6 +278,7 @@ export class PdfTranslationWriter {
           pageCount: input.pages.length,
           changedPageCount: input.incremental?.pageNumbers.length ?? input.pages.length,
           unitCount: input.units.length,
+          ...(skipFormLabels ? { skipFormLabels } : {}),
           ...measurements,
           ...(failure ?? {})
         }
@@ -255,7 +291,8 @@ export class PdfTranslationWriter {
           .terminate()
           .catch(() => undefined)
           .finally(() => {
-            if (failure && caller.isCurrent()) reject(new PdfGenerationError(failure))
+            if (failure && caller.isCurrent())
+              reject(memoryExhausted ? new PdfWorkerMemoryError() : new PdfGenerationError(failure))
             else
               resolve(
                 caller.isCurrent() && data
@@ -333,7 +370,9 @@ export class PdfTranslationWriter {
           )
       })
       const failed = (): void => finish(null, { code: 'worker-failed' })
-      worker.once('error', failed)
+      worker.once('error', (error: NodeJS.ErrnoException) =>
+        finish(null, { code: 'worker-failed' }, error.code === 'ERR_WORKER_OUT_OF_MEMORY')
+      )
       worker.once('exit', failed)
       if (caller.signal.aborted) cancel()
     })

@@ -4,6 +4,7 @@ import './office-preview.css'
 import { connectOfficePreviewRuntime } from './office-preview-controller'
 import { createOfficePreviewFrameBridge } from './office-preview-frame-bridge'
 import { runOfficePreview } from './office-preview-runtime'
+import { installPptxSlideView } from './office-preview-slide-view'
 
 const container = document.getElementById('office-preview-root')
 if (!(container instanceof HTMLDivElement)) {
@@ -48,6 +49,7 @@ window.addEventListener(
   },
   true
 )
+const disposeSlideView = installPptxSlideView(bridge, container)
 const disconnect = connectOfficePreviewRuntime({
   bridge,
   container,
@@ -55,6 +57,7 @@ const disconnect = connectOfficePreviewRuntime({
 })
 
 window.addEventListener('beforeunload', () => {
+  disposeSlideView()
   bridge.dispose()
   void disconnect()
 })

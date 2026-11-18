@@ -1,8 +1,10 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ClaudeSharedAuthController } from './claude-shared-auth'
+import * as windowsOwnedProcess from '../process-tree-windows'
 
 // Mock node:child_process so tests can script the subprocess without launching anything.
 const spawnCalls: {
@@ -13,20 +15,38 @@ const spawnCalls: {
 }[] = []
 let nextSpawn: (() => FakeChild) | undefined
 
-vi.mock('node:child_process', () => ({
+vi.mock('node:child_process', async (original) => ({
+  ...(await original<typeof import('node:child_process')>()),
   spawn: (
     command: string,
     args: string[],
     options?: { env?: NodeJS.ProcessEnv; windowsHide?: boolean }
   ) => {
+    // Assert the logical CLI invocation; real admission-pipe behavior lives in verification tests.
+    if (process.platform === 'darwin') {
+      expect(command).toBe('/bin/sh')
+      expect(args.slice(0, 3)).toEqual([
+        '-c',
+        'IFS= read -r start <&3 && [ "$start" = start ] || exit 125; exec 3<&-; exec "$@"',
+        'open-science-verification-start'
+      ])
+      command = args[3]
+      args = args.slice(4)
+    }
     spawnCalls.push({ command, args, env: options?.env, windowsHide: options?.windowsHide })
     return (nextSpawn ?? (() => new FakeChild()))()
   }
+}))
+vi.mock('../process-tree-windows', async (original) => ({
+  ...(await original<typeof import('../process-tree-windows')>()),
+  spawnWindowsOwnedProcess: vi.fn(),
+  reapWindowsOwnedJob: vi.fn(async () => true)
 }))
 
 class FakeChild extends EventEmitter {
   stdout = new EventEmitter()
   stderr = new EventEmitter()
+  stdio = [null, this.stdout, this.stderr, new PassThrough()]
 }
 
 const scriptChild =
@@ -49,6 +69,17 @@ const makeController = (
 beforeEach(() => {
   spawnCalls.length = 0
   nextSpawn = undefined
+  vi.mocked(windowsOwnedProcess.spawnWindowsOwnedProcess).mockImplementation(
+    (_jobName, command, args, options) => {
+      spawnCalls.push({
+        command,
+        args: [...args],
+        env: options.env,
+        windowsHide: options.windowsHide ?? (process.platform === 'win32' ? true : undefined)
+      })
+      return (nextSpawn ?? (() => new FakeChild()))() as never
+    }
+  )
 })
 
 describe('ClaudeSharedAuthController.getStatus', () => {

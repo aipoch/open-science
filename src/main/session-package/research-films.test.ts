@@ -28,6 +28,7 @@ import { appendResearchFilms, captureResearchFilms, validateResearchFilms } from
 import { readPackageArchive } from './archive'
 import type { SessionPackageManifest, PackageSelectionSummary } from '../../shared/session-package'
 import type { PackageRecords } from './records-contract'
+import { parseNativeRecords } from './native-snapshot'
 
 vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true },
@@ -101,20 +102,21 @@ async function saveFilm(
   root: string,
   session: PersistedChatSession,
   branchId?: string,
-  title = 'Evidence'
+  title = 'Evidence',
+  mode?: 'operation-replay'
 ): Promise<string> {
   const id = randomUUID(),
     base = join(
       root,
       'research-video-presentations',
-      researchFilmScopeKey({ projectId: session.projectId, sessionId: session.id, branchId })
+      researchFilmScopeKey({ projectId: session.projectId, sessionId: session.id, branchId, mode })
     ),
     directory = join(base, id)
   await mkdir(join(directory, 'output'), { recursive: true })
   await writeFile(
     join(directory, 'session.json'),
     JSON.stringify({
-      provenance: { projectId: session.projectId, sessionId: session.id, branchId }
+      provenance: { projectId: session.projectId, sessionId: session.id, branchId, mode }
     })
   )
   await writeFile(
@@ -596,4 +598,105 @@ it('captures and deletes films whose full source exceeds 8 MiB', async () => {
     branchId
   })
   await expect(lstat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('keeps both modes on one branch through import, deselection, fork and mode-isolated deletion', async () => {
+  const f = await setup(),
+    session = (await f.repository.loadSession('project', 'session'))!
+  const branchId = session.conversationGraph!.frames.find(
+    (frame) => frame.id === session.conversationGraph!.rootFrameId
+  )!.activeBranchId!
+  const request = { projectId: 'project', sessionId: 'session', branchId }
+  const explanation = await saveFilm(f.root, session, branchId, 'Explanation')
+  await saveFilm(f.root, session, branchId, 'Replay', 'operation-replay')
+  const path = join(f.root, 'two-modes.science')
+  await f.service.exportTo({ projectId: request.projectId, sessionId: request.sessionId }, path, {
+    selectFiles: include
+  })
+  const saved = await unpack(path, join(f.root, 'two-modes'))
+  expect(saved.records.researchFilms).toHaveLength(1)
+  expect(saved.records.operationReplayFilms?.films).toHaveLength(1)
+  expect(saved.manifest.requiredFeatures).not.toContain('operation-replay-film')
+  const invalidVersion = structuredClone(saved.records)
+  Object.assign(invalidVersion.operationReplayFilms!, { schemaVersion: 2 })
+  expect(() => parseNativeRecords(invalidVersion)).toThrow()
+  for (const damage of ['duplicate', 'namespace', 'missing', 'unlisted'] as const) {
+    const records = structuredClone(saved.records)
+    const manifest = structuredClone(saved.manifest)
+    const film = records.operationReplayFilms!.films[0]
+    if (damage === 'duplicate') records.operationReplayFilms!.films.push({ ...film })
+    if (damage === 'namespace') film.playerStorageKey = records.researchFilms![0].playerStorageKey
+    if (damage === 'missing')
+      manifest.inventory = manifest.inventory.filter(
+        (entry) => entry.storageKey !== film.sourceStorageKey
+      )
+    if (damage === 'unlisted') delete records.operationReplayFilms
+    expect(() => validateResearchFilms(records, manifest, session)).toThrow()
+  }
+  await deleteStoredResearchFilms(f.root, { ...request, mode: 'operation-replay' })
+  expect(await readFile(join(explanation, 'output/player.html'), 'utf8')).toContain('Explanation')
+  expect((await captureResearchFilms(f.root, session)).films).toHaveLength(1)
+  const imported = await f.service.importFrom(path)
+  const origin = await f.service.readOrigin(imported)
+  const scope = { ...imported, branchId: origin.identities[branchId] }
+  expect((await f.service.readResearchFilm(scope))?.title).toBe('Explanation')
+  expect((await f.service.readResearchFilm({ ...scope, mode: 'operation-replay' }))?.title).toBe(
+    'Replay'
+  )
+  const fork = await f.service.fork(imported)
+  expect((await f.service.readResearchFilm({ ...fork, mode: 'operation-replay' }))?.title).toBe(
+    'Replay'
+  )
+  const excluded = join(f.root, 'neither-mode.science')
+  await f.service.exportTo(imported, excluded, {
+    selectFiles: async () => ({
+      excludedStorageKeys: [],
+      includeResearchFilms: false,
+      includePdfNotes: false
+    })
+  })
+  const omitted = await unpack(excluded, join(f.root, 'neither-mode'))
+  expect(omitted.records.researchFilms).toBeUndefined()
+  expect(omitted.records.operationReplayFilms).toBeUndefined()
+  expect(
+    omitted.manifest.inventory.some((entry) =>
+      /\.(research|operation-replay)-films/.test(entry.storageKey ?? '')
+    )
+  ).toBe(false)
+  const replay = await f.service.readResearchFilm({ ...scope, mode: 'operation-replay' })
+  await deleteStoredResearchFilms(f.root, { ...scope, mode: 'operation-replay' }, replay!.id)
+  expect(await f.service.readResearchFilm({ ...scope, mode: 'operation-replay' })).toBeUndefined()
+  expect((await f.service.readResearchFilm(scope))?.title).toBe('Explanation')
+})
+
+it('defers film retention during a captured .science export and permits a later retry', async () => {
+  const f = await setup()
+  const session = (await f.repository.loadSession('project', 'session'))!
+  const directory = await saveFilm(f.root, session, session.conversationGraph!.branches[0].id)
+  const selecting = Promise.withResolvers<void>()
+  const allow = Promise.withResolvers<void>()
+  const archive = join(f.root, 'retention.science')
+  const exporting = f.service.exportTo({ projectId: 'project', sessionId: 'session' }, archive, {
+    selectFiles: async () => {
+      selecting.resolve()
+      await allow.promise
+      return include()
+    }
+  })
+  await selecting.promise
+  const remove = vi.fn(async () => {
+    await rm(directory, { recursive: true })
+    return true
+  })
+  const retiring = f.service.withFilmRetention(remove)
+  try {
+    expect(await retiring).toBe(false)
+    expect(remove).not.toHaveBeenCalled()
+  } finally {
+    allow.resolve()
+  }
+  await exporting
+  expect(await f.service.withFilmRetention(remove)).toBe(true)
+  const exported = await unpack(archive, join(f.root, 'retention-export'))
+  expect(exported.records.researchFilms).toHaveLength(1)
 })

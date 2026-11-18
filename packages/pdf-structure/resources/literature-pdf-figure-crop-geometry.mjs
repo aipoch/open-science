@@ -162,6 +162,83 @@ export function nativeGroupedRasterCaptionBottom(page, figure, context) {
   return { bottom, captionInkTop, imageRect: image.rect }
 }
 
+// Two independently painted charts can have caption advance boxes taller than
+// the caption ink. Recover a clipped bottom only from the matching decoded
+// image and the complete native text packets for the page.
+export function nativeAdjacentRasterCaptionBottom(page, figure, context) {
+  const rect = figure?.rect,
+    caption = figure?.caption,
+    v = context?.viewport,
+    raw = context?.content?.items,
+    valid = (r) => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && area(r) > 0,
+    images = context?.graphicsBounds?.filter((g) => g.kind === 'image')
+  if (
+    !valid(rect) ||
+    !valid(caption?.rect) ||
+    !caption.lines?.length ||
+    caption.page !== page.pageNumber ||
+    rect[3] > caption.rect[1] ||
+    caption.rect[1] - rect[3] > 2 ||
+    page.invalidGraphicsBounds !== 0 ||
+    images?.length !== 2 ||
+    !Array.isArray(raw) ||
+    !v ||
+    context.pageNumber !== page.pageNumber
+  )
+    return
+  const scale = (n, axis) => n * (axis % 2 ? page.height : page.width)
+  const selected = images.filter((g) => {
+    const paint = g.paintedNormalizedRect?.map(scale)
+    if (
+      !g.imageHash ||
+      !valid(paint) ||
+      paint[3] <= rect[3] ||
+      paint[0] <= rect[0] ||
+      paint[1] <= rect[1] ||
+      paint[2] >= rect[2]
+    )
+      return false
+    return intersection(rect, paint) >= area(paint) * 0.9
+  })
+  if (selected.length !== 1) return
+  const [graphic] = selected,
+    imageRect = graphic.paintedNormalizedRect.map(scale),
+    peer = images.find((image) => image !== graphic)?.normalizedRect?.map(scale)
+  if (!valid(peer) || !(peer[2] < rect[0] || peer[0] > rect[2])) return
+  const tokens = raw.filter((r) => r.str?.trim()).map((r) => tableTextToken(r, v, 0)),
+    packet = nativePageTextPacketInventory(page, tokens, context, true)
+  if (packet?.evidence.images.length !== 2) return
+  const bound = packet.evidence.images.find((im) => im.operationIndex === graphic.operationIndex)
+  if (
+    !bound ||
+    imageRect.some((n, i) => (i < 2 ? n < bound.rect[i] - 1e-7 : n > bound.rect[i] + 1e-7))
+  )
+    return
+  const records = packet.records.filter((r) =>
+      r.rect.every((n, i) => (i < 2 ? n >= caption.rect[i] - 1e-7 : n <= caption.rect[i] + 1e-7))
+    ),
+    key = (text) => text.replace(/\s/gu, '')
+  if (!records.length || key(records.map((r) => r.r.str).join('')) !== key(caption.lines.join('')))
+    return
+  const ink = records.flatMap((r) => r.part.map((p) => p.g.ink)).filter(valid),
+    captionInkTop = Math.min(...ink.map((r) => r[1])),
+    bottom = (imageRect[3] + captionInkTop) / 2,
+    strip = [rect[0] - 0.5, rect[3] - 0.5, rect[2] + 0.5, bottom + 0.5]
+  if (
+    !Number.isFinite(bottom) ||
+    captionInkTop <= imageRect[3] ||
+    bottom - rect[3] > 6 ||
+    packet.glyphs.some(
+      (g) => !g.rendererSkipped && valid(g.ink) && intersection(g.ink, strip) > 0
+    ) ||
+    context.graphicsBounds.some(
+      (g) => g !== graphic && intersection(g.normalizedRect.map(scale), strip) > 0
+    )
+  )
+    return
+  return { bottom, captionInkTop, imageRect }
+}
+
 // Byte-budget retries change the scale and ceil-sized last pixel. Admit this
 // optional trim only after the actual PNG protects both complete paint domains.
 export function nativeGroupedRasterCaptionPngSafe(proof, png, rect, bounds) {

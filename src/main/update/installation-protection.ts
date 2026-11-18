@@ -1,6 +1,5 @@
 import { systemBootIdentity } from '../system-boot-identity'
 import { windowsProcessIsAlive } from '../windows-process-query'
-import { cancelDebSystemdGate, type DebSystemdGate } from './deb-systemd-gate'
 import { z } from 'zod'
 import { createHash, randomUUID } from 'node:crypto'
 import { installationFs } from './installation-filesystem'
@@ -56,7 +55,7 @@ export type InstallationUpdateRecord = {
   targetManifest?: InstallationManifest
   stoppedClean?: boolean
   runtimeExited?: boolean
-  preparedDebGate?: DebSystemdGate
+  preparedDebGate?: import('./deb-systemd-gate').DebSystemdGate
   executor?: {
     channel: 'supervised-mac' | 'supervised-appimage' | 'supervised-deb'
     directory: string
@@ -483,7 +482,7 @@ export function beginInstallationUpdate(
     runtime: InstallationRuntime
     targetManifest?: InstallationManifest
     currentManifest?: InstallationManifest
-    preparedDebGate?: DebSystemdGate
+    preparedDebGate?: import('./deb-systemd-gate').DebSystemdGate
     inspectProcesses?: (root: string) => number[]
     allowedProcessIds?: number[]
   }
@@ -905,8 +904,10 @@ export async function finishInstallationRecoveryAsync(
       'install-failed',
       'The installer has already received this operation.'
     )
-  if (record.preparedDebGate && record.phase !== 'handoff')
+  if (record.preparedDebGate && record.phase !== 'handoff') {
+    const { cancelDebSystemdGate } = await import('./deb-systemd-gate.js')
     await cancelDebSystemdGate(record.preparedDebGate)
+  }
   const expected = intent === 'cancel' ? record.oldManifest : record.targetManifest
   if (
     !expected ||

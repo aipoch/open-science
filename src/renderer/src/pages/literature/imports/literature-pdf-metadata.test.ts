@@ -62,6 +62,16 @@ describe('parseLiteraturePdfMetadata', () => {
     })
   })
 
+  it('ignores a publisher template DOI during PDF import', () => {
+    const placeholder = '10.1234/journal.XX.XXXXXX'
+    expect(parseLiteraturePdfMetadata({}, `See https://doi.org/${placeholder}.`)).toEqual({})
+    expect(
+      parseLiteraturePdfMetadata({ DOI: placeholder }, `${placeholder} and 10.1234/article`)
+    ).toMatchObject({
+      identifiers: [{ scheme: 'doi', value: '10.1234/article', isPrimary: true }]
+    })
+  })
+
   it('trims prose punctuation only when extracting a DOI from free text', () => {
     expect(parseLiteraturePdfMetadata({}, 'See 10.1234/example.')).toMatchObject({
       identifiers: [{ scheme: 'doi', value: '10.1234/example', isPrimary: true }]

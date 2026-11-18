@@ -4,6 +4,7 @@ import { hostname, userInfo } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import type {
@@ -307,5 +308,11 @@ export class LocalFsService {
   async openPath(path: string): Promise<string> {
     assertValidLocalPath(path)
     return desktopShellInteraction().openPath(path)
+  }
+
+  // Opens a local file URL through the system's default browser.
+  async openInBrowser(path: string): Promise<void> {
+    assertValidLocalPath(path)
+    await desktopShellInteraction().openExternal(pathToFileURL(path).href)
   }
 }

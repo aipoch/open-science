@@ -932,13 +932,11 @@ class AcpRuntime {
   }
 
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
-  async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(async () => {
-      const created = await this.providerSessionCreator.create(request)
-      const session = this.activeSessionFor(created.sessionId)
-      if (session) await this.options.authorizedDirectories?.initialize(session)
-      return created
-    })
+  async createSession(
+    request: AcpCreateSessionRequest = {},
+    beforePublish?: () => void
+  ): Promise<AcpCreateSessionResponse> {
+    return this.withOperationLease(() => this.providerSessionCreator.create(request, beforePublish))
   }
 
   getSessionReasoningEffort(sessionId: string): ResolvedReasoningEffort | undefined {

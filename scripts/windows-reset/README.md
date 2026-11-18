@@ -109,10 +109,10 @@ Open-Science or start background runtime work while reset is running.
 Run `npm test -- scripts/windows-data-reset.test.ts` from the repository root on
 Windows. It uses disposable fixtures and tests PowerShell 5.1, process refusal,
 confirmation, path/link boundaries, corrupt settings, locked files, and the CMD
-launcher. The standalone PowerShell file includes the installer owner's cache
-validation functions so users need only the two downloaded files. A portable
-contract test requires those functions to remain identical to
-`build/windows-runtime-cache-uninstall.ps1`.
+launcher. The standalone PowerShell file carries its own copy of the installer's
+cache validation so users need only the two downloaded files. A parity test runs
+those functions and the native uninstall helper (`build/windows-uninstall-helper.cs`)
+against the same fixtures and requires identical verdicts and cache names.
 
 There are no application schema changes or new durable states. Historical support
 is limited to the legacy configuration-root data layout and known managed cache

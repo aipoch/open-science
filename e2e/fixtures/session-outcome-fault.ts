@@ -1,6 +1,8 @@
 import type { ElectronApplication, Page } from 'playwright'
 import type { PersistedChatSession } from '../../src/shared/session-persistence'
 import type { AcpPromptRequest } from '../../src/shared/acp'
+import { join } from 'node:path'
+import { SessionJournalStore } from '../../src/main/session-persistence/journal'
 
 type NativeApp = { readonly page: Page }
 type SessionIdentity = { projectId: string; sessionId: string }
@@ -20,20 +22,35 @@ const nativeApplication = (app: NativeApp): ElectronApplication => {
 export const readRawOutcomeSession = async (
   app: NativeApp,
   identity: SessionIdentity
-): Promise<PersistedChatSession> =>
-  nativeApplication(app).evaluate(async (_electron, input) => {
-    const fs = process.getBuiltinModule('node:fs/promises')!
-    const path = process.getBuiltinModule('node:path')!
+): Promise<PersistedChatSession> => {
+  for (const value of [identity.projectId, identity.sessionId])
+    if (!/^[a-zA-Z0-9_-]+$/u.test(value)) throw new Error('Unsafe outcome fixture identity.')
+  const root = await nativeApplication(app).evaluate(() => {
     const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
-    if (!root || root !== process.env.OPEN_SCIENCE_CONFIG_ROOT)
+    if (
+      !root ||
+      root !== process.env.OPEN_SCIENCE_CONFIG_ROOT ||
+      !root.includes('open-science-electron-e2e-')
+    )
       throw new Error('The outcome fixture requires isolated storage.')
-    return JSON.parse(
-      await fs.readFile(
-        path.join(root, 'sessions', input.projectId, `${input.sessionId}.json`),
-        'utf8'
-      )
-    ).session as PersistedChatSession
-  }, identity)
+    return root
+  })
+  // Read from the fixture's Node process so both legacy JSON and journal authority use the real
+  // reader, including appended revisions. A primary manifest is not a Session snapshot.
+  const stored = await new SessionJournalStore({ maxBytes: 64 * 1024 * 1024 }).read(
+    join(root, 'sessions', identity.projectId, `${identity.sessionId}.json`)
+  )
+  const document = stored?.document
+  if (
+    !document ||
+    typeof document !== 'object' ||
+    Array.isArray(document) ||
+    !('session' in document) ||
+    !document.session
+  )
+    throw new Error('The outcome fixture Session is unavailable.')
+  return document.session as unknown as PersistedChatSession
+}
 
 export const readOutcomeArtifactRun = async (
   app: NativeApp,

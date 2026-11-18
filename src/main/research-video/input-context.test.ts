@@ -107,3 +107,73 @@ it('budgets correction and animation envelopes while preserving executable helpe
   expect(projected.source.messages.length).toBeGreaterThan(0)
   expect(payload).toEqual(original)
 })
+
+it('bounds replay context without losing actor identity or inventing evidence references', () => {
+  const replay = {
+    ...source,
+    provenance: { ...source.provenance, mode: 'operation-replay' as const },
+    replay: {
+      schemaVersion: 1 as const,
+      omissions: [],
+      events: Array.from({ length: 20 }, (_, i) => ({
+        id: 'e' + i,
+        position: i + 1,
+        messageId: 'm' + i,
+        kind: i === 0 ? ('human-input' as const) : ('application-event' as const),
+        title: 'Record',
+        text: 'Evidence with uncertainty. '.repeat(200)
+      }))
+    }
+  }
+  const before = structuredClone(replay)
+  const prompt = prepareResearchFilmPrompt({ source: replay }, 'Instructions', 2400, count)
+  expect(count(prompt) + count('Instructions')).toBeLessThanOrEqual(2400)
+  const selected = JSON.parse(prompt).source
+  expect(selected.replay.events[0]).toMatchObject({ id: 'e0', position: 1, kind: 'human-input' })
+  expect(selected.replay.events.at(-1)).toMatchObject({
+    id: 'e19',
+    position: 20,
+    kind: 'application-event'
+  })
+  expect(selected.contextNote).toContain('Omitted')
+  expect(replay).toEqual(before)
+})
+
+it('budgets code, output and file previews while retaining the core evidence', () => {
+  const base = { messageId: 'm', title: 'Record', text: 'Evidence. '.repeat(2000) }
+  const replay = {
+    ...source,
+    replay: {
+      schemaVersion: 1 as const,
+      omissions: [],
+      events: [
+        { ...base, id: 'question', kind: 'human-input' as const },
+        ...Array.from({ length: 12 }, (_, i) => ({
+          ...base,
+          id: 'snapshot-' + i,
+          kind: 'plan' as const
+        })),
+        {
+          ...base,
+          id: 'run',
+          kind: 'execution' as const,
+          execution: {
+            code: 'print(42)\n'.repeat(2000),
+            output: '42\n'.repeat(4000),
+            language: 'python'
+          }
+        },
+        { ...base, id: 'answer', kind: 'agent-message' as const },
+        { ...base, id: 'file', kind: 'result' as const, previewText: 'Name,Value\n'.repeat(2000) }
+      ]
+    }
+  }
+  const original = structuredClone(replay)
+  const prompt = prepareResearchFilmPrompt({ source: replay }, 'Instructions', 3400, count)
+  const events = JSON.parse(prompt).source.replay.events
+  expect(prompt.length + 'Instructions'.length).toBeLessThanOrEqual(3400)
+  expect(events.map((event: { id: string }) => event.id)).toEqual(
+    expect.arrayContaining(['question', 'run', 'answer', 'file'])
+  )
+  expect(replay).toEqual(original)
+})

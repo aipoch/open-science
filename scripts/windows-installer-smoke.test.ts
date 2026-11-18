@@ -41,6 +41,7 @@ import {
   runProcess,
   terminateDirectoryProcesses,
   terminateProcessTree,
+  uninstallAndVerify,
   waitForShutdownExit,
   windowsProfileEnvironment,
   writeUpgradeSentinel
@@ -115,6 +116,28 @@ describe('Windows installer smoke plan', () => {
     }
   )
 
+  it('reaps detached uninstaller helpers before waiting for install files', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-uninstall-root-'))
+    const installDirectory = join(root, 'installed app')
+    const uninstaller = join(installDirectory, 'Uninstall open-science.exe')
+    const terminated: string[] = []
+    const terminate = vi.fn(async (directory: string) => {
+      terminated.push(directory)
+    })
+    const run = vi.fn(async (executable: string) => {
+      expect(executable).toBe(uninstaller)
+      return { code: 0, stdout: '', stderr: '' }
+    })
+    try {
+      await mkdir(installDirectory, { recursive: true })
+      await writeFile(uninstaller, '')
+      await uninstallAndVerify(installDirectory, {}, { processRoot: root, terminate, run })
+      expect(terminated).toEqual([installDirectory, root])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it.skipIf(process.platform !== 'win32')(
     'passes the exact cleanup directory through actual PowerShell parsing',
     async () => {
@@ -134,6 +157,57 @@ describe('Windows installer smoke plan', () => {
       expect(result?.stdout).toBe(directory)
     }
   )
+
+  it.skipIf(process.platform !== 'win32')(
+    'does not terminate an external process whose command line mentions the owned root',
+    async () => {
+      let result: Awaited<ReturnType<typeof runProcess>> | undefined
+      await terminateDirectoryProcesses(
+        'D:\\owned smoke root',
+        async (executable, args, options) => {
+          const script = args[3]
+          const probe = `
+function Get-CimInstance {
+  param([string]$ClassName)
+  @(
+    [pscustomobject]@{
+      ExecutablePath = 'D:\\other\\windows-uninstall-helper.exe'
+      CommandLine = '"D:\\owned smoke root\\windows-uninstall-helper.exe" cleanup'
+      ProcessId = 101
+    }
+    [pscustomobject]@{
+      ExecutablePath = 'D:\\owned smoke root\\open-science.exe'
+      CommandLine = '"D:\\owned smoke root\\open-science.exe"'
+      ProcessId = 202
+    }
+  )
+}
+function Stop-Process {
+  param([int]$Id, [switch]$Force, [string]$ErrorAction)
+  [Console]::Write("$Id,")
+}
+${script}`
+          result = await runProcess(executable, [...args.slice(0, 3), probe, ...args.slice(4)], {
+            ...options,
+            allowNonZero: true
+          })
+          return result
+        }
+      )
+      expect(result?.code, result?.stderr).toBe(0)
+      expect(result?.stdout).toBe('202,')
+    }
+  )
+
+  it('limits directory process cleanup to executable paths below the owned root', async () => {
+    let script
+    await terminateDirectoryProcesses('D:\\owned smoke root', async (_executable, args) => {
+      script = args[3]
+      return { code: 0, stdout: '', stderr: '' }
+    })
+    expect(script).toContain('ExecutablePath.StartsWith')
+    expect(script).not.toContain('CommandLine')
+  })
 
   it('derives the packaged version from stable and nightly installer names', () => {
     expect(installerVersion('aipoch-open-science-0.8.0-win-x64-setup.exe')).toBe('0.8.0')

@@ -32,7 +32,7 @@ import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import { renderConnectorInstructions } from '../connectors/skill-document-renderer'
-import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import type { AgentRuntimeManager } from './agent-runtime-manager'
 import { BackendRoutePlanner } from './backend-route-planner'
 import {
@@ -632,7 +632,11 @@ export class AgentBackendResolver {
             skillsRoot,
             forcedSkillIds,
             context.skillWhitelist,
-            ...(framework.id === 'codebuddy' ? [{ directoryLayout: 'agent-facing' as const }] : [])
+            ...(framework.id === 'codebuddy'
+              ? [{ directoryLayout: 'agent-facing' as const }]
+              : framework.id === 'opencode' && opencodeMajorVersion === 2
+                ? [{ directoryLayout: 'agent-facing-shared' as const }]
+                : [])
           )
         : skillDiscovery
       connectorInstructions = includeSkillAndConnectorContext ? renderConnectorInstructions() : ''

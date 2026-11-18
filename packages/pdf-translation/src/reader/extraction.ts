@@ -20,7 +20,9 @@ import {
   readNativeReferenceEvidence,
   readNativeTableNoteEvidence,
   readNativeDisplayEquationEvidence,
+  readNativeDerivativeRuleEvidence,
   readNativeNumberedPacketEvidence,
+  readNativeCompactAlgorithmEvidence,
   bindNativeReferenceRolePage,
   nativeReferenceRolePagesCurrent
 } from './native-reference-evidence.js'
@@ -341,6 +343,7 @@ async function readPdfTranslationSource({
           viewport.height - (mb * x + md * y + my)
         ],
         fontName: item.fontName,
+        fontFamily: content.styles?.[item.fontName]?.fontFamily,
         fontAscent: content.styles?.[item.fontName]?.ascent,
         fontDescent: content.styles?.[item.fontName]?.descent,
         fontVertical: content.styles?.[item.fontName]?.vertical,
@@ -397,6 +400,12 @@ async function readPdfTranslationSource({
       ),
       nativeReferenceEvidence,
       nativeDisplayMathEvidence,
+      nativeDerivativeRuleEvidence: await readNativeDerivativeRuleEvidence(
+        page,
+        content,
+        nativeDisplayMathEvidence
+      ),
+      nativeCompactAlgorithmEvidence: await readNativeCompactAlgorithmEvidence(page, content),
       nativeNumberedPacketEvidence: await readNativeNumberedPacketEvidence(
         page,
         content,

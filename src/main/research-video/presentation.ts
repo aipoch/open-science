@@ -6,6 +6,7 @@ import { writeDurableJsonFile } from '@aipoch/durable-files'
 import {
   RESEARCH_VIDEO_STATUS_TIMEOUT_MS,
   RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE,
+  RESEARCH_FILM_BUSY_MESSAGE,
   researchVideoPresentationRequestSchema,
   researchVideoStatusRequestSchema,
   researchVideoStartRequestSchema,
@@ -21,6 +22,7 @@ import type { LocalModelOwner, createLocalModelOwner } from '../local-models/own
 import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
 import {
   generateResearchFilm,
+  REPLAY_RUNTIME_VERSION,
   ResearchVideoWorkerError,
   ResearchVideoSpeechCleanupError,
   ResearchVideoBuildCleanupError,
@@ -41,12 +43,14 @@ import {
   type PendingFilm
 } from './checkpoint'
 import { stageResearchVideoSessionImages } from './session-images'
+import { operationReplaySource } from './replay-source'
 import { waitForFilmStep } from './wait'
 import type { ResearchFilmLifecycle } from './lifecycle'
 
 import {
   researchFilmScopeKey as scopeKey,
   readStoredResearchFilm,
+  pruneStoredResearchFilms,
   readResearchFilmReceipt,
   CorruptResearchFilmReceiptError,
   hasResearchFilmOutputs,
@@ -100,6 +104,7 @@ export type ResearchVideoPresentationOwner = {
 /** User-initiated derived presentations live separately from immutable imported conversation history. */
 export function createResearchVideoPresentationOwner(options: {
   dataRoot(): string
+  withUnusedFilmFiles?: (paths: string[], remove: () => Promise<void>) => Promise<boolean>
   mutate?: <T>(request: ResearchVideoPresentationRequest, work: () => Promise<T>) => Promise<T>
   checkReadiness?: (signal?: AbortSignal) => Promise<void>
   models: Pick<
@@ -109,6 +114,10 @@ export function createResearchVideoPresentationOwner(options: {
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
   writeScreenplay: ResearchFilmAuthor['writeScreenplay']
   writeAnimation?: ResearchFilmAuthor['writeAnimation']
+  writeReplay?: ResearchFilmAuthor['writeReplay']
+  loadReplayRecords?: (
+    session: PersistedChatSession
+  ) => Promise<import('@aipoch/research-film').ReplayRecords>
   generate: ResearchVideoGenerate
   checkGenerationAdmission?: () => void
   engineDirectory: string
@@ -130,7 +139,7 @@ export function createResearchVideoPresentationOwner(options: {
     { error: Error; status: ResearchVideoPresentationStatus; kind: 'disk' | 'build' }
   >()
   const sessionKey = (request: ResearchVideoPresentationRequest): string =>
-    scopeKey({ ...request, branchId: undefined })
+    scopeKey({ ...request, branchId: undefined, mode: undefined })
   let active:
     | {
         key: string
@@ -184,6 +193,7 @@ export function createResearchVideoPresentationOwner(options: {
     const key = scopeKey(request)
     const revision = operationRevision
     const state = structuredClone(states.get(key) ?? {})
+    if (active && active.key !== key) state.preflightError = RESEARCH_FILM_BUSY_MESSAGE
     const session = await options.loadSession(request.projectId, request.sessionId)
     signal.throwIfAborted()
     const block = researchVideoGenerationBlock(session, request)
@@ -253,7 +263,9 @@ export function createResearchVideoPresentationOwner(options: {
       })
     const result =
       (await local(scope)) ??
-      (branchId !== request.branchId ? await local(request) : undefined) ??
+      (request.mode !== 'operation-replay' && branchId !== request.branchId
+        ? await local(request)
+        : undefined) ??
       (session?.packageOrigin || session?.forkOrigin
         ? await options.loadImportedFilm?.(request)
         : undefined)
@@ -264,8 +276,14 @@ export function createResearchVideoPresentationOwner(options: {
       const saved = base && (await readPendingFilm(base))
       if (
         saved &&
+        (saved.mode ?? 'research-explanation') === (request.mode ?? 'research-explanation') &&
         saved.id !== result?.id &&
-        saved.conversation === filmConversationDigest(researchVideoSessionSource(session, request))
+        saved.conversation ===
+          filmConversationDigest(
+            request.mode === 'operation-replay'
+              ? operationReplaySource(session, request, await options.loadReplayRecords?.(session))
+              : researchVideoSessionSource(session, request)
+          )
       ) {
         state.canResume = true
         state.filmStep = saved.step
@@ -465,7 +483,19 @@ export function createResearchVideoPresentationOwner(options: {
                 ? 'Add conversation content before generating.'
                 : 'Research session is unavailable.'
         )
-      let source = researchVideoSessionSource(session, request)
+      let source =
+        request.mode === 'operation-replay'
+          ? operationReplaySource(
+              session,
+              request,
+              await checkFilmReadiness(
+                () =>
+                  options.loadReplayRecords?.(session) ??
+                  Promise.resolve({ reviews: [], jobs: [] }),
+                signal
+              )
+            )
+          : researchVideoSessionSource(session, request)
       activeBranchId = source.provenance.branchId
       const checksums: string[] = []
       measure('images')
@@ -520,7 +550,13 @@ export function createResearchVideoPresentationOwner(options: {
       }
       const scope = { ...request, branchId: source.provenance.branchId }
       const conversation = filmConversationDigest(source)
-      const fingerprint = digestFilmInput(JSON.stringify([conversation, checksums]))
+      const fingerprint = digestFilmInput(
+        JSON.stringify([
+          conversation,
+          checksums,
+          ...(request.mode === 'operation-replay' ? [REPLAY_RUNTIME_VERSION] : [])
+        ])
+      )
       const existingBase = await diskStep(() => directory(scopeKey(scope)))
       const previous = existingBase
         ? await diskStep(() => readPendingFilm(existingBase))
@@ -537,7 +573,10 @@ export function createResearchVideoPresentationOwner(options: {
         : undefined
       let newPending = false
       const resumable =
-        resume && previous?.source === fingerprint && previous.id !== published?.id
+        resume &&
+        previous?.source === fingerprint &&
+        previous.id !== published?.id &&
+        (previous.mode ?? 'research-explanation') === (request.mode ?? 'research-explanation')
           ? previous
           : undefined
       const pending =
@@ -585,7 +624,8 @@ export function createResearchVideoPresentationOwner(options: {
         await diskStep(() => removePendingPointer(publishBase))
         await diskStep(() => rm(job!, { recursive: true, force: true }))
         saved = {
-          version: 1,
+          version: 2,
+          mode: request.mode ?? 'research-explanation',
           id: randomUUID(),
           source: fingerprint,
           conversation,
@@ -635,7 +675,9 @@ export function createResearchVideoPresentationOwner(options: {
         // Resuming an older checkpoint does not opt it into startup cleanup.
         if (newPending) {
           const { projectId, sessionId, branchId } = source.provenance
-          await diskStep(() => savePendingFilmOwner(job!, { id, projectId, sessionId, branchId }))
+          await diskStep(() =>
+            savePendingFilmOwner(job!, { id, projectId, sessionId, branchId, mode: request.mode })
+          )
         }
         await diskStep(async () => {
           await savePendingFilm(publishBase, saved!)
@@ -748,6 +790,19 @@ export function createResearchVideoPresentationOwner(options: {
             await rm(join(outputJob, name), { recursive: true, force: true })
         }
       }, true).catch(() => log.info('film cleanup deferred', { ...context(), phase: 'publishing' }))
+      if (published && options.withUnusedFilmFiles && !diskFailure) {
+        await diskStep(
+          () =>
+            pruneStoredResearchFilms(
+              options.dataRoot(),
+              scope,
+              id,
+              published.id,
+              options.withUnusedFilmFiles!
+            ),
+          true
+        ).catch(() => log.info('film retention deferred', { ...context(), phase: 'publishing' }))
+      }
     } catch (error) {
       const buildUnconfirmed = saved && error instanceof ResearchVideoBuildCleanupError
       const cleanupUnconfirmed =
@@ -883,7 +938,7 @@ export function createResearchVideoPresentationOwner(options: {
           await active.prepared
           return status(request)
         }
-        throw new Error('Another research explanation is being generated. Wait for it to finish.')
+        throw new Error(RESEARCH_FILM_BUSY_MESSAGE)
       }
       if (installNarration && narrationInstall)
         throw new Error('Local model management is in progress.')
