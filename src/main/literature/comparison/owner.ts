@@ -179,7 +179,7 @@ export class LiteratureComparisons {
     const parts = this.tables.map((table) => {
       const cached = this.serializedTables.get(table)
       if (cached?.revision === table.revision) return cached.json
-      // History is append-only and replaced on append. Reuse validated evidence bytes on edits.
+      // Reuse validated history bytes across unrelated cell edits.
       const { cells, ...metadata } = comparisonTableSchema.parse({
         ...table,
         cells: table.cells.map((cell) => ({ ...cell, history: [] }))
@@ -531,7 +531,12 @@ export class LiteratureComparisons {
           for (const cell of table.cells) {
             const field = previous.find((f) => f.id === cell.fieldId)
             for (const attempt of cell.history)
-              if (field && attempt.fieldVersion === field.version) {
+              if (
+                field &&
+                attempt.fieldVersion === field.version &&
+                (!attempt.fieldSnapshot || !attempt.sourcePolicy)
+              ) {
+                this.serializedHistories.delete(cell.history)
                 attempt.fieldSnapshot ??= { ...field }
                 attempt.sourcePolicy ??= table.sourcePolicy
               }

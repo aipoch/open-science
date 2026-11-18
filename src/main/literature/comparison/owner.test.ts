@@ -1482,27 +1482,36 @@ it('snapshots known legacy fields before update and never relabels unknown legac
   await writeFile(f.path, JSON.stringify({ version: 1, tables: [legacy] }))
   const restored = new LiteratureComparisons(f.options)
   await restored.start()
+  // An earlier save has already cached the legacy histories.
+  const sampled = await restored.run({
+    action: 'set-sample',
+    tableId: legacy.id,
+    itemIds: ['paper1']
+  })
   await restored.run({
     action: 'update',
-    expectedRevision: legacy.revision,
+    expectedRevision: sampled.tables[0].revision,
     tableId: f.table.id,
     name: 'New',
     sourcePolicy: 'full-text',
     fields: [{ id: 'field', name: 'New name', rule: 'New rule' }]
   })
-  const saved = (await restored.run({ action: 'read', tableId: f.table.id })).tables[0]
+  await restored.dispose()
+  const reopened = new LiteratureComparisons(f.options)
+  await reopened.start()
+  const saved = (await reopened.run({ action: 'read', tableId: f.table.id })).tables[0]
   saved.cells[0] = (
-    await restored.run({ action: 'read-cell', tableId: f.table.id, cellId: saved.cells[0].id })
+    await reopened.run({ action: 'read-cell', tableId: f.table.id, cellId: saved.cells[0].id })
   ).cell!
   expect(saved.cells[0].history[0].fieldSnapshot).toBeUndefined()
   expect(saved.cells[0].history[1]).toMatchObject({
     fieldSnapshot: legacy.fields[0],
     sourcePolicy: 'abstract'
   })
-  const csv = (await restored.run({ action: 'export', tableId: f.table.id, kind: 'evidence' })).csv!
+  const csv = (await reopened.run({ action: 'export', tableId: f.table.id, kind: 'evidence' })).csv!
   expect(csv.split('\r\n')[1]).toContain('"field","","","","1"')
   expect(csv.split('\r\n')[2]).toContain('"field","Result","Extract result","abstract","2"')
-  await restored.dispose()
+  await reopened.dispose()
 })
 
 it.each(['source-1', 'source-2'])(
