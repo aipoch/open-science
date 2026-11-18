@@ -2549,19 +2549,35 @@ describe('production delegated-work composition', () => {
       const harness = await createCompositionHarness(root, 'opencode', undefined, undefined, {
         resolvePermissionPrompts
       })
-      const pending = harness.composition.host.delegate(
-        harness.caller,
-        { task: 'Check the cohort', name: 'Cohort' },
-        { wait: false }
-      )
-      // A finished root prompt or a later prompt must not alter the admitted execution.
-      currentPolicy = initialPolicy === 'none' ? undefined : 'none'
-      await pending
-      await vi.waitFor(() => expect(harness.execution.controls()).toHaveLength(1))
-      expect(harness.execution.controls()[0].input.permissionPrompts).toBe(initialPolicy)
-      expect(resolvePermissionPrompts).toHaveBeenCalledOnce()
-      expect(JSON.stringify(harness.durable())).not.toContain('permissionPrompts')
-      await harness.composition.root.stopSession(harness.session.id)
+      const startAttemptRuntime = harness.commands.startAttemptRuntime.bind(harness.commands)
+      vi.spyOn(harness.commands, 'startAttemptRuntime').mockImplementation(async (...args) => {
+        await new Promise((resolve) => setTimeout(resolve, 1200))
+        return startAttemptRuntime(...args)
+      })
+      const executionStarted = Promise.withResolvers<void>()
+      const startExecution = harness.execution.run.bind(harness.execution)
+      vi.spyOn(harness.execution, 'run').mockImplementation((...args) => {
+        const handle = startExecution(...args)
+        executionStarted.resolve()
+        return handle
+      })
+      try {
+        const pending = harness.composition.host.delegate(
+          harness.caller,
+          { task: 'Check the cohort', name: 'Cohort' },
+          { wait: false }
+        )
+        // A finished root prompt or a later prompt must not alter the admitted execution.
+        currentPolicy = initialPolicy === 'none' ? undefined : 'none'
+        await pending
+        await executionStarted.promise
+        expect(harness.execution.controls()).toHaveLength(1)
+        expect(harness.execution.controls()[0].input.permissionPrompts).toBe(initialPolicy)
+        expect(resolvePermissionPrompts).toHaveBeenCalledOnce()
+        expect(JSON.stringify(harness.durable())).not.toContain('permissionPrompts')
+      } finally {
+        await harness.composition.root.stopSession(harness.session.id)
+      }
     }
   )
 
