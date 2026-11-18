@@ -814,10 +814,17 @@ async function main(): Promise<void> {
     const { createCoreRuntime } = await coreRuntimeImport
     abortStartupIfStopping()
     configureDesktopFileInteraction(
-      createRemoteDesktopFileInteraction(async (request, callerId) => {
+      createRemoteDesktopFileInteraction(async (request, callerId, signal) => {
         if (!desktop) throw new DesktopCapabilityUnavailable(request.operation)
+        // Film generation owns this background review even if the initiating document reloads.
+        if (request.operation === 'research-video-check')
+          return desktop.requestNative(request, undefined, signal)
         const caller = currentDesktopCaller()
-        return desktop.requestNative(request, callerId ?? caller?.clientId, caller?.signal)
+        return desktop.requestNative(
+          request,
+          callerId ?? caller?.clientId,
+          signal ?? caller?.signal
+        )
       })
     )
     configureDesktopShellInteraction(

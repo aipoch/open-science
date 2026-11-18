@@ -47,6 +47,10 @@
     "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Al salir, se interrumpirán las tareas pendientes. Se conservarán las conversaciones y los archivos guardados."
   },
   "native": {
+    "Use {{name}} as a live illustration?": "¿Usar {{name}} como ilustración animada?",
+    "The film can run {{modules}} local JavaScript modules from this session in its offline player. You can use a drawn illustration instead.": "El vídeo puede ejecutar {{modules}} módulos JavaScript locales de esta sesión en su reproductor sin conexión. También puede utilizar un dibujo.",
+    "Use a drawing": "Usar un dibujo",
+    "Allow this app": "Permitir esta aplicación",
     "Local State is in use by another process.": "Otro proceso está utilizando Local State.",
     "The Local State configuration file could not be read.": "No se pudo leer el archivo de configuración Local State.",
     "The Local State configuration file is invalid.": "El archivo de configuración Local State no es válido.",
@@ -195,6 +199,11 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "El inicio se detuvo al acceder a las credenciales del sistema. Se conservaron las credenciales y los datos del perfil existentes."
   },
   "renderer": {
+    "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (prever {{min}}–{{max}} min)",
+    "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}} (prever {{min}}–{{max}} min por minuto de película)",
+    "MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.": "El MP4 se exporta en formato horizontal (16:9). Si la exportación se interrumpe, la siguiente comienza desde el principio.",
+    "Includes the session app in motion.": "Muestra en movimiento la aplicación de la sesión.",
+    "Uses a drawn illustration of the session app.": "Muestra un dibujo de la aplicación de la sesión.",
     "Pros": "Ventajas",
     "Cons": "Limitaciones",
     "The conversation changed. Reopen the image editor and try again.": "La conversación ha cambiado. Vuelva a abrir el editor de imágenes e inténtelo de nuevo.",
@@ -8122,7 +8131,9 @@
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "¿Descartar los cambios conservados de «{{title}}» y volver a cargar la versión guardada? Esta acción no se puede deshacer.",
     "Could not reload the saved conversation. Retained changes were kept. Please try again.": "No se pudo volver a cargar la conversación guardada. Los cambios conservados se mantienen. Vuelva a intentarlo.",
     "Research narration": "Narración de investigación",
-    "Export MP4": "Exportar MP4",
+    "Render video (MP4)": "Renderizar video (MP4)",
+    "Save shareable HTML": "Guardar HTML para compartir",
+    "Shared HTML can include the conversation on this branch, embedded media, and runnable app code.": "El archivo HTML compartido puede incluir la conversación de esta rama, medios incrustados y código ejecutable de la aplicación.",
     "Exporting MP4…": "Exportando MP4…",
     "English narration. Downloads the speech engine and model only when installed.": "Narración en inglés. El motor de voz y el modelo se descargan únicamente al instalar.",
     "Preparing research materials…": "Preparando los materiales de investigación…",
@@ -8130,6 +8141,8 @@
     "Generating narration…": "Generando la narración…",
     "Aligning captions…": "Sincronizando los subtítulos…",
     "Mixing narration…": "Mezclando la narración…",
+    "Checking film visuals…": "Comprobando los elementos visuales de la película…",
+    "Repairing film visuals…": "Corrigiendo los elementos visuales de la película…",
     "Building player and source package…": "Creando el reproductor y el paquete de fuentes…",
     "Saving results…": "Guardando los resultados…",
     "Rendering video frames…": "Renderizando los fotogramas…",
@@ -8141,9 +8154,12 @@
     "Video export component installation failed. Retry to continue.": "No se pudieron instalar los componentes de exportación de vídeo. Vuelva a intentarlo para continuar.",
     "Video export components required: {{size}} MiB": "Se requieren componentes de exportación de vídeo: {{size}} MiB",
     "Install and export": "Instalar y exportar",
+    "The film exceeds 200 MiB. Shorten it or use smaller media.": "La película supera los 200 MiB. Acórtela o use archivos multimedia más pequeños.",
+    "Shorten the film to fit the narration audio limit.": "Acorte el vídeo para que la pista de narración no supere el límite de tamaño.",
     "Narration installation did not finish. Retry to continue.": "La instalación de los recursos de narración no se completó. Vuelva a intentarlo para continuar.",
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "Instalar los recursos de narración ({{size}} MiB) para generar la explicación. Se reutilizarán en las próximas explicaciones.",
     "Install and generate": "Instalar y generar",
+    "Narration rubric {{score}}/9": "Evaluación de la narración {{score}}/9",
     "English narration": "Narración en inglés",
     "View generation progress": "Ver progreso de generación",
     "Generate again?": "¿Volver a generar?",
@@ -8721,6 +8737,9 @@
     "After edit": "Después de editar",
     "Before edit": "Antes de editar",
     "Comparison position": "Posición de comparación",
-    "Compare with input image": "Comparar con la imagen de entrada"
+    "Compare with input image": "Comparar con la imagen de entrada",
+    "Video ready": "Vídeo listo",
+    "Your {{resolution}} video has been saved.": "Se ha guardado el vídeo en {{resolution}}.",
+    "Play video": "Reproducir vídeo"
   }
 }

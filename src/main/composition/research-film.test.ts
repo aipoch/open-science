@@ -163,10 +163,39 @@ it.each(outcomes)(
                 { type: 'title', text: 'Evidence' },
                 { type: 'animation', script: 'anims/hook.js', size: 'band' }
               ]
+            },
+            {
+              id: 'outro',
+              role: 'outro',
+              msg: 1,
+              lines: [
+                { caption: 'The result remains uncertain.' },
+                {
+                  caption:
+                    'AIPOCH Open-Science — the AI research workbench for reproducible science.'
+                }
+              ],
+              panels: [{ type: 'end_card', at: '1' }]
             }
           ]
         })
       })
+      if (outcome === 'recovered')
+        mocks.run.mockResolvedValueOnce({
+          ...result,
+          stopReason: 'end_turn',
+          text: JSON.stringify({
+            spine: null,
+            catch: null,
+            thread: null,
+            audioOnly: null,
+            numbers: null,
+            plainWords: null,
+            lineCraft: null,
+            clean: null,
+            true: null
+          })
+        })
       if (outcome === 'recovered')
         mocks.run.mockResolvedValueOnce({
           ...result,
@@ -361,8 +390,8 @@ it.each(outcomes)(
           )
           expect(mocks.run).toHaveBeenCalledTimes(target ? 0 : expires ? 2 : 1)
           if (!target && expires) {
-            const animation = JSON.parse(mocks.run.mock.calls[1][0].prompt)
-            expect(animation.path).toBe('anims/hook.js')
+            const review = JSON.parse(mocks.run.mock.calls[1][0].prompt)
+            expect(review.narration[0].id).toBe('hook')
           }
         } finally {
           timeout?.mockRestore()
@@ -427,7 +456,7 @@ it.each(outcomes)(
         expect(status.result).toBeUndefined()
         const calls =
           outcome === 'recovered'
-            ? 4
+            ? 5
             : ['max_tokens', 'max_turn_requests', 'empty'].includes(outcome)
               ? 2
               : 1
@@ -450,7 +479,7 @@ it.each(outcomes)(
             expect(call.outputLimitBytes).toBeUndefined()
             expect(call.systemPrompt).not.toMatch(/at most \d+ (?:visible|output) tokens/)
           }
-          const animationCorrection = JSON.parse(mocks.run.mock.calls[3][0].prompt)
+          const animationCorrection = JSON.parse(mocks.run.mock.calls[4][0].prompt)
           expect(animationCorrection).toMatchObject({
             path: 'anims/hook.js',
             correction: { draft: '' }

@@ -385,6 +385,7 @@ export const createApplicationModules = async (
     modules
   })
   const researchFilm = await composeResearchFilm({
+    translate,
     previewResources: managedFiles.previewResources,
     ...settingsBootstrap,
     ...sessionFoundation,

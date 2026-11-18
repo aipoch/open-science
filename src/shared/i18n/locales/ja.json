@@ -47,6 +47,10 @@
     "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "終了すると未完了のタスクは中断されます。保存済みの会話とファイルは保持されます。"
   },
   "native": {
+    "Use {{name}} as a live illustration?": "{{name}} を動く図として使用しますか？",
+    "The film can run {{modules}} local JavaScript modules from this session in its offline player. You can use a drawn illustration instead.": "オフラインプレーヤーで、このセッションのローカル JavaScript モジュール {{modules}} 個を実行できます。代わりにイラストを使うこともできます。",
+    "Use a drawing": "イラストを使用",
+    "Allow this app": "このアプリを許可",
     "Local State is in use by another process.": "Local State は別のプロセスで使用されています。",
     "The Local State configuration file could not be read.": "Local State 設定ファイルを読み取れませんでした。",
     "The Local State configuration file is invalid.": "Local State 設定ファイルが無効です。",
@@ -193,6 +197,11 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。"
   },
   "renderer": {
+    "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（目安：{{min}}～{{max}}分）",
+    "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}}（動画1分あたりの目安：{{min}}～{{max}}分）",
+    "MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.": "MP4 は横向き（16:9）で書き出します。書き出しが中断された場合、次回は最初からやり直します。",
+    "Includes the session app in motion.": "セッションのアプリが動く様子を表示します。",
+    "Uses a drawn illustration of the session app.": "セッションのアプリをイラストで表現します。",
     "Pros": "利点",
     "Cons": "制約",
     "The conversation changed. Reopen the image editor and try again.": "会話が変更されました。画像エディターを開き直して、もう一度お試しください。",
@@ -7786,7 +7795,9 @@
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "「{{title}}」の保持された変更を破棄し、保存済みのバージョンを再読み込みしますか？この操作は元に戻せません。",
     "Could not reload the saved conversation. Retained changes were kept. Please try again.": "保存済みの会話を再読み込みできませんでした。変更は保持されています。もう一度お試しください。",
     "Research narration": "研究解説ナレーション",
-    "Export MP4": "MP4 をエクスポート",
+    "Render video (MP4)": "動画をレンダリング (MP4)",
+    "Save shareable HTML": "共有用 HTML を保存",
+    "Shared HTML can include the conversation on this branch, embedded media, and runnable app code.": "共有する HTML には、この分岐の会話、埋め込みメディア、実行可能なアプリコードが含まれる場合があります。",
     "Exporting MP4…": "MP4 をエクスポート中…",
     "English narration. Downloads the speech engine and model only when installed.": "英語のナレーション。音声エンジンとモデルはインストール時にのみダウンロードされます。",
     "Preparing research materials…": "研究資料を準備中…",
@@ -7794,6 +7805,8 @@
     "Generating narration…": "ナレーションを生成中…",
     "Aligning captions…": "字幕のタイミングを調整中…",
     "Mixing narration…": "ナレーションをミックス中…",
+    "Checking film visuals…": "動画の表示を確認中…",
+    "Repairing film visuals…": "動画の表示を修正中…",
     "Building player and source package…": "プレーヤーとソースパッケージを作成中…",
     "Saving results…": "結果を保存中…",
     "Rendering video frames…": "動画フレームを描画中…",
@@ -7805,9 +7818,12 @@
     "Video export component installation failed. Retry to continue.": "動画書き出しコンポーネントのインストールに失敗しました。再試行してください。",
     "Video export components required: {{size}} MiB": "動画書き出しコンポーネントが必要です：{{size}} MiB",
     "Install and export": "インストールして書き出す",
+    "The film exceeds 200 MiB. Shorten it or use smaller media.": "動画が 200 MiB を超えています。動画を短くするか、より小さなメディアファイルを使用してください。",
+    "Shorten the film to fit the narration audio limit.": "ナレーション音声がサイズ上限に収まるよう、動画を短くしてください。",
     "Narration installation did not finish. Retry to continue.": "ナレーション用リソースのインストールが完了しませんでした。再試行してください。",
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "生成するにはナレーション用リソース（{{size}} MiB）をインストールしてください。今後の解説でも再利用されます。",
     "Install and generate": "インストールして生成",
+    "Narration rubric {{score}}/9": "ナレーション評価 {{score}}/9",
     "English narration": "英語ナレーション",
     "View generation progress": "生成の進捗を表示",
     "Generate again?": "再生成しますか？",
@@ -8369,6 +8385,9 @@
     "After edit": "編集後",
     "Before edit": "編集前",
     "Comparison position": "比較の境界位置",
-    "Compare with input image": "入力画像と比較"
+    "Compare with input image": "入力画像と比較",
+    "Video ready": "動画が完成しました",
+    "Your {{resolution}} video has been saved.": "{{resolution}}の動画を保存しました。",
+    "Play video": "動画を再生"
   }
 }
