@@ -203,8 +203,33 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   overscroll-behavior: contain;
 }
 .onboarding-advanced-agent {
-  padding: 1.5rem;
   border-top: 1px solid var(--border);
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+.onboarding-advanced-model-header {
+  padding: 1.25rem 1.5rem 0.75rem;
+}
+.onboarding-advanced-model-content {
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+.onboarding-advanced-model-footer {
+  padding: 0.8rem 1.5rem;
+}
+.onboarding-agent-panel {
+  padding: 0;
+}
+.onboarding-agent-panel > [data-slot='settings-section'] {
+  padding: 0;
+}
+.onboarding-agent-panel > [data-slot='settings-section'] > :first-child {
+  gap: 0.75rem;
+}
+.onboarding-agent-panel > [data-slot='settings-section'] h2 {
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+.onboarding-agent-panel > [data-slot='settings-section'] > :last-child {
+  margin-top: 1rem;
 }
 
 .onboarding-entry-shell.is-ready {

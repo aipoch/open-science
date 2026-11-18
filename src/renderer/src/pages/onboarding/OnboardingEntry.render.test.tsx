@@ -98,6 +98,8 @@ describe('Onboarding entry flow', () => {
     const model = container.querySelector('section[aria-label="Configure model"]')!
     const agent = container.querySelector('.onboarding-advanced-agent')!
     expect(model.compareDocumentPosition(agent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(agent.querySelector('.onboarding-agent-panel')).not.toBeNull()
+    expect(agent.querySelector('.onboarding-agent-panel')?.classList.contains('p-5')).toBe(false)
     expect(container.querySelector('[role="dialog"]')).toBe(dialog)
     await fillRequiredProviderFields(container)
     await clickButton(/^Back$/)
