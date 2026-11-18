@@ -51,7 +51,12 @@ export type WindowsResourceSample = {
   complete: boolean
   startedAt: number
   endedAt: number
-  system?: { committedBytes: number; commitLimitBytes: number; availableBytes: number }
+  system?: {
+    committedBytes: number
+    commitLimitBytes: number
+    availableBytes: number
+    totalPhysicalBytes?: number
+  }
   systemError?: number
   processes: ResourceProcessSample[]
 }
@@ -62,6 +67,24 @@ export function sampleWindowsResources(
 ): Promise<WindowsResourceSample>
 /** Single process identity read; no process enumeration. Null means unavailable. */
 export function readWindowsResourceBirth(pid: number): string | null
+
+export type DarwinMemoryPressureSample = {
+  supported: boolean
+  complete: boolean
+  pressureLevel?: number
+  eventSequence: number
+  pressureEventSequence: number
+  error?: number
+}
+/** Current read-only sysctl snapshot. Missing/unknown levels are never healthy evidence. */
+export function sampleDarwinMemoryPressure(): Promise<DarwinMemoryPressureSample>
+/** Native Dispatch notification; a subscription alone does not establish the current level. */
+export function subscribeDarwinMemoryPressure(
+  listener: (event: { pressureLevel: number; eventSequence: number }) => void
+): object | null
+export function stopDarwinMemoryPressureSubscription(subscription: object): void
+/** Read the sequence synchronously so queued JS events cannot leave an old snapshot valid. */
+export function darwinMemoryPressureEventSequence(): number
 
 // Windows only. Each returns null for a missing or exited process and throws for any other
 // query failure. The creation time is the decimal FILETIME (100 ns since 1601-01-01 UTC).
