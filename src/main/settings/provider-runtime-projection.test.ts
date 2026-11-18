@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { codeBuddyAccounts } from '../../shared/codebuddy-subscription'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { describe, expect, it, vi } from 'vitest'
@@ -44,7 +45,10 @@ describe('ProviderRuntimeProjectionOwner', () => {
       expect(config.configFiles?.some((file) => file.path.endsWith('models.json'))).toBe(false)
       return config.env?.HOME
     })
-    expect(new Set(targets).size).toBe(2)
+    expect(targets).toEqual([
+      join('profiles', 'codebuddy-cn'),
+      join('profiles', 'codebuddy-accounts', 'external')
+    ])
   })
   it.each([
     { type: 'codex-shared', codexAuthMode: undefined },
