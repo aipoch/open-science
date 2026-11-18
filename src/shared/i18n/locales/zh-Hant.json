@@ -8048,6 +8048,7 @@
     "Branch or tag": "分支或標籤",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "使用發佈專家市集目錄的公開 GitHub 儲存庫或分支連結。",
     "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安裝的技能可能改變智能體的行為。請僅信任您認可的來源。",
+    "Open in browser": "在瀏覽器中開啟",
     "Close task": "關閉任務",
     "Closed": "已關閉",
     "Daily": "每天",

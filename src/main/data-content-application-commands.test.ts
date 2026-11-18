@@ -184,6 +184,7 @@ const createDependencies = () => {
     finalizeRunArtifacts: vi.fn(async () => []),
     reconcilePendingArtifacts: vi.fn(async () => []),
     openFile: vi.fn(async () => undefined),
+    openInBrowser: vi.fn(async () => undefined),
     readPreview: vi.fn(async () => ({
       content: '',
       encoding: 'utf8' as const,
@@ -405,6 +406,7 @@ const WRAPPED_COMMAND_KEYS = [
   'previewResearchVideoProgress',
   'artifactFinalizeRun',
   'artifactOpenFile',
+  'artifactOpenInBrowser',
   'lifecycleClientId',
   'runtimeWriterClaim',
   'projectCreate',
@@ -592,6 +594,7 @@ describe('Data and content application commands', () => {
         'artifacts:get-version-provenance',
         'artifacts:get-version-review',
         'artifacts:open-file',
+        'artifacts:open-in-browser',
         'artifacts:read-preview',
         'artifacts:reconcile-pending',
         'artifacts:resolve-version-descriptors',

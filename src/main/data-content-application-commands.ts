@@ -416,6 +416,7 @@ const dataContentApplicationCommands = Object.freeze({
   ),
   artifactGetVersionReview: artifactCommand('artifacts:get-version-review', 'getVersionReview'),
   artifactOpenFile: artifactCommand('artifacts:open-file', 'openFile'),
+  artifactOpenInBrowser: artifactCommand('artifacts:open-in-browser', 'openInBrowser'),
   artifactReadPreview: artifactCommand('artifacts:read-preview', 'readPreview'),
   artifactReconcilePending: artifactCommand(
     'artifacts:reconcile-pending',
@@ -763,6 +764,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.artifactGetVersionProvenance,
     dataContentApplicationCommands.artifactGetVersionReview,
     dataContentApplicationCommands.artifactOpenFile,
+    dataContentApplicationCommands.artifactOpenInBrowser,
     dataContentApplicationCommands.artifactReadPreview,
     dataContentApplicationCommands.artifactReconcilePending,
     dataContentApplicationCommands.artifactResolveVersionDescriptors
@@ -1034,6 +1036,10 @@ const registerDataContentApplicationCommands = (
       'artifacts:open-file': (invocation) => {
         assertLocalCaller(invocation, dataContentApplicationCommands.artifactOpenFile.name)
         return dependencies.artifacts.openFile(invocation.args[0])
+      },
+      'artifacts:open-in-browser': (invocation) => {
+        assertLocalCaller(invocation, dataContentApplicationCommands.artifactOpenInBrowser.name)
+        return dependencies.artifacts.openInBrowser(invocation.args[0])
       },
       'artifacts:read-preview': ({ args }) => dependencies.artifacts.readPreview(args[0]),
       'artifacts:reconcile-pending': ({ args }) =>
@@ -1596,11 +1602,12 @@ const registerDataContentApplicationCommands = (
       'managed-file-versions:inspect': async (invocation) => {
         const [request] = invocation.args
         const result = await dependencies.managedFileVersions.inspect(request)
-        // The command may be reached from a remote Web caller. Never return a Version whose
-        // resolved Project or logical File identity differs from the requested scope.
+        // Artifact-only browser URLs let the service resolve the Project. Still reject any
+        // mismatch with an explicitly requested Project or the required logical File identity.
         if (
           result.ok &&
-          (result.value.projectId !== request.projectId || result.value.fileId !== request.fileId)
+          ((request.projectId !== undefined && result.value.projectId !== request.projectId) ||
+            result.value.fileId !== request.fileId)
         ) {
           throw new Error('Managed file version identity does not match the requested scope.')
         }
