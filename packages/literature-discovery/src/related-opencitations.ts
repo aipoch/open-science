@@ -1,3 +1,4 @@
+import { SourceError } from './related-source-error.js'
 import { z } from 'zod'
 import {
   bibliographicRecordSchema,
@@ -11,6 +12,12 @@ import type { LiteratureRelatedRecord } from './related-contracts.js'
 
 const text = z.string().max(100_000)
 const maxReferenceIds = 2000
+
+// A complete snapshot must fit before any relationship can be published.
+export function boundedSnapshotRows(raw: unknown): unknown {
+  if (Array.isArray(raw) && raw.length > maxReferenceIds) throw new SourceError('source-limit')
+  return raw
+}
 const nativePaperId = /^opencitations:br\/(\d{1,30})$/
 const productUrl = /^https:\/\/w3id\.org\/oc\/meta\/br\/(\d{1,30})$/
 export type OpenCitationsReferenceSnapshot = readonly string[]
@@ -239,7 +246,8 @@ export async function resolveOpenCitations(
   if (dois.length === 1) {
     const doi = dois[0]
     const page = await readPage(`identifiers.scheme:doi,identifiers.id:${doi}`, 0, read)
-    if (page.hasNext || page.rows.length !== page.total) throw new z.ZodError([])
+    if (page.hasNext) throw new SourceError('source-limit')
+    if (page.rows.length !== page.total) throw new z.ZodError([])
     matches = page.rows.filter((paper) => {
       const values = doiValues(paper.identifiers)
       return values.length === 1 && values[0] === doi
@@ -287,12 +295,14 @@ function referenceSnapshot(papers: Paper[]): OpenCitationsReferenceSnapshot {
   for (const paper of papers) {
     if (!productUrl.test(paper.local_identifier ?? '')) throw new z.ZodError([])
     const related = z
-      .object({ cites: z.array(text.regex(productUrl)).max(maxReferenceIds).optional() })
+      .object({
+        cites: z.preprocess(boundedSnapshotRows, z.array(text.regex(productUrl))).optional()
+      })
       .optional()
       .parse(paper.related_products)
     for (const id of related?.cites ?? []) {
       ids.add(id)
-      if (ids.size > maxReferenceIds) throw new z.ZodError([])
+      if (ids.size > maxReferenceIds) throw new SourceError('source-limit')
     }
   }
   return [...ids].sort()
@@ -307,8 +317,8 @@ async function readReferenceSnapshot(
     const page = await readPage(`identifiers.scheme:doi,identifiers.id:${dois[0]}`, 0, read)
     // Every DOI alias must be present and independently verified before publishing
     // a stable adjacency snapshot. Never silently take only its first page.
+    if (page.hasNext) throw new SourceError('source-limit')
     if (
-      page.hasNext ||
       page.rows.length !== page.total ||
       !page.rows.length ||
       page.rows.some((paper) => {
@@ -409,7 +419,7 @@ export function openCitationsMetaRecord(
 }
 
 export function parseOpenCitationsMetadata(raw: unknown): z.infer<typeof metaPaperSchema>[] {
-  return z.array(metaPaperSchema).max(2000).parse(raw)
+  return z.array(metaPaperSchema).parse(boundedSnapshotRows(raw))
 }
 
 export async function readOpenCitationsRecords(

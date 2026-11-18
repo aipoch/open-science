@@ -38,16 +38,21 @@ export function CitationLookupError({
     authentication: t('{{source}} rejected the request. Try again later.', { source: sourceName }),
     'no-match': t('No matching paper was found in {{source}}.', { source: sourceName }),
     timeout: t('The source timed out. Retry this reference.'),
+    'source-limit': t('This response exceeds the supported size. Choose another citation source.'),
     'response-invalid': t(
       'The source returned an invalid response. Retry or choose another citation source.'
     ),
     unavailable: t('Citation discovery is temporarily unavailable. Try again.')
   }
   const retry =
-    result.issue === 'reference-changed'
+    result.issue === 'reference-changed' || result.issue === 'source-limit'
       ? undefined
       : {
-          label: coolingDown ? t('Retry in {{seconds}}s', { seconds }) : t('Retry'),
+          label: coolingDown
+            ? t('Retry in {{seconds}}s', { seconds })
+            : result.issue === 'expired'
+              ? t('Reload from starting paper')
+              : t('Retry'),
           disabled: disabled || coolingDown,
           loading,
           onClick: () => {

@@ -485,7 +485,7 @@ describe('Europe PMC first, source-pinned citation discovery', () => {
       expect(await finder.run({ ...request, provider: 'europe-pmc' })).toMatchObject({
         state: 'unavailable',
         provider: 'europe-pmc',
-        issue: 'response-invalid'
+        issue: failure === 'oversized' ? 'source-limit' : 'response-invalid'
       })
     }
   )

@@ -261,7 +261,7 @@ it('requires a fresh lookup when an appended page reports an expired seed', asyn
   expect(
     (screen.getByRole('button', { name: 'Add selected to Inbox' }) as HTMLButtonElement).disabled
   ).toBe(true)
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Reload from starting paper' }))
   await waitFor(() =>
     expect(related).toHaveBeenLastCalledWith(
       expect.objectContaining({ offset: 0, resolutionToken: undefined })
@@ -1060,6 +1060,23 @@ it.each([undefined, 'skg-if'] as const)(
     })
   }
 )
+
+it('keeps loaded papers readable and offers a source switch after a size limit', async () => {
+  related
+    .mockResolvedValueOnce(result({ nextOffset: 20 }))
+    .mockResolvedValueOnce(result({ state: 'unavailable', issue: 'source-limit', records: [] }))
+  render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Load more' }))
+  await screen.findByText(
+    'This response exceeds the supported size. Choose another citation source.'
+  )
+  expect(screen.getByText('Paper b')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+  expect(screen.getByRole('combobox', { name: 'Citation source' })).toHaveProperty(
+    'disabled',
+    false
+  )
+})
 
 it('honors the source cooldown and permits only an explicit retry after it expires', () => {
   vi.useFakeTimers()

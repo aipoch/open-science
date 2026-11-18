@@ -68,7 +68,8 @@ export const literatureRelatedResultSchema = z
         'authentication',
         'timeout',
         'unavailable',
-        'response-invalid'
+        'response-invalid',
+        'source-limit'
       ])
       .optional(),
     retryAt: z.number().int().nonnegative().optional(),

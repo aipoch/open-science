@@ -1,3 +1,5 @@
+import { literatureOpenCitationsModeSchema } from '@aipoch/literature-discovery/contracts'
+import { getExternalLiteratureUrl } from './literature-item-display'
 import { z } from 'zod'
 import { ChevronRight } from 'lucide-react'
 import { useLiteratureHost } from './renderer-host'
@@ -9,18 +11,11 @@ import { ErrorNotice } from '@/components/error-notice'
 import type { LiteratureSourceRecordView } from '@aipoch/literature-library/contracts'
 import { useLiteratureChanges } from './useLiteratureChanges'
 
-const sourceLink = (value: string): string | undefined => {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : undefined
-  } catch {
-    return undefined
-  }
-}
-
 const discoveryContext = z
   .object({
     rootItemId: z.string().min(1),
+    lookupMode: literatureOpenCitationsModeSchema.optional().catch(undefined),
+    rootMetadataRevision: z.number().int().positive().optional().catch(undefined),
     seedPaperId: z.string().optional(),
     exploredPaperId: z.string().optional(),
     direction: z.enum(['references', 'citations']).optional(),
@@ -52,7 +47,15 @@ const SourceRecord = ({
     .nonnegative()
     .max(8640000000000000)
     .safeParse(source.rawMetadata.retrievedAt)
-  const href = source.sourceUrl ? sourceLink(source.sourceUrl) : undefined
+  const href = source.sourceUrl && getExternalLiteratureUrl(source.sourceUrl)?.href
+  const contexts = contextsFor(source)
+  const revisions = new Map<string, Set<number>>()
+  for (const { rootItemId, rootMetadataRevision } of contexts) {
+    if (rootMetadataRevision === undefined) continue
+    const values = revisions.get(rootItemId) ?? new Set<number>()
+    values.add(rootMetadataRevision)
+    revisions.set(rootItemId, values)
+  }
   return (
     <li className="min-w-0 space-y-2 py-3">
       <p className="break-words font-medium">{source.provider}</p>
@@ -80,13 +83,23 @@ const SourceRecord = ({
           })}
         </p>
       ) : null}
-      {contextsFor(source).map((context, index) => (
+      {contexts.map((context, index) => (
         <div key={index} className="space-y-1 text-xs text-muted-foreground">
           <p>
             {t('Exploration started from {{paper}}', {
               paper: titles[context.rootItemId] ?? context.rootItemId
             })}
           </p>
+          {context.rootMetadataRevision && (revisions.get(context.rootItemId)?.size ?? 0) > 1 ? (
+            <p>{t('Metadata revision {{revision}}', { revision: context.rootMetadataRevision })}</p>
+          ) : null}
+          {source.provider === 'opencitations' && context.lookupMode ? (
+            <p>
+              {context.lookupMode === 'index'
+                ? t('OpenCitations · Index v2')
+                : t('OpenCitations · SKG-IF')}
+            </p>
+          ) : null}
           <p className="break-all">
             {context.exploredPaperId
               ? t('Current center')

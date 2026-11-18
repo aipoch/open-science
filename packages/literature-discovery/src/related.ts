@@ -23,16 +23,8 @@ import {
   type LiteratureRelatedProvider
 } from './related-contracts.js'
 
-class SourceError extends Error {
-  constructor(
-    readonly issue: NonNullable<LiteratureRelatedResult['issue']>,
-    readonly retryAt?: number,
-    readonly status?: number,
-    readonly retrySuppressed = false
-  ) {
-    super(issue)
-  }
-}
+import { SourceError } from './related-source-error.js'
+
 const transientCodes = [
   'ECONNRESET',
   'EPIPE',
@@ -265,7 +257,7 @@ export class LiteratureRelatedFinder {
         if (done) break
         bytes += value.length
         trace.bytes = bytes
-        if (bytes > 2 * 1024 * 1024) throw new SourceError('response-invalid')
+        if (bytes > 2 * 1024 * 1024) throw new SourceError('source-limit')
         chunks.push(value)
       }
     } finally {

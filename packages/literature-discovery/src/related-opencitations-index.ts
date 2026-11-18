@@ -6,6 +6,7 @@ import {
 import type { DiscoveryReference } from './contracts.js'
 import type { LiteratureRelatedRecord } from './related-contracts.js'
 import {
+  boundedSnapshotRows,
   openCitationsMetaRecord,
   parseOpenCitationsMetadata,
   readOpenCitationsRecords
@@ -105,10 +106,8 @@ async function readSnapshot(
   const target = doi ? `doi:${encodeURIComponent(doi)}` : `omid:br/${match[1]}`
   // Index has no assumed server pagination here. A complete bounded response is
   // required before creating either direction's immutable list of native IDs.
-  const rows = z
-    .array(edgeSchema)
-    .max(2000)
-    .parse(await read(`index/v2/${direction}/${target}`, {}))
+  const raw = await read(`index/v2/${direction}/${target}`, {})
+  const rows = z.array(edgeSchema).parse(boundedSnapshotRows(raw))
   const ids = new Map<string, string[]>()
   const claims = new Map<string, string[][]>()
   for (const row of rows) {

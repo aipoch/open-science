@@ -153,7 +153,20 @@ it('summarizes legacy and current citation evidence and retains identifiers when
       rawMetadata: {
         citationContexts: [
           null,
-          { rootItemId: 'root-b', seedPaperId: 'opencitations:br/2', directions: ['citations'] }
+          {
+            rootItemId: 'root-b',
+            seedPaperId: 'opencitations:br/2',
+            directions: ['citations'],
+            lookupMode: 'index',
+            rootMetadataRevision: 2
+          },
+          {
+            rootItemId: 'root-b',
+            seedPaperId: 'opencitations:br/2',
+            directions: ['references'],
+            lookupMode: 'skg-if',
+            rootMetadataRevision: 1
+          }
         ]
       }
     }
@@ -161,7 +174,11 @@ it('summarizes legacy and current citation evidence and retains identifiers when
   render(<LiteratureSources itemId="item-1" />)
   await toggle('Metadata sources')
   expect(await screen.findByText('Exploration started from Original paper')).not.toBeNull()
-  expect(await screen.findByText('Exploration started from root-b')).not.toBeNull()
+  expect(screen.getAllByText('Exploration started from root-b')).toHaveLength(2)
+  expect(screen.getByText('Metadata revision 2')).toBeTruthy()
+  expect(screen.getByText('Metadata revision 1')).toBeTruthy()
+  expect(screen.getByText('OpenCitations · Index v2')).toBeTruthy()
+  expect(screen.getByText('OpenCitations · SKG-IF')).toBeTruthy()
   expect(screen.getByText('References · europe-pmc:MED:1')).not.toBeNull()
   expect(screen.getByText('Cited by · opencitations:br/2')).not.toBeNull()
   expect(get).toHaveBeenCalledTimes(2)

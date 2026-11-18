@@ -694,7 +694,7 @@ it('blocks staging and further paging after expiration until the graph is search
   expect(screen.getByRole('button', { name: 'Select Paper b' })).toBeTruthy()
   related.mockImplementation(async (request) => result(request, { records: [record('d')] }))
   showPaperList()
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Reload from starting paper' }))
   await screen.findByRole('button', { name: 'Select Paper d' })
   expect(screen.queryByRole('button', { name: 'Select Paper b' })).toBeNull()
   expect(related.mock.calls.at(-2)?.[0]).toMatchObject({
@@ -1084,7 +1084,7 @@ it('restarts from the original paper after a child capability expires', async ()
   fireEvent.click(screen.getByRole('button', { name: 'Select Paper b' }))
   fireEvent.click(screen.getByRole('button', { name: 'Set as center' }))
   await screen.findByText('These results expired. Search again.')
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Reload from starting paper' }))
   await screen.findByRole('button', { name: 'Select Paper c' })
   expect(screen.queryByText('Temporary center')).toBeNull()
   expect(related.mock.calls.at(-2)?.[0]).toMatchObject({
@@ -1350,6 +1350,8 @@ it('keeps full author and missing-year descriptions while the visible pill prese
   ]
   known.item.issuedYear = 2002
   known.item.containerTitle = 'Journal of Graph Studies'
+  known.item.typeFields = { volume: '4', issue: '2', pages: '12–18' }
+  known.item.identifiers = [{ scheme: 'pmid', value: '12345', isPrimary: true }]
   known.item.url = 'https://example.org/paper'
   const missing = record('c')
   missing.item.creators = [
@@ -1382,8 +1384,10 @@ it('keeps full author and missing-year descriptions while the visible pill prese
   fireEvent.click(knownNode)
   const details = screen.getByRole('region', { name: 'Selected paper' })
   expect(within(details).getByText('张三丰李研究团队')).toBeTruthy()
-  expect(within(details).getByText('2002')).toBeTruthy()
-  expect(within(details).getByText('Journal of Graph Studies')).toBeTruthy()
+  expect(within(details).getByText('Journal of Graph Studies. 2002;4(2):12–18')).toBeTruthy()
+  expect(within(details).getByRole('link', { name: 'PMID: 12345' }).getAttribute('href')).toContain(
+    '12345'
+  )
   const explore = within(details).getByRole('button', { name: 'Set as center' })
   const save = within(details).getByRole('button', { name: 'Add to Inbox' })
   expect(explore.parentElement).toBe(save.parentElement)
@@ -2119,7 +2123,7 @@ it('discloses the paper list separately and returns to selected details without 
   expect(listToggle.getAttribute('aria-expanded')).toBe('false')
   fireEvent.click(listToggle)
   expect(listToggle.getAttribute('aria-expanded')).toBe('true')
-  expect(within(details).queryByText('Selected journal')).toBeNull()
+  expect(within(details).getByRole('button', { name: /Paper b.*Selected journal/ })).toBeTruthy()
   expect(within(details).queryByRole('button', { name: 'Add to Inbox' })).toBeNull()
   showCategory('citations')
   const list = within(details).getByRole('region', { name: 'Paper list' })

@@ -555,7 +555,12 @@ describe('manual OpenCitations discovery with stable SKG-IF reference snapshots'
         ])
       const { finder, fetcher } = fixture([json(body)])
       const result = await finder.run(request)
-      expect(result).toMatchObject({ issue: 'response-invalid', records: [] })
+      expect(result).toMatchObject({
+        issue: ['too-many-aliases', 'adjacency-limit'].includes(failure)
+          ? 'source-limit'
+          : 'response-invalid',
+        records: []
+      })
       expect(result.resolutionToken).toBeUndefined()
       expect(fetcher).toHaveBeenCalledTimes(1)
     }
@@ -580,7 +585,12 @@ describe('manual OpenCitations discovery with stable SKG-IF reference snapshots'
       const result = await finder.run(request)
       expect(result).toMatchObject({
         state: 'unavailable',
-        issue: failure === '404' ? 'unavailable' : 'response-invalid'
+        issue:
+          failure === '404'
+            ? 'unavailable'
+            : failure === 'oversized'
+              ? 'source-limit'
+              : 'response-invalid'
       })
       expect(result.resolutionToken).toBeUndefined()
       expect(fetcher).toHaveBeenCalledTimes(2)
@@ -892,7 +902,7 @@ describe('manual OpenCitations discovery with stable SKG-IF reference snapshots'
       }
     })
     const { finder, fetcher } = fixture([new Response(body)])
-    expect(await finder.run(request)).toMatchObject({ issue: 'response-invalid' })
+    expect(await finder.run(request)).toMatchObject({ issue: 'source-limit' })
     expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
@@ -1261,7 +1271,10 @@ describe('explicit OpenCitations Index sessions', () => {
         json(failure === 'oversize' ? Array(2001).fill(row) : [row])
       ])
       const result = await finder.run(indexRequest)
-      expect(result).toMatchObject({ issue: 'response-invalid', records: [] })
+      expect(result).toMatchObject({
+        issue: failure === 'oversize' ? 'source-limit' : 'response-invalid',
+        records: []
+      })
       expect(result.resolutionToken).toBeUndefined()
       expect(fetcher).toHaveBeenCalledTimes(2)
     }

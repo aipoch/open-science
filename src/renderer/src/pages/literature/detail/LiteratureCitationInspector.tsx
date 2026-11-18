@@ -5,7 +5,13 @@ import { ArrowLeft, Inbox, FileText } from 'lucide-react'
 import { Tabs } from 'radix-ui'
 import { Button } from '@/components/ui/button'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
-import { fullCreatorLabel, getExternalLiteratureUrl } from '../literature-item-display'
+import { LiteratureIdentifiers } from './LiteratureIdentifiers'
+import {
+  creatorLabel,
+  fullCreatorLabel,
+  publicationCitation,
+  getExternalLiteratureUrl
+} from '../literature-item-display'
 import { LiteratureCitationStatus, type CitationStatusModel } from './LiteratureCitationStatus'
 import type { CitationGraphNode, CitationGraphRelation } from './citation-graph'
 import type { CitationGraphController } from './useCitationGraphController'
@@ -69,6 +75,9 @@ export function LiteratureCitationInspector({
     setSelected,
     exploreSelected
   } = model
+  const selectedItem = selectedNode?.record.item
+  const authors = selectedItem && fullCreatorLabel(selectedItem)
+  const publication = selectedItem && publicationCitation(selectedItem)
   const [listOpen, setListOpen] = useState(true)
   const [listDirection, setListDirection] = useState<'references' | 'citations'>('references')
   const direction = model.filter === 'all' ? listDirection : model.filter
@@ -152,7 +161,11 @@ export function LiteratureCitationInspector({
         <span className="min-w-0 space-y-1">
           <span className="block line-clamp-3 text-sm leading-snug">{node.record.item.title}</span>
           <span className="block truncate text-xs text-muted-foreground">
-            {[fullCreatorLabel(node.record.item), node.record.item.issuedYear]
+            {[
+              node.record.item.issuedYear,
+              node.record.item.containerTitle,
+              creatorLabel(node.record.item)
+            ]
               .filter(Boolean)
               .join(' · ')}
           </span>
@@ -326,17 +339,14 @@ export function LiteratureCitationInspector({
             <div className="space-y-4">
               <div className="flex flex-col items-start gap-2">
                 <div className="flex min-w-0 flex-col items-start gap-1 text-xs leading-relaxed">
-                  {fullCreatorLabel(selectedNode.record.item) ? (
-                    <span
-                      title={fullCreatorLabel(selectedNode.record.item)}
-                      className="line-clamp-2 min-w-0 break-words"
-                    >
-                      {fullCreatorLabel(selectedNode.record.item)}
+                  {authors ? (
+                    <span title={authors} className="line-clamp-2 min-w-0 break-words">
+                      {authors}
                     </span>
                   ) : null}
-                  <span className="text-muted-foreground">
-                    {selectedNode.record.item.issuedYear?.toString() ?? t('No year')}
-                  </span>
+                  {publication ? (
+                    <span className="break-words text-muted-foreground">{publication}</span>
+                  ) : null}
                 </div>
                 <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                   <span
@@ -347,11 +357,10 @@ export function LiteratureCitationInspector({
                 </p>
               </div>
               <div className="flex flex-col items-start gap-2">
-                {selectedNode.record.item.containerTitle ? (
-                  <p className="text-xs text-muted-foreground">
-                    {selectedNode.record.item.containerTitle}
-                  </p>
-                ) : null}
+                <LiteratureIdentifiers
+                  identifiers={selectedNode.record.item.identifiers}
+                  className="text-xs"
+                />
                 {getExternalLiteratureUrl(selectedNode.record.item.url) ? (
                   <ExternalTextLink
                     href={selectedNode.record.item.url}

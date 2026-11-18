@@ -17,7 +17,7 @@ test.describe('live citation graph providers', () => {
       .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-paper-id')!))
   const settled = async (page: Page): Promise<void> => {
     await expect(frame(page)).toBeVisible()
-    await expect(frame(page).getByText('Searching…', { exact: true })).toHaveCount(0, {
+    await expect(frame(page).locator('[data-citation-direction-tab="all"]')).toBeEnabled({
       timeout: 90_000
     })
     await expect(frame(page).getByRole('alert')).toHaveCount(0)
@@ -105,9 +105,10 @@ test.describe('live citation graph providers', () => {
         const rootIds = await ids(page)
         evidence.rootIds = rootIds
         expect(rootIds.every((id) => id.startsWith(source.prefix))).toBe(true)
-        await expect(
-          frame(page).getByRole('tab', { name: 'References', exact: true })
-        ).toHaveAttribute('aria-selected', 'true')
+        await expect(frame(page).locator('[data-citation-direction-tab="all"]')).toHaveAttribute(
+          'aria-selected',
+          'true'
+        )
         await expect
           .poll(() => frame(page).locator('[data-direction="references"]').count())
           .toBeGreaterThan(0)
@@ -132,6 +133,7 @@ test.describe('live citation graph providers', () => {
         const pagination: Record<string, unknown>[] = []
         for (const direction of ['References', 'Papers citing this paper']) {
           await frame(page)
+            .locator('[data-citation-direction-tabs]')
             .getByRole('tab', {
               name: direction === 'References' ? 'References' : 'Cited by',
               exact: true
