@@ -34,6 +34,9 @@ export const resolveProviderEffectiveModel = (
   if (!provider) return undefined
 
   const availableModels = provider.models ?? []
+  if (provider.type === 'official' && provider.modelCatalog && availableModels.length === 0) {
+    return undefined
+  }
   if (
     requestedModel &&
     (availableModels.length === 0 || availableModels.includes(requestedModel))

@@ -757,10 +757,17 @@ class ProviderAccountsModule {
         }
       }
     }
-    const authResult =
-      incompatibility || xaiAuthResult
-        ? undefined
-        : await this.auth.validateProviderAuth(resolved.provider, settings, storedValidationTarget)
+    // A model without a route fails locally, but its validation still has to reach the saved card.
+    const localResult: ValidateProviderResult | undefined =
+      resolved.provider.vendorId && resolved.provider.apiEndpoints?.length === 0
+        ? { ok: false, category: 'model-not-found' }
+        : incompatibility || xaiAuthResult
+          ? undefined
+          : await this.auth.validateProviderAuth(
+              resolved.provider,
+              settings,
+              storedValidationTarget
+            )
     const usesCompatibilityTransport = requiresChatCompletionsBridge(resolved.provider, framework)
     // An incompatible pairing no longer replaces the probe: compatibility is a derivable
     // (provider, framework) relationship, not an endpoint-health fact. The probe still runs —
@@ -772,7 +779,7 @@ class ProviderAccountsModule {
     )
     let probeResult =
       xaiAuthResult ??
-      authResult ??
+      localResult ??
       (await validateProviderTarget(validationProvider, {
         fetchImpl: netFetchStandard,
         requireBridgeToolCall: framework.id === 'codex' && usesCompatibilityTransport,
@@ -786,7 +793,7 @@ class ProviderAccountsModule {
     if (
       !probeResult.ok &&
       !incompatibility &&
-      !authResult &&
+      !localResult &&
       !xaiAuthResult &&
       (validationProvider.type === 'custom' || validationProvider.type === 'official') &&
       this.options.runAcpValidation

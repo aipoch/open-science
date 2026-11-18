@@ -1,4 +1,8 @@
-import { resolveOfficialModelCatalog } from './provider-model-catalog'
+import {
+  catalogModelApiEndpoints,
+  isCatalogModelAvailable,
+  resolveOfficialModelCatalog
+} from './provider-model-catalog'
 import type { CatalogModel } from '@aipoch/providers'
 import { providerValidationRoute } from './settings'
 import {
@@ -62,14 +66,10 @@ export const parseConfiguredModelKey = (
 }
 
 export const configuredModelApiEndpoints = (
-  provider: Pick<ProviderView, 'type' | 'vendorId' | 'apiEndpoints' | 'region' | 'modelCatalog'>,
-  model: string
+  provider: Pick<ProviderView, 'type' | 'apiEndpoints'>,
+  metadata: CatalogModel | undefined
 ): readonly ModelProtocol[] =>
-  provider.type === 'official' && provider.vendorId
-    ? (Object.keys(
-        resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)?.routes ?? {}
-      ) as ModelProtocol[])
-    : providerEndpoints(provider)
+  metadata ? catalogModelApiEndpoints(metadata) : providerEndpoints(provider)
 
 export const buildConfiguredModelInventory = (
   input: Readonly<{
@@ -85,16 +85,17 @@ export const buildConfiguredModelInventory = (
     input.claudeSubscriptionProviderId
   )
 
-  const supportsImageInput = (provider: ProviderView, model: string): boolean => {
+  const supportsImageInput = (
+    provider: ProviderView,
+    model: string,
+    metadata?: CatalogModel
+  ): boolean => {
     if (isClaudeSubscriptionProvider(provider.type) || isCodexSubscriptionProvider(provider.type)) {
       return true
     }
     if (isXaiSubscriptionProvider(provider.type)) return isVendorModelMultimodal('xai', model)
     if (provider.type === 'custom') return provider.supportsImageInput === true
-    return (
-      resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)
-        ?.supportsImageInput === true
-    )
+    return metadata?.supportsImageInput === true
   }
 
   return input.providers
@@ -106,25 +107,28 @@ export const buildConfiguredModelInventory = (
         (!providerValidationFailed(provider) ||
           provider.lastValidationFailure?.target !== undefined)
     )
-    .flatMap((provider) =>
-      (provider.models.length > 0 ? provider.models : provider.model ? [provider.model] : ['']).map(
-        (model) =>
-          Object.freeze({
-            key: configuredModelKey(provider.id, model),
-            providerId: provider.id,
-            providerName: provider.name,
-            providerType: provider.type,
-            ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
-            model,
-            label: model || provider.name,
-            metadata:
-              provider.type === 'official'
-                ? resolveOfficialModelCatalog(provider).find((entry) => entry.id === model)
-                : undefined,
-            supportsImageInput: supportsImageInput(provider, model)
-          })
-      )
-    )
+    .flatMap((provider) => {
+      const entry = (model: string, metadata?: CatalogModel): ConfiguredModelInventoryEntry =>
+        Object.freeze({
+          key: configuredModelKey(provider.id, model),
+          providerId: provider.id,
+          providerName: provider.name,
+          providerType: provider.type,
+          ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
+          model,
+          label: model || provider.name,
+          metadata,
+          supportsImageInput: supportsImageInput(provider, model, metadata)
+        })
+
+      if (provider.type === 'official' && provider.vendorId) {
+        return resolveOfficialModelCatalog(provider)
+          .filter(isCatalogModelAvailable)
+          .map((metadata) => entry(metadata.id, metadata))
+      }
+      const models = provider.models.length > 0 ? provider.models : [provider.model ?? '']
+      return models.map((model) => entry(model))
+    })
 }
 
 export const buildConfiguredModelCatalog = (
@@ -140,7 +144,7 @@ export const buildConfiguredModelCatalog = (
   return buildConfiguredModelInventory(input).flatMap((entry) => {
     const provider = input.providers.find((candidate) => candidate.id === entry.providerId)!
     const model = entry.model
-    const apiEndpoints = configuredModelApiEndpoints(provider, model)
+    const apiEndpoints = configuredModelApiEndpoints(provider, entry.metadata)
     const usesCompatibilityTransport = requiresChatCompletionsBridge(
       { apiEndpoints },
       { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }

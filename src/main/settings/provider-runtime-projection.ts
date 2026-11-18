@@ -1,4 +1,5 @@
 import {
+  catalogModelApiEndpoints,
   resolveOfficialModelCatalog,
   isCatalogModelAvailable
 } from '../../shared/provider-model-catalog'
@@ -84,12 +85,12 @@ class ProviderRuntimeProjectionOwner {
     if (isXaiSubscriptionProvider(provider.type))
       return ['messages', 'chat-completions', 'responses']
     if (provider.type === 'official' && provider.vendorId) {
-      const model = resolveOfficialModelCatalog(provider).find(
-        (entry) => entry.id === (activeModel ?? this.availableModels(provider)[0])
-      )
-      return Object.keys(model?.routes ?? {}).length > 0
-        ? (Object.keys(model!.routes!) as ModelProtocol[])
-        : resolveVendorApiEndpoints(provider.vendorId)
+      const catalog = resolveOfficialModelCatalog(provider)
+      const model = activeModel
+        ? catalog.find((entry) => entry.id === activeModel)
+        : catalog.find(isCatalogModelAvailable)
+      if (model || provider.modelCatalog) return catalogModelApiEndpoints(model)
+      return resolveVendorApiEndpoints(provider.vendorId)
     }
 
     return provider.apiEndpoints && provider.apiEndpoints.length > 0

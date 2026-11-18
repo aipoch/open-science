@@ -6,6 +6,7 @@ import {
   resolveVendorModelApiEndpoints,
   isVendorModelMultimodal,
   getVendorModelReasoningCapability,
+  type ModelProtocol,
   type OfficialVendorId,
   type CatalogModel,
   type CatalogSnapshot
@@ -16,6 +17,8 @@ export type OfficialCatalogSource = {
   vendorId?: OfficialVendorId
   region?: string
   fetchedModels?: readonly string[]
+  // ProviderView already contains the region and legacy discovery policy applied by main.
+  models?: readonly string[]
   modelCatalog?: CatalogSnapshot
 }
 
@@ -27,7 +30,7 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
   if (!vendor) return []
   const ids = modelCatalog
     ? modelCatalog.models.map((model) => model.id)
-    : getOfficialVendorModelIds(vendorId, region, source.fetchedModels)
+    : (source.models ?? getOfficialVendorModelIds(vendorId, region, source.fetchedModels))
   const live = new Map(modelCatalog?.models.map((model) => [model.id, model]))
   return ids
     .filter((id) => !/\[1m\]$/i.test(id))
@@ -59,6 +62,13 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
       }
     })
 }
+
+export function catalogModelApiEndpoints(model: CatalogModel | undefined): ModelProtocol[] {
+  return model && isCatalogModelAvailable(model)
+    ? (Object.keys(model.routes ?? {}) as ModelProtocol[])
+    : []
+}
+
 export function isCatalogModelAvailable(model: CatalogModel): boolean {
   return (
     !['retired', 'offline', 'shutdown'].includes(model.lifecycle ?? '') &&

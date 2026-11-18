@@ -66,6 +66,18 @@ export const targetForValidationResult = (
       ? undefined
       : target
 
+// A catalog can rule out a model before any endpoint is known. A later successful probe for
+// that model recovers this failure on any route; HTTP and native failures retain their own scope.
+const missingTargetMatchesProbe = (
+  missing: ProviderValidationTarget,
+  probe: ProviderValidationTarget
+): boolean =>
+  providerValidationTargetMatches(missing, probe) ||
+  (missing.model !== undefined &&
+    missing.model === probe.model &&
+    missing.endpoint === undefined &&
+    missing.frameworkId === undefined)
+
 export const buildProviderValidationPatch = (
   provider: StoredProvider,
   result: ValidateProviderResult,
@@ -79,7 +91,9 @@ export const buildProviderValidationPatch = (
   const sameSuccessTarget =
     provider.lastValidatedTarget === undefined ||
     target === undefined ||
-    providerValidationTargetMatches(provider.lastValidatedTarget, target)
+    (result.category === 'model-not-found'
+      ? missingTargetMatchesProbe(target, provider.lastValidatedTarget)
+      : providerValidationTargetMatches(provider.lastValidatedTarget, target))
 
   const priorFailure = provider.lastValidationFailure
   const previousMissingTargets =
@@ -96,7 +110,7 @@ export const buildProviderValidationPatch = (
 
   if (result.ok && priorFailure?.category === 'model-not-found' && priorFailure.target) {
     const remaining = target
-      ? previousMissingTargets.filter((failed) => !providerValidationTargetMatches(failed, target))
+      ? previousMissingTargets.filter((failed) => !missingTargetMatchesProbe(failed, target))
       : []
     const retainedFailure =
       remaining.length > 0 ? { ...priorFailure, target: remaining[0] } : undefined
