@@ -8908,6 +8908,10 @@
     "The model declined to generate this content.": "Модель отказалась создавать это содержимое.",
     "Retry_step": "Повторить попытку",
     "Waiting for storage. Try again after it responds.": "Ожидание ответа хранилища. Повторите попытку после восстановления ответа.",
-    "The model stopped before completing this step. Try again.": "Модель остановилась до завершения этого шага. Повторите попытку."
+    "The model stopped before completing this step. Try again.": "Модель остановилась до завершения этого шага. Повторите попытку.",
+    "Test generation": "Проверить генерацию",
+    "Image generation test passed.": "Проверка генерации изображений пройдена.",
+    "Test image generation?": "Проверить генерацию изображений?",
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "Будет создано одно тестовое изображение с помощью {{model}}. Поставщик может взимать плату за этот запрос."
   }
 }

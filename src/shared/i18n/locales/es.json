@@ -8755,6 +8755,10 @@
     "The model declined to generate this content.": "El modelo rechazó generar este contenido.",
     "Retry_step": "Reintentar",
     "Waiting for storage. Try again after it responds.": "Esperando al almacenamiento. Vuelva a intentarlo cuando responda.",
-    "The model stopped before completing this step. Try again.": "El modelo se detuvo antes de completar este paso. Vuelva a intentarlo."
+    "The model stopped before completing this step. Try again.": "El modelo se detuvo antes de completar este paso. Vuelva a intentarlo.",
+    "Test generation": "Probar generación",
+    "Image generation test passed.": "La prueba de generación de imágenes se completó correctamente.",
+    "Test image generation?": "¿Probar la generación de imágenes?",
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "Se generará una imagen de prueba con {{model}}. El proveedor podría cobrar por esta solicitud."
   }
 }
