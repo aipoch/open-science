@@ -230,6 +230,58 @@ class NotebookInputRegistry {
     return (this.turns.get(turnKey(request))?.inputs ?? []).map((input) => ({ ...input }))
   }
 
+  async openTurnContent(
+    request: ResolveNotebookInputPreviewRequest & {
+      scope: ArtifactProducerInputScope
+    }
+  ): Promise<{ input: NotebookRunInputFile; lease: ImmutableInputContentLease } | undefined> {
+    const { scope } = request
+    scope.assertActive()
+    const registered = this.getTurnInputs({
+      projectId: request.projectId,
+      appSessionId: scope.appSessionId,
+      promptMessageId: scope.promptMessageId
+    }).find(
+      (input) =>
+        input.sourceKind === request.sourceKind &&
+        input.sourceFileId === request.sourceFileId &&
+        input.inputFileVersionId === request.inputFileVersionId
+    )
+    // Without a registered attachment, resolve only this producer's own output. Supplying a
+    // file ID here would take the general preview path and bypass the producer scope check.
+    const input =
+      registered ??
+      (request.sourceKind === 'artifact-version'
+        ? await this.options.inputAuthority.resolveVersion({
+            projectId: request.projectId,
+            sourceKind: request.sourceKind,
+            inputFileVersionId: request.inputFileVersionId,
+            producerScope: scope
+          })
+        : undefined)
+    if (
+      !input ||
+      input.sourceFileId !== request.sourceFileId ||
+      input.sourceProjectId !== request.projectId ||
+      input.sourceSessionId !== scope.appSessionId
+    )
+      return undefined
+    const lease = await this.options.inputAuthority.openContent(
+      input,
+      registered ? undefined : scope
+    )
+    try {
+      scope.assertActive()
+      return {
+        input: { ...input, association: 'resolver-accessed', accessEvidence: 'resolver' },
+        lease
+      }
+    } catch (error) {
+      await lease.close()
+      throw error
+    }
+  }
+
   async openRun(request: OpenNotebookInputRunRequest): Promise<NotebookInputRunLease> {
     if (request.producerScope && request.producerScope.appSessionId !== request.appSessionId)
       throw new Error('Notebook producer input is unavailable in this Session.')

@@ -58,6 +58,7 @@ import {
   registerProcessTreeOwnership,
   terminateProcessTree,
   trackOwnedPosixProcessTree,
+  capturePosixProcessTreeIdentity,
   type ProcessTreeKillResult
 } from '../process-tree'
 import {
@@ -1618,9 +1619,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
     }
     const recordOwnership = (): void => {
       if (!ownershipIntent || child.pid === undefined || ownershipReceipt) return
+      const birthToken = capturePosixProcessTreeIdentity(child)?.birthToken
       ownershipReceipt = this.processLifecycle?.recordSpawned(ownershipIntent, {
         pid: child.pid,
         processStartToken: readProcessStartToken(child.pid),
+        ...(birthToken ? { posixBirthToken: birthToken } : {}),
         commandIdentityMarker: ownershipIntent.record.receiptId
       })
     }

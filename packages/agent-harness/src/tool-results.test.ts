@@ -82,6 +82,54 @@ it('bounds newline-heavy previews and validates page ranges without rewriting sm
   expect(() => toolResultPage(message, 0, 2, () => false)).toThrow('budget')
 })
 
+it('retains structured continuation metadata when a large JSON tool result is shortened', () => {
+  const result = {
+    content: text(
+      JSON.stringify({
+        data: { outline: 'x'.repeat(20_000) },
+        _meta: { status: 200 },
+        _handoff: { orderId: 'order-123', workflowRunId: 'run-456' }
+      })
+    )
+  }
+  const view = toolResultView(result, 'outline-create', 700, (blocks) =>
+    Buffer.byteLength(JSON.stringify(blocks))
+  )!
+  expect(view[0]).toEqual({
+    type: 'text',
+    text: JSON.stringify({
+      _handoff: { orderId: 'order-123', workflowRunId: 'run-456' }
+    })
+  })
+  expect(JSON.stringify(view)).toContain('order-123')
+  expect(JSON.stringify(view)).toContain('workflowRunId')
+})
+
+it('removes duplicated stream outline payloads before applying the model budget', () => {
+  const outline = '# 标题\n' + '内容。'.repeat(2_000)
+  const result = {
+    content: text(
+      JSON.stringify({
+        _meta: { status: 'ok' },
+        data: {
+          outline,
+          stream: { outline },
+          status: 'outline_ready'
+        },
+        _handoff: { orderId: 'order-789' }
+      })
+    )
+  }
+  const originalBytes = Buffer.byteLength(JSON.stringify(result.content))
+  const view = toolResultView(result, 'outline-create', originalBytes - 500, (blocks) =>
+    Buffer.byteLength(JSON.stringify(blocks))
+  )!
+  const parsed = JSON.parse((view[0] as { text: string }).text)
+  expect(parsed.data.outline).toBe(outline)
+  expect(parsed.data.stream.outline).toBeUndefined()
+  expect(parsed._handoff.orderId).toBe('order-789')
+})
+
 it('reads the original middle without repeating an effect and preserves the preview on restart/fork', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'harness-result-pages-'))
   try {

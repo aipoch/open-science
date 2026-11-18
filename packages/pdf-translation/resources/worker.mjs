@@ -2518,6 +2518,71 @@ async function generate({
             right = Math.max(...selected.map((o) => o.bounds[2])),
             bottom = Math.min(...selected.map((o) => o.bounds[1])),
             top = Math.max(...selected.map((o) => o.bounds[3])),
+            crossingSideRule = (rule) => {
+              // A side may cut through a native separator's stroke width.
+              // Return only borrowed whitespace; never reclaim native text.
+              if (
+                rule.type !== 2 ||
+                rule.bounds[2] - rule.bounds[0] > 1 ||
+                rule.bounds[1] > bottom ||
+                rule.bounds[3] < top ||
+                !(
+                  (rule.bounds[0] <= sourceRect.x && rule.bounds[2] >= sourceRect.x) ||
+                  (rule.bounds[0] <= sourceRect.x + sourceRect.width &&
+                    rule.bounds[2] >= sourceRect.x + sourceRect.width)
+                ) ||
+                p.FPDFPath_CountSegments(rule.obj) !== 2 ||
+                p.FPDFPageObj_GetLineCap(rule.obj) !== 0 ||
+                p.FPDFPageObj_GetDashCount(rule.obj) !== 0
+              )
+                return false
+              const clip = p.FPDFPageObj_GetClipPath(rule.obj)
+              if (clip && p.FPDFClipPath_CountPaths(clip) !== -1) return false
+              const at = e.alloc(24)
+              try {
+                if (
+                  !p.FPDFPageObj_GetIsActive(rule.obj, at) ||
+                  !e.m.HEAP32[at / 4] ||
+                  !p.FPDFPath_GetDrawMode(rule.obj, at, at + 4) ||
+                  e.m.HEAP32[at / 4] ||
+                  !e.m.HEAP32[at / 4 + 1] ||
+                  !p.FPDFPageObj_GetStrokeColor(rule.obj, at, at + 4, at + 8, at + 12) ||
+                  e.m.HEAPU32[at / 4 + 3] !== 255 ||
+                  !p.FPDFPageObj_GetMatrix(rule.obj, at)
+                )
+                  return false
+                const matrix = [...e.m.HEAPF32.slice(at / 4, at / 4 + 6)]
+                if (
+                  !matrix.every(Number.isFinite) ||
+                  matrix[0] <= 0 ||
+                  matrix[3] <= 0 ||
+                  matrix[1] !== 0 ||
+                  matrix[2] !== 0
+                )
+                  return false
+                const points = []
+                for (let n = 0; n < 2; n++) {
+                  const segment = p.FPDFPath_GetPathSegment(rule.obj, n)
+                  if (
+                    !segment ||
+                    p.FPDFPathSegment_GetType(segment) !== (n ? 0 : 2) ||
+                    p.FPDFPathSegment_GetClose(segment) ||
+                    !p.FPDFPathSegment_GetPoint(segment, at, at + 4)
+                  )
+                    return false
+                  const [x, y] = e.m.HEAPF32.slice(at / 4, at / 4 + 2)
+                  points.push([matrix[0] * x + matrix[4], matrix[3] * y + matrix[5]])
+                }
+                return (
+                  points.flat().every(Number.isFinite) &&
+                  points[0][0] === points[1][0] &&
+                  Math.min(points[0][1], points[1][1]) <= bottom &&
+                  Math.max(points[0][1], points[1][1]) >= top
+                )
+              } finally {
+                e.free(at)
+              }
+            },
             rules = objects.filter(
               (o) =>
                 o.type === 2 &&
@@ -2528,10 +2593,10 @@ async function generate({
                   (o.bounds[2] - o.bounds[0] <= 1 ||
                     o.bounds[0] > right + 0.02 ||
                     o.bounds[2] < left - 0.02) &&
-                  o.bounds[0] > sourceRect.x &&
-                  o.bounds[2] < sourceRect.x + sourceRect.width &&
                   o.bounds[1] <= bottom &&
-                  o.bounds[3] >= top) ||
+                  o.bounds[3] >= top &&
+                  ((o.bounds[0] > sourceRect.x && o.bounds[2] < sourceRect.x + sourceRect.width) ||
+                    crossingSideRule(o))) ||
                   // A thin rule spanning the complete native label bounds its
                   // row. Return borrowed space below it even when the new
                   // glyphs would sit on opposite sides without touching it.
@@ -3540,7 +3605,7 @@ async function generate({
           .map((o) => {
             const baseline = objectBaselines.get(o.i),
               sourceOffset = offsets.get(o.i),
-              nativeLabel = o.text.trim(),
+              nativeLabel = nativeMathSymbolText(o, nativeFontName(o)).trim(),
               spelling = unit.source.slice(sourceOffset, sourceOffset + nativeLabel.length),
               // PDFium and PDF.js can use different same-width mu spellings.
               nativeAlias =
@@ -3785,6 +3850,31 @@ async function generate({
             baseline: objectBaselines.get(original.i),
             movable: true
           })
+        }
+        // A newly recognized compound index must keep its complete exact token.
+        for (const span of resolveScientificScriptSpans(
+          unit.source,
+          unit.source,
+          markers.filter(
+            (marker) =>
+              !region.anchors.some(
+                (anchor) =>
+                  anchor.mathGroup &&
+                  marker.sourceIndices.some((index) => anchor.indices.includes(index))
+              )
+          )
+        )) {
+          const label = unit.source.slice(span.start, span.end)
+          if (!label.includes(':') && !/^\([^()]*,[^()]*\)$/u.test(label)) continue
+          check(
+            region.anchors.some(
+              (anchor) =>
+                anchor.generated &&
+                anchor.label === label &&
+                anchor.indices.length === span.sourceIndices.length &&
+                span.sourceIndices.every((index) => anchor.indices.includes(index))
+            )
+          )
         }
         // A reconciled native script must acquire script typography or retain
         // its source paragraph; an unmatched alias must never become flat prose.

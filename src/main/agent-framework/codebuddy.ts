@@ -24,10 +24,8 @@ import {
 } from '@aipoch/providers/protocol'
 import type { ResolvedProvider } from '../settings/provider-env'
 import { augmentedPathEnv } from '../settings/shell-path'
-import {
-  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
-  narrowSkillRuntimeAcpServers
-} from '../skills/runtime-mcp-server'
+import { narrowSkillRuntimeAcpServers } from '../skills/runtime-mcp-config'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
 import { renderAppMcpToolReferences } from './app-mcp-names'
 import type {

@@ -50,7 +50,7 @@ export type PackPathBudget = {
 }
 
 // manifest.json, one per (envVersion, subdir). `schema` guards the shape, `envVersion` must equal the
-// runtime's DEFAULT_ENV_VERSION, and the CDN path segment (not the body) carries the conda subdir.
+// runtime's DEFAULT_BUNDLE_VERSION, and the CDN path segment (not the body) carries the conda subdir.
 // `packs` is keyed by packId (`<language>-<version>`).
 export type BundleManifest = {
   schema: number

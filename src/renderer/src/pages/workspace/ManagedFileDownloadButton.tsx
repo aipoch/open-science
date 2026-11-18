@@ -35,6 +35,7 @@ type ManagedFileDownloadButtonProps = ManagedFileDownloadInput & {
   tone?: 'default' | 'strong'
   className?: string
   disabled?: boolean
+  downloadSelectedVersion?: boolean
   iconSize?: 'icon-xs' | 'icon-sm' | 'icon'
   revealOnParentHover?: boolean
   wrapperClassName?: string
@@ -55,6 +56,7 @@ const ManagedFileDownloadButtonState = ({
   tone = 'default',
   className,
   disabled = false,
+  downloadSelectedVersion = false,
   iconSize = 'icon-xs',
   revealOnParentHover = false,
   wrapperClassName,
@@ -82,11 +84,17 @@ const ManagedFileDownloadButtonState = ({
     Boolean(latestVersionId) &&
     Number.isSafeInteger(versionNumber) &&
     Number.isSafeInteger(latestVersionNumber)
-  const versionContextPending = hasExplicitManagedVersion && !hasResolvedVersionContext
+  const versionContextPending =
+    !downloadSelectedVersion && hasExplicitManagedVersion && !hasResolvedVersionContext
   const missingManagedIdentity =
     (source === 'artifact' || source === 'upload') && (!projectId || !fileId)
-  const effectiveDisabled = disabled || versionContextPending || missingManagedIdentity
+  const effectiveDisabled =
+    disabled ||
+    versionContextPending ||
+    missingManagedIdentity ||
+    (downloadSelectedVersion && !hasExplicitManagedVersion)
   const isHistoricalVersion =
+    !downloadSelectedVersion &&
     hasExplicitManagedVersion &&
     hasResolvedVersionContext &&
     versionId !== latestVersionId &&
@@ -157,7 +165,7 @@ const ManagedFileDownloadButtonState = ({
       onClick={
         isHistoricalVersion || pdfExport || translatedPdfExport
           ? undefined
-          : () => void download.execute(null)
+          : () => void download.execute(downloadSelectedVersion ? versionId : null)
       }
       aria-busy={Boolean(status === 'saving')}
     >

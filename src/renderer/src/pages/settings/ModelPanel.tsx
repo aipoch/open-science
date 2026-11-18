@@ -1,3 +1,4 @@
+import { ImageServicesPanel } from './ImageModelSettings'
 import { LocalNarrationControl } from '@/components/local-narration-control'
 import { LocalOcrControl } from '@/components/local-ocr-control'
 import type { ModelView } from '../../lib/settings-navigation'
@@ -281,6 +282,14 @@ export const ModelPanel = ({
   )
   const tabClass =
     'relative flex min-w-0 flex-1 items-center justify-center gap-2 whitespace-nowrap border-b-2 sm:flex-none sm:justify-start border-transparent px-1 py-3 text-xs text-muted-foreground data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring'
+  if (
+    view &&
+    navigate &&
+    (view.kind === 'image-services' ||
+      view.kind === 'image-service-create' ||
+      view.kind === 'image-service-edit')
+  )
+    return <ImageServicesPanel view={view} navigate={navigate} />
   if (
     view &&
     navigate &&

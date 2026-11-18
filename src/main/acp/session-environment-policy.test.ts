@@ -55,6 +55,7 @@ const createPolicy = (
   const toolingAvailability = vi.fn(() =>
     Object.freeze({
       artifacts: true,
+      images: false,
       notebook: false,
       skillImport: true,
       plan: false,

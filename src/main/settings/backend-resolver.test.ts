@@ -1298,7 +1298,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
 
     expect(harness.runtime.prepareAgentSkillDiscovery).toHaveBeenCalledWith(
       expect.anything(),
-      '/storage/opencode/config/opencode',
+      join('/storage', 'opencode', 'config', 'opencode'),
       expect.any(Set),
       undefined,
       { directoryLayout: 'agent-facing-shared' }

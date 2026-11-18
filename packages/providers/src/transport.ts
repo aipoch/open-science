@@ -10,6 +10,7 @@ export {
   DEFAULT_MAX_PROVIDER_SSE_EVENT_BYTES,
   DEFAULT_MAX_PROVIDER_SSE_LINE_BYTES,
   ResponseBodyLimitError,
+  iterateBoundedResponseBody,
   consumeBoundedResponseBody,
   readBoundedResponseBytes,
   readBoundedResponseText

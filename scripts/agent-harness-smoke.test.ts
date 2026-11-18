@@ -6,21 +6,47 @@ import { execFile } from 'node:child_process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseSmokeOptions } from './agent-harness-smoke.mjs'
 import { fixtureModel, runHarnessSmoke } from './agent-harness-smoke-runner.mjs'
+import { SessionRepository } from '../src/main/session-persistence/repository'
 
 const faults = vi.hoisted(() => ({ status: '', session: false }))
+
+const recordsStatus = (contents: unknown, status: string): boolean => {
+  const visit = (value: unknown): boolean => {
+    if (!value || typeof value !== 'object') return false
+    if (Array.isArray(value)) return value.some(visit)
+    const requests = (value as { harnessTurn?: { requests?: Array<{ status?: string }> } })
+      .harnessTurn?.requests
+    if (requests?.some((request) => request.status === status)) return true
+    return Object.values(value).some(visit)
+  }
+  try {
+    return visit(JSON.parse(String(contents)))
+  } catch {
+    return false
+  }
+}
+
 vi.mock('@aipoch/durable-files', async (original) => {
   const real = await original<typeof import('@aipoch/durable-files')>()
   return {
     ...real,
     writeDurableJsonFile: async (...args: Parameters<typeof real.writeDurableJsonFile>) => {
       const payload = JSON.parse(args[1])
-      const matches = faults.session
-        ? payload.session?.conversationGraph?.messages.some((message) =>
-            message.harnessTurn?.requests.some((request) => request.status === faults.status)
-          )
-        : payload.status === faults.status
-      if (faults.status && matches) throw new Error('fixture storage failure')
+      if (!faults.session && faults.status && payload.status === faults.status)
+        throw new Error('fixture storage failure')
       return real.writeDurableJsonFile(...args)
+    }
+  }
+})
+
+vi.mock('node:fs/promises', async (original) => {
+  const real = await original<typeof import('node:fs/promises')>()
+  return {
+    ...real,
+    appendFile: async (...args: Parameters<typeof real.appendFile>) => {
+      if (faults.session && recordsStatus(args[1], faults.status))
+        throw new Error('fixture storage failure')
+      return real.appendFile(...args)
     }
   }
 })
@@ -55,10 +81,16 @@ const artifacts = async (): Promise<unknown[]> =>
   )
 const persistedJournal = async (): Promise<
   import('../src/shared/harness-turn-contract').HarnessTurnJournal
-> =>
-  JSON.parse(
-    await readFile(join(options().output, 'sessions/harness-smoke/harness-smoke.json'), 'utf8')
-  ).session.conversationGraph.messages.find((message) => message.id === 'answer').harnessTurn
+> => {
+  const repository = new SessionRepository(options().output)
+  const loaded = await repository.loadSessionWithDiagnostics('harness-smoke', 'harness-smoke')
+  if (loaded.status !== 'found') throw new Error('Harness Session authority is unavailable')
+  const journal = loaded.session.conversationGraph?.messages.find(
+    (message) => message.id === 'answer'
+  )?.harnessTurn
+  if (!journal) throw new Error('Harness turn journal is unavailable')
+  return journal
+}
 
 describe('harness smoke', () => {
   it('compacts through a metered request and reloads the durable summary before tool execution', async () => {

@@ -320,8 +320,13 @@ const buildArtifactVersionRoCrateMetadata = (
         propertyValue('rootFrameId', evidence.conversation.root_frame_id),
         propertyValue('agentFrameId', evidence.conversation.agent_frame_id),
         propertyValue('messageBranchId', evidence.conversation.message_branch_id),
-        propertyValue('runtimeSegmentId', evidence.conversation.runtime_segment_id),
-        propertyValue('promptMessageId', evidence.conversation.prompt_message_id)
+        ...(evidence.conversation.runtime_segment_id
+          ? [propertyValue('runtimeSegmentId', evidence.conversation.runtime_segment_id)]
+          : []),
+        ...(evidence.conversation.prompt_message_id
+          ? [propertyValue('promptMessageId', evidence.conversation.prompt_message_id)]
+          : []),
+        ...(evidence.image_task_id ? [propertyValue('imageTaskId', evidence.image_task_id)] : [])
       ]
     })
   }

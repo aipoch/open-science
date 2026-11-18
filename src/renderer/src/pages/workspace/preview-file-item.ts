@@ -181,7 +181,7 @@ export const createPreviewFileItemFromArtifact = (
         })
       : artifact.path
 
-  return createPreviewFileItem({
+  const item = createPreviewFileItem({
     id: artifact.artifactId ?? artifact.id,
     projectId,
     sessionId,
@@ -194,6 +194,9 @@ export const createPreviewFileItemFromArtifact = (
     managedFileId: artifact.artifactId,
     versionNumber: artifact.versionNumber
   })
+  // A message image represents this result, not the mutable head of the Artifact.
+  if (item.format === 'image' && artifact.versionId) item.selectedVersionId = artifact.versionId
+  return item
 }
 
 // Applies one immutable Artifact Version to the stable preview tab identity. Both image preview
@@ -220,6 +223,7 @@ export const createPreviewFileItemForArtifactVersion = ({
   }),
   name: version.name,
   title: version.name,
+  mimeType: version.mimeType,
   size: version.size,
   mtimeMs: version.mtimeMs
 })
@@ -256,6 +260,7 @@ export const createPreviewFileItemForManagedVersion = ({
         }),
   name: version.displayName,
   title: version.displayName,
+  mimeType: version.contentType ?? undefined,
   size: version.sizeBytes
 })
 

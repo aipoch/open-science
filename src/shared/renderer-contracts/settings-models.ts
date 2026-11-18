@@ -1,4 +1,8 @@
 import type { CodeBuddyAccountRequest } from '../codebuddy-subscription'
+import type {
+  ImageModelSettingsMutation,
+  ImageModelSettingsSnapshot
+} from '../image-model-settings'
 // Ordered fragments keep the public registration order when capabilities interleave.
 import type {
   ClaudeDetectResult,
@@ -229,4 +233,14 @@ export const settingsUpsertProviderContracts = {
     'settings:wait-xai-oauth-login',
     LOCAL
   ])
+} as const
+
+export const settingsImageModelsContracts = {
+  'settings.getImageModels': callable<() => Promise<ImageModelSettingsSnapshot>>()('settings', [
+    'settings:get-image-models',
+    LOCAL
+  ]),
+  'settings.updateImageModels': callable<
+    (request: ImageModelSettingsMutation) => Promise<ImageModelSettingsSnapshot>
+  >()('settings', ['settings:update-image-models', LOCAL])
 } as const

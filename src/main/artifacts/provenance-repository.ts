@@ -1,4 +1,12 @@
+import {
+  imageTaskEvidenceMatches,
+  ImageTaskIntegrityError,
+  type ImageTask
+} from '../../shared/image-task'
+import { ProvenanceIntegrityError } from '../../shared/provenance-read-result'
+import type { ArtifactVersionEvidence } from '../../shared/artifact-provenance'
 import { persistentContentReferences } from '../storage/prisma-content-references'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
 import { readFile, realpath, rm, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
@@ -8,10 +16,10 @@ import type { ArtifactVersion, PrismaClient } from '@prisma/client'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 
 import type {
-  AppGeneratedArtifactProducer,
   SaveArtifactVersionRequest,
   ArtifactWriteSourceScope,
   ArtifactLineageProvenance,
+  ArtifactVersionCoreProvenance,
   ArtifactVersionDescriptor,
   ArtifactVersionFile,
   ArtifactVersionProvenance,
@@ -34,6 +42,7 @@ import {
   parseOwnedExecutionFileEvidenceSummary
 } from '../../shared/execution-file-evidence'
 import { ArtifactRepository } from './repository'
+import { PENDING_DIR } from './storage-layout'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { defaultFileDurability, type FileDurability } from '@aipoch/durable-files'
 import {
@@ -46,7 +55,10 @@ import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repos
 import { canonicalJson, sha256 } from './provenance-canonical'
 import { readNativeEvidence } from './execution-evidence-log'
 import { computeEvidenceOwnsSource } from './compute-output-evidence'
-import { ArtifactProvenanceProducerCapture } from './provenance-producer-capture'
+import {
+  ArtifactProvenanceProducerCapture,
+  type AppGeneratedArtifactWriteProducer
+} from './provenance-producer-capture'
 import {
   ArtifactFinalizationProofError,
   ArtifactOwnershipPersistenceRaceError,
@@ -61,12 +73,15 @@ import {
 } from './provenance-finalization-recovery'
 import { ArtifactProvenanceStagingRecovery } from './provenance-staging-recovery'
 import { ArtifactProvenanceUnindexedRecovery } from './provenance-unindexed-recovery'
-import { resolveStorageKey, storageKey } from './provenance-storage'
+import { assertRegularStoragePath, resolveStorageKey, storageKey } from './provenance-storage'
 import { ArtifactProvenanceReadModel } from './provenance-read-model'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ArtifactProvenanceDependencyReader } from './provenance-dependency-reader'
 import type { HostLineageDependencyRelation, HostLineageDirection } from '../../shared/host-lineage'
-import { requireAgentArtifactVersion } from './provenance-version-kind'
+import {
+  requireAgentArtifactVersion,
+  requireGeneratedArtifactVersion
+} from './provenance-version-kind'
 import {
   LOCAL_RESOURCE_BUDGETS,
   ResourceBudgetExceededError,
@@ -100,6 +115,7 @@ import {
 } from './literature-manifest'
 import { readPreparedLiteratureSidecar } from './prepared-literature-sidecar'
 import { validateArtifactSaveSource } from './save-request'
+import type { PendingFileTransactionRequest } from './pending-file-contract'
 import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -147,11 +163,12 @@ export type WriteAppGeneratedArtifactVersionRequest = Omit<
   | 'contentType'
 > & {
   filename: string
-  content: string
+  content: string | Buffer
+  writeOperationId?: string
   encoding?: ArtifactWriteEncoding
   contentType?: string
   kind?: 'plan'
-  producer?: AppGeneratedArtifactProducer
+  producer?: AppGeneratedArtifactWriteProducer
 }
 
 type ArtifactStorageReconciliationResult = {
@@ -580,17 +597,266 @@ class ArtifactProvenanceRepository {
   async writeAppGeneratedVersion(
     request: WriteAppGeneratedArtifactVersionRequest
   ): Promise<ArtifactVersionFile> {
-    const { content, encoding = 'utf8', kind, producer, ...versionRequest } = request
+    const { content, encoding, kind, producer, ...versionRequest } = request
+    const source: PendingFileTransactionRequest['source'] =
+      typeof content === 'string'
+        ? { kind: 'inline', content, encoding: encoding ?? 'utf8' }
+        : { kind: 'inline', content, encoding: 'base64' }
     return this.writeGeneratedVersion(
       {
         ...versionRequest,
-        writeOperationId: `artifact-app-write-${this.createId()}`,
-        source: { kind: 'inline', content, encoding }
+        writeOperationId:
+          request.writeOperationId ??
+          `artifact-app-write-${request.imageTaskId ?? this.createId()}`,
+        source
       },
       { allowedImportRoots: [] },
       undefined,
-      { kind, producer, encoding }
+      { kind, producer, encoding: source.encoding }
     )
+  }
+
+  async verifyImageTaskResults(
+    tasks: readonly (Pick<
+      ImageTask,
+      'id' | 'projectId' | 'sessionId' | 'frameId' | 'branchId' | 'state' | 'result'
+    > & { edit: { source: Pick<ImageTask['edit']['source'], 'sourceVersionId'> } })[]
+  ): Promise<void> {
+    const completed = tasks.filter((task) => task.state === 'succeeded' && task.result)
+    if (!completed.length) return
+    const rows = await (
+      await this.options.getClient()
+    ).artifactVersion.findMany({
+      where: { id: { in: completed.map((task) => task.result!.versionId) }, state: 'finalized' },
+      select: {
+        id: true,
+        artifactId: true,
+        artifactRunId: true,
+        agentFrameId: true,
+        messageBranchId: true,
+        checksum: true,
+        sizeBytes: true,
+        evidenceJson: true,
+        artifact: { select: { projectId: true, sessionId: true } }
+      }
+    })
+    const versions = new Map(rows.map((row) => [row.id, row]))
+    const invalid: string[] = []
+    for (const task of completed) {
+      const result = task.result!
+      const row = versions.get(result.versionId)
+      let evidence: ArtifactVersionEvidence | undefined
+      try {
+        evidence = row?.evidenceJson ? JSON.parse(row.evidenceJson) : undefined
+      } catch {
+        invalid.push(task.id)
+        continue
+      }
+      if (
+        !row ||
+        row.artifact.projectId !== task.projectId ||
+        row.artifact.sessionId !== task.sessionId ||
+        row.artifactId !== result.artifactId ||
+        row.artifactRunId !== task.id ||
+        row.agentFrameId !== task.frameId ||
+        row.messageBranchId !== task.branchId ||
+        row.checksum !== result.checksum ||
+        row.sizeBytes !== BigInt(result.size) ||
+        !imageTaskEvidenceMatches(evidence, task.id, task.edit.source.sourceVersionId)
+      )
+        invalid.push(task.id)
+    }
+    if (invalid.length) throw new ImageTaskIntegrityError(invalid)
+  }
+
+  async readImageInvocationVersion(request: {
+    projectId: string
+    appSessionId: string
+    artifactRunId: string
+    agentFrameId: string
+    messageBranchId: string
+    promptMessageId: string
+    writeOperationId: string
+    invocationId: string
+  }): Promise<ArtifactVersionCoreProvenance | undefined> {
+    const row = await (
+      await this.options.getClient()
+    ).artifactVersion.findFirst({
+      where: {
+        writeOperationId: request.writeOperationId,
+        artifactRunId: request.artifactRunId,
+        agentFrameId: request.agentFrameId,
+        messageBranchId: request.messageBranchId,
+        promptMessageId: request.promptMessageId,
+        artifact: { projectId: request.projectId, sessionId: request.appSessionId },
+        state: { in: ['staging', 'pending', 'finalized'] }
+      }
+    })
+    if (!row) return undefined
+    if (row.state === 'staging') await this.recoverStagedImageVersion(request, row.id)
+    const core = await this.getVersionCore({
+      ...request,
+      artifactId: row.artifactId,
+      versionId: row.id
+    })
+    const producer = core.evidence.producer
+    if (
+      core.contentStatus.state !== 'available' ||
+      producer.state !== 'available' ||
+      !('kind' in producer) ||
+      producer.connector_id !== 'image-model' ||
+      producer.invocation_id !== request.invocationId
+    )
+      return undefined
+    return core
+  }
+
+  async recoverImageTaskVersion(request: {
+    projectId: string
+    appSessionId: string
+    taskId: string
+    sourceVersionId: string
+  }): Promise<ArtifactVersionFile | undefined> {
+    const row = await (
+      await this.options.getClient()
+    ).artifactVersion.findFirst({
+      where: {
+        artifactRunId: request.taskId,
+        artifact: { projectId: request.projectId, sessionId: request.appSessionId },
+        promptMessageId: null,
+        state: { in: ['staging', 'pending', 'finalized'] }
+      }
+    })
+    if (row?.state === 'staging') await this.recoverStagedImageVersion(request, row.id)
+    return row ? this.publishImageTaskVersion({ ...request, versionId: row.id }) : undefined
+  }
+
+  private async recoverStagedImageVersion(
+    scope: { projectId: string; appSessionId: string },
+    versionId: string
+  ): Promise<void> {
+    await this.withSessionMutation(scope, async () => {
+      const client = await this.options.getClient()
+      const version = await client.artifactVersion.findUnique({
+        where: {
+          id: versionId,
+          artifact: { projectId: scope.projectId, sessionId: scope.appSessionId },
+          state: 'staging'
+        },
+        include: { artifact: true }
+      })
+      if (!version) return
+      await this.stagingRecovery.recoverVersion(
+        requireGeneratedArtifactVersion(version),
+        scope.projectId,
+        scope.appSessionId,
+        version.filename
+      )
+    })
+  }
+
+  async publishImageTaskVersion(request: {
+    projectId: string
+    appSessionId: string
+    taskId: string
+    versionId: string
+    sourceVersionId: string
+  }): Promise<ArtifactVersionFile> {
+    return this.withSessionMutation(request, async () => {
+      const client = await this.options.getClient()
+      const candidate = await client.artifactVersion.findFirst({
+        where: {
+          id: request.versionId,
+          artifactRunId: request.taskId,
+          artifact: { projectId: request.projectId, sessionId: request.appSessionId },
+          state: { in: ['pending', 'finalized'] }
+        }
+      })
+      if (!candidate) throw new ImageTaskIntegrityError([request.taskId])
+      const core = await this.getVersionCore({
+        ...request,
+        artifactId: candidate.artifactId
+      }).catch((error: unknown) => {
+        if (error instanceof ProvenanceIntegrityError)
+          throw new ImageTaskIntegrityError([request.taskId])
+        throw error
+      })
+      if (
+        core.contentStatus.state !== 'available' ||
+        !imageTaskEvidenceMatches(core.evidence, request.taskId, request.sourceVersionId)
+      )
+        throw new ImageTaskIntegrityError([request.taskId])
+      const version = await client.$transaction(async (tx) => {
+        const row = await tx.artifactVersion.findFirst({
+          where: {
+            id: request.versionId,
+            artifactRunId: request.taskId,
+            artifact: { projectId: request.projectId, sessionId: request.appSessionId },
+            state: { in: ['pending', 'finalized'] }
+          },
+          include: { artifact: { include: { originSession: true, currentVersion: true } } }
+        })
+        if (!row || row.artifact.originSession.state !== 'active')
+          throw new ImageTaskIntegrityError([request.taskId])
+        requireGeneratedArtifactVersion(row)
+        const evidence = JSON.parse(row.evidenceJson!) as ArtifactVersionEvidence
+        if (
+          !imageTaskEvidenceMatches(evidence, request.taskId, request.sourceVersionId) ||
+          row.promptMessageId !== null
+        )
+          throw new ImageTaskIntegrityError([request.taskId])
+        const published = await tx.artifactVersion.update({
+          where: { id: row.id },
+          data: {
+            state: 'finalized',
+            managedVisibleAt: row.managedVisibleAt ?? this.now()
+          }
+        })
+        // Match conversation publication: newer results become current, but retries cannot roll back.
+        if (
+          !row.artifact.currentVersion ||
+          row.artifact.currentVersion.versionNumber < row.versionNumber
+        )
+          await tx.artifactLineage.update({
+            where: { id: row.artifactId },
+            data: { currentVersionId: row.id }
+          })
+        return published
+      })
+      const pendingKey = storageKey(
+        'artifacts',
+        request.projectId,
+        request.appSessionId,
+        PENDING_DIR,
+        request.taskId
+      )
+      try {
+        await assertRegularStoragePath(this.options.storageRoot, pendingKey)
+        const pendingFiles = await this.compatibilityRepository.listPendingRunFiles({
+          projectId: request.projectId,
+          sessionId: request.appSessionId,
+          runId: request.taskId
+        })
+        if (pendingFiles.length !== 1 || pendingFiles[0].versionId !== version.id) {
+          throw new Error('Image task staging ownership could not be verified.')
+        }
+        await rm(resolveStorageKey(this.options.storageRoot, pendingKey), {
+          recursive: true,
+          force: true
+        })
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          createLogger('artifact-provenance').warn(
+            'Published image task staging could not be removed.'
+          )
+        }
+      }
+      return this.toArtifactVersionFile(
+        requireGeneratedArtifactVersion(version),
+        request.projectId,
+        request.appSessionId
+      )
+    })
   }
 
   withSessionMutation<Result>(
@@ -614,12 +880,13 @@ class ArtifactProvenanceRepository {
   }
 
   private writeGeneratedVersion(
-    request: SaveArtifactVersionRequest,
+    request: Omit<SaveArtifactVersionRequest, 'source'> &
+      Pick<PendingFileTransactionRequest, 'source'>,
     sourceScope: ArtifactWriteSourceScope,
     signal?: AbortSignal,
     app?: {
       kind?: 'plan'
-      producer?: AppGeneratedArtifactProducer
+      producer?: AppGeneratedArtifactWriteProducer
       encoding: ArtifactWriteEncoding
     },
     onMetadataBytes?: (bytes: number) => void
@@ -635,6 +902,7 @@ class ArtifactProvenanceRepository {
         if (
           !app &&
           request.source.kind === 'inline' &&
+          typeof request.source.content === 'string' &&
           (await (
             await this.options.getClient()
           ).artifactVersion.findUnique({
@@ -649,7 +917,7 @@ class ArtifactProvenanceRepository {
               sourceKind: 'inline',
               writeRequestChecksum: sha256(
                 JSON.stringify({
-                  contentChecksum: sha256(Buffer.from(source.content, source.encoding)),
+                  contentChecksum: sha256(Buffer.from(request.source.content, source.encoding)),
                   contentType: request.contentType ?? null,
                   filename: request.filename,
                   producerRunId: request.producerRunId ?? null,
@@ -682,25 +950,26 @@ class ArtifactProvenanceRepository {
             : []),
           ...(sourceScope.workspaceCwd ? [sourceScope.workspaceCwd] : [])
         ]
-        const prepared = request.literature
-          ? undefined
-          : await readPreparedLiteratureSidecar(
-              request.source,
-              sourceScope.allowedImportRoots,
-              relativeBaseDirs,
-              {
-                signal,
-                grantedImportRoots: sourceScope.grantedImportRoots,
-                maxBytes: Math.max(
-                  0,
-                  LOCAL_RESOURCE_BUDGETS.requestBytes -
-                    Buffer.byteLength(
-                      JSON.stringify({ method: 'artifactSaveVersion', params: request })
-                    )
-                ),
-                onBytes: onMetadataBytes
-              }
-            )
+        const prepared =
+          request.literature || request.source.kind !== 'localPath'
+            ? undefined
+            : await readPreparedLiteratureSidecar(
+                request.source,
+                sourceScope.allowedImportRoots,
+                relativeBaseDirs,
+                {
+                  signal,
+                  grantedImportRoots: sourceScope.grantedImportRoots,
+                  maxBytes: Math.max(
+                    0,
+                    LOCAL_RESOURCE_BUDGETS.requestBytes -
+                      Buffer.byteLength(
+                        JSON.stringify({ method: 'artifactSaveVersion', params: request })
+                      )
+                  ),
+                  onBytes: onMetadataBytes
+                }
+              )
         const literature = request.literature ?? prepared?.literature
         const { source, ...versionRequest } = request
         let replacementChecksum: string | undefined
@@ -719,6 +988,11 @@ class ArtifactProvenanceRepository {
             grantedImportRoots: sourceScope.grantedImportRoots,
             relativeBaseDirs,
             signal,
+            // Host-generated images already passed the image service's 64 MiB byte check.
+            maxInlineBytes:
+              app?.producer?.kind === 'connector' && app.producer.connectorId === 'image-model'
+                ? LOCAL_RESOURCE_BUDGETS.requestBytes
+                : undefined,
             reserveFile: (fileBytes) => this.writeBudgetOwner.reserve({ ...request, fileBytes }),
             releaseFileReservation: (reservationId) =>
               this.writeBudgetOwner.release({ ...request, reservationId }),
@@ -1234,7 +1508,7 @@ class ArtifactProvenanceRepository {
     })
     const versionsById = new Map(
       versions.map((version) => {
-        const agentVersion = requireAgentArtifactVersion(version)
+        const agentVersion = requireGeneratedArtifactVersion(version)
         return [agentVersion.id, agentVersion] as const
       })
     )

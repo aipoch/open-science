@@ -116,6 +116,10 @@ export const localFsGetRootsContracts = {
     'local-fs:open-path',
     LOCAL
   ]),
+  'localFs.openInBrowser': callable<(path: string) => Promise<void>>()('local-fs', [
+    'local-fs:open-in-browser',
+    LOCAL
+  ]),
   'localFs.readPreview': callable<
     (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   >()('local-fs', ['local-fs:read-preview', LOCAL]),

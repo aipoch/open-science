@@ -148,6 +148,27 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "completedAt" DATETIME NOT NULL,
     CONSTRAINT "SessionProjectionState_identity_check" CHECK ("id" = 'session-projection' AND "projectionVersion" >= 1)
 );`,
+  `CREATE TABLE IF NOT EXISTS "SessionHistoryIndex" (
+    "sessionId" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "revision" BIGINT NOT NULL,
+    "sourceFingerprint" TEXT NOT NULL,
+    "scopeKey" TEXT NOT NULL,
+    "headerJson" TEXT NOT NULL,
+    "totalItems" INTEGER NOT NULL
+);`,
+  `CREATE TABLE IF NOT EXISTS "SessionHistoryItem" (
+    "sessionId" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "itemId" TEXT NOT NULL,
+    "ordinal" INTEGER,
+    "promptMessageId" TEXT,
+    "groupId" TEXT,
+    "payloadJson" TEXT NOT NULL,
+
+    PRIMARY KEY ("sessionId", "kind", "itemId"),
+    CONSTRAINT "SessionHistoryItem_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "SessionHistoryIndex" ("sessionId") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
   `CREATE TABLE IF NOT EXISTS "PendingSessionReconciliation" (
     "sessionId" TEXT NOT NULL PRIMARY KEY,
     "projectId" TEXT NOT NULL,
@@ -214,7 +235,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 
     PRIMARY KEY ("sessionId", "eventId"),
     CONSTRAINT "SessionAuxiliaryTurnUsage_identity_check" CHECK (length(trim("sessionId")) > 0 AND length(trim("eventId")) > 0 AND length(trim("frameworkId")) > 0 AND ("model" IS NULL OR length(trim("model")) > 0)),
-    CONSTRAINT "SessionAuxiliaryTurnUsage_source_check" CHECK ("source" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction', 'classification')),
+    CONSTRAINT "SessionAuxiliaryTurnUsage_source_check" CHECK ("source" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction', 'classification', 'image-generation')),
     CONSTRAINT "SessionAuxiliaryTurnUsage_nonnegative_check" CHECK ("completedAtMs" >= 0 AND "inputTokens" >= 0 AND "cacheTokens" >= 0 AND "outputTokens" >= 0 AND (("cachedReadTokens" IS NULL AND "cachedWriteTokens" IS NULL) OR ("cachedReadTokens" IS NOT NULL AND "cachedWriteTokens" IS NOT NULL AND "cachedReadTokens" >= 0 AND "cachedWriteTokens" >= 0)) AND ("modelCallCount" IS NULL OR "modelCallCount" > 0))
 );`,
   `CREATE TABLE IF NOT EXISTS "SessionRun" (
@@ -755,7 +776,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ArtifactVersion_state_check" CHECK ("state" IN ('staging', 'pending', 'finalized')),
     CONSTRAINT "ArtifactVersion_filename_check" CHECK (length("filename") > 0),
     CONSTRAINT "ArtifactVersion_originKind_check" CHECK ("originKind" IN ('agent_generated', 'user_edit', 'legacy')),
-    CONSTRAINT "ArtifactVersion_provenance_check" CHECK ((("originKind" = 'agent_generated' AND "artifactRunId" IS NOT NULL AND "rootFrameId" IS NOT NULL AND "agentFrameId" IS NOT NULL AND "messageBranchId" IS NOT NULL AND "runtimeSegmentId" IS NOT NULL AND "promptMessageId" IS NOT NULL AND "evidenceStorageKey" IS NOT NULL AND "evidenceJson" IS NOT NULL AND "evidenceChecksum" IS NOT NULL AND "evidenceSchemaVersion" IS NOT NULL) OR ("originKind" = 'user_edit' AND "state" = 'finalized' AND "basedOnVersionId" IS NOT NULL AND "storageTag" IS NOT NULL AND "storedFilename" IS NOT NULL AND "artifactRunId" IS NULL AND "writeRequestChecksum" IS NULL AND "rootFrameId" IS NULL AND "agentFrameId" IS NULL AND "messageBranchId" IS NULL AND "runtimeSegmentId" IS NULL AND "promptMessageId" IS NULL AND "notebookSessionId" IS NULL AND "producerRunId" IS NULL AND "producerRunIndex" IS NULL AND "messageId" IS NULL AND "messageSnapshotId" IS NULL AND "evidenceStorageKey" IS NULL AND "evidenceJson" IS NULL AND "evidenceChecksum" IS NULL AND "evidenceSchemaVersion" IS NULL AND "executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR "originKind" = 'legacy')),
+    CONSTRAINT "ArtifactVersion_provenance_check" CHECK ((("originKind" = 'agent_generated' AND "artifactRunId" IS NOT NULL AND "rootFrameId" IS NOT NULL AND "agentFrameId" IS NOT NULL AND "messageBranchId" IS NOT NULL AND (("runtimeSegmentId" IS NOT NULL AND "promptMessageId" IS NOT NULL) OR ("runtimeSegmentId" IS NULL AND "promptMessageId" IS NULL AND "messageId" IS NULL AND "messageSnapshotId" IS NULL AND "notebookSessionId" IS NULL AND "producerRunId" IS NULL AND "producerRunIndex" IS NULL AND "evidenceSchemaVersion" = 1 AND COALESCE(json_extract("evidenceJson", '$.image_task_id') = "artifactRunId" AND json_extract("evidenceJson", '$.producer.kind') = 'connector' AND json_extract("evidenceJson", '$.producer.connector_id') = 'image-model', 0))) AND "evidenceStorageKey" IS NOT NULL AND "evidenceJson" IS NOT NULL AND "evidenceChecksum" IS NOT NULL AND "evidenceSchemaVersion" IS NOT NULL) OR ("originKind" = 'user_edit' AND "state" = 'finalized' AND "basedOnVersionId" IS NOT NULL AND "storageTag" IS NOT NULL AND "storedFilename" IS NOT NULL AND "artifactRunId" IS NULL AND "writeRequestChecksum" IS NULL AND "rootFrameId" IS NULL AND "agentFrameId" IS NULL AND "messageBranchId" IS NULL AND "runtimeSegmentId" IS NULL AND "promptMessageId" IS NULL AND "notebookSessionId" IS NULL AND "producerRunId" IS NULL AND "producerRunIndex" IS NULL AND "messageId" IS NULL AND "messageSnapshotId" IS NULL AND "evidenceStorageKey" IS NULL AND "evidenceJson" IS NULL AND "evidenceChecksum" IS NULL AND "evidenceSchemaVersion" IS NULL AND "executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR "originKind" = 'legacy')),
     CONSTRAINT "ArtifactVersion_evidenceJson_check" CHECK ("evidenceJson" IS NULL OR (json_valid("evidenceJson") AND json_type("evidenceJson") = 'object')),
     CONSTRAINT "ArtifactVersion_executionSnapshotJson_check" CHECK ("executionSnapshotJson" IS NULL OR (json_valid("executionSnapshotJson") AND json_type("executionSnapshotJson") = 'object')),
     CONSTRAINT "ArtifactVersion_executionSnapshotBundle_check" CHECK ((("executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR ("executionSnapshotJson" IS NOT NULL AND "executionSnapshotChecksum" IS NOT NULL AND "executionSnapshotStorageKey" IS NOT NULL AND "executionSnapshotSchemaVersion" IS NOT NULL))),
@@ -1362,6 +1383,8 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "Session_projectId_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("projectId", "deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
   `CREATE INDEX IF NOT EXISTS "Session_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
   `CREATE INDEX IF NOT EXISTS "Session_createdAtMs_idx" ON "Session"("createdAtMs");`,
+  `CREATE INDEX IF NOT EXISTS "SessionHistoryIndex_projectId_idx" ON "SessionHistoryIndex"("projectId");`,
+  `CREATE INDEX IF NOT EXISTS "SessionHistoryItem_sessionId_ordinal_idx" ON "SessionHistoryItem"("sessionId", "ordinal");`,
   `CREATE INDEX IF NOT EXISTS "PendingSessionReconciliation_projectId_idx" ON "PendingSessionReconciliation"("projectId");`,
   `CREATE INDEX IF NOT EXISTS "SessionTurnUsage_completedAtMs_idx" ON "SessionTurnUsage"("completedAtMs");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "SessionModelCallUsage_sessionId_messageId_callIndex_key" ON "SessionModelCallUsage"("sessionId", "messageId", "callIndex");`,
@@ -1538,6 +1561,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'SessionNumberSequence',
   'Session',
   'SessionProjectionState',
+  'SessionHistoryIndex',
+  'SessionHistoryItem',
   'PendingSessionReconciliation',
   'SessionTurnUsage',
   'SessionModelCallUsage',

@@ -56,6 +56,7 @@ type ProvidersPanelProps = {
   recoveryModel?: string
   // Navigation callbacks into the page-level history: the add/edit provider form is a breadcrumb
   // sub-view owned by SettingsPage, not by this panel.
+  onManageImages?: () => void
   onCreateProvider: () => void
   onEditProvider: (provider: ProviderView) => void
   // Shared with the page: the add/edit form's post-save validation also marks the provider busy, so
@@ -117,6 +118,7 @@ const providerErrorCopy = (error: ProviderPanelError, t: TFunction): string => {
 const ProvidersPanel = ({
   recoveryProviderId,
   recoveryModel,
+  onManageImages,
   onCreateProvider,
   onEditProvider,
   busyProviderId,
@@ -627,7 +629,7 @@ const ProvidersPanel = ({
       </SettingsSection>
 
       {/* Subagent / Reviewer / Vision routing collapsed into a single accordion card. */}
-      <ScenarioModelList />
+      <ScenarioModelList onManageImages={onManageImages} />
 
       <SettingsSection
         title={t('Providers')}

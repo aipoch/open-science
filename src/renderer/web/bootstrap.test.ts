@@ -55,6 +55,7 @@ class FakeWebSocket {
 }
 
 type WebApi = {
+  artifacts: Pick<Window['api']['artifacts'], 'openInBrowser'>
   getRuntimeVersions: Window['api']['getRuntimeVersions']
   storage: Window['api']['storage']
   literature: Window['api']['literature']
@@ -254,6 +255,72 @@ afterEach(() => {
   localStorage.clear()
   document.body.innerHTML = ''
   delete (window as unknown as { api?: unknown }).api
+})
+
+describe('Web HTML browser opening', () => {
+  it.each([
+    ['local', undefined],
+    ['local', 2],
+    ['remote', undefined],
+    ['remote', 2]
+  ] as const)(
+    'opens %s HTML version %s on the current authenticated origin',
+    async (location, versionNumber) => {
+      const replace = vi.fn()
+      const tab = { opener: window, location: { replace }, close: vi.fn() }
+      const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window)
+      const request = vi.mocked(fetch).mockImplementation(async (input, options) => {
+        if (String(input) === '/api/bootstrap') {
+          return Response.json({ ...bootstrapPayload, webCallerLocation: location })
+        }
+        expect(open).toHaveBeenCalledOnce()
+        expect(tab.opener).toBeNull()
+        expect(options).toMatchObject({ method: 'HEAD', credentials: 'same-origin' })
+        return new Response(null, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' }
+        })
+      })
+      const api = await loadBootstrap()
+      await api.artifacts.openInBrowser({
+        projectId: 'project-1',
+        artifactId: 'artifact-html-1',
+        versionNumber
+      })
+      const expectedUrl = `${window.location.origin}/api/v1/artifacts/artifact-html-1/content?disposition=inline${versionNumber === undefined ? '' : '&version=2'}`
+      expect(open).toHaveBeenCalledWith('about:blank', '_blank')
+      expect(String(request.mock.calls.at(-1)?.[0])).toBe(expectedUrl)
+      expect(replace).toHaveBeenCalledExactlyOnceWith(expectedUrl)
+      expect(tab.close).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects a blocked tab so the preview can offer retry', async () => {
+    vi.spyOn(window, 'open').mockReturnValue(null)
+    const api = await loadBootstrap()
+    await expect(
+      api.artifacts.openInBrowser({ projectId: 'project-1', artifactId: 'artifact-html-1' })
+    ).rejects.toThrow()
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes a failed preview tab and allows retry', async () => {
+    const replace = vi.fn()
+    const close = vi.fn()
+    vi.spyOn(window, 'open').mockImplementation(
+      () => ({ opener: window, location: { replace }, close }) as unknown as Window
+    )
+    const api = await loadBootstrap()
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 404 }))
+    await expect(
+      api.artifacts.openInBrowser({ projectId: 'project-1', artifactId: 'missing-file' })
+    ).rejects.toThrow('HTTP 404')
+    expect(close).toHaveBeenCalledOnce()
+    expect(replace).not.toHaveBeenCalled()
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 200 }))
+    await api.artifacts.openInBrowser({ projectId: 'project-1', artifactId: 'artifact-html-1' })
+    expect(replace).toHaveBeenCalledOnce()
+  })
 })
 
 describe('Web bootstrap event connection', () => {
@@ -786,7 +853,8 @@ describe('Web bootstrap event connection', () => {
           source: 'artifact',
           projectId: 'project-1',
           fileId: 'artifact-1',
-          versionId: 'version-3'
+          versionId: 'version-3',
+          purpose: 'download'
         }
       ]
     })

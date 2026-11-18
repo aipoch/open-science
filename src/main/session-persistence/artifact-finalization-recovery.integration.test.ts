@@ -44,6 +44,7 @@ import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ManagedFileIndexRepository } from '../project-files/repository'
 import { SessionPersistenceCoordinator } from './coordinator'
 import { SessionRepository } from './repository'
+import { SessionJournalStore, sessionJournalPath } from './journal'
 import { UploadRepository } from '../uploads/repository'
 
 const openDatabase = registerDatabaseFixture()
@@ -52,6 +53,14 @@ const PROJECT_ID = 'project-1'
 const SESSION_ID = 'session-1'
 const STORAGE_SESSION_ID = 'artifact-session-1'
 const RUN_ID = 'artifact-run-1'
+
+const readSessionDocumentSnapshot = async (path: string): Promise<string> => {
+  const stored = await new SessionJournalStore({ maxBytes: 64 * 1024 * 1024 }).read(path)
+  if (!stored) throw new Error('Expected durable Session storage')
+  // Binding repair preserves a self-contained snapshot of journal authority, including appended
+  // revisions; the backup is a standalone JSON document rather than the JSONL update stream.
+  return `${JSON.stringify(stored.document)}\n`
+}
 
 describe('artifact finalization startup recovery', () => {
   let storageRoot: string
@@ -1119,7 +1128,7 @@ describe('artifact finalization startup recovery', () => {
       }
 
       const sessionPath = join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`)
-      const beforeRecovery = await readFile(sessionPath, 'utf8')
+      const beforeRecovery = await readSessionDocumentSnapshot(sessionPath)
       expect(
         (await sessions.loadSession(PROJECT_ID, SESSION_ID))?.conversationGraph?.rootFrameId
       ).toBe(`root-frame-${legacyRebound ? SESSION_ID : historicalSessionId}`)
@@ -1260,7 +1269,8 @@ describe('artifact finalization startup recovery', () => {
       })
       await sessions.saveSession(changed)
     }
-    const before = await readFile(fixture.sessionPath, 'utf8')
+    const before = await readFile(sessionJournalPath(fixture.sessionPath), 'utf8')
+    const beforeSnapshot = await readSessionDocumentSnapshot(fixture.sessionPath)
     const coordinator = fixture.coordinator(
       new SessionRepository(storageRoot, {
         hasLiveRuntimeSession: () => fault === 'live-runtime'
@@ -1268,7 +1278,8 @@ describe('artifact finalization startup recovery', () => {
     )
 
     const loaded = await coordinator.loadAll()
-    await expect(readFile(fixture.sessionPath, 'utf8')).resolves.toBe(before)
+    await expect(readFile(sessionJournalPath(fixture.sessionPath), 'utf8')).resolves.toBe(before)
+    await expect(readSessionDocumentSnapshot(fixture.sessionPath)).resolves.toBe(beforeSnapshot)
     expect(
       (await readdir(dirname(fixture.sessionPath))).filter((name) =>
         name.includes('.pre-artifact-binding-')
@@ -1282,13 +1293,15 @@ describe('artifact finalization startup recovery', () => {
 
   it('legacy binding repair refuses a conflicting backup and succeeds after the obstruction is removed', async () => {
     const fixture = await prepareBindingRepair()
-    const before = await readFile(fixture.sessionPath, 'utf8')
-    const checksum = createHash('sha256').update(before).digest('hex')
+    const before = await readFile(sessionJournalPath(fixture.sessionPath), 'utf8')
+    const beforeSnapshot = await readSessionDocumentSnapshot(fixture.sessionPath)
+    const checksum = createHash('sha256').update(beforeSnapshot).digest('hex')
     const backupPath = `${fixture.sessionPath}.pre-artifact-binding-${checksum}.backup`
     await writeFile(backupPath, 'existing evidence must not be overwritten')
 
     await fixture.coordinator().loadAll()
-    await expect(readFile(fixture.sessionPath, 'utf8')).resolves.toBe(before)
+    await expect(readFile(sessionJournalPath(fixture.sessionPath), 'utf8')).resolves.toBe(before)
+    await expect(readSessionDocumentSnapshot(fixture.sessionPath)).resolves.toBe(beforeSnapshot)
     await expect(readFile(backupPath, 'utf8')).resolves.toBe(
       'existing evidence must not be overwritten'
     )
@@ -1300,7 +1313,7 @@ describe('artifact finalization startup recovery', () => {
     await expect(
       coordinator.saveSession({ ...session, title: 'Recovered' })
     ).resolves.toMatchObject({ title: 'Recovered' })
-    await expect(readFile(backupPath, 'utf8')).resolves.toBe(before)
+    await expect(readFile(backupPath, 'utf8')).resolves.toBe(beforeSnapshot)
   })
 
   it('replays an explicitly requested finalized Version that is already linked', async () => {

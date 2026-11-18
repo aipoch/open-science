@@ -1,3 +1,12 @@
+import { createHash, randomUUID } from 'node:crypto'
+import { lstat, mkdir, readdir, rename, unlink } from 'node:fs/promises'
+import { join } from 'node:path'
+import {
+  DurableJsonReadLimitError,
+  readFileWithinLimit,
+  writeDurableJsonFile
+} from '@aipoch/durable-files'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { Prisma, type PrismaClient } from '@prisma/client'
 
 import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
@@ -10,7 +19,8 @@ const SESSION_AUXILIARY_TURN_USAGE_SOURCES = [
   'host-llm',
   'artifact-code-reconstruction',
   'context-compaction',
-  'classification'
+  'classification',
+  'image-generation'
 ] as const
 
 type SessionAuxiliaryTurnUsageSource = (typeof SESSION_AUXILIARY_TURN_USAGE_SOURCES)[number]
@@ -29,14 +39,20 @@ type SessionAuxiliaryTurnUsageRecord = Readonly<{
 
 type AuxiliaryUsageClient = () => Promise<PrismaClient>
 
+class InvalidAuxiliaryUsageError extends Error {}
+const log = createLogger('session-usage:auxiliary')
+
 const nonEmpty = (value: string, field: string): string => {
-  if (!value.trim()) throw new Error(`Auxiliary turn Usage ${field} must not be empty.`)
+  if (typeof value !== 'string' || !value.trim())
+    throw new InvalidAuxiliaryUsageError(`Auxiliary turn Usage ${field} must not be empty.`)
   return value
 }
 
 const nonNegative = (value: number, field: string): bigint => {
   if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`Auxiliary turn Usage ${field} must be a non-negative safe integer.`)
+    throw new InvalidAuxiliaryUsageError(
+      `Auxiliary turn Usage ${field} must be a non-negative safe integer.`
+    )
   }
   return BigInt(value)
 }
@@ -47,7 +63,9 @@ const optionalNonNegative = (value: number | undefined, field: string): bigint |
 const optionalPositiveInt = (value: number | undefined, field: string): number | null => {
   if (value === undefined) return null
   if (!Number.isSafeInteger(value) || value <= 0 || value > 2_147_483_647) {
-    throw new Error(`Auxiliary turn Usage ${field} must be a positive SQLite Int.`)
+    throw new InvalidAuxiliaryUsageError(
+      `Auxiliary turn Usage ${field} must be a positive SQLite Int.`
+    )
   }
   return value
 }
@@ -60,14 +78,85 @@ type PendingAuxiliaryUsage = {
 class AuxiliaryUsageOwnershipError extends Error {}
 
 class SessionAuxiliaryTurnUsageRecorder {
-  // ponytail: this backlog lives for the process lifetime; use a durable outbox if recovery must
-  // survive restart. Retain measurements, never rerun the model to recover bookkeeping.
+  // Other auxiliary sources retain their existing in-memory retry policy.
   private readonly pending = new Map<string, PendingAuxiliaryUsage>()
   private retryOperation: Promise<void> | undefined
 
-  constructor(private readonly client: AuxiliaryUsageClient) {}
+  constructor(
+    private readonly client: AuxiliaryUsageClient,
+    private readonly outboxRoot?: () => string
+  ) {}
 
-  async record(input: SessionAuxiliaryTurnUsageRecord): Promise<boolean> {
+  private async outbox(create = false): Promise<string | undefined> {
+    if (!this.outboxRoot) return undefined
+    const directory = join(this.outboxRoot(), 'image-usage-outbox')
+    if (create)
+      await mkdir(directory).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EEXIST') throw error
+      })
+    const info = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error
+    })
+    if (!info) return undefined
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Unsafe image Usage outbox.')
+    return directory
+  }
+  private outboxName(input: SessionAuxiliaryTurnUsageRecord): string {
+    return (
+      createHash('sha256')
+        .update(JSON.stringify([input.projectId, input.sessionId, input.eventId]))
+        .digest('hex') + '.json'
+    )
+  }
+  private async removeOutbox(input: SessionAuxiliaryTurnUsageRecord): Promise<void> {
+    const directory = await this.outbox()
+    if (directory)
+      await unlink(join(directory, this.outboxName(input))).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error
+        }
+      )
+  }
+  private async replayOutbox(): Promise<void> {
+    const directory = await this.outbox()
+    if (!directory) return
+    let failure: unknown
+    for (const name of await readdir(directory)) {
+      if (!/^[a-f0-9]{64}\.json$/.test(name)) continue
+      const path = join(directory, name)
+      try {
+        const info = await lstat(path)
+        if (!info.isFile() || info.isSymbolicLink())
+          throw new InvalidAuxiliaryUsageError('Unsafe image Usage record.')
+        const input = JSON.parse(
+          await readFileWithinLimit(path, 16384)
+        ) as SessionAuxiliaryTurnUsageRecord | null
+        if (input?.source !== 'image-generation' || this.outboxName(input) !== name)
+          throw new InvalidAuxiliaryUsageError('Invalid image Usage receipt.')
+        await this.record(input, 'replay')
+      } catch (error) {
+        if (
+          error instanceof SyntaxError ||
+          error instanceof InvalidAuxiliaryUsageError ||
+          error instanceof DurableJsonReadLimitError
+        ) {
+          try {
+            await rename(path, `${path}.${randomUUID()}.invalid`)
+            log.warn('Isolated invalid image Usage receipt', { receipt: name })
+          } catch (renameError) {
+            if ((renameError as NodeJS.ErrnoException).code !== 'ENOENT') failure ??= renameError
+          }
+        } else if ((error as NodeJS.ErrnoException).code !== 'ENOENT') failure ??= error
+      }
+    }
+    if (failure) throw failure
+  }
+
+  async record(
+    input: SessionAuxiliaryTurnUsageRecord,
+    mode: 'write' | 'replay' | 'stage' = 'write'
+  ): Promise<boolean> {
+    const replay = mode === 'replay'
     const projectId = nonEmpty(input.projectId, 'projectId')
     const sessionId = nonEmpty(input.sessionId, 'sessionId')
     const eventId = nonEmpty(input.eventId, 'eventId')
@@ -75,13 +164,17 @@ class SessionAuxiliaryTurnUsageRecorder {
     const providerId =
       input.providerId === undefined ? null : nonEmpty(input.providerId, 'providerId')
     const model = input.model === undefined ? null : nonEmpty(input.model, 'model')
+    if (!input.usage || typeof input.usage !== 'object')
+      throw new InvalidAuxiliaryUsageError('Auxiliary turn Usage measurement is missing.')
     const cachedReadTokens = optionalNonNegative(input.usage.cachedReadTokens, 'cachedReadTokens')
     const cachedWriteTokens = optionalNonNegative(
       input.usage.cachedWriteTokens,
       'cachedWriteTokens'
     )
     if ((cachedReadTokens === null) !== (cachedWriteTokens === null)) {
-      throw new Error('Auxiliary turn Usage cache read/write detail must be reported together.')
+      throw new InvalidAuxiliaryUsageError(
+        'Auxiliary turn Usage cache read/write detail must be reported together.'
+      )
     }
 
     const key = JSON.stringify([projectId, sessionId, eventId])
@@ -103,17 +196,29 @@ class SessionAuxiliaryTurnUsageRecorder {
       modelCallCount: optionalPositiveInt(input.usage.turnCount, 'modelCallCount')
     }
     const entry = this.pending.get(key) ?? { projectId, data }
+    if (input.source === 'image-generation' && !replay) {
+      const directory = await this.outbox(true)
+      if (directory) {
+        await writeDurableJsonFile(join(directory, this.outboxName(input)), JSON.stringify(input))
+        if (mode === 'stage') return false
+      }
+    }
     let inserted: boolean
     try {
       inserted = await this.write(entry)
       this.pending.delete(key)
+      if (input.source === 'image-generation') await this.removeOutbox(input)
     } catch (error) {
       if (!(error instanceof AuxiliaryUsageOwnershipError)) this.pending.set(key, entry)
+      else if (input.source === 'image-generation') {
+        await this.removeOutbox(input)
+        if (replay) return false
+      }
       throw error
     }
     // A successful new measurement is also an opportunity to recover earlier failures. Keep its
     // result independent; unresolved earlier failures remain observable through flush on Usage reads.
-    await this.flush().catch(() => undefined)
+    if (!replay) await this.flush().catch(() => undefined)
     return inserted
   }
 
@@ -124,8 +229,19 @@ class SessionAuxiliaryTurnUsageRecorder {
     return this.retryOperation
   }
 
+  async flushStaged(): Promise<void> {
+    // A running flush may already have listed the outbox before the latest image was staged.
+    await this.retryOperation?.catch(() => undefined)
+    await this.flush()
+  }
+
   private async retryPending(): Promise<void> {
     let failure: unknown
+    try {
+      await this.replayOutbox()
+    } catch (error) {
+      failure = error
+    }
     for (const [key, entry] of [...this.pending]) {
       try {
         await this.write(entry)
@@ -139,7 +255,7 @@ class SessionAuxiliaryTurnUsageRecorder {
         }
       }
     }
-    if (this.pending.size > 0) {
+    if (failure || this.pending.size > 0) {
       throw failure ?? new Error('Auxiliary turn Usage is pending persistence.')
     }
   }

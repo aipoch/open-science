@@ -4,7 +4,9 @@ import {
   type ProvenanceReadResult
 } from '../../shared/provenance-read-result'
 
-import { basename, dirname } from 'node:path'
+import { copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, dirname, extname, join } from 'node:path'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
 import type { ArtifactLiteratureManifest } from '../../shared/artifact-literature'
@@ -18,6 +20,7 @@ import {
   type ArtifactFile,
   type ArtifactPreviewResult,
   type FinalizeRunArtifactsResult,
+  type OpenArtifactInBrowserRequest,
   type ReconcilePendingArtifactsResult,
   type ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
@@ -101,6 +104,7 @@ type ArtifactHandlers = {
   finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
   reconcilePendingArtifacts: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
   openFile: (request: OpenArtifactFileRequest) => Promise<void>
+  openInBrowser: (request: OpenArtifactInBrowserRequest) => Promise<void>
   readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   getLineage: (
     request: GetArtifactLineageRequest
@@ -134,10 +138,17 @@ type ArtifactHandlers = {
 type ArtifactHandlerDependencies = {
   onPublished?: (artifacts: readonly ArtifactFile[]) => void
   openPath?: (path: string) => Promise<string>
+  openInBrowser?: (request: OpenArtifactInBrowserRequest) => Promise<void>
   logger?: Pick<Logger, 'error'>
   openLatestManagedFile?: (
     request: Omit<ReadArtifactPreviewRequest, 'versionId'> & { versionId?: never }
-  ) => Promise<ManagedFilePreviewReadLease & { path?: string }>
+  ) => Promise<
+    ManagedFilePreviewReadLease & {
+      path?: string
+      filename?: string
+      copyTo?: (destinationPath: string, options?: { exclusive?: boolean }) => Promise<void>
+    }
+  >
   openManagedFileVersion?: (
     request: ReadArtifactPreviewRequest & { versionId: string }
   ) => Promise<ManagedFilePreviewReadLease>
@@ -174,6 +185,23 @@ type ArtifactHandlerDependencies = {
       request: GenerateArtifactCodeReconstructionRequest
     ): Promise<ArtifactCodeReconstructionState>
   }
+}
+
+const BROWSER_OPEN_COPY_RETENTION_MS = 60 * 60 * 1000
+
+const getSafeBrowserFilename = (suggestedName: string | undefined): string | undefined => {
+  if (!suggestedName) return undefined
+  // Strip path-invalid and control characters before using the renderer-provided display name.
+  // eslint-disable-next-line no-control-regex
+  const candidate = basename(suggestedName.trim()).replaceAll(/[<>:"|?*\u0000-\u001f]/g, '-')
+  return candidate && candidate !== '.' && candidate !== '..' ? candidate : undefined
+}
+
+const scheduleBrowserOpenCleanup = (directory: string): void => {
+  const timer = setTimeout(() => {
+    void rm(directory, { recursive: true, force: true })
+  }, BROWSER_OPEN_COPY_RETENTION_MS)
+  timer.unref?.()
 }
 
 // Serializes finalization per claim so duplicate renderer event processing cannot move files twice.
@@ -299,15 +327,38 @@ const createArtifactHandlers = (
         fileId: versionIdentity.artifactId,
         versionId: undefined
       })
+      let temporaryDirectory: string | undefined
       try {
         if (!lease.path) throw new Error('Managed Artifact Version reader returned no path.')
-        const openError = await openPath(lease.path)
+        const suggestedName = getSafeBrowserFilename(request.suggestedName ?? lease.filename)
+        const needsExtensionCopy =
+          suggestedName &&
+          extname(lease.path).toLowerCase() !== extname(suggestedName).toLowerCase()
+        let pathToOpen = lease.path
+        if (needsExtensionCopy) {
+          temporaryDirectory = await mkdtemp(join(tmpdir(), 'open-science-browser-'))
+          pathToOpen = join(temporaryDirectory, suggestedName)
+          if (lease.copyTo) {
+            await lease.copyTo(pathToOpen, { exclusive: true })
+          } else {
+            await copyFile(lease.path, pathToOpen)
+          }
+        }
+        const openError = await openPath(pathToOpen)
         if (openError) throw new Error(openError)
+        if (temporaryDirectory) scheduleBrowserOpenCleanup(temporaryDirectory)
       } catch (error) {
+        if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true })
         await lease.close().catch(() => undefined)
         throw error
       }
       await lease.close()
+    },
+    openInBrowser: async (request) => {
+      if (!dependencies.openInBrowser) {
+        throw new Error('Opening an artifact in the browser is not configured.')
+      }
+      await dependencies.openInBrowser(request)
     },
     readPreview: async (request) => {
       const versionIdentity = parseArtifactVersionLocator(request.path)
@@ -686,6 +737,9 @@ const registerArtifactIpcHandlers = (
   )
   ipcMainHandle('artifacts:open-file', (_event, request: OpenArtifactFileRequest) =>
     handlers.openFile(request)
+  )
+  ipcMainHandle('artifacts:open-in-browser', (_event, request: OpenArtifactInBrowserRequest) =>
+    handlers.openInBrowser(request)
   )
   ipcMainHandle('artifacts:read-preview', (_event, request: ReadArtifactPreviewRequest) =>
     handlers.readPreview(request)

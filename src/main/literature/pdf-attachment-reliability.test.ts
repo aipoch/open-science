@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto'
 import {
   access,
   chmod,
+  mkdir,
   mkdtemp,
   readFile,
   readdir,
@@ -43,7 +44,11 @@ import {
   literaturePdfImportRequestSchema,
   type LiteraturePdfImportRequest
 } from '../../shared/literature'
-import type { PersistedChatMessage } from '../../shared/session-persistence'
+import {
+  createSessionFile,
+  type PersistedChatMessage,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
 import { ManagedPreviewResources } from '../managed-preview-resources'
@@ -389,16 +394,16 @@ describe('Literature PDF attachment reliability', () => {
     expect(sweep).not.toHaveBeenCalled()
     expect(await catalog.get(request.itemId)).toBeDefined()
   })
-  const saveReadingHistory = async (
-    sessions: SessionRepository,
+  const readingHistorySession = (
     attachment: Awaited<ReturnType<LiteraturePdfImporter['import']>>['item']['attachments'][number]
-  ): Promise<void> => {
+  ): PersistedChatSession => {
     const version = attachment.versions[0]
-    await sessions.saveSession({
+    return {
       id: 'reading-history',
       projectId: 'other-project',
       title: 'Retained reading history',
       cwd: root,
+      revision: 0,
       status: 'idle',
       filesRevision: 0,
       createdAt: 1,
@@ -431,16 +436,36 @@ describe('Literature PDF attachment reliability', () => {
           }
         }
       ]
-    })
+    }
+  }
+
+  const saveReadingHistory = async (
+    sessions: SessionRepository,
+    attachment: Awaited<ReturnType<LiteraturePdfImporter['import']>>['item']['attachments'][number],
+    format: 'legacy-json' | 'journal'
+  ): Promise<{ primary: string; session: PersistedChatSession }> => {
+    const session = readingHistorySession(attachment)
+    const directory = sessions.recoveryFolderPath('other-project')
+    if (format === 'legacy-json') {
+      await mkdir(directory, { recursive: true })
+      await writeFile(
+        join(directory, 'reading-history.json'),
+        JSON.stringify(createSessionFile(session), null, 2)
+      )
+    }
+    const saved = await sessions.saveSession(session)
+    return {
+      session: saved,
+      primary: join(directory, `reading-history.${format === 'legacy-json' ? 'json' : 'jsonl'}`)
+    }
   }
 
   it.each(['unrepaired', 'restored without reference'] as const)(
-    'protects recoverable PDF history after quarantine: %s',
+    'protects recoverable PDF history after legacy JSON quarantine: %s',
     async (state) => {
       const { importer, request, catalog, authority, sessions } = await setup()
       const attachment = (await importer.import(request)).item.attachments[0]
-      await saveReadingHistory(sessions, attachment)
-      const primary = join(sessions.recoveryFolderPath('other-project'), 'reading-history.json')
+      const { primary } = await saveReadingHistory(sessions, attachment, 'legacy-json')
       const valid = await readFile(primary, 'utf8')
       const original = await authority.resolveVersion(attachment.versions[0].id)
       const remove = {
@@ -509,12 +534,89 @@ describe('Literature PDF attachment reliability', () => {
     }
   )
 
+  it.each(['unrepaired', 'restored without reference'] as const)(
+    'protects recoverable PDF history after JSONL corruption: %s',
+    async (state) => {
+      const { importer, request, catalog, authority, sessions } = await setup()
+      const attachment = (await importer.import(request)).item.attachments[0]
+      const { primary, session } = await saveReadingHistory(sessions, attachment, 'journal')
+      const original = await authority.resolveVersion(attachment.versions[0].id)
+      const remove = {
+        kind: 'delete-attachment' as const,
+        itemId: request.itemId,
+        attachmentId: attachment.id
+      }
+      await appendFile(primary, '{invalid complete record}\n')
+      expect((await sessions.loadAllWithDiagnostics({ mode: 'read-only' })).isComplete).toBe(false)
+      await expect(catalog.transact(remove)).rejects.toThrow('complete Session catalog')
+      // JSONL corruption preserves the live log instead of moving only part of its authority.
+      await sessions.loadAllWithDiagnostics()
+      expect(await readFile(primary, 'utf8')).toContain('{invalid complete record}\n')
+      expect(
+        (await readdir(sessions.recoveryFolderPath('other-project'))).some((name) =>
+          name.startsWith('reading-history.json.invalid-')
+        )
+      ).toBe(false)
+      const scan = await sessions.loadAllWithDiagnostics({ mode: 'read-only' })
+      expect(scan.result.sessions).toEqual([])
+      expect(scan.warnings).toContainEqual(
+        expect.objectContaining({ kind: 'corrupt', recovered: false })
+      )
+      if (state === 'restored without reference') {
+        await rm(primary)
+        await sessions.saveSession({
+          ...readingHistorySession(attachment),
+          revision: 0,
+          messages: []
+        })
+        await expect(catalog.transact(remove)).resolves.toMatchObject({ state: 'unlinked' })
+        return
+      }
+      const outcome = await catalog.transact(remove).then(
+        () => 'removed',
+        (error) => {
+          expect(parseLiteratureDeletionError(error)).toMatchObject({
+            reason: 'scan-incomplete',
+            issues: [
+              {
+                projectId: 'other-project',
+                fileName: 'reading-history.json',
+                kind: 'corrupt',
+                recovered: false
+              }
+            ]
+          })
+          return 'blocked'
+        }
+      )
+      expect.soft(outcome).toBe('blocked')
+      expect.soft(await client!.literatureAttachmentVersion.count()).toBe(1)
+      expect
+        .soft(
+          await access(original!.path).then(
+            () => true,
+            () => false
+          )
+        )
+        .toBe(true)
+      await rm(primary)
+      await sessions.saveSession({ ...session, revision: 0 })
+      const restored = await sessions.loadSessionWithDiagnostics('other-project', 'reading-history')
+      expect(restored.status).toBe('found')
+      if (restored.status !== 'found') throw new Error('Restored history missing')
+      expect(restored.session.messages[0].pdfContext!.bindings[0].sourceVersionId).toBe(
+        attachment.versions[0].id
+      )
+      expect(await authority.resolveVersion(attachment.versions[0].id)).toBeDefined()
+    }
+  )
+
   it.each(['single', 'batch'] as const)(
     'preserves chat-bound PDF versions during %s permanent deletion',
     async (kind) => {
       const { importer, request, catalog, content, authority, sessions } = await setup()
       const attachment = (await importer.import(request)).item.attachments[0]
-      await saveReadingHistory(sessions, attachment)
+      await saveReadingHistory(sessions, attachment, 'journal')
       const original = await authority.resolveVersion(attachment.versions[0].id)
       await expect(
         catalog.transact({
@@ -569,7 +671,7 @@ describe('Literature PDF attachment reliability', () => {
   it('checks attachments retained on cascade aliases before deleting a trashed survivor', async () => {
     const { importer, request, catalog, content, sessions } = await setup()
     const attachment = (await importer.import(request)).item.attachments[0]
-    await saveReadingHistory(sessions, attachment)
+    await saveReadingHistory(sessions, attachment, 'journal')
     const survivor = await catalog.transact({
       kind: 'create-item',
       item: literatureItemInputSchema.parse({ title: 'Survivor', itemType: 'journalArticle' })

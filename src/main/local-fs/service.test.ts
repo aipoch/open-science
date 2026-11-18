@@ -8,7 +8,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 // electron's app/shell are unavailable in the test runner; stub the two calls the service makes.
 vi.mock('electron', () => ({
   app: { getPath: (name: string) => (name === 'home' ? '/home/testuser' : '/tmp') },
-  shell: { showItemInFolder: vi.fn(), openPath: vi.fn(async () => '') }
+  shell: {
+    showItemInFolder: vi.fn(),
+    openPath: vi.fn(async () => ''),
+    openExternal: vi.fn(async () => undefined)
+  }
 }))
 
 // access/readdir/realpath/stat start as delegating wrappers so tests can substitute
@@ -27,6 +31,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 import { access, readdir, stat } from 'node:fs/promises'
 
 import { app } from 'electron'
+import { shell } from 'electron'
 
 import { LOCAL_DIR_ENTRY_CAP, type GrantedLocalRoot } from '../../shared/local-fs'
 import {
@@ -175,6 +180,24 @@ describe('LocalFsService.listDir', () => {
 
   it('rejects paths with control characters', async () => {
     await expect(service.listDir('/tmp/\x00x')).rejects.toThrow(/invalid characters/)
+  })
+})
+
+describe('LocalFsService.openInBrowser', () => {
+  it('opens a validated local file URL through the default browser', async () => {
+    const service = new LocalFsService()
+
+    await service.openInBrowser('/Users/test/space report.html')
+
+    expect(shell.openExternal).toHaveBeenCalledWith('file:///Users/test/space%20report.html')
+  })
+
+  it('rejects malformed paths before invoking the browser', async () => {
+    const service = new LocalFsService()
+    vi.mocked(shell.openExternal).mockClear()
+
+    await expect(service.openInBrowser('relative/report.html')).rejects.toThrow(/absolute/i)
+    expect(shell.openExternal).not.toHaveBeenCalled()
   })
 })
 

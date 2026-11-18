@@ -12,7 +12,7 @@ import {
   type SkillRuntimeEnvironment,
   environmentFromProcess,
   isOwnedSkillRuntimeAcpServer
-} from '../skills/runtime-mcp-server'
+} from '../skills/runtime-mcp-config'
 
 import type { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 
@@ -24,6 +24,7 @@ import type { PptxMcpHandler } from '../pptx-edit/mcp-server'
 import type { SkillImportMcpEnvironment } from '../skills/mcp-server'
 import type { PlanMcpEnvironment } from '../session-plan/plan-mcp-server'
 import type { HostMessageMcpHandler } from '../side-chat/host-message-mcp-server'
+import type { ImageMcpEnvironment } from '../image-model/mcp-server'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
   LOCAL_RESOURCE_BUDGETS,
@@ -44,6 +45,7 @@ type HostConnection = {
 // The MCP server kinds this host serves; each maps to a factory + a per-session environment.
 const SERVER_KINDS = [
   'artifact',
+  'image',
   'notebook',
   'skill-import',
   'skills',
@@ -64,6 +66,7 @@ type SessionEntry = {
   receiptScopes?: Partial<Record<ServerKind, string>>
   skills?: SkillRuntimeEnvironment
   artifact?: ArtifactMcpEnvironment
+  image?: ImageMcpEnvironment
   notebook?: NotebookMcpEnvironment
   skillImport?: SkillImportMcpEnvironment
   plan?: PlanMcpEnvironment
@@ -77,6 +80,7 @@ type SessionEntry = {
 
 const RECEIPT_AUTHORITY_KEYS = {
   artifact: 'artifact',
+  image: 'image',
   notebook: 'notebook',
   'skill-import': 'skillImport',
   skills: 'skills',
@@ -202,6 +206,13 @@ class AgentMcpHttpHost {
     this.sessions.set(routingId, entry)
   }
 
+  registerImage(routingId: string, environment: ImageMcpEnvironment): void {
+    this.cancelToolRoute('image', routingId)
+    const entry = this.sessions.get(routingId) ?? {}
+    entry.image = environment
+    this.sessions.set(routingId, entry)
+  }
+
   registerNotebook(routingId: string, environment: NotebookMcpEnvironment): void {
     const entry = this.sessions.get(routingId) ?? {}
     entry.notebook = environment
@@ -274,7 +285,7 @@ class AgentMcpHttpHost {
   }
 
   registerLiterature(routingId: string, handler: LiteratureMcpHandler): () => void {
-    this.cancelLiteratureRoute('literature', routingId)
+    this.cancelToolRoute('literature', routingId)
     const entry = this.sessions.get(routingId) ?? {}
     const token = Symbol('literature')
     entry.literature = { handler, token }
@@ -283,7 +294,7 @@ class AgentMcpHttpHost {
       const current = this.sessions.get(routingId)
       if (current?.literature?.token !== token) return
       delete current.literature
-      this.cancelLiteratureRoute('literature', routingId)
+      this.cancelToolRoute('literature', routingId)
     }
   }
 
@@ -326,7 +337,7 @@ class AgentMcpHttpHost {
   }
 
   registerLiteratureLibrary(routingId: string, handler: LiteratureLibraryMcpHandler): () => void {
-    this.cancelLiteratureRoute('library', routingId)
+    this.cancelToolRoute('library', routingId)
     const entry = this.sessions.get(routingId) ?? {}
     const token = Symbol('library')
     entry.library = { handler, token }
@@ -335,11 +346,11 @@ class AgentMcpHttpHost {
       const current = this.sessions.get(routingId)
       if (current?.library?.token !== token) return
       delete current.library
-      this.cancelLiteratureRoute('library', routingId)
+      this.cancelToolRoute('library', routingId)
     }
   }
 
-  private cancelLiteratureRoute(kind: 'literature' | 'library', routingId: string): void {
+  private cancelToolRoute(kind: 'literature' | 'library' | 'image', routingId: string): void {
     for (const [response, pending] of this.readingToolRequests) {
       if (pending.routingId !== routingId || pending.kind !== kind) continue
       this.readingToolRequests.delete(response)
@@ -418,6 +429,12 @@ class AgentMcpHttpHost {
         new ArtifactRepository(entry.artifact.storageRoot),
         entry.artifact
       )
+    }
+
+    if (kind === 'image') {
+      if (!entry.image) return undefined
+      const { createImageMcpServer } = await import('../image-model/mcp-server')
+      return createImageMcpServer(entry.image, `http:${routingId}`)
     }
 
     if (kind === 'notebook') {
@@ -519,11 +536,11 @@ class AgentMcpHttpHost {
     if (this.receipts) {
       server.server.registerCapabilities({ experimental: { [HARNESS_RECEIPTS]: {} } })
     }
-    // Long-running Notebook/Plan calls need SSE to deliver progress while execution/review waits.
+    // Long-running Notebook/Plan/Image calls need SSE to deliver progress while work is pending.
     // Transport sessions remain stateless and are torn down when the response closes.
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
-      enableJsonResponse: kind !== 'notebook' && kind !== 'plan'
+      enableJsonResponse: kind !== 'notebook' && kind !== 'plan' && kind !== 'image'
     })
     response.on('close', () => {
       void transport.close()
@@ -531,13 +548,16 @@ class AgentMcpHttpHost {
     })
 
     const reading = { routingId, kind, cancelledIds: new Set<string>(), cancellationBytes: 0 }
-    if ((kind === 'library' || kind === 'literature') && request.method === 'POST') {
+    if (
+      (kind === 'library' || kind === 'literature' || kind === 'image') &&
+      request.method === 'POST'
+    ) {
       this.readingToolRequests.set(response, reading)
       response.once('close', () => this.readingToolRequests.delete(response))
     }
     try {
       await server.connect(transport)
-      if (kind === 'library' || kind === 'literature') {
+      if (kind === 'library' || kind === 'literature' || kind === 'image') {
         const receive = transport.onmessage!
         transport.onmessage = (message, extra) => {
           this.readingToolRequests.delete(response)
@@ -548,7 +568,7 @@ class AgentMcpHttpHost {
             }
             const key = JSON.stringify([kind, routingId, message.id])
             if (this.toolRequests.has(key)) {
-              writeJson(response, 409, { error: 'Duplicate active Literature request id.' })
+              writeJson(response, 409, { error: 'Duplicate active MCP tool request id.' })
               return
             }
             const active = { routingId, kind, receive, response }

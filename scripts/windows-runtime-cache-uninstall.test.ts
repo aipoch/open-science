@@ -15,6 +15,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { micromambaWorkingCachePaths } from '@aipoch/environment'
 
+import { runUninstallHelper } from './fixtures/windows-uninstall-helper'
+
 type Fixture = {
   sandbox: string
   runtimeRoot: string
@@ -37,20 +39,6 @@ const run = (executable: string, args: string[], env?: NodeJS.ProcessEnv): void 
       `${executable} exited with ${String(result.status)}: ${result.stderr || result.stdout}`
     )
   }
-}
-
-const runOutput = (executable: string, args: string[], env?: NodeJS.ProcessEnv): string => {
-  const result = spawnSync(executable, args, {
-    encoding: 'utf8',
-    env: env ?? process.env,
-    timeout: 30_000
-  })
-  if (result.status !== 0) {
-    throw new Error(
-      `${executable} exited with ${String(result.status)}: ${result.stderr || result.stdout}`
-    )
-  }
-  return result.stdout.trim()
 }
 
 const hardenDirectory = (path: string): void => {
@@ -88,17 +76,7 @@ const makeFixture = (): Fixture => {
     USERPROFILE: profile,
     TEMP: configuredTemp,
     TMP: configuredTmp,
-    PUBLIC: '',
-    PSModulePath: [
-      process.env.ProgramFiles
-        ? join(process.env.ProgramFiles, 'WindowsPowerShell', 'Modules')
-        : undefined,
-      process.env.SystemRoot
-        ? join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules')
-        : undefined
-    ]
-      .filter(Boolean)
-      .join(';')
+    PUBLIC: ''
   }
   const userIdentity = [env.USERDOMAIN, env.USERNAME].filter(Boolean).join('\\')
   const managedParent = join(realpathSync.native(configuredTemp), 'OpenScienceTmp')
@@ -146,45 +124,29 @@ const writeCache = (
 }
 
 const runUninstaller = (fixture: Fixture): void => {
-  const systemRoot = process.env.SystemRoot
-  if (!systemRoot) throw new Error('SystemRoot is unavailable.')
-  run(
-    join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      join(process.cwd(), 'build', 'windows-runtime-cache-uninstall.ps1')
-    ],
-    fixture.env
-  )
+  const result = runUninstallHelper(['runtime-cache'], fixture.env)
+  if (result.status !== 0)
+    throw new Error(`runtime-cache exited with ${String(result.status)}: ${result.stderr}`)
 }
 
 const inspectTrust = (fixture: Fixture): string => {
-  const systemRoot = process.env.SystemRoot
-  if (!systemRoot) throw new Error('SystemRoot is unavailable.')
-  const script = join(process.cwd(), 'build', 'windows-runtime-cache-uninstall.ps1').replace(
-    /'/g,
-    "''"
-  )
-  const parent = fixture.managedParent.replace(/'/g, "''")
-  const cache = fixture.cachePath.replace(/'/g, "''")
-  const runtimeRoot = realpathSync.native(fixture.runtimeRoot).replace(/'/g, "''")
-  const identity = fixture.userIdentity.replace(/'/g, "''")
-  return runOutput(
-    join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+  const result = runUninstallHelper(
     [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-Command',
-      `. '${script}' -LoadFunctionsOnly; [pscustomobject]@{ Parent = (Test-TrustedManagedParent '${parent}' '${identity}'); Cache = (Test-TrustedCache '${cache}' '${runtimeRoot}' '${identity}'); Leaf = (Get-WorkingCacheLeaf '${runtimeRoot}' '${identity}') } | ConvertTo-Json -Compress`
+      'test-inspect-cache',
+      '--parent',
+      fixture.managedParent,
+      '--cache',
+      fixture.cachePath,
+      '--runtime-root',
+      realpathSync.native(fixture.runtimeRoot),
+      '--identity',
+      fixture.userIdentity
     ],
     fixture.env
   )
+  if (result.status !== 0) throw new Error(`test-inspect-cache failed: ${result.stderr}`)
+  const { Parent, Cache, Leaf } = JSON.parse(result.stdout)
+  return JSON.stringify({ Parent, Cache, Leaf })
 }
 
 afterEach(() => {
@@ -208,6 +170,24 @@ describe.skipIf(process.platform !== 'win32')('Windows runtime cache uninstaller
     expect(existsSync(fixture.cachePath)).toBe(false)
     expect(existsSync(fixture.managedParent)).toBe(false)
     expect(() => runUninstaller(fixture)).not.toThrow()
+  })
+
+  it('removes a cache when the configured runtime root is behind a junction', () => {
+    const fixture = makeFixture()
+    const aliasDataRoot = join(fixture.sandbox, 'data-alias')
+    symlinkSync(join(fixture.sandbox, 'data'), aliasDataRoot, 'junction')
+    writeFileSync(
+      join(fixture.env.USERPROFILE!, '.open-science', 'settings.json'),
+      `${JSON.stringify({ dataRoot: aliasDataRoot })}\n`
+    )
+    writeParentMarker(fixture)
+    writeCache(fixture)
+
+    runUninstaller(fixture)
+
+    expect(existsSync(fixture.cachePath)).toBe(false)
+    expect(existsSync(fixture.managedParent)).toBe(false)
+    expect(existsSync(fixture.runtimeRoot)).toBe(true)
   })
 
   it('retries removal of a marker-only managed parent left by an interrupted cleanup', () => {

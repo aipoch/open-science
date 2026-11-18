@@ -26,6 +26,7 @@ import {
   LOCAL_FS_LIST_DIR_CHANNEL,
   LOCAL_FS_LIST_DRIVES_CHANNEL,
   LOCAL_FS_OPEN_PATH_CHANNEL,
+  LOCAL_FS_OPEN_IN_BROWSER_CHANNEL,
   LOCAL_FS_READ_PREVIEW_CHANNEL,
   LOCAL_FS_REVEAL_CHANNEL,
   registerLocalFsIpcHandlers
@@ -36,6 +37,7 @@ const CHANNELS = [
   LOCAL_FS_LIST_DIR_CHANNEL,
   LOCAL_FS_LIST_DRIVES_CHANNEL,
   LOCAL_FS_OPEN_PATH_CHANNEL,
+  LOCAL_FS_OPEN_IN_BROWSER_CHANNEL,
   LOCAL_FS_READ_PREVIEW_CHANNEL,
   LOCAL_FS_REVEAL_CHANNEL,
   LOCAL_FS_GRANTED_ROOTS_LIST_CHANNEL,
@@ -50,6 +52,7 @@ const createServiceStub = (): LocalFsService =>
     listDrives: vi.fn(async () => []),
     listDir: vi.fn(async () => ({ path: '/Users/test', entries: [], truncated: false })),
     openPath: vi.fn(async () => ''),
+    openInBrowser: vi.fn(async () => undefined),
     readPreview: vi.fn(async () => ({ kind: 'text', text: '' })),
     revealInFolder: vi.fn(),
     listGrantedRoots: vi.fn(async () => []),
@@ -82,6 +85,14 @@ describe('registerLocalFsIpcHandlers', () => {
     await expect(
       ipcHandlers.get(LOCAL_FS_REVEAL_CHANNEL)?.({}, '/test/report.docx')
     ).rejects.toThrow('File manager unavailable')
+  })
+
+  it('forwards browser opens to the local file service', async () => {
+    const service = createServiceStub()
+    registerLocalFsIpcHandlers(service)
+
+    await ipcHandlers.get(LOCAL_FS_OPEN_IN_BROWSER_CHANNEL)?.({}, '/test/report.html')
+    expect(service.openInBrowser).toHaveBeenCalledWith('/test/report.html')
   })
   it('forwards grant-root requests to the service', async () => {
     const service = createServiceStub()

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Unbundled worker helper. */
 const identifiers = (text) => {
   const pattern =
-    /(?:max|min)[a-z\p{Script=Greek}]∈\[[A-Za-z\p{Script=Greek}\d]+\]|[A-Z]1\[[a-z\p{Script=Greek}][<>≤≥]\d+\]|(?:E\[[A-Za-z\p{Script=Greek}]\]){1,2}T|[A-Za-z\p{Script=Greek}][A-Za-z\p{Script=Greek}\d]*(?:(?:ˆ|\u0302)\s*[A-Za-z\p{Script=Greek}\d]*)?′{0,3}(?:[∈<>≤≥×−+-][A-Za-z\p{Script=Greek}\d]+|,[\p{Script=Greek}\d][A-Za-z\p{Script=Greek}\d]*|\.{3}[A-Za-z\p{Script=Greek}\d]+)*(?:\([A-Za-z\p{Script=Greek}\d−+-]+\)[A-Za-z]?)?/gu
+    /(?:max|min)[a-z\p{Script=Greek}]∈\[[A-Za-z\p{Script=Greek}\d]+\]|[A-Z]1\[[a-z\p{Script=Greek}][<>≤≥]\d+\]|(?:E\[[A-Za-z\p{Script=Greek}]\]){1,2}T|[A-Za-z\p{Script=Greek}][A-Za-z\p{Script=Greek}\d]*(?:(?:ˆ|\u0302)\s*[A-Za-z\p{Script=Greek}\d]*)?′{0,3}(?:[-∈<>≤≥×−+:][A-Za-z\p{Script=Greek}\d]+|,[\p{Script=Greek}\d][A-Za-z\p{Script=Greek}\d]*|\.{3}[A-Za-z\p{Script=Greek}\d]+)*(?:\([A-Za-z\p{Script=Greek}\d,−+-]+\)[A-Za-z]?)?/gu
   // TeX can extract the difference operator as U+2206, outside the Greek script.
   const result = [...text.matchAll(pattern), ...text.matchAll(/∆[a-z]{1,3}(?![A-Za-z\d_])/gu)]
   // A prose qualifier follows the variable, not its native lowered suffix:
@@ -53,7 +53,7 @@ const sameStyle = (a, b) => Math.abs(a.scale - b.scale) < 0.01 && Math.abs(a.ris
 // be proven; flat identifiers are not anchors.
 export const resolveNestedScriptGroups = (source, translation, markers) => {
   const pattern =
-      /(?<![A-Za-z\p{Script=Greek}\d⊥])(?:[A-Z]{1,4}(?:\p{Script=Greek}\([A-Za-z\d]+\))(?:,\p{Script=Greek}\([A-Za-z\d]+\))+|∂[A-Za-z\p{Script=Greek}ℓ`]\/∂[A-Za-z\p{Script=Greek}][A-Za-z\p{Script=Greek}\d]*(?:[−+-]\d+)?|[A-Za-z\p{Script=Greek}](?:[A-Za-z\p{Script=Greek}\d]{2,7}|[A-Za-z\p{Script=Greek}\d]⊥))(?![A-Za-z\p{Script=Greek}\d⊥])/gu,
+      /(?<![A-Za-z\p{Script=Greek}\d⊥])(?:[A-Za-z\p{Script=Greek}]′[A-Za-z\p{Script=Greek}\d]{1,4}|[A-Z]{1,4}(?:\p{Script=Greek}\([A-Za-z\d]+\))(?:,\p{Script=Greek}\([A-Za-z\d]+\))+|∂[A-Za-z\p{Script=Greek}ℓ`]\/∂[A-Za-z\p{Script=Greek}][A-Za-z\p{Script=Greek}\d]*(?:[−+-]\d+)?|[A-Za-z\p{Script=Greek}](?:[A-Za-z\p{Script=Greek}\d]{2,7}|[A-Za-z\p{Script=Greek}\d]⊥))(?![A-Za-z\p{Script=Greek}\d⊥])/gu,
     sourceGroups = [...source.matchAll(pattern)],
     targetGroups = [...translation.matchAll(pattern)],
     groups = []
@@ -99,21 +99,84 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
     body = (part) => part.scale >= 0.9 && part.scale <= 1.1 && Math.abs(part.rise) < 0.01,
     small = (part) => part.scale >= 0.5 && part.scale < 0.85,
     center = (part) => (part.bounds[1] + part.bounds[3]) / 2,
+    pushNativeGroup = (start, end, parts, baseline, targetOffset) => {
+      groups.push({
+        sourceOffset: start,
+        targetOffset,
+        label: source.slice(start, end),
+        sourceIndices: parts.flatMap((part) => part.sourceIndices),
+        baselineIndex: baseline.sourceIndices[0],
+        nativeScriptGroup: true
+      })
+    },
     addNativeGroup = (start, end, parts, baseline) => {
       const label = source.slice(start, end),
         from = occurrences(source, label),
         to = occurrences(translation, label),
         ordinal = from.indexOf(start)
       if (ordinal < 0 || from.length !== to.length) return
-      groups.push({
-        sourceOffset: start,
-        targetOffset: to[ordinal],
-        label,
-        sourceIndices: parts.flatMap((part) => part.sourceIndices),
-        baselineIndex: baseline.sourceIndices[0],
-        nativeScriptGroup: true
-      })
+      pushNativeGroup(start, end, parts, baseline, to[ordinal])
     }
+  // Extraction flattens a blackboard capital and its raised dimensions.
+  // Move the entire native group only for unchanged set relations and dimensions.
+  const dimensions =
+    /([∈⊂])\s*([A-Z][a-z](?:×[a-z])?)(?![\p{Script=Latin}\p{Script=Greek}\p{N}\p{M}_′″‴'×+\-/^−\u{1d400}-\u{1d7ff}])/gu
+  const sourceDimensions = [...source.matchAll(dimensions)],
+    targetDimensions = [...translation.matchAll(dimensions)]
+  for (const match of sourceDimensions) {
+    const label = match[2],
+      end = match.index + match[0].length,
+      start = end - label.length,
+      parts = nativeParts(match.index, end, label.length + 1)
+    if (!parts) continue
+    const [relation, base, ...exponent] = parts,
+      height = base.bounds[3] - base.bounds[1],
+      relationGap = base.bounds[0] - relation.bounds[2]
+    if (
+      relation.sourceOffset !== match.index ||
+      relation.label !== match[1] ||
+      !/^(?:[A-Z]{6}\+)?CMSY(?:5|6|7|8|9|10|12)$/u.test(relation.fontName) ||
+      !body(relation) ||
+      !body(base) ||
+      !Number.isFinite(relation.baseline - base.baseline) ||
+      Math.abs(relation.baseline - base.baseline) > 0.01 ||
+      relationGap < 0 ||
+      relationGap >= height ||
+      base.sourceOffset !== start ||
+      base.label !== label[0] ||
+      !/^(?:[A-Z]{6}\+)?MSBM(?:5|6|7|8|9|10|12)$/u.test(base.fontName) ||
+      exponent.some((part, index) => {
+        const gap = part.bounds[0] - parts[index + 1].bounds[2],
+          font =
+            part.label === '×' ? /^(?:[A-Z]{6}\+)?CMSY\d{1,2}$/u : /^(?:[A-Z]{6}\+)?CMMI\d{1,2}$/u
+        return (
+          part.sourceOffset !== start + index + 1 ||
+          part.label !== label[index + 1] ||
+          !font.test(part.fontName) ||
+          !small(part) ||
+          !sameStyle(exponent[0], part) ||
+          part.rise < height * 0.3 ||
+          part.rise > height * 0.85 ||
+          center(part) <= center(base) ||
+          gap < -height * 0.1 ||
+          gap > height * 0.4
+        )
+      })
+    )
+      continue
+    const from = sourceDimensions.filter((entry) => entry[2] === label),
+      to = targetDimensions.filter((entry) => entry[2] === label)
+    if (from.length !== to.length || from.some((entry, index) => entry[1] !== to[index][1]))
+      continue
+    const target = to[from.indexOf(match)]
+    pushNativeGroup(
+      start,
+      end,
+      parts.slice(1),
+      base,
+      target.index + target[0].length - label.length
+    )
+  }
   // Move the complete raised order and lowered index with their native base.
   for (const match of source.matchAll(/\p{Script=Greek}\(\d{1,2}\)\d{2,6}(?=\s*=)/gu)) {
     const start = match.index,
@@ -569,7 +632,11 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
       offset !== end
     )
       continue
-    if (/^[A-Za-z\p{Script=Greek}\d]+⊥?$/u.test(label)) {
+    if (
+      /^(?:[A-Za-z\p{Script=Greek}\d]+⊥?|[A-Za-z\p{Script=Greek}]′[A-Za-z\p{Script=Greek}\d]{1,4})$/u.test(
+        label
+      )
+    ) {
       const productBoundary =
           /[\p{Script=Latin}\p{Script=Greek}\p{N}\p{M}_′″‴'⊥\u{1d400}-\u{1d7ff}]/u,
         completeProduct = (text, token) =>
@@ -654,7 +721,7 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
           !upper ||
           !lower ||
           !/^[A-Za-z\p{Script=Greek}]$/u.test(base.label) ||
-          !/^[A-Za-z\p{Script=Greek}\d]{1,4}$/u.test(upper.label) ||
+          !/^(?:[A-Za-z\p{Script=Greek}\d]{1,4}|′)$/u.test(upper.label) ||
           !/^(?:[A-Za-z\p{Script=Greek}\d]{1,4}|⊥)$/u.test(lower.label) ||
           !(base.scale >= 0.9 && base.scale <= 1.1 && Math.abs(base.rise) <= 0.01) ||
           ![upper, lower].every((part) => part.scale >= 0.5 && part.scale < 0.85) ||
@@ -698,7 +765,8 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
           targetOffset: to[from.indexOf(match)].index,
           label,
           sourceIndices: parts.flatMap((part) => part.sourceIndices),
-          baselineIndex: base.sourceIndices[0]
+          baselineIndex: base.sourceIndices[0],
+          ...(upper.label === '′' ? { nativeScriptGroup: true } : {})
         })
         continue
       }
@@ -842,7 +910,7 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
       marker.scale >= 0.9 ||
       !Number.isFinite(marker.rise) ||
       Math.abs(marker.rise) < 0.01 ||
-      (!/^[A-Za-z\p{Script=Greek}\d′∈<>≤≥×−+()[\],=.-]+[,.;:]*$/u.test(marker.label) &&
+      (!/^[A-Za-z\p{Script=Greek}\d′∈<>≤≥×−+()[\],:=.-]+[,.;:]*$/u.test(marker.label) &&
         !(marker.rise < 0 && /^[a-z] [a-z]$/u.test(marker.label))) ||
       source.slice(marker.sourceOffset, marker.sourceOffset + marker.label.length) !== marker.label
     )

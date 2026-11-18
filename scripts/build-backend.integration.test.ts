@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { expect, it } from 'vitest'
 import { createBackendBuilder } from './build-backend.mjs'
-import { desktopBackendDependencies } from './backend-dependencies.mjs'
+import {
+  assertBundledModulesStayPortable,
+  desktopBackendDependencies
+} from './backend-dependencies.mjs'
 
 it('isolates desktop bundles from CLI output and runs all native locales and workers without external i18next', async () => {
   const root = await mkdtemp(join(tmpdir(), 'desktop-backend-build-'))
@@ -64,10 +67,10 @@ it('isolates desktop bundles from CLI output and runs all native locales and wor
     expect(desktopBackendDependencies(dependencies, metadata)).toEqual([])
     expect(
       await readFile(
-        join(root, 'out/desktop-backend-build/third-party-licenses/i18next-LICENSE'),
+        join(root, 'out/desktop-backend-build/third-party-licenses/THIRD-PARTY-NOTICES.txt'),
         'utf8'
       )
-    ).toBe(await readFile(join(packageRoot, 'LICENSE'), 'utf8'))
+    ).toContain((await readFile(join(packageRoot, 'LICENSE'), 'utf8')).trim())
     await put(
       'compare.cjs',
       `
@@ -152,6 +155,8 @@ it('isolates desktop bundles from CLI output and runs all native locales and wor
     } finally {
       await future.dispose()
     }
+    // Bundling is the default for packages that never read their own files, so a version
+    // change stays inside the bundle instead of silently reintroducing an installed copy.
     expect(
       desktopBackendDependencies(
         dependencies,
@@ -159,7 +164,13 @@ it('isolates desktop bundles from CLI output and runs all native locales and wor
           await readFile(join(root, 'out/desktop-backend-build/dependencies.json'), 'utf8')
         )
       )
-    ).toEqual(['i18next'])
+    ).toEqual([])
+    expect(
+      await readFile(
+        join(root, 'out/desktop-backend-build/third-party-licenses/THIRD-PARTY-NOTICES.txt'),
+        'utf8'
+      )
+    ).toContain((await readFile(join(packageRoot, 'LICENSE'), 'utf8')).trim())
     expect(await readFile(join(root, 'out/backend/index.cjs'), 'utf8')).toBe(cli)
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -302,3 +313,109 @@ it('inlines the notebook-network-sandbox network-address subpath into backend bu
     await rm(root, { recursive: true, force: true })
   }
 }, 30_000)
+
+it('rejects a bundled dependency that reads files relative to its own module', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-self-locate-'))
+  const put = async (file: string, content: string): Promise<void> => {
+    await mkdir(dirname(join(root, file)), { recursive: true })
+    await writeFile(join(root, file), content)
+  }
+  try {
+    await put(
+      'packages/open-science/installation-startup.cjs',
+      await readFile(
+        new URL('../packages/open-science/installation-startup.cjs', import.meta.url),
+        'utf8'
+      )
+    )
+    await put('src/shared/i18n/locales/de.json', JSON.stringify({ common: {}, native: {} }))
+    await put('package.json', JSON.stringify({ dependencies: { 'self-locate': '1.0.0' } }))
+    await put(
+      'node_modules/self-locate/package.json',
+      JSON.stringify({ name: 'self-locate', version: '1.0.0', main: 'index.js' })
+    )
+    await put(
+      'node_modules/self-locate/index.js',
+      'const { readFileSync } = require("node:fs"); const { join } = require("node:path"); exports.load = () => readFileSync(join(__dirname, "data.txt"), "utf8")'
+    )
+    await put('src/main/node-entry.ts', 'import { load } from "self-locate"; console.log(load())')
+    const builder = await createBackendBuilder({ root, desktop: true })
+    try {
+      await expect(builder.rebuild()).rejects.toThrow(
+        /not on the allowlist: node_modules\/self-locate\/index\.js/
+      )
+    } finally {
+      await builder.dispose()
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 30_000)
+
+it('checks every bundled input after an allowlisted self-location file', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-self-location-order-'))
+  const put = async (file: string, content: string): Promise<void> => {
+    await mkdir(dirname(join(root, file)), { recursive: true })
+    await writeFile(join(root, file), content)
+  }
+  try {
+    await put('node_modules/openchemlib/dist/openchemlib.js', 'xxxx __dirname')
+    await put('node_modules/second-self-locate/index.js', '__dirname')
+    expect(() =>
+      assertBundledModulesStayPortable(
+        [
+          {
+            inputs: {
+              'node_modules/openchemlib/dist/openchemlib.js': {},
+              [join(root, 'node_modules/second-self-locate/index.js')]: {},
+              'node-worker:virtual-entry.ts': {},
+              'raw-resource:virtual-resource.txt': {}
+            },
+            outputs: {}
+          }
+        ],
+        root
+      )
+    ).toThrow(/node_modules\/second-self-locate\/index\.js/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('rejects dynamic package loads from bundled source unless they are staged externally', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-dynamic-package-'))
+  const put = async (file: string, content: string): Promise<void> => {
+    await mkdir(dirname(join(root, file)), { recursive: true })
+    await writeFile(join(root, file), content)
+  }
+  try {
+    await put(
+      'src/main/dynamic-loader.ts',
+      `
+        const nodeRequire = createRequire(import.meta.url)
+        nodeRequire('@aipoch/skills/projection')
+        const require = createRequire(import.meta.url)
+        require.resolve('diff')
+        createRequire(import.meta.url).resolve('another-runtime-only')
+      `
+    )
+    const metadata = [
+      {
+        inputs: { 'src/main/dynamic-loader.ts': {} },
+        outputs: {}
+      }
+    ]
+    expect(() => assertBundledModulesStayPortable(metadata, root)).toThrow(/@aipoch\/skills/)
+    expect(() => assertBundledModulesStayPortable(metadata, root)).toThrow(/diff/)
+    expect(() => assertBundledModulesStayPortable(metadata, root)).toThrow(/another-runtime-only/)
+    expect(() =>
+      assertBundledModulesStayPortable(
+        metadata,
+        root,
+        new Set(['@aipoch/skills', 'diff', 'another-runtime-only'])
+      )
+    ).not.toThrow()
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

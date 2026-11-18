@@ -1,7 +1,9 @@
+import { digestFileWithinBudget } from '../bounded-file-io'
 import { bindManagedPdfVersion } from '../pdf-annotations/source-bindings'
 import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import type { BigIntStats } from 'node:fs'
 
 import type { PrismaClient } from '@prisma/client'
 
@@ -22,7 +24,7 @@ import type {
   PublishCompatibilityRouting,
   StagingArtifactVersionRecord
 } from './provenance-version-writer'
-import { requireAgentArtifactVersion } from './provenance-version-kind'
+import { requireGeneratedArtifactVersion } from './provenance-version-kind'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 // Reconciliation can also run from a read path while an active writer is between copying bytes and
@@ -234,25 +236,31 @@ export class ArtifactProvenanceStagingRecovery {
     )
     const finalContentPath = resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
     const finalDirectory = dirname(finalContentPath)
-    const [stagingContent, finalContent] = await Promise.all([
-      readOptionalFile(join(stagingDirectory, 'content')),
-      readOptionalFile(finalContentPath)
+    const findContent = (path: string): Promise<BigIntStats | undefined> =>
+      lstat(path, { bigint: true }).catch((error: unknown) => {
+        if (errorCode(error) === 'ENOENT') return undefined
+        throw error
+      })
+    const stagingContentPath = join(stagingDirectory, 'content')
+    const [stagingInfo, finalInfo] = await Promise.all([
+      findContent(stagingContentPath),
+      findContent(finalContentPath)
     ])
-    if (stagingContent && finalContent) {
+    if (stagingInfo && finalInfo) {
       throw new Error(`Artifact Version has conflicting staging and final content: ${version.id}`)
     }
-    const content = finalContent ?? stagingContent
-    if (!content) throw new Error(`Artifact Version staging content is unavailable: ${version.id}`)
-    if (content.byteLength !== Number(version.sizeBytes) || sha256(content) !== version.checksum) {
-      throw new Error(`Artifact Version staging content is corrupt: ${version.id}`)
-    }
+    const info = finalInfo ?? stagingInfo
+    if (!info) throw new Error(`Artifact Version staging content is unavailable: ${version.id}`)
+    const corruptMessage = `Artifact Version staging content is corrupt: ${version.id}`
+    if (!info.isFile() || info.size !== version.sizeBytes) throw new Error(corruptMessage)
 
-    const publishDirectory = finalContent ? finalDirectory : stagingDirectory
-    await this.syncAndVerifyFile(
-      join(publishDirectory, 'content'),
-      version.checksum,
-      `Artifact Version staging content is corrupt: ${version.id}`
-    )
+    const contentPath = finalInfo ? finalContentPath : stagingContentPath
+    const publishDirectory = dirname(contentPath)
+    await this.options.durability.syncFile(contentPath)
+    const expectedSize = Number(version.sizeBytes)
+    const digest = await digestFileWithinBudget(contentPath, expectedSize)
+    if (digest.sizeBytes !== expectedSize || digest.checksum !== version.checksum)
+      throw new Error(corruptMessage)
     await this.ensureCanonicalMirror(
       join(publishDirectory, 'evidence.json'),
       version.evidenceJson,
@@ -272,7 +280,7 @@ export class ArtifactProvenanceStagingRecovery {
       )
     }
 
-    if (!finalContent) {
+    if (!finalInfo) {
       await mkdir(dirname(finalDirectory), { recursive: true })
       await this.options.durability.syncDirectory(stagingDirectory)
       await rename(stagingDirectory, finalDirectory)
@@ -329,7 +337,7 @@ export class ArtifactProvenanceStagingRecovery {
       return updated
     })
     return this.options.projectVersionFile(
-      requireAgentArtifactVersion(recovered),
+      requireGeneratedArtifactVersion(recovered),
       projectId,
       appSessionId
     )
@@ -358,7 +366,7 @@ export class ArtifactProvenanceStagingRecovery {
         },
         include: { artifact: true }
       })
-      .then((rows) => rows.map(requireAgentArtifactVersion))
+      .then((rows) => rows.map(requireGeneratedArtifactVersion))
 
     // A crash can leave a complete staging row after its immutable bytes were copied but before the
     // final state update. Resume those rows from SQLite authority before scanning unindexed folders.

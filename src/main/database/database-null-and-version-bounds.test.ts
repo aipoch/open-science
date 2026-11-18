@@ -397,9 +397,11 @@ describe('D02/D04 persisted database boundaries', () => {
           '0055_session_discussion_parent',
           '0056_compute_kubernetes_workspace',
           '0057_project_optimization_prompt',
-          '0058_session_schedules'
+          '0058_session_schedules',
+          '0059_session_history',
+          '0060_image_models'
         ],
-        to: '0058_session_schedules'
+        to: '0060_image_models'
       })
       // Literature adds contentBlobId to version rows while preserving their original fields.
       expect(await Promise.all(tables.map(readRows))).toMatchObject(before)

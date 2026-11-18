@@ -1,4 +1,5 @@
 import { ScheduleMessageCards, SessionScheduleBanner } from './schedules/ScheduleMessageCard'
+import { ImageToolPreviewContext } from './image-tool-preview-context'
 import { LiteratureCandidateSessionContext } from './literature-candidate-session-context'
 import { ErrorNotice } from '@/components/error-notice'
 import { cn } from '@/lib/utils'
@@ -116,6 +117,8 @@ import {
 import { parseGeneratePlanDocument } from './generate-plan-activity-projection'
 import { useNotebookRunsById } from './use-notebook-runs-by-id'
 import { useTranscriptWindow } from './use-transcript-window'
+import { SessionHistoryLoadButton } from './SessionHistoryLoadButton'
+import { ensureSessionContentLoaded } from '@/lib/session-persistence/session-history'
 import { useHandoffLifecycleEvents } from './useHandoffLifecycleEvents'
 import {
   createConversationItems,
@@ -610,6 +613,28 @@ const WorkspaceMessageScrollerImpl = ({
           onError: onAnnotationError
         }
       : undefined
+  const activityAnnotationPort = useMemo<AnnotationPort | undefined>(
+    () =>
+      currentSessionId && onAddAnnotation && onAnnotationError
+        ? {
+            sessionId: currentSessionId,
+            activeAnnotations: activeTextAnnotations,
+            onAdd: handleAddTextAnnotation,
+            onUpdateNote: onUpdateAnnotationNote,
+            onRemove: onRemoveAnnotation,
+            onError: onAnnotationError
+          }
+        : undefined,
+    [
+      currentSessionId,
+      onAddAnnotation,
+      onAnnotationError,
+      activeTextAnnotations,
+      handleAddTextAnnotation,
+      onUpdateAnnotationNote,
+      onRemoveAnnotation
+    ]
+  )
   const revisionNavigationDisabledReason =
     activeSession &&
     (activeSession.activeRun ||
@@ -651,9 +676,15 @@ const WorkspaceMessageScrollerImpl = ({
     (frame) => frame.id === conversationGraph.activeFrameId
   )
   const currentPresentationScopeId = currentSessionId
-    ? JSON.stringify([currentSessionId, activeConversationFrame?.activeBranchId ?? 'legacy'])
+    ? JSON.stringify([
+        currentSessionId,
+        activeConversationFrame?.activeBranchId ??
+          activeSession?.historyPage?.messageBranchId ??
+          'legacy'
+      ])
     : undefined
   const { artifactsForMessage } = useWorkspaceArtifactVisibility(activeSession)
+
   const [resolveFileReferences] = useState(createMessageFileReferenceResolver)
   const notebookRoot = notebookReference?.notebookSessionRoot
   const fileReferencesByMessage = useMemo(
@@ -959,6 +990,35 @@ const WorkspaceMessageScrollerImpl = ({
   const fullPresentationBarrierIndex = fullConversationItems.findIndex(
     (item) => item.type === 'message' && presentingMessageIds.has(item.message.id)
   )
+  const partialHistory = activeSession?.contentLoaded === false
+  const [historyLoadFailedSessionId, setHistoryLoadFailedSessionId] = useState<string>()
+  const ensureFullHistory = useCallback(async (): Promise<void> => {
+    if (!partialHistory || !currentProjectId || !currentSessionId) return
+    try {
+      await ensureSessionContentLoaded({ projectId: currentProjectId, sessionId: currentSessionId })
+      setHistoryLoadFailedSessionId((failed) => (failed === currentSessionId ? undefined : failed))
+    } catch {
+      setHistoryLoadFailedSessionId(currentSessionId)
+    }
+  }, [currentProjectId, currentSessionId, partialHistory])
+  const previousHistoryPageRef = useRef({
+    sessionId: currentSessionId,
+    page: activeSession?.historyPage
+  })
+  const revealEarlier = transcriptWindow.revealEarlier
+  useLayoutEffect(() => {
+    const previous = previousHistoryPageRef.current
+    const next = activeSession?.historyPage
+    previousHistoryPageRef.current = { sessionId: currentSessionId, page: next }
+    if (
+      previous.sessionId === currentSessionId &&
+      previous.page &&
+      next &&
+      previous.page !== next &&
+      previous.page.revision === next.revision
+    )
+      revealEarlier()
+  }, [activeSession?.historyPage, currentSessionId, revealEarlier])
   const searchFocus = useSearchMessageFocusStore((state) => state.pending)
   const navigationRevision = useNavigationStore((state) => state.userNavigationRevision)
   useEffect(() => {
@@ -972,6 +1032,10 @@ const WorkspaceMessageScrollerImpl = ({
     const index = fullConversationItems.findIndex(
       (item) => item.type === 'message' && item.message.id === searchFocus.messageId
     )
+    if (index < 0 && partialHistory) {
+      void Promise.resolve().then(ensureFullHistory)
+      return
+    }
     if (index < 0 || (fullPresentationBarrierIndex >= 0 && index > fullPresentationBarrierIndex))
       return
     const frame = requestAnimationFrame(() => revealTranscriptItem(searchFocus.messageId))
@@ -983,6 +1047,8 @@ const WorkspaceMessageScrollerImpl = ({
     currentSessionId,
     fullConversationItems,
     fullPresentationBarrierIndex,
+    partialHistory,
+    ensureFullHistory,
     revealTranscriptItem
   ])
   const [annotationScrollTarget, setAnnotationScrollTarget] = useState<{
@@ -1077,10 +1143,12 @@ const WorkspaceMessageScrollerImpl = ({
     undefined
   )
   const showWindowFind = useCallback((): void => {
+    if (partialHistory) void ensureFullHistory()
     const acknowledgedScope = windowFindAcknowledgedScopeRef.current
     if (
       acknowledgedScope &&
       acknowledgedScope.scopeId === currentPresentationScopeId &&
+      !partialHistory &&
       presentationBarrierIndex < 0 &&
       transcriptWindow.entries.length === conversationItems.length
     ) {
@@ -1095,7 +1163,9 @@ const WorkspaceMessageScrollerImpl = ({
     currentPresentationScopeId,
     presentationBarrierIndex,
     revealFullTranscript,
-    transcriptWindow.entries.length
+    transcriptWindow.entries.length,
+    partialHistory,
+    ensureFullHistory
   ])
   useEffect(() => {
     return window.api?.window?.onShowWindowFind?.(showWindowFind)
@@ -1115,6 +1185,7 @@ const WorkspaceMessageScrollerImpl = ({
   useLayoutEffect(() => {
     if (
       !windowFindOpen ||
+      partialHistory ||
       presentationBarrierIndex >= 0 ||
       transcriptWindow.entries.length !== conversationItems.length
     ) {
@@ -1129,6 +1200,7 @@ const WorkspaceMessageScrollerImpl = ({
     currentPresentationScopeId,
     presentationBarrierIndex,
     transcriptWindow.entries.length,
+    partialHistory,
     windowFindOpen
   ])
   // Brand-new conversation (nothing presented, no resume in flight): invite the first prompt with
@@ -1618,20 +1690,23 @@ const WorkspaceMessageScrollerImpl = ({
   }
 
   // Records the user's explicit expansion choice for a single tool-activity detail row.
-  const toggleActivityRow = (activityId: string, nextExpanded: boolean): void => {
-    setActivityExpansionOverrideState((currentState) => {
-      const currentOverrides =
-        currentState.sessionId === currentSessionId ? currentState.overrides : {}
+  const toggleActivityRow = useCallback(
+    (activityId: string, nextExpanded: boolean): void => {
+      setActivityExpansionOverrideState((currentState) => {
+        const currentOverrides =
+          currentState.sessionId === currentSessionId ? currentState.overrides : {}
 
-      return {
-        sessionId: currentSessionId,
-        overrides: {
-          ...currentOverrides,
-          [activityId]: nextExpanded
+        return {
+          sessionId: currentSessionId,
+          overrides: {
+            ...currentOverrides,
+            [activityId]: nextExpanded
+          }
         }
-      }
-    })
-  }
+      })
+    },
+    [currentSessionId]
+  )
 
   // Opens the Session reviewer panel positioned at the finding the user clicked.
   // Only the "Go to transcript" button on a finding fires this; clicking the card itself does not.
@@ -1789,6 +1864,25 @@ const WorkspaceMessageScrollerImpl = ({
                   '[&>[data-message-id]]:[content-visibility:visible]'
               )}
             >
+              {historyLoadFailedSessionId && historyLoadFailedSessionId === currentSessionId ? (
+                <MessageScrollerItem
+                  messageId={`history-error-${currentSessionId}`}
+                  className="min-w-0"
+                >
+                  <ErrorNotice
+                    description={t('Could not load conversation history.')}
+                    primaryButton={{ label: t('Retry'), onClick: () => void ensureFullHistory() }}
+                  />
+                </MessageScrollerItem>
+              ) : null}
+              {activeSession?.historyPage ? (
+                <MessageScrollerItem
+                  messageId={`history-load-${activeSession.id}`}
+                  className="min-w-0"
+                >
+                  <SessionHistoryLoadButton key={activeSession.id} session={activeSession} />
+                </MessageScrollerItem>
+              ) : null}
               {reviewLoadError ? (
                 <MessageScrollerItem
                   messageId={`review-load-error-${currentSessionId ?? 'unknown'}`}
@@ -2267,30 +2361,37 @@ const WorkspaceMessageScrollerImpl = ({
                 }
 
                 return (
-                  <WorkspaceActivityGroup
-                    allowFolderAccess={Boolean(
-                      activeSession &&
-                      activeSession.contentLoaded !== false &&
-                      !activeSession.packageOrigin
-                    )}
+                  <ImageToolPreviewContext.Provider
                     key={item.id}
-                    group={item}
-                    isExpanded={windowFindOpen || expandedActivityGroups.has(item.id)}
-                    onToggleGroup={toggleActivityGroup}
-                    expansionOverrides={activityExpansionOverrides}
-                    onToggleRow={toggleActivityRow}
-                    notebookRunsById={notebookRunsById}
-                    onNotebookRunNearViewport={handleNotebookRunNearViewport}
-                    permission={activeSession?.runtimeContext?.permission}
-                    jobsByActivityId={jobsByActivityId}
-                    onOpenJobDetail={handleOpenJobDetail}
-                    annotationPort={annotationPortFor(activeTextAnnotations)}
-                    revealRequest={
-                      sessionItemRevealRequest?.itemType === 'tool-activity'
-                        ? sessionItemRevealRequest
-                        : undefined
-                    }
-                  />
+                    value={{
+                      projectId: activeSession?.projectId,
+                      sessionId: activeSession?.id
+                    }}
+                  >
+                    <WorkspaceActivityGroup
+                      allowFolderAccess={Boolean(
+                        activeSession &&
+                        activeSession.contentLoaded !== false &&
+                        !activeSession.packageOrigin
+                      )}
+                      group={item}
+                      isExpanded={windowFindOpen || expandedActivityGroups.has(item.id)}
+                      onToggleGroup={toggleActivityGroup}
+                      expansionOverrides={activityExpansionOverrides}
+                      onToggleRow={toggleActivityRow}
+                      notebookRunsById={notebookRunsById}
+                      onNotebookRunNearViewport={handleNotebookRunNearViewport}
+                      permission={activeSession?.runtimeContext?.permission}
+                      jobsByActivityId={jobsByActivityId}
+                      onOpenJobDetail={handleOpenJobDetail}
+                      annotationPort={activityAnnotationPort}
+                      revealRequest={
+                        sessionItemRevealRequest?.itemType === 'tool-activity'
+                          ? sessionItemRevealRequest
+                          : undefined
+                      }
+                    />
+                  </ImageToolPreviewContext.Provider>
                 )
               })}
 

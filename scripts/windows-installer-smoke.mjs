@@ -1503,21 +1503,48 @@ const terminateDirectoryProcesses = async (directory, run = runProcess) => {
   )
 }
 
-const uninstallAndVerify = async (installDirectory, env) => {
+const uninstallAndVerify = async (
+  installDirectory,
+  env,
+  { processRoot = installDirectory, terminate = terminateDirectoryProcesses, run = runProcess } = {}
+) => {
   const uninstaller = await findUninstaller(installDirectory)
-  const installedPaths = [...packagedResourcePaths(installDirectory), uninstaller]
-  await terminateDirectoryProcesses(installDirectory)
-  const result = await runProcess(uninstaller, ['/S', '/KEEP_APP_DATA'], {
+  const installedPaths = packagedResourcePaths(installDirectory)
+  await terminate(installDirectory)
+  // Reap app and MCP children before NSIS starts its self-deleting helper. Killing the smoke
+  // root after the uninstaller returns can terminate that helper before it removes the tree.
+  if (processRoot !== installDirectory) await terminate(processRoot)
+  const result = await run(uninstaller, ['/S', '/KEEP_APP_DATA'], {
     allowNonZero: true,
     env
   })
-  await terminateDirectoryProcesses(installDirectory)
-  await waitFor('the installed application files to be removed', async () => {
-    const pathsRemain = (await Promise.all(installedPaths.map(pathExists))).some(Boolean)
-    if (pathsRemain) return undefined
+  const cleanupCheck = async () => {
+    const remainingPaths = (
+      await Promise.all(
+        installedPaths.map(async (path) => ((await pathExists(path)) ? path : undefined))
+      )
+    ).filter(Boolean)
+    if (remainingPaths.length > 0) return undefined
     if (!(await pathExists(installDirectory))) return true
-    return (await readdir(installDirectory)).length === 0 || undefined
-  })
+    const remainingEntries = await readdir(installDirectory)
+    return remainingEntries.every((entry) => entry === basename(uninstaller)) || undefined
+  }
+  try {
+    await waitFor('the installed application files to be removed', cleanupCheck)
+  } catch (error) {
+    const remainingPaths = (
+      await Promise.all(
+        installedPaths.map(async (path) => ((await pathExists(path)) ? path : undefined))
+      )
+    ).filter(Boolean)
+    const remainingEntries = (await pathExists(installDirectory))
+      ? await readdir(installDirectory)
+      : []
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)} Remaining packaged paths: ${remainingPaths.join(', ') || 'none'}. Install directory entries: ${remainingEntries.join(', ') || 'none'}.`,
+      { cause: error }
+    )
+  }
   if (result.code !== 0) {
     console.warn(`Uninstaller reported ${result.code} after removing the application files.`)
   }
@@ -1905,7 +1932,7 @@ const main = async () => {
         'Windows installer smoke completed successfully; installation retained for administrator-authorized teardown.'
       )
     } else {
-      await uninstallAndVerify(installDirectory, env)
+      await uninstallAndVerify(installDirectory, env, { processRoot: root })
       console.log('Windows installer smoke completed successfully.')
     }
   } catch (error) {

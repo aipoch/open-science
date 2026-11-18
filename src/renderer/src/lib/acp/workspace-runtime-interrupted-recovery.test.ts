@@ -19,6 +19,7 @@ import {
   resetSessionConversationIntentsForTests
 } from '../../stores/session-conversation-intents'
 import { toPersistedSession, useSessionStore, type ChatSession } from '../../stores/session-store'
+import { ensureSessionContentLoaded } from '../session-persistence/session-history'
 import { resetWorkspacePromptRollbacksForTests } from './workspace-prompt-preparation'
 import { useWorkspaceOperationErrors } from './workspace-operation-error'
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
@@ -186,6 +187,24 @@ const harness = (contextReset = false, withRoutedMessages = false) => {
   }
 }
 
+const showIndexedHistoryPage = (): ChatSession => {
+  const source = useSessionStore.getState().sessions[0]
+  const graph = source.conversationGraph!
+  const partial: ChatSession = {
+    ...source,
+    contentLoaded: false,
+    conversationGraph: undefined,
+    historyPage: {
+      revision: source.revision ?? 0,
+      messageBranchId: graph.frames.find(({ id }) => id === graph.activeFrameId)!.activeBranchId,
+      hasMore: false,
+      totalItems: source.messages.length
+    }
+  }
+  useSessionStore.setState({ sessions: [partial] })
+  return partial
+}
+
 describe('interrupted workspace recovery across renderer and Main authority', () => {
   beforeEach(() => {
     resetSessionPersistenceWriteFailuresForTests()
@@ -197,6 +216,141 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
+
+  it.each([
+    { contextReset: false, alreadyAttached: false },
+    { contextReset: true, alreadyAttached: false },
+    { contextReset: false, alreadyAttached: true },
+    { contextReset: true, alreadyAttached: true }
+  ])('hydrates an indexed recovery page before capturing its identity: %j', async (options) => {
+    const h = harness(options.contextReset)
+    showIndexedHistoryPage()
+    if (options.alreadyAttached) h.runtime.state.sessionIds = ['session-1']
+    const loadOne = vi.spyOn(window.api.sessions, 'loadOne')
+    const drain = vi.fn(async () => {
+      // Attachment can publish the full authority after the initial indexed view was displayed.
+      useSessionStore.getState().upsertPersistedSession(structuredClone(h.durable()))
+    })
+
+    await h.resume(drain)
+
+    expect(loadOne).toHaveBeenCalledWith({ projectId: 'project-1', sessionId: 'session-1' })
+    expect(loadOne.mock.invocationCallOrder[0]).toBeLessThan(drain.mock.invocationCallOrder[0])
+    expect(h.runtime.resumeSession).toHaveBeenCalledTimes(options.alreadyAttached ? 0 : 1)
+    if (!options.alreadyAttached)
+      expect(loadOne.mock.invocationCallOrder[0]).toBeLessThan(
+        h.runtime.resumeSession.mock.invocationCallOrder[0]
+      )
+    expect(h.continuation).toHaveBeenCalledOnce()
+    expect(h.providerDispatch).toHaveBeenCalledOnce()
+    expect(h.providerDispatch.mock.calls[0][0].provenanceContext?.promptMessageId).toBe('prompt-1')
+    expect(
+      h
+        .durable()
+        .messages.filter(({ role }) => role === 'user')
+        .map(({ id }) => id)
+    ).toEqual(['prompt-1'])
+    expect(h.durable().messages.find(({ id }) => id === 'prompt-1')?.content).toBe(
+      'Continue research'
+    )
+    expect(h.durable().activeRun?.promptMessageId).toBe('prompt-1')
+    expect(useSessionStore.getState().sessions[0].contentLoaded).toBeUndefined()
+  })
+
+  it('reports a failed recovery history read without attaching or dispatching', async () => {
+    const h = harness()
+    const partial = showIndexedHistoryPage()
+    const loadOne = vi
+      .spyOn(window.api.sessions, 'loadOne')
+      .mockRejectedValueOnce(new Error('Recovery history unavailable'))
+
+    await h.resume()
+
+    expect(loadOne).toHaveBeenCalledOnce()
+    expect(h.runtime.resumeSession).not.toHaveBeenCalled()
+    expect(h.continuation).not.toHaveBeenCalled()
+    expect(h.providerDispatch).not.toHaveBeenCalled()
+    expect(h.flush).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toBe(partial)
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toContain(
+      'Recovery history unavailable'
+    )
+  })
+
+  it.each(['deleted', 'replaced', 'branch', 'prompt'] as const)(
+    'does not install stale recovery history or resume when the indexed Session is %s during loading',
+    async (changed) => {
+      const h = harness()
+      const partial = showIndexedHistoryPage()
+      const replacement: ChatSession = {
+        ...partial,
+        ...(changed === 'replaced' ? { createdAt: partial.createdAt + 1 } : {}),
+        ...(changed === 'branch'
+          ? { historyPage: { ...partial.historyPage!, messageBranchId: 'another-branch' } }
+          : {}),
+        ...(changed === 'prompt'
+          ? { resumeRecovery: { ...partial.resumeRecovery!, promptMessageId: 'another-prompt' } }
+          : {})
+      }
+      const current = changed === 'deleted' ? [] : [replacement]
+      const loadOne = vi.spyOn(window.api.sessions, 'loadOne').mockImplementationOnce(async () => {
+        useSessionStore.setState({ sessions: current })
+        return structuredClone(h.durable())
+      })
+
+      await h.resume()
+
+      expect(loadOne).toHaveBeenCalledOnce()
+      expect(h.runtime.resumeSession).not.toHaveBeenCalled()
+      expect(h.continuation).not.toHaveBeenCalled()
+      expect(h.providerDispatch).not.toHaveBeenCalled()
+      expect(h.flush).not.toHaveBeenCalled()
+      expect(useSessionStore.getState().sessions).toEqual(current)
+      if (changed !== 'deleted') {
+        expect(useSessionStore.getState().sessions[0]).toBe(replacement)
+        expect(replacement.contentLoaded).toBe(false)
+        expect(replacement.conversationGraph).toBeUndefined()
+      }
+    }
+  )
+
+  it.each(['replaced', 'prompt'] as const)(
+    'does not resume an invalidated indexed Session after a shared history read restores its old %s identity',
+    async (changed) => {
+      const h = harness()
+      const partial = showIndexedHistoryPage()
+      let resolveHistory!: (authority: PersistedChatSession) => void
+      const loadOne = vi.spyOn(window.api.sessions, 'loadOne').mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveHistory = resolve
+          })
+      )
+      const loading = ensureSessionContentLoaded({ projectId: 'project-1', sessionId: 'session-1' })
+      const resuming = h.resume()
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...partial,
+            ...(changed === 'replaced'
+              ? { createdAt: partial.createdAt + 1 }
+              : {
+                  resumeRecovery: { ...partial.resumeRecovery!, promptMessageId: 'another-prompt' }
+                })
+          }
+        ]
+      })
+
+      resolveHistory(structuredClone(h.durable()))
+      await Promise.all([loading, resuming])
+
+      expect(loadOne).toHaveBeenCalledOnce()
+      expect(h.runtime.resumeSession).not.toHaveBeenCalled()
+      expect(h.continuation).not.toHaveBeenCalled()
+      expect(h.providerDispatch).not.toHaveBeenCalled()
+      expect(h.flush).not.toHaveBeenCalled()
+    }
+  )
 
   it.each([false, true])(
     'resumes the owning prompt after routed replies with contextReset=%s',
@@ -375,25 +529,28 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     expect(useSessionStore.getState().sessions[0].status).toBe('error')
   })
 
-  it('coalesces concurrent recovery requests until dispatch settles', async () => {
-    const h = harness(true)
-    let release!: () => void
-    h.providerDispatch.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          release = resolve
-        })
-    )
-    const first = h.resume()
-    const second = h.resume()
-    expect(second).toBe(first)
-    await vi.waitFor(() => expect(h.providerDispatch).toHaveBeenCalledOnce())
-    // One preference barrier and one prepared-continuation barrier, shared by both clicks.
-    expect(h.flush.mock.calls).toEqual([['session:session-1'], ['session:session-1']])
-    release()
-    await Promise.all([first, second])
-    expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
-  })
+  it.each([false, true])(
+    'coalesces concurrent recovery requests until dispatch settles (indexed=%s)',
+    async (indexed) => {
+      const h = harness(true)
+      if (indexed) showIndexedHistoryPage()
+      let release!: () => void
+      h.providerDispatch.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve
+          })
+      )
+      const first = h.resume()
+      const second = h.resume()
+      expect(second).toBe(first)
+      await vi.waitFor(() => expect(h.providerDispatch).toHaveBeenCalledOnce())
+      expect(h.flush.mock.calls).toEqual([['session:session-1'], ['session:session-1']])
+      release()
+      await Promise.all([first, second])
+      expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+    }
+  )
 
   it('admits context reset even when the clock has not advanced past the old segment', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1)
