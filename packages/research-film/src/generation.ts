@@ -6,6 +6,7 @@ import { lstat, readdir, mkdtemp, readFile, writeFile, rm, mkdir, copyFile } fro
 import { dirname, join } from 'node:path'
 import { Worker, type WorkerOptions } from 'node:worker_threads'
 import { availableParallelism, totalmem } from 'node:os'
+import type { VideoSpec } from './timeline.js'
 import type { SpeechSynthesizer } from './narration.js'
 import {
   forkSpeechProcess,
@@ -315,8 +316,8 @@ export async function generateResearchVideoInWorker(
   progress: (progress: ResearchVideoStep) => void,
   synthesizers: SpeechSynthesizer[]
 ): Promise<ResearchVideoGenerationResult> {
-  const { prepareVideoNarration } = await import('./narration.js')
-  const { buildResearchVideoPlayer } = await import('./build-player.js')
+  const { prepareVideoNarration, mixFilmNarration } = await import('./narration.js')
+  const { buildResearchVideoPlayer, readFilmVoiceTimings } = await import('./build-player.js')
   const { freezeResearchVideoSource } = await import('./freeze-source.js')
   const replay = input.mode === 'operation-replay'
   const { freezeReplaySource, buildReplayPlayer } = await import('./replay-player.js')
@@ -334,17 +335,26 @@ export async function generateResearchVideoInWorker(
           : undefined
       )
   const spec = JSON.parse(await readFile(specPath, 'utf8'))
-  const narrationSpec = replay ? replayNarrationSpec(spec) : spec
+  const narrationSpec: VideoSpec = replay ? replayNarrationSpec(spec) : spec
   progress({ phase: 'loading' })
   const speech = input.retainNarration
     ? join(dirname(input.specPath), 'speech')
     : input.temporaryDirectory
   const voiceDirectory = join(speech, 'voice')
-  const mixPath = join(speech, 'mix.wav')
+  const mixPath = join(input.temporaryDirectory, 'mix.wav')
   const marker = join(speech, 'complete.json')
   const inputKey = createHash('sha256')
     .update(
-      JSON.stringify([replay ? REPLAY_RUNTIME_VERSION : 1, spec, input.provenance?.modelRevision])
+      JSON.stringify([
+        'line-audio-v1',
+        replay ? REPLAY_RUNTIME_VERSION : 1,
+        input.provenance?.modelRevision,
+        synthesizers[0].identity,
+        narrationSpec.scenes.map((scene) => [
+          scene.id,
+          scene.lines.map((line) => [line.caption, line.say || line.caption])
+        ])
+      ])
     )
     .digest('hex')
   // Check the bytes once before using a previous run's speech/timing files.
@@ -354,8 +364,8 @@ export async function generateResearchVideoInWorker(
     const names = await readdir(voiceDirectory)
     if (names.length > 256) throw new Error('Too many narration files')
     let bytes = 0
-    for (const name of ['mix.wav', ...names.sort().map((name) => 'voice/' + name)]) {
-      const path = join(speech, name)
+    for (const name of names.sort()) {
+      const path = join(voiceDirectory, name)
       const stat = await lstat(path)
       bytes += stat.size
       if (!stat.isFile() || bytes > 200 * 1024 * 1024)
@@ -385,8 +395,17 @@ export async function generateResearchVideoInWorker(
       await mkdir(speech, { mode: 0o700 })
     }
   }
-  if (!ready) {
-    const { mix } = await prepareVideoNarration({
+  let mix: Buffer
+  if (ready) {
+    progress({ phase: 'mixing' })
+    mix = await mixFilmNarration(
+      narrationSpec,
+      await readFilmVoiceTimings(voiceDirectory, narrationSpec),
+      voiceDirectory,
+      freezeSignal
+    )
+  } else {
+    const narration = await prepareVideoNarration({
       spec: narrationSpec,
       synthesizer: synthesizers[0],
       additionalSynthesizer: synthesizers[1],
@@ -394,10 +413,11 @@ export async function generateResearchVideoInWorker(
       outputDirectory: voiceDirectory,
       signal: new AbortController().signal
     })
-    await writeFile(mixPath, mix, { flag: 'wx' })
+    mix = narration.mix
     if (input.retainNarration)
       await writeFile(marker, await signature(), { flag: 'wx', mode: 0o600 })
   }
+  await writeFile(mixPath, mix, { flag: 'wx' })
   progress({ phase: 'build' })
   return (replay ? buildReplayPlayer : buildResearchVideoPlayer)({
     ...input,

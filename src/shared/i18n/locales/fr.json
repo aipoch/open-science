@@ -201,7 +201,7 @@
   "renderer": {
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (prévoir {{min}}–{{max}} min)",
     "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}} (prévoir {{min}}–{{max}} min par minute de film)",
-    "Estimates allow extra time and vary with your computer and the film's visuals.": "Ces estimations prévoient une marge et varient selon votre ordinateur et les éléments visuels du film.",
+    "MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.": "Le MP4 est exporté au format paysage (16:9). Après une interruption, le prochain export reprend depuis le début.",
     "Includes the session app in motion.": "Montre l’application de la session en mouvement.",
     "Uses a drawn illustration of the session app.": "Présente un dessin de l’application de la session.",
     "Pros": "Avantages",
@@ -8133,7 +8133,7 @@
     "Research narration": "Narration de recherche",
     "Render video (MP4)": "Générer la vidéo (MP4)",
     "Save shareable HTML": "Enregistrer le HTML à partager",
-    "Save one HTML file with narration and visuals for browser playback.": "Enregistrer un fichier HTML avec narration et visuels pour le lire dans un navigateur.",
+    "Shared HTML can include the conversation on this branch, embedded media, and runnable app code.": "Le fichier HTML partagé peut contenir la conversation de cette branche, des médias intégrés et du code exécutable de l’application.",
     "Exporting MP4…": "Exportation MP4…",
     "English narration. Downloads the speech engine and model only when installed.": "Narration en anglais. Le moteur vocal et le modèle ne sont téléchargés qu’à l’installation.",
     "Preparing research materials…": "Préparation des documents de recherche…",

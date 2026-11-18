@@ -680,6 +680,9 @@ describe('PreviewFileContent', () => {
       const button = container.querySelector<HTMLButtonElement>(
         '[aria-label="Save shareable HTML"]'
       )!
+      expect(
+        document.getElementById(button.getAttribute('aria-describedby')!)?.textContent
+      ).toContain('runnable app code')
       await act(async () => button.click())
       expect(save).toHaveBeenCalledExactlyOnceWith(
         source === 'local'

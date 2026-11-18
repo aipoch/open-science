@@ -127,10 +127,18 @@ it('cancels queued exports and holds the shared partition until teardown complet
     await cleaning.promise
 
     const cancelledExport = start('missing', cancelled)
+    const reviewDeadline = vi.spyOn(AbortSignal, 'timeout')
+    const review = checkResearchVideoHtml(
+      { htmlPath: join(root, 'second.html'), includeFrames: false },
+      cancelled.signal
+    ).catch((error) => error)
+    expect(reviewDeadline).not.toHaveBeenCalledWith(120_000)
+    reviewDeadline.mockRestore()
     const secondExport = start('second', second)
     const reason = new Error('cancelled while waiting')
     cancelled.abort(reason)
     expect(await cancelledExport).toBe(reason)
+    expect(await review).toBe(reason)
     expect(electron.BrowserWindow).toHaveBeenCalledOnce()
     expect(electron.protocol.unhandle).toHaveBeenCalledWith('https')
 

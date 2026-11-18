@@ -8,7 +8,8 @@ import {
   researchFilmModeSchema,
   type ResearchFilmMode
 } from '../../shared/research-video-presentation'
-import { researchFilmReceiptSchema } from './stored-presentation'
+import { digestFileWithinBudget } from '../bounded-file-io'
+import { hasResearchFilmOutputs, researchFilmReceiptSchema } from './stored-presentation'
 
 const pendingFilmFields = {
   id: z.string().uuid(),
@@ -21,7 +22,11 @@ const pendingFilmFields = {
   completed: z.number().int().nonnegative().optional(),
   total: z.number().int().positive().optional(),
   built: researchFilmReceiptSchema.optional(),
-  visualChecked: z.literal(true).optional()
+  visualChecked: z.literal(true).optional(),
+  outputFingerprint: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional()
 }
 export const pendingFilmSchema = z.discriminatedUnion('version', [
   z.object({ ...pendingFilmFields, version: z.literal(1), mode: z.undefined().optional() }),
@@ -59,6 +64,21 @@ export function savePendingFilmOwner(
 
 export const digestFilmInput = (value: string): string =>
   createHash('sha256').update(value).digest('hex')
+
+/** Changing the review rules invalidates unpublished builds without changing published receipts. */
+export async function filmOutputFingerprint(
+  directory: string,
+  signal: AbortSignal
+): Promise<string | undefined> {
+  if (!(await hasResearchFilmOutputs(directory))) return undefined
+  const files = []
+  for (const name of ['player.html', 'sources.zip']) {
+    const path = join(directory, 'output', name)
+    const stat = await lstat(path)
+    files.push(await digestFileWithinBudget(path, stat.size, signal))
+  }
+  return digestFilmInput(JSON.stringify(['film-output-review-v1', ...files]))
+}
 
 export const filmConversationDigest = (source: ResearchVideoSessionSource): string =>
   digestFilmInput(

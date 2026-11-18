@@ -199,7 +199,7 @@
   "renderer": {
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (예상 소요 시간: {{min}}–{{max}}분)",
     "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}} (영상 1분당 예상 소요 시간: {{min}}–{{max}}분)",
-    "Estimates allow extra time and vary with your computer and the film's visuals.": "여유 있게 잡은 예상 시간이며, 컴퓨터 성능과 영상의 시각 요소에 따라 달라집니다.",
+    "MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.": "MP4는 가로(16:9)로 내보냅니다. 내보내기가 중단되면 다음 내보내기는 처음부터 시작합니다.",
     "Includes the session app in motion.": "세션 앱이 실행되는 모습을 보여줍니다.",
     "Uses a drawn illustration of the session app.": "세션 앱을 그림으로 보여줍니다.",
     "Pros": "장점",
@@ -7795,7 +7795,7 @@
     "Research narration": "연구 설명 내레이션",
     "Render video (MP4)": "동영상 렌더링 (MP4)",
     "Save shareable HTML": "공유용 HTML 저장",
-    "Save one HTML file with narration and visuals for browser playback.": "내레이션과 시각 자료가 포함된 HTML 파일을 저장하여 브라우저에서 재생합니다.",
+    "Shared HTML can include the conversation on this branch, embedded media, and runnable app code.": "공유하는 HTML에는 이 분기의 대화, 포함된 미디어 및 실행 가능한 앱 코드가 들어갈 수 있습니다.",
     "Exporting MP4…": "MP4 내보내는 중…",
     "English narration. Downloads the speech engine and model only when installed.": "영어 내레이션입니다. 음성 엔진과 모델은 설치할 때만 다운로드됩니다.",
     "Preparing research materials…": "연구 자료 준비 중…",

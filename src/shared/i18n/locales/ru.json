@@ -202,7 +202,7 @@
   "renderer": {
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (закладывайте {{min}}–{{max}} мин)",
     "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}} (закладывайте {{min}}–{{max}} мин на минуту фильма)",
-    "Estimates allow extra time and vary with your computer and the film's visuals.": "Оценки включают запас времени и зависят от вашего компьютера и визуального содержания фильма.",
+    "MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.": "MP4 экспортируется в альбомной ориентации (16:9). После прерывания следующий экспорт начнётся с начала.",
     "Includes the session app in motion.": "Показана работа приложения из сеанса.",
     "Uses a drawn illustration of the session app.": "Приложение из сеанса показано на рисунке.",
     "Pros": "Преимущества",
@@ -8278,7 +8278,7 @@
     "Research narration": "Озвучивание исследований",
     "Render video (MP4)": "Создать видео (MP4)",
     "Save shareable HTML": "Сохранить HTML для отправки",
-    "Save one HTML file with narration and visuals for browser playback.": "Сохранить один HTML-файл с озвучкой и визуальными материалами для просмотра в браузере.",
+    "Shared HTML can include the conversation on this branch, embedded media, and runnable app code.": "HTML-файл для публикации может содержать диалог из этой ветки, встроенные медиафайлы и исполняемый код приложения.",
     "Exporting MP4…": "Экспорт MP4…",
     "English narration. Downloads the speech engine and model only when installed.": "Озвучивание на английском. Речевой движок и модель загружаются только при установке.",
     "Preparing research materials…": "Подготовка исследовательских материалов…",

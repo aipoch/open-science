@@ -441,7 +441,7 @@ it('routes scalar probes without PCM and transfers owned audio buffers to the ge
   }
 })
 
-it('reuses complete speech after a player build fails and replaces a damaged mix', async () => {
+it('remixes verified speech after a visual edit and resynthesizes damaged recordings', async () => {
   const root = await mkdtemp(join(tmpdir(), 'film-speech-checkpoint-'))
   try {
     const specPath = join(root, 'video.json')
@@ -455,8 +455,15 @@ it('reuses complete speech after a player build fails and replaces a damaged mix
     )
     await writeFile(join(root, 'session.json'), JSON.stringify({ messages: [{ md: 'Evidence.' }] }))
     const synthesize = vi.fn(async () => ({ samples: new Float32Array(2400), sampleRate: 24000 }))
-    for (const expectedCalls of [1, 1, 2]) {
-      if (expectedCalls === 2) await writeFile(join(root, 'speech', 'mix.wav'), 'damaged')
+    for (const attempt of ['initial', 'longer-outro', 'corrupt-audio']) {
+      if (attempt === 'longer-outro') {
+        const spec = JSON.parse(await readFile(specPath, 'utf8'))
+        spec.scenes[0].role = 'outro'
+        spec.scenes[0].panels = [{ type: 'end_card' }]
+        await writeFile(specPath, JSON.stringify(spec))
+      }
+      if (attempt === 'corrupt-audio')
+        await writeFile(join(root, 'speech', 'voice', 's_0.wav'), 'damaged')
       const temporaryDirectory = await mkdtemp(join(root, 'attempt-'))
       const progress = vi.fn()
       await expect(
@@ -474,7 +481,9 @@ it('reuses complete speech after a player build fails and replaces a damaged mix
         )
       ).rejects.toThrow()
       expect(progress).toHaveBeenCalledWith({ phase: 'build' })
-      expect(synthesize).toHaveBeenCalledTimes(expectedCalls)
+      expect(synthesize).toHaveBeenCalledTimes(attempt === 'corrupt-audio' ? 2 : 1)
+      const mix = await readFile(join(temporaryDirectory, 'mix.wav'))
+      expect(mix.length > 48000 * 4 * 5).toBe(attempt !== 'initial')
     }
   } finally {
     await rm(root, { recursive: true, force: true })

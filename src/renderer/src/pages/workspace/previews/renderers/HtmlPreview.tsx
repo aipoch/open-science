@@ -21,7 +21,7 @@ import {
   DropdownMenuSeparator
 } from '@/components/ui/dropdown-menu'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../../../../shared/web-event-connection'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
@@ -91,6 +91,7 @@ export const HtmlPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.
 const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element => {
   const { item } = props
   const { t } = useTranslation()
+  const sharingDescriptionId = useId()
   const htmlDownload = useManagedFileDownload({
     source: item.source ?? 'artifact',
     path: item.path,
@@ -317,7 +318,7 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
                 <DropdownMenuSeparator />
                 <p className="max-w-xs px-2 py-1.5 text-xs text-muted-foreground">
                   {t(
-                    "Estimates allow extra time and vary with your computer and the film's visuals."
+                    'MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.'
                   )}
                 </p>
               </DropdownMenuContent>
@@ -328,7 +329,7 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
               disabled={htmlDownload.status === 'saving'}
               aria-busy={htmlDownload.status === 'saving'}
               aria-label={t('Save shareable HTML')}
-              title={t('Save one HTML file with narration and visuals for browser playback.')}
+              aria-describedby={sharingDescriptionId}
               onClick={() => void htmlDownload.execute()}
             >
               {htmlDownload.status === 'saving' ? (
@@ -344,6 +345,14 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
                   ? t('Saved')
                   : t('Save shareable HTML')}
             </Button>
+            <p
+              id={sharingDescriptionId}
+              className="basis-full text-right text-xs text-muted-foreground"
+            >
+              {t(
+                'Shared HTML can include the conversation on this branch, embedded media, and runnable app code.'
+              )}
+            </p>
           </div>
         )}
     </div>

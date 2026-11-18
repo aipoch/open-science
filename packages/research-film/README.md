@@ -8,6 +8,10 @@ The package owns screenplay validation and correction, shared and per-scene anim
 
 In Open-Science, generation starts only from the user's research-film button and runs independently of conversation turns. The host uses tool-less model inference for authoring; generation is not exposed as an Agent/MCP tool. Players and source bundles are stored as session-derived film files, not published as conversation Artifacts.
 
+The explanation player supports landscape and portrait playback. Before publication, the desktop host checks the rendered HTML in both orientations. Model-assisted review uses landscape frames. MP4 exports are landscape (16:9) at 720p, 1080p, or 4K. An interrupted MP4 export starts over on the next attempt.
+
+An unfinished generation keeps individual narration WAVs and timing files under `speech/voice/`. A checksum binds their contents to the captions, spoken text, scene IDs, voice engine and model revision. Visual repairs reuse verified recordings and mix them against the current timeline in the worker's temporary directory. Before resuming an unpublished build, the host checks the player and source ZIP against the fingerprint in `pending.json`. A missing or stale fingerprint triggers a rebuild from the remaining checkpoints.
+
 The host owns session/branch authorization, frozen source and approved image staging, model selection and usage accounting, model downloads and leases, data-root admission, storage/publication, UI, and Electron capture/save dialogs. No host imports or Electron dependency are used here.
 
 ```ts

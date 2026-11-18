@@ -33,6 +33,7 @@ import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 const log = createLogger('research-video')
 import {
   filmConversationDigest,
+  filmOutputFingerprint,
   readPendingFilm,
   savePendingFilm,
   savePendingFilmOwner,
@@ -591,9 +592,11 @@ export function createResearchVideoPresentationOwner(options: {
         (!options.reviewScript ||
           request.mode === 'operation-replay' ||
           resumable.built.scriptScore === 9) &&
-        (await diskStep(() =>
-          hasResearchFilmOutputs(join(existingBase!, pending ? 'pending' : resumable.id))
-        ))
+        resumable.outputFingerprint &&
+        resumable.outputFingerprint ===
+          (await diskStep(() =>
+            filmOutputFingerprint(join(existingBase!, pending ? 'pending' : resumable.id), signal)
+          ))
       // Publishing a verified checkpoint does not start a generator.
       if (resume && !hasBuiltOutput) {
         options.checkGenerationAdmission?.()
@@ -659,6 +662,8 @@ export function createResearchVideoPresentationOwner(options: {
           }
         }
         delete saved.built
+        delete saved.visualChecked
+        delete saved.outputFingerprint
         saved.step = 1
         delete saved.completed
         delete saved.total
@@ -771,6 +776,9 @@ export function createResearchVideoPresentationOwner(options: {
         if (source.sessionApp) sessionAppMode = generated.usedSessionApp ? 'live' : 'drawn'
         if (source.sessionApp && !generated.usedSessionApp)
           await diskStep(() => rm(join(job!, 'libs'), { recursive: true, force: true }))
+        saved.outputFingerprint = await diskStep(() => filmOutputFingerprint(job!, signal))
+        if (!saved.outputFingerprint)
+          throw new Error('Missing or empty research presentation output.')
         saved.built = {
           id,
           title: generated.title,
@@ -814,8 +822,10 @@ export function createResearchVideoPresentationOwner(options: {
       await diskStep(() => removePendingPointer(publishBase), true).catch(() =>
         log.info('film cleanup deferred', { ...context(), phase: 'publishing' })
       )
-      states.delete(key)
-      if (diskFailure) return
+      if (diskFailure) {
+        states.delete(key)
+        return
+      }
       await diskStep(async () => {
         for (const name of await readdir(outputJob)) {
           if (name.startsWith('unit-') || name === 'speech' || name === PENDING_FILM_OWNER)
@@ -946,6 +956,7 @@ export function createResearchVideoPresentationOwner(options: {
         )
       }
       lease?.release()
+      if (completedResult && !diskFailure) states.delete(key)
     }
   }
   return {

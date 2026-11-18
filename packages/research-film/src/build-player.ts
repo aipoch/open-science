@@ -56,6 +56,25 @@ export async function readVideoSourceFile(root: string, name: string): Promise<B
   return readFile(path)
 }
 
+export async function readFilmVoiceTimings(
+  voiceDirectory: string,
+  spec: VideoSpec
+): Promise<Record<string, VoiceTiming>> {
+  const timing = JSON.parse((await readVideoSourceFile(voiceDirectory, 'timings.json')).toString())
+  const words = JSON.parse(
+    (await readVideoSourceFile(voiceDirectory, 'word-times.json')).toString()
+  )
+  const voices: Record<string, VoiceTiming> = {}
+  for (const scene of spec.scenes)
+    for (const [i, line] of scene.lines.entries()) {
+      const key = `${scene.id}_${i}`
+      if (timing.say?.[key] !== (line.say || line.caption))
+        throw new Error(`Stale or missing voice text: ${key}`)
+      voices[key] = { duration: timing.lines[key], words: words[key] }
+    }
+  return voices
+}
+
 export async function buildResearchVideoPlayer(options: {
   specPath: string
   provenance?: Record<string, unknown>
@@ -87,20 +106,7 @@ export async function buildResearchVideoPlayer(options: {
     throw new Error('Missing video title or session snapshot')
   const session: SessionSnapshot = JSON.parse((await source(spec.session)).toString())
   if (!Array.isArray(session.messages)) throw new Error('Invalid session snapshot')
-  const timing = JSON.parse(
-    (await readVideoSourceFile(options.voiceDirectory, 'timings.json')).toString()
-  )
-  const words = JSON.parse(
-    (await readVideoSourceFile(options.voiceDirectory, 'word-times.json')).toString()
-  )
-  const voices: Record<string, VoiceTiming> = {}
-  for (const scene of spec.scenes)
-    for (const [i, line] of scene.lines.entries()) {
-      const key = `${scene.id}_${i}`
-      if (timing.say?.[key] !== (line.say || line.caption))
-        throw new Error(`Stale or missing voice text: ${key}`)
-      voices[key] = { duration: timing.lines[key], words: words[key] }
-    }
+  const voices = await readFilmVoiceTimings(options.voiceDirectory, spec)
   const timeline = buildVideoTimeline(spec, voices)
   for (const name of [
     'timings.json',

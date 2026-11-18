@@ -907,6 +907,39 @@ describe('native desktop requests over the authenticated connection', () => {
     }
   })
 
+  it('keeps a queued Film inspection cancellable beyond the native dialog deadline', async () => {
+    const started = Promise.withResolvers<AbortSignal>()
+    const value = await nativeSetup(async (_request, signal) => {
+      started.resolve(signal)
+      return new Promise(() => {})
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const controller = new AbortController()
+    try {
+      const pending = expect(
+        value.server.requestNative(
+          {
+            operation: 'research-video-check',
+            htmlPath: '/film/player.html',
+            includeFrames: false
+          },
+          undefined,
+          controller.signal
+        )
+      ).rejects.toThrow(/cancel/i)
+      const signal = await started.promise
+      await vi.advanceTimersByTimeAsync(310_000)
+      expect(signal.aborted).toBe(false)
+      controller.abort()
+      await pending
+      while (!signal.aborted) await new Promise((resolve) => setImmediate(resolve))
+    } finally {
+      controller.abort()
+      vi.useRealTimers()
+      value.client.close()
+    }
+  })
+
   it('allows a progressing 4K render to cross one hour', async () => {
     const started = Promise.withResolvers<void>()
     const output = Promise.withResolvers<string>()

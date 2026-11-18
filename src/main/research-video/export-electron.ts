@@ -228,11 +228,11 @@ export async function checkResearchVideoHtml(
   parentSignal: AbortSignal
 ): Promise<FilmVisualResult> {
   const check = (aspect: '16x9' | '9x16'): Promise<FilmVisualResult> => {
-    const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(120_000)])
     return withFilmPlayer(
       request.htmlPath,
-      signal,
+      parentSignal,
       async (window, stage) => {
+        const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(120_000)])
         const inspect = <T>(work: () => Promise<T>): Promise<T> => waitForFilmStep(signal, work)
         const result = filmVisualCheckSchema.parse(
           await inspect(() => window.webContents.executeJavaScript('window.__checkFilm()'))

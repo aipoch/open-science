@@ -199,7 +199,7 @@
   "renderer": {
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（預留 {{min}}–{{max}} 分鐘）",
     "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}}（每分鐘影片預留 {{min}}–{{max}} 分鐘）",
-    "Estimates allow extra time and vary with your computer and the film's visuals.": "估算已預留額外時間，實際耗時取決於電腦效能和影片的視覺內容。",
+    "MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.": "MP4 以橫向（16:9）匯出。匯出中斷後，再次匯出將從頭開始。",
     "Includes the session app in motion.": "包含工作階段中應用程式的動態示範。",
     "Uses a drawn illustration of the session app.": "使用插圖呈現本次工作階段中的應用程式。",
     "Pros": "優點",
@@ -7797,7 +7797,7 @@
     "Research narration": "研究短片旁白",
     "Render video (MP4)": "算繪影片 (MP4)",
     "Save shareable HTML": "儲存可分享的 HTML",
-    "Save one HTML file with narration and visuals for browser playback.": "儲存包含旁白和畫面的獨立 HTML 檔案，可在瀏覽器中播放。",
+    "Shared HTML can include the conversation on this branch, embedded media, and runnable app code.": "分享的 HTML 可能包含目前分支的對話、嵌入的媒體和可執行的應用程式碼。",
     "Exporting MP4…": "正在匯出 MP4…",
     "English narration. Downloads the speech engine and model only when installed.": "英語旁白。僅在安裝時下載語音引擎和模型。",
     "Preparing research materials…": "正在準備研究素材…",

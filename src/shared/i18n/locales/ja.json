@@ -199,7 +199,7 @@
   "renderer": {
     "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（目安：{{min}}～{{max}}分）",
     "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}}（動画1分あたりの目安：{{min}}～{{max}}分）",
-    "Estimates allow extra time and vary with your computer and the film's visuals.": "余裕を持たせた所要時間の目安です。お使いのコンピューターや動画の視覚表現によって変わります。",
+    "MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.": "MP4 は横向き（16:9）で書き出します。書き出しが中断された場合、次回は最初からやり直します。",
     "Includes the session app in motion.": "セッションのアプリが動く様子を表示します。",
     "Uses a drawn illustration of the session app.": "セッションのアプリをイラストで表現します。",
     "Pros": "利点",
@@ -7797,7 +7797,7 @@
     "Research narration": "研究解説ナレーション",
     "Render video (MP4)": "動画をレンダリング (MP4)",
     "Save shareable HTML": "共有用 HTML を保存",
-    "Save one HTML file with narration and visuals for browser playback.": "ナレーションと映像を含む HTML ファイルを保存し、ブラウザーで再生できます。",
+    "Shared HTML can include the conversation on this branch, embedded media, and runnable app code.": "共有する HTML には、この分岐の会話、埋め込みメディア、実行可能なアプリコードが含まれる場合があります。",
     "Exporting MP4…": "MP4 をエクスポート中…",
     "English narration. Downloads the speech engine and model only when installed.": "英語のナレーション。音声エンジンとモデルはインストール時にのみダウンロードされます。",
     "Preparing research materials…": "研究資料を準備中…",

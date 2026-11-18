@@ -140,6 +140,7 @@ it('keeps the previous film available while reviewing a replacement, and withhol
     await owner.start(request)
     await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
     const original = (await owner.status(request)).result!
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(1))
     await owner.start(request)
     await vi.waitFor(() => expect(reviewPlayer).toHaveBeenCalledTimes(2))
     expect(await owner.status(request)).toMatchObject({
@@ -151,6 +152,7 @@ it('keeps the previous film available while reviewing a replacement, and withhol
       expect((await owner.status(request)).result?.id).not.toBe(original.id)
     )
     const approved = (await owner.status(request)).result!
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(2))
     await owner.start(request)
     await vi.waitFor(async () =>
       expect(await owner.status(request)).toMatchObject({
@@ -1011,9 +1013,14 @@ it('keeps a known Film playable and allows regeneration with a corrupt latest re
   }
 })
 
-it.each(['player.html', 'sources.zip'])(
-  'rebuilds an empty %s while keeping the screenplay checkpoint and old Film',
-  async (emptyFile) => {
+it.each([
+  ['player.html', 'same size'],
+  ['sources.zip', 'same size'],
+  ['player.html', 'empty'],
+  ['sources.zip', 'legacy receipt']
+])(
+  'rebuilds %s (%s) while keeping the screenplay checkpoint and old Film',
+  async (filename, damage) => {
     const f = await fixture()
     const lookup = Promise.withResolvers<PersistedChatSession>()
     const entered = Promise.withResolvers<void>()
@@ -1026,7 +1033,6 @@ it.each(['player.html', 'sources.zip'])(
       const build = f.options.generate.getMockImplementation()!
       f.options.generate.mockImplementationOnce(async (...args) => {
         const result = await build(...args)
-        await writeFile(emptyFile === 'player.html' ? result.playerPath : result.sourcePath, '')
         vi.mocked(f.options.loadSession).mockImplementationOnce(() => {
           entered.resolve()
           return lookup.promise
@@ -1039,8 +1045,20 @@ it.each(['player.html', 'sources.zip'])(
       owner.cancel(request)
       await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(2))
       expect((await owner.status(request)).result).toEqual(old)
-      if (emptyFile === 'sources.zip') {
-        const base = dirname(dirname(dirname(old.playerPath)))
+      const base = dirname(dirname(dirname(old.playerPath)))
+      const damaged = join(base, 'pending', 'output', filename)
+      if (damage === 'legacy receipt') {
+        const pointer = join(base, 'pending.json')
+        const pending = JSON.parse(await readFile(pointer, 'utf8'))
+        delete pending.outputFingerprint
+        await writeFile(pointer, JSON.stringify(pending))
+      } else {
+        await writeFile(
+          damaged,
+          Buffer.alloc(damage === 'empty' ? 0 : (await readFile(damaged)).length, 0x78)
+        )
+      }
+      if (filename === 'sources.zip') {
         const pending = JSON.parse(await readFile(join(base, 'pending.json'), 'utf8'))
         await rename(join(base, 'pending'), join(base, pending.id))
       }
