@@ -1,16 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ErrorNotice } from '@/components/error-notice'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { EditableNumberCombobox } from '@/components/ui/editable-number-combobox'
-import {
-  dialogOverlayClassName,
-  dialogPanelClassName,
-  dialogTitleClassName
-} from '@/components/ui/dialog-chrome'
 import { readWithDeadline } from '@/lib/read-with-deadline'
 import type {
   NotebookNetworkAuditPage,
@@ -133,46 +127,7 @@ function NetworkLogContent(): React.JSX.Element {
   )
   return (
     <>
-      <div className="space-y-4 overflow-y-auto p-5">
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="w-40 space-y-1">
-            <label htmlFor="network-log-days" className="text-xs text-muted-foreground">
-              {t('Retention days')}
-            </label>
-            <EditableNumberCombobox
-              id="network-log-days"
-              ariaLabel={t('Retention days')}
-              value={days}
-              presets={[30, 90, 180, 365]}
-              onValueChange={setDays}
-              disabled={!page || saving}
-              locale={i18n.language}
-            />
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={
-              !page ||
-              saving ||
-              !Number.isInteger(Number(days)) ||
-              Number(days) < 1 ||
-              Number(days) > 3650 ||
-              Number(days) === page.retentionDays
-            }
-            onClick={() => {
-              if (page && Number(days) < page.retentionDays) setConfirm(true)
-              else void save()
-            }}
-          >
-            {saving ? t('Saving…') : t('Save')}
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            {t(
-              'Retain at least the selected number of days. Expired files are checked every 3 days.'
-            )}
-          </p>
-        </div>
+      <div className="space-y-4">
         <form
           className="grid grid-cols-2 gap-2 sm:grid-cols-4"
           onSubmit={(e) => {
@@ -356,15 +311,58 @@ function NetworkLogContent(): React.JSX.Element {
             <p className="p-4 text-sm text-muted-foreground">{t('No matching network records.')}</p>
           ) : null}
         </div>
-        {page?.cursor ? (
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={() => void load({ ...applied.current, cursor: page.cursor }, true)}
-          >
-            {t('Load more')}
-          </Button>
-        ) : null}
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          {page?.cursor ? (
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => void load({ ...applied.current, cursor: page.cursor }, true)}
+            >
+              {t('Load more')}
+            </Button>
+          ) : (
+            <span aria-hidden="true" />
+          )}
+          <div className="flex flex-wrap items-end justify-end gap-2">
+            <div className="w-40 space-y-1">
+              <label htmlFor="network-log-days" className="text-xs text-muted-foreground">
+                {t('Retention days')}
+              </label>
+              <EditableNumberCombobox
+                id="network-log-days"
+                ariaLabel={t('Retention days')}
+                value={days}
+                presets={[30, 90, 180, 365]}
+                onValueChange={setDays}
+                disabled={!page || saving}
+                locale={i18n.language}
+              />
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={
+                !page ||
+                saving ||
+                !Number.isInteger(Number(days)) ||
+                Number(days) < 1 ||
+                Number(days) > 3650 ||
+                Number(days) === page.retentionDays
+              }
+              onClick={() => {
+                if (page && Number(days) < page.retentionDays) setConfirm(true)
+                else void save()
+              }}
+            >
+              {saving ? t('Saving…') : t('Save')}
+            </Button>
+            <p className="basis-full text-right text-xs text-muted-foreground">
+              {t(
+                'Retain at least the selected number of days. Expired files are checked every 3 days.'
+              )}
+            </p>
+          </div>
+        </div>
       </div>
       <ConfirmActionDialog
         open={confirm}
@@ -384,42 +382,16 @@ function NetworkLogContent(): React.JSX.Element {
 }
 
 export function NotebookNetworkLogs(): React.JSX.Element {
-  const { t } = useTranslation(),
-    [open, setOpen] = useState(false)
+  const { t } = useTranslation()
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger asChild>
-        <Button variant="outline" size="sm">
-          {t('Notebook network logs')}
-        </Button>
-      </Dialog.Trigger>
-      {open ? (
-        <Dialog.Portal>
-          <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content
-            className={dialogPanelClassName(
-              'flex max-h-[85vh] w-[min(1100px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
-            )}
-          >
-            <div className="flex items-center justify-between border-b px-5 py-3">
-              <Dialog.Title className={dialogTitleClassName}>
-                {t('Notebook network logs')}
-              </Dialog.Title>
-              <Dialog.Close asChild>
-                <Button variant="ghost" size="sm">
-                  {t('Close')}
-                </Button>
-              </Dialog.Close>
-            </div>
-            <Dialog.Description className="px-5 pt-3 text-xs text-muted-foreground">
-              {t(
-                'Allowed and blocked Notebook connections, grouped by their original network mode.'
-              )}
-            </Dialog.Description>
-            <NetworkLogContent />
-          </Dialog.Content>
-        </Dialog.Portal>
-      ) : null}
-    </Dialog.Root>
+    <div className="space-y-4 p-5">
+      <div>
+        <h1 className="text-lg font-medium">{t('Notebook network logs')}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {t('Allowed and blocked Notebook connections, grouped by their original network mode.')}
+        </p>
+      </div>
+      <NetworkLogContent />
+    </div>
   )
 }

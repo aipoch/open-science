@@ -596,6 +596,25 @@ describe('Notebook network entry', () => {
     expect(networkEntry().textContent).toContain('0 groups')
   })
 
+  it('integrates the log entry into the access list and navigates to a secondary page', async () => {
+    const onNavigate = vi.fn()
+    ;(window as unknown as { api: unknown }).api = {
+      network: { queryNotebookLogs: vi.fn() }
+    }
+    await act(async () =>
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    )
+    const entry = networkEntry()
+    expect(entry.querySelectorAll('li')).toHaveLength(4)
+    const logRow = [...entry.querySelectorAll('li')].find((row) =>
+      row.textContent?.includes('Notebook network logs')
+    )!
+    expect(logRow).toBeTruthy()
+    expect(logRow.querySelector('button')?.textContent).toContain('Open')
+    await act(async () => logRow.querySelector<HTMLButtonElement>('button')!.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'logs' })
+  })
+
   it('navigates to the existing manager without saving settings', async () => {
     const onNavigate = vi.fn()
     const save = vi.fn()

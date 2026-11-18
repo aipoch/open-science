@@ -30,7 +30,7 @@ const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 
 // Package-mirror list vs. configure form. The configure form is a settings-nav sub-view (not local
 // state) so the shared header shows a "Network / Package mirror" breadcrumb with back/forward.
-type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' }
+type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' | 'logs' }
 type NetworkPanelProps = {
   view: NetworkView
   onNetworkLeaveStateChange?: (state: NetworkEditorLeaveState | null) => void
@@ -242,6 +242,7 @@ const NetworkPanel = ({
         : Network
 
   if (view.kind === 'proxy') return <NetworkProxyForm onDone={() => onNavigate({ kind: 'list' })} />
+  if (view.kind === 'logs') return <NotebookNetworkLogs />
   if (view.kind === 'domains' && notebookNetworkAvailable)
     return <NotebookNetworkDomainsForm onLeaveStateChange={onNetworkLeaveStateChange} />
 
@@ -303,10 +304,14 @@ const NetworkPanel = ({
 
       {!isConfiguring && notebookNetworkAvailable ? (
         <div className="space-y-3">
-          <NotebookNetworkAccessSummary onOpen={() => onNavigate({ kind: 'domains' })} />
-          {typeof window.api?.network?.queryNotebookLogs === 'function' ? (
-            <NotebookNetworkLogs />
-          ) : null}
+          <NotebookNetworkAccessSummary
+            onOpen={() => onNavigate({ kind: 'domains' })}
+            onOpenLogs={
+              typeof window.api?.network?.queryNotebookLogs === 'function'
+                ? () => onNavigate({ kind: 'logs' })
+                : undefined
+            }
+          />
         </div>
       ) : null}
 

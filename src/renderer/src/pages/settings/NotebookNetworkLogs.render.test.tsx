@@ -22,17 +22,15 @@ afterEach(() => {
   container.remove()
   delete (window as unknown as { api?: unknown }).api
 })
-it('loads only when opened and shows an empty state without a standalone export action', async () => {
+it('loads on entry as a secondary page without rendering a dialog trigger', async () => {
   await act(async () => root.render(<NotebookNetworkLogs />))
-  expect(query).not.toHaveBeenCalled()
-  await act(async () => container.querySelector('button')!.click())
   expect(query).toHaveBeenCalledWith({})
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   expect(document.body.textContent).toContain('No matching network records.')
-  expect(document.body.textContent).not.toContain('Export')
+  expect(document.body.textContent).toContain('Retention days')
 })
-it('requires confirmation before shortening retention and preserves the previous value on cancellation', async () => {
+it('places retention controls below the list and requires confirmation before shortening', async () => {
   await act(async () => root.render(<NotebookNetworkLogs />))
-  await act(async () => container.querySelector('button')!.click())
   const input = document.querySelector<HTMLInputElement>('[aria-label="Retention days"]')!
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '30')

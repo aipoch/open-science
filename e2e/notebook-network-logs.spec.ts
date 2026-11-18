@@ -51,33 +51,40 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   await expect(
     page.getByRole('dialog', { name: 'Notebook network logs', exact: true })
   ).toHaveCount(0)
-  await settings.getByRole('button', { name: 'Notebook network logs', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Notebook network logs', exact: true })
-  await expect(dialog.getByRole('cell', { name: 'run-strict', exact: true })).toBeVisible()
-  await expect(dialog.getByRole('cell', { name: 'run-relaxed', exact: true })).toBeVisible()
-  await dialog.getByLabel('Network mode', { exact: true }).selectOption('strict')
-  await dialog.getByRole('button', { name: 'Search', exact: true }).click()
-  await expect(dialog.getByRole('cell', { name: 'run-relaxed', exact: true })).toHaveCount(0)
-  await expect(dialog.getByRole('cell', { name: 'run-strict', exact: true })).toBeVisible()
-  await dialog.getByRole('combobox', { name: 'Retention days', exact: true }).fill('30')
-  await dialog.getByRole('button', { name: 'Save', exact: true }).click()
+  const access = settings.getByRole('region', { name: 'Notebook network access', exact: true })
+  await access.getByRole('button', { name: 'Open', exact: true }).click()
+  const logsPage = settings.getByRole('heading', {
+    name: 'Notebook network logs',
+    level: 1,
+    exact: true
+  })
+  await expect(logsPage).toBeVisible()
+  await expect(
+    page.getByRole('dialog', { name: 'Notebook network logs', exact: true })
+  ).toHaveCount(0)
+  await expect(settings.getByRole('cell', { name: 'run-strict', exact: true })).toBeVisible()
+  await expect(settings.getByRole('cell', { name: 'run-relaxed', exact: true })).toBeVisible()
+  await settings.getByLabel('Network mode', { exact: true }).selectOption('strict')
+  await settings.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(settings.getByRole('cell', { name: 'run-relaxed', exact: true })).toHaveCount(0)
+  await expect(settings.getByRole('cell', { name: 'run-strict', exact: true })).toBeVisible()
+  await settings.getByRole('combobox', { name: 'Retention days', exact: true }).fill('30')
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
   const confirmation = page.getByRole('alertdialog', { name: 'Shorten network log retention?' })
   await expect(confirmation).toBeVisible()
   await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
   expect((await page.evaluate(() => window.api.network.queryNotebookLogs({}))).retentionDays).toBe(
     90
   )
-  await dialog.getByRole('button', { name: 'Save', exact: true }).click()
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
   await confirmation.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(confirmation).toBeHidden()
   expect((await page.evaluate(() => window.api.network.queryNotebookLogs({}))).retentionDays).toBe(
     30
   )
-  await dialog.screenshot({ path: testInfo.outputPath('network-logs.png') })
-  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
-  await expect(
-    settings.getByRole('button', { name: 'Notebook network logs', exact: true })
-  ).toBeFocused()
+  await settings.screenshot({ path: testInfo.outputPath('network-logs.png') })
+  await settings.getByRole('button', { name: 'Back to network', exact: true }).click()
+  await expect(access.getByRole('button', { name: 'Open', exact: true })).toBeVisible()
   await settings.getByRole('button', { name: 'Close settings', exact: true }).click()
   const archivePath = testInfo.outputPath('network-diagnostics.tar.gz')
   await application.evaluate(({ dialog }, path) => {

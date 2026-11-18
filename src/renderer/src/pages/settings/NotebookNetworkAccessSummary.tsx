@@ -1,4 +1,4 @@
-import { Ban, Check, ChevronRight, CircleHelp, List } from 'lucide-react'
+import { Ban, Check, ChevronRight, CircleHelp, FileText, List } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -8,10 +8,12 @@ import { SettingsSection } from './SettingsLayout'
 // Keep Network and Runtimes on the same live policy summary and management entry.
 export const NotebookNetworkAccessSummary = ({
   onOpen,
+  onOpenLogs,
   testId,
   buttonClassName
 }: {
   onOpen: () => void
+  onOpenLogs?: () => void
   testId?: string
   buttonClassName?: string
 }): React.JSX.Element => {
@@ -65,7 +67,21 @@ export const NotebookNetworkAccessSummary = ({
         })
       ),
       manage: true
-    }
+    },
+    ...(onOpenLogs
+      ? [
+          {
+            icon: FileText,
+            title: t('Notebook network logs'),
+            description: t(
+              'Allowed and blocked Notebook connections, grouped by their original network mode.'
+            ),
+            manage: true,
+            actionLabel: t('Open'),
+            onManage: onOpenLogs
+          }
+        ]
+      : [])
   ]
   return (
     <SettingsSection
@@ -86,32 +102,34 @@ export const NotebookNetworkAccessSummary = ({
       data-testid={testId}
     >
       <ul className="divide-y divide-border rounded-xl border border-border px-3">
-        {notebookRows.map(({ icon: Icon, title, description, manage }, index) => (
-          <li key={index} className="flex flex-wrap items-center gap-2.5 py-2.5">
-            <span
-              className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground"
-              aria-hidden="true"
-            >
-              <Icon className="size-4" />
-            </span>
-            <div className="min-w-0 flex-1 basis-48">
-              <p className="text-sm font-medium leading-5">{title}</p>
-              <p className="mt-0.5 text-xs leading-4 text-muted-foreground">{description}</p>
-            </div>
-            {manage ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className={cn('ml-auto shrink-0', buttonClassName)}
-                onClick={onOpen}
+        {notebookRows.map(
+          ({ icon: Icon, title, description, manage, actionLabel, onManage }, index) => (
+            <li key={index} className="flex flex-wrap items-center gap-2.5 py-2.5">
+              <span
+                className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground"
+                aria-hidden="true"
               >
-                {t('Manage access')}
-                <ChevronRight className="size-4" aria-hidden="true" />
-              </Button>
-            ) : null}
-          </li>
-        ))}
+                <Icon className="size-4" />
+              </span>
+              <div className="min-w-0 flex-1 basis-48">
+                <p className="text-sm font-medium leading-5">{title}</p>
+                <p className="mt-0.5 text-xs leading-4 text-muted-foreground">{description}</p>
+              </div>
+              {manage ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={cn('ml-auto shrink-0', buttonClassName)}
+                  onClick={onManage ?? onOpen}
+                >
+                  {actionLabel ?? t('Manage access')}
+                  <ChevronRight className="size-4" aria-hidden="true" />
+                </Button>
+              ) : null}
+            </li>
+          )
+        )}
       </ul>
     </SettingsSection>
   )
