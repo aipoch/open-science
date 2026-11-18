@@ -11,6 +11,7 @@ import {
   type LiteratureRelatedRequest
 } from '@aipoch/literature-discovery/contracts'
 import { Tabs } from 'radix-ui'
+import { createPortal } from 'react-dom'
 import { BookOpen, Quote, Info, LoaderCircle } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
@@ -36,7 +37,7 @@ import type { ScheduleRequest } from './useCitationGraphController'
 const firstPageReuseMs = 60_000
 
 export function LiteratureRelatedLookup(
-  props: React.ComponentProps<typeof LiteratureRelatedList>
+  props: React.ComponentProps<typeof LiteratureRelatedList> & { toolbarHost?: HTMLElement | null }
 ): React.JSX.Element {
   const [provider, setProvider] = useState<CitationProviderChoice>('europe-pmc')
   const [view, setView] = useState<'list' | 'graph'>('list')
@@ -54,6 +55,7 @@ export function LiteratureRelatedLookup(
 
 function LiteratureRelatedSession(
   props: React.ComponentProps<typeof LiteratureRelatedList> & {
+    toolbarHost?: HTMLElement | null
     provider: CitationProviderChoice
     onProviderChange(provider: CitationProviderChoice): void
     view: 'list' | 'graph'
@@ -124,16 +126,13 @@ function LiteratureRelatedSession(
     },
     [onSavingChange]
   )
-  return (
+  const toolbar = (
     <div
-      data-citation-graph-active={view === 'graph' ? '' : undefined}
-      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      className="flex min-w-0 flex-wrap items-center gap-2"
+      role="group"
+      aria-label={t('Citation discovery view')}
     >
-      <div
-        className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border-300 px-5 py-2"
-        role="group"
-        aria-label={t('Citation discovery view')}
-      >
+      <div className="inline-flex shrink-0 rounded-lg border border-border-300 bg-muted/50 p-0.5">
         <Button
           size="sm"
           variant={view === 'list' ? 'secondary' : 'ghost'}
@@ -158,24 +157,36 @@ function LiteratureRelatedSession(
         >
           {t('Citation graph')}
         </Button>
-        <Select
-          value={props.provider}
-          disabled={saving || referenceInvalidated}
-          onValueChange={(value) => {
-            if (!saving && !invalidatedReference.current)
-              props.onProviderChange(value as CitationProviderChoice)
-          }}
-        >
-          <SelectTrigger aria-label={t('Citation source')} className="ml-auto w-auto max-w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="europe-pmc">{t('Europe PMC')}</SelectItem>
-            <SelectItem value="opencitations">{t('OpenCitations · SKG-IF')}</SelectItem>
-            <SelectItem value="opencitations-index">{t('OpenCitations · Index v2')}</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
+      <Select
+        value={props.provider}
+        disabled={saving || referenceInvalidated}
+        onValueChange={(value) => {
+          if (!saving && !invalidatedReference.current)
+            props.onProviderChange(value as CitationProviderChoice)
+        }}
+      >
+        <SelectTrigger aria-label={t('Citation source')} className="w-auto max-w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="europe-pmc">{t('Europe PMC')}</SelectItem>
+          <SelectItem value="opencitations">{t('OpenCitations · SKG-IF')}</SelectItem>
+          <SelectItem value="opencitations-index">{t('OpenCitations · Index v2')}</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  )
+  return (
+    <div
+      data-citation-graph-active={view === 'graph' ? '' : undefined}
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+    >
+      {props.toolbarHost ? (
+        createPortal(toolbar, props.toolbarHost)
+      ) : (
+        <div className="border-b border-border-300 px-3 py-2">{toolbar}</div>
+      )}
       {source.opencitationsMode === 'index' ? (
         <p
           role="status"

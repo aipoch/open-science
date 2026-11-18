@@ -143,16 +143,16 @@ it('keeps one active direction visible and switches to the cached other directio
   expect(screen.queryByRole('button', { name: 'Select Paper c' })).toBeNull()
   expect(screen.getByRole('tab', { name: 'References' }).getAttribute('aria-selected')).toBe('true')
   expect(screen.getByRole('tab', { name: 'Cited by' }).getAttribute('aria-selected')).toBe('false')
-  expect(screen.getByRole('tab', { name: 'References' }).className).toContain('bg-background')
-  expect(screen.getByRole('tab', { name: 'Cited by' }).className).not.toContain('bg-background')
+  expect(screen.getByRole('tab', { name: 'References' }).className).toContain('bg-primary/10')
+  expect(screen.getByRole('tab', { name: 'Cited by' }).className).not.toContain('bg-primary/10')
   const calls = related.mock.calls.length
   fireEvent.click(screen.getByRole('tab', { name: 'Cited by' }))
   await screen.findByRole('button', { name: 'Select Paper c' })
   expect(screen.queryByRole('button', { name: 'Select Paper b' })).toBeNull()
   expect(related).toHaveBeenCalledTimes(calls)
   expect(screen.getByRole('tab', { name: 'Cited by' }).getAttribute('aria-selected')).toBe('true')
-  expect(screen.getByRole('tab', { name: 'Cited by' }).className).toContain('bg-background')
-  expect(screen.getByRole('tab', { name: 'References' }).className).not.toContain('bg-background')
+  expect(screen.getByRole('tab', { name: 'Cited by' }).className).toContain('bg-primary/10')
+  expect(screen.getByRole('tab', { name: 'References' }).className).not.toContain('bg-primary/10')
 })
 it('defaults to all directions and filters merged papers without moving or requerying them', async () => {
   related.mockImplementation(async (request) =>

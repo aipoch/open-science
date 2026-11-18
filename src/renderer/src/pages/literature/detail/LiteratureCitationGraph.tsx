@@ -145,7 +145,7 @@ function CitationGraphSession({
         data-citation-context-header
         role="region"
         aria-label={t('Current center')}
-        className="flex h-11 shrink-0 items-center gap-1 border-b border-border-300 px-3"
+        className="flex h-9 shrink-0 items-center gap-1 border-b border-border-300 bg-muted/25 px-2 sm:px-3"
       >
         {history.length ? (
           <Button
@@ -159,7 +159,7 @@ function CitationGraphSession({
             }}
           >
             <ArrowLeft className="size-3.5" aria-hidden="true" />
-            {t('Back')}
+            <span className="hidden sm:inline">{t('Back')}</span>
           </Button>
         ) : null}
         {current !== 'root' ? (
@@ -203,7 +203,7 @@ function CitationGraphSession({
                     title={title}
                     aria-current={isCurrent ? 'page' : undefined}
                     disabled={saving}
-                    className={`min-w-0 justify-start ${isCurrent ? 'w-full shrink font-medium' : 'max-w-40'}`}
+                    className={`min-w-0 justify-start ${isCurrent ? 'w-full shrink font-medium' : 'max-w-16 sm:max-w-40'}`}
                     onClick={() => {
                       if (isCurrent) return
                       setCurrent(key)
@@ -229,7 +229,7 @@ function CitationGraphSession({
           </ol>
         </nav>
         {current !== 'root' ? (
-          <span className="shrink-0 text-[10px] text-muted-foreground">
+          <span className="sr-only text-[10px] text-muted-foreground sm:not-sr-only sm:shrink-0">
             {t('Temporary center')}
           </span>
         ) : null}
@@ -313,7 +313,7 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
       data-citation-workspace
       value={controller.filter}
       onValueChange={(value) => controller.setDirection(value as CitationGraphFilter)}
-      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
     >
       <span id={`${marker}-center-title`} className="sr-only">
         {title}
@@ -321,9 +321,9 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
       <Tabs.List
         aria-label={t('Relationship regions')}
         data-citation-direction-tabs
-        className="flex shrink-0 items-center border-b border-border-300 px-3 py-1.5"
+        className="absolute top-2 left-2 z-20 max-w-[calc(100%-1rem)] sm:top-3 sm:left-3"
       >
-        <div className="inline-flex max-w-full items-center gap-0.5 rounded-md bg-muted/60 p-0.5 ring-1 ring-border/60">
+        <div className="inline-flex max-w-full items-center gap-0.5 rounded-lg border border-border-300 bg-card p-0.5 shadow-sm">
           {citationFilters.map((direction) => {
             const active = controller.filter === direction
             return (
@@ -338,7 +338,7 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
                   size="sm"
                   variant="ghost"
                   disabled={controller.interactionBusy || controller.invalidated}
-                  className={`h-7 min-w-11 rounded px-2.5 text-xs font-medium ${active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  className={`h-7 min-w-11 rounded px-2.5 text-xs font-medium ${active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground'}`}
                   onClick={() => controller.setDirection(direction)}
                 >
                   {directionLabel(direction)}

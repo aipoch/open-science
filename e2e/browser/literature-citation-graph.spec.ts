@@ -38,6 +38,32 @@ test('navigates relationship tabs with the keyboard', async ({ page }, info) => 
   }
 })
 
+for (const width of [375, 1440]) {
+  test(`keeps citation controls clear of the plot at ${width}px`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: width === 375 ? 812 : 1000 })
+    await openCitationGraph(page, citationGraphPath + '&dark')
+    const frame = page.locator('[data-current-frame="true"]')
+    const tabs = (await frame.locator('[data-citation-direction-tabs]').boundingBox())!
+    const tools = (await frame.locator('[data-citation-toolbar]').boundingBox())!
+    const plot = (await frame.locator('[data-citation-plot]').boundingBox())!
+    expect(tabs.y + tabs.height).toBeLessThanOrEqual(plot.y)
+    if (width === 375) expect(tools.y).toBeGreaterThanOrEqual(plot.y + plot.height)
+    else expect(tools.y + tools.height).toBeLessThanOrEqual(plot.y)
+    const source = (await page.getByRole('combobox', { name: 'Citation source' }).boundingBox())!
+    const view = (await page
+      .getByRole('button', { name: 'Citation graph', exact: true })
+      .boundingBox())!
+    expect(Math.abs(source.y + source.height / 2 - view.y - view.height / 2)).toBeLessThan(4)
+    expect(source.x - view.x - view.width).toBeLessThan(20)
+    await frame.locator('[data-paper-id="europe-pmc:MED:1100"] [data-node-mark]').click()
+    await expect(frame.locator('[data-citation-inspector-title]')).toContainText('Graph paper 1100')
+    await page.mouse.move(0, 0)
+    if (await frame.locator('[data-citation-hover-title]').count())
+      await page.keyboard.press('Escape')
+    await page.screenshot({ path: info.outputPath(`graph-${width}-dark-layout.png`) })
+  })
+}
+
 test('citation graph pointer hits, pan, zoom and cached exploration', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await openCitationGraph(page, citationGraphPath)

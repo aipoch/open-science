@@ -360,7 +360,7 @@ export function LiteratureCitationCanvas({
         <div
           data-citation-toolbar
           data-no-pan
-          className="absolute top-3 right-3 z-20 flex max-w-[calc(100%-1.5rem)] items-center gap-0.5 rounded-xl border border-border-300/80 bg-card/85 p-1 !text-foreground shadow-lg shadow-black/5 backdrop-blur-md sm:top-4 sm:right-4"
+          className="absolute bottom-6 right-2 z-20 flex max-w-[calc(100%-1.5rem)] items-center gap-0.5 rounded-xl border border-border-300/80 bg-card/85 p-1 !text-foreground shadow-lg shadow-black/5 backdrop-blur-md sm:top-3 sm:right-3 sm:bottom-auto"
           style={{ color: 'var(--foreground)' }}
         >
           <TooltipProvider>
@@ -535,7 +535,7 @@ export function LiteratureCitationCanvas({
         <div
           ref={plot}
           data-citation-plot
-          className="absolute inset-x-0 top-20 bottom-6 overflow-hidden sm:top-24"
+          className="absolute inset-x-0 top-12 bottom-16 overflow-hidden sm:top-14 sm:bottom-7"
         >
           {graph ? (
             <svg
@@ -645,7 +645,7 @@ export function LiteratureCitationCanvas({
                       style={{
                         stroke: related ? 'var(--primary)' : 'var(--muted-foreground)'
                       }}
-                      opacity={related ? 0.82 : selectedNode?.center ? 0.18 : 0.16}
+                      opacity={related ? 1 : selectedNode?.center ? 0.36 : 0.24}
                       strokeWidth={(related ? 1.9 : selectedNode?.center ? 1.2 : 1) / scale}
                       markerEnd={`url(#${marker}-${direction}${related ? '-emphasized' : ''})`}
                     />

@@ -152,6 +152,7 @@ export function LiteratureDetailDialog({
 }): React.JSX.Element | null {
   const { t } = useTranslation()
   const [relatedSaving, setRelatedSavingState] = useState(false)
+  const [citationToolbarHost, setCitationToolbarHost] = useState<HTMLDivElement | null>(null)
   const relatedSavingRef = useRef(false)
   const setRelatedSaving = useCallback((saving: boolean): void => {
     relatedSavingRef.current = saving
@@ -280,7 +281,14 @@ export function LiteratureDetailDialog({
                   }}
                 >
                   {discardMetadataDialog}
-                  <div className={cn(dialogHeaderClassName, 'shrink-0 items-start px-5 py-3')}>
+                  <div
+                    className={cn(
+                      dialogHeaderClassName,
+                      'shrink-0 items-start px-5 py-3',
+                      metadata.mode === 'related' &&
+                        'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]'
+                    )}
+                  >
                     <div className="flex min-w-0 flex-1 items-start gap-2">
                       {metadata.mode !== 'view' ? (
                         <Button
@@ -420,6 +428,12 @@ export function LiteratureDetailDialog({
                         )}
                       </div>
                     </div>
+                    {metadata.mode === 'related' && (
+                      <div
+                        ref={setCitationToolbarHost}
+                        className="col-span-2 row-start-2 min-w-0 sm:col-span-1 sm:col-start-2 sm:row-start-1"
+                      />
+                    )}
                     <div className="flex shrink-0 items-center gap-1">
                       {metadata.mode === 'view' ? (
                         <DropdownMenu modal={false}>
@@ -496,6 +510,7 @@ export function LiteratureDetailDialog({
                     <LiteratureRelatedLookup
                       key={`${selectedItem.id}:${selectedItem.metadataRevision}:${generation}`}
                       item={selectedItem}
+                      toolbarHost={citationToolbarHost}
                       initialDirection={relatedDirection}
                       onSavingChange={setRelatedSaving}
                       onOpenInbox={onOpenInbox}
