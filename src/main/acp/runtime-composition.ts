@@ -51,7 +51,7 @@ import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repo
 import { netFetchStandard } from '../network-fetch'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
-import { getNotebookSessionRoot } from '../notebook/repository'
+import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
 import type { NotificationInboxController } from '../notifications/notification-inbox-controller'
 import {
@@ -836,6 +836,8 @@ const createAcpRuntime = ({
           ...(delegatedNotebookConnection
             ? {}
             : {
+                dataDirectory: (projectId, sessionId) =>
+                  getNotebookDataRoot(dataRoot, projectId, sessionId),
                 registerSessionAlias: (aliasSessionId, sessionId) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
                 releaseSessionCapabilities: (sessionId, capabilityTokens) =>

@@ -25,6 +25,7 @@ type AcpRuntimePromptReloadHost = Readonly<{
 }>
 
 type AcpRuntimePromptHost = Readonly<{
+  prepareOpenCodeTools?: (providerSessionId: string, cwd: string) => Promise<void>
   plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
@@ -225,6 +226,9 @@ const composeAcpRuntimePromptOwners = (
     skillRuntimeAllowlist?: readonly string[]
   }): Promise<void> => {
     session.sessionUpdateProjector.clearAssistantOutput(input.appSessionId)
+    if (input.framework.id === 'opencode') {
+      await host.prepareOpenCodeTools?.(input.providerSessionId, input.cwd)
+    }
     if (!input.framework.beforePromptDispatch) return
     const connection = base.connectionResources.connection
     if (!connection) throw new Error('ACP connection is not available.')

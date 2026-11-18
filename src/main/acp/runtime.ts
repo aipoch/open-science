@@ -17,7 +17,11 @@ import { redactSensitiveText } from '@aipoch/diagnostics'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
+import { isRecord } from '../value-guards'
+import { isNotebookDraftFile } from './filesystem'
+import { prepareOpenCodeSessionTools } from './opencode-session-tools'
+import { NOTEBOOK_MCP_SERVER_NAME } from '../notebook/mcp-server'
 import {
   ACP_APP_CONTINUATION_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
@@ -316,6 +320,10 @@ class AcpRuntime {
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly sessionConfigurator: AcpSessionConfigurator
+  private readonly verifiedOpenCodeTools = new WeakMap<
+    ActiveSession,
+    { revision: number; ready: boolean }
+  >()
   private readonly sessionCapabilities: AcpSessionCapabilityOwner
   private readonly sessionUpdateProjector: AcpSessionUpdateProjector
   private readonly providerPromptExecutor: AcpProviderPromptExecutor
@@ -420,6 +428,7 @@ class AcpRuntime {
       }
     })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
+      prepareOpenCodeTools: (id, cwd) => this.prepareOpenCodeTools(id, cwd),
       onProviderPromptAccepted: (sessionId) => {
         this.restoredContinuationContextResetSessionIds?.delete(sessionId)
       },
@@ -998,7 +1007,10 @@ class AcpRuntime {
         onSessionReady
       )
       const session = this.activeSessionFor(request.sessionId)
-      if (session) await this.options.authorizedDirectories?.initialize(session)
+      if (session) {
+        this.verifiedOpenCodeTools.delete(session)
+        await this.options.authorizedDirectories?.initialize(session)
+      }
       if (resumed.contextReset) {
         const contextResetSessionIds =
           this.restoredContinuationContextResetSessionIds ?? new Set<string>()
@@ -1436,7 +1448,7 @@ class AcpRuntime {
     const hooks: AcpAgentConnectionHooks = {
       toolLess: this.sessionEnvironment.role() === 'restricted-inference',
       createElicitation: (params) => this.clientInteractions.createElicitation(params),
-      requestPermission: (params) => this.clientInteractions.requestPermission(params),
+      requestPermission: (params) => this.requestProviderPermission(params),
       observeSessionUpdate: (notification) => {
         this.providerSessionResumer.observeProgress(notification.sessionId)
         this.permissionContext.observeProviderUpdate(notification)
@@ -1445,7 +1457,11 @@ class AcpRuntime {
       filesystem: {
         resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),
         protectedReadRoots: () => this.protectedReadRoots(),
-        listGrantedRoots: () => this.options.grantedRoots?.list?.() ?? Promise.resolve([])
+        listGrantedRoots: async (providerSessionId) => {
+          const roots = (await this.options.grantedRoots?.list?.()) ?? []
+          const scope = this.openCodeNotebookScope(providerSessionId)
+          return scope ? [...roots, { path: scope.directory, access: 'rw' as const }] : roots
+        }
       },
       onBackendResolved: (framework) => {
         onFrameworkResolved(framework)
@@ -3098,11 +3114,109 @@ class AcpRuntime {
     this.providerPromptExecutor.observeProviderMessage(params)
   }
 
+  private openCodeNotebookScope(providerSessionId: string):
+    | {
+        api: NonNullable<ResolvedAgentBackend['opencodeUsageApi']>
+        directory: string
+        id: string
+        session: ActiveSession
+        revision: number
+      }
+    | undefined {
+    const api = this.backendGeneration.openCodeUsageApi()
+    const directoryFor = this.options.notebook?.dataDirectory
+    if (!api || api.version === 2 || !directoryFor || this.sessionEnvironment.role() !== 'primary')
+      return
+    const id = this.sessionRegistry.resolveAppSessionId(providerSessionId)
+    const entry = this.sessionRegistry.lookup(id)
+    const snapshot = entry?.aggregate.snapshot()
+    if (
+      !entry?.attachment ||
+      entry.attachment.providerSessionId !== providerSessionId ||
+      snapshot?.frameworkId !== 'opencode' ||
+      !snapshot.projectId ||
+      !this.sessionCapabilities.mcpServerNamesFor(id).includes(NOTEBOOK_MCP_SERVER_NAME)
+    )
+      return
+    return {
+      api,
+      directory: directoryFor(snapshot.projectId, id),
+      id,
+      session: entry.attachment.session,
+      revision: entry.aggregate.specialistBindingRevision()
+    }
+  }
+
+  private async prepareOpenCodeTools(providerSessionId: string, cwd: string): Promise<void> {
+    const scope = this.openCodeNotebookScope(providerSessionId)
+    if (!scope) return
+    const cached = this.verifiedOpenCodeTools.get(scope.session)
+    if (cached?.ready && cached.revision === scope.revision) return
+    const check = { revision: scope.revision, ready: false }
+    this.verifiedOpenCodeTools.set(scope.session, check)
+    const ready = await prepareOpenCodeSessionTools({
+      api: scope.api,
+      cwd,
+      providerSessionId,
+      servers: this.sessionCapabilities.mcpServersFor(scope.id),
+      notebookDirectory: scope.directory,
+      signal: this.sessionInteractions.current(scope.id)?.signal
+    })
+    if (
+      this.verifiedOpenCodeTools.get(scope.session) !== check ||
+      this.openCodeNotebookScope(providerSessionId)?.session !== scope.session ||
+      this.sessionRegistry.lookup(scope.id)?.aggregate.specialistBindingRevision() !==
+        scope.revision
+    ) {
+      throw new Error('OpenCode session changed during tool discovery.')
+    }
+    check.ready = ready
+  }
+
+  private async requestProviderPermission(
+    params: acp.RequestPermissionRequest
+  ): Promise<acp.RequestPermissionResponse> {
+    const input = params.toolCall.rawInput
+    // 1.x 将 external_directory 上报为 other；edit 随后的独立审批仍按会话档位处理。
+    if (
+      this.framework.id === 'opencode' &&
+      params.toolCall.kind === 'other' &&
+      isRecord(input) &&
+      typeof input.parentDir === 'string' &&
+      typeof input.filepath === 'string'
+    ) {
+      const scope = this.openCodeNotebookScope(params.sessionId)
+      const filepath = input.filepath
+      if (
+        !scope ||
+        !isAbsolute(filepath) ||
+        !(await isNotebookDraftFile(scope.directory, filepath)) ||
+        this.openCodeNotebookScope(params.sessionId)?.session !== scope.session
+      ) {
+        return { outcome: { outcome: 'cancelled' } }
+      }
+      const decision = await this.clientInteractions.requestPermission({
+        ...params,
+        options: params.options.filter((option) => option.kind !== 'allow_always')
+      })
+      if (
+        decision.outcome.outcome === 'selected' &&
+        (this.openCodeNotebookScope(params.sessionId)?.directory !== scope.directory ||
+          !(await isNotebookDraftFile(scope.directory, filepath)))
+      ) {
+        return { outcome: { outcome: 'cancelled' } }
+      }
+      return decision
+    }
+    return this.clientInteractions.requestPermission(params)
+  }
+
   // Looks up the workspace root bound to a session for filesystem operations.
   private resolveSessionCwd(sessionId: string): string {
-    const sessionCwd = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd
+    const entry = this.sessionRegistry.lookup(this.sessionRegistry.resolveAppSessionId(sessionId))
+    const sessionCwd = entry?.aggregate.snapshot().cwd
 
-    if (!this.activeSessionFor(sessionId) || !sessionCwd) {
+    if (entry?.attachment?.providerSessionId !== sessionId || !sessionCwd) {
       throw new Error(`Unknown ACP session: ${sessionId}`)
     }
 

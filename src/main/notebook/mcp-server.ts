@@ -1916,11 +1916,13 @@ const notebookRpcToolsForEnvironment = (
 const createNotebookMcpServer = (
   environment: NotebookMcpEnvironment
 ): ModelContextProtocolServer => {
+  const tools = notebookRpcToolsForEnvironment(environment)
   const server = installToolErrorRecovery(
-    new ModelContextProtocolServer({ name: NOTEBOOK_MCP_SERVER_NAME, version: '1.0.0' })
+    new ModelContextProtocolServer({ name: NOTEBOOK_MCP_SERVER_NAME, version: '1.0.0' }),
+    tools.map((tool) => tool.name)
   )
 
-  for (const tool of notebookRpcToolsForEnvironment(environment)) {
+  for (const tool of tools) {
     registerNotebookRpcTool(server, environment, tool)
   }
 

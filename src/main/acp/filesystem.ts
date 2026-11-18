@@ -245,4 +245,21 @@ const writeWorkspaceTextFile = async (
   return {}
 }
 
-export { readWorkspaceTextFile, writeWorkspaceTextFile }
+// 原生 read 在提供方进程中执行。目录请求到达时必须检查实际文件，不能只信任父目录。
+const isNotebookDraftFile = async (root: string, filePath: string): Promise<boolean> => {
+  if (!isPathInsideWorkspace(root, filePath)) return false
+  try {
+    const physicalPath = await realpath(filePath)
+    const physicalRoot = await realpath(root)
+    return (
+      isPathInsideWorkspace(root, physicalRoot) &&
+      isPathInsideWorkspace(physicalRoot, root) &&
+      isPathInsideWorkspace(root, physicalPath) &&
+      (await lstat(physicalPath)).isFile()
+    )
+  } catch {
+    return false
+  }
+}
+
+export { isNotebookDraftFile, readWorkspaceTextFile, writeWorkspaceTextFile }

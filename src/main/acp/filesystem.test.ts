@@ -50,7 +50,7 @@ vi.mock('node:fs', async (importOriginal) => {
   }
 })
 
-import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
+import { isNotebookDraftFile, readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 
 let workspaceRoot: string | undefined
 
@@ -177,10 +177,13 @@ describe('ACP workspace filesystem adapter', () => {
     const filePath = join(grantedRoot, 'notes.txt')
     const outsideFile = join(outsideRoot, 'notes.txt')
     await writeFile(outsideFile, 'outside secret', 'utf8')
+    await writeFile(filePath, 'original draft', 'utf8')
+    await expect(isNotebookDraftFile(grantedRoot, filePath)).resolves.toBe(true)
     await rm(grantedRoot, { recursive: true, force: true })
     await symlink(outsideRoot, grantedRoot, process.platform === 'win32' ? 'junction' : 'dir')
 
     try {
+      await expect(isNotebookDraftFile(grantedRoot, filePath)).resolves.toBe(false)
       await expect(
         readWorkspaceTextFile(
           workspaceRoot,

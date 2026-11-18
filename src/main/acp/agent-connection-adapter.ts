@@ -67,7 +67,9 @@ type AcpAgentConnectionHooks = Readonly<{
   filesystem: Readonly<{
     resolveSessionCwd: (sessionId: string) => string
     protectedReadRoots: () => readonly string[]
-    listGrantedRoots?: () => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
+    listGrantedRoots?: (
+      providerSessionId: string
+    ) => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
   }>
   onBackendResolved: (framework: AgentFramework['id']) => void
   onProcessSpawned: (framework: AgentFramework['id']) => void
@@ -423,14 +425,14 @@ class AcpAgentConnectionAdapter {
                 hooks.filesystem.resolveSessionCwd(context.params.sessionId),
                 context.params,
                 [...hooks.filesystem.protectedReadRoots()],
-                (await hooks.filesystem.listGrantedRoots?.()) ?? []
+                (await hooks.filesystem.listGrantedRoots?.(context.params.sessionId)) ?? []
               )
             )
             .onRequest(acp.methods.client.fs.writeTextFile, async (context) =>
               writeWorkspaceTextFile(
                 hooks.filesystem.resolveSessionCwd(context.params.sessionId),
                 context.params,
-                (await hooks.filesystem.listGrantedRoots?.()) ?? []
+                (await hooks.filesystem.listGrantedRoots?.(context.params.sessionId)) ?? []
               )
             )
     ).connect(stream)
