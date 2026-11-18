@@ -257,7 +257,11 @@ export function LiteratureCitationInspector({
                     href={selectedNode.record.item.url}
                     className="text-xs text-muted-foreground"
                   >
-                    {t('View source')}
+                    {t('Open in {{source}}', {
+                      source: selectedNode.record.paperId.startsWith('europe-pmc:')
+                        ? t('Europe PMC')
+                        : 'OpenCitations'
+                    })}
                   </ExternalTextLink>
                 ) : null}
               </div>

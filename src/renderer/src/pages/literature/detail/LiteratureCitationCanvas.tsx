@@ -526,11 +526,12 @@ export function LiteratureCitationCanvas({
             <span className="h-3 w-px bg-border-300" aria-hidden="true" />
             <span className="inline-flex items-center gap-1 text-muted-foreground">
               <span className="size-1.5 rounded-full bg-chart-1" aria-hidden="true" />
-              {t('Loaded')}: {t('References')} {relationCounts.references}
+              {t('Loaded')}: {t('References')}{' '}
+              {busy === 'references' ? t('Searching…') : relationCounts.references}
             </span>
             <span className="inline-flex items-center gap-1 text-muted-foreground">
               <span className="size-1.5 rounded-full bg-chart-3" aria-hidden="true" />
-              {t('Cited by')} {relationCounts.citations}
+              {t('Cited by')} {busy === 'citations' ? t('Searching…') : relationCounts.citations}
             </span>
           </div>
         ) : null}

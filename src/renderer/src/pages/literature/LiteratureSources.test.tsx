@@ -115,3 +115,40 @@ it('refreshes saved sources while the disclosure stays open', async () => {
   })
   expect(screen.queryByText('PubMed')).not.toBeNull()
 })
+
+it('summarizes legacy and current citation evidence and retains identifiers when roots are unavailable', async () => {
+  const get = vi
+    .fn()
+    .mockResolvedValueOnce({ item: { title: 'Original paper' } })
+    .mockRejectedValueOnce(new Error('unavailable'))
+  Object.assign(window.api.literature, { get })
+  sources.mockResolvedValue([
+    {
+      ...record,
+      provider: 'europe-pmc',
+      rawMetadata: {
+        rootItemId: 'root-a',
+        seedPaperId: 'europe-pmc:MED:1',
+        direction: 'references'
+      }
+    },
+    {
+      ...record,
+      id: 'second',
+      provider: 'opencitations',
+      rawMetadata: {
+        citationContexts: [
+          null,
+          { rootItemId: 'root-b', seedPaperId: 'opencitations:br/2', directions: ['citations'] }
+        ]
+      }
+    }
+  ])
+  render(<LiteratureSources itemId="item-1" />)
+  await toggle('Metadata sources')
+  expect(await screen.findByText('Exploration started from Original paper')).not.toBeNull()
+  expect(await screen.findByText('Exploration started from root-b')).not.toBeNull()
+  expect(screen.getByText('References · europe-pmc:MED:1')).not.toBeNull()
+  expect(screen.getByText('Cited by · opencitations:br/2')).not.toBeNull()
+  expect(get).toHaveBeenCalledTimes(2)
+})

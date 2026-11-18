@@ -8297,6 +8297,8 @@
     "The source returned an invalid response. Retry or choose another citation source.": "來源傳回了無效回應。請重試或選擇其他引文來源。",
     "Check the paper identifiers or choose another citation source.": "請檢查論文識別碼，或選擇其他引文來源。",
     "Positions do not indicate similarity or importance.": "位置不表示相似度或重要程度。",
-    "Closing this view clears the exploration path.": "關閉此檢視會清除探索路徑。"
+    "Closing this view clears the exploration path.": "關閉此檢視會清除探索路徑。",
+    "Open in {{source}}": "在 {{source}} 中開啟",
+    "Exploration started from {{paper}}": "探索起點：{{paper}}"
   }
 }

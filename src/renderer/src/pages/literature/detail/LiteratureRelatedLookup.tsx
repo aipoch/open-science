@@ -618,7 +618,7 @@ function LiteratureRelatedList({
                           .join(' · ')}
                       </p>
                       <ExternalTextLink href={entry.item.url} className="text-xs">
-                        {t('View source')}
+                        {t('Open in {{source}}', { source: sourceName })}
                       </ExternalTextLink>
                       <CitationAbstract text={entry.item.abstract} className="mt-2" />
                       {receipt ? (

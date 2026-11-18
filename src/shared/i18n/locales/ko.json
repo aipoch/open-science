@@ -8295,6 +8295,8 @@
     "The source returned an invalid response. Retry or choose another citation source.": "출처에서 잘못된 응답을 반환했습니다. 다시 시도하거나 다른 인용 출처를 선택하세요.",
     "Check the paper identifiers or choose another citation source.": "논문 식별자를 확인하거나 다른 인용 출처를 선택하세요.",
     "Positions do not indicate similarity or importance.": "위치는 유사성이나 중요도를 나타내지 않습니다.",
-    "Closing this view clears the exploration path.": "이 보기를 닫으면 탐색 경로가 지워집니다."
+    "Closing this view clears the exploration path.": "이 보기를 닫으면 탐색 경로가 지워집니다.",
+    "Open in {{source}}": "{{source}}에서 열기",
+    "Exploration started from {{paper}}": "{{paper}}에서 탐색 시작"
   }
 }

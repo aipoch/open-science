@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { ChevronRight } from 'lucide-react'
 import { useLiteratureHost } from './renderer-host'
 import { useEffect, useState } from 'react'
@@ -17,7 +18,32 @@ const sourceLink = (value: string): string | undefined => {
   }
 }
 
-const SourceRecord = ({ source }: { source: LiteratureSourceRecordView }): React.JSX.Element => {
+const discoveryContext = z
+  .object({
+    rootItemId: z.string().min(1),
+    seedPaperId: z.string().optional(),
+    exploredPaperId: z.string().optional(),
+    direction: z.enum(['references', 'citations']).optional(),
+    directions: z.array(z.enum(['references', 'citations'])).optional()
+  })
+  .refine((value) => value.seedPaperId || value.exploredPaperId)
+
+const contextsFor = (source: LiteratureSourceRecordView): z.infer<typeof discoveryContext>[] => {
+  if (!['europe-pmc', 'opencitations'].includes(source.provider)) return []
+  const stored = source.rawMetadata.citationContexts
+  return (Array.isArray(stored) ? stored : [source.rawMetadata]).flatMap((value) => {
+    const parsed = discoveryContext.safeParse(value)
+    return parsed.success ? [parsed.data] : []
+  })
+}
+
+const SourceRecord = ({
+  source,
+  titles
+}: {
+  source: LiteratureSourceRecordView
+  titles: Record<string, string>
+}): React.JSX.Element => {
   const { i18n, t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const href = source.sourceUrl ? sourceLink(source.sourceUrl) : undefined
@@ -41,6 +67,26 @@ const SourceRecord = ({ source }: { source: LiteratureSourceRecordView }): React
           time: new Date(source.savedAt).toLocaleString(i18n.language)
         })}
       </p>
+      {contextsFor(source).map((context, index) => (
+        <div key={index} className="space-y-1 text-xs text-muted-foreground">
+          <p>
+            {t('Exploration started from {{paper}}', {
+              paper: titles[context.rootItemId] ?? context.rootItemId
+            })}
+          </p>
+          <p className="break-all">
+            {context.exploredPaperId
+              ? t('Current center')
+              : [...new Set(context.directions ?? (context.direction ? [context.direction] : []))]
+                  .map((direction) =>
+                    direction === 'references' ? t('References') : t('Cited by')
+                  )
+                  .join(' · ')}
+            {' · '}
+            {context.seedPaperId ?? context.exploredPaperId}
+          </p>
+        </div>
+      ))}
       <details onToggle={(event) => setExpanded(event.currentTarget.open)}>
         <summary className="cursor-pointer rounded text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
           {t('Stored metadata')}
@@ -67,6 +113,7 @@ const LiteratureSources = ({ itemId }: { itemId: string }): React.JSX.Element =>
   const [attempt, setAttempt] = useState(0)
   const [sources, setSources] = useState<LiteratureSourceRecordView[]>()
   const [failed, setFailed] = useState(false)
+  const [titles, setTitles] = useState<Record<string, string>>({})
   useLiteratureChanges(() => {
     if (open) setAttempt((value) => value + 1)
   })
@@ -74,10 +121,26 @@ const LiteratureSources = ({ itemId }: { itemId: string }): React.JSX.Element =>
     if (!open) return
     let cancelled = false
     void hostApi.literature.sources(itemId).then(
-      (records) => {
+      async (records) => {
         if (!cancelled) {
           setSources(records)
           setFailed(false)
+          const ids = [
+            ...new Set(
+              records.flatMap((source) => contextsFor(source).map((context) => context.rootItemId))
+            )
+          ]
+          const entries = await Promise.all(
+            ids.map(async (id): Promise<[string, string]> => {
+              try {
+                const root = await hostApi.literature.get(id)
+                return [id, root?.item.title || id]
+              } catch {
+                return [id, id]
+              }
+            })
+          )
+          if (!cancelled) setTitles(Object.fromEntries(entries))
         }
       },
       () => {
@@ -135,7 +198,7 @@ const LiteratureSources = ({ itemId }: { itemId: string }): React.JSX.Element =>
           ) : (
             <ul className="divide-y divide-border">
               {sources.map((source) => (
-                <SourceRecord key={source.id} source={source} />
+                <SourceRecord key={source.id} source={source} titles={titles} />
               ))}
             </ul>
           )}

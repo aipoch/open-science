@@ -8649,6 +8649,8 @@
     "The source returned an invalid response. Retry or choose another citation source.": "La source a renvoyé une réponse non valide. Réessayez ou choisissez une autre source de citations.",
     "Check the paper identifiers or choose another citation source.": "Vérifiez les identifiants de la publication ou choisissez une autre source de citations.",
     "Positions do not indicate similarity or importance.": "Les positions ne représentent ni la similarité ni l’importance.",
-    "Closing this view clears the exploration path.": "Fermer cette vue efface le parcours d’exploration."
+    "Closing this view clears the exploration path.": "Fermer cette vue efface le parcours d’exploration.",
+    "Open in {{source}}": "Ouvrir dans {{source}}",
+    "Exploration started from {{paper}}": "Exploration commencée depuis {{paper}}"
   }
 }

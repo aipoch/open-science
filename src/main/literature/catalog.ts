@@ -3091,7 +3091,8 @@ class LiteratureCatalog {
     if (existing) {
       await transaction.literatureSourceRecord.update({
         where: { id: existing.id },
-        data: { ...data, fetchedAt: new Date() }
+        // Appending discovery evidence does not refresh the frozen source snapshot.
+        data: { ...data, fetchedAt: frozen ? existing.fetchedAt : new Date() }
       })
     } else {
       await transaction.literatureSourceRecord.create({

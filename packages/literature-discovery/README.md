@@ -41,7 +41,9 @@ Callers may explicitly select `europe-pmc` or `opencitations`; each selection co
 provider. Failures remain attributed to that source and never start another provider automatically.
 Every live result reports its actual `provider`. Semantic Scholar is not a supported graph source;
 its old provider value and temporary 40-character paper IDs are rejected by the graph schemas.
-Historical catalog provenance and other discovery features use their own contracts.
+Historical catalog provenance and other discovery features use their own contracts. Existing encrypted
+Semantic Scholar credential references remain stored for compatibility, but are neither used by this
+feature nor exposed through its settings UI.
 
 Europe PMC resolves an exact normalized DOI, PMID or PMCID. If these do not resolve, it can verify a unique saved Europe PMC source and external ID against the search result. It never guesses from a
 title. Conflicting saved/provider identifiers and ambiguous matches are rejected; MED is preferred
@@ -142,7 +144,9 @@ its exploration path. Graph counts describe loaded records; positions do not enc
 Explicitly adding papers still uses Inbox review. Repeated discoveries preserve the candidate's
 original review snapshot and append source evidence. Citation sources store distinct paths in
 `rawMetadata.citationContexts`, including the original item/revision, explored or seed paper,
-direction and OpenCitations mode when available. Acceptance and item merges retain these paths.
+direction and OpenCitations mode when available. Acceptance and item merges retain these paths. Appending paths to a frozen Inbox source
+preserves its original snapshot timestamp, so a newer Library source still wins during acceptance.
+The source disclosure resolves available local root titles and falls back to their stored IDs.
 Existing top-level provenance fields are read into this collection on the next source update;
 there is no database migration or new review state. Previously overwritten paths cannot be
 reconstructed. This collection is provenance, not a saved graph or timestamped event history.

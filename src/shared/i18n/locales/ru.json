@@ -8802,6 +8802,8 @@
     "The source returned an invalid response. Retry or choose another citation source.": "Источник вернул некорректный ответ. Повторите попытку или выберите другой источник цитирований.",
     "Check the paper identifiers or choose another citation source.": "Проверьте идентификаторы статьи или выберите другой источник цитирований.",
     "Positions do not indicate similarity or importance.": "Расположение не отражает сходство или значимость.",
-    "Closing this view clears the exploration path.": "При закрытии этого представления путь исследования очищается."
+    "Closing this view clears the exploration path.": "При закрытии этого представления путь исследования очищается.",
+    "Open in {{source}}": "Открыть в {{source}}",
+    "Exploration started from {{paper}}": "Исследование начато с {{paper}}"
   }
 }

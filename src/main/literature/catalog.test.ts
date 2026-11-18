@@ -395,7 +395,10 @@ describe('LiteratureCatalog', () => {
     // Simulate a source written before citationContexts existed.
     await client!.literatureSourceRecord.updateMany({
       where: { inboxCandidateId: staged.id },
-      data: { rawMetadataJson: JSON.stringify(context('root-A')) }
+      data: {
+        rawMetadataJson: JSON.stringify(context('root-A')),
+        fetchedAt: new Date('2020-01-01')
+      }
     })
     input.source.rawMetadata = context('root-B')
     for (let i = 0; i < 2; i++)
@@ -433,13 +436,23 @@ describe('LiteratureCatalog', () => {
     // The paper enters Library by another route before this Inbox item is accepted.
     const existing = await catalog.transact({ kind: 'create-item', item: input.item })
     input.source.rawMetadata = context('root-E')
+    input.source.sourceUrl = 'https://europepmc.org/article/MED/123?latest=true'
     await catalog.transact({ kind: 'stage-candidate', candidate: input })
+    await client!.literatureSourceRecord.updateMany({
+      where: { itemId: existing.id, provider: 'europe-pmc' },
+      data: { fetchedAt: new Date('2021-01-01') }
+    })
     await catalog.transact({ kind: 'restore-candidates', candidateIds: [staged.id] })
     expect(
       await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
     ).toMatchObject({ id: existing.id })
     const sources = await catalog.sources(existing.id)
     expect(sources).toHaveLength(2)
+    expect(sources.find((source) => source.provider === 'europe-pmc')).toMatchObject({
+      sourceUrl: input.source.sourceUrl,
+      savedAt: new Date('2021-01-01').getTime(),
+      rawMetadata: { rootItemId: 'root-E' }
+    })
     const paths = sources.find((source) => source.provider === 'europe-pmc')!.rawMetadata
       .citationContexts as Array<{ rootItemId: string; directions: string[] }>
     expect(paths.map((path) => path.rootItemId).sort()).toEqual([
