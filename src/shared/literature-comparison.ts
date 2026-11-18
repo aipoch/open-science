@@ -5,7 +5,9 @@ const id = z.string().trim().min(1).max(256)
 export const COMPARISON_CSV_PAGE_SIZE = 100_000
 const offset = z.number().int().min(0)
 // A CSV cursor must leave room for the end of its page in safe-integer arithmetic.
-const csvOffset = offset.max(Number.MAX_SAFE_INTEGER - COMPARISON_CSV_PAGE_SIZE).optional()
+const csvOffset = offset
+  .max(Number.MAX_SAFE_INTEGER - COMPARISON_CSV_PAGE_SIZE, 'comparison-invalid-offset')
+  .optional()
 const text = z.string().trim().min(1).max(4000)
 export const comparisonFieldSchema = z
   .object({
@@ -122,7 +124,7 @@ export const comparisonRequestSchema = z.discriminatedUnion('action', [
     .object({
       action: z.literal('read'),
       tableId: id,
-      offset: offset.max(1199).optional(),
+      offset: offset.max(1199, 'comparison-invalid-offset').optional(),
       readToken: id.optional()
     })
     .strict(),
@@ -139,7 +141,7 @@ export const comparisonRequestSchema = z.discriminatedUnion('action', [
       action: z.literal('read-cell'),
       tableId: id,
       cellId: id,
-      offset: offset.max(COMPARISON_HISTORY_LIMIT - 1).optional()
+      offset: offset.max(COMPARISON_HISTORY_LIMIT - 1, 'comparison-invalid-offset').optional()
     })
     .strict(),
   z
