@@ -309,6 +309,9 @@ function ResearchVideoModeButton({
     )
   }
   const filmErrors: Record<string, string> = {
+    'Shorten the film to fit the narration audio limit.': t(
+      'Shorten the film to fit the narration audio limit.'
+    ),
     'The model returned no research film content. Try again or select another model.': t(
       'The model returned no film content.'
     ),

@@ -107,12 +107,12 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
   const [exportProgress, setExportProgress] = useState<ResearchVideoProgress>()
   const [installBytes, setInstallBytes] = useState<number>()
   const [installSnapshot, setInstallSnapshot] = useState<LocalModelSnapshot>()
-  const installingTools = useRef(false)
   const [exportError, setExportError] = useState<string>()
   const [exportedPath, setExportedPath] = useState<string>()
   const exportButtonRef = useRef<HTMLButtonElement>(null)
-  const exportResource = useRef<string | undefined>(undefined)
-  const exportCancelled = useRef(false)
+  const activeExport = useRef<
+    { resourceId: string; cancelled: boolean; installing: boolean } | undefined
+  >(undefined)
   const [mode, setMode] = useState<HtmlPreviewMode>('render')
   const requestKey = usePreviewResourceKey(item)
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
@@ -166,16 +166,17 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
 
   useEffect(() => {
     return () => {
-      const resourceId = exportResource.current
-      if (resourceId)
-        void window.api.previewResources.cancelResearchVideoExport({ resourceId }).catch(() => {})
-      exportResource.current = undefined
+      const attempt = activeExport.current
+      activeExport.current = undefined
+      if (attempt)
+        void window.api.previewResources
+          .cancelResearchVideoExport({ resourceId: attempt.resourceId })
+          .catch(() => {})
       setInstallBytes(undefined)
       setInstallSnapshot(undefined)
       setExportProgress(undefined)
       setExporting(false)
-      if (installingTools.current)
-        void window.api.localModels.cancel('video-export').catch(() => {})
+      if (attempt?.installing) void window.api.localModels.cancel('video-export').catch(() => {})
     }
   }, [requestKey])
 
@@ -183,17 +184,17 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
     resolution: ResearchVideoResolution,
     install = false
   ): Promise<void> => {
-    if (resourceState.status !== 'ready' || exportResource.current) return
+    if (resourceState.status !== 'ready' || activeExport.current) return
     const resourceId = resourceState.resource.id
-    exportResource.current = resourceId
-    exportCancelled.current = false
+    const attempt = { resourceId, cancelled: false, installing: install }
+    activeExport.current = attempt
     setExportResolution(resolution)
     setExporting(true)
     setExportError(undefined)
     setExportedPath(undefined)
     setExportProgress(undefined)
     let timer: ReturnType<typeof setTimeout> | undefined
-    const current = (): boolean => exportResource.current === resourceId && !exportCancelled.current
+    const current = (): boolean => activeExport.current === attempt && !attempt.cancelled
     const poll = async (): Promise<void> => {
       try {
         const progress = await window.api.previewResources.researchVideoExportProgress({
@@ -207,7 +208,6 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
     }
     try {
       if (install) {
-        installingTools.current = true
         let snapshot = await window.api.localModels.install('video-export')
         while (current() && snapshot.availability === 'installing') {
           setInstallSnapshot(snapshot)
@@ -220,7 +220,7 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
           throw new Error(t('Video export component installation failed. Retry to continue.'))
         setInstallBytes(undefined)
         setInstallSnapshot(undefined)
-        installingTools.current = false
+        attempt.installing = false
       }
       if (!current()) return
       void poll()
@@ -237,9 +237,8 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
       if (current()) setExportError(error instanceof Error ? error.message : String(error))
     } finally {
       clearTimeout(timer)
-      if (exportResource.current === resourceId) {
-        exportResource.current = undefined
-        installingTools.current = false
+      if (activeExport.current === attempt) {
+        activeExport.current = undefined
         setInstallSnapshot(undefined)
         setExportProgress(undefined)
         setExporting(false)
@@ -247,11 +246,14 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
     }
   }
   const cancelExport = async (): Promise<void> => {
-    const resourceId = exportResource.current
-    if (resourceId) {
-      exportCancelled.current = true
-      if (installingTools.current) await window.api.localModels.cancel('video-export')
-      else await window.api.previewResources.cancelResearchVideoExport({ resourceId })
+    const attempt = activeExport.current
+    if (attempt) {
+      attempt.cancelled = true
+      if (attempt.installing) await window.api.localModels.cancel('video-export')
+      else
+        await window.api.previewResources.cancelResearchVideoExport({
+          resourceId: attempt.resourceId
+        })
     }
   }
   const resolutionLabel = (resolution: ResearchVideoResolution): string => {

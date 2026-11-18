@@ -7818,6 +7818,7 @@
     "Video export component installation failed. Retry to continue.": "影片匯出元件安裝失敗。請重試以繼續。",
     "Video export components required: {{size}} MiB": "需要影片匯出元件：{{size}} MiB",
     "Install and export": "安裝並匯出",
+    "Shorten the film to fit the narration audio limit.": "請縮短影片，讓旁白音軌不超過檔案大小上限。",
     "Narration installation did not finish. Retry to continue.": "旁白資源未安裝完成，請重試以繼續。",
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "安裝旁白資源（{{size}} MiB）後即可產生，後續講解將重複使用這些資源。",
     "Install and generate": "安裝並產生",

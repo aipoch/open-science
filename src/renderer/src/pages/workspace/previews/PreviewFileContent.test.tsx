@@ -594,6 +594,10 @@ describe('PreviewFileContent', () => {
     )
     expect(button()).toBeDefined()
     expect(container.querySelector('[aria-label="Save shareable HTML"]')).not.toBeNull()
+    const oldProgress = Promise.withResolvers<{ phase: 'encoding'; startedAt: number }>()
+    vi.mocked(window.api.previewResources.researchVideoExportProgress).mockReturnValueOnce(
+      oldProgress.promise
+    )
     let finish!: () => void
     vi.mocked(window.api.previewResources.exportResearchVideo).mockImplementationOnce(
       () =>
@@ -629,6 +633,10 @@ describe('PreviewFileContent', () => {
         })
     )
     await chooseVideoResolution(button()!)
+    await act(async () => oldProgress.resolve({ phase: 'encoding', startedAt: Date.now() }))
+    expect(container.querySelector('[data-research-video-export-status]')?.textContent).toContain(
+      'Exporting MP4…'
+    )
     await act(async () =>
       root.render(
         <PreviewFileContent

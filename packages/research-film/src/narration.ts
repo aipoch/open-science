@@ -1,6 +1,7 @@
 import type { ResearchVideoStep } from './progress.js'
 import { mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from './source.js'
 import { buildVideoTimeline, type VideoSpec, type VoiceTiming } from './timeline.js'
 
 export type SpeechSynthesizer = {
@@ -8,6 +9,8 @@ export type SpeechSynthesizer = {
   measureDuration?(text: string): Promise<number>
   synthesize(text: string): Promise<{ samples: Float32Array; sampleRate: number }>
 }
+
+const pcm16WavBytes = (sampleCount: number): number => 44 + sampleCount * 2
 
 export function encodeVideoWav(samples: Float32Array, sampleRate: number, channels = 1): Buffer {
   if (
@@ -17,7 +20,7 @@ export function encodeVideoWav(samples: Float32Array, sampleRate: number, channe
     samples.length % channels
   )
     throw new Error('Invalid PCM format')
-  const buffer = Buffer.alloc(44 + samples.length * 2)
+  const buffer = Buffer.alloc(pcm16WavBytes(samples.length))
   buffer.write('RIFF')
   buffer.writeUInt32LE(buffer.length - 8, 4)
   buffer.write('WAVEfmt ', 8)
@@ -331,7 +334,10 @@ export async function mixFilmNarration(
   signal: AbortSignal
 ): Promise<Buffer> {
   const timeline = buildVideoTimeline(spec, voices)
-  const mix = new Float32Array(Math.ceil(timeline.duration * 48000) * 2)
+  const sampleCount = Math.ceil(timeline.duration * 48000) * 2
+  if (pcm16WavBytes(sampleCount) > RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES)
+    throw new Error('Shorten the film to fit the narration audio limit.')
+  const mix = new Float32Array(sampleCount)
   for (const scene of timeline.scenes)
     for (const line of scene.lines) {
       signal.throwIfAborted()
