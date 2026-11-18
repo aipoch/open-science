@@ -53,11 +53,8 @@ import { SettingsDocumentStore } from './document-store'
 import type { LocalShellRuntimeMutation } from './local-shell-runtime-contract'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { buildProviderValidationPatch } from './provider-validation-state'
-import {
-  imageProviderConfiguration,
-  sanitizeImageSettings,
-  sanitizePackageMirror
-} from './record-codec'
+import { imageProviderConfiguration } from '../../shared/image-model-service-policy'
+import { sanitizeImageSettings, sanitizePackageMirror } from './record-codec'
 import {
   buildPromptOptimizationModelMutation,
   buildReviewerModelMutation,
@@ -1204,7 +1201,7 @@ class SettingsRepository {
     update: (settings: StoredSettings) => Pick<StoredSettings, 'imageServices' | 'imageModel'>
   ): Promise<StoredSettings> {
     return this.mutate((current) => {
-      const imageSettings = update(current)
+      const imageSettings = sanitizeImageSettings(update(current), current.providers)
       const next = { ...current }
       delete next.imageServices
       delete next.imageModel

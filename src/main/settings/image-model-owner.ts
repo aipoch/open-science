@@ -13,9 +13,8 @@ import { encryptKey, hardenKeyMask, maskKey, tryDecryptKey } from './crypto'
 import {
   imageModelMutationSchema,
   imageProviderConfiguration,
-  imageServiceMatchesProvider,
-  sanitizeImageSettings
-} from './record-codec'
+  imageServiceMatchesProvider
+} from '../../shared/image-model-service-policy'
 import type { SettingsRepository } from './repository'
 import type { StoredImageService, StoredSettings } from './types'
 
@@ -147,7 +146,7 @@ export class ImageModelOwner {
           throw new Error('Image model is unavailable.')
         imageModel = update.binding
       }
-      return sanitizeImageSettings({ imageServices: services, imageModel }, current.providers)
+      return { imageServices: services, imageModel }
     })
     return view(settings)
   }

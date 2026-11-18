@@ -59,6 +59,18 @@ it('keeps old settings unconfigured and round-trips independent model presets wi
   expect(await owner.snapshot()).toEqual({ services: [], availableProviders: [] })
 })
 
+it('removes duplicate services and orphaned bindings before the repository writes settings', async () => {
+  const committed = await repository.mutateImageModels(() => ({
+    imageServices: [service, service],
+    imageModel: { ...binding, modelId: 'missing' }
+  }))
+  const persisted = JSON.parse(await readFile(join(directory, 'settings.json'), 'utf8'))
+  for (const settings of [committed, persisted]) {
+    expect(settings.imageServices).toEqual([service])
+    expect(settings).not.toHaveProperty('imageModel')
+  }
+})
+
 it('notifies only committed execution changes and unsubscribes without exposing credentials', async () => {
   const changed = vi.fn()
   const unsubscribe = repository.subscribeImageModels(changed)
