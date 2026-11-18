@@ -65,6 +65,7 @@ import {
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   getExternallyHydratedSessionAuthority,
+  hasLocalSessionWork,
   retainSessionRecoveryDrafts,
   hydrateSession,
   isExternallyHydratedSession,
@@ -143,14 +144,14 @@ const resetSessionContentCacheForTests = (): void => {
 const loadPersistedSession = async (
   request: LoadSessionRequest,
   api: SessionReadApi = window.api.sessions,
-  options: { bypassCache?: boolean } = {}
+  options: { bypassCache?: boolean; recoverSessionDetails?: boolean } = {}
 ): Promise<PersistedChatSession | undefined> => {
   const storeSummary = useSessionStore
     .getState()
     .sessions.find(
       (session) => session.id === request.sessionId && session.projectId === request.projectId
     )
-  if (!options.bypassCache) {
+  if (!options.bypassCache && !options.recoverSessionDetails) {
     const cached = sessionContentCache.get(sessionContentCacheKey(request))
     if (
       cached &&
@@ -162,7 +163,10 @@ const loadPersistedSession = async (
     }
   }
   if (typeof api.loadOne === 'function') {
-    const result = await api.loadOne(request)
+    const result = await api.loadOne({
+      ...request,
+      ...(options.recoverSessionDetails ? { recoverSessionDetails: true } : {})
+    })
     if (result) cacheSessionContent(result)
     return result
   }
@@ -2331,7 +2335,13 @@ const loadPersistedSessions = async (
     const selected = selection?.sessionId ? hydratedSessions.get(selection.sessionId) : undefined
     useSessionStore
       .getState()
-      .hydrateSessionSummaries(result.sessions, selected, result.manifest, selection)
+      .hydrateSessionSummaries(
+        result.sessions,
+        selected,
+        result.manifest,
+        selection,
+        preserveLocalDrafts
+      )
     for (const hydrated of hydratedSessions.values()) {
       if (hydrated && hydrated.id !== selected?.id) {
         useSessionStore.getState().upsertPersistedSession(hydrated)
@@ -3127,6 +3137,10 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [sessionLoadErrorsBySession, setSessionLoadErrorsBySession] = useState<
     Readonly<Record<string, string>>
   >({})
+  const sessionLoadErrorsBySessionRef = useRef(sessionLoadErrorsBySession)
+  useEffect(() => {
+    sessionLoadErrorsBySessionRef.current = sessionLoadErrorsBySession
+  }, [sessionLoadErrorsBySession])
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
   const [writeErrorRetryable, setWriteErrorRetryable] = useState(true)
@@ -3148,6 +3162,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const sizeLimitTargets = useRef(new Set<string>())
   const abandonedSizeLimitTargets = useRef(new Set<string>())
   const retryManifestWritePending = useRef(false)
+  const catalogRefreshPending = useRef(false)
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const trackedRecoveryTargets = useRef(new Set<string>())
   const previousWriteNotice = useRef<{
@@ -3543,6 +3558,59 @@ const useSessionPersistence = (): SessionPersistenceState => {
     // reconciliation resolves them.
     setLoadAttempt((attempt) => attempt + 1)
   }, [isHydrated])
+  const refreshCatalogAfterHydration = useCallback(async (): Promise<void> => {
+    if (!isHydrated || isLoading) {
+      catalogRefreshPending.current = true
+      return
+    }
+    const result = await loadPersistedSessions(
+      window.api.sessions,
+      () => true,
+      () => ({ sessionId: useSessionStore.getState().selectedSessionId }),
+      true
+    )
+    if (!result) return
+    const pending = result.diagnostics?.catalogHydrationPending === true
+    const loadWarnings = result.diagnostics?.warnings ?? []
+    const sessionWarningCount = loadWarnings.filter(
+      (warning) => warning.kind !== 'manifest-corrupt' && warning.kind !== 'manifest-unreadable'
+    ).length
+    setCatalogRecovery(deriveSessionCatalogRecovery(result.diagnostics))
+    setHasCompleteSessionCatalog(
+      !pending && result.diagnostics?.isComplete !== false && sessionWarningCount === 0
+    )
+    setCanDeleteSessionsAndProjects(
+      !pending && result.diagnostics?.isProjectDeletionRecoveryComplete === true
+    )
+    if (!pending && result.diagnostics?.isComplete === false) {
+      setIsReady(false)
+      setLoadError(
+        result.diagnostics.failure === 'startup-reconciliation-failed'
+          ? 'Saved conversations loaded, but storage recovery could not finish. Retry before creating or saving conversations.'
+          : 'Some saved conversations could not be read. Retry before creating or saving conversations.'
+      )
+    } else {
+      setLoadError(undefined)
+    }
+  }, [isHydrated, isLoading])
+  const reportCatalogRefreshFailure = useCallback((error: unknown): void => {
+    reportPersistenceError(error, 'session-load')
+    setHasCompleteSessionCatalog(false)
+    setCanDeleteSessionsAndProjects(false)
+    setIsReady(false)
+    setLoadError(SAFE_SESSION_LOAD_ERROR)
+  }, [])
+  useEffect(() => {
+    const removeCatalogChanged = window.api.sessions.onCatalogChanged?.(() => {
+      void refreshCatalogAfterHydration().catch(reportCatalogRefreshFailure)
+    })
+    return removeCatalogChanged
+  }, [refreshCatalogAfterHydration, reportCatalogRefreshFailure])
+  useEffect(() => {
+    if (!isHydrated || isLoading || !catalogRefreshPending.current) return
+    catalogRefreshPending.current = false
+    void refreshCatalogAfterHydration().catch(reportCatalogRefreshFailure)
+  }, [isHydrated, isLoading, refreshCatalogAfterHydration, reportCatalogRefreshFailure])
   const retryWrites = useCallback(() => {
     const retained = liveSessionPersistence.recovery
       .getSnapshot()
@@ -3886,15 +3954,18 @@ const useSessionPersistence = (): SessionPersistenceState => {
         const sessionWarningCount = loadWarnings.filter(
           (warning) => warning.kind !== 'manifest-corrupt' && warning.kind !== 'manifest-unreadable'
         ).length
+        const catalogHydrationPending = result.diagnostics?.catalogHydrationPending === true
         setCatalogRecovery(deriveSessionCatalogRecovery(result.diagnostics))
         setHasCompleteSessionCatalog(
-          result.diagnostics?.isComplete !== false && sessionWarningCount === 0
+          !catalogHydrationPending &&
+            result.diagnostics?.isComplete !== false &&
+            sessionWarningCount === 0
         )
         setCanDeleteSessionsAndProjects(
-          result.diagnostics?.isProjectDeletionRecoveryComplete === true
+          !catalogHydrationPending && result.diagnostics?.isProjectDeletionRecoveryComplete === true
         )
 
-        if (result.diagnostics?.isComplete === false) {
+        if (result.diagnostics?.isComplete === false && !catalogHydrationPending) {
           setIsReady(false)
           setLoadError(
             result.diagnostics.failure === 'startup-reconciliation-failed'
@@ -4126,12 +4197,23 @@ const useSessionPersistence = (): SessionPersistenceState => {
         ) {
           presentOutstandingWriteFailures()
         }
-        const selected = state.sessions.find(
-          (session) =>
+        const recoveryRequest = state.sessionDetailsRecoveryRequest
+        const selected = state.sessions.find((session) => {
+          const needsSessionDetailsRecovery =
+            recoveryRequest?.projectId === session.projectId &&
+            recoveryRequest.sessionId === session.id
+          const sessionLoadKey = `${session.projectId}\0${session.id}`
+          const canStartSessionDetailsRecovery =
+            needsSessionDetailsRecovery &&
+            !hasLocalSessionWork(session) &&
+            sessionLoadErrorsBySessionRef.current[sessionLoadKey] === undefined
+          return (
             session.id === state.selectedSessionId &&
-            session.contentLoaded === false &&
-            !session.historyPage
-        )
+            (canStartSessionDetailsRecovery ||
+              (session.contentLoaded === false &&
+                (!session.historyPage || needsSessionDetailsRecovery)))
+          )
+        })
         if (selected && !loadingSessionContent.has(selected.id)) {
           loadingSessionContent.add(selected.id)
           const sessionLoadKey = `${selected.projectId}\0${selected.id}`
@@ -4141,15 +4223,42 @@ const useSessionPersistence = (): SessionPersistenceState => {
           const isCurrentSessionLoad = (): boolean =>
             sessionLoadGenerations.current.get(sessionLoadKey) === sessionLoadGeneration
           const supportsPages = typeof window.api.sessions.loadHistoryPage === 'function'
-          void (
-            supportsPages
+          const recoveryRequest = useSessionStore.getState().sessionDetailsRecoveryRequest
+          const recoverSessionDetails =
+            recoveryRequest?.projectId === selected.projectId &&
+            recoveryRequest.sessionId === selected.id
+          const clearRecoveryRequest = (): void => {
+            const pending = useSessionStore.getState().sessionDetailsRecoveryRequest
+            if (pending?.projectId !== selected.projectId || pending.sessionId !== selected.id)
+              return
+            useSessionStore.setState((state) => ({
+              sessionDetailsRecoveryRequest: undefined,
+              sessions: state.sessions.map((session) =>
+                session.id === selected.id ? { ...session, needsStartupRecovery: false } : session
+              )
+            }))
+          }
+          const initialLoad = recoverSessionDetails
+            ? loadPersistedSession(
+                { projectId: selected.projectId, sessionId: selected.id },
+                undefined,
+                { bypassCache: true, recoverSessionDetails: true }
+              ).then((session) => {
+                return session
+              })
+            : supportsPages
               ? loadSessionHistoryPage({
                   projectId: selected.projectId,
                   sessionId: selected.id
-                }).then(() => undefined)
+                })
               : loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id })
-          )
-            .then((session) => {
+          void initialLoad
+            .then(async (session) => {
+              if (recoverSessionDetails) {
+                if (!session) throw new Error('Selected Session JSON is missing.')
+                if (supportsPages) useSessionStore.getState().upsertPersistedSession(session)
+                clearRecoveryRequest()
+              }
               if (!isMounted || !isCurrentSessionLoad()) return
               setSessionLoadErrorsBySession((current) => {
                 const next = { ...current }
@@ -4206,7 +4315,29 @@ const useSessionPersistence = (): SessionPersistenceState => {
                   [sessionLoadKey]: SESSION_LOAD_ERROR_KEY
                 }))
             })
-            .finally(() => loadingSessionContent.delete(selected.id))
+            .finally(() => {
+              loadingSessionContent.delete(selected.id)
+              const pendingRecovery = useSessionStore.getState().sessionDetailsRecoveryRequest
+              if (
+                isMounted &&
+                !recoverSessionDetails &&
+                pendingRecovery?.projectId === selected.projectId &&
+                pendingRecovery.sessionId === selected.id
+              ) {
+                const current = useSessionStore
+                  .getState()
+                  .sessions.find((session) => session.id === selected.id)
+                if (current && current.contentLoaded !== false && !hasLocalSessionWork(current)) {
+                  useSessionStore.setState((state) => ({
+                    sessions: state.sessions.map((session) =>
+                      session.id === selected.id ? { ...session, contentLoaded: false } : session
+                    )
+                  }))
+                } else {
+                  onStoreChange(useSessionStore.getState())
+                }
+              }
+            })
         }
         void save(state).then(trimReadOnlyHistory).catch(reportPersistenceError)
       }

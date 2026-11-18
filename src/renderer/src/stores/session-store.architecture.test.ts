@@ -114,6 +114,7 @@ const publicValueExports = [
   'createSessionStore',
   'findMostRecentSessionId',
   'getExternallyHydratedSessionAuthority',
+  'hasLocalSessionWork',
   'hydrateSession',
   'retainSessionRecoveryDrafts',
   'isArtifactFinalizationError',
@@ -926,6 +927,7 @@ describe('Session Store architecture', () => {
       'markSpecialistSwitchResetRequired',
       'removeSessionsForProject',
       'renameSession',
+      'requestSessionDetailsRecovery',
       'selectSession',
       'setAgentConfiguration',
       'setAutoReviewEnabled',
@@ -940,6 +942,7 @@ describe('Session Store architecture', () => {
     ])
     expect(ownerTypeProperties('session-store-persistence-owner.ts', 'SessionStoreData')).toEqual([
       'selectedSessionId',
+      'sessionDetailsRecoveryRequest',
       'sessions',
       'streamingMessages'
     ])

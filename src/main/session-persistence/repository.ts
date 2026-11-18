@@ -1014,7 +1014,7 @@ class SessionRepository {
     }
   }
 
-  private async listProjectionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
+  async listProjectionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
     const queuedAt = performance.now()
     return this.operationScheduler.runGlobal(async () => {
       // A caller cancelled while queued behind global work: skip the read instead of running it.

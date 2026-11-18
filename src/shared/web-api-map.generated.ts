@@ -542,6 +542,7 @@ export const WEB_EVENT_CHANNELS = {
   'reviewer.onUpdated': 'reviewer:updated',
   'runtime.onPolicyChanged': 'runtime:policy-changed',
   'schedules.onChanged': 'schedules:changed',
+  'sessions.onCatalogChanged': 'sessions:catalog-changed',
   'sessions.onCreated': 'session:created',
   'sessions.onDeleted': 'session:deleted',
   'sessions.onFlushAborted': 'sessions:flush-aborted',

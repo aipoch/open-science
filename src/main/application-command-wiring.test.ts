@@ -863,7 +863,7 @@ it('connects committed deletion to the same credential broker used by approval s
     updatedAt: 1
   }
   await createDeferredRecovery.mock.calls[0][0](recovered)
-  expect(recoverSession).toHaveBeenCalledWith(recovered)
+  expect(recoverSession).not.toHaveBeenCalled()
   const lifecycle = vi.mocked(composeProjectLifecycle).mock.calls.at(-1)![0]
   const info = {
     credentialId: 'openalex' as const,
