@@ -3137,10 +3137,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [sessionLoadErrorsBySession, setSessionLoadErrorsBySession] = useState<
     Readonly<Record<string, string>>
   >({})
+  // Store subscriptions can run before React effects flush, so keep the retry guard synchronous.
   const sessionLoadErrorsBySessionRef = useRef(sessionLoadErrorsBySession)
-  useEffect(() => {
-    sessionLoadErrorsBySessionRef.current = sessionLoadErrorsBySession
-  }, [sessionLoadErrorsBySession])
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
   const [writeErrorRetryable, setWriteErrorRetryable] = useState(true)
@@ -3525,11 +3523,11 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setWriteErrorRetryable(true)
   }, [])
   const retrySessionLoad = useCallback((projectId: string, sessionId: string): void => {
-    setSessionLoadErrorsBySession((current) => {
-      const next = { ...current }
-      delete next[`${projectId}\0${sessionId}`]
-      return next
-    })
+    const sessionLoadKey = `${projectId}\0${sessionId}`
+    const next = { ...sessionLoadErrorsBySessionRef.current }
+    delete next[sessionLoadKey]
+    sessionLoadErrorsBySessionRef.current = next
+    setSessionLoadErrorsBySession(next)
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((session) =>
         session.projectId === projectId && session.id === sessionId
@@ -3552,7 +3550,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setCanDeleteSessionsAndProjects(false)
     setLoadError(undefined)
     setLoadWarning(undefined)
-    setSessionLoadErrorsBySession({})
+    const nextSessionLoadErrors = {}
+    sessionLoadErrorsBySessionRef.current = nextSessionLoadErrors
+    setSessionLoadErrorsBySession(nextSessionLoadErrors)
     // Rechecking the catalog is not evidence that an outstanding write succeeded. Keep its
     // notice and Session write gates until a matching acknowledgement or authoritative
     // reconciliation resolves them.
@@ -3894,7 +3894,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
       const preferredSelection = recovering
         ? { sessionId: useSessionStore.getState().selectedSessionId }
         : retrySelection.current
-      setSessionLoadErrorsBySession({})
+      const nextSessionLoadErrors = {}
+      sessionLoadErrorsBySessionRef.current = nextSessionLoadErrors
+      setSessionLoadErrorsBySession(nextSessionLoadErrors)
       try {
         if (recovering) {
           // Let old requests settle into the retained registry before replacing their projection.
@@ -3923,11 +3925,15 @@ const useSessionPersistence = (): SessionPersistenceState => {
               projectId: summary.projectId,
               sessionId: summary.id
             })
-            if (isMounted)
-              setSessionLoadErrorsBySession((current) => ({
-                ...current,
-                [`${summary.projectId}\0${summary.id}`]: SESSION_LOAD_ERROR_KEY
-              }))
+            if (isMounted) {
+              const sessionLoadKey = `${summary.projectId}\0${summary.id}`
+              const next = {
+                ...sessionLoadErrorsBySessionRef.current,
+                [sessionLoadKey]: SESSION_LOAD_ERROR_KEY
+              }
+              sessionLoadErrorsBySessionRef.current = next
+              setSessionLoadErrorsBySession(next)
+            }
           }
         )
         if (!result || !isMounted) return
@@ -4203,15 +4209,15 @@ const useSessionPersistence = (): SessionPersistenceState => {
             recoveryRequest?.projectId === session.projectId &&
             recoveryRequest.sessionId === session.id
           const sessionLoadKey = `${session.projectId}\0${session.id}`
+          const hasSessionLoadError =
+            sessionLoadErrorsBySessionRef.current[sessionLoadKey] !== undefined
           const canStartSessionDetailsRecovery =
-            needsSessionDetailsRecovery &&
-            !hasLocalSessionWork(session) &&
-            sessionLoadErrorsBySessionRef.current[sessionLoadKey] === undefined
+            needsSessionDetailsRecovery && !hasLocalSessionWork(session) && !hasSessionLoadError
           return (
             session.id === state.selectedSessionId &&
             (canStartSessionDetailsRecovery ||
               (session.contentLoaded === false &&
-                (!session.historyPage || needsSessionDetailsRecovery)))
+                (!session.historyPage || (needsSessionDetailsRecovery && !hasSessionLoadError))))
           )
         })
         if (selected && !loadingSessionContent.has(selected.id)) {
@@ -4260,11 +4266,10 @@ const useSessionPersistence = (): SessionPersistenceState => {
                 clearRecoveryRequest()
               }
               if (!isMounted || !isCurrentSessionLoad()) return
-              setSessionLoadErrorsBySession((current) => {
-                const next = { ...current }
-                delete next[sessionLoadKey]
-                return next
-              })
+              const next = { ...sessionLoadErrorsBySessionRef.current }
+              delete next[sessionLoadKey]
+              sessionLoadErrorsBySessionRef.current = next
+              setSessionLoadErrorsBySession(next)
               if (supportsPages) return
               if (!session) throw new Error('Selected Session JSON is missing.')
               const unchangedSummary =
@@ -4309,11 +4314,14 @@ const useSessionPersistence = (): SessionPersistenceState => {
                 projectId: selected.projectId,
                 sessionId: selected.id
               })
-              if (isMounted && isCurrentSessionLoad())
-                setSessionLoadErrorsBySession((current) => ({
-                  ...current,
+              if (isMounted && isCurrentSessionLoad()) {
+                const next = {
+                  ...sessionLoadErrorsBySessionRef.current,
                   [sessionLoadKey]: SESSION_LOAD_ERROR_KEY
-                }))
+                }
+                sessionLoadErrorsBySessionRef.current = next
+                setSessionLoadErrorsBySession(next)
+              }
             })
             .finally(() => {
               loadingSessionContent.delete(selected.id)

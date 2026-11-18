@@ -357,6 +357,46 @@ describe('session persistence startup', () => {
     expect(useSessionStore.getState().sessions[0].contentLoaded).not.toBe(false)
   })
 
+  it('does not retry a failed recovery for a Session with an existing history page', async () => {
+    const persisted = createPersistedSession({ number: 1 })
+    const loadOne = installHistory([persisted])
+    window.api.sessions.loadHistoryPage = vi.fn().mockResolvedValue({
+      projectId: persisted.projectId,
+      sessionId: persisted.id,
+      revision: 0,
+      session: persisted,
+      totalItems: 1,
+      hasMore: false
+    })
+    loadOne.mockRejectedValue(new Error('recovery failed'))
+
+    await act(async () => root.render(<Probe />))
+    await act(async () => {
+      useSessionStore.getState().selectSession(persisted.id)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      useSessionStore.getState().requestSessionDetailsRecovery({
+        projectId: persisted.projectId,
+        sessionId: persisted.id
+      })
+      await Promise.resolve()
+    })
+
+    await vi.waitFor(() => expect(loadOne).toHaveBeenCalledOnce())
+    await act(async () => {
+      useSessionStore.getState().selectSession(persisted.id)
+      await Promise.resolve()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(loadOne).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessionDetailsRecoveryRequest).toEqual({
+      projectId: persisted.projectId,
+      sessionId: persisted.id
+    })
+    useSessionStore.setState({ sessionDetailsRecoveryRequest: undefined })
+  })
+
   it('reclaims inactive history pages under the existing sixteen-session retention limit', async () => {
     const histories = Array.from({ length: 17 }, (_, index) =>
       createPersistedSession({
