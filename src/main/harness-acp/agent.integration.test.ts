@@ -1565,6 +1565,13 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
   it.each([
     [400, 'text/plain', 'Model is unavailable', 'configuration/model-unavailable', 'response'],
     [
+      404,
+      'application/json',
+      '{"error":{"code":"endpoint_not_found"}}',
+      'configuration/endpoint-invalid',
+      'response'
+    ],
+    [
       503,
       'text/html',
       '<!doctype html><html><body>PRIVATE_GATEWAY_PAGE</body></html>',

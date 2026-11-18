@@ -66,6 +66,7 @@ const identifyReason = (codes: string[], message: string, status?: number): Prov
       ? 'insufficient_quota'
       : 'rate_limit_exceeded'
   if (status !== undefined && status >= 500 && status <= 599) return 'server_error'
+  if (codes.includes('endpoint_not_found')) return 'endpoint_not_found'
   const detail = [...codes, message].join(' ')
   if (AUTH.test(detail)) return 'authentication_error'
   if (BILLING.test(detail)) return 'insufficient_quota'
