@@ -115,7 +115,7 @@ const MarkdownLiveInputPlugin = createSlatePlugin({
           editor.tf.withoutNormalizing(() => {
             if (kind === 'paragraph') {
               insertBreak()
-              editor.tf.setNodes({ type: 'p' })
+              editor.tf.setNodes({ type: 'p', placeholderKind: undefined })
             } else if (kind === 'list') {
               editor.tf.splitNodes({ match: (node) => node.type === 'li', always: true })
             } else if (kind === 'exitList') {
@@ -123,11 +123,11 @@ const MarkdownLiveInputPlugin = createSlatePlugin({
               const itemPath = path.slice(0, -1)
               editor.tf.liftNodes({ at: itemPath })
               editor.tf.unwrapNodes({ match: (node) => node.type === 'li', split: true })
-              editor.tf.setNodes({ type: 'p' })
+              editor.tf.setNodes({ type: 'p', placeholderKind: undefined })
             } else if (kind === 'exitCode') {
               editor.tf.delete({ at: range })
               editor.tf.liftNodes({ at: path })
-              editor.tf.setNodes({ type: 'p' })
+              editor.tf.setNodes({ type: 'p', placeholderKind: undefined })
             } else {
               editor.tf.delete({ at: range })
               if (kind === 'code') {

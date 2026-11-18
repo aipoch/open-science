@@ -1,4 +1,4 @@
-import type { Descendant, Path, TElement } from 'platejs'
+import { NodeApi, type Descendant, type Path, type TElement } from 'platejs'
 import type { PlateEditor } from 'platejs/react'
 
 export const DROPDOWN_LANGUAGE = 'openscience-dropdown'
@@ -18,6 +18,10 @@ export type MarkdownInsertKind =
   | 'date'
   | 'dropdown'
 
+export type MarkdownPlaceholderElement = TElement & {
+  placeholderKind?: MarkdownInsertKind
+}
+
 export type DropdownDefinition = Readonly<{
   options: readonly string[]
   selected: string
@@ -25,6 +29,68 @@ export type DropdownDefinition = Readonly<{
 
 const text = (value = ''): Descendant => ({ text: value })
 const paragraph = (value = ''): TElement => ({ type: 'p', children: [text(value)] })
+
+const listItem = (value: string, checked?: boolean): TElement => ({
+  type: 'li',
+  ...(checked === undefined ? {} : { checked }),
+  children: [{ type: 'lic', children: [text(value)] }]
+})
+
+const setBlockText = (node: TElement, value: string): void => {
+  switch (node.type) {
+    case 'h1':
+    case 'h2':
+    case 'h3':
+      node.children = [text(value)]
+      break
+    case 'blockquote':
+      node.children = [paragraph(value)]
+      break
+    case 'ul':
+    case 'ol': {
+      const currentItem = node.children[0]
+      const checked =
+        currentItem &&
+        typeof currentItem === 'object' &&
+        'checked' in currentItem &&
+        typeof currentItem.checked === 'boolean'
+          ? currentItem.checked
+          : undefined
+      node.children = [listItem(value, checked)]
+      break
+    }
+    case 'table': {
+      const firstRow = node.children[0]
+      if (
+        firstRow &&
+        typeof firstRow === 'object' &&
+        'children' in firstRow &&
+        Array.isArray(firstRow.children)
+      ) {
+        const firstCell = firstRow.children[0]
+        if (
+          firstCell &&
+          typeof firstCell === 'object' &&
+          'children' in firstCell &&
+          Array.isArray(firstCell.children)
+        )
+          firstCell.children = [paragraph(value)]
+      }
+      break
+    }
+    case 'img':
+      node.caption = [text(value)]
+      break
+    case 'code_block':
+      node.children = [{ type: 'code_line', children: [text(value)] }]
+      break
+    case 'p':
+      node.children = [text(value)]
+      break
+    default:
+      break
+  }
+}
 
 /** Return a node that the existing Plate Markdown codec can serialize. */
 export const createMarkdownBlock = (
@@ -115,11 +181,50 @@ export const insertMarkdownBlock = (
   const at = [
     selectedPath ? Math.min(selectedPath[0] + 1, editor.children.length) : editor.children.length
   ]
-  const node = createMarkdownBlock(kind, options)
-  editor.tf.withNewBatch(() => {
-    editor.tf.insertNodes(node, { at, select: true })
-  })
+  const node: MarkdownPlaceholderElement = {
+    ...createMarkdownBlock(kind, options),
+    placeholderKind: kind
+  }
+  editor.tf.withNewBatch(() => editor.tf.insertNodes(node, { at, select: true }))
   return at
+}
+
+export const duplicateMarkdownBlock = (editor: PlateEditor, path: Path): Path | undefined => {
+  if (path.length !== 1 || path[0] < 0 || path[0] >= editor.children.length) return undefined
+  const node = structuredClone(editor.children[path[0]])
+  const next = [path[0] + 1]
+  editor.tf.withNewBatch(() => editor.tf.insertNodes(node, { at: next, select: true }))
+  return next
+}
+
+export const deleteMarkdownBlock = (editor: PlateEditor, path: Path): boolean => {
+  if (path.length !== 1 || path[0] < 0 || path[0] >= editor.children.length) return false
+  editor.tf.withNewBatch(() => editor.tf.removeNodes({ at: path }))
+  return true
+}
+
+export const turnMarkdownBlockInto = (
+  editor: PlateEditor,
+  path: Path,
+  kind: MarkdownInsertKind
+): boolean => {
+  if (path.length !== 1 || path[0] < 0 || path[0] >= editor.children.length) return false
+  const current = editor.children[path[0]]
+  const value = NodeApi.string(current)
+  const node = createMarkdownBlock(kind, {
+    code: value,
+    date: value || undefined,
+    imageAlt: value
+  })
+  if (kind !== 'divider' && kind !== 'dropdown' && !(kind === 'date' && !value))
+    setBlockText(node, value)
+  if (kind === 'dropdown' && value) {
+    const selected = value.trim()
+    const definition = encodeDropdownDefinition({ options: [selected], selected })
+    node.children = [{ type: 'code_line', children: [text(definition)] }]
+  }
+  editor.tf.withNewBatch(() => editor.tf.replaceNodes(node, { at: path, select: true }))
+  return true
 }
 
 export const isSafeRemoteImageUrl = (value: string): boolean => {

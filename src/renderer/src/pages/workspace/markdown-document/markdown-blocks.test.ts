@@ -1,12 +1,16 @@
+import { NodeApi } from 'platejs'
 import { describe, expect, it } from 'vitest'
 import { createMarkdownEditor } from './markdown-editor'
 import { parseMarkdownDocument, serializeMarkdownDocument } from './markdown-codec'
 import {
   createMarkdownBlock,
   decodeDropdownDefinition,
+  deleteMarkdownBlock,
+  duplicateMarkdownBlock,
   encodeDropdownDefinition,
   insertMarkdownBlock,
-  moveMarkdownBlockTo
+  moveMarkdownBlockTo,
+  turnMarkdownBlockInto
 } from './markdown-blocks'
 
 describe('Markdown block editing', () => {
@@ -24,9 +28,54 @@ describe('Markdown block editing', () => {
 
   it('inserts a heading after its selected block without changing surrounding text', () => {
     const editor = createMarkdownEditor(parseMarkdownDocument('Before\n\nAfter\n').value)
-    insertMarkdownBlock(editor, [0], 'h2')
+    const insertedPath = insertMarkdownBlock(editor, [0], 'h2')
+    expect(editor.children[insertedPath[0]]).toMatchObject({ placeholderKind: 'h2' })
+    expect(editor.children).toHaveLength(3)
+    expect(serializeMarkdownDocument(editor.children)).toBe('Before\n\n##\n\nAfter\n')
     editor.tf.insertText('Inserted')
     expect(serializeMarkdownDocument(editor.children)).toBe('Before\n\n## Inserted\n\nAfter\n')
+  })
+
+  it('supports block menu actions without losing surrounding blocks', () => {
+    const editor = createMarkdownEditor(parseMarkdownDocument('First\n\nSecond\n').value)
+    expect(duplicateMarkdownBlock(editor, [0])).toEqual([1])
+    expect(serializeMarkdownDocument(editor.children)).toBe('First\n\nFirst\n\nSecond\n')
+    expect(turnMarkdownBlockInto(editor, [1], 'h2')).toBe(true)
+    expect(serializeMarkdownDocument(editor.children)).toBe('First\n\n## First\n\nSecond\n')
+    expect(deleteMarkdownBlock(editor, [1])).toBe(true)
+    expect(serializeMarkdownDocument(editor.children)).toBe('First\n\nSecond\n')
+  })
+
+  it('keeps text when turning a block into list and checklist forms', () => {
+    const editor = createMarkdownEditor(parseMarkdownDocument('Keep this text\n').value)
+    expect(turnMarkdownBlockInto(editor, [0], 'bullet')).toBe(true)
+    expect(serializeMarkdownDocument(editor.children)).toBe('- Keep this text\n')
+    expect(turnMarkdownBlockInto(editor, [0], 'checklist')).toBe(true)
+    expect(serializeMarkdownDocument(editor.children)).toBe('- [ ] Keep this text\n')
+  })
+
+  it('keeps dropdown blocks valid when converting empty or non-empty text', () => {
+    const emptyEditor = createMarkdownEditor([{ type: 'p', children: [{ text: '' }] }])
+    expect(turnMarkdownBlockInto(emptyEditor, [0], 'dropdown')).toBe(true)
+    expect(decodeDropdownDefinition(NodeApi.string(emptyEditor.children[0]))).toEqual({
+      options: ['1', '2'],
+      selected: '1'
+    })
+
+    const editor = createMarkdownEditor(parseMarkdownDocument('Choice\n').value)
+    expect(turnMarkdownBlockInto(editor, [0], 'dropdown')).toBe(true)
+    expect(decodeDropdownDefinition(NodeApi.string(editor.children[0]))).toEqual({
+      options: ['Choice'],
+      selected: 'Choice'
+    })
+  })
+
+  it('removes an inserted block without leaving a placeholder block behind', () => {
+    const editor = createMarkdownEditor(parseMarkdownDocument('Before\n').value)
+    const insertedPath = insertMarkdownBlock(editor, [0], 'h2')
+    expect(deleteMarkdownBlock(editor, insertedPath)).toBe(true)
+    expect(editor.children).toHaveLength(1)
+    expect(serializeMarkdownDocument(editor.children)).toBe('Before\n')
   })
 
   it('preserves nested mixed checked, unchecked and ordinary list items', () => {

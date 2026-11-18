@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { PlateEditor } from 'platejs/react'
 
 import { parseMarkdownDocument, serializeMarkdownDocument } from './markdown-codec'
+import { insertMarkdownBlock } from './markdown-blocks'
 import { createMarkdownEditor } from './markdown-editor'
 
 const createEditor = (source = ''): PlateEditor => {
@@ -25,6 +26,16 @@ const expectMarkdown = (editor: PlateEditor, source: string): void => {
 }
 
 describe('Markdown live keyboard input', () => {
+  it('does not carry an inserted heading placeholder into the paragraph after Enter', () => {
+    const editor = createEditor('Before')
+    const insertedPath = insertMarkdownBlock(editor, [0], 'h1')
+    editor.tf.insertText('Title')
+    editor.tf.insertBreak()
+
+    expect(editor.children[insertedPath[0] + 1]).toMatchObject({ type: 'p' })
+    expect(editor.children[insertedPath[0] + 1]).not.toHaveProperty('placeholderKind')
+  })
+
   it.each([1, 2, 3, 4, 5, 6])(
     'converts heading level %i at the space and resets on Enter',
     (level) => {
