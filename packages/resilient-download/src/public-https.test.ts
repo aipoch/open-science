@@ -37,6 +37,9 @@ it('rejects private URL forms before connecting and pins public DNS without cred
     'https://[::1]/x',
     'https://user:pass@cdn.example/x',
     'https://cdn.local/x',
+    'https://cdn.internal./x',
+    'https://localhost./x',
+    'https://cdn.example../x',
     'https://cdn.example:8443/x'
   ]) {
     expect(() => publicDownloadUrl(url)).toThrow()
@@ -86,10 +89,16 @@ it('requires explicit legacy opt-in for fake-IP proxy resolution', async () => {
   expect(fixture.tunnel).not.toHaveBeenCalled()
   fixture.tunnel.mockResolvedValue({ destroy: vi.fn() })
   fixture.tls.mockReturnValue({})
-  const response = await requestPublicHttps('https://cdn.example/x', new AbortController().signal, {
-    ...options,
-    allowProxyHostnameResolution: true
-  })
+  const response = await requestPublicHttps(
+    'https://cdn.example./x',
+    new AbortController().signal,
+    {
+      ...options,
+      allowProxyHostnameResolution: true
+    }
+  )
+  expect(fixture.lookup).toHaveBeenLastCalledWith('cdn.example', { all: true })
+  expect(fixture.tls).toHaveBeenCalledWith(expect.objectContaining({ servername: 'cdn.example' }))
   expect(fixture.tunnel).toHaveBeenCalledWith(
     new URL('http://localhost:1086'),
     'cdn.example',

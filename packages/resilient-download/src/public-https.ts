@@ -46,16 +46,19 @@ const isFakeIpPlaceholder = (address: string): boolean =>
 
 export const publicDownloadUrl = (value: string): URL => {
   const url = new URL(value)
+  const hostname = url.hostname.replace(/\.$/u, '')
   if (
     url.protocol !== 'https:' ||
     url.username ||
     url.password ||
     (url.port && url.port !== '443') ||
-    isIP(url.hostname.replace(/^\[|\]$/gu, '')) ||
-    !url.hostname.includes('.') ||
-    /\.(localhost|local|internal)$/iu.test(url.hostname)
+    isIP(hostname.replace(/^\[|\]$/gu, '')) ||
+    !hostname.includes('.') ||
+    hostname.split('.').includes('') ||
+    /\.(localhost|local|internal)$/iu.test(hostname)
   )
     throw new Error('Download links must use public HTTPS URLs.')
+  url.hostname = hostname
   return url
 }
 
