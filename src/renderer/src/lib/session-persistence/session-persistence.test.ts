@@ -6180,6 +6180,49 @@ describe('passive summary hydration', () => {
 
     expect(api.saveSession).not.toHaveBeenCalled()
   })
+
+  it('drops a partial history page when a newer summary revision arrives', () => {
+    const base = createPersistedSession({ revision: 4 })
+    useSessionStore.getState().hydrateSessions([base])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        contentLoaded: false,
+        historyPage: { revision: 4, totalItems: 1, hasMore: true, beforeCursor: 'older' }
+      }))
+    }))
+
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: base.id,
+          projectId: base.projectId,
+          title: base.title,
+          status: 'idle',
+          presentedStatus: 'idle',
+          revision: 5,
+          pinned: false,
+          activeMessageCount: 1,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt + 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      contentLoaded: false,
+      messages: []
+    })
+    expect(useSessionStore.getState().sessions[0].historyPage).toBeUndefined()
+  })
 })
 
 describe('desktop disconnect write admission', () => {

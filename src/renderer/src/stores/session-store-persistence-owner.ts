@@ -506,12 +506,10 @@ const replaceIdleSessionWithNewerSummary = (
   summary: ChatSession,
   current: ChatSession
 ): ChatSession => {
-  if (
-    current.contentLoaded === false ||
-    hasLocalSessionWork(current) ||
-    (summary.revision ?? 0) <= (current.revision ?? 0)
-  )
+  if (hasLocalSessionWork(current) || (summary.revision ?? 0) <= (current.revision ?? 0))
     return mergeSessionSummaryWithLiveState(summary, current)
+
+  if (current.contentLoaded === false) return summary
 
   const authority = {
     ...toPersistedSession(current),
