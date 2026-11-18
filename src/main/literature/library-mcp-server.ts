@@ -328,9 +328,12 @@ const presentationContent = (
     ]) ?? []),
     ...(result?.citations?.map(sourceCitationReceipt) ?? [])
   ])
-  const text = (): string => presentationText(presentation, sourceCitationHrefs)
-  while (sourceCitationHrefs.length > 0 && text().length > 8_000) sourceCitationHrefs.pop()
-  return { type: 'text', text: text() }
+  let text = presentationText(presentation, sourceCitationHrefs)
+  while (sourceCitationHrefs.length > 0 && text.length > 8_000) {
+    sourceCitationHrefs.pop()
+    text = presentationText(presentation, sourceCitationHrefs)
+  }
+  return { type: 'text', text }
 }
 
 const compactText = (value: string, limit: number): string =>

@@ -185,8 +185,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         // schemas, handlers and allow-once authorization remain unchanged.
         // Metadata display links are issued only when retained in the bounded presentation receipt;
         // search records, abstract previews, schemas and allow-once authorization are unchanged.
+        // Receipt trimming reuses the last serialization; schemas, handlers and permissions are unchanged.
         'literature/library-mcp-server.ts':
-          '0d43d8e4f32903bfea45e7099e2c3694801bb003c7201a2860eab9db3f989ac9',
+          '58bd3caff04ec4ed52096e379aa6724401ad6f422ecb4334ef2f1cbc696d21b5',
         // Reviewed: errors keep specific codes with a next step and annotation cursors are opaque
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':

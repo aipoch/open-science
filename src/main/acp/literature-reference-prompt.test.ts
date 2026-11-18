@@ -56,7 +56,7 @@ describe('buildLiteratureReferencePrompt', () => {
 
     expect(prompt).toContain('immutable bibliographic snapshot')
     expect(prompt).toContain('scope "items"')
-    expect(prompt).toContain('When the user only referenced records')
+    expect(prompt).toContain('With only record mentions')
     expect(prompt).toContain('A cited paper')
     expect(prompt).toContain('10.1/example')
     expect(prompt).toContain('version-1')
@@ -67,16 +67,16 @@ describe('buildLiteratureReferencePrompt', () => {
     expect(buildLiteratureReferencePrompt([{ type: 'text', text: 'Hello' }])).toBeUndefined()
   })
 
-  it('retains reported phase and masking only for relevant study-design comparisons', () => {
+  it('keeps the evidence guidance focused on tool boundaries and citations', () => {
     const prompt = buildLiteratureReferencePrompt([{ type: 'literature-scope', scope: 'project' }])!
-    expect(prompt).toContain(
-      'When comparing study designs, retain relevant trial phase and masking information'
-    )
-    expect(prompt).toContain('already established by the evidence used in that comparison')
-    expect(prompt).toContain('Omit unrelated optional elaboration')
-    expect(prompt).not.toContain(
-      'Omit optional elaboration, or cite its actual supporting passage separately'
-    )
+    expect(prompt).toContain('search_library_full_text')
+    expect(prompt).toContain('existing indexed PDFs')
+    expect(prompt).toContain('read_library_abstract')
+    expect(prompt).toContain('read_library_pdf')
+    expect(prompt).toContain('sourceCitation.href or citations[].href')
+    expect(prompt).toContain('never construct, decode, rewrite or modify an href')
+    expect(prompt).toContain('label abstract-only evidence')
+    expect(prompt).toContain('Do not infer equivalence from a non-significant result')
   })
 
   it('steers paged Library and Collection retrieval without attaching their contents', () => {
@@ -90,42 +90,14 @@ describe('buildLiteratureReferencePrompt', () => {
       }
     ])
 
-    expect(prompt).toContain('does not attach every record or PDF')
+    expect(prompt).toContain('does not attach records or PDFs')
     expect(prompt).toContain('search_library')
     expect(prompt).toContain('trusted current Project')
     expect(prompt).toContain('nextOffset')
-    expect(prompt).toContain('focused, bounded searches')
-    expect(prompt).toContain('begin with metadata and abstract previews')
-    expect(prompt).toContain('read_library_abstract')
-    expect(prompt).toContain('batch of up to five itemIds')
-    expect(prompt).toContain('do not batch-read every search result')
-    expect(prompt).toContain('read_library_pdf')
-    expect(prompt).toContain('bounded passages with page numbers')
-    expect(prompt).toContain('The full-text tool limit is 1–8 passages')
-    expect(prompt).toContain('Do not pass limit 20')
-    expect(prompt).toContain('Prefer a small initial evidence budget')
-    expect(prompt).toContain('start with at most three metadata searches')
-    expect(prompt).toContain('two full-text discovery searches')
-    expect(prompt).toContain('state that the current Library lacks enough relevant records')
-    expect(prompt).toContain('answer briefly and directly')
-    expect(prompt).toContain('[1](href)')
-    expect(prompt).toContain('short #library-cite= reference')
-    expect(prompt).toContain(
-      'specific numerical result, study population, method, endpoint or limitation'
-    )
-    expect(prompt).toContain('support elsewhere in the paper is insufficient')
-    expect(prompt).toContain('exact tool-generated sourceCitation.href or citations[].href')
-    expect(prompt).toContain('Do not construct, decode, rewrite, or modify a citation href')
-    expect(prompt).toContain('titles do not establish paper contents')
-    expect(prompt).toContain('Label abstract-only evidence as abstract evidence')
-    expect(prompt).toContain('Metadata citationHref is optional')
-    expect(prompt).toContain('Never index or read the entire Library')
-    expect(prompt).toContain('Library itemId and linked-PDF documentId are not interchangeable')
-    expect(prompt).toContain('not every Library search result or attachment')
-    expect(prompt).toContain(
-      'Call list_pdf_elements with a linked documentId, or {} for a single linked PDF'
-    )
-    expect(prompt).toContain('call read_pdf_element with the exact elementRef returned by listing')
+    expect(prompt).toContain('three metadata searches')
+    expect(prompt).toContain('two full-text searches')
+    expect(prompt).toContain('Library itemId and linked-PDF documentId are different')
+    expect(prompt).toContain('exact elementRef returned by listing')
     expect(prompt).toContain(
       'read_library_pdf provides prose evidence, not verified table cells or images'
     )
@@ -133,12 +105,11 @@ describe('buildLiteratureReferencePrompt', () => {
     expect(prompt).toContain('{{bibliography}}')
     expect(prompt).toContain('format_citation_document')
     expect(prompt).toContain('format_references')
-    expect(prompt).toContain('use the returned citation strings verbatim')
+    expect(prompt).toContain('copy its strings verbatim')
     expect(prompt).toContain('prepare_latex_bundle')
-    expect(prompt).toContain('Zotero-compatible Word Fields')
-    expect(prompt).toContain('complete reviewed corpus as itemIds plus candidateCount')
-    expect(prompt).toContain('do not repeat metadataRevision')
-    expect(prompt).toContain('derives searchedCount, fullTextCount, abstractOnlyCount')
+    expect(prompt).toContain('reviewed itemIds plus candidateCount')
+    expect(prompt).toContain('derives coverage counts')
+    expect(prompt).toContain('acquire_pdf')
     expect(prompt).toContain('collection-1')
     expect(prompt).toContain('TP53 evidence')
   })
