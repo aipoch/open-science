@@ -799,7 +799,7 @@ const ProviderStep = ({
 
   return (
     <>
-      <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
+      <CardHeader className="onboarding-advanced-model-header gap-1 rounded-t-lg px-6 py-5">
         <h2 tabIndex={-1} className="text-[15px] font-semibold">
           {t('Connect a model')}
         </h2>
@@ -816,7 +816,7 @@ const ProviderStep = ({
       </CardHeader>
       <Separator className="bg-border-200" />
 
-      <CardContent className="flex-1 px-6 py-5">
+      <CardContent className="onboarding-advanced-model-content flex-1 px-6 py-5">
         <section aria-label={t('Configure model')}>
           {!encryptionAvailable ? (
             <ErrorNotice
@@ -862,7 +862,7 @@ const ProviderStep = ({
         </section>
       </CardContent>
       {children}
-      <CardFooter className="sticky bottom-0 z-10 mt-auto flex-wrap justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
+      <CardFooter className="onboarding-advanced-model-footer sticky bottom-0 z-10 mt-auto flex-wrap justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
         {!canContinue ? (
           <p className="mr-auto text-xs text-text-100">
             {t('Complete every required item above to continue.')}
