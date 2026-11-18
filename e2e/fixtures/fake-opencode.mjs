@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto'
 import {
   appendFile,
   chmod,
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -103,6 +104,7 @@ const RELIABLE_FAILURE_OBSERVE_PROMPT = 'Observe the reliable messaging post-fen
 const RELIABLE_FAIRNESS_PROMPT = 'Start the reliable messaging fairness journey.'
 const LONG_STREAM_PROMPT = 'Stream the long scroll journey.'
 const RUNTIME_RESOURCE_STRESS_PROMPT = 'Run the runtime resource stress journey.'
+const OFFICIAL_SCIENCE_UI_STREAM_PROMPT = 'Run the official science UI storage stream.'
 const MARKDOWN_PARSER_PROMPT = 'Run the native Markdown parser journey.'
 const QUEUE_GATE_PROMPT = 'Hold the queue until the reveal finishes.'
 const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
@@ -209,12 +211,78 @@ const holdFirstSessionCreateWhenRequested = async (sessionId) => {
 }
 
 const suspendSessionWrites = async () => {
-  const sessionsRoot = join(process.env.OPEN_SCIENCE_STORAGE_ROOT ?? '', 'sessions')
+  const storageRoot = process.env.OPEN_SCIENCE_STORAGE_ROOT
+  if (
+    !storageRoot ||
+    storageRoot !== process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT ||
+    !storageRoot.includes('open-science-electron-e2e-')
+  )
+    throw new Error('Session write faults require isolated E2E storage.')
+  const sessionsRoot = join(storageRoot, 'sessions')
+  for (const path of [storageRoot, sessionsRoot]) {
+    const stat = await lstat(path)
+    if (!stat.isDirectory() || stat.isSymbolicLink())
+      throw new Error('Session write faults require real E2E storage directories.')
+  }
   const projects = await readdir(sessionsRoot, { withFileTypes: true })
-  const directories = projects
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => join(sessionsRoot, entry.name))
-  await Promise.all(directories.map((directory) => chmod(directory, 0o500)))
+  const directories = []
+  const files = []
+  for (const project of projects) {
+    if (project.isSymbolicLink()) throw new Error('Session write faults cannot follow symlinks.')
+    if (!project.isDirectory()) continue
+    const directory = join(sessionsRoot, project.name)
+    const stat = await lstat(directory)
+    if (!stat.isDirectory() || stat.isSymbolicLink())
+      throw new Error('Session write faults cannot follow symlinks.')
+    directories.push({ path: directory, mode: stat.mode & 0o7777, dev: stat.dev, ino: stat.ino })
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) throw new Error('Session write faults cannot follow symlinks.')
+      if (!entry.isFile()) continue
+      const path = join(directory, entry.name)
+      const stat = await lstat(path)
+      if (!stat.isFile() || stat.isSymbolicLink())
+        throw new Error('Session write faults require regular Session files.')
+      files.push({ path, mode: stat.mode & 0o7777, dev: stat.dev, ino: stat.ino })
+    }
+  }
+  const changed = []
+  let restored = false
+  const restore = async () => {
+    if (restored) return
+    const errors = []
+    for (const original of [...changed].reverse()) {
+      try {
+        const current = await lstat(original.path)
+        // Never apply an old file's permissions to a replacement or a symlink target.
+        if (
+          !current.isSymbolicLink() &&
+          current.dev === original.dev &&
+          current.ino === original.ino
+        )
+          await chmod(original.path, original.mode)
+      } catch (error) {
+        if (error.code !== 'ENOENT') errors.push(error)
+      }
+    }
+    if (errors.length) throw new AggregateError(errors, 'Failed to restore E2E Session modes.')
+    restored = true
+  }
+  try {
+    // Directory permissions block replacement/new generations. Existing JSONL files must also
+    // lose their write bits, because append does not require a writable parent directory.
+    for (const target of [...directories, ...files]) {
+      await chmod(target.path, target.mode & ~0o222)
+      changed.push(target)
+    }
+  } catch (error) {
+    try {
+      await restore()
+    } catch (restoreError) {
+      throw new AggregateError([error, restoreError], 'E2E Session write fault setup failed.')
+    }
+    throw error
+  }
+  return restore
 }
 
 // A fixture gate occupies one line. The provider may receive more context after the user text.
@@ -1704,6 +1772,31 @@ if (process.argv.includes('--version')) {
             ? rawPrompt.slice(controlStart)
             : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
+      // Keep real imported history in the request, but route this opt-in performance turn before
+      // any historical text can match another fixture. This branch never executes a tool.
+      if (rawPrompt.includes(OFFICIAL_SCIENCE_UI_STREAM_PROMPT)) {
+        const messageId = `e2e-official-ui-${fixtureInstanceId}${nextMessageId++}`
+        for (let chunk = 0; chunk < 64; chunk += 1) {
+          const prefix =
+            chunk === 0
+              ? 'Official science UI stream begins.\n\n'
+              : `### Observation ${chunk + 1}\n\n`
+          const suffix = chunk === 63 ? '\n\nOfficial science UI stream complete.\n' : '\n\n'
+          const sentence = 'The recorded analysis remains available while this response is saved. '
+          const text =
+            prefix + sentence.repeat(10).slice(0, 512 - prefix.length - suffix.length) + suffix
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId,
+              content: { type: 'text', text }
+            }
+          })
+          await delay(250)
+        }
+        return { stopReason: 'end_turn' }
+      }
       if (prompt.includes('Run the framework Resume acceptance journey.')) {
         const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
         await context.client.notify(acp.methods.client.session.update, {

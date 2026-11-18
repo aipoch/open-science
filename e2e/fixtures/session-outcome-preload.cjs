@@ -1,5 +1,6 @@
 'use strict'
 /* eslint-disable @typescript-eslint/no-require-imports -- Source E2E preload, never a production endpoint. */
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- CommonJS preload cannot use TypeScript annotations. */
 const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
 // Other source journeys use their own storage roots and never install outcome faults.
 if (
@@ -10,15 +11,34 @@ if (
 ) {
   const fs = require('node:fs/promises')
   const path = require('node:path')
-  const original = fs.rename
-  fs.rename = async function (source, destination) {
+  const originalRename = fs.rename
+  const originalAppend = fs.appendFile
+  // Read only candidate metadata/new messages. Fault selection never executes package content.
+  const candidateSession = (contents) => {
+    const value = JSON.parse(String(contents))
+    if (value.type === 'session_snapshot') return value.document.session
+    if (value.type !== 'session_update') return value.session
+    const snapshot = value.records.findLast((record) => record.type === 'snapshot')
+    if (snapshot) return snapshot.document.session
+    const metadata = value.records.findLast((record) => record.type === 'metadata')
+    if (!metadata) return undefined
+    const messages =
+      value.records.findLast(
+        (record) => record.type === 'entities' && record.collection === 'graphMessages'
+      ) ??
+      value.records.findLast(
+        (record) => record.type === 'entities' && record.collection === 'messages'
+      )
+    return { ...metadata.session, messages: messages?.upserts ?? [] }
+  }
+  const checkWrite = async (source, destination, contents) => {
     let input
     try {
       input = JSON.parse(
         await fs.readFile(path.join(root, 'e2e-session-outcome-fault.json'), 'utf8')
       )
     } catch (error) {
-      if (error.code === 'ENOENT') return original.call(this, source, destination)
+      if (error.code === 'ENOENT') return
       throw error
     }
     for (const value of [input.projectId, input.sessionId]) {
@@ -29,7 +49,7 @@ if (
     if (dataRoot !== path.resolve(root) && !dataRoot.startsWith(path.resolve(root) + path.sep))
       throw new Error('The Artifact root must belong to the isolated fixture.')
     let reject = false
-    if (input.kind === 'artifact-publication') {
+    if (input.kind === 'artifact-publication' && source !== undefined) {
       for (const value of [input.artifactStorageSessionId, input.artifactRunId]) {
         if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]+$/u.test(value))
           throw new Error('Unsafe outcome Artifact identity.')
@@ -48,10 +68,14 @@ if (
           path.join(dataRoot, 'artifacts', input.projectId, input.sessionId) &&
         path.basename(String(destination)) === path.basename(String(source))
     } else if (
-      String(destination) ===
-      path.join(root, 'sessions', input.projectId, `${input.sessionId}.json`)
+      [`.json`, `.jsonl`].some(
+        (extension) =>
+          String(destination) ===
+          path.join(root, 'sessions', input.projectId, `${input.sessionId}${extension}`)
+      )
     ) {
-      const candidate = JSON.parse(await fs.readFile(source, 'utf8')).session
+      const candidate = candidateSession(contents ?? (await fs.readFile(source, 'utf8')))
+      if (!candidate) return
       if (input.kind === 'terminal') {
         reject =
           !candidate.activeRun &&
@@ -77,10 +101,17 @@ if (
       }
     }
     if (reject) {
-      await fs.appendFile(path.join(root, 'e2e-session-outcome-hits'), `${process.pid}\n`)
+      await originalAppend(path.join(root, 'e2e-session-outcome-hits'), `${process.pid}\n`)
       throw Object.assign(new Error(`Synthetic ${input.kind} write failure.`), { code: 'EIO' })
     }
-    return original.call(this, source, destination)
+  }
+  fs.rename = async function (source, destination) {
+    await checkWrite(source, destination)
+    return originalRename.call(this, source, destination)
+  }
+  fs.appendFile = async function (destination, contents, options) {
+    await checkWrite(undefined, destination, contents)
+    return originalAppend.call(this, destination, contents, options)
   }
   require('node:module').syncBuiltinESMExports()
 }

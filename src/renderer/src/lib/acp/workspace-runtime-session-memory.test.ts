@@ -46,6 +46,45 @@ describe('workspace Session Memory reconfiguration', () => {
   })
   afterEach(() => vi.unstubAllGlobals())
 
+  it('hydrates older messages before persisting a Memory change from a history page', async () => {
+    const complete = toPersistedSession(
+      session({
+        messages: [
+          {
+            id: 'older-message',
+            role: 'user',
+            content: 'Earlier research',
+            createdAt: 1,
+            updatedAt: 1,
+            status: 'complete',
+            eventIds: []
+          }
+        ]
+      })
+    )
+    useSessionStore.setState({ sessions: [session({ contentLoaded: false, messages: [] })] })
+    const pending = deferred<typeof complete>()
+    const loadOne = vi.fn(() => pending.promise)
+    vi.stubGlobal('window', { api: { sessions: { loadOne } } })
+    const persist = vi.fn(async () => {
+      const durable = toPersistedSession(useSessionStore.getState().sessions[0])
+      expect(durable.messages.map(({ id }) => id)).toEqual(['older-message'])
+      expect(durable.memoryEnabled).toBe(false)
+    })
+    const changed = reconfigureWorkspaceMemory(
+      { state: { sessionIds: [], cwd: '/workspace' } } as never,
+      'session-1',
+      false,
+      persist
+    )
+    expect(loadOne).toHaveBeenCalledOnce()
+    expect(persist).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].memoryEnabled).toBe(true)
+    pending.resolve(complete)
+    await changed
+    expect(persist).toHaveBeenCalledOnce()
+  })
+
   it('persists the preference, replaces live capabilities, and schedules history replay', async () => {
     const flush = vi.fn(async () => undefined)
     const resetSessionContext = vi.fn(async () => ({

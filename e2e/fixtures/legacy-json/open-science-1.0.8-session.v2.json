@@ -1,0 +1,107 @@
+{
+  "version": 2,
+  "session": {
+    "id": "legacy-upgrade-json-session",
+    "number": 1,
+    "projectId": "legacy-project-id",
+    "revision": 1,
+    "title": "Legacy JSON upgrade session",
+    "cwd": "/legacy/workspace",
+    "status": "idle",
+    "permissionProfile": "ask",
+    "autoReviewEnabled": false,
+    "memoryEnabled": true,
+    "delegationPolicy": "allow",
+    "messages": [
+      {
+        "id": "legacy-upgrade-question",
+        "role": "user",
+        "content": "LEGACY-UPGRADE-QUESTION: written by Open-Science 1.0.8.",
+        "status": "complete",
+        "eventIds": [],
+        "createdAt": 1794585445971,
+        "updatedAt": 1794585445971
+      },
+      {
+        "id": "legacy-upgrade-answer",
+        "role": "agent",
+        "content": "LEGACY-UPGRADE-ANSWER: preserved across the JSONL upgrade.",
+        "status": "complete",
+        "eventIds": [],
+        "createdAt": 1794585445972,
+        "updatedAt": 1794585445972,
+        "responseToMessageId": "legacy-upgrade-question",
+        "completedAt": 1794585445972
+      }
+    ],
+    "createdAt": 1794585445971,
+    "updatedAt": 1794585445971,
+    "agentFrameworkId": "opencode",
+    "conversationGraph": {
+      "schemaVersion": 1,
+      "rootFrameId": "root-frame-legacy-upgrade-json-session",
+      "activeFrameId": "root-frame-legacy-upgrade-json-session",
+      "frames": [
+        {
+          "id": "root-frame-legacy-upgrade-json-session",
+          "originBindingState": "root",
+          "kind": "root",
+          "status": "completed",
+          "activeBranchId": "message-branch-legacy-upgrade-json-session",
+          "createdAt": 1794585445971,
+          "completedAt": 1794585445971
+        }
+      ],
+      "branches": [
+        {
+          "id": "message-branch-legacy-upgrade-json-session",
+          "agentFrameId": "root-frame-legacy-upgrade-json-session",
+          "headMessageId": "legacy-upgrade-answer",
+          "createdAt": 1794585445971,
+          "updatedAt": 1794585445971
+        }
+      ],
+      "messages": [
+        {
+          "id": "legacy-upgrade-question",
+          "role": "user",
+          "content": "LEGACY-UPGRADE-QUESTION: written by Open-Science 1.0.8.",
+          "status": "complete",
+          "eventIds": [],
+          "createdAt": 1794585445971,
+          "updatedAt": 1794585445971,
+          "agentFrameId": "root-frame-legacy-upgrade-json-session",
+          "introducedOnBranchId": "message-branch-legacy-upgrade-json-session",
+          "revisionRootMessageId": "legacy-upgrade-question",
+          "runtimeSegmentId": "runtime-segment-legacy-upgrade-json-session"
+        },
+        {
+          "id": "legacy-upgrade-answer",
+          "role": "agent",
+          "content": "LEGACY-UPGRADE-ANSWER: preserved across the JSONL upgrade.",
+          "status": "complete",
+          "eventIds": [],
+          "createdAt": 1794585445972,
+          "updatedAt": 1794585445972,
+          "responseToMessageId": "legacy-upgrade-question",
+          "completedAt": 1794585445972,
+          "agentFrameId": "root-frame-legacy-upgrade-json-session",
+          "introducedOnBranchId": "message-branch-legacy-upgrade-json-session",
+          "parentMessageId": "legacy-upgrade-question",
+          "runtimeSegmentId": "runtime-segment-legacy-upgrade-json-session"
+        }
+      ],
+      "activities": [],
+      "activityGroups": [],
+      "runtimeSegments": [
+        {
+          "id": "runtime-segment-legacy-upgrade-json-session",
+          "agentFrameId": "root-frame-legacy-upgrade-json-session",
+          "frameworkId": "opencode",
+          "startedAt": 1794585445971
+        }
+      ]
+    },
+    "activities": []
+  }
+}

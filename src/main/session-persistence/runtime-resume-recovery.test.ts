@@ -93,7 +93,7 @@ it.each(['missing', 'wrong-project', 'unreadable'] as const)(
     expect(h.log.warn).not.toHaveBeenCalled()
 
     // Controlled authority failures reproduce the diagnostic gap, not the unknown user trigger.
-    const sessionPath = join(h.root, 'sessions', scope.projectId, `${scope.sessionId}.json`)
+    const sessionPath = join(h.root, 'sessions', scope.projectId, `${scope.sessionId}.jsonl`)
     const originalBytes = await readFile(sessionPath, 'utf8')
     if (failure === 'missing') await rm(sessionPath)
     if (failure === 'unreadable') await writeFile(sessionPath, '{PRIVATE_INVALID_JSON', 'utf8')

@@ -126,6 +126,42 @@ const createFileIndex = (overrides: Partial<SessionFileIndex> = {}): SessionFile
 })
 
 describe('SessionPersistenceCoordinator contracts', () => {
+  it('pins against the current preference while retaining history and using revision CAS', async () => {
+    const original = createSession({ pinned: false, revision: 12, title: 'Fresh title' })
+    const { repository, sessions } = createRepository([original])
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const saved = await coordinator.setSessionPinned({
+      projectId: original.projectId,
+      sessionId: original.id,
+      expectedPinned: false,
+      pinned: true
+    })
+    expect(saved).toMatchObject({
+      title: 'Fresh title',
+      pinned: true,
+      messages: original.messages,
+      updatedAt: original.updatedAt
+    })
+    expect(repository.assertSessionIdentityOwnership).toHaveBeenCalledWith(
+      original.id,
+      original.projectId
+    )
+    expect(repository.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ pinned: true }),
+      12
+    )
+    await expect(
+      coordinator.setSessionPinned({
+        projectId: original.projectId,
+        sessionId: original.id,
+        expectedPinned: false,
+        pinned: false
+      })
+    ).rejects.toMatchObject({ code: 'session-details-conflict' })
+    expect(sessions.get(original.id)?.pinned).toBe(true)
+    expect(repository.saveSession).toHaveBeenCalledTimes(1)
+  })
+
   it('preserves the latest conversation and replay marker when binding a resumed Task provider', async () => {
     const current = materializeSessionConversationGraph(
       createSession({

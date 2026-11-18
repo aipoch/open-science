@@ -20,6 +20,7 @@ import {
   resolveMessageBranchPath,
   validateConversationGraph,
   type PersistedAgentFrame,
+  type PersistedBranchActivity,
   type PersistedBranchActivityGroup,
   type PersistedConversationGraph,
   type PersistedMessageBranch,
@@ -42,6 +43,32 @@ export type RuntimeSessionScope = {
   agentFrameId: string
   messageBranchId: string
   runtimeSegmentId: string
+}
+
+// Canonical graph after-images collected where the reducer changes an entity. This is an
+// internal persistence hint, not a provider event log or a renderer command contract.
+export type RuntimeSessionChanges = {
+  readonly messages: readonly PersistedMessageNode[]
+  readonly activities: readonly PersistedBranchActivity[]
+  readonly activityGroups: readonly PersistedBranchActivityGroup[]
+  readonly branches: readonly PersistedMessageBranch[]
+  // Actual accepted text chunks, before any persistence batching. A message is omitted when any
+  // event in this batch needs content normalization or carries non-text state.
+  readonly textEvents?: readonly {
+    messageId: string
+    eventId: string
+    text: string
+    timestamp: number
+  }[]
+}
+
+type RuntimeSessionChangeCollector = {
+  messages: Map<string, PersistedMessageNode>
+  activities: Map<string, PersistedBranchActivity>
+  activityGroups: Map<string, PersistedBranchActivityGroup>
+  branches: Map<string, PersistedMessageBranch>
+  textEvents: NonNullable<RuntimeSessionChanges['textEvents']>[number][]
+  nonTextMessageIds: Set<string>
 }
 
 const scopedPath = (
@@ -69,6 +96,64 @@ const scopedPath = (
     throw new Error('Runtime Session prompt is not on the supplied Message Branch.')
   }
   return { graph, frame, branch, path }
+}
+
+const cloneRuntimeSessionScope = (
+  input: PersistedChatSession,
+  scope: RuntimeSessionScope,
+  events: readonly AcpRuntimeEvent[] = []
+): PersistedChatSession => {
+  const { graph } = scopedPath(input, scope)
+  const messageIds = new Set<string>()
+  const activityIds = new Set<string>()
+  for (const event of events) {
+    if (event.kind === 'message' && event.role === 'assistant') {
+      messageIds.add(
+        createRuntimeAgentMessageId(input.id, event.messageId ?? event.id, scope.promptMessageId)
+      )
+    } else if ((event.kind === 'tool' || event.kind === 'compaction') && event.toolCallId) {
+      activityIds.add(resolveRuntimeToolActivityId(event.toolCallId, scope, graph.activities))
+    }
+  }
+  // Projection mutates only this prompt's responses, activities and groups, plus existing IDs
+  // addressed by this batch. In particular, a tool ID can still address an older prompt on the
+  // same Branch, and terminal usage spans all Runtime Segments of the current prompt. Keep those
+  // existing attribution rules while leaving untouched historical content shared.
+  return {
+    ...input,
+    conversationGraph: {
+      ...graph,
+      frames: [...graph.frames],
+      branches: graph.branches.map((branch) =>
+        branch.id === scope.messageBranchId ? { ...branch } : branch
+      ),
+      messages: graph.messages.map((message) =>
+        message.id === scope.promptMessageId ||
+        messageIds.has(message.id) ||
+        (message.agentFrameId === scope.agentFrameId &&
+          message.introducedOnBranchId === scope.messageBranchId &&
+          message.role === 'agent' &&
+          message.responseToMessageId === scope.promptMessageId)
+          ? structuredClone(message)
+          : message
+      ),
+      activities: graph.activities.map((activity) =>
+        activity.agentFrameId === scope.agentFrameId &&
+        activity.messageBranchId === scope.messageBranchId &&
+        (activity.promptMessageId === scope.promptMessageId || activityIds.has(activity.id))
+          ? structuredClone(activity)
+          : activity
+      ),
+      activityGroups: graph.activityGroups.map((group) =>
+        group.agentFrameId === scope.agentFrameId &&
+        group.messageBranchId === scope.messageBranchId &&
+        group.promptMessageId === scope.promptMessageId
+          ? structuredClone(group)
+          : group
+      ),
+      runtimeSegments: [...graph.runtimeSegments]
+    }
+  }
 }
 
 const appendUnique = (
@@ -136,7 +221,8 @@ const synchronizeFlatProjection = (session: PersistedChatSession): PersistedChat
 const completeGroups = (
   groups: PersistedBranchActivityGroup[],
   scope: RuntimeSessionScope,
-  now: number
+  now: number,
+  changes?: RuntimeSessionChangeCollector
 ): void => {
   for (const group of groups) {
     if (
@@ -148,6 +234,7 @@ const completeGroups = (
     ) {
       group.completedAt = now
       group.updatedAt = now
+      changes?.activityGroups.set(group.id, group)
     }
   }
 }
@@ -323,7 +410,7 @@ export const attachRuntimeSessionArtifacts = (
     timestamp: number
   }
 ): { session: PersistedChatSession; messageId: string } => {
-  const session = structuredClone(inputSession)
+  const session = cloneRuntimeSessionScope(inputSession, scope)
   const { graph, branch } = scopedPath(session, scope)
   let owner = input.messageId
     ? graph.messages.find(
@@ -393,13 +480,13 @@ export const attachRuntimeSessionArtifacts = (
   return { session: synchronizeFlatProjection(session), messageId: owner.id }
 }
 
-export const applyRuntimeSessionEvents = (
+const applyRuntimeSessionEventsWithCollector = (
   inputSession: PersistedChatSession,
   scope: RuntimeSessionScope,
-  events: readonly AcpRuntimeEvent[]
+  events: readonly AcpRuntimeEvent[],
+  changes?: RuntimeSessionChangeCollector
 ): PersistedChatSession => {
-  let session = structuredClone(inputSession)
-  scopedPath(session, scope)
+  let session = cloneRuntimeSessionScope(inputSession, scope, events)
   const groupControls = new Set(
     session
       .conversationGraph!.activityGroups.filter(
@@ -451,8 +538,9 @@ export const applyRuntimeSessionEvents = (
     if (event.kind === 'message' && event.role === 'assistant') {
       const text = getAcpRuntimeEventText(event) ?? ''
       let image = getAcpRuntimeEventImage(event)
+      const hasImage = Boolean(image) || event.image !== undefined
       if (!text && !image) continue
-      completeGroups(graph.activityGroups, scope, event.timestamp)
+      completeGroups(graph.activityGroups, scope, event.timestamp, changes)
       const streamId = event.messageId ?? event.id
       const id = createRuntimeAgentMessageId(session.id, streamId, scope.promptMessageId)
       let message = graph.messages.find(({ id: candidate }) => candidate === id)
@@ -504,13 +592,34 @@ export const applyRuntimeSessionEvents = (
         session.agentFrameworkId === 'claude-code'
           ? normalizeClaudeCodeRefusalText(mergedContent)
           : mergedContent
+      if (changes) {
+        if (
+          message.content !== mergedContent ||
+          hasImage ||
+          message.images?.length ||
+          message.uploads?.length ||
+          message.annotations?.length
+        ) {
+          changes.nonTextMessageIds.add(message.id)
+        } else if (text && !changes.nonTextMessageIds.has(message.id)) {
+          changes.textEvents.push({
+            messageId: message.id,
+            eventId: event.id,
+            text,
+            timestamp: event.timestamp
+          })
+        }
+      }
       if (image) message.images = [...(message.images ?? []), { id: event.id, ...image }]
       message.eventIds.push(event.id)
       message.updatedAt = Math.max(message.updatedAt, event.timestamp)
       branch.updatedAt = Math.max(branch.updatedAt, event.timestamp)
+      changes?.messages.set(message.id, message)
+      changes?.branches.set(branch.id, branch)
     } else if ((event.kind === 'tool' || event.kind === 'compaction') && event.toolCallId) {
       const toolCallId = resolveRuntimeToolActivityId(event.toolCallId, scope, graph.activities)
-      if (event.kind === 'compaction') completeGroups(graph.activityGroups, scope, event.timestamp)
+      if (event.kind === 'compaction')
+        completeGroups(graph.activityGroups, scope, event.timestamp, changes)
       if (
         event.kind === 'tool' &&
         (isActivityGroupToolEvent(event) || groupControls.has(toolCallId))
@@ -518,8 +627,8 @@ export const applyRuntimeSessionEvents = (
         groupControls.add(toolCallId)
         const title = getActivityGroupTitleFromToolEvent(event)
         if (title && !graph.activityGroups.some(({ id }) => id === toolCallId)) {
-          completeGroups(graph.activityGroups, scope, event.timestamp)
-          graph.activityGroups.push({
+          completeGroups(graph.activityGroups, scope, event.timestamp, changes)
+          const group: PersistedBranchActivityGroup = {
             id: toolCallId,
             title,
             sortIndex: event.timestamp,
@@ -529,7 +638,9 @@ export const applyRuntimeSessionEvents = (
             updatedAt: event.timestamp,
             agentFrameId: scope.agentFrameId,
             messageBranchId: scope.messageBranchId
-          })
+          }
+          graph.activityGroups.push(group)
+          changes?.activityGroups.set(group.id, group)
         }
         continue
       }
@@ -570,6 +681,7 @@ export const applyRuntimeSessionEvents = (
         if (group) {
           group.activityIds.push(activity.id)
           group.updatedAt = event.timestamp
+          changes?.activityGroups.set(group.id, group)
         }
       }
       const wasTerminal = isTerminal(activity.status)
@@ -593,6 +705,7 @@ export const applyRuntimeSessionEvents = (
       activity.terminalExitCode = event.terminalExitCode ?? activity.terminalExitCode
       activity.elicitation = event.elicitation ?? activity.elicitation
       if (!wasTerminal) activity.updatedAt = event.timestamp
+      changes?.activities.set(activity.id, activity)
     } else if (event.kind === 'stop' || event.kind === 'error') {
       terminalize(session, scope, event)
     }
@@ -600,4 +713,52 @@ export const applyRuntimeSessionEvents = (
   }
   validateConversationGraph(session.conversationGraph!)
   return synchronizeFlatProjection(session)
+}
+
+export const applyRuntimeSessionEvents = (
+  inputSession: PersistedChatSession,
+  scope: RuntimeSessionScope,
+  events: readonly AcpRuntimeEvent[]
+): PersistedChatSession => applyRuntimeSessionEventsWithCollector(inputSession, scope, events)
+
+export const applyRuntimeSessionEventsWithChanges = (
+  inputSession: PersistedChatSession,
+  scope: RuntimeSessionScope,
+  events: readonly AcpRuntimeEvent[]
+): { session: PersistedChatSession; changes?: RuntimeSessionChanges } => {
+  // Terminal, artifact and unknown events can alter additional session fields or entities.
+  // Until their full business effects are described, preserve the complete-save fallback.
+  const collector: RuntimeSessionChangeCollector | undefined = events.every(
+    (event) =>
+      (event.kind === 'message' && event.role === 'assistant') ||
+      event.kind === 'tool' ||
+      event.kind === 'compaction'
+  )
+    ? {
+        messages: new Map(),
+        activities: new Map(),
+        activityGroups: new Map(),
+        branches: new Map(),
+        textEvents: [],
+        nonTextMessageIds: new Set()
+      }
+    : undefined
+  const session = applyRuntimeSessionEventsWithCollector(inputSession, scope, events, collector)
+  const textEvents = collector?.textEvents.filter(
+    ({ messageId }) => !collector.nonTextMessageIds.has(messageId)
+  )
+  return {
+    session,
+    ...(collector
+      ? {
+          changes: {
+            messages: [...collector.messages.values()],
+            activities: [...collector.activities.values()],
+            activityGroups: [...collector.activityGroups.values()],
+            branches: [...collector.branches.values()],
+            ...(textEvents?.length ? { textEvents } : {})
+          }
+        }
+      : {})
+  }
 }
