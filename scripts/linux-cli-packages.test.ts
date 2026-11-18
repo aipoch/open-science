@@ -13,7 +13,7 @@ import {
 } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { c } from 'tar'
 import { load } from 'js-yaml'
 import { publicationFiles } from './publish-linux-cli-packages.mjs'
@@ -25,6 +25,7 @@ import {
   packageIdentity,
   preparePackage,
   rpmSpec,
+  runtimeElfFiles,
   validateArchiveEntry
 } from './linux-cli-packages.mjs'
 
@@ -189,32 +190,48 @@ describe('Linux CLI packages', () => {
       'checksum'
     )
   })
-  it('retains GNU ELF dependencies while excluding private scripts and the dormant musl canvas addon', () => {
-    const spec = rpmSpec(metadata, ['libexample.so.1'])
-    expect(spec).not.toMatch(/AutoReq(?:Prov)?:\s*(?:no|0)/)
-    expect(spec).toContain('%global __requires_exclude ^(libexample\\.so\\.1)')
-    expect(spec).toContain('%global __os_install_post %{nil}')
-    expect(spec).not.toContain('/usr/local')
-    expect(spec).toContain('BuildArch: x86_64')
-    expect(spec).toContain('--install')
-    expect(spec).toContain("open-science-cli' 90")
-    const excluded = new RegExp(spec.match(/^%global __requires_exclude_from (.*)$/m)![1])
-    expect(excluded.test('/opt/open-science-cli/backend/cli.mjs')).toBe(true)
-    expect(
-      excluded.test(
-        '/opt/open-science-cli/backend/node_modules/@napi-rs/canvas-linux-x64-musl/skia.linux-x64-musl.node'
+  it.each(['x64', 'arm64'])(
+    'retains GNU ELF dependencies and original musl bytes for %s',
+    async (arch) => {
+      const root = await temporary()
+      const dormant = [
+        `backend/node_modules/@napi-rs/canvas-linux-${arch}-musl/skia.node`,
+        `backend/node_modules/@img/sharp-linuxmusl-${arch}/lib/sharp.node`,
+        `backend/node_modules/@img/sharp-libvips-linuxmusl-${arch}/lib/libvips-cpp.so.8`
+      ]
+      const active = [
+        'node-runtime/node',
+        `backend/node_modules/@napi-rs/canvas-linux-${arch}-gnu/skia.node`,
+        `backend/node_modules/@img/sharp-linux-${arch}/lib/sharp.node`,
+        `backend/node_modules/@img/sharp-libvips-linux-${arch}/lib/libvips-cpp.so.8`,
+        'backend/node_modules/another-native-addon/index.node',
+        `backend/node_modules/@img/sharp-linuxmusl-${arch}-extra/index.node`
+      ]
+      const elf = Buffer.from('7f454c46', 'hex')
+      for (const file of [...dormant, ...active]) {
+        await mkdir(dirname(join(root, file)), { recursive: true })
+        await writeFile(join(root, file), elf)
+      }
+      await writeFile(join(root, 'backend/cli.mjs'), '/* private Node script */')
+      expect((await runtimeElfFiles(root, arch)).sort()).toEqual(
+        active.map((file) => join(root, file)).sort()
       )
-    ).toBe(true)
-    expect(
-      excluded.test(
-        '/opt/open-science-cli/backend/node_modules/@napi-rs/canvas-linux-x64-gnu/skia.linux-x64-gnu.node'
-      )
-    ).toBe(false)
-    expect(excluded.test('/opt/open-science-cli/node-runtime/node')).toBe(false)
-    expect(
-      excluded.test('/opt/open-science-cli/backend/node_modules/another-native-addon/index.node')
-    ).toBe(false)
-  })
+      for (const file of dormant) expect(await readFile(join(root, file))).toEqual(elf)
+
+      const spec = rpmSpec({ ...metadata, target: `linux-${arch}-gnu` }, ['libexample.so.1'])
+      expect(spec).not.toMatch(/AutoReq(?:Prov)?:\s*(?:no|0)/)
+      expect(spec).toContain('%global __requires_exclude ^(libexample\\.so\\.1)')
+      expect(spec).toContain('%global __os_install_post %{nil}')
+      expect(spec).not.toContain('/usr/local')
+      expect(spec).toContain(`BuildArch: ${arch === 'x64' ? 'x86_64' : 'aarch64'}`)
+      expect(spec).toContain('--install')
+      expect(spec).toContain("open-science-cli' 90")
+      const excluded = new RegExp(spec.match(/^%global __requires_exclude_from (.*)$/m)![1])
+      expect(excluded.test('/opt/open-science-cli/backend/cli.mjs')).toBe(true)
+      for (const file of dormant) expect(excluded.test(`/opt/open-science-cli/${file}`)).toBe(true)
+      for (const file of active) expect(excluded.test(`/opt/open-science-cli/${file}`)).toBe(false)
+    }
+  )
 })
 
 describe.skipIf(process.platform === 'win32')('package lifecycle boundaries', () => {
