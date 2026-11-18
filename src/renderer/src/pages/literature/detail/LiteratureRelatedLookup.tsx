@@ -1,3 +1,4 @@
+import { CitationLookupLoading } from './CitationLookupLoading'
 import { CitationLookupError } from './CitationLookupError'
 import { CitationAbstract } from './LiteratureDetailText'
 import { fullCreatorLabel, publicationSummary } from '../literature-item-display'
@@ -542,34 +543,7 @@ function LiteratureRelatedList({
             : t('Papers that cite this paper.')}
         </p>
         {busy && busyVisible && !result ? (
-          <div data-slot="citation-loading" role="status" className="space-y-5">
-            <div className="flex items-start gap-3 py-2">
-              <LoaderCircle
-                className="mt-0.5 size-5 shrink-0 animate-spin text-primary motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{t('Searching…')}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {direction === 'references'
-                    ? t('Papers referenced by this paper.')
-                    : t('Papers that cite this paper.')}
-                </p>
-              </div>
-            </div>
-            <div aria-hidden="true" className="divide-y divide-border-300">
-              {['w-4/5', 'w-3/5', 'w-5/6', 'w-2/3'].map((width) => (
-                <div key={width} className="flex gap-3 py-5 first:pt-0">
-                  <div className="mt-0.5 size-4 shrink-0 rounded bg-muted" />
-                  <div className="min-w-0 flex-1 space-y-3">
-                    <div className={`h-3.5 rounded bg-muted ${width}`} />
-                    <div className="h-3 w-1/2 rounded bg-muted" />
-                    <div className="h-2.5 w-20 rounded bg-muted" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          <CitationLookupLoading direction={direction} />
         ) : result?.state === 'unavailable' ? (
           <CitationLookupError
             result={result}

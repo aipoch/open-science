@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Shrink, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { Shrink, PanelRightClose, PanelRightOpen, LoaderCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ZoomControls } from '@/components/ui/zoom-controls'
 import { fullCreatorLabel } from '../literature-item-display'
@@ -836,7 +836,17 @@ export function LiteratureCitationCanvas({
               role="status"
               className="flex h-full items-center justify-center p-4 text-sm text-muted-foreground"
             >
-              {busy && !initialSearchSettled ? t('Searching…') : centerTitle}
+              {busy && !initialSearchSettled ? (
+                <span className="inline-flex items-center gap-2">
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="size-4 text-primary motion-safe:animate-spin"
+                  />
+                  {t('Searching…')}
+                </span>
+              ) : (
+                centerTitle
+              )}
             </div>
           )}
         </div>

@@ -205,6 +205,10 @@ window.api = {
     cancelRelated: async () => {},
     related: async (request: LiteratureRelatedRequest) => {
       fileRequests.push(request)
+      if (params.has('citation-loading'))
+        await new Promise<void>((resolve) =>
+          Object.assign(window, { finishCitationLookup: resolve })
+        )
       if (params.has('citation-graph')) {
         if (params.has('fail-next-page') && request.offset && !failedCitationPage) {
           failedCitationPage = true
@@ -224,10 +228,6 @@ window.api = {
           params.has('mutual-paper')
         )
       }
-      if (new URLSearchParams(location.search).has('citation-loading'))
-        await new Promise<void>((resolve) =>
-          Object.assign(window, { finishCitationLookup: resolve })
-        )
       if (citationUnavailable)
         return {
           itemId: fileItem.id,

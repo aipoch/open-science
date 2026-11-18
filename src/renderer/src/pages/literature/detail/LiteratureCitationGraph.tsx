@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ChevronRight } from 'lucide-react'
+import { ArrowLeft, ChevronRight, LoaderCircle } from 'lucide-react'
 import { Tabs } from 'radix-ui'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import type { LiteratureRelatedRecord } from '@aipoch/literature-discovery/contracts'
@@ -343,6 +343,13 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
                   onClick={() => controller.setDirection(direction)}
                 >
                   {directionLabel(direction)}
+                  {!detailsOpen && controller.busy === direction && (
+                    <LoaderCircle
+                      aria-label={t('Loading…')}
+                      role="img"
+                      className="size-3.5 motion-safe:animate-spin"
+                    />
+                  )}
                 </Button>
               </Tabs.Trigger>
             )

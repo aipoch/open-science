@@ -103,6 +103,45 @@ test('Electron graph desktop canvas, details and independent paper list', async 
   await captureGraph(graphApp, info, 'electron-graph-desktop-selected')
 })
 
+test('Electron shows initial, queued and partial citation results', async ({ page }, info) => {
+  await page.goto(url + '&citation-loading')
+  await page.getByRole('button', { name: 'All references', exact: true }).click()
+  await page.getByRole('button', { name: 'A reference with supporting PDFs', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  const finishRequest = (): Promise<void> =>
+    page.evaluate(() =>
+      (window as unknown as { finishCitationLookup(): void }).finishCitationLookup()
+    )
+  await dialog.getByRole('button', { name: 'References', exact: true }).click()
+  await expect(dialog.locator('[data-slot="citation-loading"]')).toBeVisible()
+  await finishRequest()
+  await expect(dialog.getByRole('checkbox').first()).toBeVisible()
+  await dialog.getByRole('button', { name: 'Citation graph', exact: true }).click()
+  const frame = dialog.locator('[data-current-frame="true"]')
+  const tabs = frame.getByRole('tablist', { name: 'Paper list' })
+  const references = tabs.getByRole('tab', { name: /^References/ })
+  const citedBy = tabs.getByRole('tab', { name: /^Cited by/ })
+  const placeholder = frame.locator('[data-slot="citation-loading"]')
+  await expect(references).toHaveAttribute('aria-busy', 'true')
+  await expect(placeholder).toContainText('Searching…')
+  await page.screenshot({ path: info.outputPath('citation-first-load.png') })
+  await citedBy.click()
+  await expect(placeholder).toContainText('Queued')
+  await finishRequest()
+  await expect(citedBy).toHaveAttribute('aria-busy', 'true')
+  await expect(placeholder).toContainText('Papers that cite this paper.')
+  await expect(placeholder).toContainText('Searching…')
+  await references.click()
+  await expect(frame.locator('[data-citation-paper-id]')).toHaveCount(20)
+  await expect(placeholder).toHaveCount(0)
+  await page.screenshot({ path: info.outputPath('citation-cited-by-loading.png') })
+  await finishRequest()
+  await expect(citedBy).not.toHaveAttribute('aria-busy', 'true')
+  await citedBy.click()
+  await expect(frame.locator('[data-citation-paper-id]')).toHaveCount(20)
+  await expect(placeholder).toHaveCount(0)
+})
+
 test('Electron keeps a failed citation page readable and retries in place', async ({
   page
 }, info) => {

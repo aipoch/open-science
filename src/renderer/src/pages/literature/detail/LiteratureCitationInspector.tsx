@@ -1,7 +1,7 @@
 import { CitationAbstract } from './LiteratureDetailText'
 import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, Inbox, FileText } from 'lucide-react'
+import { ArrowLeft, Inbox, FileText, LoaderCircle } from 'lucide-react'
 import { Tabs } from 'radix-ui'
 import { Button } from '@/components/ui/button'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
@@ -283,6 +283,7 @@ export function LiteratureCitationInspector({
               return (
                 <Tabs.Trigger
                   key={value}
+                  aria-busy={statusModel.busy === value || undefined}
                   value={value}
                   disabled={
                     model.filter !== 'all' &&
@@ -291,6 +292,12 @@ export function LiteratureCitationInspector({
                   className="flex min-w-0 flex-1 items-center justify-center gap-2 border-b-2 border-transparent px-2 py-3 text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-50 data-[state=active]:border-primary data-[state=active]:text-primary"
                 >
                   {value === 'references' ? t('References') : t('Cited by')}
+                  {statusModel.busy === value && (
+                    <LoaderCircle
+                      aria-hidden="true"
+                      className="size-3.5 shrink-0 motion-safe:animate-spin"
+                    />
+                  )}
                   {statusModel.states[value].pages > 0 ? (
                     <span
                       className="tabular-nums"

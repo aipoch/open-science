@@ -181,7 +181,8 @@
     "src/renderer/src/pages/literature/detail/LiteratureCitationInspector.tsx",
     "src/renderer/src/pages/literature/detail/LiteratureCitationStatus.tsx",
     "src/renderer/src/pages/literature/detail/useCitationSource.ts",
-    "src/renderer/src/pages/literature/detail/CitationLookupError.tsx"
+    "src/renderer/src/pages/literature/detail/CitationLookupError.tsx",
+    "src/renderer/src/pages/literature/detail/CitationLookupLoading.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.tsx",

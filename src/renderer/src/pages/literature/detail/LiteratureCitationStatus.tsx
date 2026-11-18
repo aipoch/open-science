@@ -1,3 +1,4 @@
+import { CitationLookupLoading } from './CitationLookupLoading'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { CitationLookupError } from './CitationLookupError'
@@ -45,6 +46,13 @@ export function LiteratureCitationStatus({
   const footerClass =
     'sticky bottom-0 flex shrink-0 items-center justify-between gap-2 border-t border-border-300 bg-card px-3 py-2 text-xs text-muted-foreground sm:px-4'
   const title = direction === 'references' ? t('References') : t('Papers citing this paper')
+  if (!result && busy) {
+    return (
+      <section aria-label={title} data-citation-status className="px-3 pt-3 sm:px-4">
+        <CitationLookupLoading direction={direction} queued={busy !== direction} />
+      </section>
+    )
+  }
   return (
     <section
       key={direction}
@@ -127,22 +135,18 @@ export function LiteratureCitationStatus({
               : undefined
           }
         />
-      ) : canPage || busy === direction ? (
+      ) : canPage ? (
         <div className={footerClass}>
-          {state.pages > 0 ? <span className="tabular-nums">{loadedLabel}</span> : null}
-          {canPage ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={blocked}
-              aria-busy={busy === direction || undefined}
-              onClick={() => void load(direction, nextOffset)}
-            >
-              {busy === direction ? t('Loading…') : t('Load more')}
-            </Button>
-          ) : (
-            <span role="status">{t('Searching…')}</span>
-          )}
+          <span className="tabular-nums">{loadedLabel}</span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={blocked}
+            aria-busy={busy === direction || undefined}
+            onClick={() => void load(direction, nextOffset)}
+          >
+            {busy === direction ? t('Loading…') : t('Load more')}
+          </Button>
         </div>
       ) : !result && !busy ? (
         <Button
