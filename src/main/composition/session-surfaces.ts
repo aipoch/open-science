@@ -134,7 +134,8 @@ export async function composeSessionSurfaces({
       configRoot,
       settingsService,
       sessionPersistenceBackend,
-      sessionPersistenceCoordinator
+      sessionPersistenceCoordinator,
+      loadStartupSessions
     },
     (dependencies) => {
       const log = createLogger('session-details')
