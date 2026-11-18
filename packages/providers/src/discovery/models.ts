@@ -373,7 +373,10 @@ export const listProviderModels = async (
         offset += items.length
       }
     }
-    if (!catalog.size)
+    if (
+      !catalog.size ||
+      (options.knownModelsOnly && !target.knownModelIds?.some((id) => catalog.has(id)))
+    )
       throw new CatalogFailure('invalid-response', 'The vendor returned no supported models.')
     if (options.enrichment) {
       // Enrichment cannot expand membership or turn an otherwise complete list into a failure.
