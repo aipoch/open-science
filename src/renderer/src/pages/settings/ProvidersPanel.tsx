@@ -640,10 +640,12 @@ const ProvidersPanel = ({
         aria-label={t('Providers')}
         actionClassName="ml-auto"
         action={
-          <Button type="button" variant="outline" size="sm" onClick={onCreateProvider}>
-            <Plus aria-hidden="true" />
-            {t('Add provider')}
-          </Button>
+          !showCodeBuddyAccounts && (
+            <Button type="button" variant="outline" size="sm" onClick={onCreateProvider}>
+              <Plus aria-hidden="true" />
+              {t('Add provider')}
+            </Button>
+          )
         }
       >
         {showCodeBuddyAccounts && (

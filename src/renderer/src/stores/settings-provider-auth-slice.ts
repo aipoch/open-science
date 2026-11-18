@@ -201,9 +201,9 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
   codeBuddyAccount: async (request) => {
     const commands = getCommands()
     const result = await commands.codeBuddyAccount(request)
-    if (request.action === 'login' || request.action === 'logout') {
+    if (request.action !== 'status' && request.action !== 'cancel') {
       reconcileSnapshot(await commands.getSettings())
-      await refreshPreflight()
+      if (request.action !== 'refresh' || result.category === 'auth') await refreshPreflight()
     }
     return result
   },

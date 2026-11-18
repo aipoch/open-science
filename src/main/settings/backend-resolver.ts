@@ -734,6 +734,9 @@ export class AgentBackendResolver {
           : {}),
         sessionModel,
         ...((framework.id === 'pi' ||
+          (modelRoute === 'codebuddy-subscription' &&
+            (modelSelection.kind === 'required' ||
+              (modelSelection.kind === 'configured' && modelSelection.requestedModel))) ||
           (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type))) &&
         sessionModel
           ? { sessionModelRequired: true }

@@ -8779,6 +8779,7 @@
     "Total kernel uptime: {{duration}}": "Суммарное время работы ядер: {{duration}}",
     "CodeBuddy (China)": "CodeBuddy (Китай)",
     "CodeBuddy (International)": "CodeBuddy (международный)",
+    "Could not check CodeBuddy sign-in status.": "Не удалось проверить состояние входа в CodeBuddy.",
     "CodeBuddy account request failed.": "Не удалось выполнить запрос к учётной записи CodeBuddy."
   }
 }

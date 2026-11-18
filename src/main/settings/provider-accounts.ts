@@ -116,12 +116,13 @@ type ProviderAccountsModuleOptions = {
 // Owns durable provider records and every provider-specific validation/authentication lifecycle;
 // executable installation, runtime spawn, live ACP reconnect, and transports remain outside.
 class ProviderAccountsModule {
-  private readonly codeBuddyOperations = new Map<
-    CodeBuddySite,
-    { action: 'login' | 'logout'; controller: AbortController; settled: Promise<void> }
-  >()
+  private readonly codeBuddyOperations = new Set<{
+    site: CodeBuddySite
+    action: Exclude<CodeBuddyAccountRequest['action'], 'cancel'>
+    controller: AbortController
+    settled: Promise<void>
+  }>()
   private codeBuddyHolds = 0
-  private readonly codeBuddyProcesses = new Map<AbortController, Promise<void>>()
   private readonly repository: SettingsRepository
   private readonly runtimeProjection = new ProviderRuntimeProjectionOwner()
   private readonly auth: ProviderAuthLifecycleOwner
@@ -154,14 +155,9 @@ class ProviderAccountsModule {
   }
 
   private stopCodeBuddyOperations(): Promise<unknown> {
-    const operations = [...this.codeBuddyOperations.values()]
+    const operations = [...this.codeBuddyOperations]
     for (const operation of operations) operation.controller.abort()
-    const processes = [...this.codeBuddyProcesses]
-    for (const [controller] of processes) controller.abort()
-    return Promise.all([
-      ...operations.map((operation) => operation.settled),
-      ...processes.map(([, settled]) => settled)
-    ])
+    return Promise.all(operations.map((operation) => operation.settled))
   }
 
   quiesceAuthentication(): ReturnType<XaiProviderAccountOwner['quiesce']> {
@@ -620,59 +616,44 @@ class ProviderAccountsModule {
 
   private async runCodeBuddy(
     site: CodeBuddySite,
-    action: 'login' | 'logout' | 'status',
-    signal?: AbortSignal
+    action: Exclude<CodeBuddyAccountRequest['action'], 'cancel'>,
+    signal: AbortSignal
   ): ReturnType<typeof runCodeBuddyAuth> {
-    if (this.codeBuddyHolds) throw new Error('CodeBuddy authentication is shutting down.')
-    const controller = new AbortController()
-    const { promise: settled, resolve: finish } = Promise.withResolvers<void>()
-    this.codeBuddyProcesses.set(controller, settled)
-    try {
-      const settings = await this.repository.getSettings()
-      if (!this.options.resolveCodeBuddyExecutable)
-        throw new Error('CodeBuddy runtime unavailable.')
-      const executable = await this.options.resolveCodeBuddyExecutable(settings.codebuddyPath)
-      const effectiveSignal = signal
-        ? AbortSignal.any([signal, controller.signal])
-        : controller.signal
-      effectiveSignal.throwIfAborted()
-      return await runCodeBuddyAuth(
-        executable,
-        this.options.storageRoot,
-        site,
-        action,
-        effectiveSignal
-      )
-    } finally {
-      this.codeBuddyProcesses.delete(controller)
-      finish()
-    }
+    const settings = await this.repository.getSettings()
+    if (!this.options.resolveCodeBuddyExecutable) throw new Error('CodeBuddy runtime unavailable.')
+    const executable = await this.options.resolveCodeBuddyExecutable(settings.codebuddyPath)
+    signal.throwIfAborted()
+    return runCodeBuddyAuth(executable, this.options.storageRoot, site, action, signal)
   }
 
   async codeBuddyAccount(input: CodeBuddyAccountRequest): Promise<ValidateProviderResult> {
     const { site, action } = readCodeBuddyAccountRequest(input)
     if (action === 'cancel') {
-      const pending = this.codeBuddyOperations.get(site)
-      if (pending?.action === 'login') {
+      const pending = [...this.codeBuddyOperations].find(
+        (op) => op.site === site && op.action === 'login'
+      )
+      if (pending) {
         pending.controller.abort()
         await pending.settled
       }
       return { ok: true, category: 'ok' }
     }
-    if (this.codeBuddyHolds) throw new Error('CodeBuddy authentication is shutting down.')
-    if (action === 'status') {
-      const { authenticated } = await this.runCodeBuddy(site, 'status')
-      return authenticated ? { ok: true, category: 'ok' } : { ok: false, category: 'auth' }
-    }
     const identity = codeBuddyAccounts[site]
-    this.advanceProviderValidationGeneration(identity.id)
     return this.withCodeBuddyOperation(site, action, async (signal) => {
+      if (action === 'status') {
+        const { authenticated } = await this.runCodeBuddy(site, action, signal)
+        return authenticated ? { ok: true, category: 'ok' } : { ok: false, category: 'auth' }
+      }
+      this.advanceProviderValidationGeneration(identity.id)
       const before = await this.repository.getSettings()
       const prior = before.providers.find((provider) => provider.id === identity.id)
       if (prior && prior.type !== 'codebuddy-subscription')
         throw new Error('The CodeBuddy account ID is already in use.')
       if (action === 'login') assertProviderCapacity(before.providers.length, Boolean(prior))
+      if (action === 'refresh' && !prior) return { ok: false, category: 'auth' }
       const outcome = await this.runCodeBuddy(site, action, signal)
+      if (action === 'refresh' && outcome.authenticated && !outcome.models?.length)
+        return { ok: false, category: 'unknown' }
       return await this.auth.serializeAccountMutation(async () => {
         signal.throwIfAborted()
         const settings = await this.repository.getSettings()
@@ -689,33 +670,39 @@ class ProviderAccountsModule {
           ...identity,
           type: 'codebuddy-subscription',
           apiEndpoints: ['chat-completions'],
-          model: outcome.model ?? existing?.model,
-          fetchedModels: outcome.models ?? existing?.fetchedModels
+          model: outcome.authenticated ? (outcome.model ?? existing?.model) : undefined,
+          fetchedModels: outcome.authenticated
+            ? (outcome.models ?? existing?.fetchedModels)
+            : undefined
         }
         await this.repository.upsertProvider({
           ...provider,
           ...buildProviderValidationPatch(provider, health, undefined)
         })
-        return { ok: true, category: 'ok' }
+        return action === 'refresh' ? health : { ok: true, category: 'ok' }
       })
     })
   }
 
   private async withCodeBuddyOperation<T>(
     site: CodeBuddySite,
-    action: 'login' | 'logout',
+    action: Exclude<CodeBuddyAccountRequest['action'], 'cancel'>,
     operation: (signal: AbortSignal) => Promise<T>
   ): Promise<T> {
     if (this.codeBuddyHolds) throw new Error('CodeBuddy authentication is shutting down.')
-    if (this.codeBuddyOperations.has(site))
+    if (
+      action !== 'status' &&
+      [...this.codeBuddyOperations].some((op) => op.site === site && op.action !== 'status')
+    )
       throw new Error('CodeBuddy account operation is in progress.')
     const controller = new AbortController()
     const { promise: settled, resolve: finish } = Promise.withResolvers<void>()
-    this.codeBuddyOperations.set(site, { action, controller, settled })
+    const active = { site, action, controller, settled }
+    this.codeBuddyOperations.add(active)
     try {
       return await operation(controller.signal)
     } finally {
-      this.codeBuddyOperations.delete(site)
+      this.codeBuddyOperations.delete(active)
       finish()
     }
   }
@@ -1084,15 +1071,13 @@ class ProviderAccountsModule {
   async isProviderKeyUsable(
     provider: StoredProvider,
     frameworkId?: AgentFrameworkId
-  ): Promise<boolean> {
+  ): Promise<boolean | undefined> {
     if (provider.type === 'codebuddy-subscription') {
       const site = codeBuddySiteForId(provider.id)
-      return Boolean(
-        site &&
-        (await this.codeBuddyAccount({ site, action: 'status' }).then(
-          (result) => result.ok,
-          () => false
-        ))
+      if (!site) return false
+      return this.codeBuddyAccount({ site, action: 'status' }).then(
+        (result) => result.ok,
+        () => undefined
       )
     }
     if (isXaiSubscriptionProvider(provider.type)) return this.xai.isUsable()

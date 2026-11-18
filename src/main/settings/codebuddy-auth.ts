@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { Readable, Writable } from 'node:stream'
 import { createInterface } from 'node:readline'
 import * as acp from '@agentclientprotocol/sdk'
-import type { CodeBuddySite } from '../../shared/codebuddy-subscription'
+import type { CodeBuddyAccountRequest, CodeBuddySite } from '../../shared/codebuddy-subscription'
 import { collectSelectValues } from '../acp/session-config'
 import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
 import { codeBuddyAccountEnvironment, codeBuddyHostEnvironment } from './codebuddy-profile'
@@ -16,7 +16,7 @@ export async function runCodeBuddyAuth(
   executable: string,
   storageRoot: string,
   site: CodeBuddySite,
-  action: 'login' | 'status' | 'logout',
+  action: Exclude<CodeBuddyAccountRequest['action'], 'cancel'>,
   cancel?: AbortSignal
 ): Promise<AccountSnapshot> {
   const signal = AbortSignal.any([
@@ -104,7 +104,7 @@ export async function runCodeBuddyAuth(
           ).userInfo?.userId
         )
       const authenticated = await status()
-      if (action === 'status') return { authenticated }
+      if (action === 'status' || (action === 'refresh' && !authenticated)) return { authenticated }
       if (!authenticated) {
         if (!init.authMethods?.some((method) => method.id === site))
           throw new Error('CodeBuddy login method unavailable.')

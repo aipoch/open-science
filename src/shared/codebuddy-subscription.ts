@@ -53,7 +53,7 @@ export const codeBuddyBaseModels: Record<CodeBuddySite, readonly string[]> = {
 
 export type CodeBuddyAccountRequest = {
   site: CodeBuddySite
-  action: 'login' | 'logout' | 'cancel' | 'status'
+  action: 'login' | 'logout' | 'cancel' | 'status' | 'refresh'
 }
 
 export const codeBuddySiteForId = (id: string): CodeBuddySite | undefined =>
@@ -69,7 +69,7 @@ export function readCodeBuddyAccountRequest(
   if (
     !input ||
     (input.site !== 'internal' && input.site !== 'external') ||
-    !['login', 'logout', 'cancel', 'status'].includes(input.action)
+    !['login', 'logout', 'cancel', 'status', 'refresh'].includes(input.action)
   )
     throw new Error('Invalid CodeBuddy account request.')
   return { site: input.site, action: input.action }

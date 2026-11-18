@@ -71,10 +71,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
       expect(config.configFiles?.some((file) => file.path.endsWith('models.json'))).toBe(false)
       return config.env?.HOME
     })
-    expect(targets).toEqual([
-      join('profiles', 'codebuddy-cn'),
-      join('profiles', 'codebuddy-accounts', 'external')
-    ])
+    expect(targets).toEqual([join('profiles', 'codebuddy-cn'), join('profiles', 'codebuddy-intl')])
   })
   it.each([
     { type: 'codex-shared', codexAuthMode: undefined },

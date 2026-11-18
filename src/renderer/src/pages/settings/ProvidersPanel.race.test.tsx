@@ -80,6 +80,11 @@ it('shows the main model picker with only a CodeBuddy subscription configured', 
   })
   await act(async () => render())
   expect(container.querySelector('[role="combobox"][aria-label="Main model"]')).not.toBeNull()
+  expect(
+    Array.from(container.querySelectorAll('button')).filter(
+      (button) => button.textContent?.trim() === 'Add provider'
+    )
+  ).toHaveLength(1)
 })
 
 describe('ProvidersPanel: unexpected command failures', () => {

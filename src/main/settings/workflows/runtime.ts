@@ -257,7 +257,10 @@ class RuntimeSettingsWorkflows {
   ): ReturnType<RuntimeSettingsWorkflowStore['codeBuddyAccount']> {
     const request = readCodeBuddyAccountRequest(input)
     const result = await this.settings.codeBuddyAccount(request)
-    if (result.ok && (request.action === 'login' || request.action === 'logout')) {
+    if (
+      (result.ok && (request.action === 'login' || request.action === 'logout')) ||
+      (request.action === 'refresh' && result.category === 'auth')
+    ) {
       const id = codeBuddyAccounts[request.site].id
       const snapshot = await this.settings.getSettingsView()
       this.effects.requestProviderReconnect([id], snapshot.activeProviderId === id)

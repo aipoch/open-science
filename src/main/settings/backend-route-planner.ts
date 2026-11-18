@@ -299,7 +299,8 @@ class BackendRoutePlanner {
               ? piSessionModel(piModelId(input.target.providerId, model))
               : model,
       sessionModelRequired:
-        input.frameworkId === 'codex' && isCodexSubscriptionProvider(input.target.provider.type),
+        route === 'codebuddy-subscription' ||
+        (input.frameworkId === 'codex' && isCodexSubscriptionProvider(input.target.provider.type)),
       supportsImageInput: input.target.provider.supportsImageInput === true,
       reasoningEffort: modelEffort(input.effortIntent, input.target),
       ...(hasClaudeTransport

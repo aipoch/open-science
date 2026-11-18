@@ -8274,6 +8274,7 @@
     "Total kernel uptime: {{duration}}": "Kernel 累計存續時間：{{duration}}",
     "CodeBuddy (China)": "CodeBuddy（中國站）",
     "CodeBuddy (International)": "CodeBuddy（國際站）",
+    "Could not check CodeBuddy sign-in status.": "無法確認 CodeBuddy 登入狀態。",
     "CodeBuddy account request failed.": "CodeBuddy 帳號請求失敗。"
   }
 }

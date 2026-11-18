@@ -6,10 +6,7 @@ export function codeBuddyAccountEnvironment(
   storageRoot: string,
   site: CodeBuddySite
 ): Record<string, string> {
-  const home =
-    site === 'internal'
-      ? join(storageRoot, 'codebuddy-cn')
-      : join(storageRoot, 'codebuddy-accounts', site)
+  const home = join(storageRoot, site === 'internal' ? 'codebuddy-cn' : 'codebuddy-intl')
   return {
     HOME: home,
     USERPROFILE: home,

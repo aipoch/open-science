@@ -1,3 +1,5 @@
+import * as codeBuddyAuth from './codebuddy-auth'
+import { codeBuddyAccounts } from '../../shared/codebuddy-subscription'
 import { listAgentFrameworks } from '../agent-framework/registry'
 import { providerValidationRoute, providerValidationSucceeded } from '../../shared/settings-runtime'
 import { configureTestElectronHost } from '../../../test/runtime-host'
@@ -1294,6 +1296,7 @@ describe('ProviderAccountsModule', () => {
         settingsIdSequence += 1
         return settingsIdSequence
       },
+      resolveCodeBuddyExecutable: async () => 'test-codebuddy',
       resolveCodexExecutable: vi.fn(async () => '/codex-acp'),
       resolveCodexProxyEnvironment: vi.fn(async () => undefined),
       runClaudeSubscriptionProbe,
@@ -1309,6 +1312,38 @@ describe('ProviderAccountsModule', () => {
     return async () => {
       vi.unstubAllGlobals()
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('replaces only the refreshed CodeBuddy catalog, keeps it on failure, and clears it on logout', async () => {
+    const auth = vi.spyOn(codeBuddyAuth, 'runCodeBuddyAuth')
+    try {
+      auth.mockResolvedValue({ authenticated: true, model: 'old', models: ['old'] })
+      await module.codeBuddyAccount({ site: 'internal', action: 'login' })
+      await module.codeBuddyAccount({ site: 'external', action: 'login' })
+      auth.mockResolvedValue({ authenticated: true, model: 'new', models: ['new'] })
+      await module.codeBuddyAccount({ site: 'internal', action: 'refresh' })
+      auth.mockResolvedValue({ authenticated: true })
+      expect(await module.codeBuddyAccount({ site: 'internal', action: 'refresh' })).toMatchObject({
+        ok: false
+      })
+      const records = async (): Promise<StoredSettings['providers']> =>
+        (await repository.getSettings()).providers
+      expect(
+        (await records()).find((p) => p.id === codeBuddyAccounts.internal.id)?.fetchedModels
+      ).toEqual(['new'])
+      auth.mockResolvedValue({ authenticated: false })
+      await module.codeBuddyAccount({ site: 'internal', action: 'logout' })
+      const providers = await records()
+      const china = providers.find((p) => p.id === codeBuddyAccounts.internal.id)
+      expect(china).toBeDefined()
+      expect(china?.model).toBeUndefined()
+      expect(china?.fetchedModels).toBeUndefined()
+      expect(providers.find((p) => p.id === codeBuddyAccounts.external.id)?.fetchedModels).toEqual([
+        'old'
+      ])
+    } finally {
+      auth.mockRestore()
     }
   })
 

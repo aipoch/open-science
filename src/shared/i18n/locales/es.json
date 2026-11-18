@@ -8626,6 +8626,7 @@
     "Total kernel uptime: {{duration}}": "Tiempo total de actividad de los Kernels: {{duration}}",
     "CodeBuddy (China)": "CodeBuddy (China)",
     "CodeBuddy (International)": "CodeBuddy (internacional)",
+    "Could not check CodeBuddy sign-in status.": "No se pudo comprobar el estado de la sesión de CodeBuddy.",
     "CodeBuddy account request failed.": "No se pudo completar la solicitud de la cuenta de CodeBuddy."
   }
 }

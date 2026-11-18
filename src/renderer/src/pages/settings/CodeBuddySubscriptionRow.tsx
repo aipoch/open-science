@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { useSettingsStore } from '@/stores/settings-store'
-import type { CodeBuddySite } from '../../../../shared/codebuddy-subscription'
+import type {
+  CodeBuddyAccountRequest,
+  CodeBuddySite
+} from '../../../../shared/codebuddy-subscription'
 import { AgentFrameworkIcon } from './provider-icons'
+
+type AccountAction = CodeBuddyAccountRequest['action']
 
 export function CodeBuddySubscriptionRow({
   site,
@@ -15,67 +20,72 @@ export function CodeBuddySubscriptionRow({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const account = useSettingsStore((state) => state.codeBuddyAccount)
-  const [signedIn, setSignedIn] = useState(false)
-  const [pending, setPending] = useState<'login' | 'logout' | 'status' | undefined>(
+  const [signedIn, setSignedIn] = useState<boolean | undefined>(configured ? undefined : false)
+  const [pending, setPending] = useState<AccountAction | undefined>(
     configured ? 'status' : undefined
   )
-  const [failed, setFailed] = useState(false)
-  const generation = useRef<symbol | null>(null)
-  const login = useRef(false)
+  const [failed, setFailed] = useState<AccountAction>()
+  const current = useRef<{ action: AccountAction } | undefined>(undefined)
+  const run = useCallback(
+    async (action: AccountAction) => {
+      const operation = { action }
+      current.current = operation
+      try {
+        const result = await account({ site, action })
+        if (current.current !== operation) return
+        if (!result.ok && result.category !== 'auth') {
+          setFailed(action)
+        } else if (action !== 'cancel') {
+          setSignedIn(result.ok && action !== 'logout')
+        }
+      } catch {
+        if (current.current === operation) {
+          setFailed(action)
+          if (configured && action !== 'refresh') setSignedIn(undefined)
+        }
+      } finally {
+        if (current.current === operation) {
+          current.current = undefined
+          setPending(undefined)
+        }
+      }
+    },
+    [account, configured, site]
+  )
   useEffect(() => {
-    const current = Symbol()
-    generation.current = current
-    if (configured) {
-      void account({ site, action: 'status' })
-        .then((result) => {
-          if (current === generation.current) setSignedIn(result.ok)
-        })
-        .catch(() => {
-          if (current === generation.current) setFailed(true)
-        })
-        .finally(() => {
-          if (current === generation.current) setPending(undefined)
-        })
-    }
+    let mounted = true
+    // Skip launching a status process for a mount already discarded by React.
+    if (configured)
+      queueMicrotask(() => {
+        if (mounted) void run('status')
+      })
     return () => {
-      generation.current = null
-      if (login.current) {
-        login.current = false
+      mounted = false
+      const operation = current.current
+      current.current = undefined
+      if (operation?.action === 'login')
         void account({ site, action: 'cancel' }).catch(() => undefined)
-      }
     }
-  }, [account, site, configured])
-  const act = async (): Promise<void> => {
-    const current = Symbol()
-    generation.current = current
-    const action = signedIn ? 'logout' : 'login'
-    login.current = action === 'login'
+  }, [account, configured, run, site])
+
+  const start = (action: AccountAction): void => {
     setPending(action)
-    setFailed(false)
-    try {
-      const result = await account({ site, action })
-      if (current !== generation.current) return
-      if (result.ok) setSignedIn(action === 'login')
-      setFailed(!result.ok)
-    } catch {
-      if (current === generation.current) setFailed(true)
-    } finally {
-      if (current === generation.current) {
-        login.current = false
-        setPending(undefined)
-      }
-    }
+    setFailed(undefined)
+    void run(action)
   }
-  const cancel = async (): Promise<void> => {
-    generation.current = null
-    login.current = false
-    try {
-      await account({ site, action: 'cancel' })
-    } catch {
-      setFailed(true)
-    } finally {
-      setPending(undefined)
-    }
+  const primaryAction =
+    pending === 'login'
+      ? 'cancel'
+      : signedIn === undefined
+        ? 'status'
+        : signedIn
+          ? 'logout'
+          : 'login'
+  const labels = {
+    login: t('Sign in'),
+    logout: t('Sign out'),
+    cancel: t('Cancel'),
+    status: pending === 'status' ? t('Checking…') : t('Retry')
   }
   return (
     <div className="px-3 py-2">
@@ -84,18 +94,39 @@ export function CodeBuddySubscriptionRow({
         <span className="flex-1 text-sm font-medium">
           {site === 'internal' ? t('CodeBuddy (China)') : t('CodeBuddy (International)')}
         </span>
+        {signedIn && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={!!pending}
+            onClick={() => start('refresh')}
+          >
+            {pending === 'refresh' ? t('Refreshing…') : t('Refresh from vendor')}
+          </Button>
+        )}
         <Button
           type="button"
           size="sm"
           variant="outline"
-          disabled={pending === 'logout' || pending === 'status'}
-          onClick={() => void (pending === 'login' ? cancel() : act())}
+          disabled={!!pending && pending !== 'login'}
+          onClick={() => start(primaryAction)}
         >
-          {pending === 'login' ? t('Cancel') : signedIn ? t('Sign out') : t('Sign in')}
+          {labels[primaryAction]}
         </Button>
       </div>
       {failed && (
-        <ErrorNotice inline level="error" title={t('CodeBuddy account request failed.')} />
+        <ErrorNotice
+          inline
+          level="error"
+          title={
+            failed === 'refresh'
+              ? t('Could not refresh models from the vendor.')
+              : failed === 'status'
+                ? t('Could not check CodeBuddy sign-in status.')
+                : t('CodeBuddy account request failed.')
+          }
+        />
       )}
     </div>
   )

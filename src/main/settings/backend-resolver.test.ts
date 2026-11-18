@@ -2006,6 +2006,7 @@ describe('AgentBackendResolver bridge predicates', () => {
       providerId: codeBuddyAccounts.internal.id,
       backendId: 'codebuddy:' + codeBuddyAccounts.internal.id,
       modelRoute: 'codebuddy-subscription',
+      sessionModelRequired: true,
       env: { CODEBUDDY_INTERNET_ENVIRONMENT: 'internal' }
     })
     expect(backend.env).not.toHaveProperty('CODEBUDDY_BASE_URL')

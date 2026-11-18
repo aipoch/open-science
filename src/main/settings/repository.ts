@@ -248,6 +248,8 @@ class SettingsRepository {
       if (index >= 0) {
         const existing = providers[index]
         if (
+          // The CodeBuddy account operation itself owns catalog replacement and sign-out.
+          provider.type !== 'codebuddy-subscription' &&
           existing.type === provider.type &&
           existing.vendorId === provider.vendorId &&
           existing.region === provider.region &&

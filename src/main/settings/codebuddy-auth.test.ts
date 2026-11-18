@@ -81,9 +81,12 @@ vi.mock('node:child_process', async (original) => {
 
 it('keeps a login in its site profile, reuses it on restart and clears it on logout', async () => {
   const root = await mkdtemp(join(tmpdir(), 'os-codebuddy-auth-'))
-  const run = (action: 'login' | 'logout' | 'status'): ReturnType<typeof runCodeBuddyAuth> =>
+  const run = (
+    action: 'login' | 'logout' | 'status' | 'refresh'
+  ): ReturnType<typeof runCodeBuddyAuth> =>
     runCodeBuddyAuth('codebuddy-auth-fixture', root, 'internal', action)
   try {
+    expect(await run('refresh')).toEqual({ authenticated: false })
     const account = await run('login')
     expect(account).toEqual({ authenticated: true, model: 'model', models: ['model', 'other'] })
     const modePath = join(root, 'codebuddy-cn', 'catalog-mode')
@@ -92,7 +95,7 @@ it('keeps a login in its site profile, reuses it on restart and clears it on log
       expect(await run('login')).toEqual({ authenticated: true })
     }
     await writeFile(modePath, 'standard')
-    expect(await run('login')).toEqual({ authenticated: true, model: 'new', models: ['new'] })
+    expect(await run('refresh')).toEqual({ authenticated: true, model: 'new', models: ['new'] })
     expect(await runCodeBuddyAuth('codebuddy-auth-fixture', root, 'external', 'status')).toEqual({
       authenticated: false
     })

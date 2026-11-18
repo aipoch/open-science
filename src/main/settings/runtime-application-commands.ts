@@ -297,7 +297,9 @@ const registerRuntimeSettingsApplicationCommands = (
       'settings:codebuddy-account': ({ callerContext, args: [request] }) => {
         requireLocalCaller(callerContext, 'settings:codebuddy-account')
         const result = dependencies.workflows.codeBuddyAccount(request)
-        return request.action === 'login' || request.action === 'logout'
+        return request.action === 'login' ||
+          request.action === 'logout' ||
+          request.action === 'refresh'
           ? dependencies.snapshotCommits.projectAfter(result)
           : result
       },

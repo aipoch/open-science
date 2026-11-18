@@ -349,7 +349,9 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle('settings:codebuddy-account', (_event, request) => {
     const result = workflows.runtime.codeBuddyAccount(request)
-    return request?.action === 'login' || request?.action === 'logout'
+    return request?.action === 'login' ||
+      request?.action === 'logout' ||
+      request?.action === 'refresh'
       ? snapshotCommits.projectAfter(result)
       : result
   })

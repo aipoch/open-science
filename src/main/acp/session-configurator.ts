@@ -169,7 +169,7 @@ export class AcpSessionConfigurator {
     if (!selection) {
       log.info('no matching session model option', this.deps.diagnosticContext(input.backend))
       if (input.backend.session.modelRequired) {
-        throw new Error(`The selected model "${model}" is not available for this Codex account.`)
+        throw new Error(`The selected model "${model}" is not available for this account.`)
       }
       return { appliedModel: undefined, configOptions: undefined }
     }
@@ -184,6 +184,12 @@ export class AcpSessionConfigurator {
         acp.methods.agent.session.setConfigOption,
         { sessionId: input.session.sessionId, configId: selection.configId, value: selection.value }
       )) as { configOptions?: SessionConfigOption[] | null }
+      if (
+        input.backend.modelRoute === 'codebuddy-subscription' &&
+        input.backend.session.modelRequired &&
+        !matchSessionModelOption(response?.configOptions, model)?.alreadyCurrent
+      )
+        throw new Error('CodeBuddy did not confirm the requested model.')
       log.info('session model applied', this.deps.diagnosticContext(input.backend))
       return {
         appliedModel: selection.value,

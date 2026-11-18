@@ -2130,7 +2130,7 @@ describe('ACP runtime migration write-gate', () => {
 
     try {
       await expect(runtime.createSession({ cwd: '/workspace' })).rejects.toThrow(
-        'The selected model "gpt-subscription" is not available for this Codex account.'
+        'The selected model "gpt-subscription" is not available for this account.'
       )
     } finally {
       disposeSpy.mockRestore()
