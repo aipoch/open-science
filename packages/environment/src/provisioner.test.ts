@@ -1604,6 +1604,7 @@ describe('default specs', () => {
         'openpyxl',
         'pandas',
         'numpy',
+        'scipy',
         'pandoc=3.12.1'
       ]
     })

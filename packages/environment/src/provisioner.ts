@@ -150,6 +150,7 @@ export const DEFAULT_PYTHON_SPEC: EnvSpec = {
     'openpyxl',
     'pandas',
     'numpy',
+    'scipy',
     'pandoc=3.12.1'
   ]
 }
