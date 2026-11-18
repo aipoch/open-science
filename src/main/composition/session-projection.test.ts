@@ -244,5 +244,6 @@ describe('host network approval recovery', () => {
       sessions: [newerSummary]
     })
     expect(sessionRepository.ensureSessionProjection).toHaveBeenCalledTimes(2)
+    expect(broadcastToRenderers).toHaveBeenCalledTimes(1)
   })
 })

@@ -264,13 +264,11 @@ export function composeSessionProjection({
     const startup = startupProjection ?? beginStartupProjection()
     if (startupProjectionSettled) {
       const projection = await ensureSessionProjection()
-      if (projection.result) broadcastToRenderers('sessions:catalog-changed', undefined)
       return { projection, catalogHydrationPending: false }
     }
     const sessions = await sessionRepository.listProjectionSummaries()
     if (startup !== startupProjection || startupProjectionSettled) {
       const projection = await ensureSessionProjection()
-      if (projection.result) broadcastToRenderers('sessions:catalog-changed', undefined)
       return { projection, catalogHydrationPending: false }
     }
     await replaceSessionMetadata(
