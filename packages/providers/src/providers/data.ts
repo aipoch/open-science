@@ -410,7 +410,7 @@ const definitions: readonly OfficialVendor[] = [
     id: 'zhipu',
     label: 'Zhipu AI (GLM)',
     reasoningEffort: { supported: false },
-    // GLM serves overseas from Z.AI and mainland China from BigModel (智谱) — different hosts and
+    // GLM serves overseas from Z.AI and mainland China from BigModel (Zhipu AI) — different hosts and
     // separate consoles, so they are distinct endpoints rather than one base URL. Each region also
     // publishes an OpenAI-compatible route under `/api/paas/v4` (not `/v1`), so Codex can bridge it.
     apiEndpoints: ['messages', 'chat-completions'],

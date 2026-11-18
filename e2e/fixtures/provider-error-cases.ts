@@ -29,7 +29,7 @@ export type ProviderErrorCase = Readonly<{
 export const providerErrorCases: readonly ProviderErrorCase[] = [
   {
     id: 'E01',
-    name: '400 模型不可用',
+    name: '400 model unavailable',
     status: 400,
     code: 'model_unavailable',
     message: 'Model is unavailable',
@@ -37,7 +37,7 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E02',
-    name: '404 模型不存在',
+    name: '404 model not found',
     status: 404,
     code: 'model_not_found',
     message: 'Model retired.v1 does not exist',
@@ -45,21 +45,21 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E03',
-    name: '404 接口路径错误',
+    name: '404 invalid endpoint path',
     status: 404,
     message: 'Endpoint /v1/wrong not found',
     reason: 'configuration/endpoint-invalid'
   },
   {
     id: 'E04',
-    name: '404 无法确定资源类型',
+    name: '404 unspecified resource type',
     status: 404,
     message: 'Resource not found',
     reason: 'service/provider-error'
   },
   {
     id: 'E05',
-    name: '401 认证失败',
+    name: '401 authentication failed',
     status: 401,
     code: 'authentication_error',
     message: 'Invalid API key',
@@ -67,7 +67,7 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E06',
-    name: '403 无访问权限',
+    name: '403 permission denied',
     status: 403,
     code: 'permission_denied',
     message: 'Access denied',
@@ -75,7 +75,7 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E07',
-    name: '429 请求限流',
+    name: '429 rate limit exceeded',
     status: 429,
     code: 'rate_limit_exceeded',
     message: 'Too many requests',
@@ -83,7 +83,7 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E08',
-    name: '429 额度不足',
+    name: '429 insufficient quota',
     status: 429,
     code: 'insufficient_quota',
     message: 'Quota exhausted',
@@ -91,21 +91,21 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E09',
-    name: '400 普通参数错误',
+    name: '400 invalid parameter',
     status: 400,
     message: 'Invalid temperature',
     reason: 'configuration/request-invalid'
   },
   {
     id: 'E10',
-    name: '422 普通参数错误',
+    name: '422 invalid parameter',
     status: 422,
     message: 'Invalid output format',
     reason: 'configuration/request-invalid'
   },
   {
     id: 'E11',
-    name: '413 输入或上下文超限',
+    name: '413 input exceeds the context limit',
     status: 413,
     code: 'context_length_exceeded',
     message: 'Maximum context length exceeded',
@@ -113,7 +113,7 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E12',
-    name: '500 服务端故障',
+    name: '500 server error',
     status: 500,
     code: 'server_error',
     message: 'Model service unavailable',
@@ -121,14 +121,14 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E13',
-    name: '503 HTML 网关错误页',
+    name: '503 HTML gateway error page',
     status: 503,
     wire: 'html',
     reason: 'service/unavailable'
   },
   {
     id: 'E14',
-    name: '400 纯文本模型错误',
+    name: '400 plain-text model error',
     status: 400,
     wire: 'plain',
     message: 'Model is unavailable',
@@ -136,7 +136,7 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E15',
-    name: '200 非 SSE JSON 错误',
+    name: '200 JSON error without an SSE stream',
     status: 200,
     wire: 'non-sse',
     code: 'model_unavailable',
@@ -145,48 +145,53 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E16',
-    name: 'SSE JSON 无法解析',
+    name: 'Malformed JSON in an SSE event',
     wire: 'invalid-json',
     reason: 'service/response-invalid'
   },
   {
     id: 'E17',
-    name: 'SSE 缺少正常结束标识',
+    name: 'SSE stream ends without a completion marker',
     wire: 'missing-finish',
     reason: 'service/response-invalid'
   },
   {
     id: 'E18',
-    name: 'SSE 未知服务商错误',
+    name: 'Unknown provider error in an SSE event',
     wire: 'sse-error',
     code: 'new_provider_error',
     message: 'Provider rejected this request',
     reason: 'service/provider-error'
   },
-  { id: 'E19', name: '上游连接建立失败', wire: 'disconnect', reason: 'service/connection-failed' },
+  {
+    id: 'E19',
+    name: 'Upstream connection failed',
+    wire: 'disconnect',
+    reason: 'service/connection-failed'
+  },
   {
     id: 'E20',
-    name: '正文输出后网络中断',
+    name: 'Connection interrupted after partial output',
     wire: 'interrupt',
     reason: 'service/response-interrupted'
   },
   {
     id: 'E21',
-    name: '400 空错误正文',
+    name: '400 empty response body',
     status: 400,
     wire: 'empty',
     reason: 'service/provider-error'
   },
   {
     id: 'E22',
-    name: '超长错误消息仅供内部识别',
+    name: 'Long error message used only for classification',
     status: 422,
     message: 'Invalid parameter: ' + 'x'.repeat(600),
     reason: 'configuration/request-invalid'
   },
   {
     id: 'E23',
-    name: 'JSON 正文恰好 16 KiB',
+    name: 'JSON body of exactly 16 KiB',
     status: 400,
     wire: 'body-limit',
     message: 'Model is unavailable at byte limit',
@@ -194,21 +199,21 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E24',
-    name: 'JSON 正文超过 16 KiB',
+    name: 'JSON body larger than 16 KiB',
     status: 400,
     wire: 'body-overflow',
     reason: 'service/provider-error'
   },
   {
     id: 'E25',
-    name: '错误正文不结束',
+    name: 'Error response body never ends',
     status: 503,
     wire: 'body-timeout',
     reason: 'service/unavailable'
   },
   {
     id: 'E26',
-    name: '上游真实 502 不得冒充本机连接失败',
+    name: 'Upstream 502 classified as a gateway error',
     status: 502,
     wire: 'spoofed-connection',
     message: 'Upstream gateway unavailable',
@@ -216,7 +221,7 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E27',
-    name: '已知错误的 message 含敏感文本',
+    name: 'Known error code with a sensitive message',
     status: 400,
     code: 'model_unavailable',
     message: 'private account and token must not escape',
@@ -224,7 +229,7 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E28',
-    name: '未知错误码和敏感 message 均不得外传',
+    name: 'Unknown error code and sensitive message redacted',
     status: 400,
     code: 'unknown_private_code',
     message: 'private account and token must not escape',
@@ -232,7 +237,7 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E29',
-    name: '非法请求标识头被丢弃',
+    name: 'Invalid request ID header discarded',
     status: 400,
     code: 'model_unavailable',
     requestId: 'private account and token must not escape',
@@ -240,7 +245,7 @@ export const providerErrorCases: readonly ProviderErrorCase[] = [
   },
   {
     id: 'E30',
-    name: '超长请求标识头被丢弃',
+    name: 'Oversized request ID header discarded',
     status: 400,
     code: 'model_unavailable',
     requestId: 'r'.repeat(129),

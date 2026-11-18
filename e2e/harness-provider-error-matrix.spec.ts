@@ -152,11 +152,13 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
           )
           const failure = outcome && 'failure' in outcome ? outcome.failure : undefined
           expect
-            .soft(outcome?.kind, `${protocol}/${item.id}: 失败落库`)
+            .soft(outcome?.kind, `${protocol}/${item.id}: persisted failure outcome`)
             .toBe(item.wire === 'interrupt' ? 'interrupted' : 'failed')
-          expect.soft(failure?.reason, `${protocol}/${item.id}: 原因分类`).toBe(item.reason)
-          expect.soft(failure?.diagnostics.protocol, `${protocol}/${item.id}: 协议`).toBe(protocol)
-          expect.soft(failure?.diagnostics.model, `${protocol}/${item.id}: 模型`).toBe(model)
+          expect.soft(failure?.reason, `${protocol}/${item.id}: failure reason`).toBe(item.reason)
+          expect
+            .soft(failure?.diagnostics.protocol, `${protocol}/${item.id}: protocol`)
+            .toBe(protocol)
+          expect.soft(failure?.diagnostics.model, `${protocol}/${item.id}: model`).toBe(model)
           const phase =
             item.wire === 'invalid-json'
               ? 'event-json'
@@ -169,14 +171,16 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
                   : item.wire === 'interrupt'
                     ? 'stream'
                     : 'response'
-          expect.soft(failure?.diagnostics.phase, `${protocol}/${item.id}: 阶段`).toBe(phase)
+          expect
+            .soft(failure?.diagnostics.phase, `${protocol}/${item.id}: failure phase`)
+            .toBe(phase)
           if (item.wire !== 'disconnect' && !item.requestId)
             expect
-              .soft(failure?.diagnostics.requestId, `${protocol}/${item.id}: 请求标识`)
+              .soft(failure?.diagnostics.requestId, `${protocol}/${item.id}: request ID`)
               .toBe(`matrix-${protocol}-${item.id}`)
           if (item.status)
             expect
-              .soft(failure?.diagnostics.status, `${protocol}/${item.id}: HTTP 状态`)
+              .soft(failure?.diagnostics.status, `${protocol}/${item.id}: HTTP status`)
               .toBe(item.status)
           if (item.requestId) expect.soft(failure?.diagnostics.requestId).toBeUndefined()
           const standardCodes: Record<string, string> = {
@@ -191,7 +195,7 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
             'input/context-overflow': 'context_length_exceeded'
           }
           expect
-            .soft(failure?.diagnostics.code, `${protocol}/${item.id}: 标准原因`)
+            .soft(failure?.diagnostics.code, `${protocol}/${item.id}: normalized error code`)
             .toBe(standardCodes[item.reason])
           const serialized = JSON.stringify(outcome)
           expect
@@ -201,7 +205,10 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
             )
           if (item.message) expect.soft(serialized).not.toContain(item.message)
           expect
-            .soft(JSON.stringify(failure), `${protocol}/${item.id}: HTML 不透传`)
+            .soft(
+              JSON.stringify(failure),
+              `${protocol}/${item.id}: gateway HTML excluded from diagnostics`
+            )
             .not.toContain('PRIVATE_GATEWAY_PAGE')
           // Authentication recovery may add another notice; capture the current turn's upstream diagnostics.
           if (item.reason === 'configuration/auth-failed') {
@@ -225,12 +232,15 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
                 : item.reason.startsWith('input/')
                   ? 'compact'
                   : 'retry'
-          expect.soft(actions, `${protocol}/${item.id}: 恢复操作`).toContain(expectedAction)
+          expect.soft(actions, `${protocol}/${item.id}: recovery action`).toContain(expectedAction)
           await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
           await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans')
           await expect(notice.getByRole('heading')).not.toHaveText(englishTitle)
           expect
-            .soft(await notice.innerText(), `${protocol}/${item.id}: 不退化为内部错误`)
+            .soft(
+              await notice.innerText(),
+              `${protocol}/${item.id}: provider-specific error notice`
+            )
             .not.toContain('应用发生意外错误')
           const screenshot = `${protocol}-${item.id}.png`
           await page.screenshot({ path: join(directory, screenshot), fullPage: true })
@@ -294,7 +304,7 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
               record.data?.protocol === protocol &&
               record.data?.reason === item.reason
           ),
-          `${protocol}/${item.id}: 真实主进程日志`
+          `${protocol}/${item.id}: matching main-process log entry`
         ).toBe(true)
       }
       await writeFile(
