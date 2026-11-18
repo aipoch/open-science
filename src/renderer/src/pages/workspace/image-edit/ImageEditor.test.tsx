@@ -959,8 +959,8 @@ it('shows source limits before submission and keeps instructions when switching 
       new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
     )
   )
-  const alternativeModel = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) =>
-    item.textContent?.includes('fixture-image')
+  const alternativeModel = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    (item) => item.textContent?.includes('fixture-image')
   )
   await act(async () => alternativeModel!.click())
   expect(container.textContent).not.toContain(

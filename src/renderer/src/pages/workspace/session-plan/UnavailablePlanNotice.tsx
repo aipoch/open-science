@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PlanResponseIdentity } from '../../../../../shared/session-plan/contract'
-import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
+import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import type { ChatSession } from '@/stores/session-store-contract'
 

@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
-import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
-import type { ComposerNotice, NoticeActionHandlers } from '@/lib/composer-notice/catalog'
+import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
+import type { ComposerNotice, NoticeActionHandlers } from '@/components/notices/composer-notice-catalog'
 import { classifyFailure } from '../../../shared/failure/classify'
 import { ErrorNotice } from '@/components/error-notice'
 import { useSettingsStore } from '@/stores/settings-store'

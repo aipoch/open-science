@@ -8,8 +8,8 @@ import { annotationValidationMessage } from './annotations/annotation-validation
  * Hallmark · modern-minimal · quiet utility · palette: existing semantic theme
  * Macrostructure: integrated in-flow side panel · pre-emit critique: P5 H5 E4 S5 R5 V4
  */
-import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
-import type { ComposerNotice } from '@/lib/composer-notice/catalog'
+import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
+import type { ComposerNotice } from '@/components/notices/composer-notice-catalog'
 import { useSettingsStore } from '@/stores/settings-store'
 import { classifyFailure } from '../../../../shared/failure/classify'
 import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'

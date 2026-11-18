@@ -19,7 +19,7 @@ import {
   type ComposerNotice,
   type NoticeActionHandlers,
   type NoticeActionId
-} from '@/lib/composer-notice/catalog'
+} from './composer-notice-catalog'
 
 const TruncatedText = ({
   text,

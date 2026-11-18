@@ -204,5 +204,5 @@
   "consumerModules": [],
   "capabilityOverlays": [],
   "fallbackCapability": "renderer_view",
-  "fullTestReason": "Scheduled tool presentation and image tool previews span conversation and preview consumers beyond the reviewed workspace tool-model boundary; retain full CI validation until these contracts are reviewed."
+  "fullTestReason": "Scheduled tool results add a presentation owner shared by conversation and preview consumers beyond the reviewed source boundary; retain full CI validation until these contracts are reviewed."
 }

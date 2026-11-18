@@ -1,4 +1,4 @@
-import type { ComposerNotice } from '@/lib/composer-notice/catalog'
+import type { ComposerNotice } from '@/components/notices/composer-notice-catalog'
 import { ImageComposerNotices, ImageErrorNotice } from '@/components/image-error-notice'
 import type { ImageErrorDetail } from '../../../../../shared/image-model-error'
 import {

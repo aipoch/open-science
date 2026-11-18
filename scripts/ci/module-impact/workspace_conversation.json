@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/renderer/src/lib/composer-notice/catalog.test.ts",
     "src/renderer/src/lib/composer-notice/use-composer-notices.ts",
     "src/renderer/src/pages/workspace/ArtifactProvenanceMessages.integration.test.tsx",
     "src/renderer/src/pages/workspace/ComposerAgentControlsMenu.interaction.test.tsx",
@@ -125,6 +126,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/renderer/src/lib/composer-notice/catalog.test.ts",
       "src/renderer/src/pages/workspace/ArtifactProvenanceMessages.integration.test.tsx",
       "src/renderer/src/pages/workspace/ComposerAgentControlsMenu.interaction.test.tsx",
       "src/renderer/src/pages/workspace/ComposerComputeTargetIndicator.interaction.test.tsx",

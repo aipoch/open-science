@@ -46,9 +46,8 @@
     "src/renderer/src/components/ui/split-button.test.tsx",
     "src/renderer/src/components/ui/progress-bar.tsx",
     "src/renderer/src/components/image-error-notice.tsx",
-    "src/renderer/src/components/composer-notice/ComposerNoticeSlot.tsx",
-    "src/renderer/src/lib/composer-notice/catalog.test.ts",
-    "src/renderer/src/lib/composer-notice/catalog.ts"
+    "src/renderer/src/components/notices/ComposerNoticeSlot.tsx",
+    "src/renderer/src/components/notices/composer-notice-catalog.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ui/badge.tsx",
@@ -126,13 +125,12 @@
     "src/renderer/src/components/ui/workflow-dialog-frame.tsx",
     "src/renderer/src/components/ui/split-button.tsx",
     "src/renderer/src/components/image-error-notice.tsx",
-    "src/renderer/src/components/composer-notice/ComposerNoticeSlot.tsx",
-    "src/renderer/src/lib/composer-notice/catalog.ts"
+    "src/renderer/src/components/notices/ComposerNoticeSlot.tsx",
+    "src/renderer/src/components/notices/composer-notice-catalog.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
-      "src/renderer/src/lib/composer-notice/catalog.test.ts",
       "src/renderer/src/components/ui/control-primitives.render.test.tsx",
       "src/renderer/src/components/ui/dialog.render.test.tsx",
       "src/renderer/src/components/ui/editable-number-combobox.render.test.tsx",
@@ -555,7 +553,8 @@
       "src/renderer/src/pages/literature/imports/literature-pdf-extraction.test.ts",
       "src/renderer/src/pages/literature/imports/literature-pdf-metadata.test.ts",
       "src/renderer/src/pages/workspace/file-type-icon.test.ts",
-      "src/renderer/src/stores/specialist-store.test.ts"
+      "src/renderer/src/stores/specialist-store.test.ts",
+      "src/renderer/src/lib/composer-notice/catalog.test.ts"
     ]
   },
   "capabilityOverlays": [],

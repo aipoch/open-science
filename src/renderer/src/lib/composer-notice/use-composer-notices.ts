@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { classifyFailure } from '../../../../shared/failure/classify'
 import type { ClassifiedFailure, FailureFacts } from '../../../../shared/failure/contract'
 import type { TurnOutcome } from '../../../../shared/session-turn-outcome-contract'
-import { noticePriority, type ComposerNotice } from './catalog'
+import { noticePriority, type ComposerNotice } from '@/components/notices/composer-notice-catalog'
 
 export type ComposerOperationFailure = Readonly<{
   id: string

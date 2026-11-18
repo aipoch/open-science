@@ -3,14 +3,14 @@ import { usePromptOptimization } from './composer/use-prompt-optimization'
 import { ScheduleCardsProvider } from './schedules/ScheduleMessageCard'
 import { ResearchVideoButton } from '../../components/research-video-button'
 import type { TFunction } from 'i18next'
-import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
+import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
 import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
 import { useComposerNotices } from '@/lib/composer-notice/use-composer-notices'
 import {
   formatNoticeDiagnostics,
   noticePresentation,
   type NoticeActionHandlers
-} from '@/lib/composer-notice/catalog'
+} from '@/components/notices/composer-notice-catalog'
 import {
   SplitButton,
   SplitButtonGroup,
