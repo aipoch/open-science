@@ -506,6 +506,27 @@ describe('Data and content application commands', () => {
 
     await expect(
       router.dispatcher.invoke(
+        dataContentApplicationCommands.orgCasesList,
+        invocation([{ q: '7Q2M9X4B' }], createTaskCallerContext())
+      )
+    ).rejects.toThrow()
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.orgCaseImport,
+        invocation(['case_1'], createTaskCallerContext())
+      )
+    ).rejects.toThrow()
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.orgCasesList,
+        invocation([{ q: '7Q2M9X4B' }], createWebCallerContext('local-web'))
+      )
+    ).resolves.toEqual({ ok: true, page: { items: [], total: 0, page: 1, page_size: 20 } })
+
+    await expect(
+      router.dispatcher.invoke(
         dataContentApplicationCommands.orgCaseDetail,
         invocation(['../evil'], electronCaller)
       )

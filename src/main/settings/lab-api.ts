@@ -138,7 +138,14 @@ export class LabApi {
   private readonly now: () => number
 
   constructor(options: LabApiOptions = {}) {
-    this.fetch = options.fetch ?? (netFetchStandard as unknown as FetchLike)
+    const baseFetch = options.fetch ?? (netFetchStandard as unknown as FetchLike)
+    // Never send Chromium cookies or let Electron net.fetch silently follow 3xx redirects with Bearer auth.
+    this.fetch = (input, init) =>
+      baseFetch(input, {
+        ...init,
+        credentials: 'omit',
+        redirect: 'error'
+      })
     this.now = options.now ?? Date.now
   }
 
@@ -436,6 +443,9 @@ export class LabApi {
           response = await fetchProviderRequest(this.fetch, url, { ...init, signal })
         } catch (error) {
           if (error instanceof LabApiError) throw error
+          if (error instanceof TypeError && /redirect/i.test(error.message)) {
+            throw new LabApiError('server-error', 'The Lab server returned an unexpected redirect.')
+          }
           throw new LabApiError('network', 'The Lab server could not be reached.')
         }
         if (response.status >= 300 && response.status < 400) {

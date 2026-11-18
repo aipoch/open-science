@@ -7,6 +7,8 @@ import type {
   OrgCaseDownloadSnapshot,
   OrgCaseItem
 } from '../../../../shared/org-cases'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
+import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../../shared/web-event-connection'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useOrgCaseStore } from './org-cases-store'
 import { UseCaseCarousel } from './UseCaseCarousel'
@@ -100,6 +102,8 @@ describe('UseCaseCarousel organization cases source', () => {
 
   afterEach(() => {
     cleanup()
+    document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+    document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
     useOrgCaseStore.getState().reset()
     vi.restoreAllMocks()
   })
@@ -388,5 +392,93 @@ describe('UseCaseCarousel organization cases source', () => {
 
     render(<UseCaseCarousel variant="home" />)
     expect(screen.getByTestId('use-case-source-organization')).toBeTruthy()
+  })
+
+  it('hides Organization tab on Remote Web, omits Lab Settings CTA on Local Web, and scopes detail selection per mount', async () => {
+    const orgCasesList = vi.fn(async () => ({
+      ok: true as const,
+      page: { items: [makeOrgCase()], total: 1, page: 1, page_size: 20 }
+    }))
+    setupWindowApi({ orgCasesList })
+    useOrgCaseStore.setState({ source: 'organization' })
+
+    // Remote Web must hide Organization source and avoid LOCAL IPC calls
+    document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
+    const remoteRender = render(<UseCaseCarousel variant="marketplace" />)
+    expect(screen.queryByTestId('use-case-source-organization')).toBeNull()
+    expect(orgCasesList).not.toHaveBeenCalled()
+    remoteRender.unmount()
+
+    // Local Web hides Open Lab Settings CTA because LabPanel is unavailable in Web mode
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+    useSettingsStore.setState({
+      lab: { state: 'signedOut', serverUrl: 'https://lab.example.com' } as LabView
+    })
+    const localRender = render(<UseCaseCarousel variant="home" />)
+    expect(screen.getByText('Sign in to Lab')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Open Lab Settings' })).toBeNull()
+    localRender.unmount()
+
+    // Switching from compact Marketplace detail view back to Home does not leak open details dialog
+    document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+    document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+    useSettingsStore.setState({
+      lab: {
+        state: 'authenticated',
+        serverUrl: 'https://lab.example.com',
+        accountName: 'Alice',
+        orgId: 'org_1'
+      } as LabView
+    })
+    const compactView = render(<UseCaseCarousel variant="marketplace" compact />)
+    await waitFor(() => expect(screen.getByText('RNA-seq Differential Expression')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+    expect(await screen.findByRole('region', { name: 'Organization case details' })).toBeTruthy()
+    compactView.unmount()
+
+    render(<UseCaseCarousel variant="home" />)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('retries failed pagination append against page 2, shows Open Lab Settings when non-empty list fails with forbidden, and clears items on non-append catch', async () => {
+    const firstItem = makeOrgCase({ id: 'case_1', name: 'Page 1 Item', code: '7Q2M9X4B' })
+    const secondItem = makeOrgCase({ id: 'case_2', name: 'Page 2 Item', code: '9K4P2W8Z' })
+    const orgCasesList = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true as const,
+        page: { items: [firstItem], total: 2, page: 1, page_size: 1 }
+      })
+      .mockResolvedValueOnce({ ok: false as const, errorCode: 'network' as const })
+      .mockResolvedValueOnce({
+        ok: true as const,
+        page: { items: [secondItem], total: 2, page: 2, page_size: 1 }
+      })
+      .mockResolvedValueOnce({ ok: false as const, errorCode: 'forbidden' as const })
+      .mockRejectedValueOnce(new Error('unexpected ipc error'))
+
+    setupWindowApi({ orgCasesList })
+    render(<UseCaseCarousel variant="marketplace" />)
+    fireEvent.click(screen.getByTestId('use-case-source-organization'))
+    await waitFor(() => expect(screen.getByText('Page 1 Item')).toBeTruthy())
+
+    // Fail append on page 2 -> Retry must request page: 2 (not reset to page 1)
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(screen.getByText('Could not connect to Lab')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(orgCasesList).toHaveBeenNthCalledWith(3, { page: 2, pageSize: 20 }))
+    await waitFor(() => expect(screen.getByText('Page 2 Item')).toBeTruthy())
+
+    // Non-empty list error with forbidden exposes Open Lab Settings CTA
+    const refreshBtn = screen.getByRole('button', { name: 'Refresh organization cases' })
+    fireEvent.click(refreshBtn)
+    await waitFor(() => expect(screen.getByText('Permission denied')).toBeTruthy())
+    expect(screen.getByRole('button', { name: 'Open Lab Settings' })).toBeTruthy()
+
+    // Non-append catch rejection clears stale items cleanly
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh organization cases' }))
+    await waitFor(() => expect(screen.getByText('Could not load organization cases')).toBeTruthy())
+    expect(screen.queryByText('Page 1 Item')).toBeNull()
   })
 })

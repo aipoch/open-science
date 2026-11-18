@@ -20,7 +20,10 @@ import { useOrgCaseSearchActions, useOrgCaseStore } from '../home/org-cases-stor
 import { ResourceCatalogHeader, ResourceCatalogToolbar } from './ResourceCenterModeTabs'
 import { useNoticeCountdown } from '@/components/use-notice-countdown'
 import { cn } from '@/lib/utils'
-import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
+import {
+  orgCaseSharingAvailable,
+  sessionPackageImportAvailable
+} from '@/lib/session-package-capabilities'
 import type { MarketplaceListSnapshot } from '@/stores/navigation-store'
 import type { UseCase } from '../../../../shared/use-cases'
 import { USE_CASE_BATCH_SIZE } from '../home/use-case-gallery-store'
@@ -64,6 +67,7 @@ export const UseCaseGalleryList = ({
   onResetRefreshCompletion,
   onRefresh,
   onOpenOrgCase,
+  onResetOrgSelection,
   onOpenMarketplace,
   onFiltersChange,
   initialState
@@ -76,14 +80,16 @@ export const UseCaseGalleryList = ({
   onResetRefreshCompletion: () => void
   onRefresh: () => void
   onOpenOrgCase?: (caseId: string, opener?: HTMLElement | null) => void
+  onResetOrgSelection?: () => void
   onOpenMarketplace?: (snapshot: MarketplaceListSnapshot) => void
   onFiltersChange?: (snapshot: MarketplaceListSnapshot) => void
   initialState?: MarketplaceListSnapshot
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const source = useOrgCaseStore((state) => state.source)
+  const orgCasesEnabled = orgCaseSharingAvailable()
+  const rawSource = useOrgCaseStore((state) => state.source)
+  const source = orgCasesEnabled ? rawSource : 'official'
   const setSource = useOrgCaseStore((state) => state.setSource)
-  const selectOrgCase = useOrgCaseStore((state) => state.selectOrgCase)
   const orgLoading = useOrgCaseStore((state) => state.loading)
   const lab = useSettingsStore((state) => state.lab)
   const {
@@ -207,13 +213,15 @@ export const UseCaseGalleryList = ({
           title={t('Use Cases')}
           actions={
             <div className="flex flex-wrap items-center gap-2">
-              <UseCaseSourceToggle
-                source={source}
-                onChange={(next) => {
-                  setSource(next)
-                  if (next === 'official') selectOrgCase(null)
-                }}
-              />
+              {orgCasesEnabled ? (
+                <UseCaseSourceToggle
+                  source={source}
+                  onChange={(next) => {
+                    setSource(next)
+                    if (next === 'official') onResetOrgSelection?.()
+                  }}
+                />
+              ) : null}
               {onOpenMarketplace ? (
                 <Button
                   variant="outline"

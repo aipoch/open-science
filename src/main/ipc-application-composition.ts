@@ -823,6 +823,9 @@ export const createApplicationModules = async (
         onReleased,
         validateBeforeTarget
       ),
+    isImportBusy: () =>
+      sessionPackageSurfaces.sessionPackageDesktop.operations.active ||
+      sessionPackageSurfaces.browserPackageImport.active,
     cancelQueuedFile: (path) =>
       sessionPackageSurfaces.sessionPackageDesktop.cancelReceivedFile(path),
     publishDownloadChanged: (snapshot) =>

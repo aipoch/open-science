@@ -62,29 +62,44 @@ export const listOrgCasesQuerySchema = z.object({
 
 export const orgCaseOwnerSchema = z.object({
   id: z.string().min(1),
-  display_name: z.string().optional().default('')
+  display_name: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? '')
 })
 
 export const orgCaseOmissionSchema = z.object({
   kind: z.string().min(1),
-  description: z.string().optional().default('')
+  description: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? '')
 })
 
 export const orgCaseSummarySchema = z.object({
   schema_version: z.number().int().min(1),
-  features: z.array(z.string()).optional().default([]),
+  features: z
+    .array(z.string())
+    .nullish()
+    .transform((value) => value ?? []),
   file_count: z.number().int().nonnegative(),
   total_bytes: z.number().int().nonnegative(),
   excluded_files: z.number().int().nonnegative(),
   omission_count: z.number().int().nonnegative(),
-  omissions: z.array(orgCaseOmissionSchema).optional().default([])
+  omissions: z
+    .array(orgCaseOmissionSchema)
+    .nullish()
+    .transform((value) => value ?? [])
 })
 
 export const orgCaseItemSchema = z.object({
   id: orgCaseIdSchema,
   name: z.string().min(1),
   code: z.string().min(1),
-  description: z.string().optional().default(''),
+  description: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? ''),
   size_bytes: z.number().int().nonnegative(),
   sha256: z
     .string()
@@ -92,7 +107,10 @@ export const orgCaseItemSchema = z.object({
     .transform((value) => value.toLowerCase()),
   created_at: z.string().min(1),
   owner: orgCaseOwnerSchema,
-  can_delete: z.boolean().optional(),
+  can_delete: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? undefined),
   summary: orgCaseSummarySchema
 })
 
@@ -104,7 +122,10 @@ export const orgCasesPageSchema = z.object({
 })
 
 export const orgCaseDetailSchema = orgCaseItemSchema.extend({
-  original_filename: z.string().optional().default('')
+  original_filename: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? '')
 })
 
 export const orgCaseDetailResponseSchema = z.object({

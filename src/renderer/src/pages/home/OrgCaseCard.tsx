@@ -10,7 +10,11 @@ import { formatPackageBytes } from '../../../../shared/session-package'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { describeOrgCaseError, formatOrgCaseDownloadLabel } from './org-case-errors'
+import {
+  describeOrgCaseError,
+  formatOrgCaseDownloadLabel,
+  orgCaseErrorNoticeActions
+} from './org-case-errors'
 import type { UseCaseSourceKind } from './org-cases-store'
 
 export const UseCaseSourceToggle = ({
@@ -87,7 +91,7 @@ export const OrgCaseCard = ({
   onImport: (caseId: string) => void
   onCancelImport: (caseId: string) => void
   onDismissError: () => void
-  onOpenLabSettings: () => void
+  onOpenLabSettings?: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
@@ -196,13 +200,10 @@ export const OrgCaseCard = ({
             title={errorPresentation.title}
             description={errorPresentation.description}
             dismissButton={{ label: t('Dismiss'), onClick: onDismissError }}
-            primaryButton={
-              errorPresentation.canOpenLabSettings
-                ? { label: t('Open Lab Settings'), onClick: onOpenLabSettings }
-                : errorPresentation.canRetry
-                  ? { label: t('Retry'), onClick: () => onImport(item.id) }
-                  : undefined
-            }
+            {...orgCaseErrorNoticeActions(errorPresentation, t, {
+              onOpenLabSettings,
+              onRetry: !importDisabled && !importBusy ? () => onImport(item.id) : undefined
+            })}
           />
         ) : null}
       </div>
@@ -225,7 +226,14 @@ export const OrgCaseCard = ({
                 {t('Cancel')}
               </Button>
             </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              role="progressbar"
+              aria-label={formatOrgCaseDownloadLabel(download, t)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={download.state === 'verifying' ? 100 : progressPercent}
+              className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+            >
               <div
                 className="h-full bg-primary transition-[width] duration-200"
                 style={{ width: `${download.state === 'verifying' ? 100 : progressPercent}%` }}

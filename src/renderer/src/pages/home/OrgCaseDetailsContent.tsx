@@ -4,7 +4,7 @@ import type { OrgCaseDetail, OrgCaseErrorCode, OrgCaseItem } from '../../../../s
 import { formatPackageBytes } from '../../../../shared/session-package'
 import { ErrorNotice } from '@/components/error-notice'
 import { Notice } from '@/components/notice'
-import { describeOrgCaseError } from './org-case-errors'
+import { describeOrgCaseError, orgCaseErrorNoticeActions } from './org-case-errors'
 
 function formatOrgCaseDate(iso: string): string {
   const timestamp = Date.parse(iso)
@@ -25,7 +25,7 @@ export const OrgCaseDetailsContent = ({
   detailLoading?: boolean
   detailError?: OrgCaseErrorCode | null
   onRetryDetail?: () => void
-  onOpenLabSettings: () => void
+  onOpenLabSettings?: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const active = detail ?? item
@@ -76,13 +76,10 @@ export const OrgCaseDetailsContent = ({
           level={detailErrorPresentation.level}
           title={detailErrorPresentation.title}
           description={detailErrorPresentation.description}
-          primaryButton={
-            detailErrorPresentation.canOpenLabSettings
-              ? { label: t('Open Lab Settings'), onClick: onOpenLabSettings }
-              : detailErrorPresentation.canRetry && onRetryDetail
-                ? { label: t('Retry'), onClick: onRetryDetail }
-                : undefined
-          }
+          {...orgCaseErrorNoticeActions(detailErrorPresentation, t, {
+            onOpenLabSettings,
+            onRetry: onRetryDetail
+          })}
         />
       ) : null}
 

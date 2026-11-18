@@ -84,6 +84,7 @@ export class LabAccountOwner {
   // Distinguishes concurrent quota reads on the same connection. A slower earlier response must
   // not overwrite a newer snapshot.
   private usageRequest = 0
+  private pendingSessionClear: Promise<void> | undefined
 
   constructor(options: LabAccountOwnerOptions) {
     this.repository = options.repository
@@ -433,7 +434,16 @@ export class LabAccountOwner {
       if (!(error instanceof LabApiError) || error.code !== 'unauthorized') {
         throw error
       }
-      const refreshed = await this.getAccessToken(true, expectedServerUrl)
+      const latest = this.access
+      const expectedNormalized = normalizeLabServerUrl(expectedServerUrl)
+      const alreadyRotated =
+        latest &&
+        normalizeLabServerUrl(latest.serverUrl) === expectedNormalized &&
+        latest.token !== token &&
+        latest.expiresAt > this.now()
+      const refreshed = alreadyRotated
+        ? latest.token
+        : await this.getAccessToken(true, expectedServerUrl)
       if (signal?.aborted) {
         throw new LabApiError('cancelled', 'The Lab request was cancelled.')
       }
@@ -456,7 +466,7 @@ export class LabAccountOwner {
           throw new LabApiError('cancelled', 'The Lab session changed.')
         }
         if (retryError instanceof LabApiError && retryError.code === 'unauthorized') {
-          this.expire('unauthorized', startGeneration)
+          await this.expire('unauthorized', startGeneration)
         }
         throw retryError
       }
@@ -532,7 +542,7 @@ export class LabAccountOwner {
   }
 
   async dispose(): Promise<void> {
-    await this.oauth.dispose()
+    await Promise.all([this.oauth.dispose(), this.pendingSessionClear])
   }
 
   private async refreshAccessToken(generation: number, expectedServerUrl: string): Promise<string> {
@@ -593,13 +603,22 @@ export class LabAccountOwner {
     }
   }
 
-  private expire(code: LabErrorCode, generation?: number): void {
-    if (generation !== undefined && generation !== this.refreshGeneration) return
+  private expire(code: LabErrorCode, generation?: number): Promise<void> {
+    if (generation !== undefined && generation !== this.refreshGeneration) {
+      return Promise.resolve()
+    }
     this.access = undefined
     this.refreshGeneration += 1
-    void this.credentials.clearSession().catch(() => undefined)
     const serverUrl = this.view.serverUrl
     this.publish({ state: 'expired', ...(serverUrl ? { serverUrl } : {}), error: { code } })
+    const clear = this.credentials
+      .clearSession()
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.pendingSessionClear === clear) this.pendingSessionClear = undefined
+      })
+    this.pendingSessionClear = clear
+    return clear
   }
 
   private async bootstrapWithAuth(): Promise<LabBootstrap> {

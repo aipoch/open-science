@@ -5,9 +5,14 @@ import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { labSettingsAvailable } from '@/lib/session-package-capabilities'
 import { useSettingsStore } from '@/stores/settings-store'
 import { OrgCaseCard } from './OrgCaseCard'
-import { describeOrgCaseError, resolveOrgCaseLabError } from './org-case-errors'
+import {
+  describeOrgCaseError,
+  orgCaseErrorNoticeActions,
+  resolveOrgCaseLabError
+} from './org-case-errors'
 import { useOrgCaseSearchActions, useOrgCaseStore } from './org-cases-store'
 
 export const OrgCaseSectionContent = ({
@@ -31,6 +36,7 @@ export const OrgCaseSectionContent = ({
   const loadingMore = useOrgCaseStore((state) => state.loadingMore)
   const hasLoadedOnce = useOrgCaseStore((state) => state.hasLoadedOnce)
   const listError = useOrgCaseStore((state) => state.listError)
+  const lastListRequestFailedAppend = useOrgCaseStore((state) => state.lastListRequestFailedAppend)
   const download = useOrgCaseStore((state) => state.download)
   const downloadError = useOrgCaseStore((state) => state.downloadError)
   const loadCases = useOrgCaseStore((state) => state.loadCases)
@@ -45,7 +51,21 @@ export const OrgCaseSectionContent = ({
   const activeError = labGuardError ?? listError
   const errorPresentation = activeError ? describeOrgCaseError(activeError, t) : null
   const isAuthenticated = lab?.state === 'authenticated'
+  const showLabSettingsAction = labSettingsAvailable()
   const hasMore = items.length < total
+  const handleRetry = (): void => {
+    if (!labGuardError && lastListRequestFailedAppend) {
+      void loadCases({ q: committedQuery, page: page + 1, append: true })
+      return
+    }
+    refresh()
+  }
+  const errorNoticeActions = errorPresentation
+    ? orgCaseErrorNoticeActions(errorPresentation, t, {
+        onOpenLabSettings: showLabSettingsAction ? () => openSettingsToPanel('lab') : undefined,
+        onRetry: handleRetry
+      })
+    : {}
 
   return (
     <div className={cn(variant === 'marketplace' ? 'space-y-5' : 'space-y-3')}>
@@ -101,13 +121,7 @@ export const OrgCaseSectionContent = ({
           level={errorPresentation.level}
           title={errorPresentation.title}
           description={errorPresentation.description}
-          primaryButton={
-            errorPresentation.canOpenLabSettings
-              ? { label: t('Open Lab Settings'), onClick: () => openSettingsToPanel('lab') }
-              : errorPresentation.canRetry
-                ? { label: t('Retry'), onClick: refresh }
-                : undefined
-          }
+          {...errorNoticeActions}
         />
       ) : loading && items.length === 0 ? (
         <div
@@ -145,9 +159,7 @@ export const OrgCaseSectionContent = ({
               level={errorPresentation.level}
               title={errorPresentation.title}
               description={errorPresentation.description}
-              primaryButton={
-                errorPresentation.canRetry ? { label: t('Retry'), onClick: refresh } : undefined
-              }
+              {...errorNoticeActions}
             />
           ) : null}
 
@@ -175,7 +187,9 @@ export const OrgCaseSectionContent = ({
                   void cancelImport(caseId)
                 }}
                 onDismissError={dismissDownloadError}
-                onOpenLabSettings={() => openSettingsToPanel('lab')}
+                onOpenLabSettings={
+                  showLabSettingsAction ? () => openSettingsToPanel('lab') : undefined
+                }
               />
             ))}
           </div>

@@ -312,4 +312,16 @@ describe('Lab API client', () => {
     })
     expect(fetchMock).toHaveBeenCalledTimes(4)
   })
+
+  it('enforces credentials omit, redirect error, and rejects fetch redirect TypeErrors as server-error', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('redirect mode is set to error'))
+    const api = new LabApi({ fetch: fetchMock })
+    await expect(api.listCases(SERVER, 'tok-1')).rejects.toMatchObject({ code: 'server-error' })
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      credentials: 'omit',
+      redirect: 'error'
+    })
+  })
 })

@@ -42,15 +42,14 @@ type OrgCaseStoreState = {
   loadingMore: boolean
   hasLoadedOnce: boolean
   listError: OrgCaseErrorCode | null
+  lastListRequestFailedAppend: boolean
   detailById: Record<string, OrgCaseDetail>
   detailLoadingId: string | null
   detailError: { caseId: string; errorCode: OrgCaseErrorCode } | null
-  selectedOrgCaseId: string | null
   download: OrgCaseDownloadSnapshot | null
   downloadError: { caseId: string; errorCode: OrgCaseErrorCode } | null
   setSource: (source: UseCaseSourceKind) => void
   setQuery: (query: string) => void
-  selectOrgCase: (caseId: string | null) => void
   dismissDownloadError: () => void
   syncLabConnection: (lab: LabView | undefined) => boolean
   applyDownloadSnapshot: (snapshot: OrgCaseDownloadSnapshot | null) => void
@@ -72,10 +71,10 @@ function createEmptyOrgData(): {
   loadingMore: boolean
   hasLoadedOnce: boolean
   listError: OrgCaseErrorCode | null
+  lastListRequestFailedAppend: boolean
   detailById: Record<string, OrgCaseDetail>
   detailLoadingId: string | null
   detailError: { caseId: string; errorCode: OrgCaseErrorCode } | null
-  selectedOrgCaseId: string | null
   download: OrgCaseDownloadSnapshot | null
   downloadError: { caseId: string; errorCode: OrgCaseErrorCode } | null
 } {
@@ -90,10 +89,10 @@ function createEmptyOrgData(): {
     loadingMore: false,
     hasLoadedOnce: false,
     listError: null as OrgCaseErrorCode | null,
+    lastListRequestFailedAppend: false,
     detailById: {} as Record<string, OrgCaseDetail>,
     detailLoadingId: null as string | null,
     detailError: null as { caseId: string; errorCode: OrgCaseErrorCode } | null,
-    selectedOrgCaseId: null as string | null,
     download: null as OrgCaseDownloadSnapshot | null,
     downloadError: null as { caseId: string; errorCode: OrgCaseErrorCode } | null
   }
@@ -113,13 +112,6 @@ export const useOrgCaseStore = create<OrgCaseStoreState>((set, get) => ({
 
   setQuery: (query) => {
     set({ query })
-  },
-
-  selectOrgCase: (caseId) => {
-    set((state) => ({
-      selectedOrgCaseId: caseId,
-      detailError: caseId && state.detailError?.caseId === caseId ? state.detailError : null
-    }))
   },
 
   dismissDownloadError: () => {
@@ -175,12 +167,15 @@ export const useOrgCaseStore = create<OrgCaseStoreState>((set, get) => ({
 
     const orgCasesList = window.api?.sessions?.orgCasesList
     if (!orgCasesList) {
-      set({
+      set((state) => ({
         loading: false,
         loadingMore: false,
         hasLoadedOnce: true,
-        listError: 'unknown'
-      })
+        listError: 'unknown',
+        lastListRequestFailedAppend: append,
+        items: !append ? [] : state.items,
+        total: !append ? 0 : state.total
+      }))
       return
     }
 
@@ -188,7 +183,8 @@ export const useOrgCaseStore = create<OrgCaseStoreState>((set, get) => ({
       listRequestSeq: seq,
       loading: !append,
       loadingMore: append,
-      listError: null
+      listError: null,
+      lastListRequestFailedAppend: false
     })
 
     try {
@@ -210,6 +206,7 @@ export const useOrgCaseStore = create<OrgCaseStoreState>((set, get) => ({
           loadingMore: false,
           hasLoadedOnce: true,
           listError: result.errorCode,
+          lastListRequestFailedAppend: append,
           items: !append || CLEAR_ITEMS_ON_LIST_ERROR.has(result.errorCode) ? [] : state.items,
           total: !append || CLEAR_ITEMS_ON_LIST_ERROR.has(result.errorCode) ? 0 : state.total
         }))
@@ -228,7 +225,8 @@ export const useOrgCaseStore = create<OrgCaseStoreState>((set, get) => ({
             loading: false,
             loadingMore: false,
             hasLoadedOnce: true,
-            listError: null
+            listError: null,
+            lastListRequestFailedAppend: false
           }
         }
         const seen = new Set(state.items.map((item) => item.id))
@@ -242,18 +240,22 @@ export const useOrgCaseStore = create<OrgCaseStoreState>((set, get) => ({
           loading: false,
           loadingMore: false,
           hasLoadedOnce: true,
-          listError: null
+          listError: null,
+          lastListRequestFailedAppend: false
         }
       })
     } catch {
       const latest = get()
       if (latest.epoch !== epoch || latest.listRequestSeq !== seq) return
-      set({
+      set((state) => ({
         loading: false,
         loadingMore: false,
         hasLoadedOnce: true,
-        listError: 'unknown'
-      })
+        listError: 'unknown',
+        lastListRequestFailedAppend: append,
+        items: !append ? [] : state.items,
+        total: !append ? 0 : state.total
+      }))
     }
   },
 

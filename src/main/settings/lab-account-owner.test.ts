@@ -175,7 +175,7 @@ const seedSession = async (
 
 afterEach(async () => {
   if (root) {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
     root = undefined
   }
 })
@@ -1219,5 +1219,48 @@ describe('Lab account owner', () => {
       tokenExpiresAt: Date.now() + 900_000
     })
     await expect(firstRefresh).rejects.toMatchObject({ code: 'unauthorized' })
+  })
+
+  it('reuses a freshly rotated token across concurrent 401 org-case requests without double refresh', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const credentials = new LabCredentialStore(dir)
+    await seedSession(credentials)
+    const api = createApi()
+    api.refreshToken.mockResolvedValueOnce({
+      accessToken: 'at_refreshed_once',
+      refreshToken: 'rt_refreshed_once',
+      expiresIn: 900,
+      tokenExpiresAt: Date.now() + 900_000
+    })
+
+    let releaseSecond401: (() => void) | undefined
+    let callCount = 0
+    const listCases = vi.fn(async (_serverUrl: string, token: string) => {
+      callCount += 1
+      if (token === 'at_1') {
+        if (callCount === 1) {
+          throw new LabApiError('unauthorized', 'expired', 401, 'SESSION_INVALID')
+        }
+        await new Promise<void>((resolve) => {
+          releaseSecond401 = resolve
+        })
+        throw new LabApiError('unauthorized', 'expired', 401, 'SESSION_INVALID')
+      }
+      return { items: [], total: 0, page: 1, page_size: 20 }
+    })
+    Object.assign(api, { listCases })
+
+    const { owner } = await createOwner(dir, api)
+    await owner.check()
+
+    const first = owner.listCases({ page: 1 })
+    const second = owner.listCases({ page: 2 })
+    await vi.waitFor(() => expect(releaseSecond401).toBeTypeOf('function'))
+    await expect(first).resolves.toMatchObject({ page: 1 })
+
+    releaseSecond401?.()
+    await expect(second).resolves.toMatchObject({ page: 1 })
+    expect(api.refreshToken).toHaveBeenCalledTimes(1)
   })
 })

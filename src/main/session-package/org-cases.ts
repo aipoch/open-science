@@ -41,6 +41,7 @@ export type OrgCaseServiceOptions = {
     onReleased?: () => void,
     validateBeforeTarget?: boolean
   ) => Promise<boolean>
+  isImportBusy?: () => boolean
   cancelQueuedFile?: (path: string) => Promise<void> | void
   publishDownloadChanged?: (snapshot: OrgCaseDownloadSnapshot | null) => void
   downloadFetch?: typeof fetch
@@ -293,7 +294,7 @@ export class OrgCaseService {
       return { status: 'failed', caseId, errorCode: mapAuthUnavailableCode(view) }
     }
 
-    if (this.activeDownload) {
+    if (this.activeDownload || (this.options.isImportBusy?.() ?? false)) {
       return { status: 'failed', caseId, errorCode: 'import-busy' }
     }
 
@@ -426,14 +427,16 @@ export class OrgCaseService {
       }
 
       this.ensureDownloadStillCurrent(run)
-
-      const releaseTempDir = (): void => {
-        void rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+      if (this.options.isImportBusy?.()) {
+        throw new OrgCaseFailure('import-busy')
       }
+
+      const releaseTempDir = (): Promise<void> =>
+        rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
 
       const accepted = await this.options.enqueuePackageFile(destPath, releaseTempDir, true)
       if (!accepted) {
-        releaseTempDir()
+        await releaseTempDir()
         if (this.disposed || epoch !== this.connectionEpoch || controller.signal.aborted) {
           throw new OrgCaseFailure('cancelled')
         }
@@ -443,7 +446,7 @@ export class OrgCaseService {
       this.syncConnectionState()
       if (this.disposed || run.epoch !== this.connectionEpoch || run.controller.signal.aborted) {
         await this.options.cancelQueuedFile?.(destPath)
-        releaseTempDir()
+        await releaseTempDir()
         throw new OrgCaseFailure('cancelled')
       }
 
@@ -632,24 +635,26 @@ export class OrgCaseService {
     if (isAbortError(error)) return 'cancelled'
 
     if (error instanceof DownloadSourceError) {
-      if (/redirect|origin/i.test(error.message)) {
+      const causeMessage = error.cause instanceof Error ? error.cause.message : ''
+      const details = `${error.message} ${causeMessage}`
+      if (/redirect|origin/i.test(details)) {
         return 'invalid-response'
       }
       const now = this.options.now ?? Date.now
       const expiresAtMs = ticket ? Date.parse(ticket.expires_at) : Number.NaN
-      if ((Number.isFinite(expiresAtMs) && now() >= expiresAtMs) || /\b403\b/.test(error.message)) {
+      if ((Number.isFinite(expiresAtMs) && now() >= expiresAtMs) || /\b403\b/.test(details)) {
         return 'url-expired'
       }
-      if (/\b404\b/.test(error.message)) {
+      if (/\b404\b/.test(details)) {
         return 'not-found'
       }
-      if (/\b5\d\d\b/.test(error.message)) {
+      if (/\b5\d\d\b/.test(details)) {
         return 'storage-unavailable'
       }
-      if (/checksum|sha-?256|size|content-length/i.test(error.message)) {
+      if (/short read|checksum|sha-?256|size|content-length/i.test(details)) {
         return 'verification-failed'
       }
-      if (/timeout/i.test(error.message)) {
+      if (/stalled|timeout/i.test(details)) {
         return 'timeout'
       }
       return 'network'

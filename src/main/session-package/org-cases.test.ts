@@ -3,14 +3,17 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DownloadSourceError } from '@aipoch/resilient-download'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LabView } from '../../shared/lab'
-import type {
-  OrgCaseDetail,
-  OrgCaseDownloadSnapshot,
-  OrgCaseDownloadTicket,
-  OrgCaseItem,
-  OrgCasesPage
+import {
+  parseOrgCaseDetailResponse,
+  parseOrgCasesPage,
+  type OrgCaseDetail,
+  type OrgCaseDownloadSnapshot,
+  type OrgCaseDownloadTicket,
+  type OrgCaseItem,
+  type OrgCasesPage
 } from '../../shared/org-cases'
 import { PACKAGE_MAX_BYTES } from '../../shared/session-package'
 import { PackageCapacityError } from './capacity'
@@ -719,5 +722,171 @@ describe('OrgCaseService', () => {
     })
     expect(cancelQueuedFile).toHaveBeenCalledWith(queuedPath)
     expect(await readdir(tempRoot)).toEqual([])
+  })
+
+  it('maps real resilientDownload short-read to verification-failed and stalled DownloadSourceError to timeout', async () => {
+    const expected = Buffer.from('expected-100-bytes-payload'.padEnd(100, 'x'))
+    let truncatedController: ReadableStreamDefaultController<Uint8Array> | undefined
+    const shortBody = new ReadableStream<Uint8Array>({
+      start(ctrl) {
+        truncatedController = ctrl
+        ctrl.enqueue(new Uint8Array([1, 2, 3, 4, 5]))
+        ctrl.close()
+      }
+    })
+    void truncatedController
+
+    const serviceShortRead = new OrgCaseService({
+      getLabView: () => ({
+        state: 'authenticated',
+        serverUrl: 'https://lab.example.com',
+        accountName: 'Alice',
+        orgId: 'org_1'
+      }),
+      listLabCases: vi.fn(),
+      getLabCase: vi.fn(),
+      getLabCaseDownload: vi.fn(async () => ({
+        url: 'https://storage.example.test/truncated.science',
+        expires_at: new Date(Date.now() + 300_000).toISOString(),
+        size_bytes: expected.byteLength,
+        sha256: sha256Hex(expected),
+        name: 'Short Read',
+        code: '7Q2M9X4B'
+      })),
+      enqueuePackageFile: vi.fn(async () => true),
+      assertCapacity: vi.fn(async () => undefined),
+      downloadFetch: vi.fn(async (input) =>
+        responseWithUrl(String(input), shortBody, {
+          status: 200,
+          headers: { 'content-length': String(expected.byteLength) }
+        })
+      ),
+      tempRootDir: tempRoot
+    })
+
+    await expect(serviceShortRead.importCase('case_short')).resolves.toEqual({
+      status: 'failed',
+      caseId: 'case_short',
+      errorCode: 'verification-failed'
+    })
+
+    const serviceStalled = new OrgCaseService({
+      getLabView: () => ({
+        state: 'authenticated',
+        serverUrl: 'https://lab.example.com',
+        accountName: 'Alice',
+        orgId: 'org_1'
+      }),
+      listLabCases: vi.fn(),
+      getLabCase: vi.fn(),
+      getLabCaseDownload: vi.fn(async () => ({
+        url: 'https://storage.example.test/stalled.science',
+        expires_at: new Date(Date.now() + 300_000).toISOString(),
+        size_bytes: 10,
+        sha256: sha256Hex(Buffer.from('1234567890')),
+        name: 'Stalled',
+        code: '7Q2M9X4B'
+      })),
+      enqueuePackageFile: vi.fn(async () => true),
+      assertCapacity: vi.fn(async () => undefined),
+      download: vi.fn(async () => {
+        throw new DownloadSourceError('stalled >60000ms', {
+          cause: new Error('stalled >60000ms')
+        })
+      }),
+      tempRootDir: tempRoot
+    })
+
+    await expect(serviceStalled.importCase('case_stalled')).resolves.toEqual({
+      status: 'failed',
+      caseId: 'case_stalled',
+      errorCode: 'timeout'
+    })
+  })
+
+  it('rejects with import-busy when desktop import surface is active and awaits temp cleanup on release', async () => {
+    let busy = true
+    const getLabCaseDownload = vi.fn(async () => ({
+      url: 'https://storage.example.test/busy.science',
+      expires_at: new Date(Date.now() + 300_000).toISOString(),
+      size_bytes: 5,
+      sha256: sha256Hex(Buffer.from('hello')),
+      name: 'Desktop Busy',
+      code: '7Q2M9X4B'
+    }))
+    let releasedDir: Promise<void> | undefined
+    const enqueuePackageFile = vi.fn(async (_destPath: string, onReleased?: () => void) => {
+      releasedDir = (onReleased as (() => Promise<void>) | undefined)?.()
+      return true
+    })
+
+    const service = new OrgCaseService({
+      getLabView: () => ({
+        state: 'authenticated',
+        serverUrl: 'https://lab.example.com',
+        accountName: 'Alice',
+        orgId: 'org_1'
+      }),
+      listLabCases: vi.fn(),
+      getLabCase: vi.fn(),
+      getLabCaseDownload,
+      isImportBusy: () => busy,
+      enqueuePackageFile,
+      assertCapacity: vi.fn(async () => undefined),
+      download: vi.fn(async (_url, dest) => {
+        await writeFile(dest, Buffer.from('hello'))
+        return dest
+      }),
+      tempRootDir: tempRoot
+    })
+
+    await expect(service.importCase('case_busy_early')).resolves.toEqual({
+      status: 'failed',
+      caseId: 'case_busy_early',
+      errorCode: 'import-busy'
+    })
+    expect(getLabCaseDownload).not.toHaveBeenCalled()
+
+    busy = false
+    await expect(service.importCase('case_release_promise')).resolves.toEqual({
+      status: 'handed-off',
+      caseId: 'case_release_promise'
+    })
+    await releasedDir
+    expect(await readdir(tempRoot)).toEqual([])
+  })
+
+  it('tolerates JSON null on optional organization case metadata fields', () => {
+    const rawItem = {
+      ...makeCaseItem(),
+      description: null,
+      can_delete: null,
+      owner: { id: 'usr_1', display_name: null },
+      summary: {
+        schema_version: 1,
+        features: null,
+        file_count: 1,
+        total_bytes: 10,
+        excluded_files: 0,
+        omission_count: 1,
+        omissions: [{ kind: 'missing', description: null }]
+      }
+    }
+    expect(parseOrgCasesPage({ items: [rawItem], total: 1, page: 1, page_size: 20 })).toMatchObject(
+      {
+        items: [
+          {
+            description: '',
+            owner: { display_name: '' },
+            summary: { features: [], omissions: [{ kind: 'missing', description: '' }] }
+          }
+        ]
+      }
+    )
+    expect(
+      parseOrgCaseDetailResponse({ case: { ...rawItem, original_filename: null } })
+    ).toMatchObject({
+      original_filename: ''
+    })
   })
 })

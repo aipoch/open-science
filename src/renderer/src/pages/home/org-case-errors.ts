@@ -239,6 +239,31 @@ export function describeOrgCaseError(
   }
 }
 
+export function orgCaseErrorNoticeActions(
+  presentation: OrgCaseErrorPresentation,
+  t: TFunction,
+  options: {
+    onOpenLabSettings?: () => void
+    onRetry?: () => void
+  }
+): {
+  primaryButton?: { label: string; onClick: () => void }
+  secondaryButton?: { label: string; onClick: () => void }
+} {
+  const settingsButton =
+    presentation.canOpenLabSettings && options.onOpenLabSettings
+      ? { label: t('Open Lab Settings'), onClick: options.onOpenLabSettings }
+      : undefined
+  const retryButton =
+    presentation.canRetry && options.onRetry
+      ? { label: t('Retry'), onClick: options.onRetry }
+      : undefined
+  return {
+    primaryButton: settingsButton ?? retryButton,
+    secondaryButton: settingsButton && retryButton ? retryButton : undefined
+  }
+}
+
 export function formatOrgCaseDownloadLabel(
   snapshot: OrgCaseDownloadSnapshot,
   t: TFunction

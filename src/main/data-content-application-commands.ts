@@ -1249,19 +1249,28 @@ const registerDataContentApplicationCommands = (
           : dependencies.useCaseCatalog.refresh(invocation.args[0] === 'reload')
       },
       'sessions:org-cases-list': (invocation) => {
-        assertLocalCaller(invocation, dataContentApplicationCommands.orgCasesList.name)
+        assertElectronOrLocalWebCaller(invocation, dataContentApplicationCommands.orgCasesList.name)
         return dependencies.orgCases.listCases(invocation.args[0])
       },
       'sessions:org-case-detail': (invocation) => {
-        assertLocalCaller(invocation, dataContentApplicationCommands.orgCaseDetail.name)
+        assertElectronOrLocalWebCaller(
+          invocation,
+          dataContentApplicationCommands.orgCaseDetail.name
+        )
         return dependencies.orgCases.getCase(invocation.args[0])
       },
       'sessions:org-case-import': (invocation) => {
-        assertLocalCaller(invocation, dataContentApplicationCommands.orgCaseImport.name)
+        assertElectronOrLocalWebCaller(
+          invocation,
+          dataContentApplicationCommands.orgCaseImport.name
+        )
         return dependencies.orgCases.importCase(invocation.args[0])
       },
       'sessions:org-case-cancel-import': (invocation) => {
-        assertLocalCaller(invocation, dataContentApplicationCommands.orgCaseCancelImport.name)
+        assertElectronOrLocalWebCaller(
+          invocation,
+          dataContentApplicationCommands.orgCaseCancelImport.name
+        )
         return dependencies.orgCases.cancelImport(invocation.args[0])
       },
       'sessions:package-operation': (invocation) => {

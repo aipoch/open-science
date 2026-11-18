@@ -9,7 +9,11 @@ import type {
 } from '../../../../shared/org-cases'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
-import { describeOrgCaseError, formatOrgCaseDownloadLabel } from '../home/org-case-errors'
+import {
+  describeOrgCaseError,
+  formatOrgCaseDownloadLabel,
+  orgCaseErrorNoticeActions
+} from '../home/org-case-errors'
 import { OrgCaseDetailsContent } from '../home/OrgCaseDetailsContent'
 
 export const OrgCaseDetailsPage = ({
@@ -43,7 +47,7 @@ export const OrgCaseDetailsPage = ({
   onImport: (caseId: string) => void
   onCancelImport: (caseId: string) => void
   onDismissDownloadError: () => void
-  onOpenLabSettings: () => void
+  onOpenLabSettings?: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const backRef = useRef<HTMLButtonElement>(null)
@@ -113,7 +117,7 @@ export const OrgCaseDetailsPage = ({
             <Button
               type="button"
               size="sm"
-              disabled={importBusy || importDisabled}
+              disabled={importBusy || importDisabled || detailError === 'not-found'}
               onClick={() => onImport(caseId)}
             >
               <Download className="mr-1.5 h-3.5 w-3.5" />
@@ -139,7 +143,14 @@ export const OrgCaseDetailsPage = ({
                       {download.state === 'verifying' ? '100%' : `${progressPercent}%`}
                     </span>
                   </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    role="progressbar"
+                    aria-label={formatOrgCaseDownloadLabel(download, t)}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={download.state === 'verifying' ? 100 : progressPercent}
+                    className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+                  >
                     <div
                       className="h-full bg-primary transition-[width] duration-200"
                       style={{
@@ -157,13 +168,10 @@ export const OrgCaseDetailsPage = ({
                   title={downloadErrorPresentation.title}
                   description={downloadErrorPresentation.description}
                   dismissButton={{ label: t('Dismiss'), onClick: onDismissDownloadError }}
-                  primaryButton={
-                    downloadErrorPresentation.canOpenLabSettings
-                      ? { label: t('Open Lab Settings'), onClick: onOpenLabSettings }
-                      : downloadErrorPresentation.canRetry
-                        ? { label: t('Retry'), onClick: () => onImport(caseId) }
-                        : undefined
-                  }
+                  {...orgCaseErrorNoticeActions(downloadErrorPresentation, t, {
+                    onOpenLabSettings,
+                    onRetry: !importDisabled && !importBusy ? () => onImport(caseId) : undefined
+                  })}
                 />
               ) : null}
 
@@ -181,13 +189,10 @@ export const OrgCaseDetailsPage = ({
               level={detailErrorPresentation.level}
               title={detailErrorPresentation.title}
               description={detailErrorPresentation.description}
-              primaryButton={
-                detailErrorPresentation.canOpenLabSettings
-                  ? { label: t('Open Lab Settings'), onClick: onOpenLabSettings }
-                  : detailErrorPresentation.canRetry
-                    ? { label: t('Retry'), onClick: () => onLoadDetail(caseId) }
-                    : undefined
-              }
+              {...orgCaseErrorNoticeActions(detailErrorPresentation, t, {
+                onOpenLabSettings,
+                onRetry: () => onLoadDetail(caseId)
+              })}
             />
           ) : (
             <p className="text-sm text-muted-foreground">{t('Refreshing case details…')}</p>

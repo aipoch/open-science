@@ -19,7 +19,11 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
-import { describeOrgCaseError, formatOrgCaseDownloadLabel } from './org-case-errors'
+import {
+  describeOrgCaseError,
+  formatOrgCaseDownloadLabel,
+  orgCaseErrorNoticeActions
+} from './org-case-errors'
 import { OrgCaseDetailsContent } from './OrgCaseDetailsContent'
 
 export const OrgCaseDetailsDialog = ({
@@ -57,7 +61,7 @@ export const OrgCaseDetailsDialog = ({
   onImport: (caseId: string) => void
   onCancelImport: (caseId: string) => void
   onDismissDownloadError: () => void
-  onOpenLabSettings: () => void
+  onOpenLabSettings?: () => void
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
   const importDialogOpen = usePackageOperationStore((state) => state.open)
@@ -84,6 +88,9 @@ export const OrgCaseDetailsDialog = ({
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
           aria-label={t('Organization case details')}
+          onEscapeKeyDown={(event) => {
+            if (isDownloading) event.preventDefault()
+          }}
           onInteractOutside={(event) => {
             const fromDialog =
               event.target instanceof Element && event.target.closest('[role="dialog"]')
@@ -129,13 +136,10 @@ export const OrgCaseDetailsDialog = ({
                 level={detailErrorPresentation.level}
                 title={detailErrorPresentation.title}
                 description={detailErrorPresentation.description}
-                primaryButton={
-                  detailErrorPresentation.canOpenLabSettings
-                    ? { label: t('Open Lab Settings'), onClick: onOpenLabSettings }
-                    : detailErrorPresentation.canRetry
-                      ? { label: t('Retry'), onClick: onRetryDetail }
-                      : undefined
-                }
+                {...orgCaseErrorNoticeActions(detailErrorPresentation, t, {
+                  onOpenLabSettings,
+                  onRetry: onRetryDetail
+                })}
               />
             ) : (
               <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -151,13 +155,10 @@ export const OrgCaseDetailsDialog = ({
                 title={downloadErrorPresentation.title}
                 description={downloadErrorPresentation.description}
                 dismissButton={{ label: t('Dismiss'), onClick: onDismissDownloadError }}
-                primaryButton={
-                  downloadErrorPresentation.canOpenLabSettings
-                    ? { label: t('Open Lab Settings'), onClick: onOpenLabSettings }
-                    : downloadErrorPresentation.canRetry
-                      ? { label: t('Retry'), onClick: () => onImport(targetId) }
-                      : undefined
-                }
+                {...orgCaseErrorNoticeActions(downloadErrorPresentation, t, {
+                  onOpenLabSettings,
+                  onRetry: !importDisabled && !importBusy ? () => onImport(targetId) : undefined
+                })}
               />
             ) : null}
 
@@ -171,7 +172,14 @@ export const OrgCaseDetailsDialog = ({
                     {download.state === 'verifying' ? '100%' : `${progressPercent}%`}
                   </span>
                 </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  role="progressbar"
+                  aria-label={formatOrgCaseDownloadLabel(download, t)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={download.state === 'verifying' ? 100 : progressPercent}
+                  className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+                >
                   <div
                     className="h-full bg-primary transition-[width] duration-200"
                     style={{ width: `${download.state === 'verifying' ? 100 : progressPercent}%` }}
@@ -198,7 +206,7 @@ export const OrgCaseDetailsDialog = ({
               ) : (
                 <Button
                   type="button"
-                  disabled={importBusy || importDisabled}
+                  disabled={importBusy || importDisabled || detailError === 'not-found'}
                   onClick={() => onImport(targetId)}
                 >
                   <Download className="mr-1.5 h-4 w-4" />
