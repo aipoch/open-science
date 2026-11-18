@@ -94,6 +94,48 @@ describe('ProviderRuntimeHealthOwner', () => {
     expect(stored.lastValidationFailure?.target).toBeUndefined()
     expect(published).toHaveBeenCalledOnce()
   })
+  it('applies failures from a retained official connection across renames and fences a vendor round trip', async () => {
+    const account: StoredProvider = {
+      id: 'account',
+      name: 'Account',
+      type: 'official',
+      vendorId: 'deepseek',
+      configRevision: 1
+    }
+    await repository.upsertProvider(account)
+    const connected = target(account)
+    const owner = new ProviderRuntimeHealthOwner(repository)
+    const edit = (
+      name: string,
+      vendorId: StoredProvider['vendorId'],
+      revision: number
+    ): ReturnType<SettingsRepository['upsertProvider']> =>
+      repository.upsertProvider({ ...account, name, vendorId }, account.id, {
+        expectedConfigRevision: revision
+      })
+    const failure = {
+      category: 'auth',
+      status: 401,
+      startedAt: Date.now(),
+      endpoint: 'chat-completions'
+    } as const
+    await edit('Renamed', 'deepseek', 1)
+    await edit('Renamed again', 'deepseek', 2)
+    await owner.observe(connected, failure)
+    expect(
+      (await repository.getSettings()).providers.find((p) => p.id === account.id)
+        ?.lastValidationFailure?.status
+    ).toBe(401)
+    await edit('Changed', 'anthropic', 3)
+    await edit('Restored', 'deepseek', 4)
+    await edit('Renamed again', 'deepseek', 5)
+    await owner.observe(connected, failure)
+    expect(
+      (await repository.getSettings()).providers.find((p) => p.id === account.id)
+        ?.lastValidationFailure
+    ).toBeUndefined()
+  })
+
   it('does not invalidate a replacement configuration when an old request fails late', async () => {
     const oldTarget = target()
     await repository.upsertProvider({ ...original, model: 'model-b' }, original.id, {

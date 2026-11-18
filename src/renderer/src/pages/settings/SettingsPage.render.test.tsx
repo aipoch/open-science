@@ -70,6 +70,7 @@ let root: Root
 const originalSettingsActions = (() => {
   const state = useSettingsStore.getState()
   return {
+    refreshProviderModels: state.refreshProviderModels,
     persistProvider: state.persistProvider,
     saveValidatedProvider: state.saveValidatedProvider,
     validateProvider: state.validateProvider,
@@ -2054,6 +2055,71 @@ describe('SettingsPage layout', () => {
       expect(document.body.textContent).toContain('sensenova-6.8-flash-lite')
     }
     expect(useSettingsStore.getState().providers[0]?.region).toBe('global')
+  })
+
+  it('scopes catalog history to the current key and workspace and retries a settings read independently', async () => {
+    const catalog = { fetchedAt: 123, models: [{ id: 'workspace-only' }] }
+    const provider: ProviderView = {
+      id: 'account',
+      name: 'Anthropic',
+      type: 'official',
+      vendorId: 'anthropic',
+      models: ['workspace-only'],
+      hasKey: true,
+      needsKey: false,
+      supportsImageInput: false,
+      catalogParameters: { workspaceId: 'first' },
+      modelCatalog: catalog,
+      modelCatalogStatus: { attemptedAt: 124, ok: false, code: 'timeout' }
+    }
+    useSettingsStore.getState().openSettingsToPanel('model')
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    const saved = { fetchedAt: 125, models: [{ id: 'new-saved-model' }] }
+    const refresh = vi.fn().mockResolvedValue({
+      ok: true,
+      category: 'ok',
+      catalog: saved,
+      catalogStatus: { attemptedAt: 125, ok: true },
+      refreshFailed: true
+    })
+    await act(async () =>
+      useSettingsStore.setState({ providers: [provider], refreshProviderModels: refresh })
+    )
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')!.click()
+    )
+    const button = (name: string): HTMLButtonElement =>
+      Array.from(document.body.querySelectorAll('button')).find(
+        (b) => b.textContent?.trim() === name
+      )!
+    for (const [id, next, original] of [
+      ['catalog-workspaceId', 'second', 'first'],
+      ['provider-key', 'new-key', '']
+    ]) {
+      expect(document.body.textContent).toContain('Last updated:')
+      expect(document.body.textContent).toContain('Model refresh failed.')
+      const input = document.getElementById(id)!
+      act(() => fireEvent.change(input, { target: { value: next } }))
+      expect(document.body.textContent).not.toContain('workspace-only')
+      expect(document.body.textContent).not.toContain('Last updated:')
+      expect(document.body.textContent).not.toContain('Model refresh failed.')
+      expect(button('Refresh model list').disabled).toBe(false)
+      act(() => fireEvent.change(input, { target: { value: original } }))
+    }
+    await act(async () => button('Refresh model list').click())
+    expect(document.body.textContent).toContain('Model list saved.')
+    expect(document.body.textContent).toContain('new-saved-model')
+    expect(document.body.textContent).not.toContain('Model refresh failed.')
+    const read = vi.mocked(window.api.settings.getSettings)
+    read.mockResolvedValueOnce({
+      ...(await read()),
+      providers: [
+        { ...provider, modelCatalog: saved, modelCatalogStatus: { attemptedAt: 125, ok: true } }
+      ]
+    })
+    await act(async () => button('Retry').click())
+    expect(document.body.textContent).not.toContain('Model list saved.')
+    expect(refresh).toHaveBeenCalledTimes(1)
   })
 
   it('shows an error when refreshing a provider model catalog rejects', async () => {

@@ -95,6 +95,14 @@ test('accepts public catalogs and reports missing discovery prerequisites', asyn
     refreshed.providers.find((p) => p.name === 'Catalog acceptance')?.modelCatalog?.fetchedAt
   ).toBeGreaterThan(0)
   await settings.screenshot({ path: `${evidence}/public-refresh.png` })
+  const updated = settings.getByText(/Last updated:/)
+  await expect(updated).toBeVisible()
+  const keyInput = settings.locator('#provider-key')
+  await keyInput.fill('replacement-synthetic-key')
+  await expect(updated).toHaveCount(0)
+  await settings.screenshot({ path: `${evidence}/replacement-key.png` })
+  await keyInput.fill('')
+  await expect(updated).toBeVisible()
   await app.captureMainLog('model-catalog.log')
 })
 

@@ -1,4 +1,4 @@
-import { readProviderErrorCode } from '../failure/contract'
+import { readHarnessErrorDiagnostics } from '../failure/contract'
 import type {
   ClassifiedFailure,
   FailureCategory,
@@ -34,7 +34,9 @@ export const readPersistedFailure = (value: Record<string, unknown>): Classified
     const category = failure.category as FailureCategory
     const diagnostics: { -readonly [K in keyof FailureDiagnostics]: FailureDiagnostics[K] } = {}
     const source = failure.diagnostics
-    const harness = ['chat-completions', 'responses', 'messages'].includes(String(source.protocol))
+    const protocol = source.protocol
+    const harness =
+      protocol === 'chat-completions' || protocol === 'responses' || protocol === 'messages'
     if (
       typeof source.status === 'number' &&
       Number.isInteger(source.status) &&
@@ -42,35 +44,14 @@ export const readPersistedFailure = (value: Record<string, unknown>): Classified
       source.status <= 599
     )
       diagnostics.status = source.status
-    for (const key of [
-      'code',
-      'provider',
-      'model',
-      'requestId',
-      'raw',
-      'adapterCode',
-      'phase'
-    ] as const)
-      if (
-        typeof source[key] === 'string' &&
-        !(harness && (key === 'raw' || key === 'code' || key === 'requestId'))
-      )
-        diagnostics[key] = source[key]
+    for (const key of ['provider', 'model'] as const)
+      if (typeof source[key] === 'string') diagnostics[key] = source[key]
     if (harness) {
-      const code = readProviderErrorCode(source.code)
-      if (code) diagnostics.code = code
-      if (
-        typeof source.requestId === 'string' &&
-        /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(source.requestId)
-      )
-        diagnostics.requestId = source.requestId
+      Object.assign(diagnostics, readHarnessErrorDiagnostics(source), { protocol })
+    } else {
+      for (const key of ['code', 'requestId', 'raw', 'adapterCode', 'phase'] as const)
+        if (typeof source[key] === 'string') diagnostics[key] = source[key]
     }
-    if (
-      source.protocol === 'chat-completions' ||
-      source.protocol === 'responses' ||
-      source.protocol === 'messages'
-    )
-      diagnostics.protocol = source.protocol
     return {
       category,
       ...(!harness &&

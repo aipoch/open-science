@@ -8192,6 +8192,7 @@
     "Workspace ID": "ワークスペース ID",
     "Last updated: {{time}}": "最終更新：{{time}}",
     "Save to apply the refreshed model list.": "保存して更新したモデル一覧を適用してください。",
+    "Model list saved. The latest settings could not be loaded.": "モデル一覧を保存しました。最新の設定を読み込めませんでした。",
     "Model refresh failed. The previous list is kept.": "モデルの更新に失敗しました。前回の一覧を保持しています。",
     "Edit presentation": "プレゼンテーションを編集",
     "New text": "新しいテキスト",

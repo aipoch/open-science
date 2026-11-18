@@ -427,6 +427,20 @@ describe('provider auth slice: authentication and catalogs', () => {
     expect(reconcileSnapshot).toHaveBeenCalledTimes(2)
   })
 
+  it('returns a successful preview without reading settings and preserves a committed refresh on read failure', async () => {
+    const result = { ok: true, category: 'ok' as const, models: ['new'] }
+    commands.refreshProviderModels.mockResolvedValue(result)
+    commands.getSettings.mockRejectedValue(new Error('settings unavailable'))
+    await expect(
+      store.getState().refreshProviderModels({ draft: { type: 'official', vendorId: 'anthropic' } })
+    ).resolves.toEqual(result)
+    expect(commands.getSettings).not.toHaveBeenCalled()
+    await expect(store.getState().refreshProviderModels('saved')).resolves.toEqual({
+      ...result,
+      refreshFailed: true
+    })
+  })
+
   it('preserves a discarded model refresh error when snapshot reconciliation fails', async () => {
     const discarded = {
       ok: false,

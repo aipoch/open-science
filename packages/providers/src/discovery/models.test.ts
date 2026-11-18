@@ -76,6 +76,35 @@ describe('listProviderModels', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
+  it('requires at least one usable advertised route across the complete catalog', async () => {
+    const target = {
+      url: 'https://example.test/models',
+      options: { auth: 'none', routes: { type: 'map', path: 'api', baseUrlPath: 'base_url' } }
+    } as const
+    const unknown = { id: 'unknown', api: { future: { base_url: target.url } } }
+    const supported = { id: 'supported', api: { messages: { base_url: target.url } } }
+    for (const data of [
+      [unknown],
+      [{ id: 'missing' }],
+      [{ id: 'malformed', api: { messages: { base_url: '?' } } }]
+    ]) {
+      expect(
+        await listProviderModels(target, { fetchImpl: async () => Response.json({ data }) })
+      ).toMatchObject({ ok: false, code: 'invalid-response' })
+    }
+    expect(
+      await listProviderModels(target, {
+        fetchImpl: async () => Response.json({ data: [unknown, supported] })
+      })
+    ).toMatchObject({
+      ok: true,
+      catalog: [
+        { id: 'unknown', routes: {} },
+        { id: 'supported', routes: { messages: target.url } }
+      ]
+    })
+  })
+
   it('fails on an invalid model-list URL', async () => {
     expect((await listProviderModels({ url: 'not a url' })).ok).toBe(false)
   })

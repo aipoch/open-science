@@ -57,3 +57,50 @@ export const readProviderErrorCode = (value: unknown): ProviderErrorCode | undef
   typeof value === 'string' && (PROVIDER_ERROR_CODES as readonly string[]).includes(value)
     ? (value as ProviderErrorCode)
     : undefined
+
+// Decode the same bounded diagnostics on the wire and when restoring a saved turn.
+export const readHarnessErrorDiagnostics = (
+  data: Record<string, unknown>
+): Pick<FailureDiagnostics, 'code' | 'adapterCode' | 'phase' | 'requestId'> => {
+  const code = readProviderErrorCode(data.code)
+  const adapterCode =
+    typeof data.adapterCode === 'string' &&
+    [
+      'http',
+      'network',
+      'protocol',
+      'limit',
+      'insufficient_quota',
+      'rate_limit_exceeded',
+      'model_not_found',
+      'authentication_error'
+    ].includes(data.adapterCode)
+      ? data.adapterCode
+      : undefined
+  const phase =
+    typeof data.phase === 'string' &&
+    [
+      'response',
+      'stream',
+      'event-json',
+      'provider',
+      'choice',
+      'usage',
+      'tool-delta',
+      'missing-done',
+      'missing-finish',
+      'tool-arguments'
+    ].includes(data.phase)
+      ? data.phase
+      : undefined
+  const requestId =
+    typeof data.requestId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(data.requestId)
+      ? data.requestId
+      : undefined
+  return {
+    ...(code ? { code } : {}),
+    ...(adapterCode ? { adapterCode } : {}),
+    ...(phase ? { phase } : {}),
+    ...(requestId ? { requestId } : {})
+  }
+}

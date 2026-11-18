@@ -423,11 +423,12 @@ class ProviderRuntimeProjectionOwner {
     if (isXaiSubscriptionProvider(provider.type)) return true
     if (provider.type === 'custom') return provider.supportsImageInput === true
     if (provider.type === 'official' && provider.vendorId) {
-      return (
-        resolveOfficialModelCatalog(provider).find(
-          (entry) => entry.id === (activeModel ?? this.availableModels(provider)[0])
-        )?.supportsImageInput === true
-      )
+      const catalog = resolveOfficialModelCatalog(provider)
+      const model =
+        activeModel === undefined
+          ? catalog.find(isCatalogModelAvailable)
+          : catalog.find((entry) => entry.id === activeModel)
+      return model?.supportsImageInput === true
     }
     return false
   }

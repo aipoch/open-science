@@ -8688,6 +8688,7 @@
     "Workspace ID": "Workspace ID",
     "Last updated: {{time}}": "Last updated: {{time}}",
     "Save to apply the refreshed model list.": "Save to apply the refreshed model list.",
+    "Model list saved. The latest settings could not be loaded.": "Список моделей сохранён. Не удалось загрузить актуальные настройки.",
     "Model refresh failed. The previous list is kept.": "Model refresh failed. The previous list is kept.",
     "Edit presentation": "Редактировать презентацию",
     "New text": "Новый текст",

@@ -8,8 +8,9 @@ const route = z
   .url()
   .max(2048)
   .refine((value) => {
-    const url = new URL(value)
+    const url = URL.parse(value)
     return (
+      url !== null &&
       ['http:', 'https:'].includes(url.protocol) &&
       !url.username &&
       !url.password &&

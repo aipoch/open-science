@@ -16,6 +16,7 @@ import { netFetchStandard } from '../network-fetch'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import {
   decodeCatalogParameters,
+  decodeModelCatalog,
   providerCatalogState,
   type ProviderCatalogState
 } from '../../shared/provider-model-catalog-codec'
@@ -164,13 +165,18 @@ export class ProviderModelCatalogOwner {
     if (this.generations.get(identity) !== generation)
       return { ok: false, category: 'unknown', code: 'stale' }
     this.generations.delete(identity)
-    const models = subscription
-      ? result.models?.filter((m) => m.startsWith('grok-'))
-      : result.models
-    const code = result.ok && !models?.length ? 'invalid-response' : result.code
+    const entries = result.catalog ?? result.models?.map((id) => ({ id }))
+    const attemptedAt = Date.now()
+    const catalog = result.ok
+      ? decodeModelCatalog({
+          fetchedAt: attemptedAt,
+          models: subscription ? entries?.filter(({ id }) => id.startsWith('grok-')) : entries
+        })
+      : undefined
+    const code = result.ok && !catalog ? 'invalid-response' : result.code
     const catalogStatus: CatalogStatus = {
-      attemptedAt: Date.now(),
-      ok: result.ok && Boolean(models?.length),
+      attemptedAt,
+      ok: Boolean(catalog),
       code,
       status: result.status
     }
@@ -181,9 +187,9 @@ export class ProviderModelCatalogOwner {
       ok: catalogStatus.ok,
       code,
       status: result.status,
-      count: models?.length ?? 0
+      count: catalog?.models.length ?? 0
     })
-    if (!result.ok || !models?.length) {
+    if (!catalog) {
       if (!draft) {
         const applied = await this.repository.updateProviderModelCatalogIfTargetMatches(
           expectedProvider,
@@ -210,10 +216,7 @@ export class ProviderModelCatalogOwner {
         catalogStatus
       }
     }
-    const catalog: CatalogSnapshot = {
-      fetchedAt: Date.now(),
-      models: (result.catalog ?? models.map((id) => ({ id }))).filter((m) => models.includes(m.id))
-    }
+    const models = catalog.models.map(({ id }) => id)
     if (draftFingerprint) {
       for (const [token, value] of this.drafts)
         if (value.expiresAt < Date.now()) this.drafts.delete(token)

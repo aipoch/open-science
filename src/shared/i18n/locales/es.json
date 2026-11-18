@@ -8538,6 +8538,7 @@
     "Workspace ID": "ID del espacio de trabajo",
     "Last updated: {{time}}": "Última actualización: {{time}}",
     "Save to apply the refreshed model list.": "Guarde los cambios para aplicar la lista de modelos actualizada.",
+    "Model list saved. The latest settings could not be loaded.": "Lista de modelos guardada. No se pudo cargar la configuración más reciente.",
     "Model refresh failed. The previous list is kept.": "No se ha podido actualizar la lista de modelos. Se conserva la lista anterior.",
     "Edit presentation": "Editar presentación",
     "New text": "Texto nuevo",

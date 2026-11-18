@@ -11,7 +11,7 @@ export class ProviderRuntimeHealthOwner {
   async observe(target: ProviderRuntimeTarget, failure: ProviderFailureObservation): Promise<void> {
     const applied = await this.repository.updateProviderValidationIfTargetMatches(
       target.providerId,
-      (current) =>
+      (current, _settings, firstCompatibleRevision) =>
         // A model-specific failure cannot restore an account already known to be unusable.
         !(
           failure.category === 'model-not-found' &&
@@ -19,7 +19,9 @@ export class ProviderRuntimeHealthOwner {
           current.lastValidationFailure.target === undefined
         ) &&
         current.type === target.providerType &&
-        (current.configRevision ?? 0) === target.configRevision &&
+        target.configRevision !== undefined &&
+        target.configRevision >= firstCompatibleRevision &&
+        target.configRevision <= (current.configRevision ?? 0) &&
         tryDecryptKey(current.keyRef) === target.provider.key,
       { ok: false, category: failure.category, status: failure.status },
       failure.category === 'auth'

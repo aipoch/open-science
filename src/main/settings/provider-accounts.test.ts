@@ -786,6 +786,24 @@ describe('ProviderAccountsModule', () => {
     expect(result.message!.length).toBeLessThanOrEqual(301)
   })
 
+  it('requires a new key when an edit targets another official vendor', async () => {
+    await module.upsertProvider({
+      id: 'account',
+      type: 'official',
+      vendorId: 'sensenova',
+      region: 'global',
+      key: 'stored-secret'
+    })
+    const before = await repository.getSettings()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      module.validateProvider({ edit: { id: 'account', type: 'official', vendorId: 'deepseek' } })
+    ).rejects.toThrow('API key is required')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(await repository.getSettings()).toEqual(before)
+  })
+
   it('preserves the active official model selection and saved key during a validated edit', async () => {
     await repository.setAgentFramework('claude-code')
     await module.upsertProvider({

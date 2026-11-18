@@ -90,6 +90,7 @@ type LocalShellRuntimeWrite = Readonly<{
 }>
 
 type ProviderValidationHistory = {
+  firstCompatibleRevision: number
   configRevision: number
   keyRef?: string
   latestAt: number
@@ -358,7 +359,11 @@ class SettingsRepository {
   // Check the live target and generation in the same serialized mutation as the field-only patch.
   async updateProviderValidationIfTargetMatches(
     id: string,
-    matches: (provider: StoredProvider, settings: StoredSettings) => boolean,
+    matches: (
+      provider: StoredProvider,
+      settings: StoredSettings,
+      firstCompatibleRevision: number
+    ) => boolean,
     result: ValidateProviderResult,
     target: ProviderValidationTarget | undefined,
     observationStartedAt?: number
@@ -367,8 +372,9 @@ class SettingsRepository {
     await this.mutate((settings) => {
       const index = settings.providers.findIndex((provider) => provider.id === id)
       const current = settings.providers[index]
-      if (!current || !matches(current, settings)) return settings
-      const history = this.rememberProviderRecovery(current, settings)
+      if (!current) return settings
+      const history = this.rememberProviderRecovery(current)
+      if (!matches(current, settings, history.firstCompatibleRevision)) return settings
       if (observationStartedAt !== undefined) {
         const recoveredAt = target
           ? Math.max(history.unscopedAt, history.scopes.get(validationScopeKey(target)) ?? 0)
@@ -383,14 +389,7 @@ class SettingsRepository {
     return applied
   }
 
-  private rememberProviderRecovery(
-    provider: StoredProvider,
-    settings: StoredSettings
-  ): ProviderValidationHistory {
-    for (const id of this.providerValidationHistory.keys()) {
-      if (!settings.providers.some((current) => current.id === id))
-        this.providerValidationHistory.delete(id)
-    }
+  private rememberProviderRecovery(provider: StoredProvider): ProviderValidationHistory {
     let history = this.providerValidationHistory.get(provider.id)
     if (
       !history ||
@@ -398,6 +397,7 @@ class SettingsRepository {
       history.keyRef !== provider.keyRef
     ) {
       history = {
+        firstCompatibleRevision: provider.configRevision ?? 0,
         configRevision: provider.configRevision ?? 0,
         keyRef: provider.keyRef,
         latestAt: 0,
@@ -1406,6 +1406,18 @@ class SettingsRepository {
         const changes = [...new Set([...before.keys(), ...after.keys()])]
           .filter((id) => !isDeepStrictEqual(before.get(id), after.get(id)))
           .map((id) => ({ id, current: after.get(id) }))
+        for (const { id, current } of changes) {
+          const prior = before.get(id)
+          if (!current) this.providerValidationHistory.delete(id)
+          // A display edit keeps existing official connections and their recovery watermarks valid.
+          else if (
+            prior?.type === 'official' &&
+            current.configRevision !== prior.configRevision &&
+            sameCatalogTarget(prior, current)
+          ) {
+            this.rememberProviderRecovery(prior).configRevision = current.configRevision ?? 0
+          }
+        }
         if (changes.length) {
           for (const listener of this.providerListeners) {
             try {

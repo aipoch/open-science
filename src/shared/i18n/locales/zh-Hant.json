@@ -8192,6 +8192,7 @@
     "Workspace ID": "工作區 ID",
     "Last updated: {{time}}": "上次更新：{{time}}",
     "Save to apply the refreshed model list.": "儲存後套用重新整理的模型列表。",
+    "Model list saved. The latest settings could not be loaded.": "模型清單已儲存，無法載入最新設定。",
     "Model refresh failed. The previous list is kept.": "模型重新整理失敗，已保留上次列表。",
     "Edit presentation": "編輯簡報",
     "New text": "新文字",

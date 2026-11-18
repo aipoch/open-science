@@ -65,6 +65,38 @@ it.each([
   })
 })
 
+it.each([
+  { id: 'm', routes: { messages: 'https://example.test/' + 'a'.repeat(2048) } },
+  { id: 'm', routes: { messages: 'broken URL' } },
+  { id: '🧬'.repeat(513) }
+])(
+  'keeps the previous directory when a snapshot cannot round-trip through storage',
+  async (model) => {
+    list.mockResolvedValue({ ok: true, models: [model.id], catalog: [model] })
+    const repo = repository()
+    const owner = new ProviderModelCatalogOwner(
+      repo as unknown as SettingsRepository,
+      () => ({ key: 'decrypted' }) as ResolvedProvider,
+      vi.fn()
+    )
+    expect(await owner.refresh({ providerId: stored.id })).toMatchObject({
+      ok: false,
+      code: 'invalid-response'
+    })
+    expect(repo.updateProviderModelCatalogIfTargetMatches).toHaveBeenCalledExactlyOnceWith(
+      stored,
+      undefined,
+      {
+        modelCatalogStatus: expect.objectContaining({ ok: false, code: 'invalid-response' })
+      }
+    )
+    const preview = await owner.refresh({ providerId: stored.id, draft: stored })
+    expect(preview).toMatchObject({ ok: false, code: 'invalid-response' })
+    expect(preview.draftToken).toBeUndefined()
+    expect(repo.updateProviderModelCatalogIfTargetMatches).toHaveBeenCalledTimes(1)
+  }
+)
+
 it('keeps OAuth credential snapshots and chat filtering in the host', async () => {
   list.mockResolvedValue({ ok: true, models: ['grok-chat', 'image-model'] })
   const repo = repository()

@@ -314,9 +314,10 @@ export const listProviderModels = async (
             if (options.routes.type === 'map') {
               const base = at(advertised, `${protocol}.${options.routes.baseUrlPath}`)
               if (typeof base !== 'string') continue
-              const parsed = new URL(base)
+              const parsed = URL.parse(base)
               // A directory cannot redirect runtime credentials to an unrelated origin.
               if (
+                !parsed ||
                 parsed.origin !== root.origin ||
                 parsed.username ||
                 parsed.password ||
@@ -376,7 +377,9 @@ export const listProviderModels = async (
     }
     if (
       !catalog.size ||
-      (options.knownModelsOnly && !target.knownModelIds?.some((id) => catalog.has(id)))
+      (options.knownModelsOnly && !target.knownModelIds?.some((id) => catalog.has(id))) ||
+      (options.routes &&
+        ![...catalog.values()].some((model) => Object.keys(model.routes ?? {}).length))
     )
       throw new CatalogFailure('invalid-response', 'The vendor returned no supported models.')
     if (options.enrichment) {

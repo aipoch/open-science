@@ -64,6 +64,7 @@ type ProviderFormProps = {
   onChange: (patch: Partial<ProviderFormValue>) => void
   // Whether a stored key already exists (drives the "leave blank to keep" affordance).
   hasStoredKey?: boolean
+  catalogHasStoredKey?: boolean
   // Masked hint for the stored key; never the plaintext value.
   maskedKey?: string
   // True when the stored key could not be decrypted and must be re-entered.
@@ -265,6 +266,7 @@ const ProviderForm = ({
   value,
   onChange,
   hasStoredKey = false,
+  catalogHasStoredKey = hasStoredKey,
   maskedKey,
   needsKey = false,
   errors = {},
@@ -1106,7 +1108,9 @@ const ProviderForm = ({
               fetchedModels: supportedModels
             }).filter(isCatalogModelAvailable)
             const missingKey =
-              catalog?.options.auth !== 'none' && !value.key.trim() && (!hasStoredKey || needsKey)
+              catalog?.options.auth !== 'none' &&
+              !value.key.trim() &&
+              (!catalogHasStoredKey || needsKey)
             const missingParameter = catalog?.options.inputs?.some(
               (input) => input.required && !value.catalogParameters?.[input.id]?.trim()
             )

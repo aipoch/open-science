@@ -331,15 +331,18 @@ class ProviderAccountsModule {
     }
 
     const carryKey = (): boolean => {
-      const hasKey = Boolean(request.key) || Boolean(existing?.keyRef)
       if (request.key) {
         provider.keyRef = encryptKey(request.key)
         provider.keyMask = maskKey(request.key)
-      } else if (existing?.keyRef) {
+      } else if (
+        existing?.keyRef &&
+        existing.type === provider.type &&
+        existing.vendorId === provider.vendorId
+      ) {
         provider.keyRef = existing.keyRef
         provider.keyMask = existing.keyMask
       }
-      return hasKey
+      return Boolean(provider.keyRef)
     }
 
     let credentialsChanged = false
@@ -385,12 +388,15 @@ class ProviderAccountsModule {
     } else if (request.type === 'official') {
       const vendorId = isOfficialVendorId(request.vendorId) ? request.vendorId : existing?.vendorId
       if (!vendorId) throw new Error('A vendor is required for an official provider.')
-      const region = request.region ?? existing?.region
+      const region =
+        request.region ?? (vendorId === existing?.vendorId ? existing.region : undefined)
       provider.vendorId = vendorId
       if (region) provider.region = region
       provider.catalogParameters =
         request.catalogParameters === undefined
-          ? existing?.catalogParameters
+          ? vendorId === existing?.vendorId && region === existing.region
+            ? existing.catalogParameters
+            : undefined
           : decodeCatalogParameters(request.catalogParameters)
       if (request.catalogParameters && !provider.catalogParameters)
         throw new Error('Invalid catalog parameters.')

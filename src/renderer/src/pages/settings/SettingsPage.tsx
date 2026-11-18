@@ -219,6 +219,9 @@ type SettingsPageHandle = {
   closeActivePane: () => boolean
 }
 
+const catalogParameterKey = (parameters?: Record<string, string>): string =>
+  JSON.stringify(Object.entries(parameters ?? {}).sort())
+
 // Builds a form value from an existing provider (never carrying the plaintext key).
 const toFormValue = (provider: ProviderView): ProviderFormValue =>
   createEmptyProviderFormValue({
@@ -598,7 +601,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
   const [catalogPreview, setCatalogPreview] = useState<{
     signature: string
-    result: RefreshProviderModelsResult
+    result: RefreshProviderModelsResult & { refreshFailed?: boolean }
   }>()
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
@@ -1080,7 +1083,18 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       : undefined
   const providerEditTargetMissing = modelView.kind === 'edit' && editingProvider === undefined
   // Required-field errors for the open draft; a custom provider must be complete before it can save.
-  const formErrors = getProviderFormErrors(formValue, { hasStoredKey: editingProvider?.hasKey })
+  const credentialSource =
+    editingProvider?.type === formValue.type && editingProvider.vendorId === formValue.vendorId
+      ? editingProvider
+      : undefined
+  const regionalCredential =
+    credentialSource?.region === formValue.region ? credentialSource : undefined
+  const parameters = catalogParameterKey(formValue.catalogParameters)
+  const catalogSource =
+    !formValue.key && parameters === catalogParameterKey(regionalCredential?.catalogParameters)
+      ? regionalCredential
+      : undefined
+  const formErrors = getProviderFormErrors(formValue, { hasStoredKey: credentialSource?.hasKey })
   const providerConflict =
     editingProvider &&
     providerBase &&
@@ -1104,7 +1118,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     formValue.type,
     formValue.vendorId,
     formValue.region,
-    Object.entries(formValue.catalogParameters ?? {}).sort(),
+    parameters,
     formValue.key
   ])
   const visibleCatalogPreview =
@@ -1137,7 +1151,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     Object.entries({ ...providerDraftBaseline, ...formValue }).some(
       ([key, value]) =>
         key !== 'providerFormTouched' &&
-        value !== providerDraftBaseline[key as keyof ProviderFormValue]
+        (key === 'catalogParameters'
+          ? parameters !== catalogParameterKey(providerDraftBaseline.catalogParameters)
+          : value !== providerDraftBaseline[key as keyof ProviderFormValue])
     )
   useEffect(() => {
     // This draft shares Settings' existing leave decision; the baseline contains no secret input.
@@ -1316,7 +1332,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             }
       )
       if (generation !== catalogOperationGeneration.current) return
-      if (refreshSavedProvider && result.ok) {
+      if (refreshSavedProvider && result.ok && !result.refreshFailed) {
         setCatalogPreview(undefined)
       } else {
         setCatalogPreview({
@@ -1324,7 +1340,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           result: result.ok
             ? result
             : {
-                ...visibleCatalogPreview,
                 ...result,
                 catalog: result.catalog ?? visibleCatalogPreview?.catalog,
                 draftToken: result.draftToken ?? visibleCatalogPreview?.draftToken
@@ -2029,36 +2044,48 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             </Button>
                           </ErrorNotice>
                         ) : null}
+                        {visibleCatalogPreview?.refreshFailed ? (
+                          <ErrorNotice
+                            inline
+                            role="alert"
+                            tone="amber"
+                            description={t(
+                              'Model list saved. The latest settings could not be loaded.'
+                            )}
+                            primaryButton={{
+                              label: t('Retry'),
+                              onClick: async () => {
+                                const generation = catalogOperationGeneration.current
+                                if (
+                                  (await load()) &&
+                                  generation === catalogOperationGeneration.current
+                                )
+                                  setCatalogPreview(undefined)
+                              }
+                            }}
+                          />
+                        ) : null}
                         <ProviderForm
                           key={`${modelViewKey}:${providerBase?.configRevision ?? 'draft'}`}
                           value={formValue}
                           onChange={(patch) =>
                             setFormValue((current) => ({ ...current, ...patch }))
                           }
-                          hasStoredKey={editingProvider?.hasKey}
-                          maskedKey={editingProvider?.maskedKey}
-                          needsKey={editingProvider?.needsKey}
+                          hasStoredKey={credentialSource?.hasKey}
+                          catalogHasStoredKey={Boolean(regionalCredential?.hasKey)}
+                          maskedKey={credentialSource?.maskedKey}
+                          needsKey={credentialSource?.needsKey && !formValue.key.trim()}
                           errors={formErrors}
-                          supportedModels={
-                            editingProvider?.type === formValue.type &&
-                            editingProvider?.vendorId === formValue.vendorId &&
-                            editingProvider?.region === formValue.region
-                              ? editingProvider?.models
-                              : undefined
-                          }
+                          supportedModels={catalogSource?.models}
                           onRefreshModels={
                             canRunProviderOperation ? handleRefreshModels : undefined
                           }
                           modelCatalog={
-                            visibleCatalogPreview?.catalog ??
-                            (editingProvider?.vendorId === formValue.vendorId &&
-                            editingProvider?.region === formValue.region
-                              ? editingProvider?.modelCatalog
-                              : undefined)
+                            visibleCatalogPreview?.catalog ?? catalogSource?.modelCatalog
                           }
                           modelCatalogStatus={
                             visibleCatalogPreview?.catalogStatus ??
-                            editingProvider?.modelCatalogStatus
+                            catalogSource?.modelCatalogStatus
                           }
                           catalogNeedsSave={catalogNeedsSave}
                           catalogError={
