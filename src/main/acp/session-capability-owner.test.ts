@@ -92,6 +92,101 @@ describe('ACP session capability owner', () => {
     expect(owner.mcpServersFor('session')).toEqual(refresh.mcpServers)
     expect(owner.notebookExecutionIntentFor('session')).toBe(intent)
   })
+  it.each(['discarded', 'url failure', 'activation failure'] as const)(
+    'keeps the committed Notebook HTTP route after refresh is %s',
+    async (outcome) => {
+      const host = new AgentMcpHttpHost()
+      const releases = [vi.fn(), vi.fn()]
+      const activate = vi.fn()
+      let sequence = 0
+      const owner = createOwner({
+        artifacts: undefined,
+        notebook: {
+          projectId: 'project',
+          mcpEntryPath: '/app/main.js',
+          getRpcConnection: async () => ({
+            release: releases[sequence],
+            token: `notebook-${++sequence}`,
+            endpoint: 'http://127.0.0.1:1',
+            deferExecution: () => activate
+          })
+        },
+        mcpHttpHost: host
+      })
+      const status = async (
+        servers:
+          | SessionCapabilityProvision['mcpServers']
+          | readonly SessionCapabilityProvision['mcpServers'][number][]
+      ): Promise<number> => {
+        const server = servers.find(({ name }) => name.includes('notebook'))
+        if (!server || !('url' in server)) throw new Error('Expected the Notebook HTTP server')
+        const response = await fetch(server.url, {
+          method: 'POST',
+          headers: {
+            ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+            accept: 'application/json, text/event-stream',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+        })
+        await response.text()
+        return response.status
+      }
+      try {
+        const provision = await owner.provision({
+          stableAppSessionId: 'session',
+          sessionCwd: '/workspace',
+          projectId: 'project',
+          framework: harnessFramework,
+          nativeMcpEnabled: true,
+          bridgeMcpAliasesEnabled: false,
+          policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
+        })
+        provision.commit('session')
+        const before = owner.mcpServersFor('session')
+        expect(await status(before)).toBe(200)
+
+        const failure = new Error('Refresh failed')
+        const request = {
+          appSessionId: 'session',
+          projectId: 'project',
+          cwd: '/workspace',
+          executionIntent: new NotebookExecutionIntent({
+            projectId: 'project',
+            sessionId: 'session'
+          })
+        }
+        if (outcome === 'url failure') {
+          vi.spyOn(host, 'urlFor').mockImplementationOnce(() => {
+            throw failure
+          })
+          await expect(owner.prepareNotebookConnectionRefresh(request)).rejects.toBe(failure)
+        } else {
+          const refresh = await owner.prepareNotebookConnectionRefresh(request)
+          expect(await status(refresh.mcpServers)).toBe(200)
+          if (outcome === 'activation failure') {
+            activate.mockImplementationOnce(() => {
+              throw failure
+            })
+            expect(() => refresh.commit()).toThrow(failure)
+          }
+          refresh.release()
+          expect(await status(refresh.mcpServers)).toBe(404)
+        }
+
+        expect(owner.mcpServersFor('session')).toBe(before)
+        expect(owner.notebookCredentialFor('session')).toBe('notebook-1')
+        expect(await status(before)).toBe(200)
+        expect(releases[0]).not.toHaveBeenCalled()
+        expect(releases[1]).toHaveBeenCalledOnce()
+        expect(activate).toHaveBeenCalledTimes(outcome === 'activation failure' ? 1 : 0)
+      } finally {
+        owner.revokeSession('session')
+        await host.close()
+      }
+    }
+  )
+
   it.each(['startup', 'registration', 'url'] as const)(
     'releases a failed Notebook refresh after HTTP %s failure without changing other capabilities',
     async (failurePoint) => {

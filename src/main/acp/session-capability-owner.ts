@@ -1539,6 +1539,7 @@ export class AcpSessionCapabilityOwner {
       throw new Error('Notebook capability is unavailable.')
     let connection: NotebookRpcConnection | undefined
     let commitExecution: (() => void) | undefined
+    let rollbackHttpRoute: (() => void) | undefined
     try {
       const environment = await this.buildNotebookEnvironment(
         routingId,
@@ -1570,7 +1571,7 @@ export class AcpSessionCapabilityOwner {
         const host = this.options.mcpHttpHost
         if (!host) throw new Error('Notebook HTTP host is unavailable.')
         const { token } = await host.ensureStarted()
-        host.registerNotebook(routingId, environment)
+        rollbackHttpRoute = host.registerNotebook(routingId, environment)
         replacement = {
           type: 'http',
           name: old.name,
@@ -1604,10 +1605,12 @@ export class AcpSessionCapabilityOwner {
         release: () => {
           if (finalized) return
           finalized = true
+          rollbackHttpRoute?.()
           ownedConnection.release?.()
         }
       }
     } catch (error) {
+      rollbackHttpRoute?.()
       try {
         connection?.release?.()
       } catch (cleanupError) {

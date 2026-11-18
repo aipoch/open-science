@@ -214,11 +214,20 @@ class AgentMcpHttpHost {
     this.sessions.set(routingId, entry)
   }
 
-  registerNotebook(routingId: string, environment: NotebookMcpEnvironment): void {
+  registerNotebook(routingId: string, environment: NotebookMcpEnvironment): () => void {
     const entry = this.sessions.get(routingId) ?? {}
+    const previousEnvironment = entry.notebook
+    const previousRouteToken = entry.notebookRouteToken
+    const routeToken = randomUUID()
     entry.notebook = environment
-    entry.notebookRouteToken = randomUUID()
+    entry.notebookRouteToken = routeToken
     this.sessions.set(routingId, entry)
+    return () => {
+      const current = this.sessions.get(routingId)
+      if (current?.notebookRouteToken !== routeToken) return
+      current.notebook = previousEnvironment
+      current.notebookRouteToken = previousRouteToken
+    }
   }
 
   registerSkillImport(routingId: string, environment: SkillImportMcpEnvironment): void {

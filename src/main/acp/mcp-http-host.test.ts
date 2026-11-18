@@ -62,6 +62,34 @@ describe('AgentMcpHttpHost', () => {
     }
   })
 
+  it.each(['replacement', 'unregister', 'clear'] as const)(
+    'does not restore a Notebook route after %s supersedes its registration',
+    async (action) => {
+      host = new AgentMcpHttpHost()
+      await host.ensureStarted()
+      const environment = {
+        endpoint: 'http://127.0.0.1:1/notebook',
+        token: 'notebook-token',
+        projectId: 'project',
+        sessionId: 'session',
+        workspaceCwd: '/workspace'
+      }
+      host.registerNotebook('session', environment)
+      const rollback = host.registerNotebook('session', environment)
+      if (action === 'replacement') {
+        host.registerNotebook('session', { ...environment, token: 'successor' })
+        const successorUrl = host.urlFor('notebook', 'session')
+        rollback()
+        expect(host.urlFor('notebook', 'session')).toBe(successorUrl)
+      } else {
+        if (action === 'clear') host.clear()
+        else host.unregister('session')
+        rollback()
+        expect(() => host!.urlFor('notebook', 'session')).toThrow('No registered notebook')
+      }
+    }
+  )
+
   it('serves only the owned Skill allowlist and revokes each HTTP projection independently', async () => {
     root = await mkdtemp(join(tmpdir(), 'harness-skill-http-'))
     for (const name of ['allowed', 'hidden']) {
