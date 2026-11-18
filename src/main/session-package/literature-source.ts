@@ -17,4 +17,6 @@ export type PackageLiteratureVersion = {
 export type PackageLiteratureSource = {
   readVersions(versionIds: readonly string[]): Promise<PackageLiteratureVersion[]>
   readItem(itemId: string): Promise<PackageLiterature['items'][number] | undefined>
+  /** Resolve a live merged alias without treating a historical display ID as ownership. */
+  resolveItemId?(itemId: string): Promise<string | undefined>
 }

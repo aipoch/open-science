@@ -2,8 +2,186 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { PackageLiteratureSource } from './literature-source'
 import type { PackageLiterature } from './literature-contract'
 import { packageLiteratureSchema } from './literature-contract'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import type { PackageRecords } from './records-contract'
+import type { PersistedToolActivity } from '../../shared/session-message-contract'
+import {
+  collectLiteratureSourceCitationHrefs,
+  createLiteratureSourceCitationHref,
+  parseLiteratureSourceCitationHref,
+  type LiteratureSourceCitation
+} from '../../shared/literature-source-citation'
+import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 export { packageLiteratureSchema, type PackageLiterature } from './literature-contract'
+
+const record = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const citationActivity = (
+  activity: PersistedToolActivity,
+  prompts: ReadonlySet<string>
+): boolean => {
+  const name = activity.providerToolName ?? activity.title
+  const identity = resolveCanonicalMcpToolIdentity(name, ['open-science-library']) ?? name
+  return (
+    activity.status === 'completed' &&
+    !!activity.promptMessageId &&
+    prompts.has(activity.promptMessageId) &&
+    [
+      'search_library',
+      'search_library_full_text',
+      'read_library_abstract',
+      'read_library_pdf'
+    ].some((tool) => identity === `open-science-library/${tool}`)
+  )
+}
+
+// Only the first application presentation in a completed built-in tool can issue receipts.
+// Preserve prose and unrelated tool payloads; their embedded URLs are not dependencies.
+const visitCitationReceipts = (value: unknown, visit: (href: string) => string): unknown => {
+  let found = false
+  const walk = (entry: unknown, depth = 0): unknown => {
+    if (depth > 8) return entry
+    if (typeof entry === 'string') {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(entry)
+      } catch {
+        return entry
+      }
+      const mapped = walk(parsed, depth + 1)
+      return mapped === parsed ? entry : JSON.stringify(mapped)
+    }
+    if (Array.isArray(entry)) {
+      const mapped = entry.map((child) => walk(child, depth + 1))
+      return mapped.some((child, index) => child !== entry[index]) ? mapped : entry
+    }
+    if (!record(entry)) return entry
+    let mapped = entry
+    const set = (key: string, next: unknown): void => {
+      if (next !== entry[key]) mapped = { ...mapped, [key]: next }
+    }
+    const presentation = entry.openScienceLiteraturePresentation
+    if (!found && record(presentation)) {
+      found = true
+      const hrefs = collectLiteratureSourceCitationHrefs(presentation.sourceCitationHrefs)
+      const next = hrefs.map(visit)
+      if (next.some((href, index) => href !== hrefs[index]))
+        set('openScienceLiteraturePresentation', { ...presentation, sourceCitationHrefs: next })
+    }
+    for (const key of ['structuredContent', 'result'])
+      if (entry[key] !== undefined) set(key, walk(entry[key], depth + 1))
+    if (Array.isArray(entry.content) || entry.type === 'content')
+      set('content', walk(entry.content, depth + 1))
+    if (entry.type === 'text') set('text', walk(entry.text, depth + 1))
+    return mapped
+  }
+  return walk(value)
+}
+
+const sessionCitationActivities = (session: PersistedChatSession): PersistedToolActivity[] => {
+  const messages = session.conversationGraph?.messages ?? session.messages
+  const prompts = new Set(messages.filter((message) => message.role === 'user').map(({ id }) => id))
+  return (session.conversationGraph?.activities ?? session.activities ?? []).filter((activity) =>
+    citationActivity(activity, prompts)
+  )
+}
+
+const sessionSourceCitations = (session: PersistedChatSession): LiteratureSourceCitation[] => {
+  const citations = new Map<string, LiteratureSourceCitation>()
+  for (const activity of sessionCitationActivities(session))
+    visitCitationReceipts(activity.toolContent, (href) => {
+      citations.set(href, parseLiteratureSourceCitationHref(href)!)
+      return href
+    })
+  return [...citations.values()]
+}
+
+/** Rebind only issued display snapshots; short citation IDs and source text stay immutable. */
+export const remapSessionLiteratureCitations = (
+  session: PersistedChatSession,
+  identities: Readonly<Record<string, string>>
+): PersistedChatSession => {
+  const activities = new Set(sessionCitationActivities(session).map(({ id }) => id))
+  const replacements = new Map<string, string>()
+  const remapActivity = <T extends PersistedToolActivity>(activity: T): T => {
+    if (!activities.has(activity.id)) return activity
+    const toolContent = visitCitationReceipts(activity.toolContent, (href) => {
+      const citation = parseLiteratureSourceCitationHref(href)!
+      const mapped = createLiteratureSourceCitationHref({
+        ...citation,
+        itemId: identities[citation.itemId] ?? citation.itemId,
+        ...(citation.source
+          ? {
+              source: {
+                ...citation.source,
+                attachmentId:
+                  identities[citation.source.attachmentId] ?? citation.source.attachmentId,
+                versionId: identities[citation.source.versionId] ?? citation.source.versionId
+              }
+            }
+          : {})
+      })
+      if (mapped !== href) replacements.set(href, mapped)
+      return mapped
+    }) as T['toolContent']
+    return toolContent === activity.toolContent ? activity : { ...activity, toolContent }
+  }
+  const mappedActivities = session.activities?.map(remapActivity)
+  const graphActivities = session.conversationGraph?.activities.map(remapActivity)
+  const remapMessage = <T extends PersistedChatSession['messages'][number]>(message: T): T => {
+    if (message.role !== 'agent' || !replacements.size) return message
+    const rewrite = (text: string): string => {
+      for (const [previous, next] of replacements) text = text.replaceAll(previous, next)
+      return text
+    }
+    return {
+      ...message,
+      content: rewrite(message.content),
+      ...(message.parts
+        ? {
+            parts: message.parts.map((part) =>
+              part.type === 'text' ? { ...part, text: rewrite(part.text) } : part
+            )
+          }
+        : {})
+    }
+  }
+  return {
+    ...session,
+    ...(mappedActivities ? { activities: mappedActivities } : {}),
+    messages: session.messages.map(remapMessage),
+    ...(session.conversationGraph
+      ? {
+          conversationGraph: {
+            ...session.conversationGraph,
+            activities: graphActivities!,
+            messages: session.conversationGraph.messages.map(remapMessage)
+          }
+        }
+      : {})
+  }
+}
+
+export const canonicalizeSessionLiteratureCitations = async (
+  source: PackageLiteratureSource | undefined,
+  session: PersistedChatSession
+): Promise<PersistedChatSession> => {
+  if (!source?.resolveItemId) return session
+  const identities: Record<string, string> = {}
+  const itemIds = new Set(
+    sessionSourceCitations(session)
+      .filter(({ source }) => source)
+      .map(({ itemId }) => itemId)
+  )
+  for (const itemId of itemIds) {
+    const current = await source.resolveItemId(itemId)
+    if (current && current !== itemId) identities[itemId] = current
+  }
+  return Object.keys(identities).length
+    ? remapSessionLiteratureCitations(session, identities)
+    : session
+}
 
 // Capture explicit dependencies across every stored branch, never the whole Library or collection.
 export const sessionLiteratureReferences = (
@@ -22,6 +200,8 @@ export const sessionLiteratureReferences = (
         versionIds.add(binding.sourceVersionId)
   }
   bindings(session.runtimeContext)
+  for (const citation of sessionSourceCitations(session))
+    if (citation.source) versionIds.add(citation.source.versionId)
   for (const message of session.conversationGraph?.messages ?? session.messages) {
     bindings(message)
     for (const part of message.parts ?? []) {
@@ -56,7 +236,8 @@ export const capturePackageLiterature = async (
   source: PackageLiteratureSource | undefined,
   session: PersistedChatSession,
   records: PackageRecords,
-  additionalVersionIds: readonly string[] = []
+  additionalVersionIds: readonly string[] = [],
+  contentAvailable?: (storageKey: string) => Promise<boolean>
 ): Promise<Map<string, string>> => {
   const references = sessionLiteratureReferences(session)
   for (const id of additionalVersionIds) references.versionIds.add(id)
@@ -73,19 +254,75 @@ export const capturePackageLiterature = async (
         ])
       ).values()
     ],
-    attachments: [...(records.literature?.attachments ?? [])]
+    attachments: [...(records.literature?.attachments ?? [])],
+    unavailableVersionIds: [...(records.literature?.unavailableVersionIds ?? [])]
   }
   const localVersionIds = [...references.versionIds].filter(
     (id) => !literature.attachments.some((entry) => entry.versionId === id)
   )
-  if (localVersionIds.length && !source) throw new Error('Literature source is unavailable.')
-  const rows = localVersionIds.length ? await source!.readVersions(localVersionIds) : []
+  const candidates =
+    localVersionIds.length && source ? await source.readVersions(localVersionIds) : []
+  const availableRows = contentAvailable
+    ? (
+        await Promise.all(
+          candidates.map(async (row) =>
+            (await contentAvailable(row.storageKey)) ? row : undefined
+          )
+        )
+      ).filter((row): row is (typeof candidates)[number] => row !== undefined)
+    : candidates
+  const returnedIds = new Set(availableRows.map(({ id }) => id))
+  // Missing bytes do not erase authoritative version metadata needed by historical
+  // reading bindings. The exporter records these versions as excluded file content.
+  const rows = candidates
   if (
-    rows.length !== localVersionIds.length ||
-    new Set(rows.map(({ id }) => id)).size !== rows.length ||
-    rows.some(({ id }) => !localVersionIds.includes(id))
+    new Set(candidates.map(({ id }) => id)).size !== candidates.length ||
+    candidates.some(({ id }) => !localVersionIds.includes(id))
   )
-    throw new Error('Literature PDF Version is unavailable.')
+    throw new Error('Literature PDF Version identity is invalid.')
+  const citationByVersion = new Map(
+    sessionSourceCitations(session)
+      .filter(
+        (
+          citation
+        ): citation is LiteratureSourceCitation & {
+          source: NonNullable<LiteratureSourceCitation['source']>
+        } => Boolean(citation.source)
+      )
+      .map((citation) => [citation.source.versionId, citation])
+  )
+  const unavailableIds = localVersionIds.filter((id) => !returnedIds.has(id))
+  for (const id of unavailableIds) {
+    if (candidates.some((row) => row.id === id)) {
+      if (!literature.unavailableVersionIds.includes(id)) literature.unavailableVersionIds.push(id)
+      continue
+    }
+    const citation = citationByVersion.get(id)
+    if (!citation) {
+      const mention = (session.conversationGraph?.messages ?? session.messages)
+        .flatMap((message) => message.parts ?? [])
+        .some((part) => part.type === 'literature' && part.attachmentVersionId === id)
+      if (!mention) throw new Error('Literature PDF Version is unavailable.')
+      if (!literature.unavailableVersionIds.includes(id)) literature.unavailableVersionIds.push(id)
+      continue
+    }
+    const itemId = citation.itemId
+    if (!literature.items.some((item) => item.itemId === itemId))
+      literature.items.push(
+        (await source?.readItem(itemId)) ?? {
+          itemId,
+          metadataRevision: 1,
+          item: literatureItemInputSchema.parse({ itemType: 'document', title: citation.title })
+        }
+      )
+    if (!literature.attachments.some((entry) => entry.versionId === id))
+      literature.attachments.push({
+        versionId: id,
+        attachmentId: citation.source.attachmentId,
+        itemId
+      })
+    if (!literature.unavailableVersionIds.includes(id)) literature.unavailableVersionIds.push(id)
+  }
   if (
     rows.length &&
     !records.tables.FileOriginSession.some(
@@ -172,7 +409,10 @@ export const capturePackageLiterature = async (
     })
   }
   records.literature = packageLiteratureSchema.parse(literature)
-  validatePackageLiteratureSession(records, session)
+  validatePackageLiteratureSession(
+    records,
+    await canonicalizeSessionLiteratureCitations(source, session)
+  )
   return sources
 }
 
@@ -187,6 +427,15 @@ export const validatePackageLiterature = (records: PackageRecords): void => {
     throw new Error('Duplicate Literature package identity.')
   for (const entry of literature.attachments) {
     const version = records.tables.UploadVersion.find((row) => row.id === entry.versionId)
+    if (
+      !version &&
+      !records.tables.ArtifactVersion.some((row) => row.id === entry.versionId) &&
+      literature.unavailableVersionIds.includes(entry.versionId)
+    ) {
+      if (!literature.items.some((item) => item.itemId === entry.itemId))
+        throw new Error('Literature package attachment ownership is invalid.')
+      continue
+    }
     const file = records.tables.UploadFile.find((row) => row.id === entry.attachmentId)
     if (
       !version ||
@@ -209,6 +458,7 @@ export const validatePackageLiteratureSession = (
   session: PersistedChatSession
 ): void => {
   const messages = session.conversationGraph?.messages ?? session.messages
+  const citations = sessionSourceCitations(session).filter((citation) => citation.source)
   if (!records.literature) {
     // Historical exporters retained attachment-bearing Literature mentions as metadata, but
     // could not export live Literature PDF bindings or file evidence. Preserve only that case.
@@ -233,12 +483,32 @@ export const validatePackageLiteratureSession = (
   const references = sessionLiteratureReferences(session)
   const entries = new Map(records.literature?.attachments.map((entry) => [entry.versionId, entry]))
   const versions = new Map(records.tables.UploadVersion.map((version) => [version.id, version]))
+  const artifactVersionIds = new Set(records.tables.ArtifactVersion.map((version) => version.id))
+  // A historical missing-version marker cannot exempt an existing native version
+  // from the attachment mapping and ownership checks below.
+  const unavailable = new Set(
+    (records.literature.unavailableVersionIds ?? []).filter(
+      (id) => !versions.has(id) && !artifactVersionIds.has(id)
+    )
+  )
   for (const versionId of references.versionIds)
-    if (!entries.has(versionId))
+    if (!entries.has(versionId) && !unavailable.has(versionId))
       throw new Error('Literature PDF reference has no packaged Version.')
   for (const item of references.items)
     if (!records.literature.items.some((entry) => entry.itemId === item.itemId))
       throw new Error('Literature reference metadata is missing.')
+  for (const citation of citations) {
+    const source = citation.source!
+    const entry = entries.get(source.versionId)
+    const version = versions.get(source.versionId)
+    if (
+      !entry ||
+      entry.itemId !== citation.itemId ||
+      entry.attachmentId !== source.attachmentId ||
+      (version ? version.checksum !== source.checksum : !unavailable.has(source.versionId))
+    )
+      throw new Error('Literature citation content identity mismatch.')
+  }
   for (const context of [session.runtimeContext, ...messages])
     for (const binding of context?.pdfContext?.bindings ?? []) {
       if (binding.sourceKind !== 'literature-attachment-version') continue
@@ -258,6 +528,7 @@ export const validatePackageLiteratureSession = (
       if (
         part.type === 'literature' &&
         part.attachmentVersionId &&
+        !(!entries.has(part.attachmentVersionId) && unavailable.has(part.attachmentVersionId)) &&
         entries.get(part.attachmentVersionId)?.itemId !== part.itemId
       )
         throw new Error('Literature reference attachment ownership mismatch.')

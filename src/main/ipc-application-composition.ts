@@ -420,6 +420,7 @@ export const createApplicationModules = async (
       connectors.credentialRequestBroker.clearSession(sessionId)
   })
   const sessionProjection = composeSessionProjection({
+    sessionPackageService: sessionPackages.sessionPackageService,
     ...settingsBootstrap,
     ...sessionFoundation,
     ...sessionAuthority,

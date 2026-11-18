@@ -465,3 +465,24 @@ it('rolls back replacement after a chunk insertion fails and keeps searchable pr
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it.each([0, 99])(
+  'rejects incompatible cache schema %s without executing a write',
+  async (version) => {
+    const { openSqliteLiteratureIndex } = await import('./full-text-index-storage')
+    const execute = vi.fn(async () => 0)
+    const close = vi.fn(async () => {})
+    const transaction = vi.fn(async () => {
+      throw new Error('unexpected transaction')
+    })
+    const query = async <T>(): Promise<T> => [{ user_version: version }] as T
+    await expect(
+      openSqliteLiteratureIndex({ execute, query, transaction, close }, () => {}, {
+        existingOnly: true
+      })
+    ).rejects.toThrow('not supported for cached search')
+    expect(execute).not.toHaveBeenCalled()
+    expect(transaction).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+  }
+)

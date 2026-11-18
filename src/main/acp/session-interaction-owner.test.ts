@@ -18,6 +18,53 @@ const createDeferred = <T>(): {
 }
 
 describe('AcpSessionInteractionOwner', () => {
+  it.each(['reserve', 'claim'] as const)(
+    'captures immutable Library selection IDs at %s without retaining bibliographic content',
+    (admission) => {
+      const owner = new AcpSessionInteractionOwner()
+      const parts = [
+        {
+          type: 'literature-scope' as const,
+          scope: 'collection' as const,
+          collectionId: 'first',
+          name: 'First'
+        },
+        {
+          type: 'literature-scope' as const,
+          scope: 'collection' as const,
+          collectionId: 'second',
+          name: 'Second'
+        },
+        { type: 'literature-scope' as const, scope: 'project' as const },
+        {
+          type: 'literature' as const,
+          itemId: 'paper',
+          metadataRevision: 1,
+          item: { title: 'Long abstract' } as never
+        }
+      ]
+      const request = { sessionId: 's', kind: 'prompt' as const, parts }
+      const scope = admission === 'reserve' ? owner.reservePrompt(request) : owner.claim(request)
+      parts[0].collectionId = 'outside'
+      parts[3].itemId = 'outside'
+      parts.length = 0
+      expect(scope.literatureSelection).toEqual({
+        project: true,
+        collectionIds: ['first', 'second'],
+        itemIds: ['paper']
+      })
+      expect(Object.isFrozen(scope.literatureSelection)).toBe(true)
+      expect(Object.isFrozen(scope.literatureSelection!.collectionIds)).toBe(true)
+      expect(Object.isFrozen(scope.literatureSelection!.itemIds)).toBe(true)
+      if (admission === 'reserve') owner.activatePrompt(scope)
+      owner.supersede(scope)
+      const next = owner.claim({ sessionId: 's', kind: 'prompt' })
+      owner.release(scope)
+      expect(owner.current('s')).toBe(next)
+      expect(next.literatureSelection).toBeUndefined()
+    }
+  )
+
   it('keeps unattended policy through admission and clears it on release', () => {
     const owner = new AcpSessionInteractionOwner()
     const scope = owner.reservePrompt({ sessionId: 's', kind: 'prompt', permissionPrompts: 'none' })

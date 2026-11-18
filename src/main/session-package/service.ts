@@ -127,7 +127,9 @@ import { ForkRecoveryRequiredError, createForkSession, nextForkTitle } from './f
 import { capturePackageHistory, type PackageHistory } from './history'
 import { assertSettledHistory, inspectSessionPackage, preview, readSession } from './inspection'
 import {
+  canonicalizeSessionLiteratureCitations,
   capturePackageLiterature,
+  remapSessionLiteratureCitations,
   sessionLiteratureReferences,
   validatePackageLiteratureSession
 } from './literature'
@@ -604,6 +606,56 @@ export class SessionPackageService {
     return selection
   }
 
+  private async literatureContentAvailable(storageKey: string): Promise<boolean> {
+    try {
+      await assertPackageSourcePath(this.options.storageRoot, storageKey)
+      if (!(await lstat(resolveStorageKey(this.options.storageRoot, storageKey))).isFile())
+        throw new Error('Literature PDF source is not a regular file.')
+      return true
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      // A missing/disconnected data root is not an individually missing PDF.
+      if (!(await stat(this.options.storageRoot)).isDirectory()) throw error
+      return false
+    }
+  }
+
+  async hydrateSessionLiterature(session: PersistedChatSession): Promise<PersistedChatSession> {
+    if (!session.packageOrigin || session.packageOrigin.literature) return session
+    try {
+      const origin = await this.readOrigin({ projectId: session.projectId, sessionId: session.id })
+      const metadata = origin.nativeLogOrigin ? 'origin-metadata' : 'source'
+      const manifestPath = join(
+        this.options.storageRoot,
+        'artifacts',
+        session.projectId,
+        session.id,
+        '.session-package',
+        metadata,
+        'manifest.json'
+      )
+      if (
+        !origin.literature ||
+        origin.sourceManifest.source.projectId !== session.packageOrigin.sourceProjectId ||
+        origin.sourceManifest.source.sessionId !== session.packageOrigin.sourceSessionId ||
+        (await fileChecksum(manifestPath)) !== session.packageOrigin.manifestChecksum
+      )
+        return session
+      return {
+        ...session,
+        packageOrigin: {
+          ...session.packageOrigin,
+          literature: mapPackageReferences(origin.literature, origin.identities) as NonNullable<
+            PackageRecords['literature']
+          >
+        }
+      }
+    } catch {
+      // Reading a corrupt/removed snapshot must not prevent opening the conversation itself.
+      return session
+    }
+  }
+
   async close(): Promise<void> {
     this.closed = true
     this.shutdown.abort(new Error('Session package service is closed.'))
@@ -769,14 +821,18 @@ export class SessionPackageService {
         await assertShareable(manifest, this.signal, 'manifest.json')
       const sourceSessionEnvelope = await readPackageJson(join(source, 'session.json'))
       const sourceSession = await readSession(source)
+      const inverseIds = Object.fromEntries(
+        Object.entries(origin.identities).map(([oldId, localId]) => [localId, oldId])
+      )
       const forwardedSession = withoutPrivateAuthority(
         options.consumeSnapshot
-          ? (mapPackageReferences(
-              encodeSessionDataPaths(session, this.options.storageRoot),
-              Object.fromEntries(
-                Object.entries(origin.identities).map(([oldId, localId]) => [localId, oldId])
-              )
-            ) as PersistedChatSession)
+          ? remapSessionLiteratureCitations(
+              mapPackageReferences(
+                encodeSessionDataPaths(session, this.options.storageRoot),
+                inverseIds
+              ) as PersistedChatSession,
+              inverseIds
+            )
           : sourceSession
       )
       if (!options.consumeSnapshot && !options.allowSensitiveContent)
@@ -791,9 +847,10 @@ export class SessionPackageService {
       const previousFilmKeys = new Set(researchFilmStorageKeys(packageFilms(records)))
       delete records.researchFilms
       delete records.operationReplayFilms
-      const inverseIds = Object.fromEntries(
-        Object.entries(origin.identities).map(([oldId, localId]) => [localId, oldId])
-      )
+      // Legacy retained packages may have citation receipts without a Literature section.
+      // Rebuild a metadata-only section and mark unavailable PDF versions before forwarding.
+      // A retained snapshot must not borrow a same-ID attachment from the live Library.
+      await capturePackageLiterature(undefined, forwardedSession, records)
       const forwardedFilms: CapturedResearchFilms = {
         films: mapPackageReferences(capturedFilms.films, inverseIds) as PackageResearchFilms,
         files: new Map(
@@ -870,9 +927,12 @@ export class SessionPackageService {
       }
       const forwarded: SessionPackageManifest = {
         ...manifest,
-        requiredFeatures: manifest.requiredFeatures?.filter(
-          (feature) => feature !== 'research-film'
-        ),
+        requiredFeatures: [
+          ...new Set([
+            ...(manifest.requiredFeatures?.filter((feature) => feature !== 'research-film') ?? []),
+            ...(records.literature ? ['literature' as const] : [])
+          ])
+        ],
         inventory: manifest.inventory
           .filter(
             (entry) =>
@@ -1052,7 +1112,8 @@ export class SessionPackageService {
       this.options.literatureSource,
       session,
       records,
-      bookmarkLiteratureIds
+      bookmarkLiteratureIds,
+      (key) => this.literatureContentAvailable(key)
     )
     const sourceKey = (key: string): string =>
       capturedFilms.files.get(key)?.sourceKey ?? literatureSources.get(key) ?? key
@@ -1066,10 +1127,19 @@ export class SessionPackageService {
       request,
       this.signal
     )
+    const unavailablePdfFiles = records.tables.UploadVersion.filter((row) =>
+      records.literature?.unavailableVersionIds?.includes(String(row.id))
+    ).map((row) => ({
+      storageKey: String(row.contentStorageKey),
+      filename: String(row.filename),
+      sizeBytes: Number(row.sizeBytes)
+    }))
+    const unavailablePdfKeys = new Set(unavailablePdfFiles.map(({ storageKey }) => storageKey))
     const inheritedExclusions = [
       ...new Map(
         [
           ...packageReproducibilityExclusions(records),
+          ...unavailablePdfFiles,
           ...(retainedOrigin?.sourceManifest.excludedFiles.map((file) => ({
             ...file,
             storageKey: remapStorageKey(file.storageKey, retainedOrigin.identities)
@@ -1077,7 +1147,9 @@ export class SessionPackageService {
         ].map((file) => [file.storageKey, file])
       ).values()
     ]
-    const selectable = selectablePackageFiles(records, notebooks)
+    const selectable = selectablePackageFiles(records, notebooks).filter(
+      (file) => !unavailablePdfKeys.has(file.storageKey)
+    )
     diagnostic.phase('collect-execution-evidence')
     const logEvidence = await collectPackageLogEvidence(
       this.options.storageRoot,
@@ -1100,7 +1172,9 @@ export class SessionPackageService {
       this.signal
     )
     const sharedSession = encodeSessionDataPaths(
-      withoutPrivateAuthority(session),
+      withoutPrivateAuthority(
+        await canonicalizeSessionLiteratureCitations(this.options.literatureSource, session)
+      ),
       this.options.storageRoot
     )
     const optionalKeys = new Set(
@@ -1510,7 +1584,8 @@ export class SessionPackageService {
           this.options.literatureSource,
           session,
           currentRecords,
-          bookmarkLiteratureIds
+          bookmarkLiteratureIds,
+          (key) => this.literatureContentAvailable(key)
         )
         if (!isDeepStrictEqual(currentLiteratureSources, literatureSources))
           throw new Error('The Session changed during export. Try again.')
@@ -1913,12 +1988,15 @@ export class SessionPackageService {
         )
       }
       const mappedSession = withoutPrivateAuthority(
-        mapPackageReferences(
-          sourceSession,
-          native.identities,
-          '',
-          native.checksums
-        ) as PersistedChatSession
+        remapSessionLiteratureCitations(
+          mapPackageReferences(
+            sourceSession,
+            native.identities,
+            '',
+            native.checksums
+          ) as PersistedChatSession,
+          native.identities
+        )
       )
       let session: PersistedChatSession = {
         ...mappedSession,
@@ -1962,7 +2040,8 @@ export class SessionPackageService {
           sourceSessionId: sourceSession.id,
           importedAt: Date.now(),
           manifestChecksum,
-          excludedFiles: manifest.excludedFiles
+          excludedFiles: manifest.excludedFiles,
+          ...(native.records.literature ? { literature: native.records.literature } : {})
         }
       }
       if (forkSource) {
@@ -2409,10 +2488,13 @@ export class SessionPackageService {
     )
     const items = after.slice(0, request.limit ?? 50)
     const last = after.length > items.length ? items.at(-1) : undefined
-    const source =
-      request.versionId && selected.length
-        ? await readPackagePdfSource(await this.options.getClient(), request)
-        : undefined
+    const source = request.versionId
+      ? await readPackagePdfSource(
+          await this.options.getClient(),
+          request,
+          new Set(origin.files.map((file) => file.localStorageKey))
+        )
+      : undefined
     return {
       items,
       total: annotations.length,

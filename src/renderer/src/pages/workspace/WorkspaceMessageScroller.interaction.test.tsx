@@ -740,7 +740,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         )
       })
       await act(async () => {
-        fireEvent.click(container.querySelector(`[aria-label="Open ${title}"]`)!)
+        fireEvent.click(
+          container.querySelector(`[aria-label="Open reference literature ${title}"]`)!
+        )
       })
       const dialog = document.body.querySelector('[role="dialog"]')
       expect(dialog?.textContent).toContain(title)

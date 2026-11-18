@@ -351,6 +351,33 @@ const WorkspaceLiteratureToolCard = ({
         </div>
       ) : null}
 
+      {!annotation && isLibrary && summary.action === 'search' && summary.cachedTextCoverage ? (
+        <ErrorNotice
+          inline
+          role="status"
+          icon={TriangleAlert}
+          tone="amber"
+          description={
+            summary.cachedTextCoverage.preparePdf
+              ? t(
+                  'Full-text evidence is incomplete. Check that the selected references have PDFs and prepare their text before retrying.'
+                )
+              : t(
+                  'Cached text does not establish complete full-text coverage. Check the source PDF before drawing conclusions about missing evidence.'
+                )
+          }
+          content={
+            summary.cachedTextCoverage.hasMore ? (
+              <p>
+                {t(
+                  'Continue searching the remaining references or refine the query within the selected scope.'
+                )}
+              </p>
+            ) : undefined
+          }
+        />
+      ) : null}
+
       {summary.textCoverage?.some((coverage) => coverage.missing.length > 0) ? (
         <LocalOcrControl compact />
       ) : null}

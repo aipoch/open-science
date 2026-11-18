@@ -21,6 +21,7 @@ const registrations: Record<
   "image-model/mcp-server.ts:'generate_image'": 'allow_once',
   "image-model/mcp-server.ts:'edit_image'": 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_SEARCH_TOOL_NAME': 'allow_once',
+  'literature/library-mcp-server.ts:LITERATURE_LIBRARY_SEARCH_FULL_TEXT_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_PREPARE_LATEX_TOOL_NAME': 'allow_once',
@@ -180,8 +181,22 @@ describe('Auto operation completeness against real tool registrations', () => {
         // candidate schema now validates inline records in the handler before any save or download.
         // Citation tool descriptions are shortened only. Trusted origin, permission inputs and
         // allow-once disposition are unchanged.
+        // Reviewed: full-text discovery is an optional read-only handler with bounded scope,
+        // query, offset/limit and cancellation. Results expose cache/record coverage limitations
+        // without citation receipts. Abstract/PDF citation receipts remain bounded presentation.
+        // PDF citations validate source-owned physical spans instead of interpreting prose as pages.
+        // Read scopes include items behind the active prompt selection guard. Inline save/download
+        // validation and argument recovery are restored; trusted origin and allow-once stay unchanged.
+        // Tool guidance clarifies existing scopes. Cached coverage in the presentation comes from
+        // the same authorized search result. Argument validation and allow-once are unchanged.
+        // Full-text guidance names the record-page and passage-limit axes; behavior is unchanged.
+        // Passage guidance explicitly bounds limit to 1–8 and rejects the metadata limit of 20;
+        // schemas, handlers and allow-once authorization remain unchanged.
+        // Metadata display links are issued only when retained in the bounded presentation receipt;
+        // search records, abstract previews, schemas and allow-once authorization are unchanged.
+        // Receipt trimming reuses the last serialization; schemas, handlers and permissions are unchanged.
         'literature/library-mcp-server.ts':
-          '400ea9fb1739b849dad3f55d453b02be9879bda3e86fde29ebb34084d3e7e33e',
+          '58bd3caff04ec4ed52096e379aa6724401ad6f422ecb4334ef2f1cbc696d21b5',
         // Reviewed: errors keep specific codes with a next step and annotation cursors are opaque
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':

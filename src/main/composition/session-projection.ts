@@ -42,6 +42,7 @@ export function composeSessionProjection({
   sessionPersistenceCoordinator,
   projectDeletionCoordinator,
   archiveCoordinator,
+  sessionPackageService,
   sessionEnabledComputeHostsOwnerRef
 }: {
   wslSetupSessions: WslSetupSessionOwner
@@ -78,6 +79,10 @@ export function composeSessionProjection({
   >
   projectDeletionCoordinator: ProjectDeletionCoordinator
   archiveCoordinator: ArchiveCoordinator
+  sessionPackageService: Pick<
+    import('../session-package/service').SessionPackageService,
+    'hydrateSessionLiterature'
+  >
   sessionEnabledComputeHostsOwnerRef: { current?: SessionEnabledComputeHostsOwner }
 }): {
   sandboxNetworkApprovalOwner: SandboxNetworkApprovalOwner
@@ -264,7 +269,12 @@ export function composeSessionProjection({
         const session = recovery.result.sessions.find(
           (session) => session.projectId === projectId && session.id === sessionId
         )
-        return session && sessionPersistenceCoordinator.projectRuntimeSession(session)
+        return (
+          session &&
+          sessionPackageService.hydrateSessionLiterature(
+            sessionPersistenceCoordinator.projectRuntimeSession(session)
+          )
+        )
       }
       const session = await sessionRepository.loadSession(projectId, sessionId)
       const reconciled =
@@ -273,8 +283,10 @@ export function composeSessionProjection({
           : session
       return (
         reconciled &&
-        sessionPersistenceCoordinator.projectRuntimeSession(
-          await sandboxNetworkApprovalOwner.recoverSession(reconciled)
+        sessionPackageService.hydrateSessionLiterature(
+          sessionPersistenceCoordinator.projectRuntimeSession(
+            await sandboxNetworkApprovalOwner.recoverSession(reconciled)
+          )
         )
       )
     },

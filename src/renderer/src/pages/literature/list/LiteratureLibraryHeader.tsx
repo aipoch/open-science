@@ -2,7 +2,7 @@ import type { LiteratureProject, LiteratureNavigation } from '../renderer-host'
 import { Button } from '@/components/ui/button'
 import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
 import type { ReferenceExportRequest } from '@aipoch/literature-library/client'
-import { ExternalLink, Sparkles } from 'lucide-react'
+import { ExternalLink, MessageCircleQuestion, Sparkles } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { LiteratureAddMenu, LiteratureLibraryActionsMenu } from './LiteratureLibraryMenus'
 import { type LibrarySection } from './LiteratureLibrarySidebar'
@@ -19,6 +19,7 @@ export function LiteratureLibraryHeader({
   shouldCueLiteratureReview,
   startLiteratureReviewConversation,
   setShouldCueLiteratureReview,
+  onAskQuestion,
   importPdfInputRef,
   onImportFiles,
   importRecordsInputRef,
@@ -47,6 +48,7 @@ export function LiteratureLibraryHeader({
   shouldCueLiteratureReview: boolean
   startLiteratureReviewConversation: LiteratureNavigation['startLiteratureReviewConversation']
   setShouldCueLiteratureReview: React.Dispatch<React.SetStateAction<boolean>>
+  onAskQuestion: (() => void) | undefined
   importPdfInputRef: React.RefObject<HTMLInputElement | null>
   onImportFiles: (files: File[]) => void
   importRecordsInputRef: React.RefObject<HTMLInputElement | null>
@@ -123,6 +125,12 @@ export function LiteratureLibraryHeader({
             : 'flex w-full min-w-0 shrink-0 flex-wrap items-center gap-2 sm:w-auto'
         }
       >
+        {onAskQuestion ? (
+          <Button type="button" variant="outline" size="sm" onClick={onAskQuestion}>
+            <MessageCircleQuestion className="size-4" aria-hidden="true" />
+            {selectedCollection ? t('Ask about this collection') : t('Ask about this project')}
+          </Button>
+        ) : null}
         {showLiteratureReviewAction && reviewProjectId ? (
           <Button
             type="button"

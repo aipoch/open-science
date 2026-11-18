@@ -1033,6 +1033,7 @@ class AcpPromptTurnWorkflow {
       ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
       promptMessageId: request.provenanceContext?.promptMessageId,
       provenanceContext: request.provenanceContext,
+      parts: request.parts,
       ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {}),
       turnToken: request.continuation?.originatingTurnToken,
       ...(request.referencedSessions?.length

@@ -596,19 +596,28 @@ describe('AcpPromptTurnWorkflow', () => {
     }
   })
 
-  it('binds referenced Session ids to the prompt reservation', async () => {
+  it('binds referenced Session ids and Library parts to the prompt reservation', async () => {
     const harness = createHarness()
+    const parts = [
+      {
+        type: 'literature-scope' as const,
+        scope: 'collection' as const,
+        collectionId: 'selected',
+        name: 'Selected'
+      }
+    ]
 
     await harness.workflow.run(
       {
         ...request(),
+        parts,
         referencedSessions: [{ type: 'session', sessionId: 'session-2', title: 'Prior result' }]
       },
       { kind: 'user' }
     )
 
     expect(harness.interactions.reservePrompt).toHaveBeenCalledWith(
-      expect.objectContaining({ referencedSessionIds: ['session-2'] })
+      expect.objectContaining({ referencedSessionIds: ['session-2'], parts })
     )
   })
 

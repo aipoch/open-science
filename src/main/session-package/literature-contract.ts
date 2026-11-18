@@ -18,7 +18,10 @@ export const packageLiteratureSchema = z
       .max(10000),
     attachments: z
       .array(z.object({ versionId: identity, attachmentId: identity, itemId: identity }).strict())
-      .max(10000)
+      .max(10000),
+    // Historical packages may retain citation metadata after the PDF was omitted or lost.
+    // These identities remain useful for provenance but must never grant file access.
+    unavailableVersionIds: z.array(identity).max(10000).default([])
   })
   .strict()
 

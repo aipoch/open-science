@@ -15,4 +15,10 @@ export type {
   PageTextLayout
 } from './ports.js'
 export { LiteratureReader } from './reader.js'
-export type { ReadingOptions, ReadDocumentResult, SearchDocumentsResult } from './reader.js'
+export type {
+  ReadingOptions,
+  ReadDocumentResult,
+  SearchDocumentsResult,
+  PassagePageSpan,
+  CachedTextSearchResult
+} from './reader.js'

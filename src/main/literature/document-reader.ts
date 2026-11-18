@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
-import { LiteratureReader, type TextExtraction } from '@aipoch/literature-reading'
+import {
+  LiteratureReader,
+  type CachedTextSearchResult,
+  type TextExtraction
+} from '@aipoch/literature-reading'
 import {
   sanitizeMessagePdfContextSnapshot,
   type MessagePdfContextSnapshot,
@@ -26,7 +30,8 @@ const MAX_EXTRACTED_CACHE_CHARS = 24 * 1024 * 1024
 type LiteratureDocumentReaderOptions = Readonly<{
   storageRoot: string
   ocrModels?: Pick<LocalModelOwner, 'acquireUse' | 'getSnapshot'>
-  sources: Pick<SessionPdfSourceResolver, 'resolveVersion'>
+  sources: Pick<SessionPdfSourceResolver, 'resolveVersion'> &
+    Partial<Pick<SessionPdfSourceResolver, 'resolveCachedVersion'>>
   sessions: Pick<SessionCatalog, 'loadSessionForContinuation'>
 }>
 
@@ -45,6 +50,14 @@ type SearchLiteratureAttachmentRequest = Readonly<{
   sizeBytes: number
   checksum: string
   query: string
+  signal?: AbortSignal
+}>
+type SearchCachedLiteratureAttachmentsRequest = Readonly<{
+  projectId: string
+  attachments: readonly Omit<SearchLiteratureAttachmentRequest, 'projectId' | 'query' | 'signal'>[]
+  query: string
+  limit?: number
+  signal?: AbortSignal
 }>
 
 type ReadingReference = SessionPdfBinding & {
@@ -77,6 +90,30 @@ class LiteratureDocumentReader {
             'LINKED_PDF_UNAVAILABLE: The immutable linked PDF Version is unavailable.'
           )
         return () => this.extract(source, context.ocrRevision, context.ocrLanguages)
+      },
+      authorizeCached: async (context, signal) => {
+        const source = await options.sources.resolveCachedVersion?.({
+          projectId: context.projectId,
+          sourceKind: context.sourceKind,
+          sourceVersionId: context.sourceVersionId,
+          expectedSourceFileId: context.sourceFileId,
+          signal
+        })
+        signal?.throwIfAborted()
+        if (
+          !source ||
+          source.sourceKind !== context.sourceKind ||
+          source.sourceFileId !== context.sourceFileId ||
+          source.sourceVersionId !== context.sourceVersionId ||
+          source.checksum !== context.checksum ||
+          source.sizeBytes !== context.sizeBytes ||
+          source.filename !== context.name ||
+          !(
+            source.contentType.split(';', 1)[0]?.trim().toLowerCase() === 'application/pdf' ||
+            source.filename.toLowerCase().endsWith('.pdf')
+          )
+        )
+          throw new Error('LINKED_PDF_UNAVAILABLE: The cached linked PDF identity is unavailable.')
       },
       log: (message, fields) => log.info(message, fields),
       onIndexError: (error) => log.warn('Literature BM25 search failed', errorLogFields(error))
@@ -150,6 +187,7 @@ class LiteratureDocumentReader {
   }
 
   async searchAttachment(request: SearchLiteratureAttachmentRequest): Promise<unknown> {
+    request.signal?.throwIfAborted()
     if (request.sizeBytes > MAX_AUTO_EXTRACT_PDF_BYTES) {
       throw new Error(
         `PDF_SIZE_LIMIT_EXCEEDED: PDF source is ${request.sizeBytes} bytes, exceeding the automatic extraction limit.`
@@ -167,7 +205,37 @@ class LiteratureDocumentReader {
       checksum: request.checksum,
       linkedAt: 0
     }
-    return this.reader(request.projectId).searchDocuments([binding], request.query)
+    const result = await this.reader(request.projectId).searchDocuments([binding], request.query)
+    request.signal?.throwIfAborted()
+    return result
+  }
+
+  async searchCachedAttachments(
+    request: SearchCachedLiteratureAttachmentsRequest
+  ): Promise<CachedTextSearchResult> {
+    request.signal?.throwIfAborted()
+    if (this.closed) throw new Error('Literature reader is closed.')
+    const references = await Promise.all(
+      request.attachments.map((attachment) =>
+        this.reference(
+          {
+            version: 1,
+            bindingId: attachment.attachmentVersionId,
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: attachment.attachmentId,
+            sourceVersionId: attachment.attachmentVersionId,
+            name: attachment.filename,
+            mimeType: 'application/pdf',
+            sizeBytes: attachment.sizeBytes,
+            checksum: attachment.checksum,
+            linkedAt: 0
+          },
+          request.projectId
+        )
+      )
+    )
+    request.signal?.throwIfAborted()
+    return this.core.searchCachedDocuments(references, request.query, request.limit, request.signal)
   }
 
   async classificationEvidence(
@@ -330,5 +398,6 @@ export { LiteratureDocumentReader }
 export type {
   LiteratureDocumentReaderOptions,
   ReadCurrentLiteratureRequest,
-  SearchLiteratureAttachmentRequest
+  SearchLiteratureAttachmentRequest,
+  SearchCachedLiteratureAttachmentsRequest
 }

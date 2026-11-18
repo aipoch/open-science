@@ -160,6 +160,66 @@ describe('preview workbench store', () => {
     expect(Date.now()).toBeGreaterThan(previousTimestamp ?? 0)
   })
 
+  it('reports preview activation only inside the accepted leave action', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-1')
+    const first: PreviewItemInput = {
+      id: 'first',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'draft.md',
+      name: 'draft.md',
+      path: '/draft.md',
+      format: 'markdown'
+    }
+    store.upsertAndActivateItem(first)
+    let accept!: () => boolean | void
+    previewLeaveGuards.register('workbench:project-1:first', (action) => {
+      accept = action
+      return false
+    })
+    const onActivated = vi.fn(() => {
+      expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('second')
+    })
+    store.upsertAndActivateItem({ ...first, id: 'second' }, { onActivated })
+    vi.advanceTimersByTime(10_000)
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('first')
+    expect(onActivated).not.toHaveBeenCalled()
+    accept()
+    expect(onActivated).toHaveBeenCalledOnce()
+  })
+
+  it('does not activate or run completion after an aborted deferred preview request', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-1')
+    const first: PreviewItemInput = {
+      id: 'first',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'draft.md',
+      name: 'draft.md',
+      path: '/draft.md',
+      format: 'markdown'
+    }
+    store.upsertAndActivateItem(first)
+    let accept!: () => boolean | void
+    previewLeaveGuards.register('workbench:project-1:first', (action) => {
+      accept = action
+      return false
+    })
+    const controller = new AbortController()
+    const onActivated = vi.fn()
+    store.upsertAndActivateItem(
+      { ...first, id: 'second' },
+      { onActivated, signal: controller.signal }
+    )
+    controller.abort()
+    accept()
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('first')
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
+    expect(onActivated).not.toHaveBeenCalled()
+  })
+
   it('does not switch, remove, collapse, or close a dialog when its active draft rejects leaving', () => {
     const store = usePreviewWorkbenchStore.getState()
     store.activateProject('project-a')

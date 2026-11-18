@@ -22,13 +22,21 @@ const INDEX_IDLE_RETENTION = '-1 day'
 const MIN_INCREMENTAL_VACUUM_FREE_RATIO = 0.1
 const MIN_INCREMENTAL_VACUUM_FREE_BYTES = 16 * 1024 * 1024
 const MAX_INCREMENTAL_VACUUM_PAGES = 2_048
-const migrateLiteratureIndex = async (client: IndexDatabase): Promise<void> => {
-  await client.execute('PRAGMA foreign_keys = ON')
+const migrateLiteratureIndex = async (
+  client: IndexDatabase,
+  existingOnly = false
+): Promise<void> => {
+  if (!existingOnly) await client.execute('PRAGMA foreign_keys = ON')
   const [version] = await querySql<Array<{ user_version: bigint | number }>>(
     client,
     'PRAGMA user_version'
   )
   const currentVersion = Number(version?.user_version ?? 0)
+  if (existingOnly && currentVersion !== LITERATURE_INDEX_SCHEMA_VERSION) {
+    throw new Error(
+      `Literature index schema version ${currentVersion} is not supported for cached search.`
+    )
+  }
   if (currentVersion > LITERATURE_INDEX_SCHEMA_VERSION) {
     throw new Error(`Literature index schema version ${currentVersion} is not supported.`)
   }
@@ -55,17 +63,22 @@ const migrateLiteratureIndex = async (client: IndexDatabase): Promise<void> => {
 /** The host owns connection admission, migration, SQL dialect and physical retention. */
 export async function openSqliteLiteratureIndex(
   client: IndexDatabase,
-  log: (message: string, fields: Record<string, unknown>) => void
+  log: (message: string, fields: Record<string, unknown>) => void,
+  options: { existingOnly?: boolean } = {}
 ): Promise<LiteratureIndexStore> {
   try {
-    await migrateLiteratureIndex(client)
+    await migrateLiteratureIndex(client, options.existingOnly)
   } catch (error) {
     await client.close()
     throw error
   }
+  const requireWritable = (): void => {
+    if (options.existingOnly) throw new Error('Cached Literature search is read-only.')
+  }
   return {
     close: () => client.close(),
     async deleteExtraction(extractionId) {
+      requireWritable()
       await client.execute(
         'DELETE FROM "LiteratureIndexDocument" WHERE "extractionId" = ?',
         extractionId
@@ -78,7 +91,19 @@ export async function openSqliteLiteratureIndex(
       )
       return Number(row?.present ?? 0) === 1
     },
+    async findExtraction(documentChecksum, extractorFingerprint) {
+      const [row] = await client.query<{ extractionId: string }[]>(
+        `SELECT "extractionId" FROM "LiteratureIndexDocument"
+         WHERE "documentChecksum" = ? AND "extractorFingerprint" = ? AND "indexSchemaVersion" = ?
+         ORDER BY rowid DESC LIMIT 1`,
+        documentChecksum,
+        extractorFingerprint,
+        LITERATURE_INDEX_SCHEMA_VERSION
+      )
+      return row?.extractionId
+    },
     async replace(input: ReplaceLiteratureIndexInput) {
+      requireWritable()
       await client.transaction(async (transaction) => {
         await transaction.execute(
           `DELETE FROM "LiteratureIndexDocument" WHERE "extractionId" = ?`,
@@ -108,6 +133,8 @@ export async function openSqliteLiteratureIndex(
       })
     },
     async search(input) {
+      input.signal?.throwIfAborted()
+      if (!input.extractionIds.length || !input.terms.length) return []
       const query = input.terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(' OR ')
       const rows = await querySql<
         Array<{
@@ -132,12 +159,14 @@ export async function openSqliteLiteratureIndex(
         ...input.extractionIds,
         input.limit
       )
+      input.signal?.throwIfAborted()
       return rows.map(({ sectionTitle, ...row }): LiteratureIndexCandidate => ({
         ...row,
         ...(sectionTitle ? { sectionTitle } : {})
       }))
     },
     async purgeExpired() {
+      requireWritable()
       const startedAt = Date.now()
       await client.execute(
         `DELETE FROM "LiteratureIndexDocument" WHERE "lastAccessedAt" < datetime('now', '${INDEX_IDLE_RETENTION}')`
@@ -181,6 +210,7 @@ export async function openSqliteLiteratureIndex(
       })
     },
     async touch(extractionIds) {
+      requireWritable()
       await client.execute(
         `UPDATE "LiteratureIndexDocument" SET "lastAccessedAt" = CURRENT_TIMESTAMP WHERE "extractionId" IN (${extractionIds.map(() => '?').join(', ')})`,
         ...extractionIds
