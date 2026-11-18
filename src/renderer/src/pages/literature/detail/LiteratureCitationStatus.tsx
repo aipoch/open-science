@@ -38,42 +38,34 @@ export function LiteratureCitationStatus({
     ).length ?? 0
   const state = states[direction]
   const result = state.result
-  const pageLimitReached =
-    state.pages >= 5 && result?.state === 'ready' && result.nextOffset !== undefined
+  const nextOffset = result?.state === 'ready' ? result.nextOffset : undefined
+  const pageLimitReached = state.pages >= 5 && nextOffset !== undefined
+  const canPage = nextOffset !== undefined && !pageLimitReached
   const title = direction === 'references' ? t('References') : t('Papers citing this paper')
   return (
-    <div data-citation-status aria-busy={busy === direction}>
-      <section key={direction} className="min-w-0" aria-label={title}>
-        <div className="sr-only">
-          <h3 className="font-medium">
-            {direction === 'references' ? t('References') : t('Cited by')}
-          </h3>
-          {state.pages > 0 ? (
-            <span className="tabular-nums text-muted-foreground">
-              {t('Loaded: {{loaded}}', { loaded })}
-            </span>
-          ) : null}
-        </div>
+    <section
+      key={direction}
+      className="flex min-w-0 flex-1 flex-col"
+      data-citation-status
+      aria-busy={busy === direction}
+      aria-label={title}
+    >
+      <div className="sr-only">
+        <h3 className="font-medium">
+          {direction === 'references' ? t('References') : t('Cited by')}
+        </h3>
+        {state.pages > 0 && !canPage ? (
+          <span className="tabular-nums text-muted-foreground">
+            {t('Loaded: {{loaded}}', { loaded })}
+          </span>
+        ) : null}
+      </div>
+      <div className="flex-1 px-3 pt-3 sm:px-4">
         {renderRecords(direction)}
         <div className="mt-2 min-w-0 space-y-2">
-          {busy === direction ? (
-            <p role="status" className="text-xs">
-              {t('Searching…')}
-            </p>
-          ) : null}
-          {result?.state === 'unavailable' ? (
-            <CitationLookupError
-              result={result}
-              sourceName={sourceName}
-              disabled={interactionBusy || (invalidated && result.issue !== 'expired')}
-              onRetry={() =>
-                result.issue === 'expired'
-                  ? onRestart()
-                  : void load(direction, state.pages ? (state.nextOffset ?? 0) : 0)
-              }
-            />
-          ) : result?.state === 'ready' && !state.pages ? null : result?.state === 'ready' &&
-            !entries.some((entry) => entry.direction === direction) ? (
+          {result?.state === 'ready' &&
+          state.pages > 0 &&
+          !entries.some((entry) => entry.direction === direction) ? (
             <p className="text-xs text-muted-foreground">
               {t(
                 '{{source}} did not provide relationships for this page; the paper may still have references or citations.',
@@ -97,32 +89,59 @@ export function LiteratureCitationStatus({
             </p>
           ) : null}
         </div>
-        {result?.state === 'ready' && result.nextOffset !== undefined ? (
-          <div className="mt-2 flex justify-center">
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={blocked || state.pages >= 5}
-              onClick={() => void load(direction, result.nextOffset)}
-            >
-              {t('Load more')}
-            </Button>
-          </div>
-        ) : !result && !busy ? (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={blocked}
-            className="mt-2"
-            onClick={() => void load(direction)}
-          >
-            {t('Search')}
-          </Button>
-        ) : null}
-      </section>
-      <p className="py-3 text-xs text-muted-foreground">
-        {t('Loaded results only; source coverage may be incomplete.')}
-      </p>
-    </div>
+        <p className="py-3 text-xs text-muted-foreground">
+          {t('Loaded results only; source coverage may be incomplete.')}
+        </p>
+      </div>
+      {canPage || busy === direction || result?.state === 'unavailable' ? (
+        <div className="sticky bottom-0 border-t border-border-300 bg-card px-3 py-2 sm:px-4">
+          {result?.state === 'unavailable' ? (
+            <CitationLookupError
+              result={result}
+              loading={busy === direction}
+              sourceName={sourceName}
+              disabled={interactionBusy || (invalidated && result.issue !== 'expired')}
+              onRetry={() =>
+                result.issue === 'expired'
+                  ? onRestart()
+                  : void load(direction, state.pages ? (state.nextOffset ?? 0) : 0)
+              }
+            />
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              {state.pages > 0 ? (
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {t('Loaded: {{loaded}}', { loaded })}
+                </span>
+              ) : null}
+              {busy === direction ? (
+                <span role="status" className="text-xs">
+                  {t('Searching…')}
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={blocked}
+                  onClick={() => void load(direction, nextOffset)}
+                >
+                  {t('Load more')}
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      ) : !result && !busy ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={blocked}
+          className="m-3 self-start"
+          onClick={() => void load(direction)}
+        >
+          {t('Search')}
+        </Button>
+      ) : null}
+    </section>
   )
 }

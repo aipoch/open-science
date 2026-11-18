@@ -78,6 +78,7 @@ export function LiteratureCitationInspector({
   const inspectorTitle = useRef<HTMLHeadingElement>(null)
   const scroll = useRef(0)
   const pendingFocus = useRef(false)
+  const returnToRow = useRef(false)
   const resetScroll = useCallback(() => {
     if (pane.current) pane.current.scrollTop = 0
     if (outer.current) outer.current.scrollTop = 0
@@ -98,28 +99,31 @@ export function LiteratureCitationInspector({
   }, [visible, graph])
   // Keep the raw selection identity: merging aliases must not reset this paper's scroll.
   useLayoutEffect(() => {
+    if (!listOpen) resetScroll()
+  }, [selected, listOpen, resetScroll])
+  const showDetails = useCallback(() => {
+    if (listOpen) listScroll.current[direction] = outer.current?.scrollTop ?? 0
+    setListOpen(false)
     resetScroll()
-  }, [selected, resetScroll])
-  useImperativeHandle(
-    ref,
-    () => ({
-      showDetails() {
-        if (listOpen) listScroll.current[direction] = outer.current?.scrollTop ?? 0
-        setListOpen(false)
-        resetScroll()
-      },
-      focus() {
-        if (listOpen) listScroll.current[direction] = outer.current?.scrollTop ?? 0
-        setListOpen(false)
-        pendingFocus.current = !expanded
-        resetScroll()
-        inspectorTitle.current?.focus({ preventScroll: true })
-      }
-    }),
-    [expanded, resetScroll, listOpen, direction]
-  )
+  }, [direction, listOpen, resetScroll])
+  const focusDetails = useCallback(() => {
+    showDetails()
+    pendingFocus.current = !expanded
+    inspectorTitle.current?.focus({ preventScroll: true })
+  }, [expanded, showDetails])
+  useImperativeHandle(ref, () => ({ showDetails, focus: focusDetails }), [
+    showDetails,
+    focusDetails
+  ])
   useLayoutEffect(() => {
-    if (outer.current) outer.current.scrollTop = listOpen ? listScroll.current[direction] : 0
+    scroll.current = listOpen ? listScroll.current[direction] : 0
+    if (outer.current) outer.current.scrollTop = scroll.current
+    if (listOpen && returnToRow.current) {
+      returnToRow.current = false
+      outer.current
+        ?.querySelector<HTMLButtonElement>('[data-citation-paper-id][aria-pressed="true"]')
+        ?.focus({ preventScroll: true })
+    }
   }, [listOpen, direction, expanded])
   const relationLabel = (relation: CitationGraphRelation): string =>
     relation === 'references'
@@ -130,19 +134,16 @@ export function LiteratureCitationInspector({
           ? t('Both directions')
           : t('Current center')
   const paperRow = (node: CitationGraphNode): React.JSX.Element => (
-    <li key={node.id}>
+    <li
+      key={node.id}
+      className={selectedNode?.id === node.id ? 'rounded-md bg-primary/10' : undefined}
+    >
       <button
         type="button"
         data-citation-paper-id={node.id}
         aria-pressed={selectedNode?.id === node.id}
-        className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left hover:bg-muted aria-pressed:bg-primary/10 focus-visible:outline-2 focus-visible:outline-ring"
-        onClick={() => {
-          listScroll.current[direction] = outer.current?.scrollTop ?? 0
-          setSelected(node.id)
-          setListOpen(false)
-          resetScroll()
-          inspectorTitle.current?.focus({ preventScroll: true })
-        }}
+        className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left hover:bg-muted aria-pressed:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-ring"
+        onClick={() => setSelected(node.id)}
       >
         <span
           aria-hidden="true"
@@ -160,6 +161,11 @@ export function LiteratureCitationInspector({
           ) : null}
         </span>
       </button>
+      {selectedNode?.id === node.id ? (
+        <Button size="sm" variant="ghost" className="mb-1 ml-4 text-primary" onClick={focusDetails}>
+          {t('View details')}
+        </Button>
+      ) : null}
     </li>
   )
   const collapse = (): void => {
@@ -209,8 +215,11 @@ export function LiteratureCitationInspector({
             aria-expanded={listOpen}
             aria-controls={`${marker}-paper-list`}
             onClick={() => {
-              if (listOpen) listScroll.current[direction] = outer.current?.scrollTop ?? 0
-              setListOpen((value) => !value)
+              if (listOpen) focusDetails()
+              else {
+                returnToRow.current = true
+                setListOpen(true)
+              }
             }}
           >
             {listOpen ? (
@@ -295,7 +304,11 @@ export function LiteratureCitationInspector({
               if (listOpen) listScroll.current[direction] = event.currentTarget.scrollTop
             }
           }}
-          className="min-h-24 flex-1 overflow-y-auto overscroll-auto px-3 py-3 sm:px-4"
+          className={
+            listOpen
+              ? 'min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-pb-14'
+              : 'min-h-24 flex-1 overflow-y-auto overscroll-auto px-3 py-3 sm:px-4'
+          }
         >
           <h3
             ref={inspectorTitle}
@@ -363,7 +376,11 @@ export function LiteratureCitationInspector({
             </p>
           ) : null}
           {listOpen && visible ? (
-            <section id={`${marker}-paper-list`} aria-label={t('Paper list')}>
+            <section
+              className="min-h-full flex flex-col"
+              id={`${marker}-paper-list`}
+              aria-label={t('Paper list')}
+            >
               <LiteratureCitationStatus
                 model={statusModel}
                 direction={direction}
@@ -383,7 +400,7 @@ export function LiteratureCitationInspector({
             </section>
           ) : null}
         </Tabs.Content>
-        {selectedNode && (!selectedNode.center || temporaryCenter || receipt) ? (
+        {!listOpen && selectedNode && (!selectedNode.center || temporaryCenter || receipt) ? (
           <div
             data-citation-inspector-actions
             className="shrink-0 space-y-2 border-t border-border-300 bg-card px-3 py-2 sm:px-4"

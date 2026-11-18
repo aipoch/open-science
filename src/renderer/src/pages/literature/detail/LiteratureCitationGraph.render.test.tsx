@@ -517,11 +517,10 @@ it.each(['references', 'citations'] as const)(
       await waitFor(() => expect(related).toHaveBeenCalledTimes(page + 1))
     }
     await within(full).findByText(directionPageLimitMessage)
-    expect(within(full).getByRole('button', { name: 'Load more' })).toHaveProperty('disabled', true)
+    expect(within(full).queryByRole('button', { name: 'Load more' })).toBeNull()
     expect(
       screen.getByRole('group', { name: 'Citation graph' }).querySelectorAll('[data-node-mark]')
     ).toHaveLength(121)
-    fireEvent.click(within(full).getByRole('button', { name: 'Load more' }))
     expect(related).toHaveBeenCalledTimes(6)
     showCategory(otherDirection)
     let other = screen.getByRole('region', { name: otherTitle })
@@ -683,9 +682,11 @@ it('blocks staging and further paging after expiration until the graph is search
   showPaperList()
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await screen.findByText('These results expired. Search again.')
+  fireEvent.click(screen.getByRole('button', { name: 'View details' }))
   expect(screen.getByRole('button', { name: 'Add to Inbox' })).toHaveProperty('disabled', true)
   expect(screen.getByRole('button', { name: 'Select Paper b' })).toBeTruthy()
   related.mockImplementation(async (request) => result(request, { records: [record('d')] }))
+  showPaperList()
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
   await screen.findByRole('button', { name: 'Select Paper d' })
   expect(screen.queryByRole('button', { name: 'Select Paper b' })).toBeNull()
@@ -823,6 +824,7 @@ it('keeps a saved paper in Inbox when a later page merges its native alias into 
   expect(screen.getByRole('button', { name: 'Select Alias A' }).getAttribute('aria-pressed')).toBe(
     'true'
   )
+  fireEvent.click(screen.getByRole('button', { name: 'View details' }))
   expect(screen.getByText('In Inbox')).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Add to Inbox' })).toHaveProperty('disabled', true)
   fireEvent.click(screen.getByRole('button', { name: 'Add to Inbox' }))
@@ -938,6 +940,7 @@ it('explores an unsaved paper, restores the parent snapshot and reuses the child
   expect(outer.scrollTop).toBe(99)
   showPaperList()
   expect(screen.getByRole('button', { name: 'Load more' })).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Selected paper' }))
   fireEvent.click(screen.getByRole('button', { name: 'Set as center' }))
   expect(screen.getByRole('button', { name: 'Select Paper d' }).getAttribute('aria-pressed')).toBe(
     'true'
@@ -1323,11 +1326,13 @@ it('renders mutual citations as one selectable paper with two differently curved
 it('shows loaded counts beside pagination without presenting source totals', async () => {
   render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
   await screen.findByRole('button', { name: 'Select Paper c' })
-  const status = document.querySelector('[data-citation-status]')!
-  expect(status.textContent).toContain('ReferencesLoaded: 1')
+  expect(
+    within(screen.getByRole('region', { name: 'References' })).getByText('Loaded: 1')
+  ).toBeTruthy()
   showCategory('citations')
-  expect(status.textContent).toContain('Cited byLoaded: 1')
-  expect(status.textContent).toContain('Loaded results only; source coverage may be incomplete.')
+  const citing = within(screen.getByRole('region', { name: 'Papers citing this paper' }))
+  expect(citing.getByText('Loaded: 1')).toBeTruthy()
+  expect(citing.getByText('Loaded results only; source coverage may be incomplete.')).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'About this citation graph' })).toBeNull()
 })
 
@@ -2080,6 +2085,10 @@ it('shows loaded papers beside the graph, retries within their group and restore
   scroll.scrollTop = 220
   fireEvent.scroll(scroll)
   fireEvent.click(within(list).getByRole('button', { name: 'Paper c' }))
+  expect(scroll.scrollTop).toBe(220)
+  expect(screen.queryByRole('button', { name: 'Set as center' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Add to Inbox' })).toBeNull()
+  fireEvent.click(within(list).getByRole('button', { name: 'View details' }))
   expect(screen.queryByRole('region', { name: 'Paper list' })).toBeNull()
   expect(screen.getByRole('button', { name: 'Select Paper c' }).getAttribute('aria-pressed')).toBe(
     'true'
@@ -2104,10 +2113,12 @@ it('discloses the paper list separately and returns to selected details without 
   fireEvent.click(listToggle)
   expect(listToggle.getAttribute('aria-expanded')).toBe('true')
   expect(within(details).queryByText('Selected journal')).toBeNull()
-  expect(within(details).getByRole('button', { name: 'Add to Inbox' })).toBeTruthy()
+  expect(within(details).queryByRole('button', { name: 'Add to Inbox' })).toBeNull()
   showCategory('citations')
   const list = within(details).getByRole('region', { name: 'Paper list' })
   fireEvent.click(within(list).getByRole('button', { name: 'Paper c' }))
+  expect(listToggle.getAttribute('aria-expanded')).toBe('true')
+  fireEvent.click(within(list).getByRole('button', { name: 'View details' }))
   expect(listToggle.getAttribute('aria-expanded')).toBe('false')
   expect(within(details).getByRole('heading', { name: 'Paper c' })).toBe(document.activeElement)
   expect(screen.getByRole('button', { name: 'Select Paper c' }).getAttribute('aria-pressed')).toBe(

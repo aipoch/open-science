@@ -76,14 +76,14 @@ for (const width of [320, 375, 414, 768]) {
     if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click()
     const group = pane.getByRole('region', { name: 'References', exact: true })
     const more = group.getByRole('button', { name: 'Load more' })
-    await more.scrollIntoViewIfNeeded()
+    await expect(more).toBeInViewport({ ratio: 1 })
     const box = (await more.boundingBox())!
     expect(box.width).toBeLessThan(140)
     const groupBox = (await group.boundingBox())!
     expect(box.x).toBeGreaterThanOrEqual(groupBox.x)
     expect(box.x + box.width).toBeLessThanOrEqual(groupBox.x + groupBox.width)
-    const lastRow = (await group.locator('ol button').last().boundingBox())!
-    expect(box.y).toBeGreaterThanOrEqual(lastRow.y + lastRow.height)
+    await group.locator('[data-citation-paper-id]').last().scrollIntoViewIfNeeded()
+    expect((await more.boundingBox())!.y).toBeCloseTo(box.y, 0)
     await expect(frame.locator('[data-citation-canvas] [data-citation-status]')).toHaveCount(0)
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
@@ -473,6 +473,7 @@ test('reselecting the current paper from a scrolled list restores its visible fo
   await option.scrollIntoViewIfNeeded()
   await expect.poll(() => body.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
   await option.click()
+  await body.getByRole('button', { name: 'View details' }).click()
   await expect(list).toHaveAttribute('aria-expanded', 'false')
   const title = pane.locator('[data-citation-inspector-title]')
   await expect(title).toBeFocused()

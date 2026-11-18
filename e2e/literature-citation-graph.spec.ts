@@ -97,7 +97,9 @@ test('Electron graph desktop canvas, details and independent paper list', async 
 }, info) => {
   await openCitationGraph(page, url)
   await captureGraph(graphApp, info, 'electron-graph-desktop-initial')
-  await verifyCitationDesktopLayout(page)
+  await verifyCitationDesktopLayout(page, async () => {
+    await page.screenshot({ path: info.outputPath('electron-graph-list-selection.png') })
+  })
   await captureGraph(graphApp, info, 'electron-graph-desktop-selected')
 })
 
@@ -130,7 +132,7 @@ test('Electron graph restores visible focus when a resize collapses details', as
   const list = frame.locator('[data-citation-paper-list-toggle]')
   await list.click()
   await expect(list).toHaveAttribute('aria-expanded', 'true')
-  const action = frame.getByRole('button', { name: 'Set as center', exact: true })
+  const action = frame.getByRole('button', { name: 'View details', exact: true })
   await action.focus()
   await expect(action).toBeFocused()
   await graphApp.evaluate(({ BrowserWindow }) => {

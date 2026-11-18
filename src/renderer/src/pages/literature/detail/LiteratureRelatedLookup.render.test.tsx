@@ -673,6 +673,7 @@ it('defaults to Europe PMC routing and pins the actual source across list, graph
   )
   expect(related.mock.calls[3][0].seedPaperId).toBe('europe-pmc:PMC:PMC2')
   expect(transact).toHaveBeenCalledTimes(1)
+  fireEvent.click(screen.getByRole('button', { name: 'Selected paper' }))
   fireEvent.click(screen.getByRole('button', { name: 'Add to Inbox' }))
   await waitFor(() => expect(transact).toHaveBeenCalledTimes(2))
   expect(transact.mock.calls[1][0].candidate.source).toMatchObject({
@@ -891,6 +892,7 @@ it.each([
     fireEvent.click(screen.getByRole('button', { name: 'Set as center' }))
     await screen.findByRole('button', { name: 'Select OC descendant' })
     await waitFor(() => expect(related.mock.calls.at(-1)?.[0].direction).toBe('citations'))
+    fireEvent.click(screen.getByRole('button', { name: 'Selected paper' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add to Inbox' }))
     await waitFor(() => expect(transact).toHaveBeenCalledTimes(2))
     expect(transact.mock.calls[1][0].candidate.source).toMatchObject({

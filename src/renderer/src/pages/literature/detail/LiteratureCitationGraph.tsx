@@ -395,7 +395,7 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
             blocked: controller.blocked,
             saving: controller.saving,
             save: controller.save,
-            setSelected: selectPaper,
+            setSelected: controller.setSelected,
             exploreSelected: controller.exploreSelected,
             receipt: controller.selectedReceipt,
             temporaryCenter: Boolean(props.center),

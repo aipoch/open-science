@@ -280,7 +280,10 @@ export async function verifyCitationEdgeRendering(
   await expect(page.locator('[data-citation-center-title]')).toHaveText(rootTitle)
 }
 
-export async function verifyCitationDesktopLayout(page: Page): Promise<void> {
+export async function verifyCitationDesktopLayout(
+  page: Page,
+  onListSelection?: () => Promise<void>
+): Promise<void> {
   const frame = currentFrame(page)
   const inspector = frame.locator('[data-citation-inspector-pane]')
   const details = frame.locator('[data-citation-inspector-toggle]')
@@ -314,12 +317,26 @@ export async function verifyCitationDesktopLayout(page: Page): Promise<void> {
   await expect(list).toHaveText('Back to list')
   await list.click()
   await expect(list).toHaveAttribute('aria-expanded', 'true')
-  const listedPaper = inspector.locator('ol button').filter({ hasText: paperTitle(1100) })
+  const listedPaper = inspector
+    .locator('[data-citation-paper-id]')
+    .filter({ hasText: paperTitle(1101) })
+  const more = inspector.getByRole('button', { name: 'Load more' })
+  await expect(more).toBeInViewport({ ratio: 1 })
   await listedPaper.click()
-  await expect(node(page, 1100)).toHaveAttribute('aria-pressed', 'true')
+  await expect(node(page, 1101)).toHaveAttribute('aria-pressed', 'true')
+  await expect(listedPaper).toHaveAttribute('aria-pressed', 'true')
+  await expect(actions).toHaveCount(0)
+  await onListSelection?.()
+  const body = inspector.locator('[data-citation-inspector]')
+  const scroll = await body.evaluate((element) => element.scrollTop)
+  await more.click()
+  await expect(node(page, 1139)).toHaveCount(1)
+  await expect(body).toHaveJSProperty('scrollTop', scroll)
+  await expect(listedPaper).toHaveAttribute('aria-pressed', 'true')
+  await inspector.getByRole('button', { name: 'View details' }).click()
   await expect(list).toHaveAttribute('aria-expanded', 'false')
   await expect(
-    inspector.getByRole('heading', { name: paperTitle(1100), exact: true })
+    inspector.getByRole('heading', { name: paperTitle(1101), exact: true })
   ).toBeVisible()
   await expect(frame.locator('[data-citation-inspector-title]')).toBeFocused()
   await expectReadableSelectedLabel(page)
