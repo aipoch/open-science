@@ -23,6 +23,20 @@ const definitions: readonly OfficialVendor[] = [
     // The API exposes a broader mixed catalog (embeddings, image, and audio models); keep the coding
     // catalog curated here instead of importing every id from /v1/models.
     models: [
+      // https://developers.openai.com/api/docs/models/gpt-6.2-sol
+      {
+        id: 'gpt-6.2-sol',
+        contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
+      },
+      // https://developers.openai.com/api/docs/models/gpt-6.2-astra
+      {
+        id: 'gpt-6.2-astra',
+        contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
+      },
       // https://developers.openai.com/api/docs/models/gpt-6.1-sol
       {
         id: 'gpt-6.1-sol',

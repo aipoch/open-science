@@ -41,7 +41,7 @@ it('uses the configured size and falls back to 200k when the user leaves it blan
   expect(resolveCustomModelContextWindow(undefined)).toBe(200_000)
 })
 it.each([
-  ['openai', undefined, 'gpt-6.1-sol'],
+  ['openai', undefined, 'gpt-6.2-sol'],
   ['kimi', undefined, 'kimi-k3.1-pro'],
   ['kimiforcode', undefined, 'k3.1-pro'],
   ['anthropic', undefined, 'claude-opus-5-5'],
