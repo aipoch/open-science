@@ -2026,6 +2026,7 @@ describe('SettingsPage layout', () => {
   it('shows an error when refreshing a provider model catalog rejects', async () => {
     const provider: ProviderView = {
       id: 'anthropic-provider',
+      configRevision: 4,
       type: 'official',
       vendorId: 'anthropic',
       name: 'Anthropic',
@@ -2053,7 +2054,10 @@ describe('SettingsPage layout', () => {
     )
     await act(async () => refresh?.click())
 
-    expect(refreshProviderModels).toHaveBeenCalledWith(provider.id)
+    expect(refreshProviderModels).toHaveBeenCalledWith({
+      providerId: provider.id,
+      expectedConfigRevision: 4
+    })
     const alertText = document.body.querySelector('[role="alert"]')?.textContent ?? ''
     expect(alertText).toContain('Model refresh failed. The previous list is kept.')
     expect(alertText).toContain('Could not connect to the model catalog. Check your network.')
