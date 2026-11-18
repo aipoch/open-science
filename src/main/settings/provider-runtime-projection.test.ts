@@ -2,6 +2,7 @@ import { configureTestElectronHost } from '../../../test/runtime-host'
 import { describe, expect, it, vi } from 'vitest'
 
 import { getAgentFramework } from '../agent-framework'
+import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import type { StoredProvider } from './types'
 import { resolveProviderDraft } from './provider-draft-projection'
 
@@ -122,6 +123,25 @@ describe('ProviderRuntimeProjectionOwner', () => {
         model: 'manual-model[1m]',
         contextWindow: type === 'custom' ? 200_000 : 1_000_000
       })
+    }
+  )
+
+  it.each([undefined, { fetchedAt: 1, models: [{ id: 'gpt-6.1-sol' }] }])(
+    'uses the versioned official OpenAI route with a bundled or refreshed model catalog',
+    (modelCatalog) => {
+      const provider: StoredProvider = {
+        id: 'openai',
+        type: 'official',
+        vendorId: 'openai',
+        name: 'OpenAI',
+        modelCatalog
+      }
+      const target = new ProviderRuntimeProjectionOwner().resolveRuntimeTarget(
+        provider,
+        { kind: 'configured' },
+        getAgentFramework('codex')
+      )
+      expect(resolveResponsesBaseUrl(target.provider)).toBe('https://api.openai.com/v1')
     }
   )
 
