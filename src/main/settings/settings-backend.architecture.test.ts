@@ -726,6 +726,7 @@ describe('Settings backend ownership architecture', () => {
       'accountEmail',
       'apiEndpoints',
       'baseUrl',
+      'codeBuddyAuthMode',
       'codexAuthMode',
       'codexAutoUseHttps',
       'codexTransport',

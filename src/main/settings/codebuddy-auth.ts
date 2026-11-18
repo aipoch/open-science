@@ -9,7 +9,11 @@ import type {
   CodeBuddySite
 } from '../../shared/codebuddy-subscription'
 import { collectSelectValues } from '../acp/session-config'
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import {
+  createPosixProcessTreeOwnership,
+  terminateProcessTree,
+  trackOwnedPosixProcessTree
+} from '../process-tree'
 import {
   codeBuddyAccountEnvironment,
   codeBuddyHostEnvironment,
@@ -46,15 +50,19 @@ export async function runCodeBuddyAuth(
     ? ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
     : ['--acp', '--strict-mcp-config', '--setting-sources', 'user']
   const shell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(executable)
+  const ownership = createPosixProcessTreeOwnership({
+    ...codeBuddyHostEnvironment(process.env),
+    ...profile
+  })
   const child = spawn(shell ? `"${executable}"` : executable, args, {
     cwd,
-    env: { ...codeBuddyHostEnvironment(process.env), ...profile },
+    env: ownership.env,
     shell,
     windowsHide: true,
     detached: process.platform !== 'win32',
     stdio: 'pipe'
   })
-  if (process.platform !== 'win32') registerOwnedPosixProcessGroup(child)
+  if (process.platform !== 'win32') trackOwnedPosixProcessTree(child, ownership.token)
   child.stderr.resume()
   const aborted = (): void => {
     void terminateProcessTree(child)
