@@ -80,6 +80,7 @@
     "src/main/literature/pdf-structure/ocr.test.ts",
     "src/main/literature/overview-batch.ts",
     "src/main/literature/overview-batch.test.ts",
+    "src/main/literature/comparison/export.ts",
     "src/main/literature/comparison/extractor.test.ts",
     "src/main/literature/comparison/extractor.ts",
     "src/main/literature/comparison/owner.integration.test.ts",
