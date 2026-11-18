@@ -21,6 +21,7 @@ import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/aux
 import { encodeImageRequest, readImageResult, readImageUsage } from './adapter'
 import {
   ImageModelError,
+  ImageRequestConflictError,
   MAX_IMAGE_RESPONSE_BYTES,
   type ImageModelRequest,
   type ImageModelResult
@@ -160,28 +161,29 @@ export class ImageModelService {
       request.context.sessionId,
       request.context.invocationId
     ])
-    const fingerprint = JSON.stringify([
-      request.operation,
-      request.prompt,
-      request.options,
-      request.sourceIdentity ??
-        (Buffer.isBuffer(request.source)
-          ? createHash('sha256').update(request.source).digest('hex')
-          : null),
-      request.spatial
-    ])
+    const fingerprint =
+      request.requestFingerprint ??
+      createHash('sha256')
+        .update(
+          JSON.stringify([
+            request.operation,
+            request.prompt,
+            request.options ?? null,
+            request.sourceIdentity ??
+              (Buffer.isBuffer(request.source)
+                ? createHash('sha256').update(request.source).digest('hex')
+                : null),
+            request.spatial ?? null
+          ])
+        )
+        .digest('hex')
     const current = this.inflight.get(key)
     if (current)
       return current.fingerprint === fingerprint
         ? current.result
-        : Promise.reject(
-            new ImageModelError(
-              'INVALID_REQUEST',
-              'Image request identity was reused with different inputs.'
-            )
-          )
+        : Promise.reject(new ImageRequestConflictError())
     const releaseWrite = this.dependencies.retainWrite?.()
-    const result = this.executeOnce(request, resolveTarget).finally(() => {
+    const result = this.executeOnce(request, resolveTarget, fingerprint).finally(() => {
       this.inflight.delete(key)
       releaseWrite?.()
     })
@@ -191,27 +193,14 @@ export class ImageModelService {
 
   private async executeOnce(
     request: ImageModelRequest,
-    resolveTarget: () => Promise<ResolvedImageModel | undefined>
+    resolveTarget: () => Promise<ResolvedImageModel | undefined>,
+    fingerprint: string
   ): Promise<ImageModelResult> {
     const signal = AbortSignal.any([
       request.signal,
       this.shutdown.signal,
       AbortSignal.timeout(this.dependencies.timeoutMs ?? 600_000)
     ])
-    const fingerprint = createHash('sha256')
-      .update(
-        JSON.stringify([
-          request.operation,
-          request.prompt,
-          request.options ?? null,
-          request.sourceIdentity ??
-            (Buffer.isBuffer(request.source)
-              ? createHash('sha256').update(request.source).digest('hex')
-              : null),
-          request.spatial ?? null
-        ])
-      )
-      .digest('hex')
     let submitted = false
     let received = false
     let usageRecorded: Promise<PromiseSettledResult<void>[]> | undefined

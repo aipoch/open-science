@@ -5,6 +5,7 @@ import { readFileWithinLimit, writeDurableJsonFile } from '@aipoch/durable-files
 import { z } from 'zod'
 import {
   ImageModelError,
+  ImageRequestConflictError,
   MAX_IMAGE_BYTES,
   type ImageModelRequest,
   type ImageModelResult
@@ -116,11 +117,7 @@ export class ImageResultStore {
   ): Promise<ImageModelResult | undefined> {
     const record = await this.read(context)
     if (!record) return undefined
-    if (fingerprint && record.fingerprint !== fingerprint)
-      throw new ImageModelError(
-        'INVALID_REQUEST',
-        'Image request identity was reused with different inputs.'
-      )
+    if (fingerprint && record.fingerprint !== fingerprint) throw new ImageRequestConflictError()
     this.throwFailure(record)
     if (!record.result || !record.published)
       throw new ImageModelError(

@@ -15,6 +15,7 @@ import { artifactSaveRequestSchema } from '../artifacts/save-request'
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import {
   ImageModelError,
+  ImageRequestConflictError,
   type ImageModelRequest,
   type ImageModelResult
 } from '../image-model/contract'
@@ -2168,6 +2169,8 @@ class NotebookLocalRpcServer {
     const fingerprint = createHash('sha256')
       .update(
         JSON.stringify([
+          // Legacy service receipts omitted the requested filename and full source reference.
+          'image-rpc',
           request.operation,
           request.prompt,
           request.options ?? null,
@@ -2281,6 +2284,7 @@ class NotebookLocalRpcServer {
       }
       let published: Awaited<ReturnType<typeof publishResult>> | undefined
       await capability.executeImage!({
+        requestFingerprint: fingerprint,
         onResult: async (result) => {
           published = await publishResult(result)
           return { artifactId: published.artifactId, versionId: published.versionId }
@@ -2317,8 +2321,12 @@ class NotebookLocalRpcServer {
     try {
       return await result
     } catch (error) {
-      if (error instanceof ImageModelError && error.code === 'OUTCOME_UNKNOWN')
+      if (error instanceof ImageRequestConflictError) {
+        if (this.imageGenerationInvocations.get(key) === invocation)
+          this.imageGenerationInvocations.delete(key)
+      } else if (error instanceof ImageModelError && error.code === 'OUTCOME_UNKNOWN') {
         invocation.recheck = true
+      }
       throw error
     }
   }

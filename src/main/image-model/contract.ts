@@ -28,6 +28,11 @@ export class ImageModelError extends Error {
     }
   }
 }
+export class ImageRequestConflictError extends ImageModelError {
+  constructor() {
+    super('INVALID_REQUEST', 'Image request identity was reused with different inputs.', 409)
+  }
+}
 export type ImageRaster = {
   bytes: Buffer
   mime: 'image/png' | 'image/jpeg' | 'image/webp'
@@ -43,6 +48,8 @@ export type ImageModelRequest = {
   source?: Buffer | (() => Promise<Buffer>)
   onStarted?: (model: ImageTaskExecutionModel) => Promise<void>
   onResult?: (result: ImageModelResult) => Promise<{ artifactId: string; versionId: string }>
+  // Optional digest from the host when RPC arguments also determine the published artifact.
+  requestFingerprint?: string
   sourceIdentity?: string
   sourceSizeBytes?: number
   sourcePixels?: number

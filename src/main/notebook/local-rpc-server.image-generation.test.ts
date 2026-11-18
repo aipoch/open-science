@@ -1,3 +1,10 @@
+import { createHash } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import sharp from 'sharp'
+import { ImageModelService } from '../image-model/service'
+import { ImageResultStore } from '../image-model/result-store'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ImageModelError, type ImageModelRequest } from '../image-model/contract'
 import type { ArtifactVersionCoreProvenance } from '../../shared/artifact-provenance'
@@ -39,6 +46,87 @@ afterEach(async () => {
 })
 
 describe('imageGenerate Artifact RPC', () => {
+  it('rejects a renamed retry after restart and still recovers the original request', async () => {
+    const png = await sharp({
+      create: { width: 128, height: 128, channels: 3, background: 'white' }
+    })
+      .png()
+      .toBuffer()
+    const root = await mkdtemp(join(tmpdir(), 'image-rpc-replay-'))
+    const provider = vi.fn(async () =>
+      Response.json({ data: [{ b64_json: png.toString('base64') }] })
+    )
+    const writeImageArtifact = vi.fn(async (_binding: unknown, input: { filename: string }) => ({
+      id: 'version',
+      artifactId: 'artifact',
+      versionId: 'version',
+      versionNumber: 1,
+      sessionId: binding.appSessionId,
+      projectId: binding.projectId,
+      name: input.filename,
+      path: '/managed/original.png',
+      fileUrl: 'artifact://version',
+      size: png.length,
+      mtimeMs: 1,
+      mimeType: 'image/png'
+    }))
+    const start = async () => {
+      const results = new ImageResultStore(
+        () => root,
+        async () => ({
+          logicalFile: { sessionId: binding.appSessionId },
+          version: { checksum: createHash('sha256').update(png).digest('hex') },
+          size: png.length,
+          readRange: async () => png,
+          verifyUnchanged: async () => {},
+          close: async () => {}
+        })
+      )
+      const imageModel = new ImageModelService({
+        results,
+        fetch: provider,
+        download: async () => png,
+        recordUsage: async () => {},
+        resolveTarget: async () => ({
+          serviceId: 'local',
+          adapter: 'openai-images',
+          baseUrl: 'https://images.example/v1',
+          apiKey: 'test-key',
+          model: { id: 'image', wireModelId: 'image', presetId: 'openai-images/generic' }
+        })
+      })
+      server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+        transport: 'tcp',
+        imageModel,
+        writeImageArtifact
+      })
+      const { endpoint } = await server.ensureStarted()
+      const token = server.issueArtifactRunCapability(binding)
+      return (filename: string) =>
+        call(endpoint, token, {
+          operation: 'generate',
+          prompt: 'Draw a circle',
+          idempotencyKey: 'retry',
+          filename
+        })
+    }
+    try {
+      const initial = await start()
+      const original = await initial('original.png')
+      expect(original.response.status).toBe(200)
+      await server?.close()
+      const retry = await start()
+      expect((await retry('renamed.png')).response.status).toBe(409)
+      expect(writeImageArtifact).toHaveBeenCalledOnce()
+      const replay = await retry('original.png')
+      expect(replay.response.status).toBe(200)
+      expect(replay.payload).toEqual(original.payload)
+      expect(provider).toHaveBeenCalledOnce()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it.each([
     ['image/png', undefined, 'generated-image.png'],
     ['image/jpeg', 'diagram.png', 'diagram.jpg'],
