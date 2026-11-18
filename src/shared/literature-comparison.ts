@@ -115,7 +115,7 @@ const launchChecks = {
 
 export const comparisonRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
-  z.object({ action: z.literal('read'), tableId: id, offset }).strict(),
+  z.object({ action: z.literal('read'), tableId: id, offset, readToken: id.optional() }).strict(),
   z.object({ action: z.literal('delete'), tableId: id }).strict(),
   z
     .object({
@@ -254,6 +254,7 @@ export const comparisonResultSchema = z
     summaries: z.array(comparisonTableSummarySchema).max(30).optional(),
     cell: comparisonCellSchema.optional(),
     nextOffset: offset,
+    readToken: id.optional(),
     exportToken: id.optional(),
     csv: z.string().max(100000).optional(),
     sourceChecks: z

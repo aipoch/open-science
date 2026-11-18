@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
+import { comparisonStorageMessage } from './comparison-display'
 import { ErrorNotice } from '@/components/error-notice'
 import {
   dialogPanelClassName,
@@ -154,10 +155,10 @@ export function ComparisonDestinationDialog({
     }
   }, [getReference, selectionKey, mode, lookupKey])
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(false)
+  const [error, setError] = useState<string>()
   const save = async (): Promise<void> => {
     setBusy(true)
-    setError(false)
+    setError(undefined)
     try {
       const result = await command(
         mode === 'create'
@@ -177,8 +178,8 @@ export function ComparisonDestinationDialog({
       )
       onAdded(result.tables[0].id)
       onClose()
-    } catch {
-      setError(true)
+    } catch (error) {
+      setError((error instanceof Error && error.message) || 'command-failed')
     } finally {
       setBusy(false)
     }
@@ -404,7 +405,13 @@ export function ComparisonDestinationDialog({
                 </Collapsible.Root>
               </>
             )}
-            {error && <ErrorNotice title={t('Comparison table could not be saved.')} />}
+            {error && (
+              <ErrorNotice
+                title={
+                  comparisonStorageMessage(error, t) ?? t('Comparison table could not be saved.')
+                }
+              />
+            )}
           </div>
           <div className={`${dialogFooterClassName} shrink-0`}>
             <Button variant="ghost" disabled={busy} onClick={onClose}>

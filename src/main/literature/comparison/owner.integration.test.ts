@@ -379,10 +379,15 @@ it('drains four-way disposal and resumes only unfinished cells after restart', a
       itemIds: ['a', 'b', 'c', 'd', 'e', 'f']
     })
   ).tables[0]
+  const writesBeforeAdmission = vi.mocked(writeDurableJsonFile).mock.calls.length
   const admitted = (
     await withDataRootWrite(() => owner.run({ action: 'run', tableId: created.id }))
   ).tables[0]
   await vi.waitFor(() => expect(extract).toHaveBeenCalledTimes(4))
+  expect(vi.mocked(writeDurableJsonFile).mock.calls.length - writesBeforeAdmission).toBe(1)
+  const queued = JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable
+  expect(queued.remainingCellIds).toHaveLength(6)
+  expect(queued.cells.every((cell) => cell.status === 'pending')).toBe(true)
   pending[0].resolve()
   await vi.waitFor(async () => {
     const saved = JSON.parse(await readFile(path, 'utf8')).tables[0] as ComparisonTable
@@ -606,8 +611,18 @@ it('transports a valid state above 16MB through summaries, current cells, lazy h
   expect(list.summaries?.[0]).toMatchObject({ total: 1200, succeeded: 1200, memberCount: 100 })
   const loaded: typeof cells = []
   let offset: number | undefined = 0
+  let readToken: string | undefined
   do {
-    const page = await owner.run({ action: 'read', tableId: table.id, offset })
+    const page = await owner.run({ action: 'read', tableId: table.id, offset, readToken })
+    if (offset === 0) {
+      readToken = page.readToken
+      expect(readToken).toBeTruthy()
+      await owner.run({ action: 'set-sample', tableId: table.id, itemIds: ['p0'] })
+      expect(
+        (await owner.run({ action: 'read', tableId: table.id })).tables[0].sampleItemIds
+      ).toEqual(['p0'])
+    }
+    expect(page.tables[0].sampleItemIds).toBeUndefined()
     check(page)
     expect(page.tables[0].members.every((member) => member.abstract === '')).toBe(true)
     expect(page.tables[0].cells.length).toBeLessThanOrEqual(100)

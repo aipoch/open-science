@@ -204,6 +204,32 @@ describe('comparison workflow', () => {
       }
     }
   )
+  it.each([
+    ['model-unavailable', 'Model settings', 'model'],
+    ['checkpoint-failed', 'Open Settings', 'storage']
+  ])(
+    'opens the relevant settings for %s without submitting another extraction',
+    (issue, label, panel) => {
+      const table = { ...fixture(), issue }
+      const settings = vi.fn()
+      const command = vi.fn()
+      render(
+        <LiteratureComparisonPage
+          table={table}
+          command={command}
+          onOpenSettings={settings}
+          onChooseReferences={vi.fn()}
+          onOpenItem={vi.fn()}
+          onOpenDiscovery={vi.fn()}
+          onOpenComparison={vi.fn()}
+        />
+      )
+      fireEvent.click(screen.getByRole('button', { name: label }))
+      expect(settings).toHaveBeenCalledWith(panel)
+      expect(command).not.toHaveBeenCalled()
+    }
+  )
+
   it('offers review after the task completes even with missing sources and unrelated pending cells', () => {
     const table = fixture()
     table.state = 'completed'
@@ -2348,7 +2374,13 @@ describe('comparison workflow', () => {
       sourceKey: 'source',
       status: itemId === 'third' ? 'missing' : 'available'
     }))
-    const command = page(table, vi.fn().mockResolvedValue({ tables: [table], sourceChecks }))
+    const command = page(
+      table,
+      vi.fn(async (request) => ({
+        tables: [table],
+        sourceChecks: sourceChecks.filter((source) => request.itemIds?.includes(source.itemId))
+      }))
+    )
     const matrixSelections = screen.getAllByRole('checkbox', { name: 'Select {{title}}' })
     fireEvent.click(matrixSelections[0])
     fireEvent.click(matrixSelections[2])
@@ -2368,7 +2400,22 @@ describe('comparison workflow', () => {
       name: 'Select {{title}} for rerun'
     }) as HTMLInputElement[]
     expect(scopeSelections.map((checkbox) => checkbox.checked)).toEqual([true, false, true])
-    fireEvent.click(scopeSelections[2])
+    expect(command).toHaveBeenCalledWith({
+      action: 'check-sources',
+      tableId: table.id,
+      itemIds: ['paper', 'third']
+    })
+    expect(within(dialog).queryByText('Source could not be read')).toBeNull()
+    fireEvent.click(scopeSelections[1])
+    await within(dialog).findByText(/Ready cells: 2/)
+    expect(command).toHaveBeenCalledWith({
+      action: 'check-sources',
+      tableId: table.id,
+      itemIds: ['paper', 'second', 'third']
+    })
+    const updatedSelections = within(dialog).getAllByRole('checkbox')
+    fireEvent.click(updatedSelections[1])
+    fireEvent.click(updatedSelections[2])
     expect(translate).toHaveBeenCalledWith('Rerun scope: {{selected}} × 1 (references × fields)', {
       selected: 1
     })
@@ -2390,7 +2437,9 @@ describe('comparison workflow', () => {
         fieldId: 'outcome',
         itemIds: ['paper', 'third'],
         expectedRevision: table.revision,
-        expectedSources: sourceChecks.map(({ itemId, sourceKey }) => ({ itemId, sourceKey }))
+        expectedSources: sourceChecks
+          .filter((source) => source.itemId !== 'second')
+          .map(({ itemId, sourceKey }) => ({ itemId, sourceKey }))
       })
     )
   })
@@ -3925,7 +3974,7 @@ describe('pending comparison candidates', () => {
     fireEvent.click(bulk)
     expect(command).not.toHaveBeenCalled()
   })
-  it('allows continuing pending cells when a saved sample result is awaiting review', () => {
+  it('allows continuing pending cells when a saved sample result is awaiting review', async () => {
     const table = fixture()
     table.cells[0].manual = {
       value: '42 adults',
@@ -3970,6 +4019,9 @@ describe('pending comparison candidates', () => {
       status: 'pending',
       history: []
     })
+    table.members.push({ ...table.members[2], itemId: 'hidden', title: 'Hidden reference' })
+    table.itemIds.push('hidden')
+    table.cells.push({ ...table.cells[2], itemId: 'hidden', id: 'hidden-cell' })
     const command = page(
       table,
       vi.fn().mockResolvedValue({
@@ -3977,6 +4029,10 @@ describe('pending comparison candidates', () => {
         sourceChecks: [{ itemId: 'third-paper', sourceKey: 'third-source', status: 'available' }]
       })
     )
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search titles and results' }), {
+      target: { value: 'Third paper' }
+    })
+    await waitFor(() => expect(screen.queryByText('Hidden reference')).toBeNull())
     const continueButton = screen.getByRole('button', {
       name: 'Continue extraction ({{count}} cells)'
     })

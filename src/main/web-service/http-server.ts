@@ -467,10 +467,24 @@ const publicApplicationCommandError = (
 const applicationCommandErrorStatus = (error: ApplicationCommandError): number => {
   if (error.code === 'invalid-command-arguments' || error.code.startsWith('csl-')) return 400
   if (error.code === 'command-unavailable') return 404
-  if (error.code === 'comparison-config-changed' || error.code === 'comparison-manual-conflict')
+  if (error.code === 'comparison-read-expired') return 410
+  if (error.code === 'comparison-storage-limit' || error.code === 'comparison-table-limit')
+    return 507
+  if (
+    error.code === 'comparison-storage-unavailable' ||
+    error.code === 'comparison-model-unavailable'
+  )
+    return 503
+  if (
+    [
+      'comparison-config-changed',
+      'comparison-manual-conflict',
+      'comparison-task-changed',
+      'session-details-conflict',
+      'session-revision-conflict'
+    ].includes(error.code)
+  )
     return 409
-  if (error.code === 'session-details-conflict') return 409
-  if (error.code === 'session-revision-conflict') return 409
   return 500
 }
 

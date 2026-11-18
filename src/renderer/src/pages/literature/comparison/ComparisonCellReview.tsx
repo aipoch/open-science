@@ -22,7 +22,11 @@ import type {
   ComparisonRequest,
   ComparisonResult
 } from '../../../../../shared/literature-comparison'
-import { comparisonCellView, type ComparisonEvidenceTarget } from './comparison-display'
+import {
+  comparisonCellView,
+  comparisonStorageMessage,
+  type ComparisonEvidenceTarget
+} from './comparison-display'
 
 type ReviewProps = {
   onExtractCell?: () => void
@@ -252,7 +256,9 @@ function CellReviewBody({
     const timer = setTimeout(() => setSlowSave(true), 400)
     return () => clearTimeout(timer)
   }, [saving])
-  const [failed, setFailed] = useState(false)
+  const [saveIssue, setSaveIssue] = useState<string>()
+  const failed = Boolean(saveIssue)
+  const conflict = saveIssue?.includes('comparison-manual-conflict')
   const queue = useRef(Promise.resolve())
   const queuedDraft = useRef<Extract<ComparisonRequest, { action: 'edit-cell' }> | undefined>(
     undefined
@@ -263,7 +269,6 @@ function CellReviewBody({
   const discardFocus = useRef<HTMLElement | null>(null)
   const discarded = useRef(false)
   const manualRevision = useRef<number | undefined>(undefined)
-  const [conflict, setConflict] = useState(false)
   const save = (value: string, confirmed: boolean): void => {
     manualRevision.current ??= reviewCell.manual?.revision ?? 0
     draftDirty.current = true
@@ -308,15 +313,11 @@ function CellReviewBody({
             expectedManualRevision: manualRevision.current
           })
           manualRevision.current = receipt.cell?.manual?.revision ?? manualRevision.current
-          setConflict(false)
           failedSave.current = false
-          setFailed(false)
+          setSaveIssue(undefined)
         } catch (error) {
-          setConflict(
-            error instanceof Error && error.message.includes('comparison-manual-conflict')
-          )
           failedSave.current = true
-          setFailed(true)
+          setSaveIssue((error instanceof Error && error.message) || 'command-failed')
         } finally {
           pendingCount.current -= 1
           if (pendingCount.current === 0) setSlowSave(false)
@@ -559,7 +560,11 @@ function CellReviewBody({
             )}
             {failed && (
               <ErrorNotice
-                title={conflict ? t('Revision conflict') : t('Draft could not be saved.')}
+                title={
+                  conflict
+                    ? t('Revision conflict')
+                    : (comparisonStorageMessage(saveIssue, t) ?? t('Draft could not be saved.'))
+                }
                 description={
                   conflict
                     ? t('Latest saved version') + ' · ' + (cell.manual?.value ?? '')

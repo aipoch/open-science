@@ -8072,6 +8072,7 @@
     "Extraction failed": "抽出に失敗しました",
     "Extract remaining": "残りを抽出",
     "Actual coverage": "実際の読み取り範囲",
+    "Comparison storage is full. Export a table before deleting it to free space.": "比較表の保存容量が上限に達しました。容量を空けるには、表をエクスポートしてから削除してください。",
     "Comparison table could not be updated.": "比較表を更新できませんでした。",
     "This table changed while you were editing. Copy your draft, then cancel and reopen the editor to load the latest configuration.": "編集中にこの表が変更されました。下書きをコピーし、キャンセルしてからエディターを開き直して、最新の設定を読み込んでください。",
     "Extraction requirements": "抽出要件",

@@ -156,6 +156,7 @@ export type LiteratureRendererHost = {
     ): Promise<OpenAlexCredentialValidation>
     setOpenAlexCredential(request: SetOpenAlexCredentialRequest): Promise<void>
     isSettingsOpen: boolean
+    openSettingsToPanel(panel: 'model' | 'storage'): void
     openSettingsToClassification(): void
     setSemanticScholarCredential(request: SetSemanticScholarCredentialRequest): Promise<void>
   }>

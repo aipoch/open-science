@@ -81,7 +81,11 @@ import { LiteratureBackgroundTasks } from '../workflows/LiteratureBackgroundTask
 import { ComparisonMemberPicker } from './ComparisonMemberPicker'
 import { ComparisonCellReview } from './ComparisonCellReview'
 import { ComparisonExportDialog } from './ComparisonExportDialog'
-import { comparisonCellView, type ComparisonEvidenceTarget } from './comparison-display'
+import {
+  comparisonCellView,
+  comparisonStorageMessage,
+  type ComparisonEvidenceTarget
+} from './comparison-display'
 import {
   isPendingComparisonCell,
   isUnattemptedComparisonCell
@@ -97,6 +101,25 @@ const formatElapsedDuration = (durationMs: number): string => {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
 }
 
+function SourceCheckProgress({ done, total }: { done: number; total: number }): React.JSX.Element {
+  const { t } = useTranslation()
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    const started = Date.now()
+    const timer = window.setInterval(() => setElapsed(Date.now() - started), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+  return (
+    <div className="mt-2 w-full max-w-md space-y-1.5" role="status">
+      <p>{t('Checking sources: {{done}} / {{total}} references', { done, total })}</p>
+      <p className="text-xs text-muted-foreground">
+        {t('Elapsed {{duration}}', { duration: formatElapsedDuration(elapsed) })}
+      </p>
+      <ProgressBar label={t('Checking sources…')} value={total ? (done / total) * 100 : 0} />
+    </div>
+  )
+}
+
 export function LiteratureComparisonPage({
   table,
   loadingTableName,
@@ -105,6 +128,8 @@ export function LiteratureComparisonPage({
   loadCellHistory,
   loadError,
   onRetryLoad,
+  onOpenSettings,
+  loadIssue,
   command,
   onChooseReferences,
   onOpenItem,
@@ -118,6 +143,8 @@ export function LiteratureComparisonPage({
   requestedAction?: { tableId: string; action: 'configure' | 'export' }
   loadingTableName?: string
   loadCellHistory?: (tableId: string, cellId: string) => Promise<ComparisonCell>
+  loadIssue?: string
+  onOpenSettings?: (panel: 'model' | 'storage') => void
   loadError?: boolean
   onRetryLoad?: () => void
   command: (request: ComparisonRequest) => Promise<ComparisonResult>
@@ -236,7 +263,7 @@ export function LiteratureComparisonPage({
     draftStatus.current.field = { pending: fieldPending, failed: fieldFailed }
     reportDraftStatus()
   }, [fieldPending, fieldFailed, reportDraftStatus])
-  const [error, setError] = useState(false)
+  const [error, setError] = useState<string>()
   const [confirmation, setConfirmation] = useState<{
     request?: ComparisonLaunchRequest
     singleCell?: boolean
@@ -244,8 +271,6 @@ export function LiteratureComparisonPage({
   }>()
   const [sourceChecks, setSourceChecks] = useState<ComparisonResult['sourceChecks']>()
   const [sourceCheckProgress, setSourceCheckProgress] = useState<{ done: number; total: number }>()
-  const [sourceCheckStartedAt, setSourceCheckStartedAt] = useState<number>()
-  const [sourceCheckNow, setSourceCheckNow] = useState(() => Date.now())
   const [exportOpen, setExportOpen] = useState(false)
   const checkGeneration = useRef(0)
   const resumeTrigger = useRef<HTMLButtonElement | null>(null)
@@ -254,11 +279,6 @@ export function LiteratureComparisonPage({
   useLayoutEffect(() => {
     currentAdmission.current = { table, reviewStatus, editing }
   }, [table, reviewStatus, editing])
-  useEffect(() => {
-    if (!sourceCheckStartedAt || sourceChecks || !busy) return
-    const interval = window.setInterval(() => setSourceCheckNow(Date.now()), 1000)
-    return () => window.clearInterval(interval)
-  }, [busy, sourceCheckStartedAt, sourceChecks])
   const { cellsByItem, memberOrder, matrixCells, fieldsById, membersById } = useMemo(() => {
     const members = table?.members ?? []
     const fields = table?.fields ?? []
@@ -309,7 +329,7 @@ export function LiteratureComparisonPage({
     [table]
   )
   const openExport = useCallback(() => {
-    setError(false)
+    setError(undefined)
     setExportOpen(true)
   }, [])
   const [handledAction, setHandledAction] = useState<typeof requestedAction>()
@@ -355,13 +375,44 @@ export function LiteratureComparisonPage({
       }
     }
   }
-  if (!table && loadError)
-    return (
-      <ErrorNotice
-        title={t('Comparison table could not be updated.')}
-        primaryButton={{ label: t('Retry'), onClick: () => onRetryLoad?.() }}
-      />
-    )
+  const issue = error || loadIssue || table?.issue || ''
+  const settingsPanel = issue.includes('model-unavailable')
+    ? 'model'
+    : issue.includes('comparison-storage-unavailable') || issue === 'checkpoint-failed'
+      ? 'storage'
+      : undefined
+  const issueTitle = (): string => {
+    if (settingsPanel === 'model')
+      return t(
+        'The selected model is no longer available. Select another model or check its configuration in Settings.'
+      )
+    const storageMessage = comparisonStorageMessage(issue, t)
+    if (storageMessage) return storageMessage
+    if (issue.includes('comparison-task-changed'))
+      return t('The table changed. Close this dialog and check the scope again.')
+    if (issue === 'comparison-history-limit')
+      return t('A cell reached the extraction history limit. Its saved history is retained.')
+    return error || loadError
+      ? t('Comparison table could not be updated.')
+      : t('Extraction stopped. Review the task before continuing.')
+  }
+  const notice = (error || loadError || table?.issue) && (
+    <ErrorNotice
+      level={error || loadError ? 'error' : 'warning'}
+      title={issueTitle()}
+      primaryButton={
+        settingsPanel && onOpenSettings
+          ? {
+              label: settingsPanel === 'model' ? t('Model settings') : t('Open Settings'),
+              onClick: () => onOpenSettings(settingsPanel)
+            }
+          : loadError
+            ? { label: t('Retry'), onClick: () => onRetryLoad?.() }
+            : undefined
+      }
+    />
+  )
+  if (!table && loadError) return <>{notice}</>
   if (!table)
     return (
       <div role="status" aria-label={t('Loading')} className="min-w-0 flex-1 p-6">
@@ -384,7 +435,7 @@ export function LiteratureComparisonPage({
   const run = async (request: ComparisonRequest): Promise<boolean> => {
     if (draftStatus.current.exportBusy) return false
     setBusy(true)
-    setError(false)
+    setError(undefined)
     try {
       await command(request)
       return true
@@ -393,7 +444,7 @@ export function LiteratureComparisonPage({
         setConfigurationConflict(
           error instanceof Error && error.message.includes('comparison-config-changed')
         )
-      setError(true)
+      setError(error instanceof Error ? error.message || 'command-failed' : 'command-failed')
       return false
     } finally {
       setBusy(false)
@@ -444,8 +495,6 @@ export function LiteratureComparisonPage({
     checkGeneration.current++
     setConfirmation(undefined)
     setSourceCheckProgress(undefined)
-    setSourceCheckStartedAt(undefined)
-    setSourceCheckNow(Date.now())
     setBusy(false)
   }
   const launchBlocked = taskActive || table.remainingCellIds.length > 0
@@ -458,37 +507,23 @@ export function LiteratureComparisonPage({
       setConfirmation({ request, revision: table.revision, singleCell })
     setSourceChecks(undefined)
     setSourceCheckProgress(undefined)
-    setSourceCheckStartedAt(Date.now())
-    setSourceCheckNow(Date.now())
     setBusy(true)
-    setError(false)
+    setError(undefined)
     try {
-      const resumeItemIds =
-        request?.action === 'resume'
-          ? [
-              ...new Set(
-                table.cells
-                  .filter((cell) => table.remainingCellIds.includes(cell.id))
-                  .map((cell) => cell.itemId)
-              )
-            ]
-          : undefined
-      const itemIds =
-        request?.action === 'run' || (singleCell && request?.action === 'rerun-field')
-          ? request.itemIds
-          : resumeItemIds
-      const ids = [...new Set(itemIds ?? table.members.map((member) => member.itemId))]
+      const ids = request
+        ? [...new Set(targetsFor(request).map((cell) => cell.itemId))]
+        : table.itemIds
       const checks: NonNullable<ComparisonResult['sourceChecks']> = []
       setSourceCheckProgress({ done: 0, total: ids.length })
       // Keep each request within the owner's four-source batch so completed work is
       // observable without a second progress channel or an unbounded request fan-out.
-      for (let offset = 0; offset < Math.max(1, ids.length); offset += 4) {
+      for (let offset = 0; offset < ids.length; offset += 4) {
         if (!mounted.current || generation !== checkGeneration.current) return
         const batchIds = ids.slice(offset, offset + 4)
         const batch = await command({
           action: 'check-sources',
           tableId: table.id,
-          ...(ids.length > 4 ? { itemIds: batchIds } : itemIds && { itemIds })
+          itemIds: batchIds
         })
         if (!mounted.current || generation !== checkGeneration.current) return
         if (
@@ -544,9 +579,9 @@ export function LiteratureComparisonPage({
           setConfirmation({ request, revision: table.revision })
         }
       }
-    } catch {
+    } catch (error) {
       if (mounted.current && generation === checkGeneration.current) {
-        setError(true)
+        setError(error instanceof Error ? error.message || 'command-failed' : 'command-failed')
         if (request?.action === 'resume') {
           setConfirmation({ request, revision: table.revision })
           onRetryLoad?.()
@@ -557,25 +592,25 @@ export function LiteratureComparisonPage({
     }
   }
   const request = confirmation?.request
-  const targetCells = !confirmation
-    ? []
-    : table.cells.filter((cell) => {
-        if (!request) return true
-        if (request.action === 'resume') return table.remainingCellIds.includes(cell.id)
-        if (request.action === 'retry') return request.cellIds.includes(cell.id)
-        if (request.action === 'rerun-field')
-          return (
-            cell.fieldId === request.fieldId &&
-            (!request.itemIds || request.itemIds.includes(cell.itemId))
-          )
+  const targetsFor = (request?: ComparisonLaunchRequest): ComparisonCell[] =>
+    table.cells.filter((cell) => {
+      if (!request) return true
+      if (request.action === 'resume') return table.remainingCellIds.includes(cell.id)
+      if (request.action === 'retry') return request.cellIds.includes(cell.id)
+      if (request.action === 'rerun-field')
         return (
-          request.action === 'run' &&
-          (request.unattemptedOnly
-            ? isUnattemptedComparisonCell(cell)
-            : isPendingComparisonCell(cell)) &&
+          cell.fieldId === request.fieldId &&
           (!request.itemIds || request.itemIds.includes(cell.itemId))
         )
-      })
+      return (
+        request.action === 'run' &&
+        (request.unattemptedOnly
+          ? isUnattemptedComparisonCell(cell)
+          : isPendingComparisonCell(cell)) &&
+        (!request.itemIds || request.itemIds.includes(cell.itemId))
+      )
+    })
+  const targetCells = confirmation ? targetsFor(request) : []
   const eligibleCells = request
     ? targetCells.filter((cell) => !cell.historyLimitReached)
     : targetCells
@@ -877,7 +912,8 @@ export function LiteratureComparisonPage({
                 ? t(
                     'This table changed while you were editing. Copy your draft, then cancel and reopen the editor to load the latest configuration.'
                   )
-                : t('Comparison table could not be updated.')
+                : (comparisonStorageMessage(error, t) ??
+                  t('Comparison table could not be updated.'))
             }
           />
         )}
@@ -1001,8 +1037,9 @@ export function LiteratureComparisonPage({
       </div>
     </div>
   )
+  const scopedPendingCount = pendingCells.filter((cell) => filteredItemIds.has(cell.itemId)).length
   const continuePending =
-    sampleStep && currentResults.length > 0 && pendingCells.length > 0 ? (
+    sampleStep && currentResults.length > 0 && scopedPendingCount > 0 ? (
       <Button
         variant="outline"
         disabled={busy || taskActive || editing || reviewStatus.pending || reviewStatus.failed}
@@ -1010,36 +1047,17 @@ export function LiteratureComparisonPage({
           void prepare({
             action: 'run',
             tableId: table.id,
-            itemIds: [...new Set(pendingCells.map((cell) => cell.itemId))]
+            itemIds: scopedPendingIds
           })
         }
       >
         {t('Continue extraction ({{count}} cells)', {
-          count: pendingCells.length,
+          count: scopedPendingCount,
           defaultValue_one: 'Continue extraction ({{count}} cell)'
         })}
       </Button>
     ) : null
-  const checkingSources = sourceCheckProgress && (
-    <div className="mt-2 w-full max-w-md space-y-1.5" role="status">
-      <p>{t('Checking sources: {{done}} / {{total}} references', sourceCheckProgress)}</p>
-      {sourceCheckStartedAt && (
-        <p className="text-xs text-muted-foreground">
-          {t('Elapsed {{duration}}', {
-            duration: formatElapsedDuration(sourceCheckNow - sourceCheckStartedAt)
-          })}
-        </p>
-      )}
-      <ProgressBar
-        label={t('Checking sources…')}
-        value={
-          sourceCheckProgress.total
-            ? (sourceCheckProgress.done / sourceCheckProgress.total) * 100
-            : 0
-        }
-      />
-    </div>
-  )
+  const checkingSources = sourceCheckProgress && <SourceCheckProgress {...sourceCheckProgress} />
   return (
     <div
       className="relative flex h-full min-h-0 min-w-0 flex-1"
@@ -1318,28 +1336,7 @@ export function LiteratureComparisonPage({
             </DropdownMenu>
           </div>
         </header>
-        {(error || loadError) && (
-          <ErrorNotice
-            title={t('Comparison table could not be updated.')}
-            primaryButton={{
-              label: t('Retry'),
-              onClick: () => {
-                setError(false)
-                window.dispatchEvent(new Event('literature-comparisons-changed'))
-              }
-            }}
-          />
-        )}
-        {table.issue && (
-          <ErrorNotice
-            level="warning"
-            title={
-              table.issue === 'comparison-history-limit'
-                ? t('A cell reached the extraction history limit. Its saved history is retained.')
-                : t('Extraction stopped. Review the task before continuing.')
-            }
-          />
-        )}
+        {notice}
         {editing && (
           <Dialog.Root open onOpenChange={(open) => !open && !busy && setEditing(false)}>
             <Dialog.Portal>
@@ -1571,7 +1568,8 @@ export function LiteratureComparisonPage({
                           ? t(
                               'This table changed while you were editing. Copy your draft, then cancel and reopen the editor to load the latest configuration.'
                             )
-                          : t('Comparison table could not be updated.')
+                          : (comparisonStorageMessage(error, t) ??
+                            t('Comparison table could not be updated.'))
                       }
                     />
                   )}
@@ -2537,17 +2535,17 @@ export function LiteratureComparisonPage({
                                     })}
                                     checked={request.itemIds?.includes(member.itemId) ?? true}
                                     disabled={busy}
-                                    onChange={(event) =>
-                                      setConfirmation({
-                                        ...confirmation,
-                                        request: {
-                                          ...request,
-                                          itemIds: event.target.checked
-                                            ? [...(request.itemIds ?? []), member.itemId]
-                                            : request.itemIds?.filter((id) => id !== member.itemId)
-                                        }
-                                      })
-                                    }
+                                    onChange={(event) => {
+                                      const selected = request.itemIds ?? table.itemIds
+                                      const next = {
+                                        ...request,
+                                        itemIds: event.target.checked
+                                          ? [...selected, member.itemId]
+                                          : selected.filter((id) => id !== member.itemId)
+                                      }
+                                      if (event.target.checked && !source) void prepare(next)
+                                      else setConfirmation({ ...confirmation, request: next })
+                                    }}
                                   />
                                 )}
                                 {member.title}
@@ -2560,15 +2558,15 @@ export function LiteratureComparisonPage({
                                   <CheckCircle2 className="size-4" aria-hidden="true" />
                                   <span className="sr-only">{t('Readable source')}</span>
                                 </span>
-                              ) : (
+                              ) : source ? (
                                 <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-status-warning-foreground">
                                   <CircleAlert className="size-4" aria-hidden="true" />
                                   {source?.status === 'missing'
                                     ? t('Missing source')
                                     : t('Source could not be read')}
                                 </span>
-                              )}
-                              {source?.status !== 'available' && (
+                              ) : null}
+                              {source && source.status !== 'available' && (
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -2633,10 +2631,14 @@ export function LiteratureComparisonPage({
                       void run({
                         ...request,
                         expectedRevision: confirmation.revision,
-                        expectedSources: sourceChecks?.map(({ itemId, sourceKey }) => ({
-                          itemId,
-                          sourceKey
-                        })),
+                        expectedSources: sourceChecks
+                          ?.filter((source) =>
+                            targetCells.some((cell) => cell.itemId === source.itemId)
+                          )
+                          .map(({ itemId, sourceKey }) => ({
+                            itemId,
+                            sourceKey
+                          })),
                         ...(request.action === 'resume'
                           ? { useCurrentSources: Boolean(changedRemaining) }
                           : {})

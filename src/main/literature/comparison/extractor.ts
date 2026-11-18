@@ -79,7 +79,7 @@ export class ComparisonExtractor {
     }
   }
   async extract(
-    table: ComparisonTable,
+    table: Pick<ComparisonTable, 'members' | 'sourcePolicy' | 'language'>,
     field: ComparisonField,
     itemId: string,
     signal: AbortSignal
@@ -117,8 +117,24 @@ export class ComparisonExtractor {
     // Abstracts can exceed the persisted quote limit, so split without normalizing the text.
     const evidencePassages = passages.flatMap((passage) => {
       const parts: typeof passages = []
-      for (let offset = 0; offset < passage.content.length; offset += 12000) {
-        const content = passage.content.slice(offset, offset + 12000)
+      for (let offset = 0; offset < passage.content.length;) {
+        let content = passage.content.slice(offset, offset + 1200)
+        if (offset + content.length < passage.content.length) {
+          // Prefer a natural boundary in the final quarter, preserving the source verbatim.
+          const end = Math.max(
+            content.lastIndexOf('。'),
+            content.lastIndexOf('. '),
+            content.lastIndexOf('\n')
+          )
+          const boundary = end >= 900 ? end : content.lastIndexOf(' ')
+          if (boundary >= 900) content = content.slice(0, boundary + 1)
+          else if (
+            content.charCodeAt(content.length - 1) >= 0xd800 &&
+            content.charCodeAt(content.length - 1) <= 0xdbff
+          )
+            content = content.slice(0, -1)
+        }
+        offset += content.length
         if (content.trim()) parts.push({ ...passage, content })
       }
       return parts

@@ -2239,6 +2239,8 @@ it('skips unchanged catalog scans and refreshes after the catalog revision chang
     expect(member).toHaveBeenCalledTimes(2)
     await f.owner.run({ action: 'list' })
     expect(member).toHaveBeenCalledTimes(2)
+    await f.owner.run({ action: 'read', tableId: f.table.id })
+    expect(member).toHaveBeenCalledTimes(2)
     revision++
     await f.owner.run({ action: 'list' })
     expect(member).toHaveBeenCalledTimes(4)
@@ -2247,6 +2249,21 @@ it('skips unchanged catalog scans and refreshes after the catalog revision chang
   }
 })
 
+it('leaves the queue untouched when model setup fails and accepts the same run after setup', async () => {
+  const f = await fixture()
+  try {
+    f.capture.mockRejectedValueOnce(new Error('provider not configured'))
+    const request = { action: 'run' as const, tableId: f.table.id }
+    await expect(f.owner.run(request)).rejects.toMatchObject({
+      code: 'comparison-model-unavailable'
+    })
+    expect(await f.read()).toMatchObject({ state: 'idle', remainingCellIds: [] })
+    await f.owner.run(request)
+    await vi.waitFor(async () => expect((await f.read()).state).toBe('completed'))
+  } finally {
+    await f.owner.dispose()
+  }
+})
 it('checks just the requested source without blocking other comparison commands', async () => {
   const f = await fixture()
   const ready = deferred<void>()

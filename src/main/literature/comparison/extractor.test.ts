@@ -207,7 +207,7 @@ it('deduplicates selected evidence without copying it repeatedly', async () => {
 it('splits long abstracts within quote limits while retaining every original character', async () => {
   const f = fixture(JSON.stringify({ value: '20 patients', evidenceIds: ['P2'] }))
   const item = paper()
-  item.item.abstract = 'a'.repeat(12000) + 'Sample comprised 20 patients.'
+  item.item.abstract = 'a'.repeat(1185) + '。' + 'Sample comprised 20 patients.'
   f.catalog.get.mockResolvedValue(item)
   f.table.members[0].sourceKey = literatureOverviewSource(item).key
   const result = await f.extractor.extract(f.table, field, 'paper', new AbortController().signal)

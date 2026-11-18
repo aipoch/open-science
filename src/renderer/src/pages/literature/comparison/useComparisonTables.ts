@@ -32,6 +32,7 @@ export function useComparisonTables(activeTableId?: string): {
   tables: ComparisonTableSummary[]
   selectedTable?: ComparisonTable
   error: boolean
+  loadIssue?: string
   refresh: () => Promise<void>
   command: (request: ComparisonRequest) => Promise<ComparisonResult>
   loadCellHistory: (tableId: string, cellId: string) => Promise<ComparisonCell>
@@ -54,7 +55,7 @@ export function useComparisonTables(activeTableId?: string): {
     },
     [publish]
   )
-  const [failure, setFailure] = useState<{ tableId?: string }>()
+  const [failure, setFailure] = useState<{ tableId?: string; issue?: string }>()
   const sequence = useRef(0)
   const inFlight = useRef<{ sequence: number; promise: Promise<void> } | undefined>(undefined)
   const refresh = useCallback((): Promise<void> => {
@@ -114,15 +115,29 @@ export function useComparisonTables(activeTableId?: string): {
           // A concurrent table change invalidates earlier pages. Retry a bounded number of times.
           for (let restart = 0; restart < 3; restart += 1) {
             let offset: number | undefined
+            let readToken: string | undefined
             let revision: number | undefined
             const cells: ComparisonCell[] = []
             const sources: NonNullable<ComparisonTable['taskSources']> = []
             do {
-              const page = await api.literature.comparisons({
-                action: 'read',
-                tableId: activeTableId,
-                ...(offset === undefined ? {} : { offset })
-              })
+              let page: ComparisonResult
+              try {
+                page = await api.literature.comparisons({
+                  action: 'read',
+                  tableId: activeTableId,
+                  ...(offset === undefined ? {} : { offset }),
+                  ...(readToken && { readToken })
+                })
+              } catch (error) {
+                if (
+                  !readToken ||
+                  !(error instanceof Error) ||
+                  !error.message.includes('comparison-read-expired')
+                )
+                  throw error
+                loaded = undefined
+                break
+              }
               if (generation !== sequence.current) return
               const table = page.tables[0]
               if (!table || table.id !== activeTableId) throw new Error('Missing comparison table')
@@ -134,6 +149,7 @@ export function useComparisonTables(activeTableId?: string): {
                 loaded = undefined
                 break
               }
+              readToken = page.readToken
               revision = table.revision
               cells.push(...table.cells)
               sources.push(...(table.taskSources ?? []))
@@ -157,8 +173,12 @@ export function useComparisonTables(activeTableId?: string): {
             remember(loaded)
         }
         setFailure(undefined)
-      } catch {
-        if (generation === sequence.current) setFailure({ tableId: activeTableId })
+      } catch (error) {
+        if (generation === sequence.current)
+          setFailure({
+            tableId: activeTableId,
+            issue: error instanceof Error ? error.message : undefined
+          })
       } finally {
         if (inFlight.current?.sequence === generation) inFlight.current = undefined
       }
@@ -261,6 +281,7 @@ export function useComparisonTables(activeTableId?: string): {
     tables,
     selectedTable: activeTableId ? snapshots.get(activeTableId)?.table : undefined,
     error: Boolean(failure && failure.tableId === activeTableId),
+    loadIssue: failure?.tableId === activeTableId ? failure?.issue : undefined,
     refresh,
     command,
     loadCellHistory

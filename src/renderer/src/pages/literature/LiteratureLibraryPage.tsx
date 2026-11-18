@@ -186,6 +186,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const useAttachmentOperations = useAttachmentOperationsStore()
 
   const {
+    useSettingsStore,
     useNavigationStore,
     useProjectStore,
     useTagStore,
@@ -1829,6 +1830,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               loadingTableName={comparisons.tables.find((table) => table.id === comparisonId)?.name}
               loadCellHistory={comparisons.loadCellHistory}
               loadError={comparisons.error}
+              loadIssue={comparisons.loadIssue}
+              onOpenSettings={(panel) => useSettingsStore.getState().openSettingsToPanel(panel)}
               onRetryLoad={() => void comparisons.refresh()}
               command={comparisons.command}
               onDraftStatusChange={reportComparisonDraftStatus}

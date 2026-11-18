@@ -32,30 +32,30 @@ const envelope = z
   .object({ version: z.literal(1), tables: z.array(comparisonTableSchema).max(30) })
   .strict()
 const MAX_BYTES = 24_000_000
+const MAX_MATRIX_SNAPSHOTS = 4
 const MAX_EXPORT_SNAPSHOTS = 8
 // Keep model work bounded while allowing independent cells/tables to make progress together.
 // The queue below remains the single writer for in-memory state and durable checkpoints.
 const MAX_COMPARISON_CONCURRENCY = 4
 const now = (): string => new Date().toISOString()
+const matrixCell = (cell: ComparisonCell): ComparisonCell => ({
+  ...cell,
+  ...(cell.history.length >= COMPARISON_HISTORY_LIMIT && { historyLimitReached: true }),
+  history: cell.history.slice(-1).map((attempt) => ({ ...attempt, evidence: [] }))
+})
 type Options = {
   sourceRevision?: () => number
   path: () => string
   /** Maximum number of admitted extractions in one worker batch. */
   comparisonConcurrency?: number
   extractor: Pick<ComparisonExtractor, 'member'> & Partial<Pick<ComparisonExtractor, 'checkSource'>>
-  capture(): Promise<{
-    extract(
-      table: ComparisonTable,
-      field: ComparisonTable['fields'][number],
-      itemId: string,
-      signal: AbortSignal
-    ): Promise<ComparisonExtraction>
-  }>
+  capture(): Promise<Pick<ComparisonExtractor, 'extract'>>
   onError?(error: unknown): void
 }
 /** Process-owned worker; renderer leases never own or cancel a comparison job. */
 export class LiteratureComparisons {
   private tables: ComparisonTable[] = []
+  private readonly matrixSnapshots = new Map<string, ComparisonTable>()
   private readonly exportSnapshots = new Map<
     string,
     {
@@ -79,11 +79,7 @@ export class LiteratureComparisons {
   private project(table: ComparisonTable, offset = 0, limit = 10): ComparisonResult {
     if (offset > table.cells.length || (offset > 0 && offset === table.cells.length))
       throw new Error('comparison-invalid-offset')
-    const cells = table.cells.slice(offset, offset + limit).map((cell) => ({
-      ...cell,
-      ...(cell.history.length >= COMPARISON_HISTORY_LIMIT && { historyLimitReached: true }),
-      history: cell.history.slice(-1).map((attempt) => ({ ...attempt, evidence: [] }))
-    }))
+    const cells = table.cells.slice(offset, offset + limit).map(matrixCell)
     while (true) {
       const ids = new Set(cells.map((cell) => cell.id))
       const result: ComparisonResult = {
@@ -108,6 +104,13 @@ export class LiteratureComparisons {
   private worker: Promise<void> | undefined
   private readonly inFlightAdmissions = new Map<string, Set<string>>()
   private lastSourceScan?: { revision: number; at: number }
+  private needsSourceScan(revision: number | undefined): boolean {
+    return (
+      revision === undefined ||
+      this.lastSourceScan?.revision !== revision ||
+      Date.now() - this.lastSourceScan.at >= 60_000
+    )
+  }
   private readonly serializedTables = new WeakMap<
     ComparisonTable,
     { revision: number; json: string }
@@ -167,7 +170,11 @@ export class LiteratureComparisons {
     this.started = true
   }
   private async save(signal?: AbortSignal): Promise<void> {
-    if (this.loadError) throw new Error('comparison-storage-unavailable')
+    if (this.loadError)
+      throw new ApplicationCommandError(
+        'comparison-storage-unavailable',
+        'comparison-storage-unavailable'
+      )
     // Keep the v1 envelope atomic. Unchanged tables already passed schema validation.
     const parts = this.tables.map((table) => {
       const cached = this.serializedTables.get(table)
@@ -177,7 +184,8 @@ export class LiteratureComparisons {
       return json
     })
     const content = '{"version":1,"tables":[' + parts.join(',') + ']}'
-    if (Buffer.byteLength(content) > MAX_BYTES) throw new Error('comparison-storage-limit')
+    if (Buffer.byteLength(content) > MAX_BYTES)
+      throw new ApplicationCommandError('comparison-storage-limit', 'comparison-storage-limit')
     await withDataRootWrite(() => writeDurableJsonFile(this.options.path(), content), signal)
   }
   private async mutate<T>(
@@ -194,11 +202,35 @@ export class LiteratureComparisons {
       throw error
     }
   }
+  private mutateCell<T>(
+    table: ComparisonTable,
+    cellId: string,
+    operation: (updated: ComparisonTable, cell: ComparisonCell) => Promise<T>
+  ): Promise<T> {
+    const index = table.cells.findIndex((cell) => cell.id === cellId)
+    if (index < 0) throw new Error('comparison-cell-not-found')
+    const original = table.cells[index]
+    const cell = { ...original, history: [...original.history] }
+    const updated = { ...table, cells: [...table.cells] }
+    updated.cells[index] = cell
+    return this.mutate(undefined, async () => {
+      this.tables[this.tables.indexOf(table)] = updated
+      updated.revision++
+      return operation(updated, cell)
+    })
+  }
   private syncCells(table: ComparisonTable): void {
-    table.cells = table.cells.filter((c) => table.fields.some((f) => f.id === c.fieldId))
+    const fields = new Set(table.fields.map((field) => field.id))
+    table.cells = table.cells.filter((cell) => fields.has(cell.fieldId))
+    const existing = new Map<string, Set<string>>()
+    for (const cell of table.cells) {
+      const row = existing.get(cell.itemId) ?? new Set<string>()
+      row.add(cell.fieldId)
+      existing.set(cell.itemId, row)
+    }
     for (const itemId of table.itemIds)
       for (const field of table.fields) {
-        if (!table.cells.some((c) => c.itemId === itemId && c.fieldId === field.id))
+        if (!existing.get(itemId)?.has(field.id))
           table.cells.push({
             id: randomUUID(),
             itemId,
@@ -211,7 +243,11 @@ export class LiteratureComparisons {
   async run(input: ComparisonRequest): Promise<ComparisonResult> {
     const request = comparisonRequestSchema.parse(input)
     if (this.closed || !this.started) throw new Error('comparison-owner-unavailable')
-    if (this.loadError) throw new Error('comparison-storage-unavailable')
+    if (this.loadError)
+      throw new ApplicationCommandError(
+        'comparison-storage-unavailable',
+        'comparison-storage-unavailable'
+      )
     if (
       request.action === 'run' ||
       request.action === 'resume' ||
@@ -253,14 +289,14 @@ export class LiteratureComparisons {
     }
     const result = await this.queue(async () => {
       if (this.closed) throw new Error('comparison-owner-unavailable')
-      if (this.loadError) throw new Error('comparison-storage-unavailable')
+      if (this.loadError)
+        throw new ApplicationCommandError(
+          'comparison-storage-unavailable',
+          'comparison-storage-unavailable'
+        )
       if (request.action === 'list') {
         const revision = this.options.sourceRevision?.()
-        if (
-          revision === undefined ||
-          revision !== this.lastSourceScan?.revision ||
-          Date.now() - this.lastSourceScan.at >= 60_000
-        ) {
+        if (this.needsSourceScan(revision)) {
           await this.refreshSources()
           if (revision !== undefined) this.lastSourceScan = { revision, at: Date.now() }
         }
@@ -288,7 +324,8 @@ export class LiteratureComparisons {
       }
       if (request.action === 'create')
         return this.mutate(undefined, async () => {
-          if (this.tables.length >= 30) throw new Error('comparison-table-limit')
+          if (this.tables.length >= 30)
+            throw new ApplicationCommandError('comparison-table-limit', 'comparison-table-limit')
           if (new Set(request.fields.map((f) => f.id)).size !== request.fields.length)
             throw new Error('duplicate-field')
           const itemIds = [...new Set(request.itemIds)]
@@ -319,19 +356,40 @@ export class LiteratureComparisons {
         await this.mutate(undefined, async () => {
           this.tables = this.tables.filter((entry) => entry.id !== table.id)
         })
+        for (const [token, snapshot] of this.matrixSnapshots)
+          if (snapshot.id === table.id) this.matrixSnapshots.delete(token)
         this.extractors.delete(table.id)
         for (const [token, snapshot] of this.exportSnapshots)
           if (snapshot.tableId === table.id) this.releaseExportSnapshot(token)
         return { tables: [] }
       }
       if (request.action === 'read') {
-        // Continuation pages carry the current revision; the renderer restarts on changes.
-        if (!request.offset) await this.refreshSources(table.id)
-        return this.project(
-          this.tables.find((t) => t.id === table.id)!,
-          request.offset,
-          100
+        if (request.readToken) {
+          const snapshot = this.matrixSnapshots.get(request.readToken)
+          if (snapshot?.id !== table.id)
+            throw new ApplicationCommandError('comparison-read-expired', 'comparison-read-expired')
+          const page = this.project(snapshot, request.offset, 100)
+          if (page.nextOffset === undefined) this.matrixSnapshots.delete(request.readToken)
+          return { ...page, readToken: request.readToken }
+        }
+        if (!request.offset && this.needsSourceScan(this.options.sourceRevision?.()))
+          await this.refreshSources(table.id)
+        const current = this.tables.find((entry) => entry.id === table.id)!
+        const page = this.project(current, request.offset, 100)
+        if (request.offset || page.nextOffset === undefined) return page
+        // Continuations read the same projection even as the worker checkpoints new results.
+        const token = randomUUID()
+        if (this.matrixSnapshots.size >= MAX_MATRIX_SNAPSHOTS)
+          this.matrixSnapshots.delete(this.matrixSnapshots.keys().next().value!)
+        this.matrixSnapshots.set(
+          token,
+          structuredClone({
+            ...current,
+            members: current.members.map((member) => ({ ...member, abstract: '' })),
+            cells: current.cells.map(matrixCell)
+          })
         )
+        return { ...page, readToken: token }
       }
       if (request.action === 'read-cell') {
         const cell = table.cells.find((cell) => cell.id === request.cellId)
@@ -388,6 +446,46 @@ export class LiteratureComparisons {
       }
       if (request.action === 'update' && request.expectedRevision !== table.revision)
         throw new ApplicationCommandError('comparison-config-changed', 'comparison-config-changed')
+      if (request.action === 'edit-cell')
+        return this.mutateCell(table, request.cellId, async (table, cell) => {
+          const field = table.fields.find((f) => f.id === cell.fieldId)!
+          const member = await this.options.extractor.member(cell.itemId)
+          if (
+            field.version !== request.expectedFieldVersion ||
+            member.sourceKey !== request.expectedSourceKey
+          )
+            throw new Error('comparison-review-changed')
+          const latest = cell.history.at(-1)
+          if (
+            request.expectedAttemptId &&
+            (latest?.id !== request.expectedAttemptId ||
+              latest.fieldVersion !== field.version ||
+              latest.sourceKey !== member.sourceKey)
+          )
+            throw new Error('comparison-review-changed')
+          if (request.confirmed && latest?.value === request.value && !request.expectedAttemptId)
+            throw new Error('comparison-review-attempt-required')
+          const revision = cell.manual?.revision ?? 0
+          if ((request.expectedManualRevision ?? 0) !== revision)
+            throw new ApplicationCommandError(
+              'comparison-manual-conflict',
+              'comparison-manual-conflict'
+            )
+          cell.manual = {
+            revision: revision + 1,
+            attemptId: request.expectedAttemptId,
+            value: request.value,
+            confirmed: request.confirmed,
+            fieldVersion: field.version,
+            sourceKey: member.sourceKey,
+            updatedAt: now()
+          }
+          // The edited cell may be outside the first page. Its receipt carries no history.
+          return this.bounded({
+            ...this.project(table),
+            cell: structuredClone({ ...cell, history: [] })
+          })
+        })
       return this.mutate(table, async () => {
         if (request.action === 'update') {
           if (new Set(request.fields.map((f) => f.id)).size !== request.fields.length)
@@ -462,47 +560,6 @@ export class LiteratureComparisons {
           )
           table.itemIds.push(...added)
           this.syncCells(table)
-        } else if (request.action === 'edit-cell') {
-          const cell = table.cells.find((c) => c.id === request.cellId)
-          if (!cell) throw new Error('comparison-cell-not-found')
-          const field = table.fields.find((f) => f.id === cell.fieldId)!
-          const member = await this.options.extractor.member(cell.itemId)
-          if (
-            field.version !== request.expectedFieldVersion ||
-            member.sourceKey !== request.expectedSourceKey
-          )
-            throw new Error('comparison-review-changed')
-          const latest = cell.history.at(-1)
-          if (
-            request.expectedAttemptId &&
-            (latest?.id !== request.expectedAttemptId ||
-              latest.fieldVersion !== field.version ||
-              latest.sourceKey !== member.sourceKey)
-          )
-            throw new Error('comparison-review-changed')
-          if (request.confirmed && latest?.value === request.value && !request.expectedAttemptId)
-            throw new Error('comparison-review-attempt-required')
-          const revision = cell.manual?.revision ?? 0
-          if ((request.expectedManualRevision ?? 0) !== revision)
-            throw new ApplicationCommandError(
-              'comparison-manual-conflict',
-              'comparison-manual-conflict'
-            )
-          cell.manual = {
-            revision: revision + 1,
-            attemptId: request.expectedAttemptId,
-            value: request.value,
-            confirmed: request.confirmed,
-            fieldVersion: field.version,
-            sourceKey: member.sourceKey,
-            updatedAt: now()
-          }
-          table.revision++
-          // The edited cell may be outside the first page. Its receipt carries no history.
-          return this.bounded({
-            ...this.project(table),
-            cell: structuredClone({ ...cell, history: [] })
-          })
         } else if (request.action === 'pause') {
           if (table.state === 'running') table.state = 'paused'
         }
@@ -533,7 +590,8 @@ export class LiteratureComparisons {
               source.fieldVersion !== table.fields.find((f) => f.id === cell.fieldId)?.version)
           )
         }) ?? []
-      if (changed.length && !request.useCurrentSources) throw new Error('comparison-task-changed')
+      if (changed.length && !request.useCurrentSources)
+        throw new ApplicationCommandError('comparison-task-changed', 'comparison-task-changed')
       for (const source of changed) {
         const cell = table.cells.find((cell) => cell.id === source.cellId)!
         // The old in-flight result can be kept as history but cannot consume this new work.
@@ -608,11 +666,22 @@ export class LiteratureComparisons {
       if (skipped) table.issue = 'comparison-history-limit'
       else delete table.issue
     }
-    const extractor = table.state === 'running' ? await this.options.capture() : undefined
+    const extractor =
+      table.state === 'running'
+        ? await this.options.capture().catch((cause: unknown) => {
+            throw new ApplicationCommandError(
+              'comparison-model-unavailable',
+              'comparison-model-unavailable',
+              undefined,
+              { cause }
+            )
+          })
+        : undefined
     return this.queue(async () => {
       const index = this.tables.findIndex((entry) => entry.id === table.id)
       if (this.closed) throw new Error('comparison-owner-unavailable')
-      if (this.tables[index]?.revision !== revision) throw new Error('comparison-task-changed')
+      if (this.tables[index]?.revision !== revision)
+        throw new ApplicationCommandError('comparison-task-changed', 'comparison-task-changed')
       const result = await this.mutate(undefined, async () => {
         table.revision++
         this.tables[index] = table
@@ -628,11 +697,11 @@ export class LiteratureComparisons {
     request: ComparisonLaunchRequest
   ): Promise<void> {
     if (request.expectedRevision !== undefined && request.expectedRevision !== table.revision)
-      throw new Error('comparison-task-changed')
+      throw new ApplicationCommandError('comparison-task-changed', 'comparison-task-changed')
     const changed = await this.refreshTable(table, request.expectedSources)
     // A source update can add formerly reviewed cells to the pending scope.
     if (changed && request.action !== 'resume' && request.expectedRevision !== undefined)
-      throw new Error('comparison-task-changed')
+      throw new ApplicationCommandError('comparison-task-changed', 'comparison-task-changed')
   }
   /** Check each report once at admission; unavailable sources never enter the model queue. */
   private async readableTargets(
@@ -660,7 +729,7 @@ export class LiteratureComparisons {
       for (const source of checks) {
         const member = table.members.find((member) => member.itemId === source.itemId)!
         if (source.sourceKey && source.sourceKey !== member.sourceKey)
-          throw new Error('comparison-task-changed')
+          throw new ApplicationCommandError('comparison-task-changed', 'comparison-task-changed')
         if (source.status !== 'available') unavailable.add(source.itemId)
       }
     }
@@ -710,10 +779,11 @@ export class LiteratureComparisons {
       }
       const expectedKey = expected.get(member.itemId)
       if (expectedKey !== undefined && expectedKey !== sourceKey)
-        throw new Error('comparison-task-changed')
+        throw new ApplicationCommandError('comparison-task-changed', 'comparison-task-changed')
       expected.delete(member.itemId)
     }
-    if (expected.size) throw new Error('comparison-task-changed')
+    if (expected.size)
+      throw new ApplicationCommandError('comparison-task-changed', 'comparison-task-changed')
     if (changed) table.revision++
     return changed
   }
@@ -754,7 +824,11 @@ export class LiteratureComparisons {
                 (table.state === 'paused' && table.cells.some((cell) => cell.status === 'running'))
               ) {
                 table.state = 'paused'
-                table.issue = 'checkpoint-failed'
+                table.issue =
+                  error instanceof ApplicationCommandError &&
+                  error.code === 'comparison-storage-limit'
+                    ? error.code
+                    : 'checkpoint-failed'
                 table.revision++
                 for (const cell of table.cells)
                   if (cell.status === 'running') cell.status = 'pending'
@@ -818,9 +892,8 @@ export class LiteratureComparisons {
       if (this.closed || this.lifetime.signal.aborted) return undefined
       const table = this.tables.find((t) => t.state === 'running')
       if (!table) return undefined
-      const cell = table.cells.find(
-        (c) => table.remainingCellIds.includes(c.id) && c.status === 'pending'
-      )
+      const remaining = new Set(table.remainingCellIds)
+      const cell = table.cells.find((c) => c.status === 'pending' && remaining.has(c.id))
       if (cell && cell.history.length >= COMPARISON_HISTORY_LIMIT) {
         await this.mutate(table, async () => {
           cell.status = 'failed'
@@ -833,10 +906,7 @@ export class LiteratureComparisons {
       if (!cell) {
         // A concurrent batch can have admitted every remaining cell already. Leave the
         // table running until those checkpoints drain; the next batch will finalize it.
-        if (
-          table.cells.some((c) => table.remainingCellIds.includes(c.id) && c.status === 'running')
-        )
-          return undefined
+        if (table.cells.some((c) => c.status === 'running' && remaining.has(c.id))) return undefined
         await this.mutate(table, async () => {
           table.state = 'completed'
           table.revision++
@@ -844,14 +914,19 @@ export class LiteratureComparisons {
         })
         return null
       }
-      await this.mutate(table, async () => {
-        cell.status = 'running'
-        table.revision++
-      })
-      const snapshot = structuredClone(table)
+      // The queued ID is already durable. A crash before the result checkpoint
+      // requeues this cell whether its on-disk status is pending or running.
+      cell.status = 'running'
+      table.revision++
+      const member = table.members.find((m) => m.itemId === cell.itemId)!
       const expected = table.taskSources?.find((t) => t.cellId === cell.id)
-      if (expected)
-        snapshot.members.find((m) => m.itemId === cell.itemId)!.sourceKey = expected.sourceKey
+      const snapshot = {
+        id: table.id,
+        taskId: table.taskId,
+        language: table.language,
+        sourcePolicy: table.sourcePolicy,
+        members: [{ ...member, sourceKey: expected?.sourceKey ?? member.sourceKey }]
+      }
       const admissionId = randomUUID()
       const admissions = this.inFlightAdmissions.get(table.id) ?? new Set<string>()
       admissions.add(admissionId)
@@ -859,7 +934,7 @@ export class LiteratureComparisons {
       return {
         extractor: this.extractors.get(table.id),
         table: snapshot,
-        cell: structuredClone(cell),
+        cell: { id: cell.id, itemId: cell.itemId },
         field: structuredClone(table.fields.find((f) => f.id === cell.fieldId)!),
         admissionId
       }
@@ -901,12 +976,10 @@ export class LiteratureComparisons {
       }
     }
     try {
-      await this.queue(() => {
-        const current = this.tables.find((t) => t.id === table.id)!
-        return this.mutate(current, async () => {
-          const target = current.cells.find((c) => c.id === cell.id)
-          if (!target) return
-          current.revision++
+      await this.queue(async () => {
+        const saved = this.tables.find((entry) => entry.id === table.id)!
+        if (!saved.cells.some((entry) => entry.id === cell.id)) return
+        return this.mutateCell(saved, cell.id, async (current, target) => {
           if (extraction.status === 'succeeded' && !this.closed) {
             // The source may change after extraction or while its checkpoint waits in the queue.
             // Keep the admitted identity; a live refresh must never rebind this result.
@@ -1095,6 +1168,7 @@ export class LiteratureComparisons {
     this.lifetime.abort()
     await this.worker
     await this.serial
+    this.matrixSnapshots.clear()
     this.extractors.clear()
     for (const token of this.exportSnapshots.keys()) this.releaseExportSnapshot(token)
   }

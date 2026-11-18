@@ -8418,6 +8418,7 @@
     "Extraction failed": "Error en la extracción",
     "Extract remaining": "Extraer el resto",
     "Actual coverage": "Cobertura real",
+    "Comparison storage is full. Export a table before deleting it to free space.": "El almacenamiento de tablas comparativas está lleno. Exporte una tabla antes de eliminarla para liberar espacio.",
     "Comparison table could not be updated.": "No se pudo actualizar la tabla comparativa.",
     "This table changed while you were editing. Copy your draft, then cancel and reopen the editor to load the latest configuration.": "Esta tabla cambió durante la edición. Copie el borrador, cancele y vuelva a abrir el editor para cargar la configuración más reciente.",
     "Extraction requirements": "Requisitos de extracción",

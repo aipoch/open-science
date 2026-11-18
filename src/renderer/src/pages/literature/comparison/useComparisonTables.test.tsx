@@ -72,6 +72,24 @@ describe('comparison subscriptions', () => {
     expect(reads).toBe(4)
     expect(result.current.selectedTable?.members).toEqual(table.members)
   })
+  it('restarts an expired read snapshot and passes its replacement to the next page', async () => {
+    let pageCount = 0
+    comparisons.mockImplementation(async (request) => {
+      if (request.action === 'list') return { tables: [], summaries: [summary] }
+      if (request.offset === undefined) {
+        const readToken = ++pageCount === 1 ? 'expired' : 'fresh'
+        return { tables: [{ ...table, cells: [{ id: readToken }] }], readToken, nextOffset: 1 }
+      }
+      if (request.readToken === 'expired') throw new Error('comparison-read-expired')
+      expect(request.readToken).toBe('fresh')
+      return { tables: [{ ...table, cells: [{ id: 'last' }] }] }
+    })
+    const { result } = renderHook(() => useComparisonTables('table'))
+    await waitFor(() =>
+      expect(result.current.selectedTable?.cells).toEqual([{ id: 'fresh' }, { id: 'last' }])
+    )
+    expect(pageCount).toBe(2)
+  })
   it('checks the first page on a poll and only rereads later pages when the revision changes', async () => {
     let revision = 1
     comparisons.mockImplementation(async (request) => {

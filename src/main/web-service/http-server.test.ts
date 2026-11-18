@@ -305,6 +305,17 @@ describe('startWebHttpServer', () => {
       expect(() => unwrapApplicationCommandOutcome(staleOutcome)).toThrow(
         'comparison-manual-conflict'
       )
+      const expired = await post({
+        action: 'read',
+        tableId: table.id,
+        offset: 1,
+        readToken: 'expired'
+      })
+      expect(expired.status).toBe(410)
+      const expiredOutcome = await expired.json()
+      expect(() => unwrapApplicationCommandOutcome(expiredOutcome)).toThrow(
+        'comparison-read-expired'
+      )
       // Ablation: removing the public error type reproduces the original lost discriminator.
       invoke.mockRejectedValueOnce(new Error('comparison-config-changed'))
       const untyped = await post(update)

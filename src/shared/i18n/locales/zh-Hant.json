@@ -8072,6 +8072,7 @@
     "Extraction failed": "擷取失敗",
     "Extract remaining": "擷取其餘項目",
     "Actual coverage": "實際涵蓋範圍",
+    "Comparison storage is full. Export a table before deleting it to free space.": "比較表儲存空間已滿。請先匯出需要保留的表格，再刪除以釋放空間。",
     "Comparison table could not be updated.": "無法更新比較表。",
     "This table changed while you were editing. Copy your draft, then cancel and reopen the editor to load the latest configuration.": "編輯期間此表已發生變更。請複製草稿，然後取消並重新開啟編輯器，以載入最新設定。",
     "Extraction requirements": "擷取要求",
