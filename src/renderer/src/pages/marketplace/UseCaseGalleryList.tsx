@@ -13,17 +13,17 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { ORG_CASE_MAX_QUERY_LENGTH } from '../../../../shared/org-cases'
-import { useSettingsStore } from '@/stores/settings-store'
 import { UseCaseSourceToggle } from '../home/OrgCaseCard'
 import { OrgCaseSectionContent } from '../home/OrgCaseSectionContent'
-import { useOrgCaseSearchActions, useOrgCaseStore } from '@/stores/org-cases-store'
+import {
+  useOrgCaseSearchActions,
+  useOrgCaseStore,
+  type UseCaseSourceKind
+} from '@/stores/org-cases-store'
 import { ResourceCatalogHeader, ResourceCatalogToolbar } from './ResourceCenterModeTabs'
 import { useNoticeCountdown } from '@/components/use-notice-countdown'
 import { cn } from '@/lib/utils'
-import {
-  orgCaseSharingAvailable,
-  sessionPackageImportAvailable
-} from '@/lib/session-package-capabilities'
+import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
 import type { MarketplaceListSnapshot } from '@/stores/navigation-store'
 import type { UseCase } from '../../../../shared/use-cases'
 import { USE_CASE_BATCH_SIZE } from '../home/use-case-gallery-store'
@@ -66,8 +66,9 @@ export const UseCaseGalleryList = ({
   refreshCompletion,
   onResetRefreshCompletion,
   onRefresh,
+  source,
+  onChangeSource,
   onOpenOrgCase,
-  onResetOrgSelection,
   onOpenMarketplace,
   onFiltersChange,
   initialState
@@ -79,19 +80,15 @@ export const UseCaseGalleryList = ({
   refreshCompletion: number | null
   onResetRefreshCompletion: () => void
   onRefresh: () => void
+  source: UseCaseSourceKind
+  onChangeSource?: (source: UseCaseSourceKind) => void
   onOpenOrgCase?: (caseId: string, opener?: HTMLElement | null) => void
-  onResetOrgSelection?: () => void
   onOpenMarketplace?: (snapshot: MarketplaceListSnapshot) => void
   onFiltersChange?: (snapshot: MarketplaceListSnapshot) => void
   initialState?: MarketplaceListSnapshot
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const orgCasesEnabled = orgCaseSharingAvailable()
-  const rawSource = useOrgCaseStore((state) => state.source)
-  const source = orgCasesEnabled ? rawSource : 'official'
-  const setSource = useOrgCaseStore((state) => state.setSource)
   const orgLoading = useOrgCaseStore((state) => state.loading)
-  const lab = useSettingsStore((state) => state.lab)
   const {
     query: orgQuery,
     setQuery: setOrgQuery,
@@ -197,6 +194,26 @@ export const UseCaseGalleryList = ({
     if (viewportRef.current) viewportRef.current.scrollTop = 0
   }
 
+  const openMarketplaceAction = onOpenMarketplace ? (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() =>
+        onOpenMarketplace({
+          search,
+          category: activeCategory,
+          count,
+          ...capturePosition(viewportRef.current)
+        })
+      }
+      aria-label={t('View in case library')}
+      title={t('View in case library')}
+    >
+      <ArrowUpRight aria-hidden="true" />
+      {t('View in case library')}
+    </Button>
+  ) : undefined
+
   return (
     <div
       className="@container flex min-h-0 flex-1 flex-col"
@@ -212,36 +229,14 @@ export const UseCaseGalleryList = ({
           icon={GalleryHorizontalEnd}
           title={t('Use Cases')}
           actions={
-            <div className="flex flex-wrap items-center gap-2">
-              {orgCasesEnabled ? (
-                <UseCaseSourceToggle
-                  source={source}
-                  onChange={(next) => {
-                    setSource(next)
-                    if (next === 'official') onResetOrgSelection?.()
-                  }}
-                />
-              ) : null}
-              {onOpenMarketplace ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    onOpenMarketplace({
-                      search,
-                      category: activeCategory,
-                      count,
-                      ...capturePosition(viewportRef.current)
-                    })
-                  }
-                  aria-label={t('View in case library')}
-                  title={t('View in case library')}
-                >
-                  <ArrowUpRight aria-hidden="true" />
-                  {t('View in case library')}
-                </Button>
-              ) : null}
-            </div>
+            onChangeSource ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <UseCaseSourceToggle source={source} onChange={onChangeSource} />
+                {openMarketplaceAction}
+              </div>
+            ) : (
+              openMarketplaceAction
+            )
           }
           toolbar={
             source === 'organization' ? (
@@ -286,7 +281,7 @@ export const UseCaseGalleryList = ({
                     aria-label={t('Refresh organization cases')}
                     title={t('Refresh organization cases')}
                     aria-busy={orgLoading}
-                    disabled={orgLoading || lab?.state !== 'authenticated'}
+                    disabled={orgLoading}
                     onClick={refreshOrg}
                   >
                     <RefreshCw

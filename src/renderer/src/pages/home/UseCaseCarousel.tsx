@@ -22,7 +22,11 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { OrgCaseDetailsDialog } from './OrgCaseDetailsDialog'
 import { UseCaseSourceToggle } from './OrgCaseCard'
 import { OrgCaseSectionContent } from './OrgCaseSectionContent'
-import { useOrgCaseLabSync, useOrgCaseStore } from '@/stores/org-cases-store'
+import {
+  useOrgCaseLabSync,
+  useOrgCaseStore,
+  type UseCaseSourceKind
+} from '@/stores/org-cases-store'
 import { OrgCaseDetailsPage } from '../marketplace/OrgCaseDetailsPage'
 import { UseCaseDetailsDialog } from './UseCaseDetailsDialog'
 import { UseCaseGalleryList } from '../marketplace/UseCaseGalleryList'
@@ -44,19 +48,18 @@ export const UseCaseCarousel = ({
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
   const headingId = useId()
-  const orgCasesEnabled = orgCaseSharingAvailable()
+  const labAuthenticated = useSettingsStore((state) => state.lab?.state === 'authenticated')
+  const orgCasesEnabled = labAuthenticated && orgCaseSharingAvailable()
   const canOpenLabSettings = labSettingsAvailable()
   const rawSource = useOrgCaseStore((state) => state.source)
   const source = orgCasesEnabled ? rawSource : 'official'
-  const connectionKey = useOrgCaseStore((state) => state.connectionKey)
+  const orgCaseEpoch = useOrgCaseStore((state) => state.epoch)
   const [selectedOrgCase, setSelectedOrgCase] = useState<{
     id: string
-    connectionKey: string
+    epoch: number
   } | null>(null)
   const selectedOrgCaseId =
-    source === 'organization' && selectedOrgCase?.connectionKey === connectionKey
-      ? selectedOrgCase.id
-      : null
+    source === 'organization' && selectedOrgCase?.epoch === orgCaseEpoch ? selectedOrgCase.id : null
   const projectId = useNavigationStore((state) => state.activeProjectId)
   const initialListState = useNavigationStore((state) =>
     state.marketplaceListContext?.projectId === state.activeProjectId
@@ -531,7 +534,6 @@ export const UseCaseCarousel = ({
   const cancelOrgCaseImport = useOrgCaseStore((state) => state.cancelImport)
   const dismissOrgDownloadError = useOrgCaseStore((state) => state.dismissDownloadError)
   const orgOpenerRef = useRef<HTMLElement | null>(null)
-  const lab = useSettingsStore((state) => state.lab)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   useOrgCaseLabSync(active && orgCasesEnabled)
 
@@ -560,16 +562,17 @@ export const UseCaseCarousel = ({
     orgOpenerRef.current = null
     if (opener?.isConnected) opener.focus({ preventScroll: true })
   }, [])
-  const handleResetOrgSelection = useCallback((): void => {
-    setSelectedOrgCase(null)
-  }, [setSelectedOrgCase])
+  const handleChangeSource = (next: UseCaseSourceKind): void => {
+    setSource(next)
+    if (next === 'official') setSelectedOrgCase(null)
+  }
   const handleOpenOrgDetails = useCallback(
     (caseId: string, opener?: HTMLElement | null): void => {
       orgOpenerRef.current =
         opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
       setSelectedOrgCase({
         id: caseId,
-        connectionKey: useOrgCaseStore.getState().connectionKey
+        epoch: useOrgCaseStore.getState().epoch
       })
       void loadOrgCaseDetail(caseId)
     },
@@ -612,12 +615,7 @@ export const UseCaseCarousel = ({
     openSettingsToPanel('lab')
   }, [openSettingsToPanel])
 
-  if (
-    source === 'official' &&
-    !items?.length &&
-    variant === 'home' &&
-    (!orgCasesEnabled || !lab || lab.state === 'unconfigured')
-  ) {
+  if (!orgCasesEnabled && !items?.length && variant === 'home') {
     return null
   }
 
@@ -640,8 +638,9 @@ export const UseCaseCarousel = ({
               refreshCompletion={refreshCompletion}
               onResetRefreshCompletion={() => setRefreshCompletion(null)}
               onRefresh={() => void refreshCatalog()}
+              source={source}
+              onChangeSource={orgCasesEnabled ? handleChangeSource : undefined}
               onOpenOrgCase={handleOpenOrgDetails}
-              onResetOrgSelection={handleResetOrgSelection}
               initialState={initialListState}
               onFiltersChange={updateListFilters}
               onOpenMarketplace={
@@ -722,14 +721,7 @@ export const UseCaseCarousel = ({
             </h2>
             <div className="flex items-center gap-2">
               {orgCasesEnabled ? (
-                <UseCaseSourceToggle
-                  compact
-                  source={source}
-                  onChange={(next) => {
-                    setSource(next)
-                    if (next === 'official') setSelectedOrgCase(null)
-                  }}
-                />
+                <UseCaseSourceToggle compact source={source} onChange={handleChangeSource} />
               ) : null}
               <Button
                 variant="ghost"

@@ -123,6 +123,7 @@ export const useOrgCaseStore = create<OrgCaseStoreState>((set, get) => ({
     const current = get()
     if (nextKey === current.connectionKey) return false
     set({
+      source: lab?.state === 'authenticated' ? current.source : 'official',
       connectionKey: nextKey,
       epoch: current.epoch + 1,
       listRequestSeq: current.listRequestSeq + 1,

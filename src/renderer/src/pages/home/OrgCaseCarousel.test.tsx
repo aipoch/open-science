@@ -12,6 +12,7 @@ import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../../shared/web-event-connec
 import { useSettingsStore } from '@/stores/settings-store'
 import { useOrgCaseStore } from '@/stores/org-cases-store'
 import { UseCaseCarousel } from './UseCaseCarousel'
+import { useUseCaseGalleryStore } from './use-case-gallery-store'
 
 function makeOrgCase(overrides: Partial<OrgCaseItem> = {}): OrgCaseItem {
   return {
@@ -90,6 +91,7 @@ describe('UseCaseCarousel organization cases source', () => {
 
   beforeEach(() => {
     useOrgCaseStore.getState().reset()
+    useUseCaseGalleryStore.setState(useUseCaseGalleryStore.getInitialState(), true)
     useSettingsStore.setState({
       lab: {
         state: 'authenticated',
@@ -162,10 +164,7 @@ describe('UseCaseCarousel organization cases source', () => {
     expect(within(dialog).getByText('+2 additional omissions')).toBeTruthy()
   })
 
-  it('shows explicit notice for STORAGE_NOT_CONFIGURED instead of empty list and supports Lab settings CTA when signed out', async () => {
-    const openSettingsToPanel = vi.fn()
-    useSettingsStore.setState({ openSettingsToPanel } as never)
-
+  it('shows the storage configuration notice until sign-out returns to the official cases', async () => {
     const orgCasesList = vi.fn(async () => ({
       ok: false as const,
       errorCode: 'storage-not-configured' as const
@@ -178,15 +177,14 @@ describe('UseCaseCarousel organization cases source', () => {
     await waitFor(() => expect(screen.getByText('Case sharing is not configured')).toBeTruthy())
     expect(screen.queryByText('No organization cases yet')).toBeNull()
 
-    // Signing out immediately clears error/results and renders Open Lab Settings button
     await act(async () => {
       useSettingsStore.setState({
         lab: { state: 'signedOut', serverUrl: 'https://lab.example.com' } as LabView
       })
     })
-    await waitFor(() => expect(screen.getByText('Sign in to Lab')).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: 'Open Lab Settings' }))
-    expect(openSettingsToPanel).toHaveBeenCalledWith('lab')
+    expect(screen.queryByRole('tablist', { name: 'Case source' })).toBeNull()
+    expect(screen.queryByText('Case sharing is not configured')).toBeNull()
+    expect(screen.getByRole('article', { name: 'Official Case' })).toBeTruthy()
   })
 
   it('streams download progress, allows cancelling, and displays verification errors without closing detail dialog on failure', async () => {
@@ -384,17 +382,55 @@ describe('UseCaseCarousel organization cases source', () => {
     )
   })
 
-  it('keeps home carousel header visible when Lab is signedOut or expired even without official items', () => {
-    useSettingsStore.setState({
-      lab: { state: 'expired', serverUrl: 'https://lab.example.com' } as LabView
-    })
-    setupWindowApi({ useCaseCatalog: vi.fn(async () => []) })
+  it('keeps the original compact case library layout when signed out or expired', async () => {
+    const authenticatedLab = useSettingsStore.getState().lab
+    useSettingsStore.setState({ lab: { state: 'signedOut' } })
+    const { orgCasesList } = setupWindowApi()
+    render(<UseCaseCarousel variant="marketplace" compact />)
 
-    render(<UseCaseCarousel variant="home" />)
-    expect(screen.getByTestId('use-case-source-organization')).toBeTruthy()
+    expect(await screen.findByRole('article', { name: 'Official Case' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'View in case library' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Refresh examples' })).toBeTruthy()
+    expect(screen.queryByRole('tablist', { name: 'Case source' })).toBeNull()
+    expect(orgCasesList).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search examples' }), {
+      target: { value: 'Official' }
+    })
+
+    act(() => useSettingsStore.setState({ lab: authenticatedLab }))
+    expect(screen.getByRole('tab', { name: 'Official', selected: true })).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: 'Organization' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
+    expect(await screen.findByRole('region', { name: 'Organization case details' })).toBeTruthy()
+
+    act(() => useSettingsStore.setState({ lab: { state: 'expired' } }))
+    expect(screen.queryByRole('tablist', { name: 'Case source' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Organization case details' })).toBeNull()
+    expect(screen.getByRole('article', { name: 'Official Case' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Search examples' })).toHaveProperty(
+      'value',
+      'Official'
+    )
+
+    act(() => useSettingsStore.setState({ lab: authenticatedLab }))
+    expect(screen.getByRole('tab', { name: 'Official', selected: true })).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: 'Organization' }))
+    expect(
+      await screen.findByRole('article', { name: 'RNA-seq Differential Expression' })
+    ).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Organization case details' })).toBeNull()
   })
 
-  it('hides Organization tab on Remote Web, omits Lab Settings CTA on Local Web, and scopes detail selection per mount', async () => {
+  it('keeps the home carousel hidden when signed out and the official catalog is empty', async () => {
+    useSettingsStore.setState({ lab: { state: 'signedOut' } })
+    setupWindowApi({ useCaseCatalog: vi.fn(async () => []) })
+
+    const { container } = render(<UseCaseCarousel variant="home" />)
+    await waitFor(() => expect(useUseCaseGalleryStore.getState().items).toEqual([]))
+    expect(container.firstChild).toBeNull()
+  })
+
+  it('hides the source switch on Remote Web and signed-out Local Web and scopes detail selection per mount', async () => {
     const orgCasesList = vi.fn(async () => ({
       ok: true as const,
       page: { items: [makeOrgCase()], total: 1, page: 1, page_size: 20 }
@@ -410,14 +446,14 @@ describe('UseCaseCarousel organization cases source', () => {
     expect(orgCasesList).not.toHaveBeenCalled()
     remoteRender.unmount()
 
-    // Local Web hides Open Lab Settings CTA because LabPanel is unavailable in Web mode
+    // Signed-out Local Web shows the original home carousel.
     document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
     useSettingsStore.setState({
       lab: { state: 'signedOut', serverUrl: 'https://lab.example.com' } as LabView
     })
     const localRender = render(<UseCaseCarousel variant="home" />)
-    expect(screen.getByText('Sign in to Lab')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Open Lab Settings' })).toBeNull()
+    expect(await screen.findByRole('article', { name: 'Official Case' })).toBeTruthy()
+    expect(screen.queryByRole('tablist', { name: 'Case source' })).toBeNull()
     localRender.unmount()
 
     // Switching from compact Marketplace detail view back to Home does not leak open details dialog
@@ -432,6 +468,7 @@ describe('UseCaseCarousel organization cases source', () => {
       } as LabView
     })
     const compactView = render(<UseCaseCarousel variant="marketplace" compact />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Organization' }))
     await waitFor(() => expect(screen.getByText('RNA-seq Differential Expression')).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: 'Details' }))
     expect(await screen.findByRole('region', { name: 'Organization case details' })).toBeTruthy()
