@@ -523,7 +523,7 @@ describe('Settings backend ownership architecture', () => {
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookFolderRestrictionEnabled setNotebookNetwork setNotificationsEnabled
         setOpenAlexCredential setComputePythonRuntime setPackageMirror setProjectFilesFilter setPromptOptimizationModel setReasoningEffort setReviewerModel setSemanticScholarCredential setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setLabServer setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex uninstallPi
-        uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitLabLogin waitXaiOAuthLogin withHostSkillRead
+        uninstallOpencode updateCustomServer updateDeviceCredential updateSkill uploadLabCase upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitLabLogin waitXaiOAuthLogin withHostSkillRead
       `
         .trim()
         .split(/\s+/)
