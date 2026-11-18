@@ -1,11 +1,12 @@
 import { CitationAbstract } from './LiteratureDetailText'
 import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, ChevronRight, List, Inbox } from 'lucide-react'
+import { ChevronDown, ChevronRight, List, Inbox, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { fullCreatorLabel, getExternalLiteratureUrl } from '../literature-item-display'
-import type { CitationGraphRelation } from './citation-graph'
+import { LiteratureCitationStatus, type CitationStatusModel } from './LiteratureCitationStatus'
+import type { CitationGraphNode, CitationGraphRelation } from './citation-graph'
 import type { CitationGraphController } from './useCitationGraphController'
 
 export type CitationInspectorModel = Pick<
@@ -18,10 +19,13 @@ export type CitationInspectorModel = Pick<
   canExplore: boolean
 }
 
-export type CitationInspectorHandle = { focus(): void }
+export type CitationInspectorHandle = { focus(): void; showDetails(): void }
 
 export function LiteratureCitationInspector({
   model,
+  statusModel,
+  sourceName,
+  onRestart,
   marker,
   visible,
   expanded,
@@ -30,6 +34,9 @@ export function LiteratureCitationInspector({
   ref
 }: {
   model: CitationInspectorModel
+  statusModel: CitationStatusModel
+  sourceName: string
+  onRestart(): void
   marker: string
   visible: boolean
   expanded: boolean
@@ -51,7 +58,8 @@ export function LiteratureCitationInspector({
     setSelected,
     exploreSelected
   } = model
-  const [listOpen, setListOpen] = useState(false)
+  const [listOpen, setListOpen] = useState(true)
+  const listScroll = useRef(0)
   const toggle = useRef<HTMLButtonElement>(null)
   const pane = useRef<HTMLElement>(null)
   const outer = useRef<HTMLDivElement>(null)
@@ -83,15 +91,24 @@ export function LiteratureCitationInspector({
   useImperativeHandle(
     ref,
     () => ({
+      showDetails() {
+        if (listOpen) listScroll.current = outer.current?.scrollTop ?? 0
+        setListOpen(false)
+        resetScroll()
+      },
       focus() {
+        if (listOpen) listScroll.current = outer.current?.scrollTop ?? 0
         setListOpen(false)
         pendingFocus.current = !expanded
         resetScroll()
         inspectorTitle.current?.focus({ preventScroll: true })
       }
     }),
-    [expanded, resetScroll]
+    [expanded, resetScroll, listOpen]
   )
+  useLayoutEffect(() => {
+    if (outer.current) outer.current.scrollTop = listOpen ? listScroll.current : 0
+  }, [listOpen])
   const relationLabel = (relation: CitationGraphRelation): string =>
     relation === 'references'
       ? t('References')
@@ -100,8 +117,40 @@ export function LiteratureCitationInspector({
         : relation === 'both'
           ? t('Both directions')
           : t('Current center')
+  const paperRow = (node: CitationGraphNode): React.JSX.Element => (
+    <li key={node.id}>
+      <button
+        type="button"
+        data-citation-paper-id={node.id}
+        aria-pressed={selectedNode?.id === node.id}
+        className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left hover:bg-muted aria-pressed:bg-primary/10 focus-visible:outline-2 focus-visible:outline-ring"
+        onClick={() => {
+          listScroll.current = outer.current?.scrollTop ?? 0
+          setSelected(node.id)
+          setListOpen(false)
+          resetScroll()
+          inspectorTitle.current?.focus({ preventScroll: true })
+        }}
+      >
+        <span
+          aria-hidden="true"
+          className={`mt-1.5 size-2 shrink-0 rounded-full ${node.relation === 'references' ? 'bg-chart-1' : node.relation === 'citations' ? 'bg-chart-3' : node.relation === 'both' ? 'bg-chart-1 ring-2 ring-chart-3' : 'bg-primary'}`}
+        />
+        <span className="min-w-0 space-y-1">
+          <span className="block line-clamp-3 text-sm leading-snug">{node.record.item.title}</span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {[fullCreatorLabel(node.record.item), node.record.item.issuedYear]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+          {node.center ? (
+            <span className="block text-xs text-muted-foreground">{t('Current center')}</span>
+          ) : null}
+        </span>
+      </button>
+    </li>
+  )
   const collapse = (): void => {
-    setListOpen(false)
     resetScroll()
     if (pane.current?.contains(document.activeElement))
       toggle.current?.focus({ preventScroll: true })
@@ -135,15 +184,16 @@ export function LiteratureCitationInspector({
           size="sm"
           variant="ghost"
           data-citation-inspector-toggle
-          aria-label={t('Selected paper')}
-          title={selectedNode?.record.item.title ?? t('Selected paper')}
+          aria-label={listOpen ? t('Paper list') : t('Selected paper')}
+          title={
+            listOpen ? t('Paper list') : (selectedNode?.record.item.title ?? t('Selected paper'))
+          }
           aria-expanded={expanded}
           aria-controls={`${marker}-inspector-content`}
           className={`min-w-0 flex-1 justify-start gap-2 ${!expanded ? 'lg:justify-center lg:px-0' : ''}`}
           onClick={() => {
             if (expanded) collapse()
             else {
-              setListOpen(false)
               onExpandedChange(true)
             }
           }}
@@ -155,16 +205,22 @@ export function LiteratureCitationInspector({
           )}
           <span className={`min-w-0 truncate text-xs ${!expanded ? 'lg:hidden' : ''}`}>
             {expanded ? (
-              t('Selected paper')
+              listOpen ? (
+                t('Paper list')
+              ) : (
+                t('Selected paper')
+              )
             ) : (
               <span
                 data-citation-inspector-summary
                 className="flex min-w-0 flex-col items-start leading-tight"
               >
                 <span className="max-w-full truncate">
-                  {selectedNode?.record.item.title ?? t('Selected paper')}
+                  {listOpen
+                    ? t('Paper list')
+                    : (selectedNode?.record.item.title ?? t('Selected paper'))}
                 </span>
-                {selectedNode ? (
+                {selectedNode && !listOpen ? (
                   <span className="max-w-full truncate text-[10px] font-normal text-muted-foreground">
                     {relationLabel(selectedNode.relation)}
                   </span>
@@ -190,13 +246,20 @@ export function LiteratureCitationInspector({
             size="icon-sm"
             variant={listOpen ? 'secondary' : 'ghost'}
             data-citation-paper-list-toggle
-            aria-label={t('Paper list')}
-            title={t('Paper list')}
+            aria-label={listOpen ? t('Selected paper') : t('Paper list')}
+            title={listOpen ? t('Selected paper') : t('Paper list')}
             aria-expanded={listOpen}
             aria-controls={`${marker}-paper-list`}
-            onClick={() => setListOpen((value) => !value)}
+            onClick={() => {
+              if (listOpen) listScroll.current = outer.current?.scrollTop ?? 0
+              setListOpen((value) => !value)
+            }}
           >
-            <List className="size-4" aria-hidden="true" />
+            {listOpen ? (
+              <FileText className="size-4" aria-hidden="true" />
+            ) : (
+              <List className="size-4" aria-hidden="true" />
+            )}
           </Button>
         ) : null}
       </div>
@@ -218,7 +281,11 @@ export function LiteratureCitationInspector({
             ref={inspectorTitle}
             tabIndex={-1}
             data-citation-inspector-title
-            className="mb-4 break-words text-base font-semibold leading-snug outline-none"
+            className={
+              listOpen
+                ? 'sr-only'
+                : 'mb-4 break-words text-base font-semibold leading-snug outline-none'
+            }
           >
             {selectedNode?.record.item.title ?? t('Selected paper')}
           </h3>
@@ -270,35 +337,31 @@ export function LiteratureCitationInspector({
                 className="border-t border-border-300 pt-3 [&>summary]:font-medium"
               />
             </div>
-          ) : !selectedNode ? (
+          ) : !selectedNode && !listOpen ? (
             <p className="text-sm text-muted-foreground">
               {t('Select a paper to view its details.')}
             </p>
           ) : null}
-          {graph && listOpen ? (
-            <section
-              id={`${marker}-paper-list`}
-              aria-label={t('Paper list')}
-              className="border-t border-border-300 pt-3"
-            >
-              <h4 className="mb-2 text-xs font-medium">{t('Paper list')}</h4>
-              <ol className="space-y-1">
-                {graph.nodes.map((node, index) => (
-                  <li key={node.id}>
-                    <button
-                      type="button"
-                      aria-pressed={selectedNode?.id === node.id}
-                      className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-muted aria-pressed:bg-muted focus-visible:outline-ring"
-                      onClick={() => {
-                        setSelected(node.id)
-                        setListOpen(false)
-                        resetScroll()
-                        inspectorTitle.current?.focus({ preventScroll: true })
-                      }}
-                    >{`${index + 1}. ${node.record.item.title}`}</button>
-                  </li>
-                ))}
-              </ol>
+          {listOpen && visible ? (
+            <section id={`${marker}-paper-list`} aria-label={t('Paper list')}>
+              {graph?.nodes.find((node) => node.center) ? (
+                <ol>{paperRow(graph.nodes.find((node) => node.center)!)}</ol>
+              ) : null}
+              <LiteratureCitationStatus
+                model={statusModel}
+                sourceName={sourceName}
+                onRestart={onRestart}
+                renderRecords={(direction) => (
+                  <ol className="space-y-1">
+                    {graph?.nodes
+                      .filter(
+                        (node) =>
+                          !node.center && (node.relation === direction || node.relation === 'both')
+                      )
+                      .map(paperRow)}
+                  </ol>
+                )}
+              />
             </section>
           ) : null}
         </div>

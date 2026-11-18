@@ -22,7 +22,6 @@ import {
   type ScheduleRequest
 } from './useCitationGraphController'
 import { LiteratureCitationCanvas } from './LiteratureCitationCanvas'
-import { LiteratureCitationStatus } from './LiteratureCitationStatus'
 import {
   LiteratureCitationInspector,
   type CitationInspectorHandle
@@ -294,6 +293,7 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
   const selectPaper = (id: string): void => {
     controller.setSelected(id)
     setDetailsOpen(true)
+    inspector.current?.showDetails()
   }
   const visible = props.visible !== false
   const title = props.center?.item.title ?? props.item.item.title
@@ -372,25 +372,6 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
           }}
           marker={marker}
           visible={visible}
-          renderStatus={(outsideView) => (
-            <LiteratureCitationStatus
-              model={{
-                busy: controller.busy,
-                states: controller.states,
-                entries: controller.entries,
-                unfilteredGraph: controller.unfilteredGraph,
-                activeDirection: controller.activeDirection,
-                directionMode: controller.directionMode,
-                interactionBusy: controller.interactionBusy,
-                invalidated: controller.invalidated,
-                blocked: controller.blocked,
-                load: controller.load
-              }}
-              sourceName={sourceName}
-              outsideView={outsideView}
-              onRestart={props.onRestart}
-            />
-          )}
           onViewSelected={() => {
             setDetailsOpen(true)
             inspector.current?.focus()
@@ -413,6 +394,9 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
             temporaryCenter: Boolean(props.center),
             canExplore: Boolean(controller.resolutionToken)
           }}
+          statusModel={controller}
+          sourceName={sourceName}
+          onRestart={props.onRestart}
           marker={marker}
           visible={visible}
           onOpenInbox={props.onOpenInbox}

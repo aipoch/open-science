@@ -65,17 +65,26 @@ for (const width of [375, 1440]) {
 }
 
 for (const width of [320, 375, 414, 768]) {
-  test(`citation panel keeps pagination compact at ${width}px`, async ({ page }, info) => {
+  test(`citation sidebar keeps pagination with its papers at ${width}px`, async ({
+    page
+  }, info) => {
     await page.setViewportSize({ width, height: 812 })
     await openCitationGraph(page, citationGraphPath)
     const frame = page.locator('[data-current-frame="true"]')
-    const footer = frame.locator('[data-citation-status]')
-    const more = footer.getByRole('button', { name: 'Load more' })
+    const pane = frame.locator('[data-citation-inspector-pane]')
+    const toggle = frame.locator('[data-citation-inspector-toggle]')
+    if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click()
+    const group = pane.getByRole('region', { name: 'References', exact: true })
+    const more = group.getByRole('button', { name: 'Load more' })
+    await more.scrollIntoViewIfNeeded()
     const box = (await more.boundingBox())!
     expect(box.width).toBeLessThan(140)
-    const footerBox = (await footer.boundingBox())!
-    expect(box.x + box.width).toBeLessThanOrEqual(footerBox.x + footerBox.width)
-    expect(footerBox.x + footerBox.width - box.x - box.width).toBeLessThan(20)
+    const groupBox = (await group.boundingBox())!
+    expect(box.x).toBeGreaterThanOrEqual(groupBox.x)
+    expect(box.x + box.width).toBeLessThanOrEqual(groupBox.x + groupBox.width)
+    const lastRow = (await group.locator('ol button').last().boundingBox())!
+    expect(box.y).toBeGreaterThanOrEqual(lastRow.y + lastRow.height)
+    await expect(frame.locator('[data-citation-canvas] [data-citation-status]')).toHaveCount(0)
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
     ).toBe(true)

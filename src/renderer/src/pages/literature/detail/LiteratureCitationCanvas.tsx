@@ -34,13 +34,11 @@ export function LiteratureCitationCanvas({
   model,
   marker,
   visible,
-  renderStatus,
   onViewSelected
 }: {
   model: CitationCanvasModel
   marker: string
   visible: boolean
-  renderStatus(outsideView: boolean): React.ReactNode
   onViewSelected(): void
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -830,7 +828,6 @@ export function LiteratureCitationCanvas({
           {t('View selected paper')}
         </Button>
       </div>
-      {renderStatus(false)}
     </div>
   )
 }

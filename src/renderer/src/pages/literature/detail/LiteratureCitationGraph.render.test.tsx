@@ -72,6 +72,13 @@ beforeEach(() => {
   })
 })
 afterEach(cleanup)
+const showPaperList = (): void => {
+  const toggle = document.querySelector<HTMLButtonElement>(
+    '[data-current-frame="true"] [data-citation-paper-list-toggle]'
+  )
+  if (toggle?.getAttribute('aria-expanded') === 'false') fireEvent.click(toggle)
+}
+
 it('shows only returned directed relationships and stages an explicit keyboard-selected node', async () => {
   const onSaved = vi.fn()
   render(<LiteratureCitationGraph item={item} onSaved={onSaved} />)
@@ -174,9 +181,9 @@ it('defaults to all directions and filters merged papers without moving or reque
   const originalPosition = position()
   expect(paper().querySelector('[data-node-mark]')?.getAttribute('data-node-kind')).toBe('both')
   expect(paper().querySelector('[data-node-kind="diamond"]')).toBeTruthy()
-  const legend = document.querySelector('[data-citation-status]')!
-  expect(legend.textContent).toContain('ReferencesLoaded: 1')
-  expect(legend.textContent).toContain('Cited byLoaded: 2')
+  const legend = (): Element => document.querySelector('[data-citation-status]')!
+  expect(legend().textContent).toContain('ReferencesLoaded: 1')
+  expect(legend().textContent).toContain('Cited byLoaded: 2')
   fireEvent.click(paper())
   fireEvent.click(screen.getByRole('tab', { name: 'References' }))
   expect(paper().getAttribute('aria-pressed')).toBe('true')
@@ -184,8 +191,9 @@ it('defaults to all directions and filters merged papers without moving or reque
   expect(position()).toEqual(originalPosition)
   expect(screen.queryByRole('button', { name: 'Select Paper c' })).toBeNull()
   expect(document.querySelectorAll('[data-source][data-target]')).toHaveLength(1)
-  expect(legend.textContent).toContain('ReferencesLoaded: 1')
-  expect(legend.textContent).not.toContain('Cited by')
+  showPaperList()
+  expect(legend().textContent).toContain('ReferencesLoaded: 1')
+  expect(legend().textContent).not.toContain('Cited by')
   fireEvent.click(screen.getByRole('tab', { name: 'Cited by' }))
   expect(paper().getAttribute('aria-pressed')).toBe('true')
   expect(position()).toEqual(originalPosition)
@@ -289,6 +297,7 @@ it('shares the fitted camera across filters and preserves it through paging and 
   fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
   fireEvent.wheel(canvas, { deltaX: 70, deltaY: 80 })
   const citedView = snapshot()
+  showPaperList()
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await screen.findByRole('button', { name: 'Select Paper d' })
   expect(snapshot()).toEqual(citedView)
@@ -328,6 +337,7 @@ it('keeps prior pages on failure and retries the exact provider cursor', async (
   )
   render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
   await screen.findByRole('button', { name: 'Select Paper c' })
+  showPaperList()
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await screen.findByRole('alert')
   expect(screen.getByRole('button', { name: 'Select Paper b' })).toBeTruthy()
@@ -370,7 +380,7 @@ it('retains omitted relationships across successful pages and counts only succes
       <LiteratureCitationStatus
         model={controller}
         sourceName="Europe PMC"
-        outsideView={false}
+        renderRecords={() => null}
         onRestart={vi.fn()}
       />
     )
@@ -380,10 +390,12 @@ it('retains omitted relationships across successful pages and counts only succes
   const omittedMessage =
     'Some relationships could not be matched to a record in Europe PMC and are not shown.'
   expect(screen.getByText(omittedMessage)).toBeTruthy()
+  showPaperList()
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await waitFor(() => expect(controller.states.references.pages).toBe(2))
   expect(screen.getByText(omittedMessage)).toBeTruthy()
   expect(controller.states.references.omitted).toBe(2)
+  showPaperList()
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await screen.findByRole('alert')
   expect(screen.getByText(omittedMessage)).toBeTruthy()
@@ -645,6 +657,7 @@ it('blocks staging and further paging after expiration until the graph is search
   related.mockImplementation(async (request) =>
     result(request, { state: 'unavailable', records: [], issue: 'expired' })
   )
+  showPaperList()
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await screen.findByText('These results expired. Search again.')
   expect(screen.getByRole('button', { name: 'Add to Inbox' })).toHaveProperty('disabled', true)
@@ -780,6 +793,7 @@ it('keeps a saved paper in Inbox when a later page merges its native alias into 
   fireEvent.click(save)
   fireEvent.click(screen.getByRole('button', { name: 'Add to Inbox' }))
   await screen.findByText('In Inbox')
+  showPaperList()
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Select Alias B' })).toBeNull())
   expect(screen.getByRole('button', { name: 'Select Alias A' }).getAttribute('aria-pressed')).toBe(
@@ -898,6 +912,7 @@ it('explores an unsaved paper, restores the parent snapshot and reuses the child
   expect(rootSvg.getAttribute('data-pan-y')).toBe('-73')
   expect(rootSvg.getAttribute('data-pan-x')).toBe('-91')
   expect(outer.scrollTop).toBe(99)
+  showPaperList()
   expect(screen.getByRole('button', { name: 'Load more' })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: 'Set as center' }))
   expect(screen.getByRole('button', { name: 'Select Paper d' }).getAttribute('aria-pressed')).toBe(
@@ -1103,6 +1118,7 @@ it('freezes the initial camera and existing coordinates while paging, then fits 
   )
   render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
   await screen.findByRole('button', { name: 'Select Layout 20' })
+  showPaperList()
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Load more' })).toHaveProperty('disabled', false)
   )
@@ -1113,6 +1129,7 @@ it('freezes the initial camera and existing coordinates while paging, then fits 
     .querySelector('[data-node-mark]')!
   const position = [originalCircle.getAttribute('data-x'), originalCircle.getAttribute('data-y')]
   fireEvent.click(screen.getByRole('button', { name: 'Select Layout 1' }))
+  showPaperList()
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await screen.findByRole('button', { name: 'Select Layout 21' })
   expect(svg.getAttribute('viewBox')).toBe(originalCamera)
@@ -1512,6 +1529,7 @@ it('keeps node shape semantics stable across paging and zoom and offers a direct
   fireEvent.click(screen.getByRole('button', { name: 'View selected paper' }))
   expect(document.activeElement?.hasAttribute('data-citation-inspector-title')).toBe(true)
   fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+  showPaperList()
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await screen.findByRole('button', { name: 'Select Shape 25' })
   svg = screen.getByRole('group', { name: 'Citation graph' })
@@ -1551,12 +1569,14 @@ it('keeps the selected alias in the inspector when a new record bridges two exis
   render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
   await screen.findByRole('button', { name: 'Select Paper c' })
   fireEvent.click(screen.getByRole('button', { name: 'Select Paper c' }))
+  showPaperList()
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Load more' })).toHaveProperty('disabled', false)
   )
   const inspector = document.querySelector<HTMLElement>('[data-citation-inspector]')!
   inspector.scrollTop = 150
   fireEvent.scroll(inspector)
+  showPaperList()
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Select Paper c' })).toBeNull())
   expect(screen.getByRole('button', { name: 'Select Paper b' }).getAttribute('aria-pressed')).toBe(
@@ -1801,6 +1821,7 @@ it('completes ready root pagination while a hidden child first page remains pend
   await waitFor(() => expect(related).toHaveBeenCalledTimes(3))
   fireEvent.click(screen.getByRole('button', { name: 'Back' }))
   try {
+    showPaperList()
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Load more' })))
     expect(related.mock.calls.at(-1)?.[0]).toMatchObject({
       direction: 'references',
@@ -1890,6 +1911,7 @@ it.each([
     )
     render(<LiteratureCitationGraph item={item} provider={provider} onSaved={vi.fn()} />)
     await screen.findByRole('button', { name: `Select ${name} 3` })
+    showPaperList()
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
     await screen.findByText('Citation discovery is temporarily unavailable. Try again.')
     expect(screen.queryByRole('button', { name: 'Select Paper d' })).toBeNull()
@@ -1953,6 +1975,7 @@ it('rejects a different OpenCitations mode during Index graph paging and retries
   )
   render(<LiteratureCitationGraph item={item} provider="opencitations-index" onSaved={vi.fn()} />)
   await waitFor(() => expect(related).toHaveBeenCalledTimes(2))
+  showPaperList()
   fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
   await screen.findByText('Citation discovery is temporarily unavailable. Try again.')
   expect(screen.queryByRole('button', { name: 'Select Index next page' })).toBeNull()
@@ -1991,6 +2014,50 @@ it('defaults an independent graph to Europe PMC and keeps failures on that sourc
   expect(screen.queryByText('Source: Semantic Scholar')).toBeNull()
 })
 
+it('shows loaded papers beside the graph, retries within their group and restores list position', async () => {
+  let pages = 0
+  related.mockImplementation(async (request) =>
+    result(
+      request,
+      request.direction === 'citations'
+        ? { records: [] }
+        : !request.offset
+          ? { records: [record('b')], nextOffset: 20 }
+          : ++pages === 1
+            ? { state: 'unavailable', records: [], issue: 'response-invalid' }
+            : { records: [record('c')] }
+    )
+  )
+  render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
+  const list = await screen.findByRole('region', { name: 'Paper list' })
+  await within(list).findByRole('button', { name: 'Paper b' })
+  expect(document.querySelector('[data-citation-canvas] [data-citation-status]')).toBeNull()
+  const references = within(list).getByRole('region', { name: 'References' })
+  fireEvent.click(within(references).getByRole('button', { name: 'Load more' }))
+  await within(references).findByRole('alert')
+  expect(within(references).getByRole('button', { name: 'Paper b' })).toBeTruthy()
+  expect(
+    within(list)
+      .getByRole('region', { name: 'Papers citing this paper' })
+      .querySelector('[role="alert"]')
+  ).toBeNull()
+  fireEvent.click(within(references).getByRole('button', { name: 'Retry' }))
+  await within(list).findByRole('button', { name: 'Paper c' })
+  expect(related.mock.calls.filter(([request]) => request.offset === 20)).toHaveLength(2)
+  const scroll = document.querySelector<HTMLElement>('[data-citation-inspector]')!
+  scroll.scrollTop = 220
+  fireEvent.scroll(scroll)
+  fireEvent.click(within(list).getByRole('button', { name: 'Paper c' }))
+  expect(screen.queryByRole('region', { name: 'Paper list' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Select Paper c' }).getAttribute('aria-pressed')).toBe(
+    'true'
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Paper list' }))
+  expect(scroll.scrollTop).toBe(220)
+  expect(related).toHaveBeenCalledTimes(4)
+  expect(transact).not.toHaveBeenCalled()
+})
+
 it('discloses the paper list separately and returns to selected details without querying or saving', async () => {
   const reference = record('b')
   reference.item.containerTitle = 'Selected journal'
@@ -2007,7 +2074,7 @@ it('discloses the paper list separately and returns to selected details without 
   expect(within(details).queryByText('Selected journal')).toBeNull()
   expect(within(details).getByRole('button', { name: 'Add to Inbox' })).toBeTruthy()
   const list = within(details).getByRole('region', { name: 'Paper list' })
-  fireEvent.click(within(list).getByRole('button', { name: '3. Paper c' }))
+  fireEvent.click(within(list).getByRole('button', { name: 'Paper c' }))
   expect(listToggle.getAttribute('aria-expanded')).toBe('false')
   expect(within(details).getByRole('heading', { name: 'Paper c' })).toBe(document.activeElement)
   expect(screen.getByRole('button', { name: 'Select Paper c' }).getAttribute('aria-pressed')).toBe(
@@ -2023,7 +2090,7 @@ it('keeps narrow details recoverable, opens them on selection and preserves came
   try {
     render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
     await screen.findByRole('button', { name: 'Select Paper c' })
-    const toggle = screen.getByRole('button', { name: 'Selected paper' })
+    const toggle = screen.getByRole('button', { name: 'Paper list' })
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
     expect(screen.queryByRole('button', { name: 'Add to Inbox' })).toBeNull()
     const node = screen.getByRole('button', { name: 'Select Paper b' })

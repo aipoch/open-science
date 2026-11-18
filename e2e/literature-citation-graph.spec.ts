@@ -143,10 +143,10 @@ test('Electron graph restores visible focus when a resize collapses details', as
   await expect(selected).toHaveAttribute('aria-pressed', 'true')
   await disclosure.click()
   await expect(disclosure).toHaveAttribute('aria-expanded', 'true')
-  await expect(frame.locator('[data-citation-paper-list-toggle]')).toHaveAttribute(
-    'aria-expanded',
-    'false'
-  )
+  await expect(list).toHaveAttribute('aria-expanded', 'true')
+  await expect(frame.getByRole('region', { name: 'Paper list', exact: true })).toBeVisible()
+  await list.click()
+  await expect(list).toHaveAttribute('aria-expanded', 'false')
   await expect(frame.locator('[data-citation-inspector-title]')).toBeVisible()
   await captureGraph(graphApp, info, 'electron-graph-375-resize-focus')
 })
