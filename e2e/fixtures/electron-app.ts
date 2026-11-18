@@ -1,3 +1,4 @@
+import { CODEBUDDY_VERSION } from '../../src/main/settings/codebuddy-install'
 import {
   observeFixtureService,
   cleanupObservedFixtureService,
@@ -1368,13 +1369,13 @@ class ElectronAppHarness implements ElectronApp {
       await writeFile(
         codebuddyPath,
         process.platform === 'win32'
-          ? `@echo off\r\nif "%~1"=="--version" (echo 2.138.0 & exit /b 0)\r\n"${process.execPath}" "${FAKE_AGENT_PATH}" %*\r\n`
-          : `#!/bin/sh\nif [ "$1" = "--version" ]; then echo 2.138.0; exit 0; fi\nexec ${shellQuote(process.execPath)} ${shellQuote(FAKE_AGENT_PATH)} "$@"\n`,
+          ? `@echo off\r\nif "%~1"=="--version" (echo ${CODEBUDDY_VERSION} & exit /b 0)\r\n"${process.execPath}" "${FAKE_AGENT_PATH}" %*\r\n`
+          : `#!/bin/sh\nif [ "$1" = "--version" ]; then echo ${CODEBUDDY_VERSION}; exit 0; fi\nexec ${shellQuote(process.execPath)} ${shellQuote(FAKE_AGENT_PATH)} "$@"\n`,
         'utf8'
       )
       if (process.platform !== 'win32') await chmod(codebuddyPath, 0o755)
       settings.codebuddyPath = codebuddyPath
-      settings.codebuddyVersion = '2.138.0'
+      settings.codebuddyVersion = CODEBUDDY_VERSION
     }
     if (
       process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS ||

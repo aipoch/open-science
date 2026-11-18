@@ -20,8 +20,8 @@ const { encryptKey } = await import('./crypto')
 
 describe('ProviderRuntimeProjectionOwner', () => {
   it.each([
-    ['internal', 'hy3', 'default-model'],
-    ['external', 'default-model', 'hy3']
+    ['internal', 'hy4std', 'default-model'],
+    ['external', 'default-model', 'hy4std']
   ] as const)(
     'uses the %s base catalog until an account catalog is available',
     (site, first, otherSite) => {

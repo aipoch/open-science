@@ -1,1 +1,1 @@
-export const CODEBUDDY_VERSION = '2.138.0'
+export const CODEBUDDY_VERSION = '2.185.0'

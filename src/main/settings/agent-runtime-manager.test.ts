@@ -1169,7 +1169,7 @@ describe('AgentRuntimeManager', () => {
         return {
           result: { installId: options.installId, ok: true },
           resolvedPath: join(storageRoot, 'installed', 'codebuddy'),
-          version: '2.138.0'
+          version: CODEBUDDY_VERSION
         }
       })
     const claudePath = join(storageRoot, 'installed', 'claude')
