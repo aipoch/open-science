@@ -42,7 +42,7 @@ const readerSource = `
   })
 `
 
-/** The caller passes input as both backend descriptors and destroys its own copy after spawn. */
+/** Pass input/control to the backend, then destroy both launcher copies after spawn. */
 export async function startLaunchLogReader(node, fileDescriptor, serviceLauncher) {
   const args = ['--input-type=commonjs', '-e', readerSource]
   const reader = spawn(serviceLauncher ?? node, serviceLauncher ? [node, ...args] : args, {

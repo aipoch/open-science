@@ -447,6 +447,7 @@ describe('headless startup', () => {
         })
         child.unref()
         capture.input.destroy()
+        capture.control.destroy()
       `
         ],
         { cwd: directory, stdio: 'ignore', windowsHide: true }
