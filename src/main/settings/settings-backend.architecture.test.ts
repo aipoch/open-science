@@ -425,6 +425,7 @@ describe('Settings backend ownership architecture', () => {
       'cancelClaudeLogin',
       'cancelCodexLogin',
       'cancelXaiOAuthLogin',
+      'codeBuddyAccount',
       'completeBootstrapCodex',
       'deleteProvider',
       'dispose',
@@ -511,7 +512,7 @@ describe('Settings backend ownership architecture', () => {
         getLabCase getLabCaseDownload getLabView getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
         cancelNotebookNetworkSetup importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installPi installRecommendedWslDistro installSkillMarketplace installWslPlatform isEncryptionAvailable
         isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listLabCases listSkillMarketplace listSkills listSpecialistSkillCatalog listUserSkills
-        dispose initializeLab loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
+        dispose codeBuddyAccount initializeLab loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutLab logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
         markPathsNormalized migrateAgentHomeSkillIdentities openHarnessSession openWslTerminal prepareDelegatedSkills previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip refreshLab
@@ -725,6 +726,7 @@ describe('Settings backend ownership architecture', () => {
       'accountEmail',
       'apiEndpoints',
       'baseUrl',
+      'codeBuddyAuthMode',
       'codexAuthMode',
       'codexAutoUseHttps',
       'codexTransport',

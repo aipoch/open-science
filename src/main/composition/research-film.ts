@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { setTimeout as delay } from 'node:timers/promises'
 import {
   createResearchFilmAuthor,
   createResearchVideoGenerator,
@@ -51,6 +52,28 @@ import { desktopFileInteraction } from '../desktop-interaction'
 import { FILM_VISUAL_REVIEW_PROMPT, reviewFilmFrames } from '../research-video/visual-review'
 import type { AcpMessageImage } from '../../shared/acp-image-contract'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
+
+// ACP adapters do not expose a common HTTP retry contract. Retry only concrete transient
+// network failures; unsupported transports, configuration errors and unknown failures stay terminal.
+const isTransientFilmNetworkError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false
+  const codes = new Set([
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'EAI_AGAIN',
+    'UND_ERR_SOCKET',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_HEADERS_TIMEOUT',
+    'UND_ERR_BODY_TIMEOUT'
+  ])
+  return [error, error.cause].some(
+    (value) =>
+      value instanceof Error &&
+      'code' in value &&
+      typeof value.code === 'string' &&
+      codes.has(value.code)
+  )
+}
 
 /** Button-owned generation: no conversation tools, Artifact publication or Notebook transport. */
 export async function composeResearchFilm({
@@ -116,6 +139,7 @@ export async function composeResearchFilm({
     appVersion: runtimeMetadata().version,
     configRoot,
     profileNamespace: 'research-video',
+    requireConfirmedCleanup: true,
     allowNativeCodexSubscription: true,
     resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
   })
@@ -177,6 +201,9 @@ export async function composeResearchFilm({
       filmLog.info('film model usage still pending', { requestId: record.eventId })
     }
   }
+  // Every authoring/review call retains the same frozen source, including parallel scenes.
+  // Count additional physical calls across correction passes without persisting retry state.
+  const automaticRetries = new WeakMap<ResearchVideoSessionSource, number>()
   const inferResearchVideo = async (
     source: ResearchVideoSessionSource,
     systemPrompt: string,
@@ -204,126 +231,154 @@ export async function composeResearchFilm({
       throw failure
     })
     signal.throwIfAborted()
-    const requestId = randomUUID()
-    const started = performance.now()
-    const correction =
-      payload && typeof payload === 'object' && 'correction' in payload ? payload.correction : null
-    const fields = {
-      ...currentFilmAttempt(),
-      requestId,
-      sessionId: source.provenance.sessionId,
-      activeBranchId: source.provenance.branchId,
-      phase:
-        systemPrompt === REPLAY_AUTHORING_PROMPT
-          ? 'replay'
-          : systemPrompt.startsWith(RESEARCH_VIDEO_SCREENPLAY_PROMPT)
-            ? 'screenplay'
-            : systemPrompt.startsWith(FILM_SCRIPT_REVIEW_PROMPT)
-              ? 'script-review'
-              : systemPrompt === FILM_VISUAL_REVIEW_PROMPT
-                ? 'visual-review'
-                : 'animation',
-      purpose: correction ? 'correction' : undefined,
-      frameworkId: target.frameworkId,
-      providerId: target.providerId
-    }
-    filmLog.info('film model request', fields)
-    const modelDeadline = AbortSignal.timeout(300_000)
-    const inferenceSignal = AbortSignal.any([signal, modelDeadline])
-    const response = await Promise.resolve()
-      .then(() =>
-        researchVideoInference.run({
-          target,
-          prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
-          systemPrompt,
-          images,
-          agentName:
-            source.provenance.mode === 'operation-replay'
-              ? 'Operation replay'
-              : 'Research explanation',
-          description: 'Generate a research film from a frozen session',
-          signal: inferenceSignal
-        })
-      )
-      .catch(async (error: unknown) => {
-        // The runner reports all aborts as cancellation. Only our own deadline proves a timeout.
-        const timedOut =
-          modelDeadline.aborted &&
-          inferenceSignal.reason === modelDeadline.reason &&
-          (error === modelDeadline.reason ||
-            (error instanceof RestrictedInferenceError && error.code === 'cancelled'))
-        const usage = extractRestrictedInferenceUsage(error)
-        filmLog.info('film model failure', {
+    for (let attempt = 0; ; attempt++) {
+      signal.throwIfAborted()
+      let retryable = false
+      const requestId = randomUUID()
+      const started = performance.now()
+      const correction =
+        payload && typeof payload === 'object' && 'correction' in payload
+          ? payload.correction
+          : null
+      const fields = {
+        ...currentFilmAttempt(),
+        requestId,
+        sessionId: source.provenance.sessionId,
+        activeBranchId: source.provenance.branchId,
+        phase:
+          systemPrompt === REPLAY_AUTHORING_PROMPT
+            ? 'replay'
+            : systemPrompt.startsWith(RESEARCH_VIDEO_SCREENPLAY_PROMPT)
+              ? 'screenplay'
+              : systemPrompt.startsWith(FILM_SCRIPT_REVIEW_PROMPT)
+                ? 'script-review'
+                : systemPrompt === FILM_VISUAL_REVIEW_PROMPT
+                  ? 'visual-review'
+                  : 'animation',
+        purpose: correction ? 'correction' : undefined,
+        frameworkId: target.frameworkId,
+        providerId: target.providerId
+      }
+      try {
+        filmLog.info('film model request', fields)
+        const modelDeadline = AbortSignal.timeout(300_000)
+        const inferenceSignal = AbortSignal.any([signal, modelDeadline])
+        const response = await Promise.resolve()
+          .then(() =>
+            researchVideoInference.run({
+              target,
+              prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
+              systemPrompt,
+              images,
+              agentName:
+                source.provenance.mode === 'operation-replay'
+                  ? 'Operation replay'
+                  : 'Research explanation',
+              description: 'Generate a research film from a frozen session',
+              signal: inferenceSignal
+            })
+          )
+          .catch(async (error: unknown) => {
+            // The runner reports all aborts as cancellation. Only our own deadline proves a timeout.
+            const timedOut =
+              modelDeadline.aborted &&
+              inferenceSignal.reason === modelDeadline.reason &&
+              (error === modelDeadline.reason ||
+                (error instanceof RestrictedInferenceError && error.code === 'cancelled'))
+            retryable =
+              timedOut ||
+              (error instanceof RestrictedInferenceError
+                ? error.code === 'cancelled'
+                : isTransientFilmNetworkError(error))
+            const usage = extractRestrictedInferenceUsage(error)
+            filmLog.info('film model failure', {
+              ...fields,
+              durationMs: Math.round(performance.now() - started),
+              errorCategory: timedOut
+                ? 'timeout'
+                : error instanceof RestrictedInferenceError
+                  ? error.code
+                  : 'inference',
+              outputTokens: usage?.outputTokens
+            })
+            if (usage)
+              await recordUsage(
+                {
+                  projectId: source.provenance.projectId,
+                  sessionId: source.provenance.sessionId,
+                  eventId: requestId,
+                  source: 'host-llm',
+                  frameworkId: target.frameworkId,
+                  providerId: target.providerId,
+                  model: target.model.kind === 'required' ? target.model.id : undefined,
+                  completedAtMs: Date.now(),
+                  usage
+                },
+                signal
+              )
+            signal.throwIfAborted()
+            if (timedOut) throw new Error(RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE, { cause: error })
+            throw error
+          })
+        filmLog.info('film model response', {
           ...fields,
-          durationMs: Math.round(performance.now() - started),
-          errorCategory: timedOut
-            ? 'timeout'
-            : error instanceof RestrictedInferenceError
-              ? error.code
-              : 'inference',
-          outputTokens: usage?.outputTokens
+          model: response.model,
+          reason: response.stopReason,
+          outputBytes: Buffer.byteLength(response.text),
+          outputTokens: response.usage?.outputTokens,
+          inputTokens: response.usage?.inputTokens,
+          durationMs: Math.round(performance.now() - started)
         })
-        if (usage)
+        if (response.usage)
           await recordUsage(
             {
               projectId: source.provenance.projectId,
               sessionId: source.provenance.sessionId,
               eventId: requestId,
               source: 'host-llm',
-              frameworkId: target.frameworkId,
+              frameworkId: response.frameworkId,
               providerId: target.providerId,
-              model: target.model.kind === 'required' ? target.model.id : undefined,
+              model: response.model,
               completedAtMs: Date.now(),
-              usage
+              usage: response.usage
             },
             signal
           )
         signal.throwIfAborted()
-        if (timedOut) throw new Error(RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE, { cause: error })
-        throw error
-      })
-    filmLog.info('film model response', {
-      ...fields,
-      model: response.model,
-      reason: response.stopReason,
-      outputBytes: Buffer.byteLength(response.text),
-      outputTokens: response.usage?.outputTokens,
-      inputTokens: response.usage?.inputTokens,
-      durationMs: Math.round(performance.now() - started)
-    })
-    if (response.usage)
-      await recordUsage(
-        {
-          projectId: source.provenance.projectId,
-          sessionId: source.provenance.sessionId,
-          eventId: requestId,
-          source: 'host-llm',
-          frameworkId: response.frameworkId,
-          providerId: target.providerId,
-          model: response.model,
-          completedAtMs: Date.now(),
-          usage: response.usage
-        },
-        signal
-      )
-    signal.throwIfAborted()
-    if (response.stopReason === 'max_tokens')
-      throw new ResearchFilmOutputLimitError(
-        'Research film generation reached the model output token limit. Increase the model output limit or select another model and try again.'
-      )
-    if (response.stopReason === 'max_turn_requests')
-      throw new ResearchFilmIncompleteError(
-        'Research film generation stopped before completing (max_turn_requests). Try again or select another model.'
-      )
-    if (response.stopReason !== 'end_turn')
-      throw new Error(
-        `Research film generation stopped before completing (${response.stopReason}). Try again or select another model.`
-      )
-    if (!response.text.trim())
-      throw new ResearchFilmIncompleteError(
-        'The model returned no research film content. Try again or select another model.'
-      )
-    return response.text
+        if (response.stopReason === 'max_tokens')
+          throw new ResearchFilmOutputLimitError(
+            'Research film generation reached the model output token limit. Increase the model output limit or select another model and try again.'
+          )
+        if (response.stopReason === 'max_turn_requests')
+          throw new ResearchFilmIncompleteError(
+            'Research film generation stopped before completing (max_turn_requests). Try again or select another model.'
+          )
+        if (response.stopReason === 'cancelled') retryable = true
+        if (response.stopReason !== 'end_turn')
+          throw new Error(
+            `Research film generation stopped before completing (${response.stopReason}). Try again or select another model.`
+          )
+        if (!response.text.trim())
+          throw new ResearchFilmIncompleteError(
+            'The model returned no research film content. Try again or select another model.'
+          )
+        return response.text
+      } catch (error) {
+        signal.throwIfAborted()
+        const used = automaticRetries.get(source) ?? 0
+        if (!retryable || attempt >= 1 || used >= 2) throw error
+        // Reserve synchronously: parallel animation lanes share one allowance.
+        automaticRetries.set(source, used + 1)
+        const delayMs = 10_000 + Math.floor(Math.random() * 2_001)
+        filmLog.info('film model retry scheduled', {
+          ...fields,
+          retry: used + 1,
+          delayMs
+        })
+        // Film requires confirmed runtime cleanup; unconfirmed exits are not retryable.
+        await delay(delayMs, undefined, { signal })
+      }
+    }
   }
   let replayNotebook: NotebookRunRepository | undefined
   let replayNotebookRoot: string | undefined

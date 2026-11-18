@@ -323,6 +323,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.cancelNotebookNetworkSetup': 'settings:cancel-notebook-network-setup',
   'settings.cancelXaiOAuthLogin': 'settings:cancel-xai-oauth-login',
   'settings.checkEnvironment': 'settings:check-environment',
+  'settings.codeBuddyAccount': 'settings:codebuddy-account',
   'settings.createDeviceCredential': 'settings:create-device-credential',
   'settings.createSkill': 'settings:create-skill',
   'settings.createWslSupportHandoff': 'settings:create-wsl-support-handoff',

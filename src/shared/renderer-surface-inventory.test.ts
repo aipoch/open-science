@@ -316,6 +316,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'cancel-device-credential-authentication',
     'cancel-isolated-claude-login',
     'cancel-xai-oauth-login',
+    'codebuddy-account',
     'create-device-credential',
     'create-wsl-support-handoff',
     'disconnect-custom-server',

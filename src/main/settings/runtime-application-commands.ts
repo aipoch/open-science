@@ -27,6 +27,7 @@ type RuntimeSettingsCommandWorkflows = Pick<
   | 'loginClaudeShared'
   | 'loginIsolatedClaude'
   | 'loginIsolatedClaudeBrowser'
+  | 'codeBuddyAccount'
   | 'loginIsolatedCodex'
   | 'logoutClaudeShared'
   | 'logoutIsolatedClaude'
@@ -145,6 +146,11 @@ const settingsRuntimeApplicationCommands = Object.freeze({
     readonly [],
     WorkflowResult<'logoutIsolatedClaude'>
   >('settings:logout-isolated-claude'),
+  codeBuddyAccount: defineApplicationCommand<
+    'settings:codebuddy-account',
+    WorkflowArgs<'codeBuddyAccount'>,
+    WorkflowResult<'codeBuddyAccount'>
+  >('settings:codebuddy-account'),
   loginIsolatedCodex: defineApplicationCommand<
     'settings:login-isolated-codex',
     readonly [],
@@ -223,6 +229,7 @@ const settingsRuntimeApplicationCommandGroup = defineApplicationCommandGroup('se
   settingsRuntimeApplicationCommands.loginIsolatedClaude,
   settingsRuntimeApplicationCommands.loginIsolatedClaudeBrowser,
   settingsRuntimeApplicationCommands.logoutIsolatedClaude,
+  settingsRuntimeApplicationCommands.codeBuddyAccount,
   settingsRuntimeApplicationCommands.loginIsolatedCodex,
   settingsRuntimeApplicationCommands.logoutIsolatedCodex,
   settingsRuntimeApplicationCommands.beginXaiOAuthLogin,
@@ -341,6 +348,15 @@ const registerRuntimeSettingsApplicationCommands = (
         return dependencies.snapshotCommits.projectAfter(
           dependencies.workflows.logoutIsolatedClaude()
         )
+      },
+      'settings:codebuddy-account': ({ callerContext, args: [request] }) => {
+        requireLocalCaller(callerContext, 'settings:codebuddy-account')
+        const result = dependencies.workflows.codeBuddyAccount(request)
+        return request.action === 'login' ||
+          request.action === 'logout' ||
+          request.action === 'refresh'
+          ? dependencies.snapshotCommits.projectAfter(result)
+          : result
       },
       'settings:login-isolated-codex': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:login-isolated-codex')

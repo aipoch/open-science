@@ -2487,6 +2487,11 @@ class AcpRuntime {
   async buildReviewerSession(request: ReviewerSessionRequest): Promise<ReviewerSessionResult> {
     return this.withOperationLease(() =>
       this.reviewerSessions.create(request, {
+        configureModel: async (connection, session) => {
+          const backend = this.backendGeneration.current
+          if (backend.modelRoute === 'codebuddy-subscription')
+            await this.sessionConfigurator.applyModel({ backend, connection, session })
+        },
         ensureConnected: (cwd) => this.ensureConnected(cwd)
       })
     )

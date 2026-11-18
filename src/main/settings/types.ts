@@ -1,3 +1,4 @@
+import type { CodeBuddyAuthMode } from '../../shared/codebuddy-subscription'
 import type { McpOAuthConfig, McpOAuthState } from '@aipoch/connector-mcp-client'
 import type { ClassificationAdapter } from '@aipoch/providers'
 import type { ClassificationBinding } from '../../shared/classification'
@@ -80,6 +81,7 @@ export type StoredProvider = {
   type: ProviderType
   // Records whether the app-owned Codex profile came from an import or an in-app sign-in. Runtime
   // behavior still keys on the normalized codex-isolated provider type.
+  codeBuddyAuthMode?: CodeBuddyAuthMode
   codexAuthMode?: CodexSubscriptionAuthMode
   // Transport preference for the app-owned Codex subscription profile. Absence is Auto.
   codexTransport?: CodexSubscriptionTransport
@@ -138,7 +140,7 @@ export type StoredProvider = {
   // Recorded when a validation fails; cleared on the next success or a credential change. Kept so the
   // "unverified" warning survives a restart.
   lastValidationFailure?: ProviderValidationFailure
-  // claude-shared credentials live in the user's global profile and cannot be removed safely by the
+  // Shared Claude and CodeBuddy credentials live in the user's personal profile and cannot be removed safely by the
   // app. This timestamp records an app-local disconnect so Open-Science stops using that profile
   // until the user explicitly signs in again.
   disconnectedAt?: number

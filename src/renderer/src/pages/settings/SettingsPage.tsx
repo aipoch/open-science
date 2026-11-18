@@ -1,3 +1,6 @@
+import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
+import { isDesktopRenderer } from '@/lib/interface-scale'
+import { CodeBuddySignIn } from './CodeBuddySubscriptionRow'
 import { type SettingsEditorLeaveState, SettingsFormFooter } from './SettingsLayout'
 import { dismissSettingsManualUpdateGuide } from './settings-manual-update-guide'
 import { createBookmarkPreviewItem } from '../workspace/annotations/annotation-reveal'
@@ -227,6 +230,9 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
       provider.type === 'codex-shared' || provider.type === 'codex-isolated'
         ? resolveCodexSubscriptionType(provider)
         : provider.type,
+    codeBuddyAuthMode: provider.codeBuddyAuthMode,
+    codeBuddySite:
+      provider.type === 'codebuddy-subscription' ? codeBuddySiteForId(provider.id) : undefined,
     codexTransport: provider.codexTransport ?? 'auto',
     name: provider.name,
     baseUrl: provider.baseUrl ?? '',
@@ -1160,6 +1166,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   }
 
   const closeForm = (): void => navigate({ panel: 'model', view: { kind: 'list' } })
+  const finishProviderForm = (): void => {
+    // The completed write has settled this draft. It must not prompt or honor an older leave request.
+    providerEditorLeaveState.current = null
+    skillLeaveReturnFocus.current = null
+    setPendingSkillLeave(null)
+    closeForm()
+  }
   const canTestConnection = formValue.type === 'custom' || formValue.type === 'official'
   const prospectiveRequest = (): UpsertProviderRequest => ({
     ...toUpsertRequest(formValue, editingProvider?.id),
@@ -1239,11 +1252,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             })
         }
       }
-      // The completed write has settled this draft. It must not prompt or honor an older leave request.
-      providerEditorLeaveState.current = null
-      skillLeaveReturnFocus.current = null
-      setPendingSkillLeave(null)
-      closeForm()
+      finishProviderForm()
     } catch (error) {
       if (generation !== formOperationGeneration.current) return
       setStatusOk(false)
@@ -1889,7 +1898,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       // Add/edit provider is a secondary page reached via the shared back/forward arrows.
                       <div className="p-5">
                         {/* Secret writes fail closed when the OS keychain is unavailable. */}
-                        {!encryptionAvailable ? (
+                        {!encryptionAvailable && formValue.type !== 'codebuddy-subscription' ? (
                           <ErrorNotice
                             inline
                             role="alert"
@@ -2007,6 +2016,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           isRefreshingModels={isRefreshingModels}
                           disabled={isSaving}
                           encryptionAvailable={encryptionAvailable}
+                          codeBuddyProviders={
+                            agentFrameworkId === 'codebuddy' &&
+                            modelView.kind === 'create' &&
+                            isDesktopRenderer()
+                              ? providers.map((p) => p.id)
+                              : undefined
+                          }
                           showCodexSubscriptions={
                             (agentFrameworkId === 'codex' ||
                               agentFrameworkId === 'open-science-agent') &&
@@ -2095,34 +2111,49 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       description={statusMessage}
                     />
                   ) : null}
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      {canTestConnection ? (
+                  {formValue.type === 'codebuddy-subscription' && formValue.codeBuddySite ? (
+                    <CodeBuddySignIn
+                      key={formValue.codeBuddySite + (formValue.codeBuddyAuthMode ?? 'isolated')}
+                      mode={formValue.codeBuddyAuthMode ?? 'isolated'}
+                      site={formValue.codeBuddySite}
+                      onAdded={finishProviderForm}
+                      onCancel={closeForm}
+                    />
+                  ) : (
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        {canTestConnection ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={!canSave}
+                            onClick={() => void handleTestConnection()}
+                          >
+                            {isTestingConnection ? (
+                              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                            ) : null}
+                            {isTestingConnection ? t('Testing…') : t('Test connection')}
+                          </Button>
+                        ) : null}
+                      </div>
+                      <div className="flex gap-2">
                         <Button
                           type="button"
-                          variant="outline"
-                          disabled={!canSave}
-                          onClick={() => void handleTestConnection()}
+                          variant="ghost"
+                          onClick={closeForm}
+                          disabled={isSaving}
                         >
-                          {isTestingConnection ? (
+                          {t('Cancel')}
+                        </Button>
+                        <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
+                          {isSaving ? (
                             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                           ) : null}
-                          {isTestingConnection ? t('Testing…') : t('Test connection')}
+                          {isSaving ? t('Saving…') : t('Save')}
                         </Button>
-                      ) : null}
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button type="button" variant="ghost" onClick={closeForm} disabled={isSaving}>
-                        {t('Cancel')}
-                      </Button>
-                      <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
-                        {isSaving ? (
-                          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                        ) : null}
-                        {isSaving ? t('Saving…') : t('Save')}
-                      </Button>
-                    </div>
-                  </div>
+                  )}
                 </SettingsFormFooter>
               ) : null}
             </div>

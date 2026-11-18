@@ -83,6 +83,8 @@ export const resolveProviderReasoningEffortProfile = (
     case 'claude-shared':
     case 'claude-isolated':
       return model ? resolveVendorModelReasoningEffort('anthropic', model) : { supported: false }
+    case 'codebuddy-subscription':
+      return { supported: false }
     case 'xai-subscription':
       return resolveVendorModelReasoningEffort('xai', model)
     case 'lab': {

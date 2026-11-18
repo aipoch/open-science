@@ -247,6 +247,7 @@ const prepareSideChatBackend = (
   profileRoot: string
 ): Promise<ResolvedAgentBackend> =>
   prepareRestrictedBackend(backend, profileRoot, {
+    allowCodeBuddySubscription: true,
     agentName: SIDE_CHAT_AGENT_NAME,
     description: 'Restricted Side chat with one relationship-bound message tool.',
     systemPrompt: SIDE_CHAT_SYSTEM_PROMPT,

@@ -1,3 +1,4 @@
+import type { CodeBuddyAuthMode } from './codebuddy-subscription'
 import type {
   AgentHomeSkillRef,
   GitHubRepositorySearchView,
@@ -47,6 +48,7 @@ export type ProviderType =
   | 'official'
   | 'codex-shared'
   | 'codex-isolated'
+  | 'codebuddy-subscription'
   | 'xai-subscription'
   | 'lab'
 
@@ -135,6 +137,7 @@ export type ProviderView = {
   configRevision?: number
   id: string
   type: ProviderType
+  codeBuddyAuthMode?: CodeBuddyAuthMode
   codexAuthMode?: CodexSubscriptionAuthMode
   codexTransport?: CodexSubscriptionTransport
   // Host-derived capability of the built-in Agent; native Codex remains independently available.
