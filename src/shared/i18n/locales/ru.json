@@ -200,6 +200,9 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены."
   },
   "renderer": {
+    "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (закладывайте {{min}}–{{max}} мин)",
+    "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}} (закладывайте {{min}}–{{max}} мин на минуту фильма)",
+    "Estimates allow extra time and vary with your computer and the film's visuals.": "Оценки включают запас времени и зависят от вашего компьютера и визуального содержания фильма.",
     "Includes the session app in motion.": "Показана работа приложения из сеанса.",
     "Uses a drawn illustration of the session app.": "Приложение из сеанса показано на рисунке.",
     "Pros": "Преимущества",
@@ -8885,6 +8888,9 @@
     "After edit": "После редактирования",
     "Before edit": "До редактирования",
     "Comparison position": "Положение разделителя",
-    "Compare with input image": "Сравнить с исходным изображением"
+    "Compare with input image": "Сравнить с исходным изображением",
+    "Video ready": "Видео готово",
+    "Your {{resolution}} video has been saved.": "Видео в разрешении {{resolution}} сохранено.",
+    "Play video": "Воспроизвести видео"
   }
 }

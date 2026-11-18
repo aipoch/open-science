@@ -368,7 +368,7 @@
   })()
   window.__seek = (t) => seek(t)
   if (RENDER) return
-  parent.postMessage({ type: 'open-science-research-video-ready' }, '*')
+  parent.postMessage({ type: 'open-science-research-video-ready', duration: TL.duration }, '*')
 
   // ---- preview player ----
   const fit = () => {

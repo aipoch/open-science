@@ -197,6 +197,9 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "啟動在存取系統憑證時停止。現有憑證和設定檔資料已保留。"
   },
   "renderer": {
+    "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（預留 {{min}}–{{max}} 分鐘）",
+    "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}}（每分鐘影片預留 {{min}}–{{max}} 分鐘）",
+    "Estimates allow extra time and vary with your computer and the film's visuals.": "估算已預留額外時間，實際耗時取決於電腦效能和影片的視覺內容。",
     "Includes the session app in motion.": "包含工作階段中應用程式的動態示範。",
     "Uses a drawn illustration of the session app.": "使用插圖呈現本次工作階段中的應用程式。",
     "Pros": "優點",
@@ -8380,6 +8383,9 @@
     "After edit": "修改後",
     "Before edit": "修改前",
     "Comparison position": "對比分隔位置",
-    "Compare with input image": "與輸入圖對比"
+    "Compare with input image": "與輸入圖對比",
+    "Video ready": "影片已就緒",
+    "Your {{resolution}} video has been saved.": "您的 {{resolution}} 影片已儲存。",
+    "Play video": "播放影片"
   }
 }

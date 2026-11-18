@@ -2,8 +2,10 @@ import { parseFragment } from 'parse5'
 import { researchVideoFilename } from '../../shared/research-video-presentation'
 import type {
   ResearchVideoProgress,
-  ResearchVideoExportResult
+  ResearchVideoExportResult,
+  ResearchVideoResolution
 } from '@aipoch/research-film/contracts'
+import { researchVideoResolutionSchema } from '@aipoch/research-film/contracts'
 import type { LocalModelSnapshot } from '../../shared/local-models'
 import type { createVideoExportTools } from '@aipoch/research-film'
 import { createWriteStream } from 'node:fs'
@@ -21,13 +23,18 @@ import { publishUserFile } from '../user-file-publisher'
 import { waitForFilmStep } from './wait'
 
 const requestSchema = z.object({ resourceId: z.string().min(1).max(200) })
+const exportRequestSchema = requestSchema
+  .extend({
+    resolution: researchVideoResolutionSchema.default('720p')
+  })
+  .strict()
 export function createResearchVideoExportControl(
   previews: Pick<ManagedPreviewOwnerRegistry, 'readRange'>,
   tools?: ReturnType<typeof createVideoExportTools<LocalModelSnapshot>>
 ): {
   export(
     lease: ApplicationCallerLease,
-    request: { resourceId: string },
+    request: { resourceId: string; resolution?: ResearchVideoResolution },
     callerId?: string
   ): Promise<ResearchVideoExportResult>
   progress(
@@ -60,7 +67,7 @@ export function createResearchVideoExportControl(
       return { ...(native ?? current.progress), startedAt: current.progress.startedAt }
     },
     async export(lease, rawRequest, callerId) {
-      const { resourceId } = requestSchema.parse(rawRequest)
+      const { resourceId, resolution } = exportRequestSchema.parse(rawRequest)
       const key = callerLeaseOwnershipKey(lease)
       if (active.has(key)) throw new Error('A research video export is already running')
       if (pendingSourceReads.has(key))
@@ -143,7 +150,12 @@ export function createResearchVideoExportControl(
         const caller = currentDesktopCaller()
         const render = (): Promise<string> =>
           desktop.renderResearchVideo!(
-            { htmlPath, encoderPath: encoders.encoderPath, probePath: encoders.probePath },
+            {
+              htmlPath,
+              resolution,
+              encoderPath: encoders.encoderPath,
+              probePath: encoders.probePath
+            },
             signal
           )
         const output = await (caller ? withDesktopCaller({ ...caller, signal }, render) : render())
@@ -153,7 +165,7 @@ export function createResearchVideoExportControl(
         await publishUserFile(selected.filePath, (temporary) => copyFile(output, temporary), {
           signal
         })
-        return { canceled: false }
+        return { canceled: false, filePath: selected.filePath }
       } finally {
         try {
           if (directory) await rm(directory, { recursive: true, force: true })

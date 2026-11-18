@@ -1,5 +1,6 @@
 import {
   filmVisualResultSchema,
+  researchVideoResolutionSchema,
   researchVideoProgressSchema
 } from '@aipoch/research-film/contracts'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -193,6 +194,7 @@ export const desktopNativeOperationSchema = z.discriminatedUnion('operation', [
   z
     .object({
       operation: z.literal('research-video-mp4'),
+      resolution: researchVideoResolutionSchema.optional(),
       htmlPath: path,
       encoderPath: path,
       probePath: path

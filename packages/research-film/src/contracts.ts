@@ -1,6 +1,7 @@
 export * from './progress.js'
 export * from './visual-review.js'
 export * from './playback.js'
+export * from './export-options.js'
 export {
   RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES,
   type ResearchVideoSessionSource

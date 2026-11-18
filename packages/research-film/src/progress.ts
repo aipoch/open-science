@@ -44,4 +44,6 @@ export type ResearchVideoStep = Omit<ResearchVideoProgress, 'startedAt' | 'ended
 export type ResearchVideoExportResult = {
   canceled: boolean
   needsInstallation?: { downloadBytes: number }
+  /** Present only after the MP4 has been verified and saved to the chosen destination. */
+  filePath?: string
 }

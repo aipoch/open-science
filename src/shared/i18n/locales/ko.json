@@ -197,6 +197,9 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "시스템 자격 증명에 접근하는 동안 시작이 중지되었습니다. 기존 자격 증명과 프로필 데이터는 보존되었습니다."
   },
   "renderer": {
+    "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (예상 소요 시간: {{min}}–{{max}}분)",
+    "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}} (영상 1분당 예상 소요 시간: {{min}}–{{max}}분)",
+    "Estimates allow extra time and vary with your computer and the film's visuals.": "여유 있게 잡은 예상 시간이며, 컴퓨터 성능과 영상의 시각 요소에 따라 달라집니다.",
     "Includes the session app in motion.": "세션 앱이 실행되는 모습을 보여줍니다.",
     "Uses a drawn illustration of the session app.": "세션 앱을 그림으로 보여줍니다.",
     "Pros": "장점",
@@ -8378,6 +8381,9 @@
     "After edit": "편집 후",
     "Before edit": "편집 전",
     "Comparison position": "비교 구분선 위치",
-    "Compare with input image": "입력 이미지와 비교"
+    "Compare with input image": "입력 이미지와 비교",
+    "Video ready": "동영상 준비 완료",
+    "Your {{resolution}} video has been saved.": "{{resolution}} 동영상이 저장되었습니다.",
+    "Play video": "동영상 재생"
   }
 }

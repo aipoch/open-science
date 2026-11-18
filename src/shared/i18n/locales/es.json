@@ -199,6 +199,9 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "El inicio se detuvo al acceder a las credenciales del sistema. Se conservaron las credenciales y los datos del perfil existentes."
   },
   "renderer": {
+    "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}} (prever {{min}}–{{max}} min)",
+    "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}} (prever {{min}}–{{max}} min por minuto de película)",
+    "Estimates allow extra time and vary with your computer and the film's visuals.": "Las estimaciones incluyen un margen de tiempo y varían según el equipo y los elementos visuales de la película.",
     "Includes the session app in motion.": "Muestra en movimiento la aplicación de la sesión.",
     "Uses a drawn illustration of the session app.": "Muestra un dibujo de la aplicación de la sesión.",
     "Pros": "Ventajas",
@@ -8732,6 +8735,9 @@
     "After edit": "Después de editar",
     "Before edit": "Antes de editar",
     "Comparison position": "Posición de comparación",
-    "Compare with input image": "Comparar con la imagen de entrada"
+    "Compare with input image": "Comparar con la imagen de entrada",
+    "Video ready": "Vídeo listo",
+    "Your {{resolution}} video has been saved.": "Se ha guardado el vídeo en {{resolution}}.",
+    "Play video": "Reproducir vídeo"
   }
 }

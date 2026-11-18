@@ -1,4 +1,8 @@
-import type { FilmVisualResult, ResearchVideoProgress } from '@aipoch/research-film/contracts'
+import type {
+  FilmVisualResult,
+  ResearchVideoProgress,
+  ResearchVideoResolution
+} from '@aipoch/research-film/contracts'
 import type { VideoEncoderPaths } from '@aipoch/research-film'
 import type { CliLauncherEnv } from './cli-launcher-contract'
 import type { z } from 'zod'
@@ -25,7 +29,7 @@ export type DesktopInteraction = Readonly<{
     signal: AbortSignal
   ) => Promise<FilmVisualResult>
   renderResearchVideo?: (
-    request: { htmlPath: string } & VideoEncoderPaths,
+    request: { htmlPath: string; resolution?: ResearchVideoResolution } & VideoEncoderPaths,
     signal: AbortSignal
   ) => Promise<string>
   researchVideoProgress?: (request: { htmlPath: string }) => Promise<ResearchVideoProgress | null>

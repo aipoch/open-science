@@ -197,6 +197,9 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "启动在访问系统凭据时停止。现有凭据和配置文件数据已保留。"
   },
   "renderer": {
+    "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（预留 {{min}}–{{max}} 分钟）",
+    "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}}（每分钟影片预留 {{min}}–{{max}} 分钟）",
+    "Estimates allow extra time and vary with your computer and the film's visuals.": "估算已预留额外时间，实际耗时取决于电脑性能和影片的视觉内容。",
     "Includes the session app in motion.": "包含会话中应用的动态演示。",
     "Uses a drawn illustration of the session app.": "使用插图展示本次会话中的应用。",
     "Pros": "优点",
@@ -8380,6 +8383,9 @@
     "After edit": "修改后",
     "Before edit": "修改前",
     "Comparison position": "对比分隔位置",
-    "Compare with input image": "与输入图对比"
+    "Compare with input image": "与输入图对比",
+    "Video ready": "视频已就绪",
+    "Your {{resolution}} video has been saved.": "您的 {{resolution}} 视频已保存。",
+    "Play video": "播放视频"
   }
 }

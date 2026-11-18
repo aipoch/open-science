@@ -1,7 +1,14 @@
 import type { ResearchVideoProgress, ResearchVideoStep } from '@aipoch/research-film/contracts'
-import { filmVisualCheckSchema, type FilmVisualResult } from '@aipoch/research-film/contracts'
+import {
+  filmVisualCheckSchema,
+  researchVideoResolutionSchema,
+  RESEARCH_VIDEO_EXPORT_OPTIONS,
+  researchVideoExportTimeout,
+  type ResearchVideoResolution,
+  type FilmVisualResult
+} from '@aipoch/research-film/contracts'
 import type { VideoEncoderPaths } from '@aipoch/research-film/export'
-import { BrowserWindow, session } from 'electron'
+import { BrowserWindow, nativeImage, screen, session } from 'electron'
 import { readFile, writeFile, rm, mkdtemp, link, rename } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -92,6 +99,7 @@ export const readResearchVideoExportProgress = (request: {
 }): ResearchVideoProgress | null => activeProgress.get(request.htmlPath) ?? null
 
 type FilmStage = { duration: number; W: number; H: number }
+type FilmViewport = { width: number; height: number }
 
 /** A single isolated partition is shared by HTML review and MP4 capture. */
 async function withFilmPlayer<T>(
@@ -100,12 +108,14 @@ async function withFilmPlayer<T>(
   inspectPlayer: (
     window: BrowserWindow,
     metadata: FilmStage,
-    setupSignal: AbortSignal
-  ) => Promise<T>
+    setupSignal: AbortSignal,
+    viewport: FilmViewport
+  ) => Promise<T>,
+  resolution?: ResearchVideoResolution
 ): Promise<T> {
   await acquireRenderSlot(signal)
   try {
-    return await openFilmPlayer(htmlPath, signal, inspectPlayer)
+    return await openFilmPlayer(htmlPath, signal, inspectPlayer, resolution)
   } finally {
     const next = renderWaiters.values().next().value
     if (next) next()
@@ -119,8 +129,10 @@ async function openFilmPlayer<T>(
   inspectPlayer: (
     window: BrowserWindow,
     metadata: FilmStage,
-    setupSignal: AbortSignal
-  ) => Promise<T>
+    setupSignal: AbortSignal,
+    viewport: FilmViewport
+  ) => Promise<T>,
+  resolution?: ResearchVideoResolution
 ): Promise<T> {
   signal.throwIfAborted()
   const setupSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
@@ -167,6 +179,17 @@ async function openFilmPlayer<T>(
         backgroundThrottling: false
       }
     }))
+    // Keep the 1920 × 1080 CSS stage and raise its raster density before scripts
+    // create canvases. A 1× display must paint real 4K pixels too, not enlarge 1080p.
+    const displayScale = resolution ? screen.getDisplayMatching(window.getBounds()).scaleFactor : 1
+    if (!Number.isFinite(displayScale) || displayScale <= 0)
+      throw new Error('Invalid display scale for video rendering')
+    const zoom = resolution
+      ? Math.max(1, RESEARCH_VIDEO_EXPORT_OPTIONS[resolution].width / (1920 * displayScale))
+      : 1
+    const viewport = { width: Math.ceil(1920 * zoom), height: Math.ceil(1080 * zoom) }
+    if (zoom > 1) window.setContentSize(viewport.width, viewport.height)
+    window.webContents.setZoomFactor(zoom)
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', (event) => event.preventDefault())
     const renderCall = <T>(call: () => Promise<T>): Promise<T> => waitForFilmStep(setupSignal, call)
@@ -188,7 +211,7 @@ async function openFilmPlayer<T>(
     )
       throw new Error('Invalid research video stage')
     signal.throwIfAborted()
-    return await inspectPlayer(window, metadata, setupSignal)
+    return await inspectPlayer(window, metadata, setupSignal, viewport)
   } finally {
     if (activeWindow && !activeWindow.isDestroyed()) activeWindow.destroy()
     await resetRenderSession(isolated).catch((error: unknown) =>
@@ -231,10 +254,12 @@ export async function checkResearchVideoHtml(
 }
 
 export async function renderResearchVideoMp4(
-  request: { htmlPath: string } & VideoEncoderPaths,
+  request: { htmlPath: string; resolution?: ResearchVideoResolution } & VideoEncoderPaths,
   parentSignal: AbortSignal
 ): Promise<string> {
   parentSignal.throwIfAborted()
+  const resolution = researchVideoResolutionSchema.parse(request.resolution ?? '720p')
+  const { width, height } = RESEARCH_VIDEO_EXPORT_OPTIONS[resolution]
   assertVideoEncoderReady()
   const timeout = new AbortController()
   const signal = AbortSignal.any([parentSignal, timeout.signal])
@@ -250,77 +275,98 @@ export async function renderResearchVideoMp4(
   let encoderExit: Promise<void> | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    return await withFilmPlayer(request.htmlPath, signal, async (window, metadata, setupSignal) => {
-      report({ phase: 'preparing' })
-      timer = setTimeout(() => timeout.abort(new Error('Video export timed out')), 60 * 60 * 1000)
-      const renderCall = <T>(call: () => Promise<T>): Promise<T> =>
-        waitForFilmStep(setupSignal, call)
-      const audio: unknown = await renderCall(() =>
-        window.webContents.executeJavaScript("window.VIDEO_ASSETS['mix.wav']")
-      )
-      if (
-        typeof audio !== 'string' ||
-        !audio.startsWith('data:audio/wav;base64,') ||
-        audio.length > 140 * 1024 * 1024
-      )
-        throw new Error('Invalid narration audio')
-      // The backend can remove its staging directory as soon as native RPC is cancelled.
-      // Give the encoder its own audio, output, and any executables staged by that request.
-      const staging = dirname(request.htmlPath)
-      const owned = (directory = await mkdtemp(join(dirname(staging), 'film-encode-')))
-      const moveTool = async (source: string, name: string): Promise<string> => {
-        if (relative(staging, dirname(source)) !== '') return source
-        const path = join(owned, name)
-        await rename(source, path)
-        return path
-      }
-      const encoder = await moveTool(
-        encoderPath,
-        process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
-      )
-      const probe = await moveTool(
-        probePath,
-        process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'
-      )
-      const audioPath = join(owned, 'audio.wav')
-      const videoPath = join(owned, 'video.mp4')
-      await writeFile(
-        audioPath,
-        Buffer.from(audio.slice('data:audio/wav;base64,'.length), 'base64'),
-        { flag: 'wx', signal }
-      )
-      await exportResearchVideoMp4({
-        renderer: {
-          async capture(seconds, captureSignal) {
-            captureSignal.throwIfAborted()
-            await window.webContents.executeJavaScript(
-              `window.__seek(${seconds}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
-            )
-            captureSignal.throwIfAborted()
-            const frame = await window.webContents.capturePage({
-              x: 0,
-              y: 0,
-              width: 1920,
-              height: 1080
-            })
-            return frame.resize({ width: 1280, height: 720, quality: 'best' }).toPNG()
-          }
-        },
-        audioPath,
-        outputPath: videoPath,
-        encoderPath: encoder,
-        probePath: probe,
-        width: 1280,
-        height: 720,
-        duration: metadata.duration,
-        signal,
-        onProgress: (completed, total) => report({ phase: 'rendering', completed, total }),
-        onPhase: (phase) => report({ phase })
-      })
-      signal.throwIfAborted()
-      await link(videoPath, outputPath)
-      return outputPath
-    })
+    return await withFilmPlayer(
+      request.htmlPath,
+      signal,
+      async (window, metadata, setupSignal, viewport) => {
+        report({ phase: 'preparing' })
+        timer = setTimeout(
+          () => timeout.abort(new Error('Video export timed out')),
+          researchVideoExportTimeout(resolution, metadata.duration)
+        )
+        const renderCall = <T>(call: () => Promise<T>): Promise<T> =>
+          waitForFilmStep(setupSignal, call)
+        const audio: unknown = await renderCall(() =>
+          window.webContents.executeJavaScript("window.VIDEO_ASSETS['mix.wav']")
+        )
+        if (
+          typeof audio !== 'string' ||
+          !audio.startsWith('data:audio/wav;base64,') ||
+          audio.length > 140 * 1024 * 1024
+        )
+          throw new Error('Invalid narration audio')
+        // The backend can remove its staging directory as soon as native RPC is cancelled.
+        // Give the encoder its own audio, output, and any executables staged by that request.
+        const staging = dirname(request.htmlPath)
+        const owned = (directory = await mkdtemp(join(dirname(staging), 'film-encode-')))
+        const moveTool = async (source: string, name: string): Promise<string> => {
+          if (relative(staging, dirname(source)) !== '') return source
+          const path = join(owned, name)
+          await rename(source, path)
+          return path
+        }
+        const encoder = await moveTool(
+          encoderPath,
+          process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+        )
+        const probe = await moveTool(
+          probePath,
+          process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'
+        )
+        const audioPath = join(owned, 'audio.wav')
+        const videoPath = join(owned, 'video.mp4')
+        await writeFile(
+          audioPath,
+          Buffer.from(audio.slice('data:audio/wav;base64,'.length), 'base64'),
+          { flag: 'wx', signal }
+        )
+        await exportResearchVideoMp4({
+          renderer: {
+            async capture(seconds, captureSignal) {
+              captureSignal.throwIfAborted()
+              await window.webContents.executeJavaScript(
+                `window.__seek(${seconds}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
+              )
+              captureSignal.throwIfAborted()
+              const frame = await window.webContents.capturePage({
+                x: 0,
+                y: 0,
+                ...viewport
+              })
+              const scaleFactor = Math.max(1, ...frame.getScaleFactors())
+              const size = frame.getSize(scaleFactor)
+              const pixelSize = {
+                width: Math.round(size.width * scaleFactor),
+                height: Math.round(size.height * scaleFactor)
+              }
+              if (pixelSize.width < width || pixelSize.height < height)
+                throw new Error('The video frame is smaller than the selected resolution')
+              // NativeImage sizes are in DIPs. Rebase a Retina bitmap to 1× before
+              // resizing beyond its DIP size, preserving its existing physical pixels.
+              const pixels =
+                size.width >= width && size.height >= height
+                  ? frame
+                  : nativeImage.createFromBitmap(frame.toBitmap({ scaleFactor }), pixelSize)
+              return pixels.resize({ width, height, quality: 'best' }).toPNG()
+            }
+          },
+          audioPath,
+          outputPath: videoPath,
+          encoderPath: encoder,
+          probePath: probe,
+          width,
+          height,
+          duration: metadata.duration,
+          signal,
+          onProgress: (completed, total) => report({ phase: 'rendering', completed, total }),
+          onPhase: (phase) => report({ phase })
+        })
+        signal.throwIfAborted()
+        await link(videoPath, outputPath)
+        return outputPath
+      },
+      resolution
+    )
   } catch (error) {
     if (error instanceof ResearchVideoEncoderCleanupError) {
       encoderExit = error.exited

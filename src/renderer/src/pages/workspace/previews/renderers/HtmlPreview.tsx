@@ -1,5 +1,11 @@
 import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
 import {
+  RESEARCH_VIDEO_EXPORT_OPTIONS,
+  researchVideoResolutionSchema,
+  researchVideoExportEstimate,
+  type ResearchVideoResolution
+} from '@aipoch/research-film/contracts'
+import {
   localModelDownloadProgress,
   type LocalModelSnapshot
 } from '../../../../../../shared/local-models'
@@ -7,6 +13,13 @@ import { DownloadProgressLine } from '../../../../components/DownloadProgressLin
 import { ResearchVideoProgressLine } from '../../../../components/research-video-progress'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator
+} from '@/components/ui/dropdown-menu'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../../../../shared/web-event-connection'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -23,7 +36,8 @@ import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { SourcePreviewContent } from './SourcePreview'
 import { useRegisterPreviewContextMenuFrame } from '../../preview-actions/preview-action-hooks'
 import { useManagedFileDownload } from '../../use-managed-file-download'
-import { Check, Download, Loader2, Video } from 'lucide-react'
+import { Check, ChevronDown, Download, Loader2, Video } from 'lucide-react'
+import { ResearchVideoExportComplete } from './ResearchVideoExportComplete'
 
 type HtmlPreviewMode = 'render' | 'source'
 
@@ -86,12 +100,16 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
     suggestedName: item.name
   })
   const [videoKey, setVideoKey] = useState<string>()
+  const [videoDuration, setVideoDuration] = useState<number>()
+  const [exportResolution, setExportResolution] = useState<ResearchVideoResolution>('720p')
   const [exporting, setExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState<ResearchVideoProgress>()
   const [installBytes, setInstallBytes] = useState<number>()
   const [installSnapshot, setInstallSnapshot] = useState<LocalModelSnapshot>()
   const installingTools = useRef(false)
   const [exportError, setExportError] = useState<string>()
+  const [exportedPath, setExportedPath] = useState<string>()
+  const exportButtonRef = useRef<HTMLButtonElement>(null)
   const exportResource = useRef<string | undefined>(undefined)
   const exportCancelled = useRef(false)
   const [mode, setMode] = useState<HtmlPreviewMode>('render')
@@ -120,8 +138,18 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
       if (
         event.source === iframeRef.current?.contentWindow &&
         event.data?.type === 'open-science-research-video-ready'
-      )
+      ) {
         setVideoKey(requestKey)
+        const duration: unknown = event.data.duration
+        setVideoDuration(
+          typeof duration === 'number' &&
+            Number.isFinite(duration) &&
+            duration > 0 &&
+            duration <= 3600
+            ? duration
+            : undefined
+        )
+      }
       if (
         event.data === MANAGED_PREVIEW_LOAD_ERROR &&
         event.source === iframeRef.current?.contentWindow
@@ -150,13 +178,18 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
     }
   }, [requestKey])
 
-  const exportVideo = async (install = false): Promise<void> => {
+  const exportVideo = async (
+    resolution: ResearchVideoResolution,
+    install = false
+  ): Promise<void> => {
     if (resourceState.status !== 'ready' || exportResource.current) return
     const resourceId = resourceState.resource.id
     exportResource.current = resourceId
     exportCancelled.current = false
+    setExportResolution(resolution)
     setExporting(true)
     setExportError(undefined)
+    setExportedPath(undefined)
     setExportProgress(undefined)
     let timer: ReturnType<typeof setTimeout> | undefined
     const current = (): boolean => exportResource.current === resourceId && !exportCancelled.current
@@ -190,8 +223,15 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
       }
       if (!current()) return
       void poll()
-      const result = await window.api.previewResources.exportResearchVideo({ resourceId })
-      if (current()) setInstallBytes(result.needsInstallation?.downloadBytes)
+      const result = await window.api.previewResources.exportResearchVideo({
+        resourceId,
+        resolution
+      })
+      if (current()) {
+        setInstallBytes(result.needsInstallation?.downloadBytes)
+        if (!result.canceled && !result.needsInstallation && result.filePath)
+          setExportedPath(result.filePath)
+      }
     } catch (error) {
       if (current()) setExportError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -212,6 +252,13 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
       if (installingTools.current) await window.api.localModels.cancel('video-export')
       else await window.api.previewResources.cancelResearchVideoExport({ resourceId })
     }
+  }
+  const resolutionLabel = (resolution: ResearchVideoResolution): string => {
+    const estimate = researchVideoExportEstimate(resolution, videoDuration)
+    const values = { ...estimate, resolution: RESEARCH_VIDEO_EXPORT_OPTIONS[resolution].label }
+    return estimate.perMinute
+      ? t('{{resolution}} (allow {{min}}–{{max}} min per minute of film)', values)
+      : t('{{resolution}} (allow {{min}}–{{max}} min)', values)
   }
   const modeToggle = (
     <div
@@ -242,15 +289,36 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
         resourceState.status === 'ready' &&
         document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true' && (
           <div className="ml-auto flex min-w-0 flex-wrap justify-end gap-2">
-            <Button
-              size="xs"
-              variant="secondary"
-              disabled={htmlDownload.status === 'saving'}
-              onClick={() => void exportVideo(installBytes !== undefined)}
-            >
-              <Video aria-hidden="true" />
-              {t('Render video (MP4)')}
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  ref={exportButtonRef}
+                  size="xs"
+                  variant="secondary"
+                  disabled={htmlDownload.status === 'saving'}
+                >
+                  <Video aria-hidden="true" />
+                  {t('Render video (MP4)')}
+                  <ChevronDown aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-w-sm">
+                {researchVideoResolutionSchema.options.map((resolution) => (
+                  <DropdownMenuItem
+                    key={resolution}
+                    onSelect={() => void exportVideo(resolution, installBytes !== undefined)}
+                  >
+                    {resolutionLabel(resolution)}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <p className="max-w-xs px-2 py-1.5 text-xs text-muted-foreground">
+                  {t(
+                    "Estimates allow extra time and vary with your computer and the film's visuals."
+                  )}
+                </p>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               size="xs"
               variant="outline"
@@ -278,30 +346,30 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
     </div>
   )
   const exportStatus = exporting && (
-    <div
-      data-research-video-export-status
-      className="flex min-w-0 shrink-0 items-center gap-3 border-b border-border-300 bg-bg-000 px-3 py-2"
-    >
-      {installSnapshot ? (
-        <DownloadProgressLine compact progress={localModelDownloadProgress(installSnapshot)} />
-      ) : exportProgress ? (
-        <ResearchVideoProgressLine compact progress={exportProgress} />
-      ) : (
-        <div className="flex min-w-0 flex-1 items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
-          <span role="status" className="truncate">
-            {t('Exporting MP4…')}
-          </span>
-        </div>
-      )}
-      <Button
-        size="xs"
-        variant="ghost"
-        className="shrink-0"
-        onClick={() => void cancelExport().catch((error) => setExportError(String(error)))}
-      >
-        {t('Cancel')}
-      </Button>
+    <div className="shrink-0 border-b border-border-300 bg-bg-000 px-3 py-2">
+      <p className="mb-2 text-xs text-muted-foreground">{resolutionLabel(exportResolution)}</p>
+      <div data-research-video-export-status className="flex min-w-0 items-center gap-3">
+        {installSnapshot ? (
+          <DownloadProgressLine compact progress={localModelDownloadProgress(installSnapshot)} />
+        ) : exportProgress ? (
+          <ResearchVideoProgressLine compact progress={exportProgress} />
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
+            <span role="status" className="truncate">
+              {t('Exporting MP4…')}
+            </span>
+          </div>
+        )}
+        <Button
+          size="xs"
+          variant="ghost"
+          className="shrink-0"
+          onClick={() => void cancelExport().catch((error) => setExportError(String(error)))}
+        >
+          {t('Cancel')}
+        </Button>
+      </div>
     </div>
   )
   const installPrompt = !exporting &&
@@ -319,7 +387,7 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
           size="xs"
           variant="secondary"
           className="shrink-0"
-          onClick={() => void exportVideo(true)}
+          onClick={() => void exportVideo(exportResolution, true)}
         >
           <Video aria-hidden="true" />
           {t('Install and export')}
@@ -334,6 +402,14 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
       {exportError && <ErrorNotice inline tone="amber" description={exportError} />}
       {htmlDownload.status === 'error' && (
         <ErrorNotice inline tone="amber" description={t('Download failed. Try again')} />
+      )}
+      {exportedPath && (
+        <ResearchVideoExportComplete
+          filePath={exportedPath}
+          resolution={RESEARCH_VIDEO_EXPORT_OPTIONS[exportResolution].label}
+          onClose={() => setExportedPath(undefined)}
+          onRestoreFocus={() => exportButtonRef.current?.focus()}
+        />
       )}
     </>
   )

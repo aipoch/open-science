@@ -197,6 +197,9 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。"
   },
   "renderer": {
+    "{{resolution}} (allow {{min}}–{{max}} min)": "{{resolution}}（目安：{{min}}～{{max}}分）",
+    "{{resolution}} (allow {{min}}–{{max}} min per minute of film)": "{{resolution}}（動画1分あたりの目安：{{min}}～{{max}}分）",
+    "Estimates allow extra time and vary with your computer and the film's visuals.": "余裕を持たせた所要時間の目安です。お使いのコンピューターや動画の視覚表現によって変わります。",
     "Includes the session app in motion.": "セッションのアプリが動く様子を表示します。",
     "Uses a drawn illustration of the session app.": "セッションのアプリをイラストで表現します。",
     "Pros": "利点",
@@ -8380,6 +8383,9 @@
     "After edit": "編集後",
     "Before edit": "編集前",
     "Comparison position": "比較の境界位置",
-    "Compare with input image": "入力画像と比較"
+    "Compare with input image": "入力画像と比較",
+    "Video ready": "動画が完成しました",
+    "Your {{resolution}} video has been saved.": "{{resolution}}の動画を保存しました。",
+    "Play video": "動画を再生"
   }
 }
