@@ -2261,6 +2261,37 @@ describe('ACP runtime migration write-gate', () => {
     }
   })
 
+  it('refuses to start a CodeBuddy subscription reviewer on a different model', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['reviewer-session'])
+    const runtime = new AcpRuntime({
+      appVersion: 'test',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...codeBuddyFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/codebuddy',
+        env: {},
+        modelRoute: 'codebuddy-subscription',
+        sessionModel: 'requested-model',
+        sessionModelRequired: true
+      }),
+      framework: codeBuddyFramework
+    })
+    await expect(
+      runtime.buildReviewerSession({
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            type: 'http',
+            name: 'open-science-reviewer',
+            url: 'http://127.0.0.1:1/mcp',
+            headers: []
+          }
+        ]
+      })
+    ).rejects.toThrow('not available for this account')
+  })
+
   it('skips set_config_option when a required subscription model already matches currentValue', async () => {
     // codex-acp reloads on every session/set_config_option call, which would stall the first prompt
     // of a new session for ~2 min when the model was already seeded via CODEX_CONFIG (issue #277).

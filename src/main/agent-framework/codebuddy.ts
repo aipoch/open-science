@@ -8,7 +8,7 @@ import {
   type ChildProcessWithoutNullStreams,
   type SpawnOptionsWithoutStdio
 } from 'node:child_process'
-import { cp, mkdir } from 'node:fs/promises'
+import { copyFile, cp, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import * as acp from '@agentclientprotocol/sdk'
 import type { SessionModeState } from '@agentclientprotocol/sdk'
@@ -89,12 +89,25 @@ const CODEBUDDY_NETWORK_DENY_RULES = [
 export const codeBuddyStorageDir = (storageRoot: string): string => join(storageRoot, 'codebuddy')
 
 export const isolateCodeBuddyEnvironment = async (
-  env: Readonly<Record<string, string>>,
-  configDir: string
+  backend: ResolvedAgentBackend,
+  configDir: string,
+  allowSubscription = false
 ): Promise<Record<string, string>> => {
-  if (env.CODEBUDDY_INTERNET_ENVIRONMENT && env.USERPROFILE)
-    throw new Error('CodeBuddy subscription accounts are available in the main conversation only.')
+  const env = backend.env
   const sourceConfigDir = env.CODEBUDDY_CONFIG_DIR
+  if (backend.modelRoute === 'codebuddy-subscription') {
+    if (!allowSubscription) throw new Error('This task does not support CodeBuddy subscriptions.')
+    if (backend.codeBuddySharedSite && !sharedCodeBuddySiteMatches(backend.codeBuddySharedSite))
+      throw new Error('Sign in to the selected site in CodeBuddy CLI.')
+    // The CLI finds credentials through HOME/platform data. Sessions, logs and caches stay local.
+    const site = env.CODEBUDDY_INTERNET_ENVIRONMENT
+    if (!sourceConfigDir || (site !== 'internal' && site !== 'external'))
+      throw new Error('CodeBuddy subscription profile is unavailable.')
+    const target = join(configDir, site)
+    await mkdir(target, { recursive: true, mode: 0o700 })
+    await copyFile(join(sourceConfigDir, 'settings.json'), join(target, 'settings.json'))
+    return { ...env, CODEBUDDY_CONFIG_DIR: target }
+  }
   if (sourceConfigDir && sourceConfigDir !== configDir) {
     await cp(sourceConfigDir, configDir, { recursive: true })
   } else {
@@ -144,10 +157,20 @@ export const createCodeBuddyFramework = ({
     backend: ResolvedAgentBackend,
     runtimeHome: string
   ): Promise<AgentSpawnInput> {
+    const env = await isolateCodeBuddyEnvironment(backend, join(runtimeHome, 'codebuddy'), true)
+    const args = [...(backend.args ?? [])]
+    const promptFlag = args.indexOf('--system-prompt-file')
+    if (backend.modelRoute === 'codebuddy-subscription' && promptFlag !== -1) {
+      const target = join(env.CODEBUDDY_CONFIG_DIR!, 'system-prompt.md')
+      if (!backend.persistentSystemPrompt)
+        throw new Error('CodeBuddy system prompt is unavailable.')
+      await writeFile(target, backend.persistentSystemPrompt, { mode: 0o600 })
+      args[promptFlag + 1] = target
+    }
     return {
       executablePath: backend.executablePath,
-      args: [...(backend.args ?? [])],
-      env: await isolateCodeBuddyEnvironment(backend.env, join(runtimeHome, 'codebuddy')),
+      args,
+      env,
       proxyEnvironmentMode: backend.proxyEnvironmentMode
     }
   },

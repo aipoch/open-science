@@ -160,7 +160,9 @@ export class AcpSessionConfigurator {
     return application.state
   }
 
-  private async applyModel(input: StartupConfiguration): Promise<ModelApplication> {
+  async applyModel(
+    input: Pick<StartupConfiguration, 'backend' | 'session' | 'connection'>
+  ): Promise<ModelApplication> {
     const model = input.backend.session.model
     if (!model) return { appliedModel: undefined, configOptions: undefined }
     const configOptions = configOptionsOf(input.session)
