@@ -101,10 +101,11 @@ describe('Compute Job remote cleanup migration', () => {
         '0056_compute_kubernetes_workspace',
         '0057_project_optimization_prompt',
         '0058_session_schedules',
-        '0059_session_history'
+        '0059_session_history',
+        '0060_image_models'
       ],
       from: '0025_managed_file_version_foundation',
-      to: '0059_session_history'
+      to: '0060_image_models'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ remoteCleanupDisposition: string }>>(

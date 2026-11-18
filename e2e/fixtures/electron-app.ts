@@ -14,6 +14,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   writeFile
 } from 'node:fs/promises'
@@ -349,6 +350,7 @@ type NativeMenuProbe = {
 }
 type ElectronApp = {
   addCleanupAudit: (audit: () => Promise<void>) => void
+  isolatedDataRoot: () => Promise<string>
   captureBrandState: () => Promise<BrandState>
   restartWithBrandFixture: (
     mode: 'legacy' | 'legacy-config' | 'custom' | 'onboarding'
@@ -491,6 +493,8 @@ const launchEnvironment = (
         !key.startsWith('OPEN_SCIENCE_E2E_') &&
         key !== 'OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT' &&
         key !== 'OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT' &&
+        key !== 'OPEN_SCIENCE_ALLOW_MULTI_INSTANCE' &&
+        key !== 'OPEN_SCIENCE_WEB_PORT' &&
         key !== 'OPEN_SCIENCE_MICROMAMBA_BIN'
       )
         delete environment[key]
@@ -962,14 +966,15 @@ class ElectronAppHarness implements ElectronApp {
           : 'open-science-electron-e2e-'
       )
     )
+    const canonicalRoot = await realpath(testRoot)
     const harness = new ElectronAppHarness(
       testRoot,
       {
         fakeAgentBinRoot: join(testRoot, 'fake-agent-bin'),
         fakeRemoteItRoot: join(testRoot, 'fake-remoteit'),
         fakeRemoteItState: join(testRoot, 'fake-remoteit-state.json'),
-        storageRoot: join(testRoot, 'storage'),
-        userDataRoot: join(testRoot, 'electron-profile')
+        storageRoot: join(canonicalRoot, 'storage'),
+        userDataRoot: join(canonicalRoot, 'electron-profile')
       },
       windowMode
     )
@@ -1843,6 +1848,16 @@ class ElectronAppHarness implements ElectronApp {
     if (!target) throw new Error(`No sabotaged delegated handoff exists for ${childName}.`)
     await rm(target, { force: true, recursive: true })
     this.sabotagedDelegatedHandoffs.delete(childName)
+  }
+
+  async isolatedDataRoot(): Promise<string> {
+    const dataRoot = await realpath(
+      await this.page.evaluate(async () => (await window.api.storage.getInfo()).dataRoot)
+    )
+    const offset = relative(await realpath(this.testRoot), dataRoot)
+    if (!offset || offset === '..' || offset.startsWith('..' + sep) || isAbsolute(offset))
+      throw new Error('Data root is outside the Electron fixture: ' + dataRoot)
+    return dataRoot
   }
 
   async captureBrandState(): Promise<BrandState> {

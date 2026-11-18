@@ -121,6 +121,7 @@ export const RENDERER_API_CONTRACT = composeRendererApiContract(
   settingsModels.settingsSetSubagentModelContracts,
   settingsConnectors.settingsSetToolPermissionContracts,
   settingsModels.settingsSetVisionModelContracts,
+  settingsModels.settingsImageModelsContracts,
   settingsConnectors.settingsUpdateCustomServerContracts,
   settingsSkills.settingsUpdateSkillContracts,
   settingsModels.settingsUpsertProviderContracts,

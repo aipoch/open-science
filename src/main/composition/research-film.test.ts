@@ -8,6 +8,7 @@ import { createResearchFilmLifecycle } from '../research-video/lifecycle'
 import { composeResearchFilm } from './research-film'
 import { RestrictedInferenceError } from '../acp/restricted-inference-contract'
 import { computePreflight } from '../settings/preflight'
+import { RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE } from '../../shared/research-video-presentation'
 
 const mocks = vi.hoisted(() => ({
   root: '',
@@ -49,6 +50,9 @@ const outcomes = [
   'target-unavailable',
   'target-stalled',
   'target-timeout',
+  'model-timeout',
+  'model-cancelled',
+  'model-failure-after-deadline',
   'usage-stalled',
   'usage-timeout',
   'session-missing',
@@ -163,10 +167,39 @@ it.each(outcomes)(
                 { type: 'title', text: 'Evidence' },
                 { type: 'animation', script: 'anims/hook.js', size: 'band' }
               ]
+            },
+            {
+              id: 'outro',
+              role: 'outro',
+              msg: 1,
+              lines: [
+                { caption: 'The result remains uncertain.' },
+                {
+                  caption:
+                    'AIPOCH Open-Science — the AI research workbench for reproducible science.'
+                }
+              ],
+              panels: [{ type: 'end_card', at: '1' }]
             }
           ]
         })
       })
+      if (outcome === 'recovered')
+        mocks.run.mockResolvedValueOnce({
+          ...result,
+          stopReason: 'end_turn',
+          text: JSON.stringify({
+            spine: null,
+            catch: null,
+            thread: null,
+            audioOnly: null,
+            numbers: null,
+            plainWords: null,
+            lineCraft: null,
+            clean: null,
+            true: null
+          })
+        })
       if (outcome === 'recovered')
         mocks.run.mockResolvedValueOnce({
           ...result,
@@ -321,6 +354,73 @@ it.each(outcomes)(
         return
       }
       if (
+        outcome === 'model-timeout' ||
+        outcome === 'model-cancelled' ||
+        outcome === 'model-failure-after-deadline'
+      ) {
+        const deadline = new AbortController()
+        const realTimeout = AbortSignal.timeout
+        const timeout = vi
+          .spyOn(AbortSignal, 'timeout')
+          .mockImplementation((ms) => (ms === 300_000 ? deadline.signal : realTimeout(ms)))
+        mocks.run.mockImplementation(
+          ({ signal }: { signal: AbortSignal }) =>
+            new Promise((_, reject) => {
+              signal.addEventListener(
+                'abort',
+                () =>
+                  reject(
+                    outcome === 'model-failure-after-deadline'
+                      ? new RestrictedInferenceError(
+                          'transport-unavailable',
+                          'Transport failed before cleanup.'
+                        )
+                      : new RestrictedInferenceError(
+                          'cancelled',
+                          'Restricted inference was cancelled.'
+                        )
+                  ),
+                { once: true }
+              )
+            })
+        )
+        try {
+          await owner.start(request)
+          await vi.waitFor(() => expect(mocks.run).toHaveBeenCalledOnce())
+          if (outcome !== 'model-cancelled')
+            deadline.abort(new DOMException('Timed out', 'TimeoutError'))
+          else owner.cancel(request)
+          await vi.waitFor(async () => {
+            const status = await owner.status(request)
+            expect(status.progress?.phase).toBe(
+              outcome !== 'model-cancelled' ? 'failed' : 'cancelled'
+            )
+            expect(status.error).toBe(
+              outcome === 'model-timeout'
+                ? RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE
+                : outcome === 'model-failure-after-deadline'
+                  ? 'Transport failed before cleanup.'
+                  : undefined
+            )
+          })
+          expect(mocks.log).toHaveBeenCalledWith(
+            'film model failure',
+            expect.objectContaining({
+              errorCategory:
+                outcome === 'model-timeout'
+                  ? 'timeout'
+                  : outcome === 'model-failure-after-deadline'
+                    ? 'transport-unavailable'
+                    : 'cancelled'
+            })
+          )
+          expect(mocks.run).toHaveBeenCalledOnce()
+        } finally {
+          timeout.mockRestore()
+        }
+        return
+      }
+      if (
         outcome === 'target-stalled' ||
         outcome === 'target-timeout' ||
         outcome === 'usage-stalled' ||
@@ -361,8 +461,8 @@ it.each(outcomes)(
           )
           expect(mocks.run).toHaveBeenCalledTimes(target ? 0 : expires ? 2 : 1)
           if (!target && expires) {
-            const animation = JSON.parse(mocks.run.mock.calls[1][0].prompt)
-            expect(animation.path).toBe('anims/hook.js')
+            const review = JSON.parse(mocks.run.mock.calls[1][0].prompt)
+            expect(review.narration[0].id).toBe('hook')
           }
         } finally {
           timeout?.mockRestore()
@@ -427,7 +527,7 @@ it.each(outcomes)(
         expect(status.result).toBeUndefined()
         const calls =
           outcome === 'recovered'
-            ? 4
+            ? 5
             : ['max_tokens', 'max_turn_requests', 'empty'].includes(outcome)
               ? 2
               : 1
@@ -450,7 +550,7 @@ it.each(outcomes)(
             expect(call.outputLimitBytes).toBeUndefined()
             expect(call.systemPrompt).not.toMatch(/at most \d+ (?:visible|output) tokens/)
           }
-          const animationCorrection = JSON.parse(mocks.run.mock.calls[3][0].prompt)
+          const animationCorrection = JSON.parse(mocks.run.mock.calls[4][0].prompt)
           expect(animationCorrection).toMatchObject({
             path: 'anims/hook.js',
             correction: { draft: '' }

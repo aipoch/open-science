@@ -38,6 +38,7 @@ describe('settings record codec', () => {
       'sanitizeComputeGrant',
       'sanitizeConnectors',
       'sanitizeCustomMcpServer',
+      'sanitizeImageSettings',
       'sanitizePackageMirror',
       'sanitizeProvider'
     ])

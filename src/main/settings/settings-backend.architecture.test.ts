@@ -350,6 +350,7 @@ describe('Settings backend ownership architecture', () => {
       'markOnboardingComplete',
       'markPathsNormalized',
       'mutateClassification',
+      'mutateImageModels',
       'persistLegacyDataRoot',
       'publishBootstrapOpenAlex',
       'publishBootstrapProvider',
@@ -402,6 +403,7 @@ describe('Settings backend ownership architecture', () => {
       'setToolPolicy',
       'setVisionModel',
       'setWslSelection',
+      'subscribeImageModels',
       'subscribeProviders',
       'updateClaudeIsolatedCredentialsIfExists',
       'updateClaudeIsolatedValidationIfKeyMatches',
@@ -627,6 +629,7 @@ describe('Settings backend ownership architecture', () => {
   it('locks the complete Notebook local-RPC capability inventory', () => {
     expect(stringSetValues(settingsPaths.notebookLocalRpcServer, 'ARTIFACT_RPC_METHODS')).toEqual([
       'artifactSaveVersion',
+      'imageGenerate',
       'artifactReserveWrite',
       'artifactReleaseWrite',
       'artifactCreateVersion',
@@ -689,6 +692,8 @@ describe('Settings backend ownership architecture', () => {
       'githubTokenRef',
       'grantedLocalRoots',
       'huggingFaceRuntime',
+      'imageModel',
+      'imageServices',
       'legacyDataMovePromptDismissedAt',
       'localShellRuntime',
       'localePreference',

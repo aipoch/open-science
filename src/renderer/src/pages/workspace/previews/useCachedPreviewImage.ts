@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { IMAGE_PREVIEW_BUSY_MESSAGE } from '../../../../../shared/preview-resources'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 
@@ -28,7 +29,10 @@ type CachedPreviewImageState =
   | ({ status: 'ready'; url: string; error?: undefined } & ImageDimensions)
   | { status: 'error'; url?: undefined; error: Error }
 
-type PreviewImageItem = Pick<PreviewFileItem, 'path' | 'source' | 'mimeType' | 'size' | 'mtimeMs'> &
+type PreviewImageItem = { imageGenerationSessionId?: string } & Pick<
+  PreviewFileItem,
+  'path' | 'source' | 'mimeType' | 'size' | 'mtimeMs'
+> &
   Partial<Pick<PreviewFileItem, 'projectId' | 'sessionId' | 'managedFileId' | 'selectedVersionId'>>
 
 const entries = new Map<string, CachedImageEntry>()
@@ -63,28 +67,58 @@ const prune = (): void => {
 
 const acquirePreviewResource = async (
   item: PreviewImageItem,
-  retriesRemaining = PUBLICATION_RETRY_LIMIT
+  thumbnail: boolean,
+  isNeeded: () => boolean,
+  publicationRetries = PUBLICATION_RETRY_LIMIT,
+  capacityAttempt = 0
 ): ReturnType<Window['api']['previewResources']['acquire']> => {
   try {
     return await window.api.previewResources.acquire({
       ...createManagedPreviewRequest(item),
-      imagePreview: true
+      imagePreview: thumbnail ? 'thumbnail' : true
     })
   } catch (error) {
-    if (retriesRemaining === 0 || !isManagedFilePublicationPendingError(error)) throw error
-    await new Promise<void>((resolve) => setTimeout(resolve, PUBLICATION_RETRY_DELAY_MS))
-    return acquirePreviewResource(item, retriesRemaining - 1)
+    if (publicationRetries > 0 && isManagedFilePublicationPendingError(error)) {
+      await new Promise<void>((resolve) => setTimeout(resolve, PUBLICATION_RETRY_DELAY_MS))
+      if (isNeeded())
+        return acquirePreviewResource(
+          item,
+          thumbnail,
+          isNeeded,
+          publicationRetries - 1,
+          capacityAttempt
+        )
+    }
+    if (
+      capacityAttempt < (thumbnail ? 6 : 3) &&
+      String(error).includes(IMAGE_PREVIEW_BUSY_MESSAGE)
+    ) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 250 * 2 ** capacityAttempt))
+      if (isNeeded())
+        return acquirePreviewResource(
+          item,
+          thumbnail,
+          isNeeded,
+          publicationRetries,
+          capacityAttempt + 1
+        )
+    }
+    throw error
   }
 }
 
-const loadImage = async (item: PreviewImageItem): Promise<CachedImage> => {
-  const resource = await acquirePreviewResource(item)
+const loadImage = async (
+  item: PreviewImageItem,
+  thumbnail: boolean,
+  isNeeded: () => boolean
+): Promise<CachedImage> => {
+  const resource = await acquirePreviewResource(item, thumbnail, isNeeded)
 
-  const imageSize = resource.size
   const decodedBytes = (resource.width ?? 0) * (resource.height ?? 0) * 4
+  const estimatedSize = Math.max(resource.size, decodedBytes)
   const dimensions = { width: resource.width, height: resource.height }
-  if (imageSize > MAX_CACHED_IMAGE_BYTES) {
-    return { url: resource.url, size: imageSize, managedResourceId: resource.id, ...dimensions }
+  if (estimatedSize > MAX_CACHED_IMAGE_BYTES) {
+    return { url: resource.url, size: estimatedSize, managedResourceId: resource.id, ...dimensions }
   }
 
   try {
@@ -105,7 +139,7 @@ const loadImage = async (item: PreviewImageItem): Promise<CachedImage> => {
   }
 }
 
-const acquire = (item: PreviewImageItem, key: string): CachedImageEntry => {
+const acquire = (item: PreviewImageItem, key: string, thumbnail: boolean): CachedImageEntry => {
   const existing = entries.get(key)
   if (existing) {
     existing.refs += 1
@@ -114,7 +148,8 @@ const acquire = (item: PreviewImageItem, key: string): CachedImageEntry => {
     return existing
   }
 
-  const pending = loadImage(item)
+  // isNeeded is checked after retry backoff, when the cache entry is already installed.
+  const pending = loadImage(item, thumbnail, () => entry.refs > 0)
   const entry: CachedImageEntry = {
     key,
     promise: pending,
@@ -161,9 +196,11 @@ const invalidate = (key: string): void => {
 const useCachedPreviewImage = (
   item: PreviewImageItem,
   enabled = true,
-  invalidateWhenDisabled = false
+  invalidateWhenDisabled = false,
+  thumbnail = false
 ): CachedPreviewImageState => {
-  const requestKey = usePreviewResourceKey(item)
+  const resourceKey = usePreviewResourceKey(item)
+  const requestKey = thumbnail ? `${resourceKey}:thumbnail` : resourceKey
   const [result, setResult] = useState<
     | ({ requestKey: string; status: 'ready'; url: string } & ImageDimensions)
     | { requestKey: string; status: 'error'; error: Error }
@@ -187,9 +224,11 @@ const useCachedPreviewImage = (
         projectId: item.projectId,
         sessionId: item.sessionId,
         managedFileId: item.managedFileId,
-        selectedVersionId: item.selectedVersionId
+        selectedVersionId: item.selectedVersionId,
+        imageGenerationSessionId: item.imageGenerationSessionId
       },
-      requestKey
+      requestKey,
+      thumbnail
     )
     void entry.promise.then(
       ({ url, width, height }) => {
@@ -216,6 +255,7 @@ const useCachedPreviewImage = (
   }, [
     enabled,
     invalidateWhenDisabled,
+    thumbnail,
     item.mimeType,
     item.managedFileId,
     item.mtimeMs,
@@ -223,6 +263,7 @@ const useCachedPreviewImage = (
     item.projectId,
     item.sessionId,
     item.selectedVersionId,
+    item.imageGenerationSessionId,
     item.size,
     item.source,
     requestKey

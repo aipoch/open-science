@@ -1,3 +1,4 @@
+import type { ImageTask, ImageTaskScope } from '../../shared/image-task'
 import { createLiteraturePackageSource } from '../literature/package-source'
 import { desktopInteraction } from '../desktop-interaction'
 import { join } from 'node:path'
@@ -42,6 +43,7 @@ export async function composeSessionPackages({
   uploadRepository,
   sessionRepository,
   getDetectSessionExportBlockingSessions,
+  readImageTasks,
   modules
 }: {
   settingsRepository: SettingsRepository
@@ -51,6 +53,7 @@ export async function composeSessionPackages({
   uploadRepository: ReturnType<typeof createDefaultUploadRepository>
   sessionRepository: ReturnType<typeof createDefaultSessionRepository>
   getDetectSessionExportBlockingSessions: () => () => ReturnType<typeof detectActiveSessions>
+  readImageTasks: (scope: ImageTaskScope) => Promise<ImageTask[]>
   modules: ApplicationModuleBuilder
 }): Promise<{
   projectRepository: ReturnType<typeof createDefaultProjectRepository>
@@ -75,6 +78,7 @@ export async function composeSessionPackages({
   } = {}
   const sessionPackageService = await modules.add(undefined, () => {
     const service = new SessionPackageService({
+      readImageTasks,
       literatureSource: createLiteraturePackageSource(() =>
         getProjectDbClient(resolveConfigRoot())
       ),

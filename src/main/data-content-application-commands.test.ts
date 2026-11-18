@@ -421,6 +421,10 @@ const createDependencies = () => {
 
 type DataContentCommandKey = keyof typeof dataContentApplicationCommands
 const WRAPPED_COMMAND_KEYS = [
+  'imageTaskStart',
+  'imageTaskGet',
+  'imageTaskList',
+  'imageTaskCancel',
   'previewResearchVideoExport',
   'previewResearchVideoCancel',
   'researchVideoPresentationStart',
@@ -713,6 +717,10 @@ describe('Data and content application commands', () => {
         'preview-resources:release',
         'preview-resources:export-research-video',
         'preview-resources:cancel-research-video-export',
+        'image-tasks:start',
+        'image-tasks:get',
+        'image-tasks:list',
+        'image-tasks:cancel',
         'research-video:start',
         'research-video:status',
         'research-video:remove',

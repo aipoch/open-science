@@ -8,6 +8,13 @@ import type { OfficialVendor } from './types'
 const definitions: readonly OfficialVendor[] = [
   {
     id: 'openai',
+    imageGeneration: {
+      regions: [{ id: 'global', baseUrl: 'https://api.openai.com/v1' }],
+      models: [
+        { id: 'gpt-image-2.6-sunburst', label: 'GPT Image 2.6 Sunburst' },
+        { id: 'gpt-image-2.6-flare', label: 'GPT Image 2.6 Flare' }
+      ]
+    },
     label: 'OpenAI',
     reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh'] },
     apiEndpoints: ['responses'],
@@ -16,6 +23,20 @@ const definitions: readonly OfficialVendor[] = [
     // The API exposes a broader mixed catalog (embeddings, image, and audio models); keep the coding
     // catalog curated here instead of importing every id from /v1/models.
     models: [
+      // https://developers.openai.com/api/docs/models/gpt-6.2-sol
+      {
+        id: 'gpt-6.2-sol',
+        contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
+      },
+      // https://developers.openai.com/api/docs/models/gpt-6.2-astra
+      {
+        id: 'gpt-6.2-astra',
+        contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
+      },
       // https://developers.openai.com/api/docs/models/gpt-6.1-sol
       {
         id: 'gpt-6.1-sol',
@@ -182,6 +203,14 @@ const definitions: readonly OfficialVendor[] = [
   },
   {
     id: 'bailian',
+    imageGeneration: {
+      // The chat catalog's global region is US, not Singapore. Do not borrow its key.
+      regions: [{ id: 'china', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }],
+      models: [
+        { id: 'qwen-image-3.0-pro', label: 'Qwen Image 3.0 Pro' },
+        { id: 'qwen-image-3.0', label: 'Qwen Image 3.0' }
+      ]
+    },
     label: 'Bailian',
     // Keep effort hidden for models that only expose protocol-specific thinking controls. Models
     // with a documented cross-protocol effort vocabulary override this default below.
@@ -532,6 +561,16 @@ const definitions: readonly OfficialVendor[] = [
   {
     id: 'minimax',
     label: 'MiniMax',
+    // Image hosts are independent of the region's chat API.
+    // https://platform.minimax.io/docs/guides/image-generation
+    // China endpoint verified against https://api.minimax.cn/v1/images/generations.
+    imageGeneration: {
+      regions: [
+        { id: 'global', baseUrl: 'https://api.minimax.io/v1' },
+        { id: 'china', baseUrl: 'https://api.minimax.cn/v1' }
+      ],
+      models: [{ id: 'MiniMax-H3-Image', label: 'MiniMax H3 Image' }]
+    },
     reasoningEffort: { supported: false },
     // MiniMax serves the Anthropic /v1/messages route under `/anthropic`, plus the OpenAI-compatible
     // /v1/chat/completions and OpenAI Responses /v1/responses under `/v1`, from a Global host (.io) and
@@ -730,6 +769,10 @@ const definitions: readonly OfficialVendor[] = [
   },
   {
     id: 'volcengine',
+    imageGeneration: {
+      regions: [{ id: 'china', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' }],
+      models: [{ id: 'doubao-seedream-5-5-261028', label: 'Seedream 5.5' }]
+    },
     label: 'Volcengine Ark',
     reasoningEffort: { supported: true, values: ['minimal', 'low', 'medium', 'high'] },
     // ByteDance's Volcengine Ark serves all three routes on one host: the Anthropic-compatible

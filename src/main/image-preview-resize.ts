@@ -1,7 +1,9 @@
+import { IMAGE_PREVIEW_BUSY_MESSAGE } from '../shared/preview-resources'
 import { exceedsDecodedImagePixelLimit, MAX_DECODED_IMAGE_PIXELS } from './raster-image-safety'
 
 export const MAX_PREVIEW_SOURCE_PIXELS = 64_000_000
-const MAX_SOURCE_BYTES = 50 * 1024 * 1024
+export const IMAGE_THUMBNAIL_EDGE = 192
+const MAX_SOURCE_BYTES = 64 * 1024 * 1024
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 const MAX_RETAINED_BYTES = 128 * 1024 * 1024
 const MAX_PENDING_CONVERSIONS = 9
@@ -13,10 +15,17 @@ export type ResizedImagePreview = {
   release: () => void
 }
 
+export class AnimatedImagePreviewError extends Error {
+  constructor() {
+    super('Animated image preview exceeds the 16,000,000-pixel limit.')
+  }
+}
+
 // Shared by all resource owners: waiting requests hold no source or decoded image buffers.
 let pending = 0
 let retainedBytes = 0
-let tail = Promise.resolve()
+const waitingPreviews: Array<() => void> = []
+const waitingThumbnails: Array<() => void> = []
 
 const isAnimatedPng = (source: Buffer): boolean => {
   if (!source.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return false
@@ -34,28 +43,33 @@ const isAnimatedPng = (source: Buffer): boolean => {
 
 export const resizeImagePreview = async (
   size: number,
-  readSource: () => Promise<Buffer>
+  readSource: () => Promise<Buffer>,
+  thumbnail = false
 ): Promise<ResizedImagePreview> => {
-  if (size > MAX_SOURCE_BYTES) throw new Error('Image preview source exceeds the 50 MiB limit.')
-  if (pending >= MAX_PENDING_CONVERSIONS) throw new Error('Image preview capacity is busy.')
+  const outputBudget = thumbnail ? 512 * 1024 : MAX_OUTPUT_BYTES
+  if (size > MAX_SOURCE_BYTES)
+    throw new Error(
+      `Image preview source exceeds the ${MAX_SOURCE_BYTES / (1024 * 1024)} MiB limit.`
+    )
+  // Keep one position available when a grid fills the queue with thumbnails.
+  if (pending >= MAX_PENDING_CONVERSIONS - (thumbnail ? 1 : 0))
+    throw new Error(IMAGE_PREVIEW_BUSY_MESSAGE)
   pending += 1
-  const previous = tail
-  let advance!: () => void
-  tail = new Promise<void>((resolve) => {
-    advance = resolve
-  })
-  await previous
+  if (pending > 1) {
+    const waiting = thumbnail ? waitingThumbnails : waitingPreviews
+    await new Promise<void>((resolve) => waiting.push(resolve))
+  }
   let reserved = 0
   try {
-    if (retainedBytes + MAX_OUTPUT_BYTES > MAX_RETAINED_BYTES) {
-      throw new Error('Image preview capacity is busy.')
+    if (retainedBytes + outputBudget > MAX_RETAINED_BYTES) {
+      throw new Error(IMAGE_PREVIEW_BUSY_MESSAGE)
     }
-    retainedBytes += MAX_OUTPUT_BYTES
-    reserved = MAX_OUTPUT_BYTES
+    retainedBytes += outputBudget
+    reserved = outputBudget
     const source = await readSource()
     if (source.byteLength !== size) throw new Error('Image preview changed while reading.')
     if (isAnimatedPng(source)) {
-      throw new Error('Animated image preview exceeds the 16,000,000-pixel limit.')
+      throw new AnimatedImagePreviewError()
     }
     const { default: sharp } = await import('sharp')
     const image = sharp(source, {
@@ -66,10 +80,11 @@ export const resizeImagePreview = async (
     try {
       const metadata = await image.metadata()
       if ((metadata.pages ?? 1) > 1) {
-        throw new Error('Animated image preview exceeds the 16,000,000-pixel limit.')
+        throw new AnimatedImagePreviewError()
       }
       const dimensions = metadata.autoOrient
       const scale = Math.min(
+        thumbnail ? IMAGE_THUMBNAIL_EDGE / Math.max(dimensions.width, dimensions.height) : 1,
         1,
         Math.sqrt(MAX_DECODED_IMAGE_PIXELS / (dimensions.width * dimensions.height))
       )
@@ -88,7 +103,7 @@ export const resizeImagePreview = async (
         )
         .png()
         .toBuffer({ resolveWithObject: true })
-      if (exceedsDecodedImagePixelLimit(result.info) || result.data.byteLength > MAX_OUTPUT_BYTES) {
+      if (exceedsDecodedImagePixelLimit(result.info) || result.data.byteLength > outputBudget) {
         throw new Error('Image preview output exceeds its safety limit.')
       }
       retainedBytes -= reserved - result.data.byteLength
@@ -106,8 +121,8 @@ export const resizeImagePreview = async (
       }
     } catch (error) {
       if (
-        error instanceof Error &&
-        /^(Animated image preview|Image preview output)/.test(error.message)
+        error instanceof AnimatedImagePreviewError ||
+        (error instanceof Error && error.message.startsWith('Image preview output'))
       ) {
         throw error
       }
@@ -118,6 +133,7 @@ export const resizeImagePreview = async (
   } finally {
     retainedBytes -= reserved
     pending -= 1
-    advance()
+    const advance = waitingPreviews.shift() ?? waitingThumbnails.shift()
+    advance?.()
   }
 }

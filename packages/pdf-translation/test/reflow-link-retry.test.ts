@@ -76,3 +76,13 @@ it('stops when a copied endpoint still fails instead of retrying without progres
   expect(control.attempts).toEqual([[], [1]])
   expect(control.failures).toEqual([])
 })
+
+it('reports each retained unit fragment count independently of the document link count', async () => {
+  control.failures = []
+  control.attempts = []
+  const input = await source()
+  const output = await generateReflow(input, new Set([1]))
+  expect(output.layoutFailures).toHaveLength(3)
+  expect(output.layoutFailures.map((failure) => failure.fragmentCount)).toEqual([1, 1, 1])
+  expect(output.reflow.originalPageNumbers).toEqual([1, 2, 3])
+})

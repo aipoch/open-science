@@ -32,6 +32,7 @@ async function fingerprint(dir) {
 
 const registry = JSON.parse(await readFile('scripts/ci/package-test-boundaries.json', 'utf8'))
 const plan = familyVerificationPlan([
+  'resilient-download',
   'pdf-structure',
   'pdf-translation',
   'research-film',

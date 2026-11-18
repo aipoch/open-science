@@ -1,3 +1,9 @@
+import { z } from 'zod'
+import {
+  imageServiceSchema,
+  imageServiceMatchesProvider,
+  imageModelBindingSchema
+} from '../../shared/image-model-service-policy'
 import {
   isAgentFrameworkId,
   AGENT_MODEL_ROUTE_VALUES,
@@ -38,7 +44,9 @@ import type {
   StoredComputeGrant,
   StoredConnectors,
   StoredCustomMcpServer,
-  StoredProvider
+  StoredProvider,
+  StoredImageService,
+  StoredSettings
 } from './types'
 
 const log = createLogger('settings.repository')
@@ -565,5 +573,46 @@ export const encodeProviderProtocolsForStorage = (value: unknown): unknown => {
           }
         }
       : {})
+  }
+}
+
+const storedService = imageServiceSchema
+  .safeExtend({
+    keyRef: z.string().min(1).max(32768).optional(),
+    keyMask: z.string().max(128).optional()
+  })
+  .refine(
+    (service) =>
+      !service.providerId || (service.keyRef === undefined && service.keyMask === undefined)
+  )
+export const sanitizeImageSettings = (
+  value: { imageServices?: unknown; imageModel?: unknown },
+  providers: StoredProvider[]
+): Pick<StoredSettings, 'imageServices' | 'imageModel'> => {
+  const services: StoredImageService[] = []
+  if (Array.isArray(value.imageServices)) {
+    for (const candidate of value.imageServices.slice(0, 16)) {
+      const parsed = storedService.safeParse(candidate)
+      if (
+        parsed.success &&
+        !services.some((entry) => entry.id === parsed.data.id) &&
+        imageServiceMatchesProvider(parsed.data, providers)
+      )
+        services.push(parsed.data)
+    }
+  }
+  const binding = imageModelBindingSchema.safeParse(value.imageModel).data
+  const imageModel =
+    binding &&
+    services.some(
+      (service) =>
+        service.id === binding.serviceId &&
+        service.models.some((model) => model.id === binding.modelId)
+    )
+      ? binding
+      : undefined
+  return {
+    ...(services.length ? { imageServices: services } : {}),
+    ...(imageModel ? { imageModel } : {})
   }
 }
