@@ -70,9 +70,6 @@ export async function composeSessionSurfaces({
     current?: ArtifactReproducibilityAttemptOwner
   }
   sessionPersistenceCoordinator: SessionPersistenceCommands
-  loadStartupSessions?: () => Promise<
-    readonly import('../../shared/session-persistence').PersistedChatSession[]
-  >
   uploadCommandOwner: ReturnType<typeof createUploadCommandOwner>
   reviewRepository: ReturnType<typeof createDefaultReviewRepository>
   sessionPersistenceBackend: ReturnType<typeof coordinateSessionPersistenceWithProjectDeletions>
@@ -134,8 +131,7 @@ export async function composeSessionSurfaces({
       configRoot,
       settingsService,
       sessionPersistenceBackend,
-      sessionPersistenceCoordinator,
-      loadStartupSessions
+      sessionPersistenceCoordinator
     },
     (dependencies) => {
       const log = createLogger('session-details')
@@ -221,21 +217,7 @@ export async function composeSessionSurfaces({
               log.warn('stale Session details profile cleanup failed', diagnosticErrorFields(error))
             )
           composition.phase('session-details-recovery')
-          const startInBackground = disposed
-            ? Promise.resolve()
-            : (async () => {
-                let startupSessions: readonly import('../../shared/session-persistence').PersistedChatSession[] =
-                  []
-                try {
-                  startupSessions = (await dependencies.loadStartupSessions?.()) ?? []
-                } catch (error) {
-                  log.warn(
-                    'Session details startup candidate recovery failed; continuing without candidates',
-                    diagnosticErrorFields(error)
-                  )
-                }
-                await owner.start(startupSessions)
-              })()
+          const startInBackground = disposed ? Promise.resolve() : owner.start([])
           void startInBackground.catch((error) =>
             log.warn('Session details startup recovery failed', diagnosticErrorFields(error))
           )
