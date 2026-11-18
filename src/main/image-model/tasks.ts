@@ -41,7 +41,7 @@ const unavailableResult = (task: ImageTask): ImageTask => ({
 export class ImageTaskOwner {
   private readonly active = new Map<
     string,
-    { controller: AbortController; done: Promise<void>; scope: ImageTaskScope; task: ImageTask }
+    { controller: AbortController; done: Promise<void>; task: ImageTask }
   >()
   private readonly admissions = new Map<Promise<void>, ImageTaskStart>()
   private readonly cancelledAdmissions = new Set<string>()
@@ -249,6 +249,7 @@ export class ImageTaskOwner {
         const done = Promise.resolve()
           .then(async () => {
             try {
+              controller.signal.throwIfAborted()
               task.result = await execute(controller.signal, async (model) => {
                 await this.options.mutate(task, async () => {
                   controller.signal.throwIfAborted()
@@ -289,12 +290,7 @@ export class ImageTaskOwner {
             this.active.delete(key)
             releaseWrite()
           })
-        this.active.set(key, {
-          controller,
-          done,
-          task,
-          scope: { projectId: task.projectId, sessionId: task.sessionId }
-        })
+        this.active.set(key, { controller, done, task })
         admitted = true
         return structuredClone(task)
       } finally {
@@ -305,32 +301,24 @@ export class ImageTaskOwner {
   async cancel(raw: ImageTaskIdentity): Promise<void> {
     const scope = imageTaskIdentitySchema.parse(raw)
     await this.options.authorize(scope)
-    for (const request of this.admissions.values()) {
-      if (
-        'id' in request &&
-        request.id === scope.id &&
-        request.projectId === scope.projectId &&
-        request.sessionId === scope.sessionId
-      )
-        this.cancelledAdmissions.add(this.key(scope))
-    }
-    this.active.get(this.key(scope))?.controller.abort()
+    const key = this.key(scope)
+    this.cancelMatching((task) => this.key(task) === key)
+  }
+  private cancelMatching(matches: (task: ImageTaskIdentity) => boolean): void {
+    for (const request of this.admissions.values())
+      if (matches(request)) this.cancelledAdmissions.add(this.key(request))
+    for (const { controller, task } of this.active.values()) if (matches(task)) controller.abort()
   }
   isBusy(projectId: string, sessionId?: string): boolean {
-    return [
-      ...this.admissions.values(),
-      ...[...this.active.values()].map(({ scope }) => scope)
-    ].some(
+    return [...this.admissions.values(), ...[...this.active.values()].map(({ task }) => task)].some(
       (scope) => scope.projectId === projectId && (!sessionId || scope.sessionId === sessionId)
     )
   }
   cancelSessions(sessionIds: readonly string[]): void {
-    for (const { controller, scope } of this.active.values())
-      if (sessionIds.includes(scope.sessionId)) controller.abort()
+    this.cancelMatching(({ sessionId }) => sessionIds.includes(sessionId))
   }
   cancelProject(projectId: string): void {
-    for (const { controller, scope } of this.active.values())
-      if (scope.projectId === projectId) controller.abort()
+    this.cancelMatching((task) => task.projectId === projectId)
   }
   async close(): Promise<void> {
     this.closed = true

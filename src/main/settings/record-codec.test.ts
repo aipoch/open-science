@@ -33,11 +33,15 @@ describe('settings record codec', () => {
   it('keeps the private owner interface explicit', async () => {
     expect(Object.keys(await import('./record-codec')).sort()).toEqual([
       'encodeProviderProtocolsForStorage',
+      'imageModelMutationSchema',
+      'imageProviderConfiguration',
+      'imageServiceMatchesProvider',
       'sanitizeClaudeInfo',
       'sanitizeCodexInfo',
       'sanitizeComputeGrant',
       'sanitizeConnectors',
       'sanitizeCustomMcpServer',
+      'sanitizeImageSettings',
       'sanitizePackageMirror',
       'sanitizeProvider'
     ])

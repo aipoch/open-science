@@ -63,6 +63,19 @@ describe('image model presets', () => {
     })
   })
 
+  it.each(['generate', 'edit'] as const)(
+    'rejects a transparent JPG before %s dispatch',
+    (operation) => {
+      expect(
+        official({ output_format: 'jpg', background: 'transparent' }, operation)
+      ).toMatchObject({
+        ok: false,
+        code: 'UNSUPPORTED_OPTION',
+        option: 'background'
+      })
+    }
+  )
+
   it('rejects official range errors, conflicts and generation-only options during edit', () => {
     for (const options of [
       { size: '1024x639' },

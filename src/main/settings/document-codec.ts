@@ -1,7 +1,6 @@
 import { computePythonSelectionSchema } from '../../shared/compute-python-runtime'
 import { isAbsolute } from 'node:path'
 import { classificationSettingsSchema } from './classification-config'
-import { sanitizeImageSettings } from './image-model-config'
 
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { isAgentFrameworkId } from '../../shared/agent-framework-id'
@@ -37,7 +36,8 @@ import {
   sanitizeComputeGrant,
   sanitizeConnectors,
   sanitizePackageMirror,
-  sanitizeProvider
+  sanitizeProvider,
+  sanitizeImageSettings
 } from './record-codec'
 import {
   createEmptySettings,

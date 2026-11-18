@@ -394,28 +394,34 @@ it('waits for admission before resolving a lost start response by identity', asy
   expect(f.prepare).toHaveBeenCalledTimes(1)
 })
 
-it('cancels admission while inputs are being prepared without calling the provider', async () => {
-  const execute = vi.fn(async () => output)
-  const f = await fixture(execute)
-  let release!: () => void
-  f.prepare.mockImplementationOnce(async () => {
-    await new Promise<void>((resolve) => {
-      release = resolve
+it.each(['task', 'sessions', 'project'] as const)(
+  'cancels pending admission by %s without calling the provider',
+  async (target) => {
+    const execute = vi.fn(async () => output)
+    const f = await fixture(execute)
+    let release!: () => void
+    f.prepare.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return execute
     })
-    return execute
-  })
-  const input = request()
-  const started = f.owner.start(input)
-  const duplicate = f.owner.start(input)
-  const duplicateRejected = expect(duplicate).rejects.toMatchObject({ code: 'CANCELLED' })
-  const rejected = expect(started).rejects.toMatchObject({ code: 'CANCELLED' })
-  await vi.waitFor(() => expect(release).toBeTypeOf('function'))
-  await f.owner.cancel({ projectId: input.projectId, sessionId: input.sessionId, id: input.id })
-  release()
-  await rejected
-  await duplicateRejected
-  expect(execute).not.toHaveBeenCalled()
-})
+    const input = request()
+    const started = f.owner.start(input)
+    const duplicate = f.owner.start(input)
+    const duplicateRejected = expect(duplicate).rejects.toMatchObject({ code: 'CANCELLED' })
+    const rejected = expect(started).rejects.toMatchObject({ code: 'CANCELLED' })
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    if (target === 'sessions') f.owner.cancelSessions([input.sessionId])
+    else if (target === 'project') f.owner.cancelProject(input.projectId)
+    else
+      await f.owner.cancel({ projectId: input.projectId, sessionId: input.sessionId, id: input.id })
+    release()
+    await rejected
+    await duplicateRejected
+    expect(execute).not.toHaveBeenCalled()
+  }
+)
 
 it('honors cancellation while the queued record is being written', async () => {
   const execute = vi.fn(async () => output)

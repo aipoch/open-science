@@ -50,11 +50,14 @@ import {
 } from './custom-server-identity'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
-import { imageProviderConfiguration, sanitizeImageSettings } from './image-model-config'
 import type { LocalShellRuntimeMutation } from './local-shell-runtime-contract'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { buildProviderValidationPatch } from './provider-validation-state'
-import { sanitizePackageMirror } from './record-codec'
+import {
+  imageProviderConfiguration,
+  sanitizeImageSettings,
+  sanitizePackageMirror
+} from './record-codec'
 import {
   buildPromptOptimizationModelMutation,
   buildReviewerModelMutation,

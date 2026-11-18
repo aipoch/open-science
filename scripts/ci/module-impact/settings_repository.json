@@ -15,8 +15,7 @@
     "src/main/settings/record-codec.test.ts",
     "src/main/settings/repository.test.ts",
     "src/main/settings/classification-config.ts",
-    "src/main/settings/local-shell-runtime-contract.ts",
-    "src/main/settings/image-model-config.ts"
+    "src/main/settings/local-shell-runtime-contract.ts"
   ],
   "interfacePaths": [
     "src/main/settings/repository.ts",
@@ -24,7 +23,7 @@
     "src/main/settings/compute-grant-port.ts",
     "src/main/settings/document-store.ts",
     "src/main/settings/local-shell-runtime-contract.ts",
-    "src/main/settings/image-model-config.ts"
+    "src/main/settings/record-codec.ts"
   ],
   "consumerModules": [
     "settings_provider_accounts",

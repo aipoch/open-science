@@ -15,7 +15,7 @@ import {
   imageProviderConfiguration,
   imageServiceMatchesProvider,
   sanitizeImageSettings
-} from './image-model-config'
+} from './record-codec'
 import type { SettingsRepository } from './repository'
 import type { StoredImageService, StoredSettings } from './types'
 
