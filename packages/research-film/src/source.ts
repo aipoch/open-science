@@ -1,5 +1,12 @@
 export const RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES = 100 * 1024 * 1024
 
+export const RESEARCH_VIDEO_PLAYER_SIZE_ERROR =
+  'The film exceeds 200 MiB. Shorten it or use smaller media.'
+
+export function assertResearchVideoPlayerSize(bytes: number): void {
+  if (bytes > 200 * 1024 * 1024) throw new Error(RESEARCH_VIDEO_PLAYER_SIZE_ERROR)
+}
+
 export type ResearchVideoSessionSource = {
   sessionTitle: string
   project: string

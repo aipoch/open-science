@@ -1,5 +1,6 @@
 import type { ResearchVideoProgress, ResearchVideoStep } from '@aipoch/research-film/contracts'
 import {
+  assertResearchVideoPlayerSize,
   filmVisualCheckSchema,
   researchVideoResolutionSchema,
   RESEARCH_VIDEO_EXPORT_OPTIONS,
@@ -141,10 +142,8 @@ async function openFilmPlayer<T>(
   const html = await waitForFilmStep(setupSignal, () =>
     readFile(htmlPath, { encoding: 'utf8', signal: setupSignal })
   )
-  if (
-    Buffer.byteLength(html) > 200 * 1024 * 1024 ||
-    !html.includes('<meta name="open-science-research-video" content="1">')
-  )
+  assertResearchVideoPlayerSize(Buffer.byteLength(html))
+  if (!html.includes('<meta name="open-science-research-video" content="1">'))
     throw new Error('Not a supported research video player')
   const isolated = (renderSession ??= createRenderSession())
   if (needsReset) await resetRenderSession(isolated, signal)

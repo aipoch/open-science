@@ -7818,6 +7818,7 @@
     "Video export component installation failed. Retry to continue.": "動画書き出しコンポーネントのインストールに失敗しました。再試行してください。",
     "Video export components required: {{size}} MiB": "動画書き出しコンポーネントが必要です：{{size}} MiB",
     "Install and export": "インストールして書き出す",
+    "The film exceeds 200 MiB. Shorten it or use smaller media.": "動画が 200 MiB を超えています。動画を短くするか、より小さなメディアファイルを使用してください。",
     "Shorten the film to fit the narration audio limit.": "ナレーション音声がサイズ上限に収まるよう、動画を短くしてください。",
     "Narration installation did not finish. Retry to continue.": "ナレーション用リソースのインストールが完了しませんでした。再試行してください。",
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "生成するにはナレーション用リソース（{{size}} MiB）をインストールしてください。今後の解説でも再利用されます。",

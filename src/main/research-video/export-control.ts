@@ -5,7 +5,10 @@ import type {
   ResearchVideoExportResult,
   ResearchVideoResolution
 } from '@aipoch/research-film/contracts'
-import { researchVideoResolutionSchema } from '@aipoch/research-film/contracts'
+import {
+  assertResearchVideoPlayerSize,
+  researchVideoResolutionSchema
+} from '@aipoch/research-film/contracts'
 import type { LocalModelSnapshot } from '../../shared/local-models'
 import type { createVideoExportTools } from '@aipoch/research-film'
 import { createWriteStream } from 'node:fs'
@@ -99,7 +102,7 @@ export function createResearchVideoExportControl(
           })
         }
         const { total } = await readRange(0, 1)
-        if (total > 200 * 1024 * 1024) throw new Error('Research video player exceeds 200 MiB')
+        assertResearchVideoPlayerSize(total)
         const read = async (begin: number, end: number): Promise<Uint8Array> => {
           signal.throwIfAborted()
           const chunk = await readRange(begin, end)

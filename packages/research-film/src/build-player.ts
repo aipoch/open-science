@@ -1,4 +1,4 @@
-import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from './source.js'
+import { assertResearchVideoPlayerSize, RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from './source.js'
 import { readFile, readdir, lstat, realpath, stat, mkdir, writeFile, rm } from 'node:fs/promises'
 import { resolve, relative, isAbsolute, dirname, extname, join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -384,6 +384,7 @@ export async function buildResearchVideoPlayer(options: {
   }
   sources['manifest.json'] = Buffer.from(JSON.stringify(manifest, null, 2))
   options.signal?.throwIfAborted()
+  assertResearchVideoPlayerSize(Buffer.byteLength(html))
   await mkdir(options.outputDirectory, { recursive: false })
   try {
     const playerPath = join(options.outputDirectory, 'player.html'),

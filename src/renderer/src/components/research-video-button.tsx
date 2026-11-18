@@ -1,3 +1,4 @@
+import { RESEARCH_VIDEO_PLAYER_SIZE_ERROR } from '@aipoch/research-film/contracts'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -309,6 +310,9 @@ function ResearchVideoModeButton({
     )
   }
   const filmErrors: Record<string, string> = {
+    [RESEARCH_VIDEO_PLAYER_SIZE_ERROR]: t(
+      'The film exceeds 200 MiB. Shorten it or use smaller media.'
+    ),
     'Shorten the film to fit the narration audio limit.': t(
       'Shorten the film to fit the narration audio limit.'
     ),

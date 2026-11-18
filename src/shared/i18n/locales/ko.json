@@ -7816,6 +7816,7 @@
     "Video export component installation failed. Retry to continue.": "동영상 내보내기 구성 요소를 설치하지 못했습니다. 계속하려면 다시 시도하세요.",
     "Video export components required: {{size}} MiB": "동영상 내보내기 구성 요소 필요: {{size}} MiB",
     "Install and export": "설치 후 내보내기",
+    "The film exceeds 200 MiB. Shorten it or use smaller media.": "동영상이 200 MiB를 초과합니다. 동영상을 줄이거나 더 작은 미디어 파일을 사용하세요.",
     "Shorten the film to fit the narration audio limit.": "내레이션 오디오가 크기 제한을 넘지 않도록 영상을 줄이세요.",
     "Narration installation did not finish. Retry to continue.": "내레이션 리소스 설치가 완료되지 않았습니다. 다시 시도하세요.",
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "생성하려면 내레이션 리소스({{size}} MiB)를 설치하세요. 이후 해설에서도 재사용됩니다.",

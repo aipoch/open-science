@@ -1,3 +1,4 @@
+import { assertResearchVideoPlayerSize } from './source.js'
 import { researchFilmResources } from './resources.js'
 import { createHash } from 'node:crypto'
 import { mkdtemp, writeFile, readFile, mkdir, symlink, rm } from 'node:fs/promises'
@@ -11,6 +12,14 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 describe('research video source boundaries', () => {
+  it('accepts the player byte limit and reports how to reduce an oversized film', () => {
+    const limit = 200 * 1024 * 1024
+    expect(() => assertResearchVideoPlayerSize(limit)).not.toThrow()
+    expect(() => assertResearchVideoPlayerSize(limit + 1)).toThrow(
+      'Shorten it or use smaller media.'
+    )
+  })
+
   it('preserves engine and source bytes, and rejects source names that overwrite generated files', async () => {
     const root = await mkdtemp(join(tmpdir(), 'research-video-'))
     roots.push(root)

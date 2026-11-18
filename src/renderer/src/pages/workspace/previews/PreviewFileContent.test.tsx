@@ -829,9 +829,50 @@ describe('PreviewFileContent', () => {
     await act(async () => button('Install and export').click())
     expect(window.api.localModels.install).toHaveBeenCalledExactlyOnceWith('video-export')
     expect(window.api.previewResources.exportResearchVideo).toHaveBeenCalledTimes(1)
+
+    // A second preview joins the same download, cancels its export, then closes.
+    const other = document.createElement('div')
+    document.body.appendChild(other)
+    const otherRoot = createRoot(other)
+    try {
+      await act(async () =>
+        otherRoot.render(
+          <PreviewFileContent
+            item={createFileItem({
+              format: 'html',
+              name: 'second.html',
+              path: '/second.html',
+              projectId: 'project-1'
+            })}
+          />
+        )
+      )
+      await act(async () =>
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'open-science-research-video-ready' },
+            source: other.querySelector('iframe')!.contentWindow
+          })
+        )
+      )
+      const otherButton = (text: string): HTMLButtonElement =>
+        [...other.querySelectorAll('button')].find((entry) => entry.textContent === text)!
+      vi.mocked(window.api.previewResources.exportResearchVideo).mockResolvedValueOnce({
+        canceled: false,
+        needsInstallation: { downloadBytes: 1024 }
+      })
+      await chooseVideoResolution(otherButton('Render video (MP4)'))
+      await act(async () => otherButton('Install and export').click())
+      await act(async () => otherButton('Cancel').click())
+    } finally {
+      await act(async () => otherRoot.unmount())
+      other.remove()
+    }
+    expect(window.api.localModels.cancel).not.toHaveBeenCalled()
+    expect(window.api.previewResources.cancelResearchVideoExport).not.toHaveBeenCalled()
     await act(async () => vi.advanceTimersByTimeAsync(500))
     expect(getSnapshot).toHaveBeenCalledWith('video-export')
-    expect(window.api.previewResources.exportResearchVideo).toHaveBeenCalledTimes(2)
+    expect(window.api.previewResources.exportResearchVideo).toHaveBeenCalledTimes(3)
     expect(window.api.previewResources.exportResearchVideo).toHaveBeenLastCalledWith({
       resourceId: expect.any(String),
       resolution: '1080p'

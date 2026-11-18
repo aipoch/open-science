@@ -7982,6 +7982,7 @@
     "Video export component installation failed. Retry to continue.": "Installation der Videoexport-Komponenten fehlgeschlagen. Zum Fortfahren erneut versuchen.",
     "Video export components required: {{size}} MiB": "Videoexport-Komponenten erforderlich: {{size}} MiB",
     "Install and export": "Installieren und exportieren",
+    "The film exceeds 200 MiB. Shorten it or use smaller media.": "Der Film überschreitet 200 MiB. Kürzen Sie ihn oder verwenden Sie kleinere Mediendateien.",
     "Shorten the film to fit the narration audio limit.": "Kürzen Sie den Film, damit die Tonspur die Größenbegrenzung einhält.",
     "Narration installation did not finish. Retry to continue.": "Die Installation der Sprachressourcen wurde nicht abgeschlossen. Versuchen Sie es erneut.",
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "Installieren Sie die Sprachressourcen ({{size}} MiB) zum Erstellen. Sie werden für weitere Erklärungen wiederverwendet.",

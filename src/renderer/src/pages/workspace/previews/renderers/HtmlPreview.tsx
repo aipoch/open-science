@@ -1,6 +1,7 @@
 import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
 import {
   RESEARCH_VIDEO_EXPORT_OPTIONS,
+  RESEARCH_VIDEO_PLAYER_SIZE_ERROR,
   researchVideoResolutionSchema,
   researchVideoExportEstimate,
   type ResearchVideoResolution
@@ -168,7 +169,7 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
     return () => {
       const attempt = activeExport.current
       activeExport.current = undefined
-      if (attempt)
+      if (attempt && !attempt.installing)
         void window.api.previewResources
           .cancelResearchVideoExport({ resourceId: attempt.resourceId })
           .catch(() => {})
@@ -176,7 +177,6 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
       setInstallSnapshot(undefined)
       setExportProgress(undefined)
       setExporting(false)
-      if (attempt?.installing) void window.api.localModels.cancel('video-export').catch(() => {})
     }
   }, [requestKey])
 
@@ -249,8 +249,8 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
     const attempt = activeExport.current
     if (attempt) {
       attempt.cancelled = true
-      if (attempt.installing) await window.api.localModels.cancel('video-export')
-      else
+      // The component download is shared by every preview. Cancel only this export.
+      if (!attempt.installing)
         await window.api.previewResources.cancelResearchVideoExport({
           resourceId: attempt.resourceId
         })
@@ -414,7 +414,17 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
       {modeToggle}
       {exportStatus}
       {installPrompt}
-      {exportError && <ErrorNotice inline tone="amber" description={exportError} />}
+      {exportError && (
+        <ErrorNotice
+          inline
+          tone="amber"
+          description={
+            exportError === RESEARCH_VIDEO_PLAYER_SIZE_ERROR
+              ? t('The film exceeds 200 MiB. Shorten it or use smaller media.')
+              : exportError
+          }
+        />
+      )}
       {htmlDownload.status === 'error' && (
         <ErrorNotice inline tone="amber" description={t('Download failed. Try again')} />
       )}
