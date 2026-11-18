@@ -13,7 +13,8 @@ import type {
 } from '../research-video-presentation'
 import type {
   ResearchVideoProgress,
-  ResearchVideoExportResult
+  ResearchVideoExportResult,
+  ResearchVideoResolution
 } from '@aipoch/research-film/contracts'
 import type { PdfReconcileRequest, PdfSharingPreview } from '../pdf-annotations'
 // Ordered fragments keep the public registration order when capabilities interleave.
@@ -195,7 +196,10 @@ export const previewDeleteContracts = {
     (request: ReadManagedPreviewRangeRequest) => Promise<ManagedPreviewRangeResult>
   >()('preview-resources', ['preview-resources:read-range']),
   'previewResources.exportResearchVideo': callable<
-    (request: { resourceId: string }) => Promise<ResearchVideoExportResult>
+    (request: {
+      resourceId: string
+      resolution?: ResearchVideoResolution
+    }) => Promise<ResearchVideoExportResult>
   >()('preview-resources', ['preview-resources:export-research-video', ELECTRON]),
   'researchVideo.start': callable<
     (request: ResearchVideoStartRequest) => Promise<ResearchVideoPresentationStatus>

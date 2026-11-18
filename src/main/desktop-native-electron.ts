@@ -1,4 +1,5 @@
 import {
+  checkResearchVideoHtml,
   renderResearchVideoMp4,
   readResearchVideoExportProgress
 } from './research-video/export-electron'
@@ -26,6 +27,7 @@ export function createDesktopNativeHandler(
       signal.throwIfAborted()
       return renderReviewerDesktopResource({ ...request.input, signal })
     }
+    if (request.operation === 'research-video-check') return checkResearchVideoHtml(request, signal)
     const windowFor = (): BrowserWindow | undefined => {
       signal.throwIfAborted()
       const sender =

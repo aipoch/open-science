@@ -1,5 +1,5 @@
-import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from './source.js'
-import { readFile, realpath, stat, mkdir, writeFile, rm } from 'node:fs/promises'
+import { assertResearchVideoPlayerSize, RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from './source.js'
+import { readFile, readdir, lstat, realpath, stat, mkdir, writeFile, rm } from 'node:fs/promises'
 import { resolve, relative, isAbsolute, dirname, extname, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { Script } from 'node:vm'
@@ -16,6 +16,7 @@ type SourceSpec = VideoSpec & {
   profile?: string
   disclaimer?: string
   start_file?: string
+  libs?: string[]
 }
 type SessionSnapshot = {
   messages: Array<{ md?: string; [key: string]: unknown }>
@@ -55,6 +56,25 @@ export async function readVideoSourceFile(root: string, name: string): Promise<B
   return readFile(path)
 }
 
+export async function readFilmVoiceTimings(
+  voiceDirectory: string,
+  spec: VideoSpec
+): Promise<Record<string, VoiceTiming>> {
+  const timing = JSON.parse((await readVideoSourceFile(voiceDirectory, 'timings.json')).toString())
+  const words = JSON.parse(
+    (await readVideoSourceFile(voiceDirectory, 'word-times.json')).toString()
+  )
+  const voices: Record<string, VoiceTiming> = {}
+  for (const scene of spec.scenes)
+    for (const [i, line] of scene.lines.entries()) {
+      const key = `${scene.id}_${i}`
+      if (timing.say?.[key] !== (line.say || line.caption))
+        throw new Error(`Stale or missing voice text: ${key}`)
+      voices[key] = { duration: timing.lines[key], words: words[key] }
+    }
+  return voices
+}
+
 export async function buildResearchVideoPlayer(options: {
   specPath: string
   provenance?: Record<string, unknown>
@@ -86,20 +106,7 @@ export async function buildResearchVideoPlayer(options: {
     throw new Error('Missing video title or session snapshot')
   const session: SessionSnapshot = JSON.parse((await source(spec.session)).toString())
   if (!Array.isArray(session.messages)) throw new Error('Invalid session snapshot')
-  const timing = JSON.parse(
-    (await readVideoSourceFile(options.voiceDirectory, 'timings.json')).toString()
-  )
-  const words = JSON.parse(
-    (await readVideoSourceFile(options.voiceDirectory, 'word-times.json')).toString()
-  )
-  const voices: Record<string, VoiceTiming> = {}
-  for (const scene of spec.scenes)
-    for (const [i, line] of scene.lines.entries()) {
-      const key = `${scene.id}_${i}`
-      if (timing.say?.[key] !== (line.say || line.caption))
-        throw new Error(`Stale or missing voice text: ${key}`)
-      voices[key] = { duration: timing.lines[key], words: words[key] }
-    }
+  const voices = await readFilmVoiceTimings(options.voiceDirectory, spec)
   const timeline = buildVideoTimeline(spec, voices)
   for (const name of [
     'timings.json',
@@ -282,12 +289,30 @@ export async function buildResearchVideoPlayer(options: {
   if (sourceBytes > 200 * 1024 * 1024) throw new Error('Source bundle exceeds 200 MiB')
   sources['mix.wav'] = mix
   dataUrls['mix.wav'] = dataUrl('mix.wav', mix)
+  // The skill stores reusable drawings beside video.json, under subjects/*.json.
+  // Use the same source boundary and archive accounting as animation scripts.
+  const subjects: Record<string, unknown> = Object.create(null)
+  const subjectDirectory = join(root, 'subjects')
+  const subjectInfo = await lstat(subjectDirectory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error
+    return undefined
+  })
+  if (subjectInfo) {
+    if (!subjectInfo.isDirectory()) throw new Error('Invalid subjects directory')
+    for (const entry of await readdir(subjectDirectory, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+      const drawing = JSON.parse((await source(`subjects/${entry.name}`)).toString())
+      if (!Array.isArray(drawing?.parts)) throw new Error(`Invalid subject drawing: ${entry.name}`)
+      subjects[entry.name.slice(0, -5)] = drawing
+    }
+  }
   const data = {
     meta: {
       title: spec.title,
       case: spec.case,
       profile: spec.profile ?? 'user',
-      disclaimer: spec.disclaimer ?? ''
+      disclaimer: spec.disclaimer ?? '',
+      ...(options.provenance?.scriptScore === 9 && { scriptScore: 9 })
     },
     timeline,
     session,
@@ -296,11 +321,29 @@ export async function buildResearchVideoPlayer(options: {
       : null,
     tables,
     codes,
-    subjects: {},
+    subjects,
     assets: [],
     svgs: {}
   }
   let scripts = `window.DATA=${scriptJson(data)};window.TOKENS=${scriptJson(tokens)};window.VIDEO_ASSETS=${scriptJson(dataUrls)};`
+  if (spec.libs?.length) {
+    if (
+      spec.libs.length !== 1 ||
+      spec.libs[0] !== 'libs/app.js' ||
+      !options.provenance?.sessionAppSha256
+    )
+      throw new Error('Session app approval is required for this film.')
+    const appBytes = await source('libs/app.js')
+    if (createHash('sha256').update(appBytes).digest('hex') !== options.provenance.sessionAppSha256)
+      throw new Error('The approved session app changed.')
+    const appCode = appBytes.toString()
+    new Script(appCode) // Only the isolated HTML player runs the consented module graph.
+    scripts +=
+      '\n;\nwindow.__filmAppUsed=false;try {\n' +
+      appCode +
+      '\nconst sessionApp=window.APP; Object.defineProperty(window,"APP",{get(){window.__filmAppUsed=true;return sessionApp}});' +
+      '\n} catch(error) {window.__filmAppError=String(error.message || error)}\n;\n'
+  }
   scripts += `window.ResearchVideoPlaybackClock=${ResearchVideoPlaybackClock.toString()};`
   for (const [key, code] of Object.entries(codes)) {
     const factory = `function(k,Math,Date,performance,requestAnimationFrame,setTimeout,setInterval){${code}\n}`
@@ -315,10 +358,19 @@ export async function buildResearchVideoPlayer(options: {
     'icons/lucide.js',
     'js/kit.js',
     'js/panels.js',
-    'js/stage.js'
+    'js/stage.js',
+    'js/visual-check.js'
   ])
     scripts += '\n;\n' + (await engine(name))
-  const inner = `<!doctype html><html lang="en"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"><meta name="open-science-research-video" content="1"><title>${attr(spec.title)}</title><!-- Third-party licenses: ${notices.join('\n\n').replace(/--/g, '—')} --><style>${css}</style><div id="root"></div><div id="controls"></div><script>${scripts.replace(/<\/script/gi, '<\\/script')}</script></html>`
+  // The card travels in the player so old receipt and session-package readers keep their format.
+  const score = options.provenance?.scriptScore === 9 ? '9' : ''
+  const app = spec.libs?.length
+    ? 'live'
+    : options.provenance?.sessionAppSha256 || options.provenance?.sessionAppMode === 'drawn'
+      ? 'drawn'
+      : ''
+  const card = score || app ? `<!--open-science-film-card:${score}:${app}-->` : ''
+  const inner = `<!doctype html>${card}<html lang="en"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"><meta name="open-science-research-video" content="1"><title>${attr(spec.title)}</title><!-- Third-party licenses: ${notices.join('\n\n').replace(/--/g, '—')} --><style>${css}</style><div id="root"></div><div id="controls"></div><script>${scripts.replace(/<\/script/gi, '<\\/script')}</script></html>`
   const html = inner
 
   const manifest = {
@@ -332,6 +384,7 @@ export async function buildResearchVideoPlayer(options: {
   }
   sources['manifest.json'] = Buffer.from(JSON.stringify(manifest, null, 2))
   options.signal?.throwIfAborted()
+  assertResearchVideoPlayerSize(Buffer.byteLength(html))
   await mkdir(options.outputDirectory, { recursive: false })
   try {
     const playerPath = join(options.outputDirectory, 'player.html'),

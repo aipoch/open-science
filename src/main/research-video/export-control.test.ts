@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { expect, it, vi } from 'vitest'
 import { createResearchVideoExportControl } from './export-control'
 import type { ApplicationCallerLease } from '../application-command-router'
+import { desktopNativeOperationSchema } from '../desktop-native-contract'
 const native = vi.hoisted(() => ({ chooseSavePath: vi.fn(), renderResearchVideo: vi.fn() }))
 vi.mock('../desktop-interaction', () => ({ desktopFileInteraction: () => native }))
 const lease = (id: string): ApplicationCallerLease =>
@@ -22,16 +23,21 @@ const content = Buffer.from(
   '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="open-science-research-video" content="1"><title>Heat &amp; Light: Where?</title><style>body{}</style><div id="root">player</div></html>'
 )
 it.each([
-  ['generated document over two chunks', Buffer.concat([content, Buffer.alloc(1024 * 1024)])],
+  [
+    'generated document over two chunks',
+    Buffer.concat([content, Buffer.alloc(1024 * 1024)]),
+    undefined
+  ],
   [
     'explicit head element',
     Buffer.from(
       '<!doctype html><html><head><meta name="open-science-research-video" content="1"><title>Heat &amp; Light: Where?</title></head><body>player</body></html>'
-    )
+    ),
+    '4k' as const
   ]
 ])(
   'exports %s with its decoded title and atomically replaces the chosen output',
-  async (_shape, content) => {
+  async (_shape, content, resolution) => {
     const root = await mkdtemp(join(tmpdir(), 'video-export-control-'))
     let htmlPath = ''
     try {
@@ -49,6 +55,7 @@ it.each([
       native.chooseSavePath.mockResolvedValue({ canceled: false, filePath: destination })
       native.renderResearchVideo.mockImplementation(async (request) => {
         htmlPath = request.htmlPath
+        expect(request.resolution).toBe(resolution ?? '720p')
         expect(await readFile(destination, 'utf8')).toBe('old')
         expect(await readFile(htmlPath, 'utf8')).toBe(content.toString())
         await writeFile(`${htmlPath}.mp4`, 'new')
@@ -56,7 +63,12 @@ it.each([
       })
       const control = createResearchVideoExportControl({ readRange }, tools)
       await expect(control.export(lease('other'), { resourceId: 'r' })).rejects.toThrow('not owned')
-      await control.export(lease('owner'), { resourceId: 'r' })
+      await expect(
+        control.export(lease('owner'), { resourceId: 'r', resolution })
+      ).resolves.toEqual({
+        canceled: false,
+        filePath: destination
+      })
       expect(native.chooseSavePath).toHaveBeenLastCalledWith(
         { defaultPath: 'Heat-&-Light-Where.mp4', filters: [{ name: 'MP4', extensions: ['mp4'] }] },
         undefined
@@ -68,6 +80,25 @@ it.each([
     }
   }
 )
+it('rejects unsupported resolutions at both boundaries before reading or saving a file', async () => {
+  const readRange = vi.fn()
+  const control = createResearchVideoExportControl({ readRange }, tools)
+  const calls = native.chooseSavePath.mock.calls.length
+  await expect(
+    control.export(lease('owner'), { resourceId: 'r', resolution: '8k' } as never)
+  ).rejects.toThrow()
+  expect(readRange).not.toHaveBeenCalled()
+  expect(native.chooseSavePath).toHaveBeenCalledTimes(calls)
+  expect(
+    desktopNativeOperationSchema.safeParse({
+      operation: 'research-video-mp4',
+      htmlPath: '/tmp/player.html',
+      encoderPath: '/tmp/ffmpeg',
+      probePath: '/tmp/ffprobe',
+      resolution: '8k'
+    }).success
+  ).toBe(false)
+})
 it('cancels the owning export without publishing, and cannot cancel another caller', async () => {
   const root = await mkdtemp(join(tmpdir(), 'video-export-cancel-'))
   let htmlPath = ''

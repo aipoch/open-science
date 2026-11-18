@@ -19,6 +19,7 @@ import {
   type ResearchVideoSessionSource,
   RESEARCH_NARRATION_MODELS,
   RESEARCH_VIDEO_SCREENPLAY_PROMPT,
+  FILM_SCRIPT_REVIEW_PROMPT,
   RESEARCH_VIDEO_ANIMATION_PROMPT,
   REPLAY_AUTHORING_PROMPT,
   VIDEO_EXPORT_REVISIONS
@@ -46,6 +47,10 @@ import { resolveDataRoot } from '../storage-root'
 import type { ManagedPreviewResources } from '../managed-preview-resources'
 import { NotebookRunRepository } from '../notebook/repository'
 import { RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE } from '../../shared/research-video-presentation'
+import { desktopFileInteraction } from '../desktop-interaction'
+import { FILM_VISUAL_REVIEW_PROMPT, reviewFilmFrames } from '../research-video/visual-review'
+import type { AcpMessageImage } from '../../shared/acp-image-contract'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 /** Button-owned generation: no conversation tools, Artifact publication or Notebook transport. */
 export async function composeResearchFilm({
@@ -57,9 +62,11 @@ export async function composeResearchFilm({
   researchFilmLifecycle,
   previewResources,
   recordAuxiliaryUsage,
+  translate = englishNativeTranslator,
   modules
 }: {
   configRoot: string
+  translate?: NativeTranslator
   settingsService: SettingsService
   sessionRepository: ReturnType<typeof createDefaultSessionRepository>
   sessionPersistenceCoordinator: Pick<SessionPersistenceCommands, 'runSessionMutation'>
@@ -99,6 +106,7 @@ export async function composeResearchFilm({
   const videoExportTools = createVideoExportTools(videoExportModels)
   const resources = researchFilmResources()
   const researchVideoEngineDirectory = resources.stageDirectory
+  const scriptStandard = await readFile(join(resources.authoringDirectory, 'SCRIPT.md'), 'utf8')
   const animationInstructions =
     RESEARCH_VIDEO_ANIMATION_PROMPT +
     '\n\n' +
@@ -117,6 +125,7 @@ export async function composeResearchFilm({
   ): Promise<{
     target: Awaited<ReturnType<SettingsService['captureActiveExplicitAgentBackendTarget']>>
     budget: number
+    supportsImages: boolean
     count: (text: string) => number
   }> => {
     const target = await settingsService.captureActiveExplicitAgentBackendTarget()
@@ -128,6 +137,7 @@ export async function composeResearchFilm({
     const model = target.model.kind === 'required' ? target.model.id : provider.model
     return {
       target,
+      supportsImages: provider.supportsImageInput,
       budget: researchFilmInputBudget(provider, model),
       count: researchFilmTokenCounter({
         ...target,
@@ -137,6 +147,13 @@ export async function composeResearchFilm({
   }
   const filmLog = createLogger('research-video')
   const targets = new WeakMap<ResearchVideoSessionSource, ReturnType<typeof capture>>()
+  const targetFor = (
+    source: ResearchVideoSessionSource,
+    signal: AbortSignal
+  ): ReturnType<typeof capture> => {
+    if (!targets.has(source)) targets.set(source, capture(signal))
+    return targets.get(source)!
+  }
   const recordUsage = async (
     record: SessionAuxiliaryTurnUsageRecord,
     signal: AbortSignal
@@ -164,14 +181,14 @@ export async function composeResearchFilm({
     source: ResearchVideoSessionSource,
     systemPrompt: string,
     payload: unknown,
-    signal: AbortSignal
+    signal: AbortSignal,
+    images?: AcpMessageImage[]
   ): Promise<string> => {
     signal.throwIfAborted()
     const targetDeadline = AbortSignal.timeout(30_000)
     const setupSignal = AbortSignal.any([signal, targetDeadline])
     const { target, budget, count } = await waitForFilmStep(setupSignal, () => {
-      if (!targets.has(source)) targets.set(source, capture(setupSignal))
-      return targets.get(source)!
+      return targetFor(source, setupSignal)
     }).catch((error) => {
       signal.throwIfAborted()
       const failure =
@@ -199,9 +216,13 @@ export async function composeResearchFilm({
       phase:
         systemPrompt === REPLAY_AUTHORING_PROMPT
           ? 'replay'
-          : systemPrompt === RESEARCH_VIDEO_SCREENPLAY_PROMPT
+          : systemPrompt.startsWith(RESEARCH_VIDEO_SCREENPLAY_PROMPT)
             ? 'screenplay'
-            : 'animation',
+            : systemPrompt.startsWith(FILM_SCRIPT_REVIEW_PROMPT)
+              ? 'script-review'
+              : systemPrompt === FILM_VISUAL_REVIEW_PROMPT
+                ? 'visual-review'
+                : 'animation',
       purpose: correction ? 'correction' : undefined,
       frameworkId: target.frameworkId,
       providerId: target.providerId
@@ -215,6 +236,7 @@ export async function composeResearchFilm({
           target,
           prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
           systemPrompt,
+          images,
           agentName:
             source.provenance.mode === 'operation-replay'
               ? 'Operation replay'
@@ -381,7 +403,7 @@ export async function composeResearchFilm({
       if (
         budget <
         Math.max(
-          count(RESEARCH_VIDEO_SCREENPLAY_PROMPT),
+          count(RESEARCH_VIDEO_SCREENPLAY_PROMPT + '\n\n' + scriptStandard),
           count(animationInstructions),
           count(REPLAY_AUTHORING_PROMPT)
         ) +
@@ -399,6 +421,52 @@ export async function composeResearchFilm({
       return result.status === 'found' ? result.session : undefined
     },
     generate: researchVideoGenerate,
+    confirmSessionApp: async (app, signal) => {
+      const result = await desktopFileInteraction().confirm(
+        {
+          type: 'question',
+          message: translate('Use {{name}} as a live illustration?', { name: app.name }),
+          detail: translate(
+            'The film can run {{modules}} local JavaScript modules from this session in its offline player. You can use a drawn illustration instead.',
+            { modules: app.modules }
+          ),
+          buttons: [translate('Use a drawing'), translate('Allow this app')],
+          defaultId: 0,
+          cancelId: 0
+        },
+        undefined,
+        signal
+      )
+      return result.response === 1
+    },
+    reviewPlayer: async (source, htmlPath, spec, signal) => {
+      const check = desktopFileInteraction().checkResearchVideoHtml
+      if (!check) throw new Error('The desktop HTML film checker is unavailable.')
+      const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+      const { supportsImages } = await waitForFilmStep(deadline, () => targetFor(source, deadline))
+      const { issues, frames } = await check({ htmlPath, includeFrames: supportsImages }, signal)
+      signal.throwIfAborted()
+      filmLog.info('film HTML checked', {
+        ...currentFilmAttempt(),
+        issues: issues.length,
+        frames: frames.length
+      })
+      if (issues.length || !supportsImages) return issues
+      if (
+        frames.length !== spec.scenes.length ||
+        frames.some((frame, i) => frame.scene !== spec.scenes[i].id)
+      )
+        throw new Error('The desktop returned incomplete film review frames.')
+      return reviewFilmFrames(frames, spec, signal, (positions, images, correction) =>
+        inferResearchVideo(
+          source,
+          FILM_VISUAL_REVIEW_PROMPT,
+          { frames: positions, correction },
+          signal,
+          images
+        )
+      )
+    },
     checkGenerationAdmission: researchVideoGenerate.assertReady,
     engineDirectory: researchVideoEngineDirectory,
     ...createResearchFilmAuthor(inferResearchVideo)
