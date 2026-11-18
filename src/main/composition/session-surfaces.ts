@@ -222,9 +222,19 @@ export async function composeSessionSurfaces({
           composition.phase('session-details-recovery')
           const startInBackground = disposed
             ? Promise.resolve()
-            : (dependencies.loadStartupSessions?.() ?? Promise.resolve([])).then((sessions) =>
-                owner.start(sessions)
-              )
+            : (async () => {
+                let startupSessions: readonly import('../../shared/session-persistence').PersistedChatSession[] =
+                  []
+                try {
+                  startupSessions = (await dependencies.loadStartupSessions?.()) ?? []
+                } catch (error) {
+                  log.warn(
+                    'Session details startup candidate recovery failed; continuing without candidates',
+                    diagnosticErrorFields(error)
+                  )
+                }
+                await owner.start(startupSessions)
+              })()
           void startInBackground.catch((error) =>
             log.warn('Session details startup recovery failed', diagnosticErrorFields(error))
           )

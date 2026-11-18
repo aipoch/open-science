@@ -159,7 +159,7 @@ it.each(
   }
 )
 
-it('starts Session Details without hydrating the startup catalog', async () => {
+it('starts Session Details when startup candidate loading fails', async () => {
   let sessionModule:
     | {
         start: () => Promise<void>
@@ -179,7 +179,7 @@ it('starts Session Details without hydrating the startup catalog', async () => {
   }
   const loadOne = vi.fn()
   persistenceHandlers.loadOne = loadOne
-  const loadStartupSessions = vi.fn().mockResolvedValue([])
+  const loadStartupSessions = vi.fn().mockRejectedValue(new Error('catalog unavailable'))
   const { sessionDetailsOwner, sessionPersistenceHandlers } = await composeSessionSurfaces({
     modules,
     configRoot: process.cwd(),
