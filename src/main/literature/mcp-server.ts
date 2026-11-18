@@ -8,7 +8,11 @@ import { withDataRootWrite } from '../storage/migration-state'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { installToolErrorRecovery } from '../../shared/tool-error-recovery'
 import { z } from 'zod'
-import { listPdfElementsInput, readPdfElementInput } from './pdf-structure/agent-reader'
+import {
+  listPdfElementsInput,
+  readPdfElementInput,
+  type PdfElementOutput
+} from './pdf-structure/agent-reader'
 import {
   LITERATURE_MCP_SERVER_NAME,
   LITERATURE_READ_DOCUMENT_TOOL_NAME,
