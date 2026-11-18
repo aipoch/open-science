@@ -2,7 +2,10 @@ import { z } from 'zod'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 
 const id = z.string().trim().min(1).max(256)
-const offset = z.number().int().min(0).optional()
+export const COMPARISON_CSV_PAGE_SIZE = 100_000
+const offset = z.number().int().min(0)
+// A CSV cursor must leave room for the end of its page in safe-integer arithmetic.
+const csvOffset = offset.max(Number.MAX_SAFE_INTEGER - COMPARISON_CSV_PAGE_SIZE).optional()
 const text = z.string().trim().min(1).max(4000)
 export const comparisonFieldSchema = z
   .object({
@@ -115,7 +118,14 @@ const launchChecks = {
 
 export const comparisonRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list'), retryStorage: z.literal(true).optional() }).strict(),
-  z.object({ action: z.literal('read'), tableId: id, offset, readToken: id.optional() }).strict(),
+  z
+    .object({
+      action: z.literal('read'),
+      tableId: id,
+      offset: offset.max(1199).optional(),
+      readToken: id.optional()
+    })
+    .strict(),
   z.object({ action: z.literal('delete'), tableId: id }).strict(),
   z
     .object({
@@ -124,7 +134,14 @@ export const comparisonRequestSchema = z.discriminatedUnion('action', [
       itemIds: z.array(id).min(1).max(100).optional()
     })
     .strict(),
-  z.object({ action: z.literal('read-cell'), tableId: id, cellId: id, offset }).strict(),
+  z
+    .object({
+      action: z.literal('read-cell'),
+      tableId: id,
+      cellId: id,
+      offset: offset.max(COMPARISON_HISTORY_LIMIT - 1).optional()
+    })
+    .strict(),
   z
     .object({
       action: z.literal('create'),
@@ -204,7 +221,7 @@ export const comparisonRequestSchema = z.discriminatedUnion('action', [
       action: z.literal('export'),
       tableId: id,
       kind: z.enum(['matrix', 'evidence']),
-      offset,
+      offset: csvOffset,
       exportToken: id.optional(),
       releaseOnComplete: z.boolean().optional()
     })
@@ -253,10 +270,10 @@ export const comparisonResultSchema = z
     tables: z.array(comparisonTableSchema).max(30),
     summaries: z.array(comparisonTableSummarySchema).max(30).optional(),
     cell: comparisonCellSchema.optional(),
-    nextOffset: offset,
+    nextOffset: csvOffset,
     readToken: id.optional(),
     exportToken: id.optional(),
-    csv: z.string().max(100000).optional(),
+    csv: z.string().max(COMPARISON_CSV_PAGE_SIZE).optional(),
     sourceChecks: z
       .array(
         z

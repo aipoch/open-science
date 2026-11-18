@@ -114,6 +114,17 @@ describe('comparison command boundaries', () => {
     }
   })
 
+  it('accepts large CSV cursors only on the export route', () => {
+    const request = { tableId: 'table', offset: 21_000_000 }
+    expect(
+      comparisonRequestSchema.safeParse({ ...request, action: 'export', kind: 'evidence' }).success
+    ).toBe(true)
+    expect(comparisonRequestSchema.safeParse({ ...request, action: 'read' }).success).toBe(false)
+    expect(
+      comparisonRequestSchema.safeParse({ ...request, action: 'read-cell', cellId: 'cell' }).success
+    ).toBe(false)
+  })
+
   it('represents abstract quotations without inventing PDF page numbers', () => {
     expect(
       comparisonEvidenceSchema.parse({ pageStart: null, pageEnd: null, quote: 'Randomized trial.' })

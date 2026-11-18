@@ -1,4 +1,5 @@
 import {
+  COMPARISON_CSV_PAGE_SIZE,
   comparisonCellView,
   type ComparisonCell,
   type ComparisonTable
@@ -117,8 +118,6 @@ function* exportRows(table: ComparisonTable, kind: ExportKind): Generator<unknow
     }
 }
 
-const PAGE_SIZE = 100_000
-
 // Keep one cursor per immutable snapshot and format. A replay can seek from the beginning.
 export class ComparisonCsvReader {
   private rows: Generator<unknown[]>
@@ -138,7 +137,7 @@ export class ComparisonCsvReader {
       this.position = 0
       this.done = false
     }
-    while (!this.done && this.position + this.buffer.length <= offset + PAGE_SIZE) {
+    while (!this.done && this.position + this.buffer.length <= offset + COMPARISON_CSV_PAGE_SIZE) {
       const row = this.rows.next()
       if (row.done) {
         this.done = true
@@ -154,7 +153,7 @@ export class ComparisonCsvReader {
     }
     const start = offset - this.position
     if (start >= this.buffer.length) throw new Error('comparison-invalid-offset')
-    const csv = this.buffer.slice(start, start + PAGE_SIZE)
+    const csv = this.buffer.slice(start, start + COMPARISON_CSV_PAGE_SIZE)
     this.buffer = this.buffer.slice(start + csv.length)
     this.position = offset + csv.length
     return this.buffer.length || !this.done ? { csv, nextOffset: this.position } : { csv }
