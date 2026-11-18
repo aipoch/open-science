@@ -6164,6 +6164,49 @@ describe('passive summary hydration', () => {
     })
   })
 
+  it('keeps newer live metadata when an older summary arrives', () => {
+    const base = createPersistedSession({
+      revision: 5,
+      title: 'Current title',
+      pinned: true,
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt-1', startedAt: 1 }
+    })
+    useSessionStore.getState().hydrateSessions([base])
+
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: base.id,
+          projectId: base.projectId,
+          title: 'Stale title',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 4,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt - 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Current title',
+      pinned: true,
+      status: 'running',
+      revision: 5
+    })
+  })
+
   it('does not save an idle transcript after a newer summary revision arrives', async () => {
     const base = createPersistedSession({
       revision: 4,

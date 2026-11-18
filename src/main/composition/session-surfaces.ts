@@ -70,6 +70,9 @@ export async function composeSessionSurfaces({
     current?: ArtifactReproducibilityAttemptOwner
   }
   sessionPersistenceCoordinator: SessionPersistenceCommands
+  loadStartupSessions?: () => Promise<
+    readonly import('../../shared/session-persistence').PersistedChatSession[]
+  >
   uploadCommandOwner: ReturnType<typeof createUploadCommandOwner>
   reviewRepository: ReturnType<typeof createDefaultReviewRepository>
   sessionPersistenceBackend: ReturnType<typeof coordinateSessionPersistenceWithProjectDeletions>
@@ -145,8 +148,6 @@ export async function composeSessionSurfaces({
       })
       const owner = createSessionDetailsOwner({
         sessions: {
-          // Session Details recovery is explicitly driven by the opened Session below. Keeping
-          // this fallback empty prevents a future owner.start() call from scanning all history.
           listSessions: async () => [],
           mutateSession: (projectId, sessionId, mutation) =>
             dependencies.sessionPersistenceCoordinator.mutateSessionDetailsAuthority(
@@ -219,7 +220,11 @@ export async function composeSessionSurfaces({
               log.warn('stale Session details profile cleanup failed', diagnosticErrorFields(error))
             )
           composition.phase('session-details-recovery')
-          const startInBackground = disposed ? Promise.resolve() : owner.start([])
+          const startInBackground = disposed
+            ? Promise.resolve()
+            : (dependencies.loadStartupSessions?.() ?? Promise.resolve([])).then((sessions) =>
+                owner.start(sessions)
+              )
           void startInBackground.catch((error) =>
             log.warn('Session details startup recovery failed', diagnosticErrorFields(error))
           )

@@ -471,6 +471,7 @@ const mergeSessionSummaryWithLiveState = (
   summary: ChatSession,
   current: ChatSession
 ): ChatSession => {
+  const summaryIsNewer = (summary.revision ?? 0) > (current.revision ?? 0)
   const preservesActiveStatus =
     current.activeRun !== undefined ||
     current.status === 'running' ||
@@ -482,19 +483,19 @@ const mergeSessionSummaryWithLiveState = (
     id: summary.id,
     projectId: summary.projectId,
     parentSessionId: summary.parentSessionId,
-    title: current.unsavedTitle ? current.title : summary.title,
-    pinned: summary.pinned,
-    archivedAt: summary.archivedAt,
+    title: current.unsavedTitle || !summaryIsNewer ? current.title : summary.title,
+    pinned: summaryIsNewer ? summary.pinned : current.pinned,
+    archivedAt: summaryIsNewer ? summary.archivedAt : current.archivedAt,
     revision: Math.max(current.revision ?? 0, summary.revision ?? 0),
     filesRevision: Math.max(current.filesRevision ?? 0, summary.filesRevision ?? 0),
     createdAt: summary.createdAt,
     updatedAt: Math.max(current.updatedAt, summary.updatedAt),
-    status: preservesActiveStatus ? current.status : summary.status,
+    status: preservesActiveStatus || !summaryIsNewer ? current.status : summary.status,
     contentLoaded: current.contentLoaded,
-    activeMessageCount: summary.activeMessageCount,
-    artifactCount: summary.artifactCount,
-    recordProblems: summary.recordProblems,
-    ...(summary.wslSetup ? { wslSetup: true as const } : {})
+    activeMessageCount: summaryIsNewer ? summary.activeMessageCount : current.activeMessageCount,
+    artifactCount: summaryIsNewer ? summary.artifactCount : current.artifactCount,
+    recordProblems: summaryIsNewer ? summary.recordProblems : current.recordProblems,
+    ...(summaryIsNewer && summary.wslSetup ? { wslSetup: true as const } : {})
   }
 }
 

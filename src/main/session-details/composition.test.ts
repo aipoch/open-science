@@ -179,6 +179,7 @@ it('starts Session Details without hydrating the startup catalog', async () => {
   }
   const loadOne = vi.fn()
   persistenceHandlers.loadOne = loadOne
+  const loadStartupSessions = vi.fn().mockResolvedValue([])
   const { sessionDetailsOwner, sessionPersistenceHandlers } = await composeSessionSurfaces({
     modules,
     configRoot: process.cwd(),
@@ -194,6 +195,7 @@ it('starts Session Details without hydrating the startup catalog', async () => {
     sessionPersistenceCoordinator: {
       mutateSessionDetailsAuthority: vi.fn()
     },
+    loadStartupSessions,
     specialistService: { subscribe: vi.fn() },
     composition: { phase: vi.fn() }
   } as unknown as Parameters<typeof composeSessionSurfaces>[0])
@@ -211,6 +213,7 @@ it('starts Session Details without hydrating the startup catalog', async () => {
   }
   loadOne.mockResolvedValue(opened)
   await sessionModule!.start()
+  expect(loadStartupSessions).toHaveBeenCalledOnce()
   expect(start).toHaveBeenCalledExactlyOnceWith([])
   await expect(
     sessionPersistenceHandlers.loadOne({ projectId: opened.projectId, sessionId: opened.id })
