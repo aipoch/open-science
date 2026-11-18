@@ -9,7 +9,12 @@ import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { filmAuthoringCheckpoint, PENDING_FILM_OWNER } from './checkpoint'
+import {
+  filmAuthoringCheckpoint,
+  PENDING_FILM_OWNER,
+  pendingFilmSchema,
+  pendingFilmOwnerSchema
+} from './checkpoint'
 import { createResearchFilmLifecycle } from './lifecycle'
 import { createResearchVideoPresentationOwner } from './presentation'
 import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
@@ -398,7 +403,12 @@ it('resumes an interrupted scene after restart using the validated screenplay an
   )
   const ownerPath = join(base, 'pending', PENDING_FILM_OWNER)
   const { id } = JSON.parse(await readFile(join(base, 'pending.json'), 'utf8'))
-  expect(JSON.parse(await readFile(ownerPath, 'utf8'))).toEqual({ version: 1, id, ...request })
+  expect(JSON.parse(await readFile(ownerPath, 'utf8'))).toEqual({
+    version: 2,
+    mode: 'research-explanation',
+    id,
+    ...request
+  })
   // Simulate a checkpoint from before ownership receipts were introduced.
   await rm(ownerPath)
   const owner = createResearchVideoPresentationOwner({ ...f.options, writeAnimation })
@@ -1057,12 +1067,14 @@ it('releases Film admission when a shared readiness check is cancelled', async (
     const first = owner.start(request)
     await vi.waitFor(() => expect(checkReadiness).toHaveBeenCalledOnce())
     const duplicate = owner.start(request)
-    await expect(owner.start(other)).rejects.toThrow('Another research explanation')
+    await expect(owner.start(other)).rejects.toThrow('Another film')
+    expect((await owner.status(other)).preflightError).toContain('Another film')
     owner.cancel(request)
     const settled = vi.fn()
     void Promise.all([first, duplicate]).then(settled, settled)
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce())
     await Promise.all([first, duplicate])
+    expect((await owner.status(other)).preflightError).toBeUndefined()
     expect(checkReadiness.mock.calls[0][0]?.aborted).toBe(true)
     expect((await owner.status(request)).progress?.phase).toBe('cancelled')
     expect(f.options.models.acquireUse).not.toHaveBeenCalled()
@@ -1197,4 +1209,191 @@ it('records an incomplete narration installation without starting authoring', as
       errorCategory: 'installation-incomplete'
     })
   )
+})
+
+it('preserves legacy scope identity and rejects replay disguised as a version-one checkpoint', () => {
+  expect(researchFilmScopeKey(request)).toBe(
+    researchFilmScopeKey({ ...request, mode: 'research-explanation' })
+  )
+  expect(researchFilmScopeKey(request)).not.toBe(
+    researchFilmScopeKey({ ...request, mode: 'operation-replay' })
+  )
+  const checkpoint = {
+    version: 1,
+    id: '11111111-1111-4111-8111-111111111111',
+    conversation: 'a'.repeat(64),
+    source: 'b'.repeat(64),
+    step: 2,
+    startedAt: 1,
+    updatedAt: 1,
+    attempt: 1
+  }
+  expect(pendingFilmSchema.safeParse(checkpoint).success).toBe(true)
+  expect(pendingFilmSchema.safeParse({ ...checkpoint, mode: 'operation-replay' }).success).toBe(
+    false
+  )
+  expect(
+    pendingFilmSchema.parse({ ...checkpoint, version: 2, mode: 'operation-replay' }).mode
+  ).toBe('operation-replay')
+  expect(
+    pendingFilmOwnerSchema.safeParse({
+      ...request,
+      id: checkpoint.id,
+      version: 1,
+      mode: 'operation-replay'
+    }).success
+  ).toBe(false)
+})
+
+it('generates attachment-only replay without requiring an agent reply', async () => {
+  const f = await fixture()
+  const replay = { ...request, mode: 'operation-replay' as const }
+  const attachmentOnly = {
+    ...session,
+    messages: [
+      {
+        ...session.messages[0],
+        content: '',
+        uploads: [{ id: 'upload', name: 'data.csv', size: 12, mimeType: 'text/csv' }]
+      }
+    ]
+  } as PersistedChatSession
+  f.options.loadSession = async () => attachmentOnly
+  const writeReplay = vi.fn(async () =>
+    JSON.stringify({
+      schemaVersion: 1,
+      title: 'Recorded attachment',
+      scenes: [
+        {
+          id: 's1',
+          evidenceIds: ['attachment:question:upload'],
+          narration: 'The user attached a data file. No analysis result is recorded.'
+        }
+      ]
+    })
+  )
+  const owner = createResearchVideoPresentationOwner({ ...f.options, writeReplay })
+  try {
+    expect((await owner.status(request)).generationBlock).toBe('empty')
+    expect((await owner.status(replay)).generationBlock).toBeUndefined()
+    expect(
+      researchVideoGenerationBlock({ ...session, messages: [session.messages[0]] }, replay)
+    ).toBeUndefined()
+    expect(researchVideoGenerationBlock({ ...attachmentOnly, messages: [] }, replay)).toBe('empty')
+    expect(researchVideoGenerationBlock({ ...attachmentOnly, status: 'running' }, replay)).toBe(
+      'busy'
+    )
+    await owner.start(replay)
+    await vi.waitFor(async () => expect((await owner.status(replay)).result).toBeDefined())
+    expect(writeReplay).toHaveBeenCalledOnce()
+    expect(f.options.generate).toHaveBeenCalledOnce()
+    expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+  } finally {
+    await owner.close()
+  }
+})
+
+it('generates both modes from unchanged history and removes only the selected film', async () => {
+  const f = await fixture()
+  const writeReplay = vi.fn(async () =>
+    JSON.stringify({
+      schemaVersion: 1,
+      title: 'Rainfall replay',
+      scenes: [
+        {
+          id: 's1',
+          evidenceIds: ['message:result'],
+          narration: 'The recorded answer reports an uncertain trend.'
+        }
+      ]
+    })
+  )
+  const owner = createResearchVideoPresentationOwner({ ...f.options, writeReplay })
+  const replay = { ...request, mode: 'operation-replay' as const }
+  const before = JSON.stringify(session)
+  try {
+    await owner.start(request)
+    await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+    const explanation = (await owner.status(request)).result
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(1))
+    await owner.start(replay)
+    await vi.waitFor(async () => expect((await owner.status(replay)).result).toBeDefined())
+    const result = (await owner.status(replay)).result!
+    expect(result.id).not.toBe(explanation!.id)
+    expect(f.options.writeScreenplay).toHaveBeenCalledTimes(1)
+    expect(writeReplay).toHaveBeenCalledTimes(1)
+    expect(f.options.generate.mock.calls[1][0]).toMatchObject({ mode: 'operation-replay' })
+    expect(JSON.stringify(session)).toBe(before)
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(2))
+    await owner.remove(replay)
+    expect((await owner.status(replay)).result).toBeUndefined()
+    expect((await owner.status(request)).result).toEqual(explanation)
+  } finally {
+    await owner.close()
+  }
+})
+
+it('resumes a replay checkpoint after restart without rewriting it as an explanation', async () => {
+  const f = await fixture()
+  const writeReplay = vi.fn(async () =>
+    JSON.stringify({
+      schemaVersion: 1,
+      title: 'Replay',
+      scenes: [
+        {
+          id: 's1',
+          evidenceIds: ['message:result'],
+          narration: 'The observed trend remains uncertain.'
+        }
+      ]
+    })
+  )
+  const replay = { ...request, mode: 'operation-replay' as const }
+  const options = { ...f.options, writeReplay }
+  f.options.generate.mockRejectedValueOnce(new Error('Interrupted build'))
+  const first = createResearchVideoPresentationOwner(options)
+  await first.start(replay)
+  await vi.waitFor(async () => expect((await first.status(replay)).canResume).toBe(true))
+  await first.close()
+  const reopened = createResearchVideoPresentationOwner(options)
+  try {
+    expect((await reopened.status(request)).canResume).not.toBe(true)
+    await reopened.start({ ...replay, resume: true })
+    await vi.waitFor(async () => expect((await reopened.status(replay)).result).toBeDefined())
+    expect(writeReplay).toHaveBeenCalledOnce()
+    expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+    expect(f.options.generate).toHaveBeenCalledTimes(2)
+  } finally {
+    await reopened.close()
+  }
+})
+
+it('prunes older output only after successful publication and keeps cleanup failures nonfatal', async () => {
+  const f = await fixture()
+  const cleanup = vi.fn(async (_paths: string[], remove: () => Promise<void>) => {
+    await remove()
+    return true
+  })
+  const owner = createResearchVideoPresentationOwner({ ...f.options, withUnusedFilmFiles: cleanup })
+  const results: string[] = []
+  try {
+    for (let index = 0; index < 3; index++) {
+      await owner.start(request)
+      await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(index + 1))
+      results.push((await owner.status(request)).result!.playerPath)
+    }
+    await expect(readFile(results[0])).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(results[1])).resolves.toBeDefined()
+    await expect(readFile(results[2])).resolves.toBeDefined()
+    expect(cleanup).toHaveBeenCalledOnce()
+    cleanup.mockRejectedValueOnce(new Error('cleanup disk unavailable'))
+    await owner.start(request)
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledTimes(4))
+    const status = await owner.status(request)
+    expect(status.error).toBeUndefined()
+    expect(status.result?.playerPath).not.toBe(results[2])
+    await expect(readFile(results[1])).resolves.toBeDefined()
+  } finally {
+    await owner.close()
+  }
 })

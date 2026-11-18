@@ -106,7 +106,8 @@ describe('Content blob migration', () => {
         '0055_session_discussion_parent',
         '0056_compute_kubernetes_workspace',
         '0057_project_optimization_prompt',
-        '0058_session_schedules'
+        '0058_session_schedules',
+        '0059_session_history'
       ]
     })
     await expect(
@@ -212,10 +213,11 @@ describe('Content blob migration', () => {
                 '0055_session_discussion_parent',
                 '0056_compute_kubernetes_workspace',
                 '0057_project_optimization_prompt',
-                '0058_session_schedules'
+                '0058_session_schedules',
+                '0059_session_history'
               ],
         from: schema === 'pre-ledger' ? null : '0029_compute_host_execution_mode',
-        to: '0058_session_schedules'
+        to: '0059_session_history'
       })
 
       await expect(

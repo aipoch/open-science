@@ -54,7 +54,7 @@ const fileAnnotationSource = (
   annotation: Annotation | BookmarkRevealTarget
 ):
   | Extract<BookmarkRevealTarget, { kind: 'pdf' }>['source']
-  | Extract<Annotation, { kind: 'image-point' | 'pdf' }>['source']
+  | Extract<Annotation, { kind: 'image-point' | 'pdf' | 'pptx-slide' }>['source']
   | Extract<Extract<Annotation, { kind: 'text' }>['source'], { kind: 'project-file' }>
   | undefined => {
   if (annotation.kind !== 'text') return annotation.source

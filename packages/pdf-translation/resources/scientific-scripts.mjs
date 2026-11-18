@@ -2,7 +2,8 @@
 const identifiers = (text) => {
   const pattern =
     /(?:max|min)[a-z\p{Script=Greek}]∈\[[A-Za-z\p{Script=Greek}\d]+\]|[A-Z]1\[[a-z\p{Script=Greek}][<>≤≥]\d+\]|(?:E\[[A-Za-z\p{Script=Greek}]\]){1,2}T|[A-Za-z\p{Script=Greek}][A-Za-z\p{Script=Greek}\d]*(?:(?:ˆ|\u0302)\s*[A-Za-z\p{Script=Greek}\d]*)?′{0,3}(?:[∈<>≤≥×−+-][A-Za-z\p{Script=Greek}\d]+|,[\p{Script=Greek}\d][A-Za-z\p{Script=Greek}\d]*|\.{3}[A-Za-z\p{Script=Greek}\d]+)*(?:\([A-Za-z\p{Script=Greek}\d−+-]+\)[A-Za-z]?)?/gu
-  const result = [...text.matchAll(pattern)]
+  // TeX can extract the difference operator as U+2206, outside the Greek script.
+  const result = [...text.matchAll(pattern), ...text.matchAll(/∆[a-z]{1,3}(?![A-Za-z\d_])/gu)]
   // A prose qualifier follows the variable, not its native lowered suffix:
   // d_model-dimensional. Only native script evidence can choose this prefix.
   for (const match of text.matchAll(/\b([A-Za-z\p{Script=Greek}]+)-[a-z]{3,}\b/gu)) {
@@ -113,6 +114,42 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
         nativeScriptGroup: true
       })
     }
+  // Move the complete raised order and lowered index with their native base.
+  for (const match of source.matchAll(/\p{Script=Greek}\(\d{1,2}\)\d{2,6}(?=\s*=)/gu)) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 5)
+    if (!parts) continue
+    const [base, open, order, close, lower] = parts,
+      height = base.bounds[3] - base.bounds[1],
+      upper = [open, order, close]
+    if (
+      open.label !== '(' ||
+      close.label !== ')' ||
+      !/^\d{1,2}$/u.test(order.label) ||
+      !/^\d{2,6}$/u.test(lower.label) ||
+      parts.map((part) => part.label).join('') !== match[0] ||
+      !body(base) ||
+      ![...upper, lower].every(small) ||
+      open.rise <= height * 0.3 ||
+      open.rise >= height ||
+      lower.rise >= -height * 0.15 ||
+      lower.rise <= -height * 0.7 ||
+      Math.abs(lower.bounds[0] - open.bounds[0]) > height * 0.15 ||
+      center(lower) >= center(base) ||
+      upper.some((part, index) => {
+        const gap = part.bounds[0] - [base, open, order][index].bounds[2]
+        return (
+          Math.abs(part.rise - open.rise) >= 0.01 ||
+          center(part) <= center(base) ||
+          gap < -height * 0.1 ||
+          gap > height * 0.3
+        )
+      })
+    )
+      continue
+    addNativeGroup(start, end, parts, base)
+  }
   for (const match of source.matchAll(/\(∂([A-Za-z\p{Script=Greek}])\)(\p{Script=Greek})/gu)) {
     const opening = markers.filter(
         (part) =>
@@ -830,14 +867,14 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
     }
   }
   for (const run of runs) run.label = run.label.replace(/[,.;:]+$/u, '')
-  // A lowered callee suffix precedes its argument; require its complete native base.
-  const nativeCallee = (match, run) => {
+  // Prove the lowered index against its complete native base.
+  const hasNativeLoweredIndex = (match, run) => {
     if (run.rise >= 0 || !/^[A-Za-z\p{Script=Greek}\d]{1,3}$/u.test(run.label)) return false
     const bases = markers.filter(
       (base) =>
         base.sourceOffset === match.index &&
         base.sourceOffset + base.label.length === run.sourceOffset &&
-        /^[A-Za-z\p{Script=Greek}]$/u.test(base.label) &&
+        /^[A-Za-z\p{Script=Greek}∆]$/u.test(base.label) &&
         source.slice(base.sourceOffset, run.sourceOffset) === base.label &&
         base.scale >= 0.9 &&
         base.scale <= 1.1 &&
@@ -883,7 +920,7 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
         (match.index + match[0].length === run.sourceOffset + run.label.length ||
           ((/^′{1,3}$/u.test(run.label) ||
             (run.rise < 0 && /^[\p{Script=Greek}]+(?:,[\p{Script=Greek}]+)+$/u.test(run.label)) ||
-            nativeCallee(match, run)) &&
+            hasNativeLoweredIndex(match, run)) &&
             /^\([A-Za-z\p{Script=Greek}\d−+-]+\)$/u.test(
               match[0].slice(run.sourceOffset + run.label.length - match.index)
             )) ||
@@ -921,6 +958,7 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
       continue
     const prefixLength = run.sourceOffset - token.index,
       prefix = token[0].slice(0, prefixLength).trimEnd(),
+      nativeDifferenceIndex = prefix === '∆' && hasNativeLoweredIndex(token, run),
       collectionLimits =
         /^\}[A-Z][a-z]=\d{1,3}$/u.test(token[0]) &&
         markers.some(
@@ -975,6 +1013,7 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
       !collectionLimits &&
       !indicatorPredicate &&
       !expectationTranspose &&
+      !nativeDifferenceIndex &&
       !/^[A-Za-z\p{Script=Greek}]+(?:ˆ|\u0302)?(?:\([A-Za-z\p{Script=Greek}\d−+-]+\))?$/u.test(
         prefix
       )
@@ -989,6 +1028,7 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
       !indicatorPredicate &&
       !expectationTranspose &&
       !pairedLevel &&
+      !nativeDifferenceIndex &&
       !/^(?:[A-Z]{1,4}|[a-z]|\p{Script=Greek}{1,4})(?:ˆ|\u0302)?(?:\([A-Za-z\p{Script=Greek}\d−+-]+\))?$/u.test(
         prefix
       ) &&

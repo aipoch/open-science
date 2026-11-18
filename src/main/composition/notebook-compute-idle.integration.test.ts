@@ -158,7 +158,7 @@ async function notebookComposition(
 ): Promise<{
   notebook: NotebookRuntimeService
   archive: ReturnType<typeof composeProjectLifecycle>['archiveCoordinator']
-  dispose(): Promise<void>
+  dispose(): Promise<{ reaped: boolean }>
 }> {
   initDataRoot(root)
   const notebookActivityRef = { current: undefined } as Parameters<
@@ -221,8 +221,9 @@ async function notebookComposition(
   return {
     ...runtime.interfaces,
     dispose: async () => {
-      await notebook.dispose()
+      const result = await notebook.dispose()
       await runtime.dispose()
+      return result
     }
   }
 }
@@ -531,13 +532,14 @@ it.each([
     } finally {
       clock.mockRestore()
       await ray?.stop()
-      await composition?.dispose()
+      const disposal = await composition?.dispose()
       await client.$disconnect()
       await remote?.close()
       vi.restoreAllMocks()
       vi.unstubAllEnvs()
       await releaseLocks()
-      await rm(root, { recursive: true, force: true })
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      if (disposal) expect(disposal.reaped).toBe(true)
     }
   },
   60_000

@@ -1,7 +1,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { z } from 'zod'
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
   sessionPackageRequestSchema,
@@ -9,6 +9,7 @@ import {
 } from '../../shared/session-package'
 import { SessionProjectionRepository } from '../session-persistence/projection'
 import { SessionRepository } from '../session-persistence/repository'
+import { SessionJournalStore } from '../session-persistence/journal'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import { defaultFileDurability as durability } from '@aipoch/durable-files'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
@@ -309,35 +310,93 @@ export class SessionPackageDeletion {
       return false
     }
     let remainingBytes = 64 * 1024 ** 2
+    let remainingLogicalBytes = remainingBytes
     let remainingRows = 100000
-    // A quarantine or backup can retain a reference not present in the live catalog. Inspect only
-    // directory entries, without opening or repairing those alternate authorities during GC.
+    const history = new SessionJournalStore({ maxBytes: remainingBytes, maxCacheEntries: 0 })
+    const validations: (() => Promise<void>)[] = []
+    const watchDirectory = (directory: string, expected: string[]): (() => Promise<void>) => {
+      const validate = async (): Promise<void> => {
+        signal.throwIfAborted()
+        await assertPackageSourcePath(
+          this.options.configRoot,
+          relative(this.options.configRoot, directory)
+        )
+        const current = (await readdir(directory)).sort()
+        if (
+          current.length !== expected.length ||
+          current.some((name, index) => name !== expected[index])
+        )
+          throw new Error('Session catalog changed during package cleanup inspection.')
+      }
+      validations.push(validate)
+      return validate
+    }
+    // Inspect complete append history and the exact legacy backup. A reference-free current
+    // Session cannot rule out earlier references. Unknown files remain retention barriers.
     for (const rootName of ['sessions', 'deleted-sessions']) {
       const root = join(this.options.configRoot, rootName)
-      if (!(await exists(root))) continue
+      if (!(await exists(root))) {
+        validations.push(async () => {
+          if (await exists(root))
+            throw new Error('Session catalog appeared during package cleanup inspection.')
+        })
+        continue
+      }
       await assertPackageSourcePath(this.options.configRoot, rootName)
-      for (const entry of await readdir(root, { withFileTypes: true })) {
+      const entries = await readdir(root, { withFileTypes: true })
+      watchDirectory(root, entries.map((entry) => entry.name).sort())
+      for (const entry of entries) {
         signal.throwIfAborted()
         const project = entry.name
         await assertPackageSourcePath(root, project)
         // This is navigation state, not a Project directory or research authority.
         if (rootName === 'sessions' && project === 'manifest.json' && entry.isFile()) continue
         if (!entry.isDirectory()) return undefined
-        const names = await readdir(join(root, project))
-        if (
-          rootName === 'deleted-sessions'
-            ? names.length > 0
-            : names.some((name) => !name.endsWith('.json'))
-        )
-          return undefined
+        const directory = join(root, project)
+        const names = (await readdir(directory)).sort()
+        const validateDirectory = watchDirectory(directory, names)
+        if (rootName === 'deleted-sessions' && names.length > 0) return undefined
+        if (names.length > remainingRows) return undefined
+        const owned = new Set<string>()
+        let directoryBytes = 0
         for (const name of names) {
-          const path = join(root, project, name)
+          signal.throwIfAborted()
+          await assertPackageSourcePath(directory, name)
+          const path = join(directory, name)
           const info = await lstat(path)
           if (!info.isFile()) return undefined
-          remainingBytes -= info.size
-          remainingRows--
-          if (remainingBytes < 0 || remainingRows < 0) return undefined
+          directoryBytes += info.size
+          if (directoryBytes > remainingBytes) return undefined
         }
+        const logicalNames = new Set(
+          names
+            .filter((candidate) => /\.jsonl?$/.test(candidate))
+            .map((name) => name.replace(/\.jsonl$/, '.json'))
+        )
+        for (const name of logicalNames) {
+          signal.throwIfAborted()
+          let referenced = false
+          const inspected = await history.visitRetainedHistory(join(directory, name), {
+            maxBytes: remainingBytes,
+            maxRecords: remainingRows,
+            maxLogicalBytes: remainingLogicalBytes,
+            signal,
+            visit: (value) => {
+              referenced ||= references(value)
+            }
+          })
+          if (referenced) return undefined
+          remainingBytes -= inspected.bytes
+          remainingRows -= inspected.records
+          remainingLogicalBytes -= inspected.logicalBytes
+          validations.push(inspected.assertUnchanged)
+          for (const path of inspected.paths) {
+            if (owned.has(path)) return undefined
+            owned.add(path)
+          }
+        }
+        if (names.some((name) => !owned.has(join(directory, name)))) return undefined
+        await validateDirectory()
       }
     }
     const sessions = await new SessionRepository(this.options.configRoot).loadAllWithDiagnostics({
@@ -469,6 +528,13 @@ export class SessionPackageDeletion {
         }
       }
       if (values.length) removals.push({ table, key, values })
+    }
+    // Collection runs before writer hydration. Recheck the complete read proof after the slower
+    // catalog/SQL scan, so changes to an earlier Session do not get mistaken for stable history.
+    // This is a startup consistency check, not an atomic snapshot against external processes.
+    for (const validate of validations) {
+      signal.throwIfAborted()
+      await validate()
     }
     return removals
   }

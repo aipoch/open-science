@@ -1,66 +1,32 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { initDataRoot } from '../storage-root'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-
 import type { PersistedChatSession } from '../../shared/session-persistence'
 
-const fsMock = vi.hoisted(() => ({
-  lstat: vi.fn(),
-  mkdir: vi.fn(),
-  open: vi.fn(),
-  readFile: vi.fn(),
-  readdir: vi.fn(),
-  rename: vi.fn(),
-  rm: vi.fn(),
-  writeFile: vi.fn()
-}))
-
-vi.mock('node:fs/promises', () => fsMock)
-vi.mock('@aipoch/durable-files', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@aipoch/durable-files')>()
-  const durability = actual.createFileDurability({ openHandle: fsMock.open })
-  return {
-    ...actual,
-    defaultFileDurability: durability,
-    writeDurableJsonFile: (path, contents, dependencies) =>
-      actual.writeDurableJsonFile(path, contents, {
-        mkdir: fsMock.mkdir,
-        writeFile: fsMock.writeFile,
-        rename: fsMock.rename,
-        remove: fsMock.rm,
-        ...durability,
-        ...dependencies
-      })
-  } satisfies typeof actual
-})
-// Session encode/decode falls back to resolveDataRoot(), which reads electron's app.getPath.
-vi.mock('electron', () => ({
-  app: { getPath: () => '/home/user', isPackaged: true }
-}))
-
+vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
 const { SessionRepository } = await import('./repository')
 
-type Deferred<T> = {
-  promise: Promise<T>
-  resolve: (value: T) => void
-  reject: (error: unknown) => void
+const roots: string[] = []
+const root = async (): Promise<string> => {
+  const directory = await mkdtemp(join(tmpdir(), 'session-queue-'))
+  roots.push(directory)
+  initDataRoot(directory)
+  return directory
 }
-
-const createDeferred = <T>(): Deferred<T> => {
-  let resolve!: (value: T) => void
-  let reject!: (error: unknown) => void
-  const promise = new Promise<T>((innerResolve, innerReject) => {
-    resolve = innerResolve
-    reject = innerReject
+afterEach(async () => {
+  await Promise.all(
+    roots.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))
+  )
+})
+const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
   })
-
-  return { promise, resolve, reject }
+  return { promise, resolve }
 }
-
-const flushMicrotasks = async (): Promise<void> => {
-  await Promise.resolve()
-  await Promise.resolve()
-}
-
 const createSession = (id: string, projectId = 'project-a'): PersistedChatSession => ({
   id,
   projectId,
@@ -73,84 +39,70 @@ const createSession = (id: string, projectId = 'project-a'): PersistedChatSessio
 })
 
 describe('session persistence repository save ordering', () => {
-  beforeEach(() => {
-    initDataRoot('/in-memory-session-storage')
-    vi.resetAllMocks()
-    fsMock.lstat.mockImplementation((path: string) =>
-      path.endsWith('.json')
-        ? Promise.reject(Object.assign(new Error('not found'), { code: 'ENOENT' }))
-        : Promise.resolve({
-            isDirectory: () => true,
-            isFile: () => false,
-            isSymbolicLink: () => false
-          })
-    )
-    fsMock.open.mockResolvedValue({
-      close: vi.fn().mockResolvedValue(undefined),
-      sync: vi.fn().mockResolvedValue(undefined)
-    })
-    fsMock.rm.mockResolvedValue(undefined)
-  })
-
   it('does not start a later session write while an earlier one is still writing', async () => {
-    const firstWrite = createDeferred<void>()
-    const secondWrite = createDeferred<void>()
+    const firstGate = deferred()
+    const secondGate = deferred()
     const writes: string[] = []
-    const repository = new SessionRepository('/session-storage')
-
-    fsMock.mkdir.mockResolvedValue(undefined)
-    fsMock.rename.mockResolvedValue(undefined)
-    fsMock.writeFile.mockImplementation((_path: string, content: string) => {
-      writes.push(content)
-      return writes.length === 1 ? firstWrite.promise : secondWrite.promise
+    const repository = new SessionRepository(await root(), {
+      journalDependencies: {
+        writeFile: async (path, contents, options) => {
+          if (path.includes('.jsonl.')) {
+            const id = (JSON.parse(contents) as { document: { session: { id: string } } }).document
+              .session.id
+            writes.push(id)
+            await (id === 'first-session' ? firstGate.promise : secondGate.promise)
+          }
+          await writeFile(path, contents, options)
+        }
+      }
     })
-
     const firstSave = repository.saveSession(createSession('first-session'))
-    await vi.waitFor(() => expect(fsMock.writeFile).toHaveBeenCalledTimes(1))
-
+    await vi.waitFor(() => expect(writes).toEqual(['first-session']))
     const secondSave = repository.saveSession(createSession('second-session'))
-    await flushMicrotasks()
-
-    expect(fsMock.writeFile).toHaveBeenCalledTimes(1)
-
-    firstWrite.resolve(undefined)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(writes).toEqual(['first-session'])
+    firstGate.resolve()
     await firstSave
-    await vi.waitFor(() => expect(fsMock.writeFile).toHaveBeenCalledTimes(2))
-
-    secondWrite.resolve(undefined)
+    await vi.waitFor(() => expect(writes).toEqual(['first-session', 'second-session']))
+    secondGate.resolve()
     await secondSave
-
-    expect(writes[0]).toContain('first-session')
-    expect(writes[1]).toContain('second-session')
+    expect((await repository.loadAll()).sessions.map(({ id }) => id).sort()).toEqual([
+      'first-session',
+      'second-session'
+    ])
   })
 
   it('does not let one Project write stall an independent Project write', async () => {
-    const projectOneGate = createDeferred<void>()
-    const projectOneStarted = createDeferred<void>()
-    const projectTwoStarted = createDeferred<void>()
-    const repository = new SessionRepository('/session-storage')
-
-    fsMock.mkdir.mockResolvedValue(undefined)
-    fsMock.rename.mockResolvedValue(undefined)
-    fsMock.writeFile.mockImplementation((path: string) => {
-      if (path.includes('project-a')) {
-        projectOneStarted.resolve(undefined)
-        return projectOneGate.promise
+    const firstGate = deferred()
+    const firstStarted = deferred()
+    const secondStarted = deferred()
+    const repository = new SessionRepository(await root(), {
+      journalDependencies: {
+        writeFile: async (path, contents, options) => {
+          if (path.includes('.jsonl.')) {
+            if (path.includes('project-a')) {
+              firstStarted.resolve()
+              await firstGate.promise
+            } else secondStarted.resolve()
+          }
+          await writeFile(path, contents, options)
+        }
       }
-      projectTwoStarted.resolve(undefined)
-      return Promise.resolve()
     })
-
-    const projectOne = repository.saveSession(createSession('session-a', 'project-a'))
-    await projectOneStarted.promise
-    const projectTwo = repository.saveSession(createSession('session-b', 'project-b'))
+    const first = repository.saveSession(createSession('session-a', 'project-a'))
+    await firstStarted.promise
+    const second = repository.saveSession(createSession('session-b', 'project-b'))
     const outcome = await Promise.race([
-      projectTwoStarted.promise.then(() => 'started' as const),
-      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
+      secondStarted.promise.then(() => 'started' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 250))
     ])
-    projectOneGate.resolve(undefined)
-    await Promise.all([projectOne, projectTwo])
-
+    firstGate.resolve()
+    await Promise.all([first, second])
     expect(outcome).toBe('started')
+    expect((await repository.loadAll()).sessions.map(({ id }) => id).sort()).toEqual([
+      'session-a',
+      'session-b'
+    ])
   })
 })

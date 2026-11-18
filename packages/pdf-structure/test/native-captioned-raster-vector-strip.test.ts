@@ -2,7 +2,7 @@ import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
 
-const { associateFigures } = await import(
+const { associateFigures, recoverNativePeerFigureBarrier } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
 )
 const { nativeCaptionedRasterVectorStrip } = await import(
@@ -189,5 +189,170 @@ it.each([
       320
     ])
     expect(page).toEqual(before)
+  }
+)
+
+it.each([
+  { proof: 'independent frames', keepStrip: false },
+  { proof: 'unproved peer caption', keepStrip: true },
+  { proof: 'drawing across the gutter', keepStrip: true }
+])('keeps frame ownership in a staggered two-column layout ($proof)', ({ proof, keepStrip }) => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 1: Thermal profile.'],
+    rect: [60, 260, 295, 325]
+  }
+  const peer = {
+    page: 1,
+    lines: ['Figure 2: Response curves.'],
+    rect: [325, 420, 560, 440]
+  }
+  const leftPaths = Array.from({ length: 12 }, (_, i) =>
+    path([80 + i * 4, 90 + i * 5, 220, 110 + i * 5])
+  )
+  const graphics = [
+    path([60, 50, 295, 250]),
+    image([250, 80, 275, 220]),
+    ...leftPaths,
+    path([325, 245, 560, 410]),
+    path([370, 250, 450, 256])
+  ]
+  if (proof === 'drawing across the gutter') graphics.push(path([260, 248, 355, 258]))
+  const page = makePage(
+    caption,
+    graphics.map((g, operationIndex) => ({ ...g, operationIndex }))
+  )
+  const tokens = [caption, peer]
+    .filter((c) => proof !== 'unproved peer caption' || c !== peer)
+    .map((c, index) => ({
+      text: c.lines[0],
+      sourceItem: { pageNumber: 1, index, text: c.lines[0] },
+      horizontal: true,
+      height: 9,
+      rect: [c.rect[0], c.rect[1], c.rect[2], c.rect[1] + 9]
+    }))
+  const strip = nativeCaptionedRasterVectorStrip(page, caption, [caption, peer], [], [], tokens)
+  expect(strip?.reason).toEqual(keepStrip ? 'native-raster-vector-strip' : undefined)
+})
+
+it.each([
+  { numberedDisplay: true, crossGutter: false, keepStrip: false },
+  { numberedDisplay: false, crossGutter: false, keepStrip: true },
+  { numberedDisplay: true, crossGutter: true, keepStrip: true }
+])('excludes the opposite numbered equation from a raster figure (%j)', (test) => {
+  const caption = { page: 1, lines: ['Figure 2. Optical apparatus.'], rect: [318, 435, 565, 447] }
+  const opposite = [path([95, 303, 145, 310]), path([130, 350, 170, 357])]
+  const own = Array.from({ length: 12 }, (_, i) => path([354 + i * 12, 302, 360 + i * 12, 414]))
+  const bridge = test.crossGutter ? [path([285, 330, 359, 340])] : []
+  const page = makePage(caption, [image([352, 297, 526, 429]), ...own, ...opposite, ...bridge])
+  page.lines.push(
+    {
+      text: 'The wave equation can be written as follows',
+      x: 45,
+      y: 280,
+      width: 245,
+      height: 9,
+      fontSize: 9
+    },
+    {
+      text: test.numberedDisplay ? '(1)' : 'Chamber',
+      x: 280,
+      y: 319,
+      width: 10,
+      height: 9,
+      fontSize: 9
+    },
+    {
+      text: 'The terms denote the parameters of the model',
+      x: 45,
+      y: 365,
+      width: 239,
+      height: 9,
+      fontSize: 9
+    }
+  )
+  expect(Boolean(nativeCaptionedRasterVectorStrip(page, caption, [caption], []))).toBe(
+    test.keepStrip
+  )
+})
+
+it.each([false, true])(
+  'keeps opposite captioned figures separate only across an empty gutter (%s)',
+  (crosses) => {
+    const left = { page: 1, lines: ['Figure 1. Phase data.'], rect: [50, 385, 287, 430] }
+    const right = { page: 1, lines: ['Figure 2. Response data.'], rect: [318, 369, 573, 408] }
+    const plots = Array.from({ length: 30 }, (_, i) => {
+      const x = 325 + (i % 6) * 28,
+        y = 68 + Math.floor(i / 6) * 55
+      return path([x, y, x + 20, y + 25])
+    })
+    const page = makePage(left, [
+      image([60, 60, 280, 260]),
+      path([45, 285, 292, 380]),
+      path([318, 60, 575, 365]),
+      ...plots,
+      ...(crosses ? [path([275, 120, 335, 148])] : [])
+    ])
+    page.lines = [left, right].map(({ rect, lines }) => ({
+      text: lines[0],
+      x: rect[0],
+      y: rect[1],
+      width: rect[2] - rect[0],
+      height: 10,
+      fontSize: 10
+    }))
+    const wide = [45, 35, 575, 365]
+    const peer = [45, 60, 292, 380]
+    const [a, b] = recoverNativePeerFigureBarrier(
+      page,
+      [left, right],
+      [
+        { caption: right, rect: wide, graphicsCount: 30 },
+        { caption: left, rect: peer, graphicsCount: 2 }
+      ]
+    )
+    expect(a.rect.map((v: number) => Math.round(v))).toEqual(crosses ? wide : [318, 60, 575, 365])
+    expect(b.rect).toEqual(peer)
+  }
+)
+
+it.each(['stack', 'frame gap', 'intervening prose'] as const)(
+  'keeps all three proved panels next to a side caption (%s)',
+  (variant) => {
+    const caption = {
+      page: 1,
+      lines: ['Figure 3. a: Signal. b: Contrast. c: Residual.'],
+      rect: [394, 329, 572, 382]
+    }
+    const frames = [
+      [64, 130, 376, variant === 'frame gap' ? 207 : 210],
+      [64, 210, 376, 290],
+      [64, 290, 376, 370]
+    ]
+    const paint = frames.flatMap(([left, top, right, bottom]) => [
+      path([left, top, right, top + 3]),
+      path([left, bottom - 3, right, bottom]),
+      path([left, top, left + 3, bottom]),
+      path([right - 3, top, right, bottom]),
+      ...Array.from({ length: 24 }, (_, index) => {
+        const x = left + 25 + index * 11
+        const y = top + 33 + (index % 4) * 6
+        return path([x, y, x + 8, y + 12])
+      })
+    ])
+    const page = makePage(caption, paint)
+    page.lines[0].width = 178
+    if (variant === 'intervening prose') {
+      page.lines.push({
+        text: 'A full paragraph must stay separate from the neighboring figure in every reading mode.',
+        x: 76,
+        y: 156,
+        width: 272,
+        height: 10,
+        fontSize: 9
+      })
+    }
+    const [figure] = associateFigures(page, [caption], [], [], frames)
+    expect(figure.rect).toEqual(variant === 'stack' ? [64, 130, 376, 370] : [64, 130, 376, 293])
   }
 )

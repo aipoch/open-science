@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   readdir: vi.fn(),
   arguments: vi.fn(),
   warn: vi.fn(),
+  info: vi.fn(),
   stat: vi.fn(),
   resolveNative: vi.fn(),
   windows: {
@@ -36,7 +37,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../windows-process-query', () => mocks.windows)
 vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
-  createLogger: () => ({ warn: mocks.warn })
+  createLogger: () => ({ warn: mocks.warn, info: mocks.info })
 }))
 vi.mock('node:module', () => ({
   createRequire: () =>
@@ -162,7 +163,7 @@ describe('cold Windows resource scans', () => {
     }
   )
 
-  it('enumerates every file and distinct directory while stopping directory-link cycles', async () => {
+  it('enumerates every file and distinct directory but registers only payload resources', async () => {
     const root = join(process.cwd(), 'installation ü')
     const nested = join(root, 'nested')
     const linked = join(root, 'directory-link')
@@ -224,18 +225,18 @@ describe('cold Windows resource scans', () => {
             write: (text: string) => {
               stdout += text
             }
-          }
+          },
+          stderr: { write: () => {} }
         }
       })
       return { stdout }
     })
     await expect(inspectInstallationProcessesAsync(root)).resolves.toEqual([456])
-    expect(occupants).toHaveBeenCalledWith([
-      join(root, 'app.exe'),
-      join(root, 'LICENSE'),
-      join(nested, 'data.json'),
-      join(linked, 'archive.asar')
-    ])
+    expect(occupants).toHaveBeenCalledWith([join(root, 'app.exe'), join(linked, 'archive.asar')])
+    expect(mocks.info).toHaveBeenCalledWith(
+      'Windows installation occupancy inspected',
+      expect.objectContaining({ fileCount: 4, resourceCount: 2 })
+    )
     expect(stat.mock.calls.map(([file]) => file)).toEqual([
       root,
       linked,
@@ -415,6 +416,9 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     mocks.stat.mockReturnValue({ isDirectory: () => true })
     mocks.readdir.mockReturnValue([]).mockReturnValueOnce([
       { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'node.exe' },
+      { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'LICENSE.txt' },
+      { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'Resources.PAK' },
+      { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'grammar.wasm' },
       {
         isFile: () => false,
         isDirectory: () => true,
@@ -426,6 +430,7 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     // Execute the child script against fixture dependencies; integration tests cover its process.
     mocks.run.mockImplementation(async (_command, args: string[]) => {
       let stdout = ''
+      let stderr = ''
       const requireFixture = (id: string): unknown => {
         if (id === 'node:fs')
           return { realpathSync: mocks.realpath, statSync: mocks.stat, readdirSync: mocks.readdir }
@@ -438,9 +443,14 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
           write: (value: string) => {
             stdout += value
           }
+        },
+        stderr: {
+          write: (value: string) => {
+            stderr += value
+          }
         }
       })
-      return { stdout, stderr: '' }
+      return { stdout, stderr }
     })
     mocks.windows.listWindowsProcesses.mockReturnValue([])
   }
@@ -470,10 +480,38 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
       ])
       expect(await inspect('c:\\apps\\science')).toEqual([43, 42])
       const query = mocks.windows.listWindowsInstallationOccupants
-      expect(query).toHaveBeenCalledWith([join('c:\\apps\\science', 'node.exe')])
+      // Ordinary data files are left to the installer's staged removal and rollback.
+      expect(query).toHaveBeenCalledWith([
+        join('c:\\apps\\science', 'node.exe'),
+        join('c:\\apps\\science', 'Resources.PAK'),
+        join('c:\\apps\\science', 'grammar.wasm')
+      ])
       expect(mocks.spawnSync).not.toHaveBeenCalled()
       if (mode === 'sync') expect(mocks.run).not.toHaveBeenCalled()
       else expect(mocks.run).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.skipIf(mode === 'sync')(
+    'records Windows scan stage evidence without changing the occupancy result',
+    async () => {
+      windows([])
+      expect(await inspect('c:\\apps\\science')).toEqual([])
+      expect(mocks.info).toHaveBeenCalledWith('Windows installation occupancy inspected', {
+        fileCount: 4,
+        resourceCount: 3,
+        enumMs: expect.any(Number),
+        rmMs: expect.any(Number),
+        durationMs: expect.any(Number)
+      })
+      const stderr = await mocks.run.mock.results[0].value.then(
+        (output: { stderr: string }) => output.stderr
+      )
+      expect(JSON.parse(stderr)).toMatchObject({
+        stage: 'resource-query',
+        fileCount: 4,
+        resourceCount: 3
+      })
     }
   )
 

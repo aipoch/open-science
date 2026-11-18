@@ -2,6 +2,7 @@ import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import type { TextItem } from 'pdfjs-dist/types/src/display/api.js'
 import { readPdfFixture } from './read-fixture'
 
 const { repairPdfSymbolText } = await import(
@@ -104,3 +105,60 @@ it('requires the complete Universal subset encoding rather than its Latin glyph 
   )
   expect(result.items[0].str).toBe(text)
 })
+
+it.each(['native outline', 'different slot', 'remapped slot', 'outside gap'] as const)(
+  'recovers a dropped Computer Modern mass subscript only from its positioned Type1 glyph (%s)',
+  async (variant) => {
+    const item = (str: string, x: number, width: number, height: number): TextItem => ({
+      str,
+      dir: 'ltr',
+      width,
+      height,
+      transform: [9, 0, 0, 9, x, 81],
+      fontName: 'body',
+      hasEOL: false
+    })
+    const slot = { ...item(' ', 50, 6.3, 0), sourceItem: { pageNumber: 1, index: 1, text: ' ' } }
+    const items = [item('( M', 34, 16, 9), slot, item(')', 56.3, 4, 9)]
+    const widths = Object.assign([], { 12: 963 })
+    const defaultEncoding = Object.assign([], { 12: '' })
+    const font = {
+      name: 'ABCDEF+CMSY6',
+      type: 'Type1',
+      widths,
+      defaultEncoding,
+      differences: variant === 'remapped slot' ? Object.assign([], { 12: 'circleplus' }) : []
+    }
+    const glyph = {
+      originalCharCode: variant === 'different slot' ? 13 : 12,
+      unicode: '\f',
+      isInFont: true,
+      width: 963,
+      isSpace: false,
+      accent: null
+    }
+    const x = variant === 'outside gap' ? 50.1 : 50
+    const page = { commonObjs: { has: (name: string) => name === 'math', get: () => font } }
+    const result = await repairPdfSymbolText(
+      page,
+      { items },
+      {
+        fnArray: [OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText],
+        argsArray: [[], ['math', 6], [1, 0, 0, 1, x, 80], [[glyph]], []]
+      }
+    )
+    if (variant === 'native outline') {
+      expect(result.items[1]).toMatchObject({
+        str: '⊙',
+        transform: [6, 0, 0, 6, 50, 80],
+        fontName: 'math',
+        inlineSymbol: true
+      })
+      expect(result.items[1].sourceItem).toBeUndefined()
+      expect(result.items[0]).toEqual(items[0])
+      expect(result.items[2]).toEqual(items[2])
+    } else {
+      expect(result.items).toEqual(items)
+    }
+  }
+)

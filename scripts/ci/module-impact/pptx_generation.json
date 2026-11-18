@@ -1,0 +1,22 @@
+{
+  "ownerPaths": [
+    "src/main/skills/pptx-generation.test.ts",
+    "test/pptx-generation/test_kernel.py",
+    "resources/skills/pptx-generation/README.md",
+    "resources/skills/pptx-generation/SKILL.md",
+    "resources/skills/pptx-generation/kernel.py",
+    "resources/skills/pptx-generation/open-science.json"
+  ],
+  "interfacePaths": [
+    "resources/skills/pptx-generation/SKILL.md",
+    "resources/skills/pptx-generation/kernel.py"
+  ],
+  "testFiles": {
+    "owner": ["src/main/skills/pptx-generation.test.ts"],
+    "contract": ["src/main/skills/runtime-mcp-server.test.ts"],
+    "consumer": []
+  },
+  "consumerModules": [],
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

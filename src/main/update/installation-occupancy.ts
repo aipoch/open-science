@@ -205,7 +205,7 @@ export async function inspectInstallationProcessesAsync(
   signal?: AbortSignal
 ): Promise<number[]> {
   signal?.throwIfAborted()
-  const { runVerificationProcess } = await import('./verification-process')
+  const { runVerificationProcess } = await import('./verification-process.js')
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
@@ -228,6 +228,7 @@ export async function inspectInstallationProcessesAsync(
           const fs = require('node:fs')
           const { join } = require('node:path')
           const native = require(process.argv[1])
+          const started = Date.now()
           let root = process.argv[2]
           try { root = fs.realpathSync(root) } catch { /* The installation may have moved. */ }
           const files = []
@@ -255,9 +256,21 @@ export async function inspectInstallationProcessesAsync(
               }
             }
           }
+          // Like Inno Setup's default CloseApplicationsFilter, query only loaded or mapped payload:
+          // executables, libraries, native addons, WebAssembly modules, ASAR archives and Chromium's
+          // mapped .pak/.dat/.bin.
+          // Every registered file scales the cold Restart Manager query. Ordinary data files held
+          // without delete sharing make the installer's staged removal fail and roll back instead.
+          const resources = files.filter(file =>
+            /\.(?:exe|dll|node|wasm|asar|pyd|pak|dat|bin)$/i.test(file)
+          )
+          const stats = { fileCount: files.length, resourceCount: resources.length, enumMs: Date.now() - started }
+          // A timed-out scanner has no stdout; stderr progress identifies the stage that was reached.
+          process.stderr.write(JSON.stringify({ stage: 'resource-query', ...stats }) + '\n')
+          const queried = Date.now()
           // Only this short-lived scanner is exempt; the parent and other occupants remain.
-          const pids = native.listWindowsInstallationOccupants(files).filter(pid => pid !== process.pid)
-          process.stdout.write(JSON.stringify({ root, pids }))
+          const pids = native.listWindowsInstallationOccupants(resources).filter(pid => pid !== process.pid)
+          process.stdout.write(JSON.stringify({ root, pids, ...stats, rmMs: Date.now() - queried }))
         `,
           nativePath,
           installationRoot
@@ -275,6 +288,18 @@ export async function inspectInstallationProcessesAsync(
         !Array.isArray(result.pids)
       )
         throw new Error('Invalid installation resource scan result.')
+      // Stage timings are diagnostic only; malformed values are omitted, never trusted.
+      const stat = (key: string): number | undefined => {
+        const value = (result as Record<string, unknown>)[key]
+        return Number.isSafeInteger(value) ? (value as number) : undefined
+      }
+      createLogger('update').info('Windows installation occupancy inspected', {
+        fileCount: stat('fileCount'),
+        resourceCount: stat('resourceCount'),
+        enumMs: stat('enumMs'),
+        rmMs: stat('rmMs'),
+        durationMs: Date.now() - started
+      })
       return windowsInstallationOccupants(result.pids, result.root)
     } catch (cause) {
       if (signal?.aborted) throw cause
@@ -350,7 +375,7 @@ export async function inspectProcessNamesAsync(
   if (pids.length === 0) return names
   if (process.platform !== 'darwin') return inspectProcessNames(pids)
   try {
-    const { runVerificationProcess } = await import('./verification-process')
+    const { runVerificationProcess } = await import('./verification-process.js')
     const { stdout } = await runVerificationProcess(
       '/bin/ps',
       ['-o', 'pid=,comm=', '-p', pids.join(',')],

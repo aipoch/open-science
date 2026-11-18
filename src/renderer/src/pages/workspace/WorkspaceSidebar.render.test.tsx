@@ -851,8 +851,25 @@ describe('WorkspaceSidebar accessible render', () => {
     const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
     const sessions = [
       createSession({ id: 'session-a', title: 'Active session', status: 'idle' }),
-      createSession({ id: 'session-b', title: 'Context target', status: 'idle' })
+      createSession({
+        id: 'session-b',
+        title: 'Context target',
+        status: 'idle',
+        contentLoaded: false
+      })
     ]
+    const firstRead = deferred<Record<string, never>>()
+    const status = vi.fn(() => firstRead.promise)
+    const start = vi.fn()
+    const loadOne = vi.fn(async () => ({
+      ...sessions[1],
+      conversationGraph: createDelegatedQuestionSession().conversationGraph
+    }))
+    vi.stubGlobal('api', {
+      ...window.api,
+      sessions: { ...window.api?.sessions, loadOne },
+      researchVideo: { status, start }
+    })
     const onOpenSession = vi.fn()
     const onRenameSession = vi.fn()
     const onTogglePin = vi.fn()
@@ -926,6 +943,7 @@ describe('WorkspaceSidebar accessible render', () => {
         'view-replay',
         'download-artifacts',
         'view-notebook',
+        'research-explanation',
         'archive',
         'delete'
       ])
@@ -935,7 +953,38 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
       expect(onOpenSession).not.toHaveBeenCalled()
 
-      const edit = menu?.querySelector<HTMLElement>('[data-action-id="edit"]')
+      const film = menu?.querySelector<HTMLElement>('[data-action-id="research-explanation"]')
+      expect(film?.nextElementSibling?.textContent).toBe('Export')
+      expect(status).not.toHaveBeenCalled()
+      await act(async () => {
+        await clickRadixMenuItem(film)
+      })
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
+      expect(dialog?.querySelector('footer [role="status"]')?.textContent).toBe('Loading…')
+      expect(dialog?.textContent).toContain('Generating a film uses your token quota')
+      expect(dialog?.textContent).not.toContain('Start generation')
+      await act(async () => firstRead.resolve({}))
+      expect(dialog?.querySelector('footer [role="status"]')).toBeNull()
+      expect(dialog?.querySelector('footer')?.textContent).toContain('Start generation')
+      const scope = { projectId: sessions[1].projectId, sessionId: sessions[1].id }
+      expect(loadOne).toHaveBeenCalledExactlyOnceWith(scope)
+      expect(status).toHaveBeenCalledWith({
+        ...scope,
+        branchId: 'root-branch',
+        checkReadiness: true
+      })
+      expect(start).not.toHaveBeenCalled()
+      expect(onOpenSession).not.toHaveBeenCalled()
+      await act(async () =>
+        dialog?.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.click()
+      )
+      await vi.waitFor(() => expect(document.activeElement).toBe(targetButton))
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+
+      await act(async () =>
+        targetRow.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      )
+      const edit = document.querySelector<HTMLElement>('[data-action-id="edit"]')
       if (!edit) throw new Error('Edit action did not render')
       await clickRadixMenuItem(edit)
       expect(onRenameSession).toHaveBeenCalledWith(sessions[1])
@@ -956,6 +1005,7 @@ describe('WorkspaceSidebar accessible render', () => {
         'view-replay',
         'download-artifacts',
         'view-notebook',
+        'research-explanation',
         'archive',
         'delete'
       ])
@@ -966,6 +1016,7 @@ describe('WorkspaceSidebar accessible render', () => {
     } finally {
       act(() => root.unmount())
       container.remove()
+      vi.unstubAllGlobals()
     }
   })
 
@@ -1028,6 +1079,7 @@ describe('WorkspaceSidebar accessible render', () => {
         'discuss',
         'view-replay',
         'view-notebook',
+        'research-explanation',
         'archive',
         'delete'
       ])
@@ -2092,7 +2144,7 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
-  it('keeps keyboard focus on project results after expanding the menu', async () => {
+  it('continues at the first newly shown project after expanding the menu', async () => {
     const otherProjects = Array.from({ length: 7 }, (_, index) => ({
       id: `project-${index + 1}`,
       name: `Project ${index + 1}`,
@@ -2114,7 +2166,7 @@ describe('WorkspaceSidebar accessible render', () => {
 
       expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(7)
       expect(document.activeElement).toBe(
-        document.body.querySelector<HTMLElement>('[data-project-id]')
+        document.body.querySelector<HTMLElement>('[data-project-id="project-6"]')
       )
     } finally {
       mounted.cleanup()

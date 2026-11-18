@@ -2,7 +2,7 @@ import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
 
-const { nativeCaptionedRaster } = await import(
+const { nativeCaptionedRaster, nativeCaptionedRasterFullWidth } = await import(
   pathToFileURL(resolve('resources/literature-pdf-figure-native-captioned-illustration.mjs')).href
 )
 
@@ -103,3 +103,36 @@ it.each([
     f.page.graphicsBounds[0].paintedNormalizedRect = [0, 0, 1, 1]
   expect(f.run()?.rect[1] ?? Infinity).toBeGreaterThan(200)
 })
+
+it.each(['complete', 'missing label', 'body text', 'foreign paint', 'same operation', 'table'])(
+  'joins two independently painted wide rows only with native caption evidence: %s',
+  (mode) => {
+    const f = fixture()
+    const origin = [50, 289, 550, 309]
+    const caption = {
+      page: 1,
+      rect: origin,
+      lines: ['Figure 1: (a,e) Initial; (b,f) Middle; (c,g) Final; (d) Left; (h) Right.']
+    }
+    const lower = [50, 180, 550, 280]
+    const upper = [50, 75, 550, 175]
+    const p = {
+      ...f.page,
+      rotation: 0,
+      renderRotation: 0,
+      lines: [f.line(caption.lines[0], origin)],
+      graphicsBounds: [f.image(upper, 1), f.image(lower, 2)]
+    }
+    const tables: number[][] = []
+    if (mode === 'missing label') caption.lines[0] = caption.lines[0].replace('(c,g)', '(c)')
+    if (mode === 'body text') p.lines.push(f.line('Separate body row', [52, 175, 400, 179]))
+    if (mode === 'foreign paint')
+      p.graphicsBounds.push({ ...f.image([52, 175, 400, 179], 3), kind: 'path' })
+    if (mode === 'same operation') p.graphicsBounds[0].operationIndex = 2
+    if (mode === 'table') tables.push([80, 100, 200, 130])
+    const result = nativeCaptionedRasterFullWidth(p, caption, [caption], tables)
+    expect(result?.caption).toBe(caption)
+    expect(result?.rect).toEqual(mode === 'complete' ? [50, 75, 550, 280] : lower)
+    expect(result?.graphicsCount).toBe(mode === 'complete' ? 2 : 1)
+  }
+)

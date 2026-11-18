@@ -243,7 +243,11 @@ const ApplicationPresentationContent = ({
     )
   }
 
-  if (!sessions.isHydrated && sessions.isLoading) {
+  const isHomeRoute = events.navigation.view === 'home'
+  const canShowHomeDuringSessionStartup =
+    isHomeRoute && startup.storageRecovery.missingDataRoot === undefined
+
+  if (!sessions.isHydrated && sessions.isLoading && !canShowHomeDuringSessionStartup) {
     return (
       <main
         data-testid="session-persistence-startup-loading"
@@ -404,8 +408,10 @@ const ApplicationPresentationContent = ({
               <Suspense fallback={null}>
                 {events.navigation.view === 'home' ? (
                   <HomePage
-                    canDeleteProjects={sessions.canDeleteSessionsAndProjects}
-                    hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
+                    canDeleteProjects={sessions.isHydrated && sessions.canDeleteSessionsAndProjects}
+                    hasCompleteSessionCatalog={
+                      sessions.isHydrated && sessions.hasCompleteSessionCatalog
+                    }
                     catalogRecovery={sessions.catalogRecovery}
                     onOpenGlobalSearch={events.globalSearch.open}
                   />

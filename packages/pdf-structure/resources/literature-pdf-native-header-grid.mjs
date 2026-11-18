@@ -481,7 +481,7 @@ export function proveNativeFullyRuledLiteralGrid(table, items, captions, rules) 
   }
 }
 
-// An explicitly captioned numeric inventory need not draw an outer box. A
+// An explicitly captioned table need not draw an outer box. A
 // single header separator plus a continuous stub fence and complete peer
 // records can prove the same physical leaf lanes without model predictions.
 export function findCaptionedNativePartialRuleTable(caption, items, rules, runs = []) {
@@ -507,7 +507,7 @@ export function findCaptionedNativePartialRuleTable(caption, items, rules, runs 
       ),
       heights = near.map((i) => i.height).sort((a, b) => a - b),
       h = heights[heights.length >> 1]
-    if (!(h > 0) || caption.rect[1] - divider[1] > h * 8) continue
+    if (!(h > 0) || caption.rect[1] - divider[1] > h * 9) continue
     const vertical = rules.filter(
         (r) =>
           r[0] === r[2] &&
@@ -544,27 +544,42 @@ export function findCaptionedNativePartialRuleTable(caption, items, rules, runs 
       bands = groupSourceRowsWithScripts(bodyItems, h, 0.2)
     if (!headerBands || headerBands.length !== 1 || !bands || bands.length < 3 || bands.length > 6)
       continue
-    const leaves = nativeHorizontalFields(
+    let leaves = nativeHorizontalFields(
         header.flatMap((i) => splitNativeMeasuredFields(i, runs, h) ?? [i]),
         h * 0.55
       ),
       fields = bands.map((g) => nativeHorizontalFields(g, h * 0.55))
+    const categorical =
+      leaves.length === 4 &&
+      leaves[0].every((i) => i.rect[0] > stub) &&
+      fields.every(
+        (g) =>
+          g.length === 5 &&
+          /\p{L}/u.test(g[0].map((i) => i.text).join('')) &&
+          g.slice(1, 3).every((f) => f.length === 1 && /^[✓✗]$/u.test(f[0].text.trim())) &&
+          g[3].length === 1 &&
+          /^\d+(?:[kKmM])?$/u.test(g[3][0].text.trim()) &&
+          g[4].length === 1 &&
+          /^[A-Z]{2,5}$/u.test(g[4][0].text.trim())
+      )
+    if (categorical) leaves = [[], ...leaves]
+    else if (caption.rect[1] - divider[1] > h * 8) continue
     if (
       leaves.length < 3 ||
       leaves.length > 8 ||
       fields.some((g) => g.length !== leaves.length) ||
-      leaves.some((g) => !g.some((i) => /\p{L}/u.test(i.text))) ||
-      fields.some((g) =>
-        g.some(
-          (f) =>
-            !/^[-+−]?\d/u.test(
+      leaves.some((g, c) => (!categorical || c > 0) && !g.some((i) => /\p{L}/u.test(i.text))) ||
+      (!categorical &&
+        !fields.every((g) =>
+          g.every((f) =>
+            /^[-+−]?\d/u.test(
               f
                 .map((i) => i.text)
                 .join('')
                 .trim()
             )
-        )
-      ) ||
+          )
+        )) ||
       !hasUniqueRecordTokens(bodyItems, bands)
     )
       continue
@@ -1319,10 +1334,50 @@ export function proveNativePrintedHeaderAtColumns(
         r[1] <= table.cropRect[3] + h
     )
     .sort((a, b) => a[1] - b[1])
-  if (full.length < 3) return
+  if (full.length < 2) return
   const opening = full[0],
-    divider = full.find((r) => r[1] - opening[1] > h * 0.6),
     closing = full.at(-1)
+  // Repeated separators can leave gutters between otherwise complete lanes.
+  // Admit the first such separator only when each printed segment stays in
+  // one assigned column and an identical set recurs below it.
+  const lanes = new Map()
+  if (full.length === 2 && columns.length === 5)
+    for (const r of rules) {
+      if (
+        r[1] !== r[3] ||
+        r[1] <= opening[1] + h * 0.6 ||
+        r[1] >= closing[1] ||
+        r[0] < opening[0] ||
+        r[2] > opening[2] ||
+        r[2] - r[0] < h
+      )
+        continue
+      const row = lanes.get(r[1]) ?? []
+      row.push(r)
+      lanes.set(r[1], row)
+    }
+  const laneRows = [...lanes.values()]
+    .map((row) => row.toSorted((a, b) => a[0] - b[0]))
+    .sort((a, b) => a[0][1] - b[0][1])
+  const firstLanes = laneRows[0]
+  const segmentedDivider =
+    firstLanes?.length === columns.length &&
+    firstLanes.every(
+      (r, c) =>
+        r[0] >= columns[c][0] - h * 0.35 &&
+        r[2] <= columns[c][2] + h * 0.35 &&
+        (!c || r[0] - firstLanes[c - 1][2] > h * 0.1)
+    ) &&
+    laneRows
+      .slice(1)
+      .some(
+        (row) =>
+          row.length === firstLanes.length &&
+          row.every((r, c) => r[0] === firstLanes[c][0] && r[2] === firstLanes[c][2])
+      )
+  const divider = segmentedDivider
+    ? [opening[0], firstLanes[0][1], opening[2], firstLanes[0][1]]
+    : full.find((r) => r[1] - opening[1] > h * 0.6)
   if (
     !divider ||
     divider === closing ||
@@ -1349,6 +1404,8 @@ export function proveNativePrintedHeaderAtColumns(
       h * 0.35
     )
   )
+  if (segmentedDivider && (bands.length !== 2 || bands[0].length !== 3 || bands[1].length !== 2))
+    return
   const columnOf = (g) =>
     columns
       .map((r, c) => ({ r, c }))
@@ -1545,8 +1602,15 @@ export function proveNativePrintedHeaderAtColumns(
               ((start === 1 && slots.has(0)) || fence(a)) &&
               (end === columns.length - 1 || fence(b))
             const repeatBounded = repeated && span.length === 4 && (start - 1) % 4 === 0
+            const segmentedBounded =
+              segmentedDivider &&
+              start === columns.length - 2 &&
+              end === columns.length - 1 &&
+              slots.size === 2 &&
+              Math.abs((rect[0] + rect[2] - firstLanes[start][0] - firstLanes[end][2]) / 2) <
+                h * 0.15
             if (
-              (bounded || repeatBounded) &&
+              (bounded || repeatBounded || segmentedBounded) &&
               rect[0] >= a &&
               rect[2] <= b &&
               Math.abs((rect[0] + rect[2] - a - b) / 2) < h * 0.2
@@ -1596,6 +1660,7 @@ export function proveNativePrintedHeaderAtColumns(
     spans: [],
     completeSpans: true,
     kind: 'printed-header',
+    ...(segmentedDivider ? { segmentedDivider: true } : {}),
     repair: 'native-independent-printed-header-proved'
   }
 }
@@ -3098,7 +3163,100 @@ export function recoverWrappedSampleHeaderBand(table, items, captions, rules) {
 // A detector top can graze the last caption line. Move only that edge, inside
 // a proven blank gap before native header ink. A native top/footer or the
 // complete underlined count layout must independently witness the table.
+// A detector can straddle the gutter and clip a compact two-group table.
+// Close the region with the caption, native rules, and complete printed records.
+function recoverInsetPairedHeaderCrop(table, items, captions, rules) {
+  const [left, top, right, bottom] = table.cropRect
+  const horizontal = joinHorizontalTableRules(rules)
+  const candidates = []
+  for (const caption of captions) {
+    const [cx, cy, cr, end] = caption.rect
+    const font = (end - cy) / caption.lines.length
+    if (
+      !(font > 0) ||
+      captionKind(caption.lines[0]) !== 'table' ||
+      Math.abs(top - end) > font * 0.5 ||
+      cx - left < font * 5 ||
+      right <= cx ||
+      right >= cr
+    )
+      continue
+    const opening = horizontal.filter(
+      (r) =>
+        r[1] > end &&
+        r[1] - end <= font * 1.75 &&
+        Math.abs(r[0] - cx) < font &&
+        Math.abs(r[2] - cr) < font &&
+        r[2] > right
+    )
+    if (opening.length !== 1) continue
+    const [x, y, z] = opening[0]
+    const frame = horizontal
+      .filter(
+        (r) =>
+          r[1] >= y &&
+          r[1] < y + font * 12 &&
+          Math.abs(r[0] - x) < 0.02 &&
+          Math.abs(r[2] - z) < 0.02 &&
+          !captions.some(
+            (c) =>
+              c !== caption && c.rect[1] > y && c.rect[1] <= r[1] && c.rect[0] < z && c.rect[2] > x
+          )
+      )
+      .sort((a, b) => a[1] - b[1])
+    if (frame.length !== 3) continue
+    const [, divider, closing] = frame
+    if (!(divider[1] < bottom && bottom < closing[1])) continue
+    const rect = [x, y, z, closing[1]]
+    const parents = horizontal
+      .filter((r) => r[1] > y && r[1] < divider[1] && r[0] > x && r[2] <= z)
+      .sort((a, b) => a[0] - b[0])
+    if (
+      parents.length !== 2 ||
+      parents[0][2] >= parents[1][0] ||
+      Math.abs(parents[0][1] - parents[1][1]) > 0.02 ||
+      rules.some((r) => r[0] === r[2] && r[0] > x && r[0] < z && r[1] < rect[3] && r[3] > y)
+    )
+      continue
+    const source = tableSourceItems(items, rect),
+      lower = source.filter((i) => i.baseline > parents[0][1] && i.baseline < divider[1]),
+      body = source.filter((i) => i.rect[1] > divider[1])
+    const leaves = parents.map((r) =>
+      lower
+        .filter((i) => i.rect[0] >= r[0] && i.rect[2] <= r[2])
+        .sort((a, b) => a.rect[0] - b.rect[0])
+    )
+    if (
+      !leaves.every(
+        (g) => g.length === 2 && g.every((i) => /^\p{L}+(?:-\p{L}+)?$/u.test(i.text.trim()))
+      ) ||
+      leaves[0].some((i, n) => i.text.trim() !== leaves[1][n].text.trim())
+    )
+      continue
+    const starts = leaves.flat().map((i) => i.rect[0]),
+      groups = groupSourceRowsWithScripts(body, font, 0.3)
+    if (
+      !groups ||
+      groups.length < 3 ||
+      !hasUniqueRecordTokens(body, groups) ||
+      !groups.every((group) => {
+        const cells = readSourceRow(group, [x, ...starts.map((v) => v - font * 0.3), z])
+        return (
+          cells?.[0] &&
+          /\p{L}/u.test(cells[0]) &&
+          cells.slice(1).every((v) => /^[−+-]?\d+(?:\.\d+)?%?[*∗†‡]*$/u.test(v))
+        )
+      })
+    )
+      continue
+    candidates.push([x - 0.5, y - 0.5, z + 0.5, closing[1] + 0.5])
+  }
+  if (candidates.length === 1) return candidates[0]
+}
+
 export function recoverCaptionSeparatedHeaderCrop(table, items, captions, rules) {
+  const inset = recoverInsetPairedHeaderCrop(table, items, captions, rules)
+  if (inset) return inset
   const [left, top, right, bottom] = table.cropRect,
     source = tableSourceItems(items, table.cropRect),
     height = source.map((i) => i.height).sort((a, b) => a - b)[Math.floor(source.length / 2)],
@@ -7693,6 +7851,57 @@ export function recoverClippedColumnHeader(table, items, rules, captions = []) {
         )
       if (divider && lower) {
         const rect = [upper[0], upper[1], upper[2], divider[1]]
+        // A thin double top rule can extend above the drawn faces. Match the
+        // inner top stroke and all three vertical edges, including the same
+        // column divider immediately below the header.
+        const cuts =
+          columns.length === 2
+            ? clusterTableRulePositions(
+                rules
+                  .filter(
+                    (r) =>
+                      r[0] === r[2] &&
+                      Math.abs(r[0] - (crop[0] + (columns[0].rect[2] + columns[1].rect[0]) / 2)) <
+                        item.height * 0.25 &&
+                      r[1] <= divider[1] + 1 &&
+                      r[3] > divider[1] + item.height * 0.5
+                  )
+                  .map((r) => r[0])
+              )
+            : []
+        const [cut] = cuts
+        const top = Math.max(
+          upper[1],
+          ...rules
+            .filter(
+              (r) =>
+                r[1] === r[3] &&
+                r[1] > upper[1] &&
+                r[1] - upper[1] < item.height * 0.25 &&
+                Math.abs(r[0] - upper[0]) < 0.1 &&
+                Math.abs(r[2] - upper[2]) < 0.1
+            )
+            .map((r) => r[1])
+        )
+        const vertical = rules.filter((r) => r[0] === r[2])
+        const divided =
+          cuts.length === 1 &&
+          cut > rect[0] + 1 &&
+          item.rect[0] > cut + 1 &&
+          (item.rect[1] + item.rect[3]) / 2 > top &&
+          [rect[0], cut, rect[2]].every(
+            (x) => classifyTableRuleEdge(vertical, 0, x, top, divider[1]) === 1
+          ) &&
+          !items.some(
+            (i) =>
+              i !== item &&
+              i.text.trim() &&
+              i.rect[0] < rect[2] &&
+              i.rect[2] > rect[0] &&
+              (i.rect[1] + i.rect[3]) / 2 > upper[1] &&
+              (i.rect[1] + i.rect[3]) / 2 < divider[1]
+          )
+
         return {
           cropRect: [
             Math.min(crop[0], upper[0]),
@@ -7701,7 +7910,7 @@ export function recoverClippedColumnHeader(table, items, rules, captions = []) {
             Math.max(crop[3], lower[1])
           ],
           rect,
-          spans: [rect]
+          ...(divided ? { dividedHeaderCut: cut } : { spans: [rect] })
         }
       }
     }

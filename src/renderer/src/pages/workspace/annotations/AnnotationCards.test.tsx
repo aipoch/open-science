@@ -290,6 +290,46 @@ describe('AnnotationCards image projection', () => {
     expect(onReveal).toHaveBeenNthCalledWith(2, pdfAnnotations[1])
   })
 
+  it('describes sent slide annotations by target and reveals the deck', async () => {
+    const source = {
+      kind: 'artifact-version' as const,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      versionId: 'deck-version-1',
+      name: 'deck.pptx',
+      path: 'artifact-version:project-1/session-1/deck-1/deck-version-1'
+    }
+    const base = { kind: 'pptx-slide' as const, target: 'agent' as const, source, slideId: 257 }
+    const slides: Annotation[] = [
+      { ...base, id: 'slide-shape', note: 'Shorten.', slideIndex: 1, shapeId: 4 },
+      {
+        ...base,
+        id: 'slide-area',
+        note: 'Align.',
+        slideIndex: 1,
+        region: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 }
+      },
+      { ...base, id: 'slide-all', note: 'Add a summary.', slideIndex: 2, slideId: 258 }
+    ]
+    const onReveal = vi.fn()
+    await act(async () =>
+      root.render(<AnnotationMessageCards annotations={slides} onReveal={onReveal} />)
+    )
+    const buttons = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        'button[aria-label="Show annotation source"]'
+      )
+    ]
+    const cards = buttons.map((button) => button.closest('li') ?? button.parentElement)
+    expect(cards.map((card) => card?.textContent)).toEqual([
+      expect.stringMatching(/Selected shape.*deck\.pptx · Slide 2.*Shorten\./s),
+      expect.stringMatching(/Selected area.*deck\.pptx · Slide 2.*Align\./s),
+      expect.stringMatching(/Entire slide.*deck\.pptx · Slide 3.*Add a summary\./s)
+    ])
+    await act(async () => buttons[2]?.click())
+    expect(onReveal).toHaveBeenCalledWith(slides[2])
+  })
+
   it('clamps only overflowing PDF quotes to three lines and expands them on demand', async () => {
     const baseQuote = pdfAnnotations[0]
     if (baseQuote.kind !== 'pdf' || baseQuote.selector.kind !== 'text') {

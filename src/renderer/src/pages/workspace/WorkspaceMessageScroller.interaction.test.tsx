@@ -25,9 +25,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArtifactVersionDescriptor } from '../../../../shared/artifact-provenance'
 import type { JobSummary } from '../../../../shared/compute'
 import {
+  activateConversationBranch,
   createLinearConversationGraph,
+  forkEditedConversationMessage,
   projectConversationMessage,
-  resolveActiveConversationMessages
+  resolveActiveConversationMessages,
+  synchronizeActiveConversationMessages
 } from '../../../../shared/conversation-graph'
 import type {
   HandoffLifecycleEvent,
@@ -75,13 +78,19 @@ vi.mock('pdfjs-dist', () => {
   }
 })
 
-const { agentMarkdownRenderMock, endScrollTargetMock, scrollToEndMock, scrollableMock } =
-  vi.hoisted(() => ({
-    agentMarkdownRenderMock: vi.fn(),
-    endScrollTargetMock: vi.fn(),
-    scrollToEndMock: vi.fn(),
-    scrollableMock: { end: false }
-  }))
+const {
+  agentMarkdownRenderMock,
+  endScrollTargetMock,
+  scrollToEndMock,
+  scrollToMessageMock,
+  scrollableMock
+} = vi.hoisted(() => ({
+  agentMarkdownRenderMock: vi.fn(),
+  endScrollTargetMock: vi.fn(),
+  scrollToEndMock: vi.fn(),
+  scrollToMessageMock: vi.fn(() => true),
+  scrollableMock: { end: false }
+}))
 const { flushSessionPersistenceMock } = vi.hoisted(() => ({
   flushSessionPersistenceMock: vi.fn(async (): Promise<void> => undefined)
 }))
@@ -228,7 +237,7 @@ vi.mock('@/components/ui/message-scroller', () => {
     useMessageScroller: () => ({
       stopAutoScroll: vi.fn(),
       scrollToEnd: scrollToEndMock,
-      scrollToMessage: vi.fn(),
+      scrollToMessage: scrollToMessageMock,
       scrollToStart: vi.fn()
     }),
     useMessageScrollerScrollable: () => scrollableMock
@@ -4786,6 +4795,74 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     ).toBe(true)
   })
 
+  it('keeps an inline draft mounted when a paged branch receives another clients branch selection', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const { WorkspaceMessageEditStateProvider } = await import('./workspace-message-edit-state')
+    const original = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [createMessage({ id: 'original', content: 'Original prompt' })],
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000
+    })
+    const edited = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(original, 'original', 'edited-branch', 1710000000001),
+      [createMessage({ id: 'revised', content: 'Revised prompt' })],
+      1710000000001
+    )
+    const partial = createSession({
+      status: 'idle',
+      revision: 4,
+      contentLoaded: false,
+      historyPage: { revision: 4, hasMore: false, totalItems: 1, messageBranchId: 'edited-branch' },
+      messages: resolveActiveConversationMessages(edited).map(projectConversationMessage)
+    })
+    useSessionStore.setState({ sessions: [partial], selectedSessionId: partial.id })
+    const Parent = (): React.JSX.Element => {
+      const activeSession = useSessionStore((state) => state.sessions[0])
+      return (
+        <WorkspaceMessageEditStateProvider canEditMessage={true}>
+          <WorkspaceMessageScroller activeSession={activeSession} onSendEditedMessage={vi.fn()} />
+        </WorkspaceMessageEditStateProvider>
+      )
+    }
+    root = createRoot(container)
+    await act(async () => root.render(<Parent />))
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Edit message"]')!.click()
+    })
+    const editor = container.querySelector<HTMLElement>(
+      '[role="textbox"][aria-label="Edit message"]'
+    )!
+    expect(editor).not.toBeNull()
+    await act(async () => {
+      editor.textContent = 'Unsaved Web revision'
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    const remoteGraph = activateConversationBranch(edited, original.branches[0]!.id)
+    await act(async () => {
+      useSessionStore.getState().applyDurableSessionProjection({
+        source: partial,
+        session: {
+          ...createSession({ status: 'idle' }),
+          revision: 5,
+          messages: resolveActiveConversationMessages(remoteGraph).map(projectConversationMessage),
+          conversationGraph: remoteGraph
+        },
+        mode: 'runtime-transcript-authority'
+      })
+    })
+    const retained = container.querySelector('[role="textbox"][aria-label="Edit message"]')
+    expect(retained).toBe(editor)
+    expect(retained?.textContent).toBe('Unsaved Web revision')
+    expect(container.textContent).not.toContain('Original prompt')
+    await act(async () => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Cancel')!
+        .click()
+    })
+    expect(container.querySelector('[aria-label="Message revision"]')?.textContent).toBe('2/2')
+  })
+
   it.each([
     { count: 2, kind: 'messages' },
     { count: 80, kind: 'messages' },
@@ -5207,7 +5284,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const firstRun = document.body.querySelector<HTMLButtonElement>('[aria-label^="Go to run 1:"]')!
     expect(firstRun).not.toBeNull()
     await act(async () => firstRun.click())
-    expect(viewport.scrollTo).toHaveBeenCalled()
+    expect(scrollToMessageMock).toHaveBeenCalledWith('find-reading-1', {
+      align: 'start',
+      scrollMargin: 8,
+      behavior: 'instant'
+    })
     await act(async () => hideWindowFindListener?.())
     expect(target.isConnected).toBe(true)
     expect(
@@ -5638,6 +5719,49 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     announceWindowFindContentReady.mockClear()
     await act(async () => showWindowFindListener?.())
     expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads complete history before announcing native find readiness for a paged session', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const full = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'older-message', content: 'Old searchable record', createdAt: 1 }),
+        createMessage({ id: 'recent-message', content: 'Recent record', createdAt: 2 })
+      ]
+    })
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...full,
+          messages: full.messages.slice(-1),
+          contentLoaded: false,
+          historyPage: { revision: 0, totalItems: 200, hasMore: true, beforeCursor: 'older' }
+        }
+      ]
+    })
+    let finish!: () => void
+    const loadOne = vi.fn(
+      () =>
+        new Promise<typeof full>((resolve) => {
+          finish = () => resolve(full)
+        })
+    )
+    window.api.sessions = { loadOne } as unknown as Window['api']['sessions']
+    const Harness = (): React.JSX.Element => {
+      const selected = useSessionStore((state) => state.sessions[0])
+      return <WorkspaceMessageScroller activeSession={selected} onSendEditedMessage={vi.fn()} />
+    }
+    root = createRoot(container)
+    await act(async () => root.render(<Harness />))
+    expect(loadOne).not.toHaveBeenCalled()
+    await act(async () => showWindowFindListener?.())
+    expect(announceWindowFindContentReady).not.toHaveBeenCalled()
+    expect(container.textContent).not.toContain('Old searchable record')
+    await act(async () => finish())
+    expect(container.textContent).toContain('Old searchable record')
+    expect(announceWindowFindContentReady).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].contentLoaded).toBeUndefined()
   })
 
   it('reveals the full transcript only while whole-window find is open', async () => {

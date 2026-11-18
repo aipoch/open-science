@@ -1,3 +1,7 @@
+import {
+  createNotebookCellPreview,
+  type NotebookCellPreview
+} from '../../shared/notebook-process-monitor'
 import { compilePowerShellCommand } from './powershell-native-capture'
 import { NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE } from './process-sandbox'
 import { ExecutionDeadline } from './execution-deadline'
@@ -51,6 +55,40 @@ const cancelledResult = (): NotebookShellResult => ({
 // serialized and never replayed. The existing process adapter still owns native tree cleanup.
 export class ShellCellSession {
   lastUsedAt = Date.now()
+  startedAt = Date.now()
+  private lastCell?: NotebookCellPreview
+  private lastPid?: number
+  private lastProcessIdentity?: object
+  private cleanupInProgress = false
+  private cleanupAttemptFailed = false
+
+  get monitoredProcess():
+    | {
+        identity: object
+        lastCell?: NotebookCellPreview
+        pid?: number
+        status: import('../../shared/notebook-process-monitor').NotebookProcessStatus
+      }
+    | undefined {
+    const failed =
+      this.cleanupAttemptFailed ||
+      this.processResult?.ownedTreeReaped === false ||
+      this.processResult?.errorCode === 'shell-cleanup-incomplete'
+    if ((!this.isLive && !failed && !this.cleanupInProgress) || !this.lastProcessIdentity)
+      return undefined
+    return {
+      identity: this.lastProcessIdentity,
+      lastCell: this.lastCell,
+      pid: this.child?.pid ?? this.lastPid,
+      status: this.cleanupInProgress
+        ? 'cleaning'
+        : failed
+          ? 'cleanup-failed'
+          : this.cell
+            ? 'running'
+            : 'idle'
+    }
+  }
 
   get isLive(): boolean {
     return Boolean(this.child && !this.closed && !this.processResult)
@@ -108,9 +146,19 @@ export class ShellCellSession {
   async shutdown(): Promise<{ reaped: boolean }> {
     this.closed = true
     this.lifetime.abort()
-    await this.tail
-    await this.completion
-    return { reaped: await this.verifyCleanup() }
+    this.cleanupInProgress = true
+    try {
+      await this.tail
+      await this.completion
+      const reaped = await this.verifyCleanup()
+      this.cleanupAttemptFailed = !reaped
+      return { reaped }
+    } catch (error) {
+      this.cleanupAttemptFailed = true
+      throw error
+    } finally {
+      this.cleanupInProgress = false
+    }
   }
 
   private async verifyCleanup(): Promise<boolean> {
@@ -299,6 +347,10 @@ export class ShellCellSession {
           (child) => {
             this.launchedProcess = true
             this.child = child
+            this.lastPid = child.pid
+            this.lastProcessIdentity = child
+            this.lastCell = undefined
+            this.startedAt = Date.now()
             child.stdout.on('data', (chunk: string) => this.accept('stdout', chunk))
             child.stderr.on('data', (chunk: string) => this.accept('stderr', chunk))
             child.stdin.on('error', () => this.lifetime.abort())
@@ -352,6 +404,7 @@ export class ShellCellSession {
         })
         const input = powershell && !this.nativeControl ? this.controlSocket! : this.child.stdin
         input.write(this.frame(request.command, this.cell!.marker, powershell))
+        this.lastCell = createNotebookCellPreview(request.command)
       }
       const completed = await result
       timer?.cancel()

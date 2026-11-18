@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto'
+import { runVerificationProcess } from '../update/verification-process'
+import { spawnWindowsOwnedProcess, reapWindowsOwnedJob } from '../process-tree-windows'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { execFile } from 'node:child_process'
 import { constants as fsConstants } from 'node:fs'
 import { access as fsAccess } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { promisify } from 'node:util'
 
 import type {
   ClaudeInstallEvent,
@@ -14,11 +15,15 @@ import type {
   ClaudeInstallSource,
   NpmAvailability
 } from '../../shared/settings'
-import { terminateProcessTree } from '../process-tree'
+import {
+  terminateProcessTree,
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
+  registerProcessTreeOwnership
+} from '../process-tree'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { augmentedPathEnv } from './shell-path'
 
-const execFileAsync = promisify(execFile)
 const INSTALL_CLEANUP_TIMEOUT_MS = 8_000
 const log = createLogger('settings-install')
 
@@ -248,11 +253,11 @@ type NpmGlobalPrefixWritableDeps = {
 // caller safely falls back to a user-owned prefix instead of failing with EACCES.
 const isNpmGlobalPrefixWritable = async ({
   runNpmPrefix = () =>
-    execFileAsync('npm', ['prefix', '-g'], {
-      timeout: 10_000,
+    runVerificationProcess('npm', ['prefix', '-g'], {
+      timeoutMs: 10_000,
+      maxBytes: 1024 * 1024,
       // On Windows npm is an `npm.cmd` shim that execFile can't launch without a shell.
       shell: process.platform === 'win32',
-      windowsHide: true,
       env: augmentedPathEnv()
     }),
   access = fsAccess
@@ -326,13 +331,30 @@ const defaultInstallSpawn = (
   command: string,
   args: string[],
   options?: { shell?: boolean }
-): ChildProcessWithoutNullStreams =>
-  spawn(command, args, {
-    stdio: 'pipe',
-    windowsHide: true,
-    shell: options?.shell,
-    env: augmentedPathEnv()
-  }) as ChildProcessWithoutNullStreams
+): ChildProcessWithoutNullStreams => {
+  const jobName = `Local\\OpenScience.Delegation.${randomUUID()}`
+  const ownership = createPosixProcessTreeOwnership(augmentedPathEnv())
+  const child =
+    process.platform === 'win32'
+      ? spawnWindowsOwnedProcess(jobName, command, args, {
+          stdio: 'pipe',
+          shell: options?.shell,
+          env: ownership.env
+        })
+      : (spawn(command, args, {
+          stdio: 'pipe',
+          detached: true,
+          shell: options?.shell,
+          env: ownership.env
+        }) as ChildProcessWithoutNullStreams)
+  if (process.platform === 'win32')
+    registerProcessTreeOwnership(child, {
+      terminate: async () => ({ reaped: await reapWindowsOwnedJob(jobName) }),
+      settled: () => undefined
+    })
+  else trackOwnedPosixProcessTree(child, ownership.token)
+  return child
+}
 
 // Runs an install source to completion, coalescing stdout/stderr through onEvent and enforcing a
 // timeout. Resolves (never rejects) with a structured result the service can act on.
@@ -404,7 +426,7 @@ const runInstall = async ({
       resolve(result)
     }
 
-    const terminate = (result: ClaudeInstallResult, message: string): void => {
+    const terminate = (result: ClaudeInstallResult, message = ''): void => {
       if (settled || terminating) return
       terminating = true
       publisher.log('system', message)
@@ -427,7 +449,7 @@ const runInstall = async ({
           log.warn('installer cleanup failed', { installId, ...diagnosticErrorFields(error) })
           onCleanupFailure?.(error)
         }
-        settle(result)
+        settle(error && result.ok ? { ...result, ok: false, error: error.message } : result)
       })
     }
 
@@ -455,14 +477,14 @@ const runInstall = async ({
 
     child.on('error', (error) => {
       if (terminating) return
-      settle({ installId, ok: false, error: error.message })
+      terminate({ installId, ok: false, error: error.message })
     })
 
     child.on('exit', (code) => {
       if (terminating) return
       const ok = code === 0
 
-      settle({
+      terminate({
         installId,
         ok,
         exitCode: code ?? undefined,
@@ -482,11 +504,11 @@ const runInstall = async ({
 // with common node locations so a GUI-launched app doesn't falsely report npm as missing.
 const detectNpmAvailable = async (
   runNpm: (signal?: AbortSignal) => Promise<unknown> = (signal) =>
-    execFileAsync('npm', ['--version'], {
-      timeout: 10_000,
+    runVerificationProcess('npm', ['--version'], {
+      timeoutMs: 10_000,
+      maxBytes: 1024 * 1024,
       // On Windows npm is an `npm.cmd` shim that execFile can't launch without a shell.
       shell: process.platform === 'win32',
-      windowsHide: true,
       signal,
       env: augmentedPathEnv()
     }),

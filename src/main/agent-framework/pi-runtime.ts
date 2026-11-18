@@ -1,3 +1,11 @@
+import { randomUUID } from 'node:crypto'
+import {
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
+  registerProcessTreeOwnership,
+  terminateProcessTree
+} from '../process-tree'
+import { spawnWindowsOwnedProcess, reapWindowsOwnedJob } from '../process-tree-windows'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -53,31 +61,42 @@ export const resolvePiExecutable = async (options: PiRuntimeLocation = {}): Prom
   const path = piAdapterPath(options)
   assertPiAdapter(path, options)
   const temporary = await mkdtemp(join(tmpdir(), 'open-science-pi-smoke-'))
+  let retainTemporary = false
   try {
     await new Promise<void>((resolveReady, reject) => {
-      const child = spawn(
-        process.execPath,
-        [
-          path,
-          '--agent-dir',
-          join(temporary, 'agent'),
-          '--session-dir',
-          join(temporary, 'sessions'),
-          '--no-delegation',
-          '--quiet-startup'
-        ],
-        {
-          stdio: 'pipe',
-          env: {
-            PATH: process.env.PATH ?? '/usr/bin:/bin',
-            HOME: temporary,
-            PI_CODING_AGENT_DIR: join(temporary, 'agent'),
-            PI_ACP_SESSION_DIR: join(temporary, 'sessions'),
-            PI_OFFLINE: '1',
-            ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {})
-          }
-        }
-      )
+      const jobName = `Local\\OpenScience.Delegation.${randomUUID()}`
+      const args = [
+        path,
+        '--agent-dir',
+        join(temporary, 'agent'),
+        '--session-dir',
+        join(temporary, 'sessions'),
+        '--no-delegation',
+        '--quiet-startup'
+      ]
+      const ownership = createPosixProcessTreeOwnership({
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        HOME: temporary,
+        PI_CODING_AGENT_DIR: join(temporary, 'agent'),
+        PI_ACP_SESSION_DIR: join(temporary, 'sessions'),
+        PI_OFFLINE: '1',
+        ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {})
+      })
+      const spawnOptions = {
+        stdio: 'pipe' as const,
+        detached: process.platform !== 'win32',
+        env: ownership.env
+      }
+      const child =
+        process.platform === 'win32'
+          ? spawnWindowsOwnedProcess(jobName, process.execPath, args, spawnOptions)
+          : spawn(process.execPath, args, spawnOptions)
+      if (process.platform === 'win32')
+        registerProcessTreeOwnership(child, {
+          terminate: async () => ({ reaped: await reapWindowsOwnedJob(jobName) }),
+          settled: () => undefined
+        })
+      else trackOwnedPosixProcessTree(child, ownership.token)
       let buffer = ''
       let initialized = false
       let settled = false
@@ -85,12 +104,19 @@ export const resolvePiExecutable = async (options: PiRuntimeLocation = {}): Prom
         if (settled) return
         settled = true
         clearTimeout(timer)
-        if (error) reject(error)
-        else resolveReady()
+        void terminateProcessTree(child, 'SIGKILL').then(({ reaped }) => {
+          child.stdin.destroy()
+          child.stdout.destroy()
+          child.stderr.destroy()
+          if (!reaped) {
+            retainTemporary = true
+            reject(new Error('Pi ACP process tree cleanup was not confirmed.'))
+          } else if (error) reject(error)
+          else resolveReady()
+        })
       }
       const timer = setTimeout(() => {
         child.stdin.end()
-        child.kill()
         finish(new Error('Pi ACP initialization timed out.'))
       }, 10_000)
       child.on('error', (error) => finish(error))
@@ -98,6 +124,7 @@ export const resolvePiExecutable = async (options: PiRuntimeLocation = {}): Prom
       child.stderr.resume()
       child.stdout.setEncoding('utf8')
       child.stdout.on('data', (chunk: string) => {
+        if (settled) return
         buffer += chunk
         if (buffer.length > 256 * 1024) {
           child.stdin.end()
@@ -145,7 +172,7 @@ export const resolvePiExecutable = async (options: PiRuntimeLocation = {}): Prom
       )
     })
   } finally {
-    await rm(temporary, { recursive: true, force: true })
+    if (!retainTemporary) await rm(temporary, { recursive: true, force: true })
   }
   return path
 }

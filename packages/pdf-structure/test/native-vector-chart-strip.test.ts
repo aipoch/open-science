@@ -312,7 +312,7 @@ it('claims a framed native bar chart immediately before its caption', () => {
 })
 
 it('claims a compact framed native plot when its ticks and legend are complete', () => {
-  const width = 612
+  const width = 660
   const height = 792
   const caption = {
     page: 1,
@@ -363,6 +363,27 @@ it('claims a compact framed native plot when its ticks and legend are complete',
   expect(result?.reason).toBe('native-vector-bar-chart')
   expect(result?.rect).toEqual([345, 229, 502, 309])
   expect(associateFigures(page, [caption])[0].rect).toEqual([345, 229, 502, 309])
+
+  const peerCaption = {
+    page: 1,
+    lines: ['Figure 7: Response by cohort.'],
+    rect: [511, 335, 606, 345]
+  }
+  page.graphicsBounds.push({
+    kind: 'path',
+    normalizedRect: [510 / width, 229 / height, 658 / width, 309 / height]
+  })
+  page.lines.push({ text: 'Response', x: 511, y: 249, width: 8, height: 38, fontSize: 8 })
+  expect(nativeCaptionedVectorBarChart(page, caption, [caption], [])?.rect).toEqual([
+    345, 229, 519, 309
+  ])
+  expect(nativeCaptionedVectorBarChart(page, caption, [caption, peerCaption], [])?.rect).toEqual([
+    345, 229, 502, 309
+  ])
+  const tableCaption = { ...peerCaption, lines: ['Table 1: Response by cohort.'] }
+  expect(nativeCaptionedVectorBarChart(page, caption, [caption, tableCaption], [])?.rect).toEqual([
+    345, 229, 519, 309
+  ])
 })
 
 it('claims adjacent unframed native bar panels immediately before their caption', () => {
@@ -501,4 +522,66 @@ it.each([
   )
   expect(!!result).toBe(kind === 'intact')
   if (result) expect(result.rect.map((v: number) => Math.round(v))).toEqual([310, 70, 530, 150])
+})
+
+it('keeps a stacked plot out of a separately captioned chart crop', () => {
+  const width = 600,
+    height = 780,
+    paths = [[48, 80, 276, 514]],
+    rules: number[][] = [],
+    lines: {
+      text: string
+      x: number
+      y: number
+      width: number
+      height: number
+      fontSize: number
+    }[] = []
+  const text = (value: string, x: number, y: number, span: number, fontSize = 10): void => {
+    lines.push({ text: value, x, y, width: span, height: fontSize, fontSize })
+  }
+  for (const [left, top] of [
+    [63, 90],
+    [320, 90],
+    [63, 325]
+  ]) {
+    const right = left + 205,
+      bottom = top + 175
+    paths.push([left - 15, top - 10, right + 8, bottom + 14])
+    rules.push(
+      [left, top, right, top],
+      [left, bottom, right, bottom],
+      [left, top, left, bottom],
+      [right, top, right, bottom]
+    )
+    for (let i = 0; i < 8; i++)
+      paths.push([left + 28 + i * 17, top + 20 + i * 8, left + 65 + i * 17, top + 37 + i * 8])
+    for (let i = 0; i < 5; i++) text(String(i * 2), left - 10, top + 9 + i * 22, 11, 8)
+    text('Test input', left + 48, bottom + 2, 64, 8)
+    text('Series one', left + 113, top + 23, 70, 8)
+    text('Series two', left + 113, top + 37, 70, 8)
+  }
+  const left = { page: 1, rect: [48, 530, 268, 540], lines: ['Figure 1. Baseline measurements.'] },
+    right = { page: 1, rect: [305, 299, 525, 309], lines: ['Figure 2. Comparison measurements.'] }
+  for (const caption of [left, right]) {
+    const [x, y, end] = caption.rect
+    text(caption.lines[0], x, y, end - x)
+  }
+  const page = {
+    pageNumber: 1,
+    width,
+    height,
+    lines,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: paths.map((rect) => ({
+      kind: 'path',
+      normalizedRect: rect.map((value, index) => value / (index % 2 ? height : width))
+    }))
+  }
+  const figures = associateFigures(page, [right, left], [], rules)
+  expect(figures.map((figure: { rect: number[] }) => figure.rect)).toEqual([
+    [305, 80, 533, 279],
+    [48, 80, 276, 514]
+  ])
+  expect(associateFigures(page, [right], [], rules)[0]?.rect).toEqual([48, 80, 533, 279])
 })

@@ -177,3 +177,21 @@ it('offers diagnostics and a fresh conversation for unknown effects, never a bli
   expect(presentation.secondaryActions).toEqual(['new-session'])
   expect(presentation.descriptionKey).toContain('verified state')
 })
+
+it('explains missing image support without suggesting credential failures', () => {
+  expect(
+    noticePresentation({
+      category: 'configuration',
+      reason: 'configuration/vision-model',
+      diagnostics: {}
+    })
+  ).toEqual({
+    level: 'warning',
+    titleKey: 'Image support is not configured',
+    descriptionKey:
+      "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support.",
+    primaryAction: 'open-provider-settings',
+    secondaryActions: [],
+    feedback: 'none'
+  })
+})

@@ -357,6 +357,7 @@ type RpcRequest = {
 }
 
 type RpcResponse = {
+  manualKernelTerminations?: import('../../shared/notebook-process-monitor').ManualKernelTermination[]
   result?: unknown
   error?: unknown
 }
@@ -472,6 +473,8 @@ const createNotebookMcpEnvironmentFromProcess = (
 }
 
 // Sends a tool request to the app-local notebook RPC server and returns its raw result payload.
+const terminationNotices = new WeakMap<object, string>()
+
 const callNotebookRpc = async (
   environment: NotebookMcpEnvironment,
   method: string,
@@ -509,6 +512,10 @@ const callNotebookRpc = async (
   )
 
   const payload = (await response.json()) as RpcResponse
+  const terminationNotice = payload.manualKernelTerminations?.length
+    ? 'User manually requested kernel termination. Comments are user-provided feedback. Account for this before recreating kernels.\n' +
+      JSON.stringify(payload.manualKernelTerminations)
+    : undefined
 
   if (!response.ok || payload.error) {
     const message =
@@ -518,9 +525,11 @@ const callNotebookRpc = async (
           ? payload.error
           : JSON.stringify(payload.error)
     const guidance = notebookRpcErrorGuidance(response.status, payload.error)
-    throw new Error(guidance ? `${message}\n${guidance}` : message)
+    throw new Error([message, guidance, terminationNotice].filter(Boolean).join('\n'))
   }
 
+  if (terminationNotice && payload.result && typeof payload.result === 'object')
+    terminationNotices.set(payload.result, terminationNotice)
   return payload.result
 }
 
@@ -827,7 +836,9 @@ const compactExecutionOutputs = (
 const BUNDLED_KERNEL_SKILL_PSEUDO_MODULES = new Map([
   ['figure_style', 'figure-style'],
   ['figure_composer', 'figure-composer'],
-  ['paper_narrative', 'paper-narrative']
+  ['paper_narrative', 'paper-narrative'],
+  ['pdf_generation', 'pdf-generation'],
+  ['pptx_generation', 'pptx-generation']
 ])
 
 // Projects one immediate execution result for the next model step. Code, roots, provenance, and
@@ -1205,6 +1216,8 @@ const buildNotebookToolContent = (
       text: serializeNotebookToolResult(result, definition.resultLimitChars)
     }
   ]
+  const terminationNotice = raw && typeof raw === 'object' ? terminationNotices.get(raw) : undefined
+  if (terminationNotice) content.push({ type: 'text', text: terminationNotice })
   const rawRecord = asRecord(raw)
   if (!definition.includeViewImages || rawRecord?.status !== 'completed') return content
   if (rawRecord.viewImageError === 'evidence-unavailable') {

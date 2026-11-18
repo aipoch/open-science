@@ -153,7 +153,7 @@ function canonicalScientificSource(
     !normalRuns.length ||
     normalRuns.some((run) => run.position !== 'normal' || !run.text.trim()) ||
     exponent?.position !== 'superscript' ||
-    !/^[+−-]?\d+(?:\.\d+)?\s*×\s*10$/u.test(normalText) ||
+    !/^[+−-]?\d+(?:\.\d+)?(?:\s*\([+−-]?\d+(?:\.\d+)?\))?\s*×\s*10$/u.test(normalText) ||
     !/^[+−-]?\d+$/u.test(exponent.text)
   )
     return false
@@ -773,7 +773,10 @@ export async function applyCachedPdfTableSources({
         raw.str === origin.text
       )
     }
+    const blockedWarnings = new Set<string>()
+    const retainedHeaderUnits = new Set<string>()
     if (blockedUnits.size) {
+      const incompleteOrigins = new Set<string>()
       const proveBlockedUnits = async (): Promise<boolean> => {
         for (const result of results)
           for (const element of result.elements) {
@@ -781,10 +784,14 @@ export async function applyCachedPdfTableSources({
               element.tableParts?.map((part) => part.table) ??
               (element.table ? [element.table] : [])
             for (const [part, table] of tables.entries()) {
-              if (!blockedTables.has(`${result.extractionId}:${element.id}:${part}`)) continue
+              const key = `${result.extractionId}:${element.id}:${part}`
+              if (!blockedTables.has(key)) continue
               for (const cell of table.cells) {
                 const origins = [...(cell.sourceItems ?? []), ...(cell.sourceSegments ?? [])]
-                if (cell.text.trim() && !origins.length) return false
+                // An unresolved cell can lack an origin. This table is already
+                // blocked; verify every claim it actually makes and let the
+                // independent tables go through their own complete verification.
+                if (cell.text.trim() && !origins.length) incompleteOrigins.add(key)
                 for (const origin of origins) if (!(await proveOrigin(origin, result))) return false
               }
             }
@@ -800,6 +807,9 @@ export async function applyCachedPdfTableSources({
       const proved = await proveBlockedUnits()
       current()
       if (!proved) return retainOriginal()
+      for (const id of blockedUnits)
+        if (![...unitTables.get(id)!].some((key) => incompleteOrigins.has(key)))
+          blockedWarnings.add(id)
       // A captioned native record grid can be uncertain without becoming prose.
       // Only complete owners inside its proved cells lose eligibility; this
       // evidence never authorizes a crop, a cell replacement or local painting.
@@ -842,6 +852,44 @@ export async function applyCachedPdfTableSources({
           for (const [part, table] of tables.entries()) {
             const key = `${result.extractionId}:${element.id}:${part}`,
               origins = tableOrigins.get(key)!
+            // PDF.js can report one native run spanning several printed header cells.
+            // A complete literal and geometry match only authorizes keeping that
+            // whole owner. It never permits independently replacing those cells.
+            const header = table.cells
+              .filter((cell) => cell.row === 0)
+              .sort((a, b) => a.column - b.column)
+            const shared = header.filter(
+              (cell) =>
+                cell.sourceItems?.length === 1 &&
+                normalizeSourceText(cell.sourceItems[0].text) !== normalizeSourceText(cell.text)
+            )
+            const parent = shared[0]?.sourceItems?.[0]
+            const sharedHeader =
+              parent &&
+              shared.length >= 2 &&
+              [...element.issues, ...table.issues].every(
+                ({ code }) => code === 'native-table-structure-ambiguous'
+              ) &&
+              !table.unassignedText.length &&
+              header.length === table.columnCount &&
+              header.every(
+                (cell, index) =>
+                  cell.column === index &&
+                  cell.rowSpan === 1 &&
+                  cell.columnSpan === 1 &&
+                  cell.sourceItems?.length === 1 &&
+                  cell.regions.length === 1 &&
+                  /[A-Za-z]{3,}/u.test(cell.text)
+              ) &&
+              shared.every(
+                (cell, index) =>
+                  cell.column === shared[0].column + index &&
+                  cell.sourceItems?.[0].pageNumber === parent.pageNumber &&
+                  cell.sourceItems[0].index === parent.index &&
+                  cell.sourceItems[0].text === parent.text
+              ) &&
+              normalizeSourceText(shared.map((cell) => cell.text).join('')) ===
+                normalizeSourceText(parent.text)
             if (
               !blockedTables.has(key) ||
               table.rowCount < 3 ||
@@ -853,16 +901,21 @@ export async function applyCachedPdfTableSources({
                   cell.sourceSegments ||
                   (cell.text.trim()
                     ? !cell.sourceItems?.length ||
-                      normalizeSourceText(
+                      (normalizeSourceText(
                         cell.sourceItems.map((origin) => origin.text).join('')
-                      ) !== normalizeSourceText(cell.text)
+                      ) !== normalizeSourceText(cell.text) &&
+                        !(sharedHeader && shared.includes(cell)))
                     : !!cell.sourceItems?.length || !!cell.regions.length)
               )
             )
               continue
             let geometryProved = true
             for (const cell of table.cells) {
-              const remaining = [...cell.regions]
+              if (sharedHeader && shared.includes(cell) && cell !== shared[0]) continue
+              const remaining =
+                sharedHeader && cell === shared[0]
+                  ? shared.flatMap((headerCell) => headerCell.regions)
+                  : [...cell.regions]
               for (const origin of cell.sourceItems ?? []) {
                 const page = pages.get(origin.pageNumber)!,
                   raw = page.content.items[origin.index]
@@ -886,9 +939,11 @@ export async function applyCachedPdfTableSources({
               if (remaining.length) geometryProved = false
             }
             if (!geometryProved) continue
-            const simpleGrid = table.cells.every(
-              (cell) => cell.sourceItems?.length && cell.rowSpan === 1 && cell.columnSpan === 1
-            )
+            const simpleGrid =
+              !sharedHeader &&
+              table.cells.every(
+                (cell) => cell.sourceItems?.length && cell.rowSpan === 1 && cell.columnSpan === 1
+              )
             // Spanning headers do not prove a body grid. Protect only a complete
             // native header row crossing cells above independently aligned numeric records.
             const sameNativeRow = (
@@ -995,7 +1050,16 @@ export async function applyCachedPdfTableSources({
                   unit.fragments.length !== 1 ||
                   unit.fragments[0].pageNumber !== numericRows[0][0].sourceItems![0].pageNumber ||
                   !sameNativeRow(items) ||
-                  headerCells.some((matches) => matches.length !== 1) ||
+                  headerCells.some(
+                    (matches) =>
+                      matches.length !== 1 &&
+                      !(
+                        sharedHeader &&
+                        matches.length === shared.length &&
+                        matches.every((cell) => shared.includes(cell))
+                      )
+                  ) ||
+                  (sharedHeader && cells.length !== header.length) ||
                   new Set(cells.map((cell) => cell.column)).size < 2 ||
                   cells.some((cell) =>
                     cell.sourceItems!.some(
@@ -1011,7 +1075,8 @@ export async function applyCachedPdfTableSources({
                 )
                   continue
               }
-              incompleteOriginalUnits.add(unit.id)
+              if (sharedHeader) retainedHeaderUnits.add(unit.id)
+              else incompleteOriginalUnits.add(unit.id)
             }
           }
         }
@@ -1025,8 +1090,9 @@ export async function applyCachedPdfTableSources({
             element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
           for (const [part, table] of tables.entries()) {
             if (!table.unreliableMathSourceItems) continue
-            if (!blockedTables.has(`${result.extractionId}:${element.id}:${part}`))
-              return extraction
+            const key = `${result.extractionId}:${element.id}:${part}`
+            if (!blockedTables.has(key)) return extraction
+            if (incompleteOrigins.has(key)) continue
             const evidence = new Set(
               table.unreliableMathSourceItems.map(
                 (origin) => `${origin.pageNumber}:${origin.index}`
@@ -1082,33 +1148,36 @@ export async function applyCachedPdfTableSources({
       const warnings = new Map(
         extraction.coverage.warnings.map((warning) => [warning.unitId, new Set(warning.reasons)])
       )
-      for (const id of blockedUnits) {
+      for (const id of blockedWarnings) {
         if (!warnings.has(id)) warnings.set(id, new Set())
         warnings.get(id)!.add('table-structure-unreliable')
       }
-      warningOnly = Object.freeze({
-        ...extraction,
-        ...(unreliableMathUnits.size || incompleteOriginalUnits.size
-          ? {
-              source: createPdfTranslationSource({
-                ...source,
-                units: source.units.map((unit) =>
-                  unreliableMathUnits.has(unit.id) || incompleteOriginalUnits.has(unit.id)
-                    ? { ...unit, sourceOnly: true as const }
-                    : unit
-                )
-              })
-            }
-          : {}),
-        coverage: Object.freeze({
-          ...extraction.coverage,
-          warnings: Object.freeze(
-            [...warnings].map(([unitId, reasons]) =>
-              Object.freeze({ unitId, reasons: Object.freeze([...reasons]) })
+      if (blockedWarnings.size || unreliableMathUnits.size || incompleteOriginalUnits.size)
+        warningOnly = Object.freeze({
+          ...extraction,
+          ...(unreliableMathUnits.size || incompleteOriginalUnits.size
+            ? {
+                source: createPdfTranslationSource({
+                  ...source,
+                  units: source.units.map((unit) =>
+                    unreliableMathUnits.has(unit.id) ||
+                    incompleteOriginalUnits.has(unit.id) ||
+                    retainedHeaderUnits.has(unit.id)
+                      ? { ...unit, sourceOnly: true as const }
+                      : unit
+                  )
+                })
+              }
+            : {}),
+          coverage: Object.freeze({
+            ...extraction.coverage,
+            warnings: Object.freeze(
+              [...warnings].map(([unitId, reasons]) =>
+                Object.freeze({ unitId, reasons: Object.freeze([...reasons]) })
+              )
             )
-          )
+          })
         })
-      })
       if (incompleteOriginalUnits.size) {
         // This exclusion must survive an independent cell-replacement failure,
         // including a saved snapshot that already contains those cell IDs.
@@ -1658,9 +1727,9 @@ export async function applyCachedPdfTableSources({
         claim.replacementIndex = indices.get(claim.replacementIndex)!
       replacements.splice(0, replacements.length, ...kept)
       for (const key of incompleteTables) blockedTables.add(key)
-      for (const unit of incompleteUnits) blockedUnits.add(unit.id)
+      for (const unit of incompleteUnits) blockedWarnings.add(unit.id)
     }
-    if (!replacements.length && !blockedUnits.size) return retainOriginal()
+    if (!replacements.length && !blockedWarnings.size) return retainOriginal()
     const regionProof = await verifiedPdfTableRegions(
       source,
       results.flatMap((result) =>
@@ -1778,11 +1847,11 @@ export async function applyCachedPdfTableSources({
     }
     current()
     let coverage = extraction.coverage
-    if (blockedUnits.size) {
+    if (blockedWarnings.size) {
       const warnings = new Map(
         coverage.warnings.map((warning) => [warning.unitId, new Set(warning.reasons)])
       )
-      for (const id of blockedUnits) {
+      for (const id of blockedWarnings) {
         if (!warnings.has(id)) warnings.set(id, new Set())
         warnings.get(id)!.add('table-structure-unreliable')
       }
@@ -1844,7 +1913,9 @@ export async function applyCachedPdfTableSources({
           ...source.units
             .filter((u) => !removed.has(u.id))
             .map((unit) =>
-              unreliableMathUnits.has(unit.id) || incompleteOriginalUnits.has(unit.id)
+              unreliableMathUnits.has(unit.id) ||
+              incompleteOriginalUnits.has(unit.id) ||
+              retainedHeaderUnits.has(unit.id)
                 ? { ...unit, sourceOnly: true as const }
                 : unit
             ),

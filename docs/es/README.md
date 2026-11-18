@@ -55,13 +55,13 @@
 
 ### 💡 AIPOCH Open-Science v1.2.2 — Novedades
 
-_12 de noviembre de 2026_
+_18 de noviembre de 2026_
 
 - **Modo de red estricto**: Active un modo Strict con lista blanca para la red de Notebook — las solicitudes deben coincidir con sus reglas por protocolo, host y puerto; las solicitudes sin coincidencia se bloquean sin solicitud de autorización.
 - **Reanudación de películas**: La generación interrumpida de una película de investigación continúa desde puntos de control validados con una vista de progreso de cinco pasos; las escenas completadas y la narración se reutilizan.
-- **Fidelidad de PDF**: Los PDF externos conservan figuras nativas, tablas, pies de figura y orden de lectura, y los documentos traducidos preservan la estructura y el diseño originales.
+- **Fidelidad de PDF**: Los PDF externos conservan figuras, tablas, pies de figura y orden de lectura nativos; la traducción preserva la estructura y el diseño, manteniendo el contenido original si no se puede verificar su colocación.
 - **Concesiones más seguras en Windows**: Las concesiones de carpetas en modo protegido se comprueban antes de guardar, y los flujos de actualización, desinstalación y entrega se recuperan con más fiabilidad conservando los diagnósticos.
-- **Actualizaciones de proveedores**: Qwen4 Max Preview se suma a Bailian Token Plans en Pekín y Singapur, y los modelos predeterminados de las conexiones oficiales se actualizan.
+- **Actualizaciones de proveedores**: Qwen4 Max Preview (contexto de 1M) se suma a Bailian Token Plans en Pekín y Singapur, y los modelos predeterminados de las conexiones oficiales se actualizan.
 - **Correcciones de fiabilidad**: Las importaciones de sesiones informan de su resultado, la recuperación del servicio bloquea el espacio de trabajo hasta que la conexión vuelve y el contraste del modo oscuro se conserva en todas las superficies.
 
 [Notas completas v1.2.2](https://github.com/aipoch/open-science/releases/tag/v1.2.2)

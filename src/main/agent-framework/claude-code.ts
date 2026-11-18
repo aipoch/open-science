@@ -21,10 +21,12 @@ import { renderAppMcpToolReferences } from './app-mcp-names'
 import {
   LOAD_SKILL_TOOL_CALLABLE_NAME,
   OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
-  SKILL_RUNTIME_MCP_SERVER_NAME,
+  SKILL_RUNTIME_MCP_SERVER_NAME
+} from '../skills/runtime-mcp-constants'
+import {
   createSkillRuntimeAcpServerConfig,
   createSkillRuntimeMcpServerConfig
-} from '../skills/runtime-mcp-server'
+} from '../skills/runtime-mcp-config'
 
 // Select Claude Code's complete built-in tool set explicitly instead of relying on
 // claude-agent-acp's current fallback. This keeps WebFetch/WebSearch available if the adapter's

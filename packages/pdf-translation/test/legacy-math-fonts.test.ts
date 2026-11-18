@@ -667,3 +667,103 @@ it.each([
     registry.dispose()
   }
 })
+
+it.each([
+  ['same native codes', 'ABCDEF+SymbolMT', '\uf064与\uf077', undefined],
+  ['ordinary font', 'Helvetica', '\uf064与\uf077', 'font'],
+  ['different code order', 'ABCDEF+SymbolMT', '\uf077与\uf064', 'annotations'],
+  ['duplicate code', 'ABCDEF+SymbolMT', '\uf064与\uf077、\uf077', 'annotations']
+] as const)(
+  'retains native Windows Symbol objects within translated prose (%s)',
+  async (_, name, sequence, failure) => {
+    const pdf = await PDFDocument.create(),
+      prose = await pdf.embedFont(StandardFonts.TimesRoman),
+      symbols = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([300, 200]),
+      source = 'Reference \uf064 then \uf077 stays stable.',
+      translation = `参考值${sequence}保持稳定。`
+    let x = 40
+    for (const [index, text] of ['Reference ', '<', ' then ', '>', ' stays stable.'].entries()) {
+      const font = index % 2 ? symbols : prose
+      page.drawText(text, { font, size: 10, x, y: 150 })
+      x += font.widthOfTextAtSize(text, 10)
+    }
+    await pdf.flush()
+    const dictionary = pdf.context.lookup(symbols.ref, PDFDict)
+    dictionary.set(PDFName.of('BaseFont'), PDFName.of(name))
+    dictionary.set(
+      PDFName.of('ToUnicode'),
+      pdf.context.register(
+        pdf.context.stream(
+          '/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n' +
+            '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n' +
+            '/CMapName /PrivateSymbols def /CMapType 2 def\n' +
+            '1 begincodespacerange <00> <FF> endcodespacerange\n' +
+            '2 beginbfchar <3C> <F064> <3E> <F077> endbfchar\n' +
+            'endcmap CMapName currentdict /CMap defineresource pop end end'
+        )
+      )
+    )
+    const registry = new TestCallerRegistry(),
+      caller = registry.acquire({ leaseId: 'private-symbol', surface: 'electron' }),
+      writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs')),
+      data = await pdf.save(),
+      original = getDocument({ data: data.slice(), useSystemFonts: true })
+    let target: ReturnType<typeof getDocument> | undefined
+    try {
+      const output = await writer.generateDetailed(
+        {
+          id: 'private-symbol',
+          data,
+          pages: [{ width: 300, height: 200 }],
+          preserveUnsupported: true,
+          units: [
+            {
+              source,
+              translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 39 / 300, y: 38 / 200, width: 210 / 300, height: 16 / 200 }
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(output?.layoutFailures.map(({ code }) => code)).toEqual(failure ? [failure] : [])
+      target = getDocument({ data: output!.data.slice(), useSystemFonts: true })
+      const read = async (
+        loading: typeof original
+      ): Promise<import('pdfjs-dist/types/src/display/api').TextItem[]> =>
+        (await (await (await loading.promise).getPage(1)).getTextContent()).items.filter(
+          (item) => 'str' in item
+        )
+      const before = await read(original),
+        after = await read(target)
+      expect(
+        after
+          .map(({ str }) => str)
+          .join('')
+          .replace(/\s/gu, '')
+      ).toBe((failure ? source : translation).replace(/\s/gu, ''))
+      for (const symbol of ['\uf064', '\uf077']) {
+        const previous = before.find((item) => item.str === symbol),
+          current = after.find((item) => item.str === symbol)
+        expect(previous).toBeDefined()
+        expect(current).toBeDefined()
+        expect(current!.width).toBeCloseTo(previous!.width, 4)
+        expect(current!.height).toBeCloseTo(previous!.height, 4)
+        current!.transform
+          .slice(0, 4)
+          .forEach((value, axis) => expect(value).toBeCloseTo(previous!.transform[axis], 4))
+      }
+    } finally {
+      await original.destroy()
+      await target?.destroy()
+      caller.release()
+      registry.dispose()
+    }
+  }
+)

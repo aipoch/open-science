@@ -3455,6 +3455,30 @@ describe('compactNotebookExecutionResult', () => {
     expect(compact.traceback).toBe(traceback)
   })
 
+  it('corrects imports of injected document Skill helpers without suggesting package installation', () => {
+    for (const [skillId, moduleName] of [
+      ['pdf-generation', 'pdf_generation'],
+      ['pptx-generation', 'pptx_generation']
+    ] as const) {
+      const traceback = [
+        'Traceback (most recent call last):',
+        '  File "<cell>", line 3, in <module>',
+        `ModuleNotFoundError: No module named '${moduleName}'`
+      ].join('\n')
+      const compact = compactNotebookExecutionResult(
+        {
+          ...runSummary({ traceback }),
+          kernelKind: 'python',
+          status: 'failed'
+        },
+        { kernelSkillIds: [skillId] }
+      ) as { hint?: string; traceback: string }
+
+      expect(compact.hint).toContain(`Kernel Skill "${skillId}"`)
+      expect(compact.hint).toContain(`Do not install ${moduleName}`)
+    }
+  })
+
   it('corrects imports of injected figure Skill helpers without suggesting package installation', () => {
     const kernelSkillIds = ['figure-style', 'figure-composer', 'paper-narrative']
 
@@ -3851,3 +3875,55 @@ describe('compactRestartResult', () => {
 })
 
 ;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()
+
+describe('manual kernel termination feedback', () => {
+  const environment = {
+    endpoint: 'http://127.0.0.1:4567',
+    token: 'secret',
+    projectId: 'p1',
+    sessionId: 's1',
+    workspaceCwd: '/workspace'
+  }
+  const events = [
+    {
+      id: 'event',
+      instanceId: 'kernel',
+      projectId: 'p1',
+      sessionId: 's1',
+      kind: 'python',
+      requestedAt: 1,
+      comment: 'Use smaller batches',
+      status: 'stopped'
+    }
+  ]
+  it('keeps feedback visible even when a tool maps its result', async () => {
+    const raw = await callNotebookRpc(
+      environment,
+      'state',
+      {},
+      async () =>
+        new Response(JSON.stringify({ result: { ok: true }, manualKernelTerminations: events }))
+    )
+    expect(raw).toEqual({ ok: true })
+    const content = buildNotebookToolContent(raw, { mapResult: () => ({ summary: 'done' }) })
+    expect(content).toHaveLength(2)
+    expect(content[1]).toMatchObject({
+      type: 'text',
+      text: expect.stringContaining('Use smaller batches')
+    })
+  })
+  it('includes the user reason in interrupted tool errors', async () => {
+    await expect(
+      callNotebookRpc(
+        environment,
+        'execute',
+        {},
+        async () =>
+          new Response(
+            JSON.stringify({ error: 'Kernel exited', manualKernelTerminations: events }),
+            { status: 500 }
+          )
+      )
+    ).rejects.toThrow('Use smaller batches')
+  })
+})

@@ -34,6 +34,9 @@ const registrations: Record<
   "literature/mcp-server.ts:'list_pdf_annotations'": 'allow_once',
   "literature/mcp-server.ts:'locate_pdf_annotation_target'": 'allow_once',
   "literature/mcp-server.ts:'create_pdf_annotation'": 'allow_once',
+  // PPTX tools never save: propose only stages a draft that the user must accept in the preview.
+  "pptx-edit/mcp-server.ts:'read_pptx_outline'": 'allow_once',
+  "pptx-edit/mcp-server.ts:'propose_pptx_operations'": 'allow_once',
   'notebook/mcp-server.ts:definition.name': 'operations',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.readTurn': 'legacy',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.queryExecutionLog': 'legacy',
@@ -178,13 +181,20 @@ describe('Auto operation completeness against real tool registrations', () => {
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':
           '561a62c02556d3677874d524dd7c9433b3131a42eda21f526d8684888a673cd9',
-        // Reviewed: ask_user_question adds bounded, optional pros/cons display annotations.
-        // The RPC handler, trusted app-interaction classifier and inner authorization are unchanged.
-        'notebook/mcp-server.ts':
-          '0414babc27b5fa0d5c0b287e8ccd81d62621f9b68a6190bb96b7cc4c639345c3',
         // Reviewed: calls require a mounted route and current turn. Task edits are scoped to the
         // originating conversation, and unattended mutations are limited to the task's own trigger.
         'schedules/mcp.ts': '4c7322e66195808835ae282899a90c51777f79cf0ccf07ee7cdb6d2607b63f52',
+
+        // Reviewed: propose_pptx_operations only stages a draft; saving needs a user accept in the preview.
+        'pptx-edit/mcp-server.ts':
+          '3bd949c59a19ad322a31d9c3274600e5d4c46023ffe5190115952c8029bda4bb',
+        // Reviewed: interpreter descriptions now explain idle reclamation and volatile variables.
+        // Tool schemas, handlers, operation classifiers and Auto dispositions are unchanged.
+        // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
+        // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
+        'notebook/mcp-server.ts':
+          '5dd96acc425304cc6c75989dc99420e61899733b2ad1423a0df547ea9a5868a6',
+
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':
