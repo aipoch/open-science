@@ -523,11 +523,6 @@ console.log(JSON.stringify({ pid: process.pid, descendant: descendant.pid }));`
         Number(shellPid)
       ])
     )
-    const memberBirths = members.map((pid) => ({
-      pid,
-      birth: native.getWindowsProcessCreationTime(pid)
-    }))
-    expect(memberBirths.every(({ birth }) => birth !== null)).toBe(true)
     const receipts: Array<{
       laneKey: string
       processKey: string
@@ -540,6 +535,27 @@ console.log(JSON.stringify({ pid: process.pid, descendant: descendant.pid }));`
       expect(receipt.windowsJobName).toMatch(/^Local\\OpenScience\.Notebook\./)
       expect(members).toContain(receipt.pid)
     }
+
+    const processRoles = new Map<number, string>([
+      ...receipts.map(({ pid, processKey }) => [pid, processKey + ' launcher'] as const),
+      [pythonWorkload.pid, 'python'],
+      [pythonWorkload.descendant, 'python descendant'],
+      [nodeWorkload.pid, 'repl'],
+      [nodeWorkload.descendant, 'repl descendant'],
+      [shellReceipt.pid, 'shell supervisor'],
+      [Number(shellPid), 'powershell']
+    ])
+    const memberBirths = members.map((pid) => {
+      const process = snapshot.find((entry) => entry.pid === pid)
+      return {
+        pid,
+        birth: native.getWindowsProcessCreationTime(pid),
+        role: processRoles.get(pid) ?? (shellMembers.has(pid) ? 'shell descendant' : 'job member'),
+        parentPid: process?.ppid,
+        image: process?.executablePath && basename(process.executablePath)
+      }
+    })
+    expect(memberBirths.filter(({ birth }) => birth === null)).toEqual([])
 
     await service.bindRuntime({ ...other, language: 'python', runtimeId: python })
     const retained = await service.execute({
@@ -572,8 +588,15 @@ console.log(JSON.stringify({ pid: process.pid, descendant: descendant.pid }));`
     )
     const environment = group.resources.find(({ kind }) => kind === 'python')!.environment!
     expect(environment).toEqual(expect.any(String))
-    expect((await service.getProjectResources(scope)).groups).toContainEqual(group)
+    expect((await service.getProjectResources(scope)).groups).toContainEqual(
+      expect.objectContaining({
+        sessionId: scope.sessionId,
+        revision: group.revision,
+        resources: group.resources.map(({ id }) => expect.objectContaining({ id }))
+      })
+    )
     const before = await service.state(scope)
+    const releaseStartedAt = performance.now()
     const operation = await service.releaseSessionResources(
       { ...scope, revision: group.revision },
       () => undefined
@@ -610,10 +633,20 @@ console.log(JSON.stringify({ pid: process.pid, descendant: descendant.pid }));`
         )
       }
     }
-    for (const { pid, birth } of memberBirths) {
-      expect(native.getWindowsProcessCreationTime(pid)).not.toBe(birth)
-      expect(inspectOwnedWindowsProcessIds()).not.toContain(pid)
-    }
+    const remainingMembers = inspectOwnedWindowsProcessIds()
+    const survivors = memberBirths.filter(
+      ({ pid, birth }) =>
+        native.getWindowsProcessCreationTime(pid) === birth || remainingMembers.includes(pid)
+    )
+    expect(
+      survivors,
+      JSON.stringify({
+        session: scope.sessionId,
+        elapsedMs: performance.now() - releaseStartedAt,
+        release: released,
+        remainingMembers
+      })
+    ).toEqual([])
     expect(service.ownedResources(scope)).toEqual([])
     expect(await readdir(shellReceiptsRoot)).toEqual([])
     const after = await service.state(scope)

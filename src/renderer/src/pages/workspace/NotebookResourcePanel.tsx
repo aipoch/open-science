@@ -210,7 +210,9 @@ const ResourceDetails = ({
               ? t('Partial data')
               : t('Unknown')}
         </span>
-        <span>{t('Sampled: {{time}}', { time: formatDateTime(memory.sampledAt) })}</span>
+        {memory.sampledAt !== undefined && (
+          <span>{t('Sampled: {{time}}', { time: formatDateTime(memory.sampledAt) })}</span>
+        )}
       </div>
     </li>
   )
@@ -220,7 +222,8 @@ type NotebookResourcePanelProps = {
   isActive: boolean
   projectId: string
   snapshot: NotebookProjectResources
-  observedAt: number
+  observedAt?: number
+  readError?: string
   backgroundRuns: readonly NotebookProjectBackgroundRunActivity[]
   refresh: () => void
   goToSession: (sessionId: string) => void
@@ -231,6 +234,7 @@ const NotebookResourcePanel = ({
   projectId,
   snapshot,
   observedAt,
+  readError,
   backgroundRuns,
   refresh,
   goToSession
@@ -315,6 +319,20 @@ const NotebookResourcePanel = ({
 
   return (
     <section aria-labelledby="notebook-resources-title" className="space-y-3">
+      {readError !== undefined && (
+        <ErrorNotice
+          inline
+          role="status"
+          title={t('Could not refresh {{source}}', { source: t('Notebook resources') })}
+          description={
+            observedAt !== undefined
+              ? t('The last successful sample is shown. Try refreshing again.')
+              : undefined
+          }
+          errorCode={readError}
+          diagnosticsLabel={t('Details')}
+        />
+      )}
       {error !== undefined ? (
         <ErrorNotice
           role="alert"
@@ -335,8 +353,10 @@ const NotebookResourcePanel = ({
       <div className="overflow-hidden rounded-lg border border-border-200 bg-bg-000">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-200 px-3.5 py-3">
           <h2 id="notebook-resources-title" className="text-sm font-semibold">
-            {t('Notebook resources')} ·{' '}
-            {t('Sessions: {{sessions}}', { sessions: snapshot.groups.length })}
+            {t('Notebook resources')}
+            {observedAt !== undefined && (
+              <> · {t('Sessions: {{sessions}}', { sessions: snapshot.groups.length })}</>
+            )}
           </h2>
           <Button type="button" size="sm" variant="ghost" onClick={refresh}>
             {t('Refresh')}
@@ -347,75 +367,80 @@ const NotebookResourcePanel = ({
             'Only Notebooks in the current project are listed. Switch projects to manage other Notebooks.'
           )}
         </p>
-        {snapshot.groups.length === 0 ? (
-          <p className="px-3 py-6 text-center text-xs text-text-100">{t('No running Notebooks')}</p>
-        ) : (
-          snapshot.groups.map((group) => (
-            <section
-              key={group.sessionId}
-              aria-label={sessionTitle(group.sessionId)}
-              className="space-y-3 border-t border-border-200 px-3.5 py-3 text-xs first:border-t-0"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="min-w-0 font-semibold">{sessionTitle(group.sessionId)}</h3>
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  disabled={
-                    !sessions.some(
-                      (session) => session.id === group.sessionId && session.projectId === projectId
-                    )
-                  }
-                  aria-label={t('Go to Session')}
-                  title={t('Go to Session')}
-                  onClick={() => goToSession(group.sessionId)}
-                >
-                  <ArrowUpRight aria-hidden="true" />
-                </Button>
-              </div>
-              <ul className="space-y-2">
-                {group.resources.map((resource) => (
-                  <ResourceDetails key={resource.id} resource={resource} observedAt={observedAt} />
-                ))}
-              </ul>
-              <p className="text-text-100">
-                {t('Interpreters: {{interpreters}}', {
-                  interpreters: group.resources.filter(
-                    (resource) => resource.group === 'kernel' || resource.group === 'shell'
-                  ).length
-                })}
-                {' · '}
-                {t('Resources: {{resources}}', { resources: group.resources.length })}
-              </p>
-              {backgroundRuns
-                .filter((run) => run.sessionId === group.sessionId)
-                .map((run) => (
-                  <p key={run.runId} className="text-text-100">
-                    {t('Background')} · {run.title}
-                  </p>
-                ))}
+        {snapshot.groups.length === 0 && readError === undefined && (
+          <p role="status" className="px-3 py-6 text-center text-xs text-text-100">
+            {observedAt === undefined ? t('Loading…') : t('No running Notebooks')}
+          </p>
+        )}
+        {snapshot.groups.map((group) => (
+          <section
+            key={group.sessionId}
+            aria-label={sessionTitle(group.sessionId)}
+            className="space-y-3 border-t border-border-200 px-3.5 py-3 text-xs first:border-t-0"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="min-w-0 font-semibold">{sessionTitle(group.sessionId)}</h3>
               <Button
                 type="button"
-                size="sm"
-                variant="outline"
-                className="h-auto max-w-full whitespace-normal text-left"
-                disabled={Boolean(group.releaseBlockedReason)}
-                aria-describedby={
-                  group.releaseBlockedReason ? `release-blocked-${group.sessionId}` : undefined
+                size="icon-xs"
+                variant="ghost"
+                disabled={
+                  !sessions.some(
+                    (session) => session.id === group.sessionId && session.projectId === projectId
+                  )
                 }
-                onClick={() => setConfirmation(group)}
+                aria-label={t('Go to Session')}
+                title={t('Go to Session')}
+                onClick={() => goToSession(group.sessionId)}
               >
-                {t('Stop and release Notebook')}
+                <ArrowUpRight aria-hidden="true" />
               </Button>
-              {group.releaseBlockedReason ? (
-                <p id={`release-blocked-${group.sessionId}`} className="text-text-100">
-                  {releaseBlockedLabel(group.releaseBlockedReason, t)}
+            </div>
+            <ul className="space-y-2">
+              {group.resources.map((resource) => (
+                <ResourceDetails
+                  key={resource.id}
+                  resource={resource}
+                  observedAt={observedAt ?? 0}
+                />
+              ))}
+            </ul>
+            <p className="text-text-100">
+              {t('Interpreters: {{interpreters}}', {
+                interpreters: group.resources.filter(
+                  (resource) => resource.group === 'kernel' || resource.group === 'shell'
+                ).length
+              })}
+              {' · '}
+              {t('Resources: {{resources}}', { resources: group.resources.length })}
+            </p>
+            {backgroundRuns
+              .filter((run) => run.sessionId === group.sessionId)
+              .map((run) => (
+                <p key={run.runId} className="text-text-100">
+                  {t('Background')} · {run.title}
                 </p>
-              ) : null}
-            </section>
-          ))
-        )}
+              ))}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-auto max-w-full whitespace-normal text-left"
+              disabled={Boolean(group.releaseBlockedReason)}
+              aria-describedby={
+                group.releaseBlockedReason ? `release-blocked-${group.sessionId}` : undefined
+              }
+              onClick={() => setConfirmation(group)}
+            >
+              {t('Stop and release Notebook')}
+            </Button>
+            {group.releaseBlockedReason ? (
+              <p id={`release-blocked-${group.sessionId}`} className="text-text-100">
+                {releaseBlockedLabel(group.releaseBlockedReason, t)}
+              </p>
+            ) : null}
+          </section>
+        ))}
         <p className="border-t border-border-200 px-3.5 py-2 text-[11px] text-text-100">
           {t('RSS may include shared pages and does not predict how much memory will be released.')}
         </p>
@@ -488,7 +513,11 @@ const NotebookResourcePanel = ({
               </AlertDialog.Description>
               <ul className="mt-3 space-y-2 text-xs">
                 {confirmation?.resources.map((resource) => (
-                  <ResourceDetails key={resource.id} resource={resource} observedAt={observedAt} />
+                  <ResourceDetails
+                    key={resource.id}
+                    resource={resource}
+                    observedAt={observedAt ?? 0}
+                  />
                 ))}
               </ul>
             </div>

@@ -75,6 +75,89 @@ const originalOwner = (): {
   return { owner, resources, add, settle, release }
 }
 
+describe('Notebook resource memory sampling', () => {
+  it('rotates through large inventories, samples other projects and drops failed measurements', async () => {
+    vi.useFakeTimers()
+    try {
+      const { owner, add } = originalOwner()
+      const sample =
+        (pid: number): NonNullable<NotebookOwnedResource['sampleMemory']> =>
+        async () => ({
+          metric: 'rss' as const,
+          sampledAt: Date.now(),
+          complete: true,
+          processes: [{ pid, birth: String(pid), rssBytes: pid }]
+        })
+      for (let pid = 1; pid <= 129; pid++) add('large', 'session').sampleMemory = sample(pid)
+      const probe = vi.fn(sample(1))
+      add('other', 'session').sampleMemory = probe
+      const [large, other] = await Promise.all([owner.project('large'), owner.project('other')])
+      expect(large.groups[0].resources.at(-1)?.memory).toEqual({
+        coverage: 'unknown',
+        metric: process.platform === 'win32' ? 'private-bytes-and-working-set' : 'rss'
+      })
+      expect(other.groups[0].resources[0].memory.rssBytes).toBe(1)
+      await owner.project('other')
+      expect(probe).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(5000)
+      expect((await owner.project('large')).groups[0].resources.at(-1)?.memory.rssBytes).toBe(129)
+      probe.mockRejectedValueOnce(new Error('unavailable'))
+      const failed = (await owner.project('other')).groups[0].resources[0].memory
+      expect(failed.coverage).toBe('unknown')
+      expect(failed.sampledAt).toBeUndefined()
+      expect(failed.rssBytes).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('finishes at the deadline and advances past a stalled owner; ignores late samples', async () => {
+    vi.useFakeTimers()
+    try {
+      const { owner, add } = originalOwner()
+      const stuck = add('project', 'session')
+      let finish!: () => void
+      stuck.sampleMemory = vi.fn<NonNullable<NotebookOwnedResource['sampleMemory']>>(
+        () =>
+          new Promise((resolve) => {
+            finish = () =>
+              resolve({
+                metric: 'rss',
+                sampledAt: Date.now(),
+                complete: true,
+                processes: [{ pid: 1, birth: 'a', rssBytes: 10 }]
+              })
+          })
+      )
+      add('project', 'session').sampleMemory = async () => ({
+        metric: 'rss',
+        sampledAt: Date.now(),
+        complete: true,
+        processes: [{ pid: 2, birth: 'b', rssBytes: 20 }]
+      })
+      const first = owner.project('project')
+      await vi.advanceTimersByTimeAsync(1500)
+      expect((await first).groups[0].resources[0].memory.coverage).toBe('unknown')
+      await vi.advanceTimersByTimeAsync(3500)
+      const second = owner.project('project')
+      await vi.advanceTimersByTimeAsync(1500)
+      const [slow, healthy] = (await second).groups[0].resources
+      expect(slow.memory.coverage).toBe('unknown')
+      expect(healthy.memory.rssBytes).toBe(20)
+      expect(stuck.sampleMemory).toHaveBeenCalledTimes(1)
+      finish()
+      const cached = await owner.project('project')
+      expect(cached.groups[0].resources[0].memory.sampledAt).toBeUndefined()
+      vi.setSystemTime(Date.now() + 60_000)
+      expect((await owner.project('project')).groups[0].resources[1].memory.coverage).toBe(
+        'unknown'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('NotebookResourceReleaseOwner retention', () => {
   it('retains only the latest 20 successful operations per Project through the public projection', async () => {
     const original = originalOwner()

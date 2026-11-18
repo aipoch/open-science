@@ -1,6 +1,6 @@
 import { useShallow } from 'zustand/react/shallow'
 import { computeQueueBlockedLabel } from '@/lib/compute/queue-blocked-label'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { useTranslation } from 'react-i18next'
 import { isComputeJobCancelled, isComputeJobTrackingStopped } from '@aipoch/compute'
 import { ArrowUpRight, ChevronDown, Cpu, RadioTower } from 'lucide-react'
@@ -19,6 +19,7 @@ import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-loc
 import type { NotebookProjectResources } from '../../../../shared/notebook-resources'
 import { ComputePanel } from './ComputePanel'
 import { ComputeProcessMonitor } from './ComputeProcessMonitor'
+import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useRelativeTimeFormat } from '@/hooks/useDateTimeFormat'
@@ -46,7 +47,8 @@ const ACTIVE_COMPUTE_JOB_STATUSES = new Set<JobSummary['status']>([
 const createActivityRefresh = <T,>(
   read: () => Promise<T>,
   publish: (value: T) => void,
-  canRead: () => boolean = () => true
+  canRead: () => boolean = () => true,
+  onFailure?: (error: unknown) => void
 ): { refresh: () => void; poll: () => void; dispose: () => void } => {
   let active = true
   let loading = false
@@ -70,7 +72,8 @@ const createActivityRefresh = <T,>(
         const value = await read()
         if (active && canRead() && !pending) publish(value)
         retries = 0
-      } catch {
+      } catch (error) {
+        if (active && canRead() && !pending) onFailure?.(error)
         // Keep the last good snapshot. A missed terminal update may have no later event.
         if (active && canRead() && !pending && retries < 3) {
           timer = setTimeout(
@@ -101,6 +104,26 @@ const createActivityRefresh = <T,>(
     }
   }
 }
+
+type ProjectRead<T> = { projectId: string; value?: T; observedAt?: number; error?: string }
+
+const createNotebookRefresh = <T,>(
+  projectId: string,
+  read: () => Promise<T>,
+  publish: Dispatch<SetStateAction<ProjectRead<T> | undefined>>,
+  visible: () => boolean
+): ReturnType<typeof createActivityRefresh> =>
+  createActivityRefresh(
+    read,
+    (value) => publish({ projectId, value, observedAt: Date.now() }),
+    visible,
+    (error) =>
+      publish((previous) => ({
+        ...(previous?.projectId === projectId ? previous : undefined),
+        projectId,
+        error: String(error)
+      }))
+  )
 
 const kernelLabel = (
   kernel: NotebookProjectKernelActivity,
@@ -202,23 +225,14 @@ const ProjectComputeInbox = ({ isActive = true }: { isActive?: boolean }): React
       disposed = true
     }
   }, [projectId])
-  const [notebookSnapshot, setNotebookSnapshot] = useState<{
-    projectId: string
-    activity: NotebookProjectActivity
-    resources: NotebookProjectResources
-    observedAt: number
-  }>()
+  const [activityRead, setActivityRead] = useState<ProjectRead<NotebookProjectActivity>>()
+  const [resourceRead, setResourceRead] = useState<ProjectRead<NotebookProjectResources>>()
+  const activity = activityRead?.projectId === projectId ? activityRead : undefined
+  const resources = resourceRead?.projectId === projectId ? resourceRead : undefined
   const [jobsSnapshot, setJobsSnapshot] = useState<{ projectId: string; jobs: JobSummary[] }>()
   const [recentSince, setRecentSince] = useState(() => Date.now() - RECENT_COMPUTE_WINDOW_MS)
-  const notebookActivity =
-    projectId && notebookSnapshot?.projectId === projectId
-      ? notebookSnapshot.activity
-      : EMPTY_NOTEBOOK_ACTIVITY
+  const notebookActivity = activity?.value ?? EMPTY_NOTEBOOK_ACTIVITY
   const jobs = projectId && jobsSnapshot?.projectId === projectId ? jobsSnapshot.jobs : EMPTY_JOBS
-  const notebookResources =
-    projectId && notebookSnapshot?.projectId === projectId
-      ? notebookSnapshot.resources
-      : EMPTY_NOTEBOOK_RESOURCES
 
   useEffect(() => {
     notebookVisible.current = isActive
@@ -227,32 +241,42 @@ const ProjectComputeInbox = ({ isActive = true }: { isActive?: boolean }): React
 
   useEffect(() => {
     if (!projectId) return
-    const refresh = createActivityRefresh(
-      async () => {
-        const [activity, resources] = await Promise.all([
-          window.api.notebook.getProjectActivity({ projectId }),
-          window.api.notebook.getProjectResources({ projectId })
-        ])
-        return { activity, resources, observedAt: Date.now() }
-      },
-      (snapshot) => setNotebookSnapshot({ projectId, ...snapshot }),
-      () => notebookVisible.current && document.visibilityState !== 'hidden'
+    const visible = (): boolean => notebookVisible.current && document.visibilityState !== 'hidden'
+    const activity = createNotebookRefresh(
+      projectId,
+      () => window.api.notebook.getProjectActivity({ projectId }),
+      setActivityRead,
+      visible
     )
-    refreshNotebook.current = refresh.refresh
-    pollNotebook.current = refresh.poll
+    const resources = createNotebookRefresh(
+      projectId,
+      () => window.api.notebook.getProjectResources({ projectId }),
+      setResourceRead,
+      visible
+    )
+    const refresh = (): void => {
+      activity.refresh()
+      resources.refresh()
+    }
+    refreshNotebook.current = refresh
+    pollNotebook.current = () => {
+      activity.poll()
+      resources.poll()
+    }
     const stop = window.api.notebook.onChanged((event) => {
-      if (event.projectId === projectId) refresh.refresh()
+      if (event.projectId === projectId) refresh()
     })
     const resume = (): void => {
-      if (document.visibilityState !== 'hidden') refresh.refresh()
+      if (document.visibilityState !== 'hidden') refresh()
     }
     document.addEventListener('visibilitychange', resume)
-    refresh.refresh()
+    refresh()
     return () => {
       refreshNotebook.current = () => undefined
       pollNotebook.current = () => undefined
       document.removeEventListener('visibilitychange', resume)
-      refresh.dispose()
+      activity.dispose()
+      resources.dispose()
       stop()
     }
   }, [projectId])
@@ -375,14 +399,27 @@ const ProjectComputeInbox = ({ isActive = true }: { isActive?: boolean }): React
               key={projectId}
               isActive={isActive}
               projectId={projectId}
-              snapshot={notebookResources}
-              observedAt={notebookSnapshot?.observedAt ?? 0}
+              snapshot={resources?.value ?? EMPTY_NOTEBOOK_RESOURCES}
+              observedAt={resources?.observedAt}
+              readError={resources?.error}
               backgroundRuns={notebookActivity.backgroundRuns}
               refresh={() => refreshNotebook.current()}
               goToSession={goToSession}
             />
           ) : null}
 
+          {activity?.error !== undefined && (
+            <ErrorNotice
+              inline
+              role="status"
+              title={t('Could not refresh {{source}}', { source: t('Active kernels') })}
+              description={
+                activity.value && t('The last successful sample is shown. Try refreshing again.')
+              }
+              errorCode={activity.error}
+              diagnosticsLabel={t('Details')}
+            />
+          )}
           {isRemote ? (
             <section aria-labelledby="active-kernels-title">
               {kernels.length === 0 ? (
@@ -391,10 +428,15 @@ const ProjectComputeInbox = ({ isActive = true }: { isActive?: boolean }): React
                     id="active-kernels-title"
                     className="border-b border-border-200 px-3.5 py-3 text-sm font-semibold"
                   >
-                    {t('Active kernels')} · {kernels.length}
+                    {t('Active kernels')}
+                    {activity?.value && ` · ${kernels.length}`}
                   </h2>
                   <div className="px-3 py-6 text-center text-xs text-text-100">
-                    {t('No active kernels')}
+                    {activity?.error !== undefined
+                      ? null
+                      : activity?.value
+                        ? t('No active kernels')
+                        : t('Loading…')}
                   </div>
                 </div>
               ) : (
@@ -403,7 +445,8 @@ const ProjectComputeInbox = ({ isActive = true }: { isActive?: boolean }): React
                     id="active-kernels-title"
                     className="border-b border-border-200 px-3.5 py-3 text-sm font-semibold"
                   >
-                    {t('Active kernels')} · {kernels.length}
+                    {t('Active kernels')}
+                    {activity?.value && ` · ${kernels.length}`}
                   </h2>
                   <div
                     role="row"

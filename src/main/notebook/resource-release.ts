@@ -8,6 +8,7 @@ import type {
   NotebookResourceReleaseRequest,
   ReleaseNotebookSessionResourcesRequest
 } from '../../shared/notebook-resources'
+import type { NotebookOwnedMemorySample } from './resource-memory'
 import { acquireDataRootWriter, withDataRootWrite } from '../storage/migration-state'
 import type {
   NotebookExecutionContinuation,
@@ -19,6 +20,7 @@ import {
   type NotebookResourceCleanupResult
 } from './owned-resources'
 
+type MemoryProbe = { attemptedAt: number; pending: boolean; sample?: NotebookOwnedMemorySample }
 type Scope = NotebookExecutionIntentScope
 type Confirmation = { revision: string; resources: NotebookOwnedResource[] }
 type Release = {
@@ -38,6 +40,7 @@ type Dependencies = {
 }
 
 const completedReleaseLimitPerProject = 20
+const sampleIntervalMs = 5_000
 const keyFor = (scope: Scope): string => JSON.stringify([scope.projectId, scope.sessionId])
 const sameResource = (left: NotebookOwnedResource, right: NotebookOwnedResource): boolean =>
   left.identity === right.identity &&
@@ -64,9 +67,8 @@ export class NotebookResourceReleaseOwner {
   private readonly ids = new WeakMap<object, string>()
   private readonly confirmations = new Map<string, Confirmation>()
   private readonly releases = new Map<string, Release>()
-  private readonly memory = new WeakMap<object, NotebookResourceMemory>()
-  private sampling?: Promise<void>
-  private lastSampleAt = -Infinity
+  private readonly samples = new WeakMap<object, MemoryProbe>()
+  private readonly sampling = new Map<string, Promise<void>>()
 
   constructor(private readonly dependencies: Dependencies) {}
 
@@ -96,7 +98,48 @@ export class NotebookResourceReleaseOwner {
     return id
   }
 
-  private resource(resource: NotebookOwnedResource): NotebookResource {
+  private memory(resource: NotebookOwnedResource, counted: Set<string>): NotebookResourceMemory {
+    const entry = this.samples.get(resource.identity)
+    const sample = entry?.sample
+    const wallAge = sample ? Date.now() - sample.sampledAt : Infinity
+    if (
+      !sample ||
+      wallAge < 0 ||
+      Math.max(wallAge, performance.now() - entry.attemptedAt) > 2 * sampleIntervalMs
+    ) {
+      return {
+        coverage: 'unknown',
+        metric: process.platform === 'win32' ? 'private-bytes-and-working-set' : 'rss'
+      }
+    }
+    const processes = sample.processes.filter(({ pid, birth }) => {
+      const key = JSON.stringify([pid, birth])
+      if (counted.has(key)) return false
+      counted.add(key)
+      return true
+    })
+    const memory: NotebookResourceMemory = {
+      sampledAt: sample.sampledAt,
+      metric: sample.metric,
+      coverage:
+        processes.length === 0
+          ? 'unknown'
+          : sample.complete && processes.length === sample.processes.length
+            ? 'complete'
+            : 'partial'
+    }
+    if (processes.length) {
+      if (sample.metric === 'rss')
+        memory.rssBytes = processes.reduce((sum, p) => sum + (p.rssBytes ?? 0), 0)
+      else {
+        memory.privateBytes = processes.reduce((sum, p) => sum + (p.privateBytes ?? 0), 0)
+        memory.workingSetBytes = processes.reduce((sum, p) => sum + (p.workingSetBytes ?? 0), 0)
+      }
+    }
+    return memory
+  }
+
+  private resource(resource: NotebookOwnedResource, counted: Set<string>): NotebookResource {
     return {
       id: this.id(resource),
       group: resource.group,
@@ -105,11 +148,7 @@ export class NotebookResourceReleaseOwner {
       ...(Number.isFinite(resource.startedAt) ? { startedAt: resource.startedAt } : {}),
       laneKey: resource.laneKey,
       environment: resource.environment,
-      memory: this.memory.get(resource.identity) ?? {
-        sampledAt: Date.now(),
-        coverage: 'unknown',
-        metric: process.platform === 'win32' ? 'private-bytes-and-working-set' : 'rss'
-      }
+      memory: this.memory(resource, counted)
     }
   }
 
@@ -129,7 +168,8 @@ export class NotebookResourceReleaseOwner {
   }
 
   async project(projectId: string): Promise<NotebookProjectResources> {
-    await this.sampleMemory(this.dependencies.resources({ projectId }))
+    await this.sampleMemory(projectId, this.dependencies.resources({ projectId }))
+    const counted = new Set<string>()
     const grouped = new Map<string, { scope: Scope; resources: NotebookOwnedResource[] }>()
     for (const resource of this.dependencies.resources({ projectId })) {
       if (!resource.projectId || !resource.sessionId) continue
@@ -157,7 +197,7 @@ export class NotebookResourceReleaseOwner {
         return {
           ...scope,
           revision: confirmation.revision,
-          resources: resources.map((resource) => this.resource(resource)),
+          resources: resources.map((resource) => this.resource(resource, counted)),
           releaseBlockedReason: running
             ? 'release-in-progress'
             : this.dependencies.blockedReason(scope),
@@ -171,67 +211,46 @@ export class NotebookResourceReleaseOwner {
     }
   }
 
-  private async sampleMemory(resources: readonly NotebookOwnedResource[]): Promise<void> {
-    if (!this.sampling && performance.now() - this.lastSampleAt >= 5_000) {
-      this.lastSampleAt = performance.now()
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 1_500)
-      const work = (async () => {
-        const counted = new Set<string>()
-        for (const resource of resources.slice(0, 128)) {
-          if (controller.signal.aborted) break
-          if (!resource.sampleMemory) continue
-          try {
-            const sample = await resource.sampleMemory(controller.signal)
-            if (controller.signal.aborted) break
-            const processes = sample.processes.filter(({ pid, birth }) => {
-              const key = JSON.stringify([pid, birth])
-              if (counted.has(key)) return false
-              counted.add(key)
-              return true
-            })
-            this.memory.set(resource.identity, {
-              sampledAt: sample.sampledAt,
-              metric: sample.metric,
-              coverage: !processes.length
-                ? 'unknown'
-                : sample.complete && processes.length === sample.processes.length
-                  ? 'complete'
-                  : 'partial',
-              ...(processes.length
-                ? sample.metric === 'rss'
-                  ? { rssBytes: processes.reduce((sum, entry) => sum + (entry.rssBytes ?? 0), 0) }
-                  : {
-                      privateBytes: processes.reduce(
-                        (sum, entry) => sum + (entry.privateBytes ?? 0),
-                        0
-                      ),
-                      workingSetBytes: processes.reduce(
-                        (sum, entry) => sum + (entry.workingSetBytes ?? 0),
-                        0
-                      )
-                    }
-                : {})
-            })
-          } catch {
-            /* Unavailable diagnostics never replace original cleanup authority. */
-          }
+  private sampleMemory(
+    projectId: string,
+    resources: NotebookOwnedResource[]
+  ): Promise<void> | undefined {
+    const current = this.sampling.get(projectId)
+    if (current) return current
+    const attemptedAt = (resource: NotebookOwnedResource): number =>
+      this.samples.get(resource.identity)?.attemptedAt ?? -Infinity
+    const candidates = resources
+      .filter((resource) => resource.sampleMemory && !this.samples.get(resource.identity)?.pending)
+      .sort((a, b) => attemptedAt(a) - attemptedAt(b))
+      .slice(0, 128)
+    if (!candidates.length) return
+    const controller = new AbortController()
+    const work = async (): Promise<void> => {
+      for (const resource of candidates) {
+        if (controller.signal.aborted) break
+        const entry: MemoryProbe = { attemptedAt: performance.now(), pending: true }
+        this.samples.set(resource.identity, entry)
+        try {
+          const sample = await resource.sampleMemory!(controller.signal)
+          if (!controller.signal.aborted) entry.sample = sample
+        } catch {
+          // A failed observation leaves this owner's memory unknown until its next turn.
+        } finally {
+          entry.pending = false
         }
-      })().finally(() => {
-        clearTimeout(timer)
-        if (this.sampling === work) this.sampling = undefined
-      })
-      this.sampling = work
+      }
     }
-    if (this.sampling) {
-      let timer: ReturnType<typeof setTimeout> | undefined
-      await Promise.race([
-        this.sampling,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, 1_500)
-        })
-      ]).finally(() => clearTimeout(timer))
-    }
+    let timer: ReturnType<typeof setTimeout>
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        resolve()
+      }, 1_500)
+    })
+    const sampling = Promise.race([work(), deadline]).finally(() => clearTimeout(timer))
+    this.sampling.set(projectId, sampling)
+    setTimeout(() => this.sampling.delete(projectId), sampleIntervalMs).unref()
+    return sampling
   }
 
   release(

@@ -1,6 +1,6 @@
 // Transient Compute projections. These fields never enter run.json or a Session package.
 export type NotebookResourceMemory = {
-  sampledAt: number
+  sampledAt?: number
   coverage: 'complete' | 'partial' | 'unknown'
   metric: 'rss' | 'private-bytes-and-working-set'
   rssBytes?: number

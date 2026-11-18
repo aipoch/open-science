@@ -139,6 +139,39 @@ describe('Compute Notebook resource controls', () => {
     vi.restoreAllMocks()
   })
 
+  it('distinguishes loading, failed reads, stale data and a confirmed empty project', async () => {
+    let fail!: (error: Error) => void
+    getProjectResources.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          fail = reject
+        })
+    )
+    await render()
+    expect(container.textContent).toContain('Loading…')
+    expect(container.textContent).not.toContain('No running Notebooks')
+    await act(async () => fail(new Error('resources offline')))
+    expect(container.textContent).toContain('Could not refresh Notebook resources')
+    expect(container.textContent).not.toContain('Sessions: 0')
+    expect(container.textContent).not.toContain('No running Notebooks')
+
+    vi.mocked(window.api.notebook.getProjectActivity).mockRejectedValue(
+      new Error('activity offline')
+    )
+    await act(async () => button('Refresh').click())
+    expect(container.textContent).toContain('Research analysis')
+    expect(container.textContent).not.toContain('Could not refresh Notebook resources')
+    getProjectResources.mockRejectedValueOnce(new Error('resources offline'))
+    await act(async () => changed())
+    expect(container.textContent).toContain('The last successful sample is shown.')
+    expect(container.textContent).toContain('Research analysis')
+
+    view = { groups: [], pendingDecisions: [], releases: [] }
+    await act(async () => button('Refresh').click())
+    expect(container.textContent).toContain('No running Notebooks')
+    expect(container.textContent).not.toContain('Could not refresh Notebook resources')
+  })
+
   it('cancels without stopping and confirms only the resources shown when confirmation opened', async () => {
     await render()
     await act(async () => button('Stop and release Notebook').click())
