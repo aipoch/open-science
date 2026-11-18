@@ -19,11 +19,7 @@ import {
   terminateOwnedPosixProcessGroupById,
   type ProcessTreeKillResult
 } from '../process-tree'
-import {
-  listWindowsProcesses,
-  windowsProcessCommandLine,
-  windowsProcessIsAlive
-} from '../windows-process-query'
+import { windowsProcessCommandLine, windowsProcessIsAlive } from '../windows-process-query'
 import { reapWindowsOwnedJob } from '../process-tree-windows'
 import {
   createDarwinKernelRecovery,
@@ -246,32 +242,6 @@ const processEvidence = async (
   return capture('ps', ['eww', '-p', String(record.pid), '-o', 'command='])
 }
 
-// Legacy Windows receipts predate the named Job and supervisor proof. When their recorded host
-// has exited, the process table is the remaining authoritative evidence we can inspect: a live
-// descendant whose parent chain still leads to that host means the old process tree may survive.
-// A failed native query remains unknown so recovery never clears a receipt on incomplete evidence.
-const windowsProcessTreeIsGone = (hostPid: number): boolean => {
-  try {
-    const childrenByParent = new Map<number, number[]>()
-    for (const process of listWindowsProcesses()) {
-      const children = childrenByParent.get(process.ppid) ?? []
-      children.push(process.pid)
-      childrenByParent.set(process.ppid, children)
-    }
-    const pending = [...(childrenByParent.get(hostPid) ?? [])]
-    const visited = new Set<number>()
-    while (pending.length > 0) {
-      const pid = pending.pop()!
-      if (visited.has(pid)) continue
-      visited.add(pid)
-      pending.push(...(childrenByParent.get(pid) ?? []))
-    }
-    return visited.size === 0
-  } catch {
-    return false
-  }
-}
-
 const proofFileConfirmsWindowsProcessTreeReaped = (proof: WindowsProcessTreeProof): boolean => {
   try {
     const value = JSON.parse(readFileSync(proof.path, 'utf8')) as Record<string, unknown>
@@ -303,16 +273,16 @@ const requestWindowsProcessTreeReap = async (proof: WindowsProcessTreeProof): Pr
 
 const terminateWindowsPid = async (
   pid: number,
-  proof?: WindowsProcessTreeProof
+  proof: WindowsProcessTreeProof
 ): Promise<ProcessTreeKillResult> => {
-  if (proof && (await requestWindowsProcessTreeReap(proof))) return { reaped: true }
+  if (await requestWindowsProcessTreeReap(proof)) return { reaped: true }
   await capture('taskkill.exe', ['/pid', String(pid), '/T', '/F'])
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (!pidIsAlive(pid)) {
       // A proof-backed receipt remains unresolved until the supervisor publishes terminal
       // evidence. The taskkill fallback only proves that the recorded host exited, not that
       // descendants were reaped.
-      return { reaped: proof ? proofFileConfirmsWindowsProcessTreeReaped(proof) : true }
+      return { reaped: proofFileConfirmsWindowsProcessTreeReaped(proof) }
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 50))
   }
@@ -341,31 +311,19 @@ const defaultController = (
     if (platform === 'darwin') {
       return createDarwinKernelRecovery().probe({ ...record, pid: record.pid }, checkpoint)
     }
+    let alive: boolean
     if (platform === 'win32') {
+      // Exited intermediate parents disappear from snapshots even if their children survive.
+      const proof = record.windowsProcessTreeProof
+      if (!proof) return 'unknown'
       try {
-        if (!windowsProcessIsAlive(record.pid)) {
-          if (
-            record.windowsProcessTreeProof &&
-            (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
-          )
-            return 'dead'
-          return windowsProcessTreeIsGone(record.pid) ? 'dead' : 'unknown'
-        }
+        alive = windowsProcessIsAlive(record.pid) && pidIsAlive(record.pid)
       } catch {
-        // Fall back to the portable PID probe. An unreadable native query must not authorize
-        // clearing or killing a receipt that may still refer to a live process.
+        alive = pidIsAlive(record.pid)
       }
-    }
-    const alive = pidIsAlive(record.pid)
-    if (platform === 'win32') {
-      if (!alive) {
-        if (
-          record.windowsProcessTreeProof &&
-          (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
-        )
-          return 'dead'
-        return windowsProcessTreeIsGone(record.pid) ? 'dead' : 'unknown'
-      }
+      if (!alive) return (await requestWindowsProcessTreeReap(proof)) ? 'dead' : 'unknown'
+    } else {
+      alive = pidIsAlive(record.pid)
     }
     if (platform !== 'win32') {
       const groupAlive = isOwnedPosixProcessGroupAlive(record.pid)
@@ -398,15 +356,18 @@ const defaultController = (
         ? createDarwinKernelRecovery().terminate({ ...record, pid: record.pid }, checkpoint)
         : Promise.resolve({ reaped: false })
     }
-    return platform === 'win32'
-      ? terminateWindowsPid(record.pid, record.windowsProcessTreeProof)
-      : terminateOwnedPosixProcessGroupById(
-          record.pid,
-          undefined,
-          undefined,
-          record.posixBirthToken,
-          { name: OWNER_TOKEN_ENV, value: record.ownerToken }
-        )
+    if (platform === 'win32') {
+      return record.windowsProcessTreeProof
+        ? terminateWindowsPid(record.pid, record.windowsProcessTreeProof)
+        : Promise.resolve({ reaped: false })
+    }
+    return terminateOwnedPosixProcessGroupById(
+      record.pid,
+      undefined,
+      undefined,
+      record.posixBirthToken,
+      { name: OWNER_TOKEN_ENV, value: record.ownerToken }
+    )
   }
 })
 

@@ -8,7 +8,7 @@ import { createProject, openRecentSession, sendPrompt } from './certification/he
 import { fencePrompt, retryFencePrompt } from './fixtures/kernel-fence.mjs'
 import { KernelProcessLifecycleOwner } from '../src/main/notebook/kernel-process-lifecycle.windows-posix'
 
-test('recovers a legacy Windows receipt before package tools across Sessions', async ({
+test('keeps a legacy Windows receipt fenced across sessions until its supervisor confirms exit', async ({
   app
 }, testInfo) => {
   test.skip(process.platform !== 'win32', 'Windows legacy receipt recovery')
@@ -91,9 +91,7 @@ test('recovers a legacy Windows receipt before package tools across Sessions', a
       return
     }
     await sendPrompt(page, fencePrompt, 'Kernel fence results:', 90_000)
-    // The repair is lazy but automatic: the first strict package probe reconciles a dead legacy
-    // host whose process table contains no descendants before returning its independent error.
-    await expect(readFile(receipt.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(JSON.parse(await readFile(receipt.path, 'utf8')).receiptId).toBe(receipt.receiptId)
     const raw = await page.evaluate(async (sessionId) => {
       const { sessions } = await window.api.sessions.loadAll()
       return sessions
@@ -106,20 +104,20 @@ test('recovers a legacy Windows receipt before package tools across Sessions', a
     const results = JSON.parse(
       raw.slice(raw.indexOf('Kernel fence results:') + 'Kernel fence results:'.length)
     )
-    expect(results).toHaveLength(2)
-    for (const entry of results) {
-      expect(JSON.stringify(entry.result)).not.toContain('KERNEL_STARTUP_FENCE')
-    }
-    expect(results[0].result).toEqual(results[1].result)
-    await writeFile(testInfo.outputPath('repaired-tools.json'), JSON.stringify(results, null, 2))
-    await testInfo.attach('repaired-tools', {
+    expect(results.map((entry: { tool: string }) => entry.tool)).toEqual([
+      'inspect_packages',
+      'inspect_packages',
+      'manage_packages',
+      'manage_environments'
+    ])
+    for (const entry of results)
+      expect(JSON.stringify(entry.result)).toContain('KERNEL_STARTUP_FENCE')
+    await testInfo.attach('blocked-tools', {
       body: JSON.stringify(results, null, 2),
       contentType: 'application/json'
     })
-    await page.screenshot({ path: testInfo.outputPath('repaired.png'), fullPage: true })
+    await page.screenshot({ path: testInfo.outputPath('blocked.png'), fullPage: true })
 
-    // A fresh Session also sees the repaired state. The independent default-runtime error is
-    // expected in this clean fixture and proves package admission passed the startup fence.
     await page.getByRole('button', { name: 'All projects', exact: true }).click()
     await createProject(page, 'Another session cannot bypass fence')
     await sendPrompt(page, retryFencePrompt, 'Kernel fence retry:', 60_000)
@@ -127,18 +125,22 @@ test('recovers a legacy Windows receipt before package tools across Sessions', a
       .getByText('Kernel fence retry:', { exact: false })
       .last()
       .innerText()
-    expect(crossSessionRetry).not.toContain('KERNEL_STARTUP_FENCE')
-    expect(crossSessionRetry).toContain('DEFAULT_RUNTIME_NOT_READY')
-    const noticeClose = page
-      .locator('[data-bottom-notice-stack]')
-      .getByRole('button', { name: 'Close', exact: true })
-    while (await noticeClose.count()) await noticeClose.first().click()
+    expect(crossSessionRetry).toContain('KERNEL_STARTUP_FENCE')
+    expect(JSON.parse(await readFile(receipt.path, 'utf8')).receiptId).toBe(receipt.receiptId)
+    await writeFile(
+      proofPath,
+      JSON.stringify({ version: 1, token: proof.token, processState: 'started-and-reaped' })
+    )
+    await page.getByRole('button', { name: 'All projects', exact: true }).click()
+    await createProject(page, 'Terminal proof releases the legacy fence')
     await sendPrompt(page, retryFencePrompt, 'Kernel fence retry:', 60_000)
     const retry = await page.getByText('Kernel fence retry:', { exact: false }).last().innerText()
     expect(retry).not.toContain('KERNEL_STARTUP_FENCE')
     // This clean profile has no managed default: advancing to this error proves fence recovery,
     // without installing into the user's registered external interpreter.
     expect(retry).toContain('DEFAULT_RUNTIME_NOT_READY')
+    await expect(readFile(receipt.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await page.screenshot({ path: testInfo.outputPath('recovered.png'), fullPage: true })
     await writeFile(testInfo.outputPath('recovered-inspection.txt'), retry)
     await testInfo.attach('recovered-inspection', { body: retry, contentType: 'text/plain' })
     await testInfo.attach('isolation', {
@@ -146,10 +148,7 @@ test('recovers a legacy Windows receipt before package tools across Sessions', a
       contentType: 'application/json'
     })
   } finally {
-    await writeFile(
-      proofPath,
-      JSON.stringify({ version: 1, token: proof.token, processState: 'started-and-reaped' })
-    )
-    await new KernelProcessLifecycleOwner({ storageRoot: dataRoot }).ensureReady()
+    // The fixture's only process exited before its synthetic receipt was created.
+    owner.complete(receipt, true)
   }
 })
