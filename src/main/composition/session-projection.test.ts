@@ -246,4 +246,36 @@ describe('host network approval recovery', () => {
     expect(sessionRepository.ensureSessionProjection).toHaveBeenCalledTimes(2)
     expect(broadcastToRenderers).toHaveBeenCalledTimes(1)
   })
+
+  it('hydrates Compute Host access from a read-only catalog before runtime polling', async () => {
+    const catalog: LoadAllSessionsResult = {
+      sessions: [],
+      manifest: { version: 1 },
+      diagnostics: { isComplete: false, warnings: [] }
+    }
+    const loadAllReadOnly = vi.fn().mockResolvedValue(catalog)
+    const hydrateFromSessionCatalog = vi.fn(async (load: () => Promise<LoadAllSessionsResult>) =>
+      load()
+    )
+    const composed = composeSessionProjection({
+      settingsService: {
+        allowNotebookNetworkDomain: vi.fn(),
+        allowNotebookNetworkDestination: vi.fn()
+      },
+      sessionPersistenceCoordinator: { loadAllReadOnly },
+      sessionEnabledComputeHostsOwnerRef: {
+        current: { hydrateFromSessionCatalog }
+      },
+      sessionRepository: {},
+      projectDeletionCoordinator: {},
+      permissionGrantRegistry: {},
+      wslSetupSessions: {},
+      auxiliaryUsageRecorder: {},
+      archiveCoordinator: {}
+    } as unknown as Parameters<typeof composeSessionProjection>[0])
+
+    await expect(composed.hydrateSessionComputeHosts()).resolves.toEqual(catalog)
+    expect(hydrateFromSessionCatalog).toHaveBeenCalledOnce()
+    expect(loadAllReadOnly).toHaveBeenCalledOnce()
+  })
 })

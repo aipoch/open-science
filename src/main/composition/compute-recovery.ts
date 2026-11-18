@@ -27,6 +27,7 @@ export async function composeComputeRecovery({
   jobRepository,
   operationRepository,
   hostRepository,
+  hydrateSessionComputeHosts,
   dataRoot,
   modules,
   composition
@@ -40,6 +41,7 @@ export async function composeComputeRecovery({
   jobRepository: import('../compute/job-repository').ComputeJobRepository
   operationRepository: import('../compute/compute-job-operation-repository').ComputeJobOperationRepository
   hostRepository: import('../compute/repository').ComputeHostRepository
+  hydrateSessionComputeHosts: () => Promise<unknown>
   dataRoot: ReturnType<typeof resolveDataRoot>
   modules: ApplicationModuleBuilder
   composition: DiagnosticOperation
@@ -152,8 +154,10 @@ export async function composeComputeRecovery({
           } finally {
             markComputeResultAuthorityReady()
           }
-          // Session Details recovery is local to the Session the user opens. Idle history stays on
-          // disk and does not participate in startup readiness.
+          // Session Details recovery is local to the Session the user opens. Compute Host access
+          // is different: headless and early runtime paths can resolve targets before a renderer
+          // catalog read, so restore that per-Session authority before polling.
+          await hydrateSessionComputeHosts()
           await jobPoller.start()
         },
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
