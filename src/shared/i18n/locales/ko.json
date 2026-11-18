@@ -8401,6 +8401,10 @@
     "Retry_step": "다시 시도",
     "Waiting for storage. Try again after it responds.": "저장소의 응답을 기다리는 중입니다. 응답이 돌아오면 다시 시도하세요.",
     "Model setup timed out. Try again.": "모델 준비 시간이 초과되었습니다. 다시 시도하세요.",
-    "The model stopped before completing this step. Try again.": "이 단계를 완료하기 전에 모델이 중단되었습니다. 다시 시도하세요."
+    "The model stopped before completing this step. Try again.": "이 단계를 완료하기 전에 모델이 중단되었습니다. 다시 시도하세요.",
+    "Test generation": "생성 테스트",
+    "Image generation test passed.": "이미지 생성 테스트에 성공했습니다.",
+    "Test image generation?": "이미지 생성을 테스트하시겠습니까?",
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "{{model}} 모델로 테스트 이미지 한 장을 생성합니다. 모델 제공업체가 이 요청에 요금을 청구할 수 있습니다."
   }
 }

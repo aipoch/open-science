@@ -8403,6 +8403,10 @@
     "Retry_step": "重新嘗試",
     "Waiting for storage. Try again after it responds.": "正在等待儲存回應，請在恢復後重新嘗試。",
     "Model setup timed out. Try again.": "模型準備逾時，請重新嘗試。",
-    "The model stopped before completing this step. Try again.": "模型在完成此步驟前中斷，請重新嘗試。"
+    "The model stopped before completing this step. Try again.": "模型在完成此步驟前中斷，請重新嘗試。",
+    "Test generation": "測試生成",
+    "Image generation test passed.": "圖片生成測試通過。",
+    "Test image generation?": "測試圖片生成？",
+    "Generate one test image with {{model}}. Your provider may charge for this request.": "使用 {{model}} 生成一張測試圖片。服務供應商可能會對此請求收費。"
   }
 }

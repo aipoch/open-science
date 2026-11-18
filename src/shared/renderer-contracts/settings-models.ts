@@ -1,5 +1,7 @@
 import type { CodeBuddyAccountRequest } from '../codebuddy-subscription'
 import type {
+  ImageModelTestRequest,
+  ImageModelTestResult,
   ImageModelSettingsMutation,
   ImageModelSettingsSnapshot
 } from '../image-model-settings'
@@ -236,6 +238,9 @@ export const settingsUpsertProviderContracts = {
 } as const
 
 export const settingsImageModelsContracts = {
+  'settings.testImageModel': callable<
+    (request: ImageModelTestRequest) => Promise<ImageModelTestResult>
+  >()('settings', ['settings:test-image-model', LOCAL]),
   'settings.getImageModels': callable<() => Promise<ImageModelSettingsSnapshot>>()('settings', [
     'settings:get-image-models',
     LOCAL

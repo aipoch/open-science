@@ -41,6 +41,7 @@ import {
   SettingsSection
 } from './SettingsLayout'
 import { useImageModelSettings } from './use-image-model-settings'
+import { ImageServiceTest } from './ImageServiceTest'
 import { ProviderKindIcon } from './provider-icons'
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
@@ -410,6 +411,15 @@ const ImageServiceEditor = ({
         Boolean(endpointError) ||
         (keyRequired && !apiKey.trim()) ||
         (!vendor && models.some((model) => !/^[a-zA-Z0-9._:/-]+$/.test(model.wireModelId.trim()))))
+  const draft: ImageServiceConfiguration = {
+    id,
+    name: name.trim() || vendor?.label || t('Custom HTTP service'),
+    adapter: selectedAdapter,
+    ...(vendor ? { vendorId: vendor.id } : {}),
+    ...(providerId ? { providerId } : {}),
+    ...(!providerId || workspace ? { baseUrl: selectedBaseUrl } : {}),
+    models: vendor?.models ?? models
+  }
   const updateModel = (index: number, patch: Partial<ImageServiceModel>): void =>
     setModels((models) => models.map((model, i) => (i === index ? { ...model, ...patch } : model)))
   return (
@@ -418,18 +428,7 @@ const ImageServiceEditor = ({
       onSubmit={(event) => {
         event.preventDefault()
         if (busy || invalid) return
-        void onSave(
-          {
-            id,
-            name: name.trim() || vendor?.label || t('Custom HTTP service'),
-            adapter: selectedAdapter,
-            ...(vendor ? { vendorId: vendor.id } : {}),
-            ...(providerId ? { providerId } : {}),
-            ...(!providerId || workspace ? { baseUrl: selectedBaseUrl } : {}),
-            models: vendor?.models ?? models
-          },
-          providerId ? undefined : apiKey
-        )
+        void onSave(draft, providerId ? undefined : apiKey)
       }}
     >
       <fieldset disabled={busy} className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
@@ -753,6 +752,10 @@ const ImageServiceEditor = ({
           </>
         )}
       </fieldset>
+      <ImageServiceTest
+        request={{ kind: 'save', ...draft, ...(!providerId ? { apiKey } : {}) }}
+        disabled={busy || Boolean(invalid)}
+      />
       <SettingsFormFooter>
         <div className="flex items-center gap-2">
           {onRemove &&

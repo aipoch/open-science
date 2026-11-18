@@ -853,6 +853,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.stopSkillMarketplaceBatch',
       'settings.switchLocalShellToPowerShell',
       'settings.testClassification',
+      'settings.testImageModel',
       'settings.uninstallClaude',
       'settings.uninstallCodeBuddy',
       'settings.uninstallCodex',
