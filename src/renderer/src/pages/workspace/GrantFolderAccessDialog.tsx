@@ -682,7 +682,7 @@ const GrantFolderAccessDialogContent = ({
               data-testid="grant-access-grant"
               disabled={isHome || isGranting || listing.kind !== 'ok'}
               onClick={() => setGrantConfirmationOpen(true)}
-              className="bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-primary disabled:text-primary-foreground disabled:opacity-40"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary disabled:text-primary-foreground disabled:opacity-40"
             >
               {t('Grant this folder')}
             </Button>

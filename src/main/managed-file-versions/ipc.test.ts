@@ -63,6 +63,7 @@ const inspectRequest: ManagedFileVersionInspectRequest = {
 }
 const saveRequest: ManagedFileVersionSaveTextEditRequest = {
   ...inspectRequest,
+  projectId: 'project-1',
   basedOnVersionId: 'version-1',
   expectedHeadVersionId: 'version-1',
   operationId: 'operation-1',
@@ -70,6 +71,7 @@ const saveRequest: ManagedFileVersionSaveTextEditRequest = {
 }
 const diffRequest: ManagedFileVersionDiffRequest = {
   ...inspectRequest,
+  projectId: 'project-1',
   versionId: 'version-2',
   requestId: 'diff-request-1'
 }
@@ -95,6 +97,7 @@ const diffResult: ManagedFileVersionDiffResult = {
 }
 const inspectResult: ManagedFileVersionInspectResult = {
   ...inspectRequest,
+  projectId: 'project-1',
   sessionId: 'session-1',
   displayName: 'README.md',
   headVersionId: 'version-1',
@@ -135,7 +138,8 @@ describe('managed file version IPC', () => {
       inspect: vi.fn(async () => inspectResult),
       diffText: vi.fn(async () => diffResult),
       cancelDiff: vi.fn(() => true),
-      saveTextEdit: vi.fn(async () => saveResult)
+      saveTextEdit: vi.fn(async () => saveResult),
+      saveBinaryEdit: vi.fn(async () => saveResult)
     }
     const writeGateEntered = vi.fn()
     const withDataRootWrite = async <Result>(write: () => Promise<Result>): Promise<Result> => {
@@ -175,6 +179,9 @@ describe('managed file version IPC', () => {
         cancelDiff: vi.fn(() => false),
         saveTextEdit: vi.fn(async () => {
           throw new Error('unexpected implementation failure')
+        }),
+        saveBinaryEdit: vi.fn(async () => {
+          throw new Error('unexpected implementation failure')
         })
       },
       { withDataRootWrite: async (write) => write() }
@@ -201,7 +208,8 @@ describe('managed file version IPC', () => {
         inspect: vi.fn(async () => inspectResult),
         diffText: vi.fn(async () => diffResult),
         cancelDiff: vi.fn(() => false),
-        saveTextEdit: vi.fn(async () => ({ ...saveResult, replayed: true }))
+        saveTextEdit: vi.fn(async () => ({ ...saveResult, replayed: true })),
+        saveBinaryEdit: vi.fn(async () => ({ ...saveResult, replayed: true }))
       },
       { withDataRootWrite: async (write) => write(), onChanged }
     )
@@ -218,7 +226,8 @@ describe('managed file version IPC', () => {
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(async () => ({ ok: true as const, value: diffResult })),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
-      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
+      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
 
@@ -226,6 +235,7 @@ describe('managed file version IPC', () => {
       'managed-file-versions:cancel-diff',
       'managed-file-versions:diff-text',
       'managed-file-versions:inspect',
+      'managed-file-versions:save-binary-edit',
       'managed-file-versions:save-text-edit'
     ])
     await registered.get('managed-file-versions:inspect')?.({}, inspectRequest as never)
@@ -253,7 +263,8 @@ describe('managed file version IPC', () => {
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(() => pendingDiff),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
-      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
+      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     })
     const destroyedListeners: Array<() => void> = []
     const senderA = {
@@ -295,7 +306,8 @@ describe('managed file version IPC', () => {
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(() => pendingDiff),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
-      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
+      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
     const senderA = { id: 11, once: vi.fn() }
@@ -338,7 +350,8 @@ describe('managed file version IPC', () => {
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
-      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
+      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
     const senderA = { id: 11, once: vi.fn() }
@@ -379,7 +392,8 @@ describe('managed file version IPC', () => {
           })
       ),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
-      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
+      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
     const diff = registered.get('managed-file-versions:diff-text')!
@@ -429,7 +443,8 @@ describe('managed file version IPC', () => {
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(() => pendingDiff),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: false } })),
-      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
+      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
     const senderA = { id: 11, once: vi.fn() }
@@ -468,7 +483,8 @@ describe('managed file version IPC', () => {
           })
       ),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: false } })),
-      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
+      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
     const sender = { id: 11, once: vi.fn() }
@@ -503,7 +519,8 @@ describe('managed file version IPC', () => {
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(() => pendingDiff),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: false } })),
-      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
+      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
     const destroyedListeners: Array<() => void> = []
@@ -533,7 +550,8 @@ describe('managed file version IPC', () => {
       inspect: vi.fn(async () => ({ ok: true as const, value: inspectResult })),
       diffText: vi.fn(async () => ({ ok: true as const, value: diffResult })),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: false } })),
-      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
+      saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
     const destroyedListeners: Array<() => void> = []

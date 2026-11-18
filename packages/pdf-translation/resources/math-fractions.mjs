@@ -17,7 +17,9 @@ export const resolveInlineFractions = (items, bodyBaseline, bodyFont) => {
           base.fontSize >= bodyFont * 0.9 &&
           // PDF text runs may combine a separator with the following base.
           // Its adjacent upper/lower scripts still belong to that single letter.
-          (/^(?:[,;]\s*)?[A-Za-z\p{Script=Greek}]$/u.test(base.text.trim()) ||
+          (/^(?:[,;]\s*|,\s*\.\s*\.\s*\.\s*,\s*)?[A-Za-z\p{Script=Greek}]$/u.test(
+            base.text.trim()
+          ) ||
             // A native product run can own a raised index above its lowered
             // sign. Numeric tiers remain fraction candidates: geometry alone
             // cannot distinguish those from division after a product.

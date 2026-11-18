@@ -31,7 +31,7 @@ import {
   isXaiSubscriptionProvider,
   providerEndpoints,
   requiresChatCompletionsBridge
-} from '../../shared/settings'
+} from '../../shared/settings-runtime'
 import type { AgentFrameworkId } from '../agent-framework'
 import { isOfficialOpenAiResponsesBase } from '../agent-framework/codex'
 import { hardenKeyMask, tryDecryptKey } from './crypto'
@@ -46,6 +46,7 @@ type RuntimeProviderModelSelection =
 type ProviderRuntimeTarget = {
   configRevision?: number
   providerId: string
+  providerName?: string
   providerType: StoredProvider['type']
   disconnectedAt?: number
   effectiveModel?: string
@@ -214,6 +215,7 @@ class ProviderRuntimeProjectionOwner {
 
     return {
       providerId: storedProvider.id,
+      providerName: storedProvider.name,
       configRevision: storedProvider.configRevision ?? 0,
       providerType: storedProvider.type,
       ...(storedProvider.disconnectedAt === undefined

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, symlink } from 'node:fs/promises'
+import { stat, mkdtemp, mkdir, writeFile, readFile, rm, readdir, symlink } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
@@ -9,6 +9,7 @@ import * as fsPromises from 'node:fs/promises'
 import { RUNTIME_SCHEMA_TABLE_DDLS } from '../database/generated/runtime-schema'
 import * as diagnosticProjection from './projection'
 import { runSessionDiagnosticWorker } from './collector'
+import { SessionJournalStore, sessionJournalPath } from '../session-persistence/journal'
 import type { SessionDiagnosticWorkerInput } from '../../shared/session-diagnostics'
 
 vi.mock('node:fs/promises', async (importOriginal) => ({
@@ -45,6 +46,99 @@ async function fixture(): Promise<SessionDiagnosticWorkerInput> {
 const sessionPath = (input: SessionDiagnosticWorkerInput): string =>
   join(input.configRoot, 'sessions/project/session.json')
 describe('session diagnostics isolated collector', () => {
+  it('projects the latest journal state without exporting sidecars or modifying the source', async () => {
+    const input = await fixture()
+    const path = sessionPath(input)
+    const journal = new SessionJournalStore({ maxBytes: 8 * 1024 * 1024 })
+    await journal.write(path, {
+      expectedRevision: 0,
+
+      document: {
+        id: 'session',
+        projectId: 'project',
+        revision: 1,
+        title: 'Before',
+        inputTokens: 12,
+        apiKey: 'private-secret'
+      }
+    })
+    await journal.write(path, {
+      expectedRevision: 1,
+
+      document: {
+        id: 'session',
+        projectId: 'project',
+        revision: 2,
+        title: 'After',
+        inputTokens: 24,
+        apiKey: 'private-secret'
+      }
+    })
+    const names = await readdir(dirname(path))
+    const before = await Promise.all(
+      names.map((name) => readFile(join(dirname(path), name), 'utf8'))
+    )
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['session'] })
+    expect(result.kind).toBe('archive')
+    const exported = await readFile(join(input.directory!, 'content/session.json'), 'utf8')
+    expect(JSON.parse(exported).session).toMatchObject({ revision: 2, inputTokens: 24 })
+    expect(exported).not.toContain('private-secret')
+    expect(await readdir(dirname(path))).toEqual(names)
+    expect(
+      await Promise.all(names.map((name) => readFile(join(dirname(path), name), 'utf8')))
+    ).toEqual(before)
+    expect(
+      (await readdir(join(input.directory!, 'content'))).some(
+        (name) => name.endsWith('.checkpoint') || name.endsWith('.jsonl')
+      )
+    ).toBe(false)
+  })
+
+  it('exports a small current Session from a journal larger than the snapshot limit', async () => {
+    const input = await fixture()
+    const path = sessionPath(input)
+    const journal = new SessionJournalStore({ maxBytes: 8 * 1024 * 1024 })
+    for (let revision = 1; revision <= 3; revision++) {
+      await journal.write(path, {
+        expectedRevision: revision - 1,
+        document: {
+          id: 'session',
+          projectId: 'project',
+          revision,
+          title: revision === 3 ? 'Current' : String(revision).repeat(4 * 1024 * 1024)
+        }
+      })
+    }
+    expect((await stat(sessionJournalPath(path))).size).toBeGreaterThan(8 * 1024 * 1024)
+    await runSessionDiagnosticWorker({ ...input, selectedItems: ['session'] })
+    const exported = JSON.parse(
+      await readFile(join(input.directory!, 'content/session.json'), 'utf8')
+    )
+    expect(exported.session.revision).toBe(3)
+  })
+
+  it('does not follow a journal primary symlink during diagnostic collection', async () => {
+    const input = await fixture()
+    const path = sessionPath(input)
+    await new SessionJournalStore({ maxBytes: 8 * 1024 * 1024 }).write(path, {
+      expectedRevision: 0,
+
+      document: { id: 'session', revision: 1 }
+    })
+    const checkpoint = sessionJournalPath(path)
+    const external = join(input.directory!, 'external-secret')
+    await writeFile(external, await readFile(checkpoint))
+    await rm(checkpoint)
+    await symlink(external, checkpoint)
+    await runSessionDiagnosticWorker({ ...input, selectedItems: ['session'] })
+    expect(await readdir(join(input.directory!, 'content'))).not.toContain('session.json')
+    const diagnosticManifest = JSON.parse(
+      await readFile(join(input.directory!, 'content/manifest.json'), 'utf8')
+    )
+    expect(JSON.stringify(diagnosticManifest)).toContain('failed')
+    expect(await readFile(external, 'utf8')).toContain('session')
+  })
+
   it.each([
     { id: 'log:main.log', output: 'logs/main.log' },
     { id: 'desktop-log:main.log', output: 'logs/desktop/main.log' }
@@ -223,7 +317,10 @@ describe('session diagnostics isolated collector', () => {
     const document = (runId: string): Record<string, unknown> => ({
       projectId: 'project',
       sessionId: 'session',
-      runs: [{ runId, script: 'SECRET_SCRIPT', text: { stdout: 'SECRET_STDOUT' } }]
+      runs: [
+        ...Array.from({ length: 100 }, (_, index) => ({ runId: `older-${index}` })),
+        { runId, script: 'SECRET_SCRIPT', text: { stdout: 'SECRET_STDOUT' } }
+      ]
     })
     await writeFile(join(notebookRoot, 'run.json'), JSON.stringify(document('root-run')))
     await writeFile(
@@ -254,8 +351,9 @@ describe('session diagnostics isolated collector', () => {
     const environment = JSON.parse(
       await readFile(join(input.directory!, 'content/environment.json'), 'utf8')
     )
-    expect(rootRun.runs[0].runId).toBe('root-run')
-    expect(frameRun.runs[0].runId).toBe('frame-run')
+    expect(rootRun.runCounts).toEqual({ source: 101, retained: 100, omitted: 1 })
+    expect(rootRun.runs.at(-1).runId).toBe('root-run')
+    expect(frameRun.runs.at(-1).runId).toBe('frame-run')
     expect(environment.storedDefaults.frameworkId).toBe('codex')
     const exported = JSON.stringify([rootRun, frameRun, environment])
     for (const secret of ['SECRET_SCRIPT', 'SECRET_STDOUT', 'SECRET_KEY'])

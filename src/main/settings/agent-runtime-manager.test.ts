@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ClaudeInstallEvent } from '../../shared/settings'
 import type { ConnectorSettingsModule } from './connector-settings'
 import type { ClaudeDetectDeps } from './claude-detect'
+import { CODEBUDDY_VERSION } from './codebuddy-install'
 import type { CodexDetectDeps } from './codex-detect'
 import type { OpencodeDetectDeps } from './opencode-detect'
 import type { ProviderPreflightAccess } from './agent-runtime-manager'
@@ -96,6 +97,24 @@ const buildManagedClaudeTgz = (content: Buffer): Buffer => {
 const sha512 = (data: Buffer): string =>
   `sha512-${createHash('sha512').update(data).digest('base64')}`
 
+const descendantProbeSource = (pidFile: string): string =>
+  [
+    "const { spawn } = require('node:child_process')",
+    "const { writeFileSync } = require('node:fs')",
+    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })",
+    `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid))`,
+    'setInterval(() => {}, 1000)'
+  ].join('\n')
+
+const killFixtureProcess = (pid: number | undefined): void => {
+  if (!pid) return
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // The production teardown should already have reaped it.
+  }
+}
+
 const createClaudeDeps = (inventory: RuntimeInventory): ClaudeDetectDeps => ({
   env: {},
   homePath: '/home',
@@ -132,6 +151,98 @@ const createCodexDeps = (
 })
 
 describe('AgentRuntimeManager', () => {
+  it
+    .skipIf(process.platform === 'win32')
+    .each([
+      'shared status',
+      'shared status input',
+      'shared login',
+      'isolated login',
+      'subscription'
+    ] as const)('releases real Claude %s processes before returning', async (scenario) => {
+    const { ClaudeSharedAuthController } = await import('./claude-shared-auth')
+    const { ClaudeIsolatedAuthController } = await import('./claude-isolated-auth')
+    const executable = join(storageRoot, 'resource-cli.mjs')
+    const pidFile = join(storageRoot, 'resource-pids.json')
+    const login = scenario.endsWith('login')
+    let pids: number[] = []
+    let pending: Promise<unknown> | undefined
+    let cancel: (() => void) | undefined
+    try {
+      await writeFile(
+        executable,
+        "import { spawn } from 'node:child_process';\n" +
+          "import { writeFileSync } from 'node:fs';\n" +
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });\n" +
+          `writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify([process.pid, child.pid]));\n` +
+          (login
+            ? 'setInterval(() => {}, 1000);\n'
+            : scenario === 'shared status input'
+              ? 'child.unref(); process.stdin.on("end", () => process.exit(3)); process.stdin.resume(); setTimeout(() => { console.log(JSON.stringify({ loggedIn: true })); process.exit(0) }, 50);\n'
+              : 'child.unref(); console.log(JSON.stringify({ loggedIn: true }));\n')
+      )
+      if (scenario === 'subscription') {
+        const settings = {
+          ...(await repository.getSettings()),
+          claude: { resolvedPath: executable, version: '2.1.309' }
+        }
+        pending = manager.runClaudeSubscriptionProbe({ type: 'claude-shared', key: '' }, settings)
+      } else if (scenario === 'isolated login') {
+        const ctrl = new ClaudeIsolatedAuthController({
+          claudePath: executable,
+          configDir: storageRoot,
+          store: {
+            loadToken: async () => undefined,
+            saveToken: async () => {},
+            clearToken: async () => {},
+            isEncryptionAvailable: () => true
+          }
+        })
+        cancel = () => ctrl.cancelLogin()
+        pending = ctrl.loginIsolatedBrowser()
+      } else {
+        const ctrl = new ClaudeSharedAuthController({
+          claudePath: executable,
+          configDir: storageRoot
+        })
+        cancel = () => ctrl.cancelLogin()
+        pending = login ? ctrl.loginShared() : ctrl.getStatus()
+      }
+      if (login) {
+        await vi.waitFor(
+          async () => {
+            pids = JSON.parse(await readFile(pidFile, 'utf8'))
+          },
+          { timeout: 5000 }
+        )
+      } else {
+        await pending
+        pids = JSON.parse(await readFile(pidFile, 'utf8'))
+      }
+      if (login) cancel!()
+      expect(await pending).toMatchObject(
+        login
+          ? { cancelled: true }
+          : scenario === 'subscription'
+            ? { ok: true }
+            : { authenticated: true }
+      )
+      for (const pid of pids)
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+    } finally {
+      cancel?.()
+      await pending
+      if (!pids.length) {
+        try {
+          pids = JSON.parse(await readFile(pidFile, 'utf8'))
+        } catch {
+          /* No spawn. */
+        }
+      }
+      for (const pid of pids) killFixtureProcess(pid)
+    }
+  })
+
   it.each(['detectCodex', 'bootstrapCodex', 'checkEnvironment'] as const)(
     'upgrades the installed adapter before %s starts its nested process',
     async (operation) => {
@@ -318,6 +429,80 @@ describe('AgentRuntimeManager', () => {
   let managedAdapterPath: string
   let managedCodexPath: string
   let manager: InstanceType<typeof AgentRuntimeManager>
+
+  it('queries a shared npm directory once per environment check and detects each executable', async () => {
+    const resolveNpmBinDirs = vi.fn(async () => ['/custom/bin'])
+    const deps = { ...createOpencodeDeps(inventory), resolveNpmBinDirs }
+    manager = createManager({
+      opencodeDetectDeps: deps,
+      codebuddyDetectDeps: deps,
+      codexDetectDeps: {
+        ...createCodexDeps(inventory, managedAdapterPath, managedCodexPath),
+        managedAdapterPath: undefined,
+        resolveNpmBinDirs
+      }
+    })
+    await manager.checkEnvironment()
+    expect(resolveNpmBinDirs).toHaveBeenCalledTimes(1)
+
+    inventory.opencode.set('/custom/bin/opencode', '1.19.4')
+    inventory.opencode.set('/custom/bin/codebuddy', CODEBUDDY_VERSION)
+    await manager.checkEnvironment()
+    expect(resolveNpmBinDirs).toHaveBeenCalledTimes(2)
+    expect(await repository.getSettings()).toMatchObject({
+      opencodePath: '/custom/bin/opencode',
+      codebuddyPath: '/custom/bin/codebuddy'
+    })
+  })
+
+  it('shares concurrent npm availability checks and rechecks failures and expired successes', async () => {
+    const first = Promise.withResolvers<{ available: boolean }>()
+    const probe = vi
+      .spyOn(await import('./claude-install'), 'detectNpmAvailable')
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce({ available: false })
+      .mockResolvedValue({ available: true })
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(100)
+    const reads = [manager.isNpmAvailable(), manager.isNpmAvailable()]
+    first.resolve({ available: true })
+    expect(await Promise.all(reads)).toEqual([true, true])
+    expect(await manager.isNpmAvailable()).toBe(true)
+    expect(probe).toHaveBeenCalledTimes(1)
+
+    clock.mockReturnValue(2100)
+    expect(await manager.isNpmAvailable()).toBe(false)
+    expect(await manager.isNpmAvailable()).toBe(true)
+    expect(probe).toHaveBeenCalledTimes(3)
+  })
+
+  it('reuses a recent OpenCode launch probe until the executable changes or the window expires', async () => {
+    const executable = join(storageRoot, 'opencode')
+    await writeFile(executable, 'first')
+    const probe = vi.fn(async () => '1.2.3')
+    const runtime = createManager({
+      opencodeDetectDeps: { ...createOpencodeDeps(inventory), probeVersion: probe }
+    })
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(100)
+    probe.mockImplementationOnce(async () => {
+      clock.mockReturnValue(3100)
+      return '1.2.3'
+    })
+    try {
+      expect(await runtime.probeOpencodeVersion(executable)).toBe('1.2.3')
+      expect(await runtime.probeOpencodeVersion(executable)).toBe('1.2.3')
+      expect(probe).toHaveBeenCalledTimes(1)
+
+      await writeFile(executable, 'replacement')
+      probe.mockRejectedValueOnce(new Error('launch failed')).mockResolvedValue('2.0.1')
+      await expect(runtime.probeOpencodeVersion(executable)).rejects.toThrow('launch failed')
+      expect(await runtime.probeOpencodeVersion(executable)).toBe('2.0.1')
+      clock.mockReturnValue(5200)
+      expect(await runtime.probeOpencodeVersion(executable)).toBe('2.0.1')
+      expect(probe).toHaveBeenCalledTimes(4)
+    } finally {
+      clock.mockRestore()
+    }
+  })
 
   it('preserves a failed configured OpenCode version probe for diagnostics', async () => {
     const failure = Object.assign(new Error('version process failed'), { code: 23 })
@@ -572,9 +757,13 @@ describe('AgentRuntimeManager', () => {
     expect(detectionOutcome).toBe('AbortError')
   })
 
-  it.each(['getPreflight', 'checkEnvironment'] as const)(
-    'aborts and drains all %s runtime probes before disposal completes',
-    async (operation) => {
+  it.each([
+    ['getPreflight', 'shutdown'],
+    ['getPreflight', 'caller'],
+    ['checkEnvironment', 'shutdown']
+  ] as const)(
+    'aborts and drains all %s runtime probes after %s cancellation',
+    async (operation, cancellation) => {
       const claudePath = join(storageRoot, 'claude')
       const opencodePath = join(storageRoot, 'opencode')
       await repository.setClaudeInfo({ resolvedPath: claudePath, version: 'old' })
@@ -608,13 +797,20 @@ describe('AgentRuntimeManager', () => {
         resolveActiveModel: () => undefined,
         isProviderKeyUsable: async () => false
       }
+      const controller = new AbortController()
       const pending =
-        operation === 'getPreflight' ? manager.getPreflight(providers) : manager.checkEnvironment()
+        operation === 'getPreflight'
+          ? manager.getPreflight(providers, controller.signal)
+          : manager.checkEnvironment()
       const outcome = pending.then(
         () => 'resolved',
         (error: Error) => error.name
       )
       const signals = await Promise.all([claudeEntered.promise, opencodeEntered.promise])
+      if (cancellation === 'caller') {
+        controller.abort()
+        expect(signals.map((signal) => signal?.aborted)).toEqual([true, true])
+      }
       let disposed = false
       const disposal = manager.dispose().then(() => {
         disposed = true
@@ -687,6 +883,35 @@ describe('AgentRuntimeManager', () => {
     })
     expect(Date.now() - startedAt).toBeLessThan(750)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'reaps the default Codex JavaScript probe descendants on cancellation',
+    async () => {
+      const pidFile = join(storageRoot, 'codex-probe-pid')
+      await mkdir(dirname(managedAdapterPath), { recursive: true })
+      await writeFile(managedAdapterPath, descendantProbeSource(pidFile))
+      inventory.opencode.set(managedAdapterPath, 'unused')
+      manager = createManager({ codexDetectDeps: undefined })
+      const controller = new AbortController()
+      const result = manager.detectCodex(controller.signal).catch((error: unknown) => error)
+      let descendant: number | undefined
+      try {
+        await vi.waitFor(async () => {
+          descendant = Number(await readFile(pidFile, 'utf8'))
+          expect(descendant).toBeGreaterThan(0)
+        })
+        controller.abort()
+        expect(await result).toMatchObject({ name: 'AbortError' })
+        expect(() => process.kill(descendant!, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+      } finally {
+        controller.abort()
+        await result
+        killFixtureProcess(descendant)
+      }
+    }
+  )
 
   it('rejects and clears a cached CodeBuddy runtime outside the pinned version', async () => {
     const codebuddyPath = posix.join('/detected', 'codebuddy')
@@ -1771,6 +1996,41 @@ console.log('ok');\n`
     await manager.prepareAgentSkillDiscovery(settings, root, new Set(), [])
     await expect(readFile(path, 'utf8')).resolves.toContain('get_disease_genes')
     expect(await repository.getSettings()).not.toHaveProperty('enabledConnectorIds')
+  })
+
+  it('aligns OpenCode public skill IDs and permission paths without enabling disabled skills', async () => {
+    const { ConnectorSettingsModule } = await import('./connector-settings')
+    const connectors = new ConnectorSettingsModule(repository)
+    const materializeSkills = vi.fn().mockResolvedValue(undefined)
+    const skills = {
+      materializeSkills,
+      listHostSkills: vi.fn().mockResolvedValue([
+        { id: 'imported-abstract-summarizer', name: 'abstract-summarizer', source: 'imported' },
+        { id: 'private', name: 'private-research', source: 'personal' }
+      ])
+    } as unknown as SkillCatalogModule
+    manager = createManager({ connectors, skills })
+    const settings = { ...(await repository.getSettings()), disabledSkillIds: ['private'] }
+    const root = join(storageRoot, 'opencode', 'config', 'opencode')
+    const options = { directoryLayout: 'agent-facing-shared' as const }
+    const discovery = await manager.prepareAgentSkillDiscovery(
+      settings,
+      root,
+      new Set(),
+      undefined,
+      options
+    )
+
+    expect(materializeSkills).toHaveBeenCalledWith(root, [], expect.any(Set), options)
+    expect(discovery.allowedNames).toContain('abstract-summarizer')
+    expect(discovery.allowedPaths).toContain(
+      join(root, 'skills', 'abstract-summarizer', 'SKILL.md')
+    )
+    expect(discovery.allowedNames).not.toContain('private-research')
+    expect(discovery.allowedPaths).not.toContain(
+      join(root, 'skills', 'private-research', 'SKILL.md')
+    )
+    expect(discovery.allowedPaths.some((path) => path.includes('os-imported-'))).toBe(false)
   })
 
   it('synchronizes provisioned custom Connector docs into isolated agent Skill roots', async () => {

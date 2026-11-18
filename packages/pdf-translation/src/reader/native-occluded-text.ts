@@ -1,7 +1,8 @@
 import type { PDFPageProxy } from 'pdfjs-dist'
-import { nativeOutlineBox } from './native-source-geometry.js'
+import { nativeOutlineBox, nativeRectangularPath } from './native-source-geometry.js'
 import { nativeInkPageCurrent, nativeInkPageIdentity } from './auxiliary-native-ink.js'
 import { getPdfTranslationTextContent } from './text-content.js'
+import { readNativeFormClippedText } from './native-form-clipped-text.js'
 
 type Box = [number, number, number, number]
 type Content = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
@@ -18,47 +19,12 @@ function bounds(b: Box, m: number[]): Box {
 function intersect(a: Box, b: Box): Box {
   return [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])]
 }
-// A filled hull is not an opaque interior. Accept exactly one closed rectangular
-// subpath, without holes, curves, repeated vertices, or diagonal edges.
-function rectangle(paths: ArrayLike<number>[]): Box | undefined {
-  if (paths.length !== 1) return
-  const p = Array.from(paths[0])
-  if (
-    p.length !== 13 ||
-    !p.every(Number.isFinite) ||
-    p[0] !== 0 ||
-    p[3] !== 1 ||
-    p[6] !== 1 ||
-    p[9] !== 1 ||
-    p[12] !== 4
-  )
-    return
-  const points = [
-    [p[1], p[2]],
-    [p[4], p[5]],
-    [p[7], p[8]],
-    [p[10], p[11]]
-  ]
-  const xs = [...new Set(points.map((v) => v[0]))],
-    ys = [...new Set(points.map((v) => v[1]))]
-  if (xs.length !== 2 || ys.length !== 2 || new Set(points.map((v) => v.join(','))).size !== 4)
-    return
-  if (
-    points.some((a, i) => {
-      const b = points[(i + 1) % 4]
-      return (a[0] === b[0]) === (a[1] === b[1])
-    })
-  )
-    return
-  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]
-}
-
 /** Only the initial ordinary paint prefix is supported. A later, solid rectangle
  * must cover complete native glyph outlines in its actual rectangular clip.
  * Forms, groups, unknown state and unsupported text stop the proof. A source is
  * bound to one complete text-show occurrence; equal strings never deduplicate.
  * Missing outlines abstain; no font metric or navigation box substitutes ink. */
-export async function readNativeOccludedText(
+async function readNativeSolidFillOccludedText(
   page: PDFPageProxy,
   content: Content,
   viewport: ReturnType<PDFPageProxy['getViewport']>
@@ -99,7 +65,7 @@ export async function readNativeOccludedText(
             outlineKeys.add(`${activeFont}_path_${glyph.fontChar}`)
           }
       } else if (op === OPS.constructPath && args[0] !== OPS.endPath) {
-        if (args[0] !== OPS.fill || !rectangle(args[1] ?? [])) return
+        if (args[0] !== OPS.fill || !nativeRectangularPath(args[1] ?? [])) return
         firstFill = true
         break
       }
@@ -205,7 +171,7 @@ export async function readNativeOccludedText(
       } else if (op === OPS.clip || op === OPS.eoClip) clipping = true
       else if (op === OPS.constructPath) {
         if (state.inText) return
-        const r = rectangle(args[1] ?? [])
+        const r = nativeRectangularPath(args[1] ?? [])
         if (!r) return
         const painted = bounds(r, state.matrix)
         if (clipping) {
@@ -353,5 +319,34 @@ export async function readNativeOccludedText(
     }
   } catch {
     return
+  }
+}
+
+export async function readNativeOccludedText(
+  page: PDFPageProxy,
+  content: Content,
+  viewport: ReturnType<PDFPageProxy['getViewport']>,
+  readAuxiliaryExclusions?: () => Promise<Proof | undefined>
+): Promise<Proof | undefined> {
+  let clipped: Proof | undefined = await readNativeFormClippedText(page, content, viewport)
+  if (!clipped && readAuxiliaryExclusions) {
+    try {
+      const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+      const operators = await page.getOperatorList()
+      if (
+        operators.fnArray.length <= 100000 &&
+        operators.fnArray.includes(OPS.paintFormXObjectBegin)
+      )
+        clipped = await readAuxiliaryExclusions()
+    } catch {
+      /* Unknown native observations do not exclude source text. */
+    }
+  }
+  const covered = await readNativeSolidFillOccludedText(page, content, viewport)
+  const proofs = [clipped, covered].filter((proof): proof is Proof => !!proof)
+  if (!proofs.length || proofs.some((proof) => !proof.current())) return
+  return {
+    indexes: new Set(proofs.flatMap((proof) => [...proof.indexes])),
+    current: () => proofs.every((proof) => proof.current())
   }
 }

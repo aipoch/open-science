@@ -338,6 +338,17 @@ describe('Windows update presentation receipts', () => {
     // Another profile may clean during the no-live-PID gap of Electron relaunch.
     expect((await resolveWindowsUpdateStartup(ready))?.startupOptions).toEqual(config())
   })
+  it('does not treat a reused PID as a live update owner when its birth identity changed', async () => {
+    const { directory, operationId } = await setup()
+    const requestPath = join(directory, 'request.json')
+    const request = JSON.parse(await readFile(requestPath, 'utf8'))
+    request.parentPid = process.pid
+    request.parentBirthToken = 'stale-process-birth'
+    await writeFile(requestPath, JSON.stringify(request))
+    await writeFile(join(directory, 'failed.receipt'), windowsUpdateReceipt(operationId, 'failed'))
+    await cleanupWindowsUpdateHandoffs(root)
+    expect(await readdir(windowsUpdateHandoffRoot(root))).toEqual([])
+  })
   it('does not acknowledge when the original data cannot be read', async () => {
     const { directory, ready } = await setup()
     ready.verifyReady = async () => {

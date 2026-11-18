@@ -23,6 +23,11 @@ vi.mock('../system-boot-identity', async (original) => ({
   ...(await original<typeof import('../system-boot-identity')>()),
   systemBootIdentity: () => 'windows-boot:12345678-1234-4321-8123-123456789abc'
 }))
+// Synthetic occupants represent live holders, independent of the host's real PID table.
+vi.mock('../windows-process-query', async (original) => ({
+  ...(await original<typeof import('../windows-process-query')>()),
+  windowsProcessIsAlive: () => true
+}))
 
 const dirs: string[] = []
 afterEach(() => dirs.splice(0).forEach((p) => rmSync(p, { recursive: true, force: true })))

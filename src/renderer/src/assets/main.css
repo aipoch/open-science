@@ -14,7 +14,7 @@
 html[data-windows-titlebar] {
   --windows-titlebar-height: 36px;
   --windows-content-center-y: calc(
-    var(--windows-titlebar-height) + (100vh - var(--windows-titlebar-height)) / 2
+    var(--windows-titlebar-height) + (100dvh - var(--windows-titlebar-height)) / 2
   );
   --windows-content-max-height: calc(100svh - var(--windows-titlebar-height) - 2rem);
 }
@@ -59,6 +59,17 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 @media (min-width: 768px) {
   html[data-windows-titlebar] .windows-app-content .md\:h-screen {
     height: calc(100svh - var(--windows-titlebar-height));
+  }
+}
+
+/* iOS Safari zooms the page when a focused field is below 16px. Unlayered so it outranks the
+   compact text-* utilities that call sites apply for desktop density. */
+@media (pointer: coarse) {
+  input:not([type='checkbox'], [type='radio'], [type='range']),
+  textarea,
+  select,
+  [contenteditable]:not([contenteditable='false']) {
+    font-size: max(16px, 1em);
   }
 }
 
@@ -327,6 +338,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--danger-foreground);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -350,6 +362,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --color-text-200: var(--text-200);
   --color-text-300: var(--text-300);
   --color-danger-000: var(--danger-000);
+  --color-danger-foreground: var(--danger-foreground);
   --color-danger-900: var(--danger-900);
   --color-warning-100: var(--warning-100);
   --color-warning-900: var(--warning-900);
@@ -387,7 +400,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --color-status-info-dark-surface: var(--color-teal-950);
   --color-status-info-dark-foreground: var(--color-teal-300);
   --color-status-warning-surface: var(--color-amber-100);
-  --color-status-warning-foreground: var(--color-amber-700);
+  --color-status-warning-foreground: var(--color-amber-800);
   --color-status-warning-dark-surface: var(--color-amber-950);
   --color-status-warning-dark-foreground: var(--color-amber-400);
   --color-success-000: var(--success-000);
@@ -433,7 +446,8 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   /* Portaled surfaces are positioned against the browser viewport rather than the content
      wrapper. Keep a zero-height default so the same geometry works on non-Windows surfaces. */
   --windows-titlebar-height: 0px;
-  --windows-content-center-y: 50vh;
+  /* dvh tracks mobile browser toolbars, so centered dialogs stay above the bottom toolbar. */
+  --windows-content-center-y: 50dvh;
   --windows-content-max-height: calc(100svh - 2rem);
   /* Light-theme elevation (referenced by the shadow-* utilities via @theme inline). */
   --shadow-card-value: 0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04);
@@ -450,14 +464,49 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --border-ink-channel: 60 2% 12%;
   --text-000: hsl(0 0% 7%);
   --text-100: var(--muted-foreground);
-  --text-200: hsl(43 3% 52%);
-  --text-300: hsl(43 3% 57%);
+  --text-200: hsl(43 3% 36%);
+  --text-300: hsl(43 3% 38%);
+  /* Standard ANSI roles follow the local color-scheme, not an ancestor .dark selector.
+     Soft backgrounds keep explicit SGR foreground/background pairs readable in either scheme. */
+  --notebook-ansi-30: light-dark(hsl(43 3% 20%), hsl(43 3% 78%));
+  --notebook-ansi-31: light-dark(hsl(0 65% 28%), hsl(0 65% 80%));
+  --notebook-ansi-32: light-dark(hsl(145 55% 24%), hsl(145 55% 78%));
+  --notebook-ansi-33: light-dark(hsl(35 65% 26%), hsl(35 65% 80%));
+  --notebook-ansi-34: light-dark(hsl(220 65% 32%), hsl(220 65% 82%));
+  --notebook-ansi-35: light-dark(hsl(280 50% 30%), hsl(280 50% 82%));
+  --notebook-ansi-36: light-dark(hsl(185 65% 24%), hsl(185 55% 78%));
+  --notebook-ansi-37: light-dark(hsl(43 3% 30%), hsl(43 3% 84%));
+  --notebook-ansi-90: light-dark(hsl(43 3% 32%), hsl(43 3% 82%));
+  --notebook-ansi-91: light-dark(hsl(0 65% 32%), hsl(0 65% 86%));
+  --notebook-ansi-92: light-dark(hsl(145 55% 24%), hsl(145 55% 84%));
+  --notebook-ansi-93: light-dark(hsl(35 65% 27%), hsl(35 65% 86%));
+  --notebook-ansi-94: light-dark(hsl(220 65% 36%), hsl(220 65% 88%));
+  --notebook-ansi-95: light-dark(hsl(280 50% 34%), hsl(280 50% 88%));
+  --notebook-ansi-96: light-dark(hsl(185 65% 24%), hsl(185 55% 84%));
+  --notebook-ansi-97: light-dark(hsl(43 3% 32%), hsl(43 3% 90%));
+  --notebook-ansi-bg-40: light-dark(hsl(43 3% 90%), hsl(43 3% 12%));
+  --notebook-ansi-bg-41: light-dark(hsl(0 35% 94%), hsl(0 35% 12%));
+  --notebook-ansi-bg-42: light-dark(hsl(145 35% 94%), hsl(145 35% 12%));
+  --notebook-ansi-bg-43: light-dark(hsl(35 35% 94%), hsl(35 35% 12%));
+  --notebook-ansi-bg-44: light-dark(hsl(220 35% 94%), hsl(220 35% 12%));
+  --notebook-ansi-bg-45: light-dark(hsl(280 35% 94%), hsl(280 35% 12%));
+  --notebook-ansi-bg-46: light-dark(hsl(185 35% 94%), hsl(185 35% 12%));
+  --notebook-ansi-bg-47: light-dark(hsl(43 3% 94%), hsl(43 3% 12%));
+  --notebook-ansi-bg-100: light-dark(hsl(43 3% 96%), hsl(43 3% 16%));
+  --notebook-ansi-bg-101: light-dark(hsl(0 35% 96%), hsl(0 35% 16%));
+  --notebook-ansi-bg-102: light-dark(hsl(145 35% 96%), hsl(145 35% 16%));
+  --notebook-ansi-bg-103: light-dark(hsl(35 35% 96%), hsl(35 35% 16%));
+  --notebook-ansi-bg-104: light-dark(hsl(220 35% 96%), hsl(220 35% 16%));
+  --notebook-ansi-bg-105: light-dark(hsl(280 35% 96%), hsl(280 35% 16%));
+  --notebook-ansi-bg-106: light-dark(hsl(185 35% 96%), hsl(185 35% 16%));
+  --notebook-ansi-bg-107: light-dark(hsl(43 3% 96%), hsl(43 3% 16%));
   --rail-card-bg: 0 0% 100%;
   --danger-000: hsl(0 45% 38%);
+  --danger-foreground: hsl(0 0% 100%);
   --danger-900: hsl(0 55% 95%);
   --warning-100: hsl(45 80% 90%);
   --warning-900: hsl(32 65% 28%);
-  --success-000: hsl(145 45% 38%);
+  --success-000: hsl(145 45% 30%);
   /* Version diffs keep semantic markers and body text above WCAG AA contrast on both row and
      inline-highlight surfaces. */
   --diff-added-surface: hsl(145 45% 92%);
@@ -495,10 +544,10 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --secondary: #ececea;
   --secondary-foreground: #202321;
   --muted: #ececea;
-  --muted-foreground: #646762;
+  --muted-foreground: hsl(90 3% 34%);
   --accent: oklch(0.87 0.115 82);
   --accent-foreground: oklch(0.2 0.03 62);
-  --destructive: oklch(0.58 0.22 25);
+  --destructive: oklch(0.52 0.19 25);
   --chart-1: rgb(109 167 236);
   --chart-2: rgb(88 176 133);
   --chart-3: rgb(210 157 56);
@@ -532,11 +581,12 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --bg-400: hsl(46 3% 28%);
   --border-ink-channel: 48 8% 82%;
   --text-000: hsl(48 12% 92%);
-  --text-100: hsl(45 5% 62%);
-  --text-200: hsl(45 5% 56%);
-  --text-300: hsl(45 4% 50%);
+  --text-100: hsl(45 5% 80%);
+  --text-200: hsl(45 5% 76%);
+  --text-300: hsl(45 4% 72%);
   --rail-card-bg: 48 4% 15%;
   --danger-000: hsl(0 70% 72%);
+  --danger-foreground: hsl(0 30% 14%);
   --danger-900: hsl(0 35% 20%);
   --warning-100: hsl(45 45% 18%);
   --warning-900: hsl(45 90% 62%);
@@ -573,10 +623,10 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --secondary: #33322b;
   --secondary-foreground: #e8e6df;
   --muted: #33322b;
-  --muted-foreground: #a8a49a;
+  --muted-foreground: hsl(45 5% 78%);
   --accent: oklch(0.78 0.11 82);
   --accent-foreground: oklch(0.2 0.03 62);
-  --destructive: oklch(0.68 0.19 25);
+  --destructive: oklch(0.76 0.15 25);
   --chart-1: rgb(109 167 236);
   --chart-2: rgb(88 176 133);
   --chart-3: rgb(210 157 56);
@@ -630,7 +680,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   html,
   body,
   #root {
-    min-height: 100vh;
+    min-height: 100dvh;
     @apply bg-bg-10;
   }
 
@@ -654,6 +704,12 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   html,
   body {
     overflow-x: clip;
+    /* Remote phone sessions: no rubber-band drag of the shell and no pull-to-refresh reload. */
+    overscroll-behavior: none;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
   }
 
   button,

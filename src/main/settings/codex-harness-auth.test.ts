@@ -1,5 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { once } from 'node:events'
+import * as processTree from '../process-tree'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { inspectCodexHarnessAvailability, readCodexHarnessConnection } from './codex-harness-auth'
@@ -160,6 +162,62 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     await rejected
     expect(JSON.parse(await readFile(join(home, 'auth.json'), 'utf8'))).toEqual(next)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'reaps escaped refresh descendants after the app-server exits',
+    async () => {
+      const { storageRoot, home } = await profile(credential('account-one', 1))
+      const nativePath = join(storageRoot, 'escaped-refresh.cjs')
+      const pidFile = join(storageRoot, 'escaped.pid')
+      const next = credential()
+      const terminate = processTree.terminateProcessTree
+      const cleanup = vi
+        .spyOn(processTree, 'terminateProcessTree')
+        .mockImplementation(async (child, ...args) => {
+          if (child.exitCode === null && child.signalCode === null) await once(child, 'close')
+          return terminate(child, ...args)
+        })
+      let descendant: number | undefined
+      await writeFile(
+        nativePath,
+        `
+        const fs = require('node:fs');
+        require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+          const request = JSON.parse(line);
+          if (request.id === 1) process.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\\n');
+          if (request.id !== 2) return;
+          const worker = require('node:child_process').spawn(process.execPath,
+            ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+          worker.unref();
+          fs.writeFileSync(${JSON.stringify(pidFile)}, String(worker.pid));
+          fs.writeFileSync(${JSON.stringify(join(home, 'auth.json'))}, ${JSON.stringify(JSON.stringify(next))});
+          process.stdout.write(JSON.stringify({ id: 2, result: {} }) + '\\n', () => process.exit(0));
+        });
+      `
+      )
+      try {
+        await expect(
+          readCodexHarnessConnection({ storageRoot, nativePath }, signal())
+        ).resolves.toMatchObject({
+          accessToken: next.tokens.access_token
+        })
+        descendant = Number(await readFile(pidFile, 'utf8'))
+        expect(() => process.kill(descendant!, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+      } finally {
+        cleanup.mockRestore()
+        descendant ??= await readFile(pidFile, 'utf8').then(Number, () => undefined)
+        if (descendant) {
+          try {
+            process.kill(descendant, 'SIGKILL')
+          } catch {
+            /* Already reaped by production. */
+          }
+        }
+      }
+    }
+  )
 
   it('suppresses raw app-server errors and tears down its stalled process', async () => {
     const { storageRoot } = await profile(credential('account-one', 1))

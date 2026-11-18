@@ -12,6 +12,8 @@ import { joinPdfTextItems } from '../../shared/pdf-text'
 import scaledInlineNative from './fixtures/scaled-inline-native.json'
 import scaledGapJoinedToken from './fixtures/scaled-gap-joined-token.json'
 import scaledGapRunningHead from './fixtures/scaled-gap-running-head.json'
+import nativeInlineReferenceTitle from './fixtures/native-inline-reference-title.json'
+import nativeInlineReferenceLink from './fixtures/native-inline-reference-link.json'
 
 // Small anonymous native PDFs retain real PDF.js whitespace and font/EOL
 // boundaries; the original external articles are not regression fixtures.
@@ -171,6 +173,25 @@ const nativeGridParagraphs = (): TextItem[] => {
 }
 
 describe('automatic PDF reading order', () => {
+  it.each([
+    ['title', nativeInlineReferenceTitle],
+    ['venue', nativeInlineReferenceLink]
+  ])('keeps inline reference %s text ahead of the next source line', async (_, fixture) => {
+    const items = fixture.items as TextItem[],
+      before = JSON.stringify(fixture),
+      warning = vi.fn(),
+      text = await read(items, null, warning, 0, false, fixture.page, fixture.styles),
+      normalized = text.replace(/\s+/gu, ' ')
+
+    expect(normalized).toContain(fixture.expectedBefore)
+    expect(normalized).toContain(fixture.expectedAfter)
+    expect(normalized.indexOf(fixture.expectedBefore)).toBeLessThan(
+      normalized.indexOf(fixture.expectedAfter)
+    )
+    expect(warning).toHaveBeenCalledWith(1)
+    expect(JSON.stringify(fixture)).toBe(before)
+  })
+
   it.each([
     ['joined text', scaledGapJoinedToken],
     ['running header', scaledGapRunningHead]

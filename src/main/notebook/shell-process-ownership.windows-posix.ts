@@ -17,7 +17,13 @@ import { readdir, readFile, rename, rm, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import {
+  capturePosixProcessTreeIdentity,
+  readCurrentPosixProcessTreeIdentity,
+  registerProcessTreeOwnership,
+  terminateOwnedPosixProcessGroupById,
+  terminateProcessTree
+} from '../process-tree'
 import { windowsProcessCommandLine, windowsProcessStartTicks } from '../windows-process-query'
 import { bootTokenProvesReboot, isValidBootToken, readBootToken } from '@aipoch/environment'
 
@@ -31,6 +37,7 @@ type ShellProcessOwnershipRecord = Readonly<{
   ownerInstanceId: string
   launchedAt: number
   processStartIdentity: string
+  posixBirthToken?: string
   bootToken?: string
 }>
 
@@ -120,7 +127,7 @@ const processStartIdentity = (pid: number, platform: NodeJS.Platform): string | 
 }
 
 const recoveryHandle = (
-  record: Pick<ShellProcessOwnershipRecord, 'pid' | 'platform'>
+  record: Pick<ShellProcessOwnershipRecord, 'pid' | 'platform' | 'posixBirthToken'>
 ): ChildProcess => {
   const handle = Object.assign(new EventEmitter(), {
     pid: record.pid,
@@ -136,7 +143,17 @@ const recoveryHandle = (
       }
     }
   }) as unknown as ChildProcess
-  if (record.platform !== 'win32') registerOwnedPosixProcessGroup(handle)
+  if (record.platform !== 'win32')
+    registerProcessTreeOwnership(handle, {
+      terminate: () =>
+        terminateOwnedPosixProcessGroupById(
+          record.pid,
+          undefined,
+          undefined,
+          record.posixBirthToken
+        ),
+      settled: () => undefined
+    })
   return handle
 }
 
@@ -144,8 +161,8 @@ class ShellProcessOwnershipRegistry {
   private readonly ownerInstanceId = randomUUID()
   private readonly directory: string
 
-  // Only old, structurally complete launch intents qualify for explicit abandonment. A current
-  // launch, a claimed process, a malformed file or an unknown format must retain its normal gate.
+  // Old launch intents and POSIX receipts without birth proof may require explicit abandonment.
+  // Keep originals and bind consent to exact bytes; archival never proves a process was reaped.
   private legacyLaunchSnapshot(): { token: string; entries: string[] } | undefined {
     try {
       const entries = readdirSync(this.directory)
@@ -160,7 +177,6 @@ class ShellProcessOwnershipRegistry {
         const record = JSON.parse(contents.toString('utf8'))
         if (
           record?.version !== 1 ||
-          record.state !== 'launching' ||
           typeof record.runId !== 'string' ||
           !SAFE_RUN_ID.test(record.runId) ||
           entry !== `${record.runId}.json` ||
@@ -169,11 +185,22 @@ class ShellProcessOwnershipRegistry {
           typeof record.ownerInstanceId !== 'string' ||
           record.ownerInstanceId === this.ownerInstanceId ||
           !Number.isFinite(record.launchedAt) ||
-          record.pid !== undefined ||
-          record.processStartIdentity !== undefined ||
           (record.bootToken !== undefined && !isValidBootToken(record.bootToken))
         )
           return undefined
+        const legacyLaunch =
+          record.state === 'launching' &&
+          record.pid === undefined &&
+          record.processStartIdentity === undefined
+        const legacyPosix =
+          record.state === undefined &&
+          ['linux', 'darwin'].includes(record.platform) &&
+          Number.isSafeInteger(record.pid) &&
+          record.pid > 0 &&
+          record.posixBirthToken === undefined &&
+          typeof record.processStartIdentity === 'string' &&
+          record.processStartIdentity.trim().length > 0
+        if (!legacyLaunch && !legacyPosix) return undefined
         hash.update(JSON.stringify([entry, contents.toString('base64')]))
       }
       return { token: hash.digest('hex'), entries }
@@ -273,6 +300,14 @@ class ShellProcessOwnershipRegistry {
         }
         const bootToken =
           platform === 'linux' ? (this.options.readBootToken ?? readBootToken)() : undefined
+        const posixBirthToken = capturePosixProcessTreeIdentity(child)?.birthToken
+        if (
+          (platform === 'linux' || platform === 'darwin') &&
+          platform === process.platform &&
+          !posixBirthToken
+        ) {
+          throw new Error('Shell process birth identity could not be confirmed.')
+        }
         const record: ShellProcessOwnershipRecord = {
           version: 1,
           runId: metadata.runId,
@@ -283,6 +318,7 @@ class ShellProcessOwnershipRegistry {
           ownerInstanceId: this.ownerInstanceId,
           launchedAt: intent.launchedAt,
           ...(bootToken ? { bootToken } : {}),
+          ...(posixBirthToken ? { posixBirthToken } : {}),
           processStartIdentity:
             (this.options.processStartIdentity ?? processStartIdentity)(pid, platform) ??
             (() => {
@@ -497,6 +533,7 @@ class ShellProcessOwnershipRegistry {
         typeof parsed.ownerInstanceId !== 'string' ||
         typeof parsed.launchedAt !== 'number' ||
         typeof parsed.processStartIdentity !== 'string' ||
+        (parsed.posixBirthToken !== undefined && typeof parsed.posixBirthToken !== 'string') ||
         (parsed.bootToken !== undefined && !isValidBootToken(parsed.bootToken))
       ) {
         throw new Error(`Corrupt Shell process ownership record: ${entry}`)
@@ -512,6 +549,10 @@ class ShellProcessOwnershipRegistry {
         }
       }
       const leaderExists = (this.options.processExists ?? processExists)(record.pid)
+      const currentPosixIdentity =
+        record.platform !== 'win32' && record.platform === process.platform && leaderExists
+          ? readCurrentPosixProcessTreeIdentity(record.pid)
+          : undefined
       if (leaderExists) {
         const currentIdentity = (this.options.processStartIdentity ?? processStartIdentity)(
           record.pid,
@@ -528,16 +569,23 @@ class ShellProcessOwnershipRegistry {
           continue
         }
       }
-      const treeExists = (this.options.ownedTreeExists ?? ownedTreeExists)(record)
-      if (treeExists && record.platform !== 'win32' && !leaderExists) {
+      const recoveryRecord =
+        record.platform !== 'win32' &&
+        record.posixBirthToken === undefined &&
+        leaderExists &&
+        currentPosixIdentity?.birthToken
+          ? { ...record, posixBirthToken: currentPosixIdentity.birthToken }
+          : record
+      const treeExists = (this.options.ownedTreeExists ?? ownedTreeExists)(recoveryRecord)
+      if (treeExists && recoveryRecord.platform !== 'win32' && !leaderExists) {
         // A leaderless POSIX group cannot be tied back to the persisted start identity. Its numeric
         // id may have been reused during this boot, so never signal it from the receipt alone.
         throw new ShellProcessRecoveryBlockedError(record.runId)
       }
       if (treeExists) {
         const result = this.options.terminateOwnedTree
-          ? await this.options.terminateOwnedTree(record)
-          : await terminateProcessTree(recoveryHandle(record))
+          ? await this.options.terminateOwnedTree(recoveryRecord)
+          : await terminateProcessTree(recoveryHandle(recoveryRecord))
         if (!result.reaped) throw new ShellProcessRecoveryBlockedError(record.runId)
       }
       await unlink(path)

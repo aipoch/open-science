@@ -1,0 +1,1370 @@
+import type {
+  AgentHomeSkillRef,
+  GitHubRepositorySearchView,
+  SkillActivationPolicy,
+  SkillBundlePreviewResult,
+  SkillPackageFileInfo,
+  SkillReference,
+  SkillReferenceInfo,
+  SkillReplacementPreview,
+  SkillSource
+} from '@aipoch/skills/document'
+import {
+  type ModelProtocol,
+  type OfficialVendorId,
+  type CustomReasoningEffortTransport
+} from '@aipoch/providers'
+import { type ReasoningEffort } from './model-preference-contract'
+import { type ReasoningEffortPresetSetting } from './reasoning-effort'
+import type { AgentModelRoute, AgentFrameworkId } from './agent-framework-id'
+export type { AgentFrameworkId } from './agent-framework-id'
+export type { ModelProtocol } from '@aipoch/providers'
+export type { ReasoningEffort } from './model-preference-contract'
+
+// Shared model-settings & onboarding types crossing the main <-> renderer IPC boundary.
+//
+// The main process owns settings.json and all secret material. The renderer only ever receives the
+// masked provider view (never keyRef or plaintext keys) and sends drafts that carry a plaintext key
+// only while the user is actively typing one in.
+
+import type { PackageMirror } from './mirror'
+import type { NetworkProxySettings } from './network-proxy'
+import type { NotebookNetworkSettings } from './notebook-network-settings'
+import type { PermissionProfileId } from './permission-profiles'
+
+import type { CloseActionPreference } from './window-controls'
+
+// A provider targets a custom gateway, a built-in official vendor, an app-owned Claude
+// subscription, or a Codex subscription. `codex-shared` remains a legacy Provider/import
+// discriminator; both Codex variants use the app-owned profile at runtime. claude-shared uses ~/.claude (browser
+// OAuth login via `claude auth login`); claude-isolated uses an app-owned CLAUDE_CONFIG_DIR
+// (setup-token paste, no ~/.claude touch).
+export type ProviderType =
+  | 'custom'
+  | 'claude-shared'
+  | 'claude-isolated'
+  | 'official'
+  | 'codex-shared'
+  | 'codex-isolated'
+  | 'xai-subscription'
+
+// The stored Codex subscription always uses the app-owned runtime type. This discriminator preserves
+// which setup choice produced it so editing an imported profile does not masquerade as an isolated
+// sign-in and accidentally discard its imported loopback route.
+export type CodexSubscriptionAuthMode = 'imported' | 'isolated'
+export type CodexSubscriptionTransport = 'auto' | 'https' | 'websocket'
+export type ClaudeSubscriptionProviderId = 'builtin-claude-shared' | 'builtin-claude-isolated'
+
+// Detected claude executable metadata, persisted so later spawns skip re-detection.
+export type ClaudeInfo = {
+  resolvedPath?: string
+  version?: string
+}
+
+// Detected opencode executable metadata (resolved path + reported version), persisted for the card.
+export type OpencodeInfo = {
+  resolvedPath?: string
+  version?: string
+}
+
+export type CodeBuddyInfo = {
+  resolvedPath?: string
+  version?: string
+}
+
+// Detected codex-acp adapter metadata. App-managed installs also report the paired native Codex
+// version; its executable path stays main-process-only.
+export type CodexInfo = {
+  resolvedPath?: string
+  version?: string
+  nativeVersion?: string
+  // Read-only ownership projection; never persisted in Settings.
+  nativeManaged?: boolean
+}
+
+// Result of probing the machine for a runnable claude executable.
+export type ClaudeDetectResult = {
+  found: boolean
+  path?: string
+  version?: string
+  // Diagnostic detail for when detection fails but partial components are present. Used to provide
+  // more accurate error messages (e.g., "Codex ACP adapter missing" vs "Codex not installed").
+  diagnostic?: string
+  // For Codex: separate detection state of native CLI and ACP adapter components. When present,
+  // the environment check can display distinct status for each component rather than collapsing
+  // them into a single "runtime" row. Omitted for Claude/OpenCode (single-binary runtimes).
+  codexComponents?: {
+    nativeCliFound: boolean
+    nativeCliPath?: string
+    nativeCliVersion?: string
+    adapterFound: boolean
+    adapterPath?: string
+    adapterVersion?: string
+    // When adapter exists but is non-functional (version probe or smoke test failed), this
+    // explains why. Environment check uses this to mark the adapter row as failed even when
+    // adapterFound is true.
+    adapterFailureReason?: 'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed'
+  }
+}
+
+// Non-secret fingerprint for a concrete model/protocol probe. Provider-auth-only checks omit it.
+export type ProviderValidationTarget = {
+  model?: string
+  endpoint?: ModelProtocol
+  // Absent for HTTP evidence and historical records. Native evidence applies only to this route.
+  frameworkId?: AgentFrameworkId
+  route?: AgentModelRoute
+}
+
+export type ProviderValidationFailure = {
+  at: number
+  category: ValidationCategory
+  status?: number
+  message?: string
+  target?: ProviderValidationTarget
+  // Additional independently unavailable models/routes, only for model-not-found failures.
+  // Includes target; omitted for a single failure and for provider-wide failures.
+  targets?: ProviderValidationTarget[]
+}
+
+// Renderer-facing provider view: masked and stripped of every secret field.
+export type ProviderView = {
+  // Human configuration revision; legacy records start at zero.
+  configRevision?: number
+  id: string
+  type: ProviderType
+  codexAuthMode?: CodexSubscriptionAuthMode
+  codexTransport?: CodexSubscriptionTransport
+  // Host-derived capability of the built-in Agent; native Codex remains independently available.
+  codexHarnessAvailable?: boolean
+  name: string
+  // Which chat APIs this provider's endpoint speaks; drives per-framework availability. Absent ⇒
+  // treat as ['messages'] (every legacy provider).
+  apiEndpoints?: ModelProtocol[]
+  baseUrl?: string
+  model?: string
+  // User-configured model token limits. Context is the shared request/response budget; input/output
+  // are independent provider-reported caps. An omitted context window resolves to 200k at runtime.
+  contextWindow?: number
+  maxInputTokens?: number
+  maxOutputTokens?: number
+  supportsImageInput: boolean
+  // Custom-model effort declaration. Absence intentionally means the standard five-level preset.
+  reasoningEffortPreset?: ReasoningEffortPresetSetting
+  // Request-body shape used to deliver the selected effort to a custom model endpoint. Absence uses
+  // the broadly compatible `reasoning_effort` field for existing settings.
+  reasoningEffortTransport?: CustomReasoningEffortTransport
+  // Set for official-vendor providers: which vendor and (where applicable) which regional endpoint.
+  vendorId?: OfficialVendorId
+  region?: string
+  // Models selectable for this provider in the composer: the vendor catalog for official providers,
+  // or the single configured model for custom. Derived from the registry in main.
+  models: string[]
+  // A short, non-secret hint like "sk-…abcd" for display only.
+  maskedKey?: string
+  // Non-secret account label returned by the provider during subscription sign-in.
+  accountEmail?: string
+  // True when a key is stored (custom/official providers). Lets the form show "leave blank to keep".
+  hasKey: boolean
+  // True when a stored key could not be decrypted and must be re-entered before use.
+  needsKey: boolean
+  // Timestamp of the last successful connectivity/key check.
+  lastValidatedAt?: number
+  // The model and protocol exercised by lastValidatedAt. Absent on legacy/provider-auth-only checks.
+  lastValidatedTarget?: ProviderValidationTarget
+  // Present when the most recent validation failed and no later one has succeeded. Drives the
+  // "unverified" warning in the provider list.
+  lastValidationFailure?: ProviderValidationFailure
+  // Estimated credential expiry (epoch ms). Set for credential types that have a known bounded
+  // lifetime — today that is `claude setup-token` (Anthropic documents a one-year lifetime).
+  // The Settings card surfaces this as "Expires <date>".
+  expiresAt?: number
+}
+
+export type XaiOAuthDeviceAuthorization = {
+  userCode: string
+  verificationUri: string
+  verificationUriComplete?: string
+  expiresAt: number
+  intervalSeconds: number
+}
+
+export type XaiOAuthLoginResult = {
+  accountEmail?: string
+  validation: ValidateProviderResult
+}
+
+// Durable Composer selection for one Session. The ACP framework remains a global Settings choice;
+// this value is re-evaluated against that framework when the Session is next used.
+export type SessionAgentConfiguration = Readonly<{
+  providerId: string
+  model?: string
+  reasoningEffort: ReasoningEffort
+}>
+
+// Global routing preference for direct Subagents. Inherited mode intentionally carries no latent
+// provider/model/effort fields; selecting a fixed target commits the compound identity and effort
+// intent as one value so renderers can never observe a torn configuration.
+export type SubagentModelConfiguration =
+  | Readonly<{ mode: 'inherit' }>
+  | Readonly<{
+      mode: 'fixed'
+      providerId: string
+      model: string
+      reasoningEffort: ReasoningEffort
+    }>
+
+// Reviewer uses the same compound provider/model/effort selection shape as direct Subagents, but
+// keeps an independent persisted policy and runtime admission path.
+export type ReviewerModelConfiguration = SubagentModelConfiguration
+
+// Prompt optimization uses the same provider/model policy shape as other fixed scenarios. Inherit
+// keeps existing installations on the active composer model until the user chooses a dedicated one.
+export type PromptOptimizationModelConfiguration = SubagentModelConfiguration
+
+export type SetAgentRoutingRequest = Readonly<{
+  framework?: AgentFrameworkId
+  reviewer?: ReviewerModelConfiguration
+  subagent?: SubagentModelConfiguration
+}>
+
+export type SessionDetailsModelConfiguration =
+  | Readonly<{ mode: 'inherit'; reasoningEffort: ReasoningEffort }>
+  | Readonly<{
+      mode: 'fixed'
+      providerId: string
+      model: string
+      reasoningEffort: ReasoningEffort
+    }>
+  | Readonly<{ mode: 'disabled' }>
+
+// Optional fixed target used only to translate image input for a text-only active model. Absence is
+// disabled; unlike Subagent and Reviewer routing there is no inherited active-model mode.
+export type VisionModelConfiguration = Readonly<{
+  providerId: string
+  model: string
+  reasoningEffort: ReasoningEffort
+}>
+
+// The selectable app-icon look. 'light' is the shipped default; 'dark' is its matching dark variant.
+// Both are built-in assets; the independent choice is applied at runtime to non-macOS app windows and
+// the Windows tray glyph. macOS instead uses its Icon Composer asset for the installed app and binds
+// the running Dock icon to General > Theme (the static installed icon in Explorer/taskbar is baked in).
+export type AppIconVariant = 'light' | 'dark'
+
+// Static, non-secret descriptor for one selectable icon variant, driving the Appearance picker.
+export type AppIconVariantInfo = {
+  id: AppIconVariant
+  label: string
+  description: string
+}
+
+// Renderer-facing descriptor for one selectable agent framework (built from the main registry).
+export type AgentFrameworkView = {
+  id: AgentFrameworkId
+  // Chat endpoints this framework can drive; a provider is selectable only if it shares one. Absent ⇒
+  // treat as ['messages'].
+  supportedApiTypes?: ModelProtocol[]
+  displayName: string
+  // Whether this framework materializes app skills; the renderer hides the skills UI when false.
+  supportsSkills: boolean
+  // Release-gated app-owned subagent support. Absent legacy snapshots are treated as unavailable.
+  supportsDelegatedWork?: boolean
+}
+
+// Full renderer snapshot of settings state.
+export type SettingsSnapshot = {
+  // Effective Settings credential backend; startup-only, not a stored preference.
+  credentialStore?: 'os' | 'file'
+  // Volatile Main-authority projection order. It is not persisted; older peers may omit it.
+  // Renderer stores use it to reject an RPC response that arrives after a newer settings event.
+  revision?: number
+  claude: ClaudeInfo
+  // Detected opencode executable, for the framework-aware detection card.
+  opencode: OpencodeInfo
+  codebuddy: CodeBuddyInfo
+  // Detected codex-acp adapter and its paired native Codex runtime.
+  codex: CodexInfo
+  activeProviderId?: string
+  // Last explicitly configured Claude subscription mode, used when another provider is active.
+  claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
+  // The active model within the active provider. For custom this mirrors the provider's own model;
+  // for official providers it's the chosen catalog entry. Undefined until a provider exists.
+  activeModel?: string
+  providers: ProviderView[]
+  // The selected agent backend, and the frameworks available to choose from.
+  agentFrameworkId: AgentFrameworkId
+  agentFrameworks: AgentFrameworkView[]
+  // Whether each framework's detected runtime is the app-managed install (binary in the app's data
+  // dir), which is the only case an in-app uninstall is offered — a PATH/npm binary we didn't install
+  // is never removed. Derived each read from the resolved path, never persisted.
+  claudeManaged: boolean
+  opencodeManaged: boolean
+  // Derived like the other frameworks: only the app-managed CodeBuddy shim is removed in-app.
+  codebuddyManaged: boolean
+  codexManaged: boolean
+  // Timestamp of first-run onboarding completion; undefined until it finishes at least once.
+  onboardingCompletedAt?: number
+  // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
+  packageMirror?: PackageMirror
+  // Application-wide proxy preference. Older documents without this field resolve to System.
+  networkProxy?: NetworkProxySettings
+  // Global Notebook REPL/Bash egress policy. Historical settings resolve to the safe defaults.
+  notebookFolderRestrictionEnabled?: boolean
+  notebookNetwork?: NotebookNetworkSettings
+  // The user's reasoning-effort preference for agent requests. 'default' leaves the agent's own
+  // default untouched; concrete levels apply to subsequent requests when the agent supports them.
+  reasoningEffort: ReasoningEffort
+  subagentModel?: SubagentModelConfiguration
+  reviewerModel?: ReviewerModelConfiguration
+  promptOptimizationModel?: PromptOptimizationModelConfiguration
+  sessionDetailsModel?: SessionDetailsModelConfiguration
+  visionModel?: VisionModelConfiguration
+  // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
+  notificationsEnabled: boolean
+  // Whether native banners may include bounded task/request detail. Provider errors remain hidden.
+  // Older app/Web peers may omit this newly-added preference; consumers must default to false.
+  showNotificationContent?: boolean
+  // Whether conversations may detect attached Skill packages and request an app-owned import flow.
+  conversationSkillImportEnabled: boolean
+  // Saved Windows titlebar-close behavior. Undefined means ask every time.
+  closePreference?: CloseActionPreference
+  // The selected built-in app-icon look for non-macOS windows and the Windows tray. Defaults to 'light'.
+  appIconVariant: AppIconVariant
+  // Last Files-tab source filter. Undefined means the default ("All artifacts").
+  projectFilesFilter?: ProjectFilesFilterPreference
+  // The default permission profile for new sessions. Valid values: 'ask', 'auto', 'full'.
+  // Absent or invalid falls back to 'ask' (the most restrictive mode).
+  defaultPermissionProfile?: PermissionProfileId
+}
+
+// Persisted Files-tab source filter: an artifact collection, the machine's local browser, or a
+// granted folder inside it. `optionId` is the artifact filter id ('all', 'uploads', 'session:<id>');
+// `localRootId` is a GrantedLocalRoot id.
+export type ProjectFilesFilterPreference = {
+  sourceMode: 'artifacts' | 'local'
+  optionId?: string
+  localRootId?: string
+}
+
+// Request to set (or clear, via omitted fields) the package-mirror configuration.
+export type SetNetworkProxyRequest = NetworkProxySettings
+
+export type SetNotebookNetworkRequest = NotebookNetworkSettings & {
+  baseMode?: NotebookNetworkSettings['mode']
+  baseStrictWhitelist?: NotebookNetworkSettings['strictWhitelist']
+  baseStrictWhitelistGroups?: NotebookNetworkSettings['strictWhitelistGroups']
+  // The renderer's allowed-domain baseline. The owner applies the draft's add/remove delta to the
+  // latest stored policy so a concurrent conversation approval cannot be overwritten by a stale form.
+  baseAllowedDomains?: readonly string[]
+  revokeNetworkGrantIds?: readonly string[]
+  baseTrustedPrivateDestinations?: NotebookNetworkSettings['trustedPrivateDestinations']
+}
+
+export type SetPackageMirrorRequest = PackageMirror
+
+export type SetAgentFrameworkRequest = {
+  id: AgentFrameworkId
+}
+
+export type SetReasoningEffortRequest = {
+  effort: ReasoningEffort
+}
+
+export type SetSubagentModelRequest = {
+  configuration: SubagentModelConfiguration
+}
+
+export type SetReviewerModelRequest = {
+  configuration: ReviewerModelConfiguration
+}
+
+export type SetPromptOptimizationModelRequest = {
+  configuration: PromptOptimizationModelConfiguration
+}
+
+export type SetSessionDetailsModelRequest = {
+  configuration: SessionDetailsModelConfiguration
+}
+
+export type SetVisionModelRequest = {
+  configuration?: VisionModelConfiguration
+}
+
+export type SetNotificationsEnabledRequest = {
+  enabled: boolean
+}
+
+export type SetShowNotificationContentRequest = {
+  enabled: boolean
+}
+
+export type SetConversationSkillImportEnabledRequest = {
+  enabled: boolean
+}
+
+export type SetClosePreferenceRequest = {
+  preference?: CloseActionPreference
+}
+
+export type SetProjectFilesFilterRequest = {
+  filter?: ProjectFilesFilterPreference
+}
+
+export type SetAppIconVariantRequest = {
+  variant: AppIconVariant
+}
+
+export type SetDefaultPermissionProfileRequest = {
+  profile: PermissionProfileId
+}
+
+// A built-in icon variant plus a small preview image (data URL) generated in the main process from the
+// bundled asset, so the renderer shows exactly what will be applied without shipping the asset twice.
+export type AppIconPreview = AppIconVariantInfo & {
+  // A small PNG data URL of the variant's icon, sized for the settings preview tile.
+  previewDataUrl: string
+}
+
+export type ReadinessStatus = 'ready' | 'missing' | 'not_ready'
+
+export type ProviderReadinessReason =
+  'credential_invalid' | Exclude<ValidationCategory, 'ok' | 'auth'>
+
+export type ProviderReadiness =
+  { status: 'ready' | 'missing' } | { status: 'not_ready'; reason?: ProviderReadinessReason }
+
+// The hard startup gates. The booleans keep the wizard's existing gate contract; the structured
+// projections distinguish absent resources from configured resources that cannot currently run.
+export type Preflight = {
+  claudeReady: boolean
+  opencodeReady: boolean
+  codebuddyReady: boolean
+  codexReady: boolean
+  // Missing on older Main processes; Pi is selectable only when Main reports true.
+  openScienceAgentReady?: boolean
+  piReady?: boolean
+  // Location of the separately installed Pi ACP adapter, reported while a managed installation exists.
+  piRuntimePath?: string
+  // Readiness of the selected agent framework, plus which one it is.
+  agentFrameworkId: AgentFrameworkId
+  agentReady: boolean
+  activeProviderReady: boolean
+}
+
+export type ReadinessPreflight = Preflight & {
+  runtimeReadiness: { status: ReadinessStatus }
+  providerReadiness: ProviderReadiness
+}
+
+// A provider draft as entered in the renderer form. The plaintext `key` is present only when the user
+// typed a new one; leaving it undefined on edit keeps the previously stored key.
+export type ProviderDraft = {
+  type: ProviderType
+  codexTransport?: CodexSubscriptionTransport
+  name?: string
+  baseUrl?: string
+  model?: string
+  // Custom model token limits. `null` explicitly clears a saved override; omitted leaves it unchanged
+  // on partial edits. A provider with no context override resolves to 200k at runtime.
+  contextWindow?: number | null
+  maxInputTokens?: number | null
+  maxOutputTokens?: number | null
+  supportsImageInput?: boolean
+  // Optional custom-model effort declaration. Absence defaults to the standard five-level preset.
+  reasoningEffortPreset?: ReasoningEffortPresetSetting
+  // Optional custom-gateway request shape. Absence defaults to the literal `reasoning_effort` field.
+  reasoningEffortTransport?: CustomReasoningEffortTransport
+  // Which chat APIs a custom gateway speaks (form selector). Official providers take it from the
+  // registry; omitted defaults to ['messages'].
+  apiEndpoints?: ModelProtocol[]
+  // Set when type is 'official': the chosen vendor and (where applicable) region. Base URL and model
+  // catalog then come from the registry rather than the draft's baseUrl.
+  vendorId?: OfficialVendorId
+  region?: string
+  key?: string
+}
+
+// Create/update request: an existing `id` edits in place, otherwise a new provider is created.
+export type UpsertProviderRequest = ProviderDraft & {
+  id?: string
+  // Edit flows set this so a stale draft cannot recreate a provider that was removed after the
+  // renderer loaded it. It affects command semantics only and is never persisted.
+  requireExisting?: boolean
+  expectedConfigRevision?: number
+  // Explicitly refreshes an existing imported Codex subscription from the user's CLI profile.
+  // Ordinary edits remain app-owned and never cross that external profile boundary.
+  reimportCodexAuthentication?: boolean
+}
+
+export type ProviderDeletionScenarioModelHandling = 'preserve' | 'inherit'
+
+export type DeleteProviderRequest = {
+  id: string
+  // Missing preserves the historical, restorable unavailable selections. The settings UI can
+  // instead reset every affected scenario in the same document mutation as the provider deletion.
+  scenarioModelHandling?: ProviderDeletionScenarioModelHandling
+}
+
+export type SetActiveProviderRequest = {
+  id: string
+  // Optional model to activate within the provider. Omitted (e.g. selecting a provider without a
+  // specific model) falls back to the provider's default: its stored model or the vendor's first
+  // catalog entry.
+  model?: string
+}
+
+// Validation may target a saved provider (key resolved from storage) or an unsaved draft.
+export type ValidateProviderRequest = {
+  // Test prospective form values; existing credentials are merged only in main.
+  // A definitive failure of the unchanged saved connection updates its health, not its config.
+  edit?: UpsertProviderRequest
+  providerId?: string
+  draft?: ProviderDraft
+  // Optional model override for validating a saved provider before that model becomes active.
+  model?: string
+}
+
+// Structured validation outcome so the renderer can render an actionable message per category.
+// 'incompatible' is decided before any network probe: the provider's API format can't drive the
+// active agent framework, so a raw auth probe would only mislead (the key is fine; the pairing isn't).
+export type ValidationCategory =
+  | 'ok'
+  | 'network'
+  | 'auth'
+  | 'model-not-found'
+  | 'bad-url'
+  | 'timeout'
+  | 'incompatible'
+  | 'server-error'
+  | 'unknown'
+
+export type ValidateProviderResult = {
+  // Exact prospective model and route tested by the edit/save operation.
+  testedTarget?: ProviderValidationTarget
+  ok: boolean
+  category: ValidationCategory
+  status?: number
+  message?: string
+  // Whether the outcome was actually recorded on the stored provider. A result can be authenticated
+  // (`ok: true`) yet discarded — the provider was switched, deleted, or superseded by a newer test
+  // while an async sign-in/probe was in flight. Callers that gate navigation on success (onboarding)
+  // must treat `applied === false` as "do not advance": the stored provider does not reflect it.
+  // For prospective edits, absence makes no claim about persisted health; only true confirms it.
+  applied?: boolean
+  // Set when the user explicitly cancelled a browser sign-in. Distinct from applied:false (provider
+  // changed): the login was intentionally stopped, not invalidated by a concurrent edit.
+  cancelled?: boolean
+  // True when the endpoint itself was probed (ok carries endpoint health) but the active agent
+  // framework cannot drive this provider. A derivable (provider, framework) relationship surfaced
+  // for immediate UI feedback — never persisted as a validation failure, because it goes stale the
+  // moment the framework changes.
+  frameworkIncompatible?: boolean
+}
+
+export type SaveValidatedProviderResult = {
+  runtimeReconnectFailed?: boolean
+  validation: ValidateProviderResult
+  // Present only after the atomic configuration and health write has completed.
+  providerId?: string
+  // May also reflect a health-only update after rejected validation, without providerId.
+  // Snapshot refresh can fail after a committed write; providerId still records that outcome.
+  snapshot?: SettingsSnapshot
+}
+
+// Request to refresh a saved provider's model list from the vendor's live API (fills the bundled
+// catalog with the account's current models).
+export type RefreshProviderModelsRequest = {
+  providerId: string
+}
+
+// Outcome of a model-list refresh. On success `models` is the fetched list (also persisted on the
+// provider); on failure the caller keeps the bundled catalog and can surface `message`.
+export type RefreshProviderModelsResult = {
+  ok: boolean
+  models?: string[]
+  category: ValidationCategory
+  message?: string
+}
+
+// Selectable install sources for the one-click claude installer. `managed` is the app-driven download
+// (no user Node/npm needed) and is the default; the other two are manual/advanced fallbacks.
+export type ClaudeInstallSource = 'managed' | 'npm' | 'official-script'
+
+// Trusted registries supported by the app-managed installer. The renderer can select one only from
+// this fixed allow-list; arbitrary download origins never cross the IPC boundary.
+export type ManagedClaudeRegistry = 'npmjs' | 'npmmirror'
+
+// Static, non-secret description of an install source shown in the UI (command is copyable).
+// Install-source copy carried as the English text itself, which under natural-language keys is also
+// its own catalog key. This module is shared with the main process and has no i18n access, so it
+// passes the English through unresolved and the renderer's picker maps it via t(). Spelled as literal
+// unions rather than `string` so a typo in the English fails typecheck at the call site.
+export type InstallSourceLabelKey =
+  | 'App-managed download (recommended)'
+  | 'npm (global install)'
+  | 'Official install.ps1'
+  | 'Official install.sh'
+  | 'Official install script'
+
+export type InstallSourceDescriptionKey =
+  | 'Downloads a self-contained Claude — no Node.js or npm required.'
+  | 'Downloads a self-contained Codex ACP runtime — no Node.js or npm required.'
+  | 'Downloads CodeBuddy into the app-managed runtime and runs it with the app runtime — no global Node.js or npm required.'
+  | 'Downloads a self-contained OpenCode — no Node.js or npm required.'
+
+export type ClaudeInstallSourceInfo = {
+  id: ClaudeInstallSource
+  labelKey: InstallSourceLabelKey
+  // Human-readable command shown in the UI and safe to copy/paste. Empty for the app-managed source,
+  // which has no shell command (the app performs the install itself). Shell text, never translated.
+  displayCommand: string
+  // Whether this source needs npm on PATH (drives default selection + disabled state).
+  requiresNpm: boolean
+  // Optional one-line explanation shown under the picker (used by the app-managed source).
+  descriptionKey?: InstallSourceDescriptionKey
+}
+
+// Guidance for installing Node.js (which bundles npm) when the npm install source is unavailable.
+// The npm path to install claude needs Node present first; a non-developer often won't have it.
+export type NodeInstallHint = {
+  // Copyable one-line install command for this platform, when a reliable one exists.
+  command?: string
+  // Official download page for a manual (GUI) installer — always available as a fallback.
+  url: string
+}
+
+export type InstallClaudeRequest = {
+  source: ClaudeInstallSource
+  // Optional trusted-source preference for an explicit install request. Automatic setup omits this
+  // field and lets the installer try the official registry and China-friendly mirror in order.
+  managedRegistry?: ManagedClaudeRegistry
+}
+
+// Install request for OpenCode. Reuses the same three source kinds as Claude; the app-managed download
+// is the recommended default and the only cross-platform-guaranteed path (no user Node/npm needed).
+export type InstallOpencodeRequest = {
+  source: ClaudeInstallSource
+}
+
+export type InstallPiRequest = {
+  source: 'managed'
+}
+
+export type InstallCodeBuddyRequest = {
+  source: 'managed'
+}
+
+export type CodexInstallSource = Exclude<ClaudeInstallSource, 'official-script'>
+
+// Codex supports only an app-managed bundle or the upstream npm-global adapter. Authentication is
+// always provider API-key based; ChatGPT/local Codex login is intentionally absent.
+export type InstallCodexRequest = {
+  source: CodexInstallSource
+}
+
+// One streamed line of installer output. `installId` groups a single install run.
+export type ClaudeInstallLogEvent = {
+  kind: 'log'
+  installId: string
+  stream: 'stdout' | 'stderr' | 'system'
+  chunk: string
+}
+
+// Coarse stage of an install run, used to label the progress bar.
+export type ClaudeInstallPhase = 'resolving' | 'downloading' | 'extracting' | 'installing'
+
+// One progress tick driving the install progress bar. `receivedBytes`/`totalBytes` are present only
+// for a determinate download (the app-managed source, when the server reports a content length); their
+// absence marks an indeterminate phase (npm/official-script, or an unknown download size).
+export type ClaudeInstallProgressEvent = {
+  kind: 'progress'
+  installId: string
+  phase: ClaudeInstallPhase
+  receivedBytes?: number
+  totalBytes?: number
+}
+
+// The single install-event stream: discrete log lines and progress ticks share one ordered channel,
+// discriminated by `kind`. The renderer routes by kind (progress → the bar, log → the log pane).
+export type ClaudeInstallEvent = ClaudeInstallLogEvent | ClaudeInstallProgressEvent
+
+// Final result of an install run; on success the caller re-detects claude.
+export type ClaudeInstallResult = {
+  installId: string
+  ok: boolean
+  exitCode?: number
+  timedOut?: boolean
+  error?: string
+  // The official installer returned a region-block HTML page instead of the script (common in
+  // regions where claude.ai is unavailable); the installer auto-falls-back to npm when it can.
+  regionBlocked?: boolean
+  // The install failed with output matching a transient network fault (registry timeout, connection
+  // reset); the runner retries the same source a few times before surfacing the failure.
+  retryableNetworkFailure?: boolean
+}
+
+// Availability of npm on the host, used to gate the npm source.
+export type NpmAvailability = {
+  available: boolean
+}
+
+// Automatic first-run environment inspection. Warnings are non-blocking; failures identify setup
+// requirements that prevent a supported configuration, such as unavailable secure credential storage.
+export type EnvironmentCheckId =
+  | 'system'
+  | 'storage'
+  | 'secure-storage'
+  | 'install-network'
+  | 'python'
+  // The selected agent runtime (Claude or OpenCode); label/summary are framework-specific.
+  | 'agent'
+
+export type EnvironmentCheckStatus = 'passed' | 'warning' | 'failed'
+
+export type EnvironmentCheckPresentation =
+  | {
+      kind: 'system-supported'
+      platform: string
+      architecture: string
+    }
+  | {
+      kind: 'system-baseline-supported'
+      platform: string
+      architecture: string
+    }
+  | {
+      kind: 'system-detected-runtime'
+      platform: string
+      architecture: string
+      runtime: string
+    }
+  | {
+      kind: 'system-no-installer'
+      platform: string
+      architecture: string
+    }
+  | { kind: 'storage-writable' }
+  | { kind: 'storage-unwritable' }
+  | { kind: 'file-credential-storage' }
+  | { kind: 'secure-storage-available' }
+  | { kind: 'secure-storage-unavailable' }
+  | {
+      kind: 'install-network-runtime-present'
+      runtime: string
+    }
+  | {
+      kind: 'install-network-registry-available'
+      registry: ManagedClaudeRegistry
+      latencyMs: number
+    }
+  | { kind: 'install-network-unreachable' }
+
+export type EnvironmentCheckItem = {
+  id: EnvironmentCheckId
+  label: string
+  status: EnvironmentCheckStatus
+  summary: string
+  detail?: string
+  // Stable renderer-owned copy projection. The English strings above remain as a compatibility
+  // fallback and for technical diagnostics that must be shown verbatim.
+  presentation?: EnvironmentCheckPresentation
+}
+
+export type EnvironmentCheckResult = {
+  checkedAt: number
+  platform: string
+  architecture: string
+  checks: EnvironmentCheckItem[]
+  // True when no required check failed. A warning does not block the next onboarding step.
+  ready: boolean
+  // True when the managed runtime can be attempted using a reachable trusted source and app-owned
+  // data directory. More detailed operational errors are reported by the install log.
+  canAutoInstall: boolean
+  recommendedRegistry?: ManagedClaudeRegistry
+  // The framework this check inspected, and its runtime detection result.
+  agentFrameworkId: AgentFrameworkId
+  runtime: ClaudeDetectResult
+}
+
+// Stable machine codes for failed Settings writes. The renderer display layer translates by code,
+// so no English message text ever crosses the store boundary or gets string-compared to decide a
+// translation. Codes are single hyphenated tokens with no spaces: concurrent failures are joined
+// with spaces in the visible error string and split back apart by the display layer.
+export type SettingsWriteErrorCode =
+  | 'active-provider'
+  | 'agent-framework'
+  | 'reasoning-effort'
+  | 'reviewer-model'
+  | 'prompt-optimization-model'
+  | 'session-details-model'
+  | 'subagent-model'
+  | 'vision-model'
+  | 'notifications'
+  | 'notification-content'
+  | 'conversation-skill-import'
+  | 'close-preference'
+  | 'default-permission-profile'
+  | 'app-icon'
+  | 'project-files-filter'
+
+// Renderer-safe view of one bundled skill (no file contents).
+export type SkillView = {
+  id: string
+  // Settings may surface an on-disk package that runtime identity checks excluded. Omitted by an
+  // older main process means available.
+  available?: boolean
+  availability?: 'identity-conflict'
+  // Ephemeral row identity for conflicting packages that reuse the same durable id.
+  catalogEntryKey?: string
+  directoryName?: string
+  // Stable invocation name from SKILL.md.
+  name: string
+  // Presentation label supplied by the catalog source, falling back to name.
+  displayName: string
+  description: string
+  source: SkillSource
+  updatedAt: string
+  enabled: boolean
+  activationPolicy?: SkillActivationPolicy
+  // From the SKILL.md frontmatter; shown in the detail view's "Details" section when present.
+  author?: string
+  license?: string
+  thirdParty?: string
+}
+
+// A skill view plus its SKILL.md body (frontmatter stripped) and the names of any files under its
+// `references/` directory, for the detail/edit view.
+export type SkillDetailView = SkillView & {
+  // Opaque read-time validator for conditional saves; not a stored revision counter.
+  etag?: string
+  body: string
+  metadata?: Record<string, string>
+  references: SkillReferenceInfo[]
+  // Complete regular-file inventory, with paths relative to the package root.
+  packageFiles: SkillPackageFileInfo[]
+}
+
+export type ExportSkillRequest = { id: string }
+
+export type ExportSkillResult = { saved: boolean }
+
+// Resolves a renderable SKILL.md document by its canonical invocation name across every source the
+// runtime can load from: the managed Skills catalog, enabled bundled connectors (rendered on the
+// fly), and materialized custom MCP server skills. Electron-only — the document sources live on the
+// main-process filesystem. A null result means no source provides the name.
+export type ResolveSkillDocumentRequest = { name: string }
+
+export type ResolvedSkillDocument = {
+  name: string
+  displayName?: string
+  description?: string
+  // SKILL.md body with the YAML frontmatter stripped, matching SkillDetailView.body.
+  body: string
+}
+
+export type SetSkillEnabledRequest = {
+  id: string
+  enabled: boolean
+}
+
+export type SetSkillsEnabledRequest = {
+  ids: string[]
+  enabled: boolean
+}
+
+// Create a personal (user-authored) skill from the in-app editor. `name` is the immutable invocation
+// identity and the package directory name.
+export type CreateSkillRequest = {
+  name: string
+  description: string
+  body: string
+  metadata?: Record<string, string>
+  references?: SkillReference[]
+}
+
+// Update an existing personal skill through a staged package replacement.
+export type UpdateSkillRequest = {
+  id: string
+  // Omit for an unconditional update; supplied etags are checked before any write.
+  etag?: string
+  description: string
+  body: string
+  metadata?: Record<string, string>
+  references?: SkillReference[]
+}
+
+export type DeleteSkillRequest = {
+  id: string
+  source?: Extract<SkillSource, 'imported' | 'personal'>
+  directoryName?: string
+}
+
+// Import a single skill from a public GitHub URL.
+export type ImportSkillRequest = {
+  url: string
+}
+
+// Renderer-safe GitHub credential state. Main never returns the plaintext token.
+export type GitHubTokenStatus = {
+  configured: boolean
+  mask?: string
+}
+
+export type SaveGitHubTokenRequest = {
+  token: string
+}
+
+// Import a skill from an uploaded .zip / .skill bundle (base64-encoded archive bytes). When
+// `replaceId` is set, the bundle overwrites that already-imported skill in place instead of being
+// imported as a new (possibly suffixed) skill.
+export type ImportSkillZipRequest = {
+  dataBase64: string
+  filename?: string
+  replaceId?: string
+  subPath?: string
+}
+
+// Parse an uploaded .zip / .skill bundle without importing it, for a confirm-before-import preview.
+export type PreviewSkillZipRequest = {
+  dataBase64: string
+}
+
+export type SkillImportPreviewContent = {
+  replacement?: SkillReplacementPreview
+  name: string
+  description: string
+  sourceLabel: string
+  metadata: Record<string, string>
+  body: string
+  files: string[]
+}
+
+export type PreviewGitHubSkillRequest = {
+  url: string
+}
+
+// Import several skills from ONE uploaded bundle in a single call, so a bundle holding many skills is
+// unpacked once instead of re-decoded per skill. Each item selects a skill root by subPath (and may
+// target an existing imported skill to replace).
+export type ImportSkillZipBatchRequest = {
+  dataBase64: string
+  items: { subPath: string; replaceId?: string }[]
+}
+
+// Per-item outcome of a batch import: the same status as a single import on success, or an error
+// message on failure, keyed by the requested subPath. The refreshed skill list is returned once.
+// Per-item outcome: on success `status` (+ `id`) is set and `error` is absent; on failure `error` is
+// set and `status`/`id` are absent. The two are mutually exclusive, so a caller keys off `error`.
+export type ImportSkillZipBatchItemResult =
+  | { subPath: string; status: 'imported' | 'unchanged' | 'updated'; id: string; error?: undefined }
+  | { subPath: string; status?: undefined; id?: undefined; error: string }
+
+export type ImportSkillZipBatchResult = {
+  results: ImportSkillZipBatchItemResult[]
+  skills: SkillView[]
+}
+
+// A Skill package import requested by an agent tool. The main process owns the archive bytes and
+// sends only the parsed, bounded preview to the renderer for an explicit user decision.
+export type ConversationSkillImportApprovalRequest = SkillBundlePreviewResult & {
+  id: string
+  sessionId: string
+  source: {
+    kind: 'attachment' | 'github'
+    label: string
+  }
+}
+
+export type ConversationSkillImportSelection = {
+  subPath: string
+  replaceId?: string
+}
+
+export type ConversationSkillImportApprovalResponse =
+  | { id: string; cancelled: true; items?: undefined }
+  | { id: string; cancelled?: false; items: ConversationSkillImportSelection[] }
+
+export type ConversationSkillImportResult = {
+  status: 'imported' | 'unchanged' | 'partial' | 'cancelled'
+  skills: Array<{
+    id: string
+    name: string
+    status: 'imported' | 'unchanged' | 'updated'
+  }>
+  errors?: Array<{ name: string; error: string }>
+  warnings?: string[]
+}
+
+// Search GitHub by keyword, or scan a direct repo reference for skill directories.
+export type ScanRepoRequest = {
+  repo: string
+}
+
+export type PreviewAgentHomeSkillRequest = AgentHomeSkillRef
+
+// Batch import selected user-level skills. Main re-derives every absolute path from the trusted
+// source id + slug pair, so the renderer cannot use this interface to read arbitrary host paths.
+export type ImportAgentHomeSkillsRequest = {
+  skills: AgentHomeSkillRef[]
+}
+
+// One bad or concurrently removed source does not abort the rest of a checked batch.
+export type ImportAgentHomeSkillItemResult =
+  import('@aipoch/skills/document').AgentHomeSkillImportResult
+
+export type ImportAgentHomeSkillsResult = {
+  results: ImportAgentHomeSkillItemResult[]
+  skills: SkillView[]
+}
+
+// One skill directory found by a repo scan, with an importable URL and whether it's already imported.
+export type ScannedSkillView = {
+  installedId?: string
+  name: string
+  path: string
+  url: string
+  alreadyImported: boolean
+}
+
+// The existing scan seam also handles keyword discovery. Presence of `repositories` identifies a
+// search result, including the empty-results case; direct repo scans retain their original shape.
+export type ScanRepoResult =
+  | { skills: ScannedSkillView[]; repositories?: never }
+  | { skills: []; repositories: GitHubRepositorySearchView[] }
+
+// Outcome of an import: newly imported, refreshed from upstream, or an already-imported no-op. The
+// refreshed skill list is included so the renderer can update in one round-trip.
+export type ImportSkillResult = {
+  status: 'imported' | 'unchanged' | 'updated'
+  id: string
+  skills: SkillView[]
+}
+
+// --- Connectors ---------------------------------------------------------------------------------
+
+// Per-tool Connector policy. `ask` requires a matching Broker grant or a scoped approval prompt.
+export type ToolPermission = 'allow' | 'ask' | 'block'
+
+// One tool within a connector, with its current permission (derived: 'block' if blocklisted).
+export type ConnectorToolView = {
+  id: string // "<connector>/<method>"
+  method: string
+  description: string
+  permission: ToolPermission
+}
+
+// Which section a bundled connector belongs to in the settings list.
+export type ConnectorGroup = 'featured' | 'directory'
+
+// Renderer-safe view of one bundled connector (no tool schemas).
+export type ConnectorView = {
+  id: string
+  // Immutable invocation/export name. Bundled Connectors currently use the same value as id.
+  name: string
+  displayName: string
+  description: string
+  sources: string[]
+  requiresNcbi: boolean
+  enabled: boolean // Catalog default with persisted explicit enable/disable choices.
+  autoAllow: boolean // autoAllowIds.includes(id) — "Skip approvals"
+  group: ConnectorGroup
+}
+
+// A connector view plus its tools and metadata, for the detail page.
+export type ConnectorDetailView = ConnectorView & {
+  useWhen: string
+  termsUrl?: string
+  tools: ConnectorToolView[]
+}
+
+// NCBI / research-service credential state surfaced to the renderer (never the plaintext key).
+export type NcbiCredentialsView = { contactEmail?: string; hasApiKey: boolean }
+
+// Renderer-safe OpenAlex state. The key itself never crosses the main-process boundary.
+export type OpenAlexCredentialView = { hasApiKey: boolean }
+
+// Transport for a user-added custom MCP server: stdio (local command) or a remote HTTP variant.
+export type CustomServerTransport = 'stdio' | 'streamable_http' | 'sse'
+
+// Renderer-safe view of one user-added custom MCP server (no secret env/header values).
+export type CustomServerView = {
+  id: string
+  // Immutable agent-facing name used by host.mcp, Specialists, and generated MCP skills.
+  name: string
+  // User-facing label; spaces, punctuation, and duplicates are allowed.
+  displayName: string
+  description?: string
+  transport: CustomServerTransport
+  enabled: boolean
+  // Physical availability is independent of Main's enabled toggle. An invalid persisted server may
+  // remain visible to a Specialist but can never be selected or dispatched.
+  availability?: 'unavailable' | 'unauthenticated' | 'credential_unavailable'
+  // Background discovery is transient and does not make the Connector unavailable by itself.
+  checking?: boolean
+  // Display-only config summary. Environment/header names are safe to show; values stay write-only.
+  command?: string
+  args?: string[]
+  url?: string
+  hasHeaders?: boolean
+  headerNames?: string[]
+  hasEnv?: boolean
+  environmentNames?: string[]
+  // Opaque device credential reference used to preselect a shared OAuth credential in Configure.
+  oauthCredentialId?: string
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+    clientId?: string
+    redirectUri?: string
+    hasTokens: boolean
+    // Optional for compatibility with snapshots from an older main process during development.
+    hasClientSecret?: boolean
+    sharedCredential?: boolean
+  }
+}
+
+// The connectors list plus custom servers and shared credential state, returned by list/mutation calls.
+export type ConnectorsSnapshot = {
+  connectors: ConnectorView[]
+  customServers: CustomServerView[]
+  // Derived Agent Skill documents can fail independently after durable Connector settings save.
+  skillProjectionStatus?: 'degraded'
+  // Local IDs reserved until interrupted custom Connector deletion cleanup completes.
+  reservedCustomServerIds?: string[]
+  ncbi: NcbiCredentialsView
+  // Optional only for compatibility with an older main process during local development.
+  openAlex?: OpenAlexCredentialView
+  semanticScholar?: { hasApiKey: boolean }
+}
+
+export type SetConnectorEnabledRequest = { id: string; enabled: boolean }
+export type SetConnectorAutoAllowRequest = { id: string; autoAllow: boolean }
+export type SetToolPermissionRequest = { toolId: string; permission: ToolPermission }
+export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string }
+export type SetSemanticScholarCredentialRequest = { apiKey: string }
+export type SetOpenAlexCredentialRequest = { apiKey: string }
+export type ValidateOpenAlexCredentialRequest = { apiKey: string }
+export type OpenAlexCredentialValidation =
+  { valid: true } | { valid: false; reason: 'invalid-format' | 'rejected' | 'unavailable' }
+
+export type DeviceCredentialKind = 'api_key' | 'token' | 'oauth'
+export type DeviceOAuthTransport = Extract<CustomServerTransport, 'streamable_http' | 'sse'>
+export type DeviceOAuthRegistration = {
+  clientMetadataUrl?: string
+  authorizationServerUrl?: string
+  scopes?: string[]
+  clientId?: string
+  redirectUri?: string
+}
+
+export type DeviceCredentialView = {
+  id: string
+  displayName: string
+  kind: DeviceCredentialKind
+  status: 'stored' | 'connected' | 'disconnected'
+  needsSecret: boolean
+  resourceUri?: string
+  transport?: DeviceOAuthTransport
+  oauth?: DeviceOAuthRegistration
+  hasClientSecret?: boolean
+  // Derived separately from unreadable OAuth login state; never persisted.
+  needsClientSecret?: boolean
+  consumerCount: number
+  consumerNames: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+export type DeviceCredentialsSnapshot = { credentials: DeviceCredentialView[] }
+export type CreateDeviceCredentialResult = {
+  // Missing when creation committed but the full consumer projection could not be read.
+  credentials?: DeviceCredentialView[]
+  createdCredential: DeviceCredentialView
+}
+
+export type CreateDeviceCredentialRequest =
+  | { displayName: string; kind: 'api_key' | 'token'; secret: string }
+  | {
+      displayName: string
+      kind: 'oauth'
+      resourceUri: string
+      transport: DeviceOAuthTransport
+      oauth: DeviceOAuthRegistration & {
+        clientSecret?: string
+      }
+    }
+
+export type UpdateDeviceCredentialRequest = {
+  id: string
+  displayName?: string
+  secret?: string
+}
+
+export type RemoveDeviceCredentialRequest = { id: string }
+export type DeviceCredentialAuthenticationRequest = { id: string }
+
+// Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
+export type AddCustomServerRequest = {
+  // Optional immutable local ID. Omission lets main infer one from `name` and fall back to a UUID.
+  id?: string
+  name: string
+  displayName: string
+  description?: string
+  transport: CustomServerTransport
+  command?: string
+  args?: string[]
+  envCredentialIds?: Record<string, string>
+  url?: string
+  headerCredentialIds?: Record<string, string>
+  oauthCredentialId?: string
+  // Non-secret registration requirements checked against a selected shared OAuth credential.
+  // They are validation input only and are not persisted on the Connector.
+  oauthRequirements?: DeviceOAuthRegistration
+  // Request-only marker from an imported template. Main validates the selected shared credential;
+  // the marker is never persisted on the Connector.
+  requiresOAuthClientSecret?: boolean
+}
+export type SetCustomServerEnabledRequest = { id: string; enabled: boolean }
+export type RemoveCustomServerRequest = { id: string }
+export type AuthenticateCustomServerRequest = { id: string }
+export type DisconnectCustomServerRequest = { id: string }
+
+// Versioned, credential-free exchange format for sharing one custom Connector. Secret fields list
+// names only; values are always supplied locally through the trusted Add Connector form.
+export type ConnectorTemplateDefinition = {
+  schemaVersion: 1
+  kind: 'open-science.connector'
+  name: string
+  displayName: string
+  description?: string
+  transport: CustomServerTransport
+  command?: string
+  args?: string[]
+  url?: string
+  requiredSecrets?: {
+    environment?: string[]
+    headers?: string[]
+    oauthClientSecret?: boolean
+  }
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+    clientId?: string
+    redirectUri?: string
+  }
+}
+
+export type ConnectorTemplateDiagnostic = {
+  severity: 'error' | 'warning'
+  code: string
+  message: string
+  path?: string
+}
+
+export type ConnectorTemplatePreview = {
+  definition?: ConnectorTemplateDefinition
+  // MCP client configuration files may contain more than one server. The renderer selects one
+  // definition at a time and sends it through the existing trusted Add Connector workflow.
+  definitions?: ConnectorTemplateDefinition[]
+  sourceFormat?: 'open-science' | 'mcp-client' | 'mcp-registry'
+  diagnostics: ConnectorTemplateDiagnostic[]
+  ready: boolean
+}
+
+export type ConnectorTemplateExportPreview = ConnectorTemplatePreview & {
+  connectorId: string
+  digest?: string
+  suggestedFileName?: string
+  mcpClientDigest?: string
+  mcpClientSuggestedFileName?: string
+  mcpClientDiagnostics?: ConnectorTemplateDiagnostic[]
+}
+
+export type ConnectorTemplateSelectionResult =
+  { cancelled: true } | { cancelled: false; fileName: string; preview: ConnectorTemplatePreview }
+
+export type SelectCustomServerTemplateRequest = {
+  fileName: string
+  contents: string
+}
+
+export type ConnectorTemplateExportFormat = 'open-science' | 'mcp-client'
+export type ExportCustomServerTemplateRequest = {
+  id: string
+  expectedDigest: string
+  format?: ConnectorTemplateExportFormat
+}
+export type ExportCustomServerTemplateResult = { saved: boolean }
+
+// Edit an existing custom MCP server. `name` is deliberately absent because it is immutable.
+// Omitted env/headers keep the stored values; providing them replaces the set.
+export type UpdateCustomServerRequest = {
+  id: string
+  displayName?: string
+  description?: string
+  transport: CustomServerTransport
+  command?: string
+  // Omitted keeps saved args while staying on stdio; [] explicitly clears them.
+  args?: string[]
+  env?: Record<string, string>
+  envCredentialIds?: Record<string, string>
+  url?: string
+  headers?: Record<string, string>
+  headerCredentialIds?: Record<string, string>
+  // Omitted retains the current shared OAuth binding; a value selects or replaces it.
+  oauthCredentialId?: string
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+    clientId?: string
+    redirectUri?: string
+    // Omitted keeps the stored secret; null explicitly removes it.
+    clientSecret?: string | null
+  } | null
+}
+
+// A per-call approval request for a connector tool invocation (external data-egress gate). Sent from
+// main to the renderer, which shows an approval card and responds with a decision.
+export type ConnectorApprovalRequest = {
+  id: string
+  connector: string // bundled connector id or custom server name
+  // Custom Connector identity/route metadata. Optional for bundled requests and compatibility with
+  // an older main process during development.
+  connectorId?: string
+  connectorName?: string
+  displayName?: string
+  transport?: CustomServerTransport
+  target?: string
+  method: string
+  argsPreview: string // truncated JSON preview of the call arguments
+  argsJson?: string // bounded serialized arguments, expandable in the approval dialog
+  argsJsonTruncated?: boolean
+  // The session that triggered the connector call, so a desktop notification can surface and open
+  // that conversation. Absent for call paths that don't carry one.
+  sessionId?: string
+  // Missing only when talking to an older main process during development; renderer falls back to Once.
+  availableScopes?: ConnectorApprovalScope[]
+}
+export type ConnectorApprovalScope = 'once' | 'session' | 'project' | 'global'
+export type ApprovalDecision = ConnectorApprovalScope | 'deny'
+export type RespondApprovalRequest = { id: string; decision: ApprovalDecision }
+
+export type ConnectorCredentialRequestInfo = {
+  credentialId: 'openalex'
+  connector: string
+  method: string
+  sessionId?: string
+}
+
+// Public metadata for a parked Connector call. The credential value is never sent on this event.
+export type ConnectorCredentialRequest = ConnectorCredentialRequestInfo & { id: string }
+export type RespondConnectorCredentialRequest = { id: string; configured: boolean }
+
+// Minimal settings slice the remote-file-browser bookmark helpers depend on. Declared here in
+// src/shared (not src/main) so src/shared/remote-fs.ts stays within the shared layer — the full
+// StoredSettings in src/main structurally satisfies this shape.
+export type ComputeBookmarkStore = { computeBookmarks?: Record<string, string[]> }

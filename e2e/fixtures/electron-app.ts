@@ -302,7 +302,7 @@ const settlesWithin = async (promise: Promise<void>, timeoutMs: number): Promise
 
 // Allow platform-specific shutdown latency while keeping each cleanup phase bounded.
 const CLEANUP_GRACEFUL_TIMEOUT_MS =
-  process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
+  process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 30_000 : 10_000
 const CLEANUP_FORCED_TIMEOUT_MS =
   process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
 
@@ -415,6 +415,11 @@ type ElectronApp = {
   }) => Promise<Page>
   restartAfterCrash: (options?: { force?: boolean }) => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
+  restartWithRawSessionFileFixture: (fixture: {
+    projectId: string
+    sessionId: string
+    contents: string
+  }) => Promise<Page>
   restartWithSessionFixture: (
     session: PersistedChatSession,
     notebookRuns?: NotebookRunRecord[],
@@ -425,6 +430,7 @@ type ElectronApp = {
   captureResourceTimings: (prefix?: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
   setMainWindowSize: (width: number, height: number) => Promise<void>
+  setMainWindowSizeAndViewport: (width: number, height: number) => Promise<void>
   auditSourceAttachments: () => Promise<JSHandle<boolean[]>>
   pressSourcePreviewShortcut: (
     url: string,
@@ -460,6 +466,7 @@ const launchEnvironment = (
       'comspec',
       'temp',
       'tmp',
+      'tmpdir',
       'number_of_processors',
       'processor_architecture',
       'systemdrive',
@@ -703,6 +710,15 @@ const launchOpenScience = async (
     ...electronLaunchTarget(userDataRoot),
     args: [...electronLaunchTarget(userDataRoot).args, ...(packagePath ? [packagePath] : [])],
     cwd: fakeRemoteItEnabled ? fakeRemoteItRoot : APP_ROOT,
+    // Opt-in recordings stay outside disposable fixture profiles for before/after evidence.
+    ...(process.env.OPEN_SCIENCE_E2E_VIDEO_DIR
+      ? {
+          recordVideo: {
+            dir: process.env.OPEN_SCIENCE_E2E_VIDEO_DIR,
+            size: { width: 1280, height: 900 }
+          }
+        }
+      : {}),
     env: {
       ...environment,
       ...(process.platform === 'darwin' && !process.env.OPEN_SCIENCE_E2E_EXECUTABLE
@@ -1636,6 +1652,22 @@ class ElectronAppHarness implements ElectronApp {
     )
   }
 
+  async setMainWindowSizeAndViewport(width: number, height: number): Promise<void> {
+    await this.page.setViewportSize({ width, height })
+    await this.setMainWindowSize(width, height)
+    await expect
+      .poll(() =>
+        this.runningApplication.evaluate(({ BrowserWindow }) => {
+          const bounds = BrowserWindow.getAllWindows()[0].getBounds()
+          return { width: bounds.width, height: bounds.height }
+        })
+      )
+      .toEqual({ width, height })
+    await expect
+      .poll(() => this.page.evaluate(() => ({ width: innerWidth, height: innerHeight })))
+      .toEqual({ width, height })
+  }
+
   async pressSourcePreviewShortcut(
     url: string,
     key: string,
@@ -1938,6 +1970,30 @@ class ElectronAppHarness implements ElectronApp {
         })
     }
     // Rebuild the catalog from the fixture file, just as the historical-session fixture does.
+    const client = createProjectDbClient(this.roots.storageRoot)
+    try {
+      await client.sessionProjectionState.deleteMany()
+    } finally {
+      await client.$disconnect()
+    }
+    await this.launch()
+    return this.page
+  }
+
+  async restartWithRawSessionFileFixture(fixture: {
+    projectId: string
+    sessionId: string
+    contents: string
+  }): Promise<Page> {
+    if (![fixture.projectId, fixture.sessionId].every((id) => /^[a-zA-Z0-9_-]+$/.test(id))) {
+      throw new Error('Invalid E2E Session fixture identity.')
+    }
+    await this.close()
+    const directory = join(this.roots.storageRoot, 'sessions', fixture.projectId)
+    await mkdir(directory, { recursive: true })
+    // Preserve the released fixture byte-for-byte instead of re-encoding it through the current
+    // createSessionFile projection.
+    await writeFile(join(directory, `${fixture.sessionId}.json`), fixture.contents, 'utf8')
     const client = createProjectDbClient(this.roots.storageRoot)
     try {
       await client.sessionProjectionState.deleteMany()

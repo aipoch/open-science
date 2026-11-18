@@ -2,6 +2,12 @@
 
 # AI review authentication
 
+Reviews run for ready PRs targeting main on opened, synchronize, reopened, and
+ready_for_review events. Draft PRs are skipped, including manual dispatches.
+Converting a PR back to draft cancels an in-progress run through PR concurrency;
+the publisher also checks the current draft status before posting feedback.
+Existing enablement, fork policy, and review-round limits still apply.
+
 The `AI PR Review (Single)` workflow supports API-key and Codex subscription authentication.
 Subscription auth is the default for every allowed automatic or manually dispatched pull request
 review. Invalid or missing subscription credentials fall back to API-key auth. API-key auth also

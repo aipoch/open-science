@@ -158,8 +158,12 @@ export {
 
 export { HuggingFaceJobCreationRejectedError } from './hugging-face-jobs-http'
 
-export { resolveRayJobsEndpoint, isRayBearerEndpoint, type RayJobsTarget } from './ray-jobs-http'
+/** @deprecated Import Ray endpoint helpers from `@aipoch/compute/ray-endpoint`. */
+export { resolveRayJobsEndpoint, isRayBearerEndpoint } from './ray-endpoint'
+export type { RayJobsTarget } from './ray-jobs-http'
+/** @deprecated Import Ray APIs from `@aipoch/compute/ray`. */
 export { prepareRayJobInputs, uploadRayWorkingDirectory } from './ray-job-inputs'
+/** @deprecated Import Ray APIs from `@aipoch/compute/ray`. */
 export {
   inspectRayJob,
   inspectRayDashboard,
@@ -168,9 +172,11 @@ export {
   RayJobCreationRejectedError,
   RayJobCreationNotSentError,
   stopRayJob,
+  deleteRayJob,
   readRayJobLogs,
   type RayJobClaim,
   type RayJobStatus,
   type RayJobObservation
 } from './ray-job-control'
+/** @deprecated Import Ray APIs from `@aipoch/compute/ray`. */
 export { stageRayJobOutputs } from './ray-job-outputs'

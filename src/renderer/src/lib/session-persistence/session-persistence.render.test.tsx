@@ -139,6 +139,7 @@ describe('session persistence startup', () => {
         data-persistence-blocked={persistence.persistenceBlockedSessionIds.join(',')}
         data-checking={String(persistence.isCheckingWrites)}
         data-write-targets={persistence.writeIssues.map(({ target }) => target).join(',')}
+        data-session-load-errors={JSON.stringify(persistence.sessionLoadErrorsBySession)}
       >
         <span data-testid="load-error">{persistence.loadError ?? 'sessions available'}</span>
         <span data-testid="load-warning">{persistence.loadWarning ?? 'no load warnings'}</span>
@@ -220,6 +221,98 @@ describe('session persistence startup', () => {
     window.api.sessions.loadOne = loadOne
     return loadOne
   }
+
+  it('opens selected history through a page without loading or saving the complete transcript', async () => {
+    const persisted = createPersistedSession({
+      number: 1,
+      messages: [
+        {
+          id: 'last-message',
+          role: 'user',
+          content: 'Latest page',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    const loadOne = installHistory([persisted])
+    window.api.sessions.loadHistoryPage = vi.fn().mockResolvedValue({
+      projectId: persisted.projectId,
+      sessionId: persisted.id,
+      revision: 0,
+      session: persisted,
+      totalItems: 200,
+      hasMore: true,
+      beforeCursor: 'earlier'
+    })
+    await act(async () => root.render(<Probe />))
+    await act(async () => {
+      useSessionStore.getState().selectSession(persisted.id)
+      await Promise.resolve()
+    })
+    expect(window.api.sessions.loadHistoryPage).toHaveBeenCalledOnce()
+    expect(loadOne).not.toHaveBeenCalled()
+    expect(saveSession).not.toHaveBeenCalled()
+    const displayed = useSessionStore.getState().sessions[0]
+    expect(displayed.messages[0].content).toBe('Latest page')
+    expect(displayed.contentLoaded).toBe(false)
+    expect(displayed.historyPage?.hasMore).toBe(true)
+  })
+
+  it('reclaims inactive history pages under the existing sixteen-session retention limit', async () => {
+    const histories = Array.from({ length: 17 }, (_, index) =>
+      createPersistedSession({
+        id: `paged-${index}`,
+        number: index + 1,
+        messages: [
+          {
+            id: `message-${index}`,
+            role: 'user',
+            content: `Page ${index}`,
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+    )
+    const loadOne = installHistory(histories)
+    window.api.sessions.loadHistoryPage = vi.fn(async ({ sessionId }) => {
+      const session = histories.find(({ id }) => id === sessionId)!
+      return {
+        projectId: session.projectId,
+        sessionId,
+        revision: 0,
+        session,
+        totalItems: 100,
+        hasMore: true,
+        beforeCursor: 'earlier'
+      }
+    })
+    await act(async () => root.render(<Probe />))
+    for (const history of histories) {
+      await act(async () => {
+        useSessionStore.getState().selectSession(history.id)
+        await Promise.resolve()
+      })
+    }
+    expect(
+      useSessionStore.getState().sessions.filter((session) => session.historyPage)
+    ).toHaveLength(16)
+    expect(
+      useSessionStore.getState().sessions.find(({ id }) => id === 'paged-0')?.messages
+    ).toEqual([])
+    expect(loadOne).not.toHaveBeenCalled()
+    expect(saveSession).not.toHaveBeenCalled()
+    await act(async () => {
+      useSessionStore.getState().selectSession('paged-0')
+      await Promise.resolve()
+    })
+    expect(window.api.sessions.loadHistoryPage).toHaveBeenCalledTimes(18)
+  })
 
   it('shows retained terminal storage failures globally and retries only the exact execution', async () => {
     loadAll.mockReset().mockResolvedValue(emptyLoadResult())
@@ -2328,5 +2421,68 @@ describe('session persistence startup', () => {
     expect(loadOne).toHaveBeenCalledTimes(2)
     expect(saveSession).not.toHaveBeenCalled()
     expect(saveManifest).toHaveBeenCalledWith({ lastSessionId: second.id })
+  })
+
+  it('keeps a newer lazy-load error when an older request settles after retry', async () => {
+    const session = createPersistedSession({ number: 1 })
+    const summary: SessionSummary = {
+      number: 1,
+      id: session.id,
+      projectId: session.projectId,
+      title: session.title,
+      status: session.status,
+      presentedStatus: session.status,
+      pinned: false,
+      revision: 0,
+      activeMessageCount: 0,
+      artifactCount: 0,
+      filesRevision: 0,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      needsStartupRecovery: false
+    }
+    let resolveOldRequest: (value: PersistedChatSession) => void = () => undefined
+    const oldRequest = new Promise<PersistedChatSession>((resolve) => {
+      resolveOldRequest = resolve
+    })
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    window.api.sessions.list = vi.fn().mockResolvedValue({
+      sessions: [summary],
+      manifest: { version: SESSION_MANIFEST_VERSION, lastSessionId: session.id },
+      diagnostics: emptyLoadResult().diagnostics
+    })
+    const loadOne = vi.fn(({ sessionId }: { sessionId: string }) => {
+      expect(sessionId).toBe(session.id)
+      return loadOne.mock.calls.length === 1
+        ? oldRequest
+        : Promise.reject(new Error('new retry error'))
+    })
+    window.api.sessions.loadOne = loadOne
+
+    await act(async () => root.render(<Probe />))
+    await act(async () => {
+      useSessionStore.getState().selectSession(session.id)
+      await Promise.resolve()
+    })
+    expect(loadOne).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')?.click()
+    })
+    await vi.waitFor(() => expect(loadOne).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-testid="load-error"]')?.textContent).toBe(
+        'sessions available'
+      )
+    )
+    expect(container.querySelector('div')?.dataset.sessionLoadErrors).toContain(
+      `${session.projectId}\\u0000${session.id}`
+    )
+
+    await act(async () => resolveOldRequest(session))
+
+    expect(container.querySelector('div')?.dataset.sessionLoadErrors).toContain(
+      `${session.projectId}\\u0000${session.id}`
+    )
   })
 })

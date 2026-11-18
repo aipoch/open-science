@@ -841,9 +841,19 @@ describe('verified structure source bridge', () => {
           else element.caption!.regions = [{ ...element.regions[0] }]
         }
         const result = await applyCachedPdfStructureSources(f.args)
-        expect(result.retainedUnitIds).toEqual([])
-        expect(result.extraction).toBe(f.args.extraction)
-        expect(result.extraction.source.originalRegions).toBeUndefined()
+        if (kind === 'table' && (variant === 'mixed-prose' || variant === 'mixed-caption')) {
+          expect(result.retainedUnitIds).toEqual(['native-0', 'native-2', 'native-4', 'native-6'])
+          expect(result.retainedSourcePageNumbers).toEqual([1])
+          expect(result.extraction.source.units).toEqual(
+            f.args.extraction.source.units.map((u) =>
+              result.retainedUnitIds.includes(u.id) ? { ...u, sourceOnly: true } : u
+            )
+          )
+        } else {
+          expect(result.retainedUnitIds).toEqual([])
+          expect(result.extraction).toBe(f.args.extraction)
+        }
+        expect(result.extraction.source.originalRegions ?? []).toEqual([])
       } finally {
         await f.loading.destroy()
       }
@@ -1083,7 +1093,10 @@ async function isolatedPlotCaption(referenceContext = false, networkCaption = fa
   }
 }
 
-async function genericFigureWithoutSourceItems(captionText = 'Figure 1: Generic panel') {
+async function genericFigureWithoutSourceItems(
+  captionText = 'Figure 1: Generic panel',
+  labels = ['Alpha', 'Beta']
+) {
   const pdf = await PDFDocument.create()
   pdf.registerFontkit(fontkit)
   const font = await pdf.embedFont(
@@ -1096,8 +1109,9 @@ async function genericFigureWithoutSourceItems(captionText = 'Figure 1: Generic 
   )
   const page = pdf.addPage([400, 500])
   page.drawRectangle({ x: 30, y: 170, width: 220, height: 200, borderWidth: 1 })
-  page.drawText('Alpha', { x: 50, y: 350, size: 10, font })
-  page.drawText('Beta', { x: 120, y: 350, size: 10, font })
+  labels.forEach((label, index) =>
+    page.drawText(label, { x: 50 + index * 70, y: 350, size: 10, font })
+  )
   page.drawText(captionText, { x: 50, y: 90, size: 10, font })
   const bytes = await pdf.save(),
     loading = getDocument({
@@ -1112,8 +1126,6 @@ async function genericFigureWithoutSourceItems(captionText = 'Figure 1: Generic 
     text = content.items.filter((item): item is TextItem => 'str' in item && item.str.trim()),
     index = (value: string) =>
       content.items.findIndex((item) => 'str' in item && item.str === value),
-    alpha = index('Alpha'),
-    beta = index('Beta'),
     caption = index(captionText),
     rect = (item: number) =>
       nativeLabelRegion(
@@ -1122,7 +1134,7 @@ async function genericFigureWithoutSourceItems(captionText = 'Figure 1: Generic 
         viewport,
         1
       )!
-  expect(text.map((item) => item.str)).toEqual(['Alpha', 'Beta', captionText])
+  expect(text.map((item) => item.str)).toEqual([...labels, captionText])
   const figureRect = { page: 1, x: 0.08, y: 0.2, width: 0.5, height: 0.35 },
     captionRect = rect(caption),
     source = createPdfTranslationSource({
@@ -1130,17 +1142,14 @@ async function genericFigureWithoutSourceItems(captionText = 'Figure 1: Generic 
       fingerprint: document.fingerprints[0],
       pages: [{ width: 400, height: 500 }],
       units: [
-        ...[
-          ['alpha', alpha, 'Alpha'],
-          ['beta', beta, 'Beta']
-        ].map(([id, item, value]) => ({
-          id: id as string,
-          source: value as string,
+        ...labels.map((label, n) => ({
+          id: ['alpha', 'beta'][n] ?? 'label-' + n,
+          source: label,
           fragments: [
             {
               pageNumber: 1,
-              rect: rect(item as number),
-              items: [{ index: item as number, text: value as string }]
+              rect: rect(index(label)),
+              items: [{ index: index(label), text: label }]
             }
           ]
         })),
@@ -1232,6 +1241,44 @@ it('retains complete generic figure labels only when the crop owns every native 
     expect(result.source.originalRegions![0].rect).toMatchObject({ x: 0.08, y: 0.2 })
     expect(result.source.originalRegions![0].rect.width).toBeCloseTo(0.5)
     expect(result.source.originalRegions![0].rect.height).toBeCloseTo(0.35)
+  } finally {
+    await f.loading.destroy()
+  }
+})
+
+it('preserves explicit panel tags without holding descriptive labels inside the same crop', async () => {
+  const f = await genericFigureWithoutSourceItems('Figure 1: (a) Device (b) response', [
+    'a',
+    'b',
+    'Control'
+  ])
+  try {
+    const cached = await f.args.readCached()
+    const sourceItems = f.extraction.source.units.slice(0, 2).map(({ fragments }) => {
+      const [{ pageNumber, items }] = fragments
+      return { pageNumber, ...items[0] }
+    })
+    const result = await applyCachedPdfFigureSources({
+      ...f.args,
+      readCached: async () => ({
+        ...cached,
+        elements: [
+          {
+            ...cached.elements[0],
+            sourceItems,
+            issues: [
+              { code: 'native-raster-vector-strip', detail: 'Native raster and vector figure' }
+            ]
+          }
+        ]
+      })
+    })
+    expect(
+      result.source.units.filter((unit) => unit.sourceOnly).map((unit) => unit.source)
+    ).toEqual(['a', 'b', 'Figure 1: (a) Device (b) response'])
+    expect(result.source.units.find((unit) => unit.source === 'Control')).toEqual(
+      f.extraction.source.units.find((unit) => unit.source === 'Control')
+    )
   } finally {
     await f.loading.destroy()
   }

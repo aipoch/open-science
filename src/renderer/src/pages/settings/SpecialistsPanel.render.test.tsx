@@ -1584,6 +1584,9 @@ describe('SpecialistsPanel', () => {
     })
 
     expect(document.body.querySelector('[data-specialist-icon="microscope"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-avatar-size="md"]')?.getAttribute('style')).toContain(
+      'color: hsl(var(--always-black) / 0.78)'
+    )
   })
 
   it('updates a custom specialist color from the avatar without opening the editor', async () => {

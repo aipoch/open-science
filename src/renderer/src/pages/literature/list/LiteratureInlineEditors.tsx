@@ -226,7 +226,7 @@ export function LiteratureNoteControl({
         }}
       />
       {failed ? (
-        <div className="flex items-center gap-2 px-2 text-xs text-status-warning-foreground">
+        <div className="flex items-center gap-2 px-2 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
           <p
             role="alert"
             className="whitespace-normal [overflow-wrap:anywhere]"

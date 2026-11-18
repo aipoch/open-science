@@ -1643,6 +1643,10 @@ test('restarts after proven service exit and stops automatic recovery on the thi
           .toMatchObject({ phase: 'unavailable' })
         await new Promise((resolveWait) => setTimeout(resolveWait, 1500))
         expect(await captureFixtureService(f.roots.storageRoot)).toBeUndefined()
+        await f.page.getByRole('button', { name: 'Retry', exact: true }).click()
+        await expect
+          .poll(() => f.page.evaluate(() => window.api.desktopRuntime!.getState()))
+          .toMatchObject({ phase: 'connected' })
       }
       await expect(composer).toHaveText('Draft kept across service restart')
       await expect(composer).toBeFocused()

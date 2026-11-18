@@ -97,9 +97,9 @@ jobs:
           SOURCE_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
-          [[ "$SOURCE_MODE" == portable ]]
-          [[ "$SOURCE_BASE" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_MODE" == portable ]] || exit 1
+          [[ "$SOURCE_BASE" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
           git merge-base --is-ancestor "$SOURCE_BASE" "$GITHUB_SHA"
           git diff --exit-code "$SOURCE_BASE" "$GITHUB_SHA" -- \
             package.json package-lock.json .nvmrc .npmrc patches prisma \
@@ -357,7 +357,8 @@ jobs:
           Write-Host "MSVC tools $toolsVersion"
 
       - name: Test Windows sandbox native source
-        run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml
+        # Native ACL tests can lease the same ancestors of separate temporary directories.
+        run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml -- --test-threads=1
 
       - name: Build Windows sandbox native host
         id: build_native

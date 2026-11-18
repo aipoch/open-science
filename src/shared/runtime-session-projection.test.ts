@@ -7,11 +7,14 @@ import {
   activateConversationBranch,
   createLinearConversationGraph,
   forkConversationAfterActivity,
-  forkEditedConversationMessage
+  forkEditedConversationMessage,
+  resolveActiveConversationMessages
 } from './conversation-graph'
 import type { PersistedChatMessage, PersistedChatSession } from './session-persistence'
+import { createRuntimeAgentMessageId } from './runtime-message-identity'
 import {
   applyRuntimeSessionEvents,
+  applyRuntimeSessionEventsWithChanges,
   attachRuntimeSessionArtifacts,
   type RuntimeSessionScope
 } from './runtime-session-projection'
@@ -59,6 +62,358 @@ const fixture = (): { session: PersistedChatSession; scope: RuntimeSessionScope 
   }
 }
 
+describe('runtime Session business changes', () => {
+  it('collects accepted original text events with canonical identities across messages and batches', () => {
+    const initial = fixture()
+    const first = event('message', {
+      id: 'first',
+      timestamp: 2,
+      role: 'assistant',
+      messageId: 'stream-a',
+      text: 'First '
+    })
+    const previous = applyRuntimeSessionEvents(initial.session, initial.scope, [first])
+    const before = structuredClone(previous)
+    freezeDeep(previous)
+    const next = event('message', {
+      id: 'next',
+      timestamp: 3,
+      role: 'assistant',
+      messageId: 'stream-a',
+      text: 'answer'
+    })
+    const other = event('message', {
+      id: 'other',
+      timestamp: 4,
+      role: 'assistant',
+      messageId: 'stream-b',
+      text: 'Second answer'
+    })
+    const events = [
+      first,
+      next,
+      next,
+      { ...next, id: 'foreign', sessionId: 'another-session', text: 'ignored' },
+      {
+        ...next,
+        id: 'stale-scope',
+        terminalScope: {
+          ...initial.scope,
+          runtimeSegmentId: 'another-segment',
+          projectId: initial.session.projectId,
+          executionId: 'execution',
+          startedAt: 1
+        }
+      },
+      other
+    ]
+    const result = applyRuntimeSessionEventsWithChanges(previous, initial.scope, events)
+    expect(result.changes?.textEvents).toEqual(
+      [next, other].map((item) => ({
+        messageId: createRuntimeAgentMessageId(
+          previous.id,
+          item.messageId!,
+          initial.scope.promptMessageId
+        ),
+        eventId: item.id,
+        text: item.text,
+        timestamp: item.timestamp
+      }))
+    )
+    expect(result.changes?.messages.map(({ content }) => content)).toEqual([
+      'First answer',
+      'Second answer'
+    ])
+    expect(result.session).toEqual(applyRuntimeSessionEvents(previous, initial.scope, events))
+    expect(previous).toEqual(before)
+  })
+
+  it.each(['cancelled', 'end_turn'] as const)(
+    'does not collect text rejected after %s',
+    (outcome) => {
+      const initial = fixture()
+      const previous = applyRuntimeSessionEvents(initial.session, initial.scope, [
+        event('message', {
+          id: 'answer',
+          timestamp: 2,
+          role: 'assistant',
+          messageId: 'stream',
+          text: 'Answer'
+        }),
+        event('stop', { id: 'stop', timestamp: 4, text: outcome })
+      ])
+      const result = applyRuntimeSessionEventsWithChanges(previous, initial.scope, [
+        event('message', {
+          id: 'late',
+          timestamp: outcome === 'cancelled' ? 5 : 3,
+          role: 'assistant',
+          messageId: 'stream',
+          text: 'ignored'
+        })
+      ])
+      expect(result.changes?.textEvents).toBeUndefined()
+      expect(result.changes?.messages).toEqual([])
+      expect(result.session.messages.at(-1)?.content).toBe('Answer')
+    }
+  )
+
+  it('withdraws all text events for a message whose Claude refusal normalization rewrites content', () => {
+    const initial = fixture()
+    initial.session.agentFrameworkId = 'claude-code'
+    const events = [
+      event('message', {
+        id: 'prefix',
+        timestamp: 2,
+        role: 'assistant',
+        messageId: 'refusal',
+        text: 'API Error: '
+      }),
+      event('message', {
+        id: 'refusal',
+        timestamp: 3,
+        role: 'assistant',
+        messageId: 'refusal',
+        text: 'Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup).'
+      }),
+      event('message', {
+        id: 'suffix',
+        timestamp: 4,
+        role: 'assistant',
+        messageId: 'refusal',
+        text: ' More details.'
+      }),
+      event('message', {
+        id: 'safe',
+        timestamp: 5,
+        role: 'assistant',
+        messageId: 'safe',
+        text: 'Ordinary text'
+      })
+    ]
+    const result = applyRuntimeSessionEventsWithChanges(initial.session, initial.scope, events)
+    expect(result.changes?.textEvents?.map(({ eventId }) => eventId)).toEqual(['safe'])
+    expect(result.changes?.messages[0].content).toBe(
+      'The selected model declined to complete this response under its safety policy. More details.'
+    )
+    expect(result.session).toEqual(
+      applyRuntimeSessionEvents(initial.session, initial.scope, events)
+    )
+    const previous = applyRuntimeSessionEvents(initial.session, initial.scope, events.slice(0, 1))
+    const continuation = applyRuntimeSessionEventsWithChanges(
+      previous,
+      initial.scope,
+      events.slice(1, 3)
+    )
+    expect(continuation.changes?.textEvents).toBeUndefined()
+    expect(continuation.changes?.messages[0].content).toBe(result.changes?.messages[0].content)
+  })
+
+  it('keeps image messages on complete-record fallback within a batch and across saves', () => {
+    const initial = fixture()
+    const events = [
+      event('message', {
+        id: 'text',
+        timestamp: 2,
+        role: 'assistant',
+        messageId: 'image-stream',
+        text: 'Before '
+      }),
+      event('message', {
+        id: 'image',
+        timestamp: 3,
+        role: 'assistant',
+        messageId: 'image-stream',
+        text: '',
+        raw: {
+          update: { content: { type: 'image', mimeType: 'image/png', data: 'YQ==', byteLength: 1 } }
+        }
+      }),
+      event('message', {
+        id: 'after',
+        timestamp: 4,
+        role: 'assistant',
+        messageId: 'image-stream',
+        text: 'after'
+      })
+    ]
+    const result = applyRuntimeSessionEventsWithChanges(initial.session, initial.scope, events)
+    expect(result.changes?.textEvents).toBeUndefined()
+    expect(result.changes?.messages[0].content).toBe('Before after')
+    expect(result.changes?.messages[0].images).toHaveLength(1)
+    expect(result.session).toEqual(
+      applyRuntimeSessionEvents(initial.session, initial.scope, events)
+    )
+    const continuation = applyRuntimeSessionEventsWithChanges(result.session, initial.scope, [
+      event('message', {
+        id: 'later',
+        timestamp: 5,
+        role: 'assistant',
+        messageId: 'image-stream',
+        text: ' later'
+      })
+    ])
+    expect(continuation.changes?.textEvents).toBeUndefined()
+    expect(continuation.changes?.messages[0].content).toBe('Before after later')
+  })
+
+  it('collects final entity after-images and group/branch effects without historical entities', () => {
+    const initial = fixtureWithHistory()
+    const before = structuredClone(initial.session)
+    freezeDeep(initial.session)
+    const events = [
+      event('tool', {
+        id: 'group-event',
+        timestamp: 7,
+        toolCallId: 'new-group',
+        providerToolName: 'mcp__open-science-activity__begin_activity_group',
+        rawInput: { title: 'Current work' }
+      }),
+      event('tool', {
+        id: 'tool-start',
+        timestamp: 8,
+        toolCallId: 'new-tool',
+        status: 'in_progress',
+        rawInput: { command: 'echo test' }
+      }),
+      event('tool', {
+        id: 'tool-result',
+        timestamp: 9,
+        toolCallId: 'new-tool',
+        status: 'completed',
+        rawOutput: { text: 'result' }
+      }),
+      event('message', {
+        id: 'first-chunk',
+        timestamp: 10,
+        messageId: 'new-stream',
+        role: 'assistant',
+        text: 'First '
+      }),
+      event('message', {
+        id: 'second-chunk',
+        timestamp: 11,
+        messageId: 'new-stream',
+        role: 'assistant',
+        text: 'answer'
+      })
+    ]
+    const result = applyRuntimeSessionEventsWithChanges(initial.session, initial.scope, events)
+    expect(initial.session).toEqual(before)
+    expect(result.session).toEqual(
+      applyRuntimeSessionEvents(initial.session, initial.scope, events)
+    )
+    expect(result.changes?.messages).toHaveLength(1)
+    expect(result.changes?.messages[0]).toMatchObject({
+      content: 'First answer',
+      eventIds: ['first-chunk', 'second-chunk']
+    })
+    expect(result.changes?.activities).toHaveLength(1)
+    expect(result.changes?.activities[0]).toMatchObject({
+      id: 'new-tool',
+      status: 'completed',
+      rawOutput: { text: 'result' }
+    })
+    expect(result.changes?.activityGroups).toHaveLength(1)
+    expect(result.changes?.activityGroups[0]).toMatchObject({
+      id: 'new-group',
+      activityIds: ['new-tool'],
+      completedAt: 10
+    })
+    expect(result.changes?.branches).toHaveLength(1)
+    expect(result.changes?.branches[0].headMessageId).toBe(result.changes?.messages[0].id)
+    const replay = <T extends { id: string }>(previous: readonly T[], after: readonly T[]): T[] => {
+      const byId = new Map(previous.map((item) => [item.id, item]))
+      for (const item of after) byId.set(item.id, item)
+      return [...byId.values()]
+    }
+    const graph = initial.session.conversationGraph!
+    expect({
+      ...graph,
+      messages: replay(graph.messages, result.changes!.messages),
+      activities: replay(graph.activities, result.changes!.activities),
+      activityGroups: replay(graph.activityGroups, result.changes!.activityGroups),
+      branches: replay(graph.branches, result.changes!.branches)
+    }).toEqual(result.session.conversationGraph)
+  })
+
+  it('captures a group closure even when the triggering message event is a duplicate', () => {
+    const initial = fixture()
+    const answer = event('message', {
+      id: 'answer',
+      timestamp: 2,
+      role: 'assistant',
+      text: 'Answer'
+    })
+    const session = applyRuntimeSessionEvents(initial.session, initial.scope, [
+      answer,
+      event('tool', {
+        id: 'group-event',
+        timestamp: 3,
+        toolCallId: 'group',
+        providerToolName: 'mcp__open-science-activity__begin_activity_group',
+        rawInput: { title: 'Work' }
+      }),
+      event('tool', { id: 'tool-event', timestamp: 4, toolCallId: 'tool', status: 'in_progress' })
+    ])
+    const result = applyRuntimeSessionEventsWithChanges(session, initial.scope, [answer])
+    expect(result.changes?.messages).toEqual([])
+    expect(result.changes?.activities).toEqual([])
+    expect(result.changes?.branches).toEqual([])
+    expect(result.changes?.activityGroups).toEqual(result.session.conversationGraph!.activityGroups)
+    expect(result.changes?.activityGroups[0].completedAt).toBe(2)
+  })
+
+  it('does not infer entity changes from ignored event identities', () => {
+    const initial = fixture()
+    const result = applyRuntimeSessionEventsWithChanges(initial.session, initial.scope, [
+      event('message', { id: 'empty', timestamp: 2, role: 'assistant', text: '' }),
+      {
+        ...event('tool', { id: 'foreign', timestamp: 3, toolCallId: 'foreign-tool' }),
+        sessionId: 'another-session'
+      }
+    ])
+    expect(result.changes).toEqual({
+      messages: [],
+      activities: [],
+      activityGroups: [],
+      branches: []
+    })
+    expect(result.session.conversationGraph).toEqual(initial.session.conversationGraph)
+    expect(result.session.messages).toEqual(initial.session.messages)
+    expect(result.session.updatedAt).toBe(initial.session.updatedAt)
+  })
+
+  it.each(['stop', 'error'] as const)('falls back for a batch containing %s', (kind) => {
+    const initial = fixture()
+    const result = applyRuntimeSessionEventsWithChanges(initial.session, initial.scope, [
+      event('message', { id: 'answer', timestamp: 2, role: 'assistant', text: 'Answer' }),
+      event(kind, { id: 'terminal', timestamp: 3 })
+    ])
+    expect(result.changes).toBeUndefined()
+    expect(result.session.activeRun).toBeUndefined()
+  })
+
+  it('falls back for artifact attachment and unsupported runtime metadata events', () => {
+    const initial = fixture()
+    const artifact = applyRuntimeSessionEventsWithChanges(initial.session, initial.scope, [
+      event('artifact', {
+        id: 'artifact-event',
+        timestamp: 2,
+        runId: 'run',
+        artifactClaimId: 'claim',
+        artifacts: []
+      })
+    ])
+    expect(artifact.changes).toBeUndefined()
+    expect(artifact.session.messages.at(-1)?.eventIds).toContain('artifact-event')
+    const metadata = applyRuntimeSessionEventsWithChanges(initial.session, initial.scope, [
+      event('system', { id: 'system-event', timestamp: 3, text: 'Runtime update' })
+    ])
+    expect(metadata.changes).toBeUndefined()
+    expect(metadata.session.updatedAt).toBe(3)
+  })
+})
+
 const event = <Kind extends AcpRuntimeEvent['kind']>(
   kind: Kind,
   fields: Omit<Extract<AcpRuntimeEvent, { kind: Kind }>, 'kind' | 'level' | 'sessionId'>
@@ -67,6 +422,214 @@ const event = <Kind extends AcpRuntimeEvent['kind']>(
     AcpRuntimeEvent,
     { kind: Kind }
   >
+
+const freezeDeep = (value: unknown): void => {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return
+  for (const child of Object.values(value)) freezeDeep(child)
+  Object.freeze(value)
+}
+
+const fixtureWithHistory = (): ReturnType<typeof fixture> => {
+  const original = fixture()
+  const session = applyRuntimeSessionEvents(original.session, original.scope, [
+    event('tool', {
+      id: 'old-group-start',
+      timestamp: 2,
+      toolCallId: 'old-group',
+      providerToolName: 'mcp__open-science-activity__begin_activity_group',
+      rawInput: { title: 'Earlier work' }
+    }),
+    event('tool', {
+      id: 'old-tool-start',
+      timestamp: 3,
+      toolCallId: 'old-tool',
+      status: 'in_progress',
+      rawOutput: { nested: { history: 'Earlier tool output'.repeat(1000) } }
+    }),
+    event('message', {
+      id: 'old-answer',
+      timestamp: 4,
+      role: 'assistant',
+      text: 'Earlier answer'.repeat(1000)
+    }),
+    event('stop', { id: 'old-stop', timestamp: 5 })
+  ])
+  const graph = session.conversationGraph!
+  const branch = graph.branches[0]
+  const nextPrompt = {
+    ...prompt('prompt-2', 6),
+    agentFrameId: original.scope.agentFrameId,
+    introducedOnBranchId: original.scope.messageBranchId,
+    runtimeSegmentId: original.scope.runtimeSegmentId,
+    parentMessageId: branch.headMessageId,
+    revisionRootMessageId: 'prompt-2'
+  }
+  graph.messages.push(nextPrompt)
+  branch.headMessageId = nextPrompt.id
+  session.messages = resolveActiveConversationMessages(graph)
+  session.activeRun = { promptMessageId: nextPrompt.id, startedAt: 6 }
+  session.status = 'running'
+  return { session, scope: { ...original.scope, promptMessageId: nextPrompt.id } }
+}
+
+describe('runtime Session structural sharing', () => {
+  it('isolates current groups, tools and terminal writes while retaining historical nodes', () => {
+    const initial = fixtureWithHistory()
+    const input = applyRuntimeSessionEvents(initial.session, initial.scope, [
+      event('message', {
+        id: 'current-answer',
+        messageId: 'current-stream',
+        timestamp: 7,
+        role: 'assistant',
+        text: 'Partial'
+      }),
+      event('tool', {
+        id: 'current-group-start',
+        timestamp: 8,
+        toolCallId: 'current-group',
+        providerToolName: 'mcp__open-science-activity__begin_activity_group',
+        rawInput: { title: 'Current work' }
+      }),
+      event('tool', {
+        id: 'current-tool-start',
+        timestamp: 9,
+        toolCallId: 'current-tool',
+        status: 'in_progress',
+        rawInput: { nested: { argument: 'unchanged' } }
+      })
+    ])
+    const graph = input.conversationGraph!
+    // Terminal handling intentionally includes earlier Runtime Segments of this same prompt.
+    const response = graph.messages.at(-1)!
+    response.runtimeSegmentId = 'earlier-runtime-segment'
+    graph.runtimeSegments.push({ ...graph.runtimeSegments[0], id: response.runtimeSegmentId })
+    const before = structuredClone(input)
+    freezeDeep(input)
+    const result = applyRuntimeSessionEvents(input, initial.scope, [
+      event('tool', {
+        id: 'new-tool-start',
+        timestamp: 10,
+        toolCallId: 'new-tool',
+        status: 'in_progress'
+      }),
+      event('message', {
+        id: 'current-answer-2',
+        messageId: 'current-stream',
+        timestamp: 11,
+        role: 'assistant',
+        text: ' answer'
+      }),
+      event('stop', {
+        id: 'current-stop',
+        timestamp: 12,
+        turnUsage: { inputTokens: 2, cacheTokens: 0, outputTokens: 3, turnCount: 1 }
+      })
+    ])
+    expect(input).toEqual(before)
+    const projected = result.conversationGraph!
+    expect(projected.messages.slice(0, 2)).toEqual(graph.messages.slice(0, 2))
+    for (let index = 0; index < 2; index++) {
+      expect(projected.messages[index]).toBe(graph.messages[index])
+    }
+    expect(projected.activities[0]).toBe(graph.activities[0])
+    expect(projected.activityGroups[0]).toBe(graph.activityGroups[0])
+    expect(projected.frames[0]).toBe(graph.frames[0])
+    expect(projected.runtimeSegments[0]).toBe(graph.runtimeSegments[0])
+    expect(projected.messages.at(-1)).toMatchObject({
+      content: 'Partial answer',
+      status: 'complete',
+      runtimeSegmentId: 'earlier-runtime-segment',
+      turnUsage: { inputTokens: 2, outputTokens: 3 }
+    })
+    expect(projected.messages.find(({ id }) => id === initial.scope.promptMessageId)).toMatchObject(
+      {
+        turnOutcome: { kind: 'completed', settledAt: 12 }
+      }
+    )
+    expect(projected.activityGroups[1]).toMatchObject({
+      activityIds: ['current-tool', 'new-tool'],
+      completedAt: 11
+    })
+    expect(projected.activities.slice(1).map(({ status }) => status)).toEqual([
+      'completed',
+      'completed'
+    ])
+  })
+
+  it('preserves existing cross-prompt tool ID attribution without mutating history inputs', () => {
+    const { session, scope } = fixtureWithHistory()
+    const before = structuredClone(session)
+    freezeDeep(session)
+    const result = applyRuntimeSessionEvents(session, scope, [
+      event('tool', {
+        id: 'late-old-tool',
+        timestamp: 7,
+        toolCallId: 'old-tool',
+        rawOutput: { nested: { history: 'Late output' } }
+      })
+    ])
+    expect(session).toEqual(before)
+    expect(result.conversationGraph!.activities[0]).toMatchObject({
+      id: 'old-tool',
+      promptMessageId: 'prompt-1',
+      rawOutput: { nested: { history: 'Late output' } },
+      eventIds: ['old-tool-start', 'late-old-tool']
+    })
+    expect(result.conversationGraph!.messages[0]).toBe(session.conversationGraph!.messages[0])
+    expect(result.conversationGraph!.activityGroups[0]).toBe(
+      session.conversationGraph!.activityGroups[0]
+    )
+  })
+
+  it('isolates artifact-only creation and an existing owner while sharing historical content', () => {
+    const { session, scope } = fixtureWithHistory()
+    const before = structuredClone(session)
+    freezeDeep(session)
+    const input = {
+      eventId: 'artifact-event',
+      runId: 'artifact-run',
+      timestamp: 7,
+      artifacts: [
+        {
+          id: 'artifact-version',
+          projectId: session.projectId,
+          sessionId: session.id,
+          name: 'result.csv',
+          path: '/managed/result.csv',
+          fileUrl: 'file:///managed/result.csv',
+          size: 3,
+          mtimeMs: 7,
+          isPublished: true
+        }
+      ]
+    }
+    const first = attachRuntimeSessionArtifacts(session, scope, input)
+    expect(session).toEqual(before)
+    expect(first.session.conversationGraph!.messages[0]).toBe(
+      session.conversationGraph!.messages[0]
+    )
+    expect(first.session.conversationGraph!.branches[0].headMessageId).toBe(first.messageId)
+    const firstBefore = structuredClone(first.session)
+    freezeDeep(first.session)
+    const second = attachRuntimeSessionArtifacts(first.session, scope, {
+      ...input,
+      messageId: first.messageId,
+      eventId: 'artifact-update',
+      timestamp: 8,
+      artifacts: [{ ...input.artifacts[0], size: 9 }]
+    })
+    expect(first.session).toEqual(firstBefore)
+    expect(second.messageId).toBe(first.messageId)
+    expect(second.session.artifacts?.[0].size).toBe(9)
+    expect(second.session.conversationGraph!.messages.at(-1)?.eventIds).toEqual([
+      'artifact-event',
+      'artifact-update'
+    ])
+    expect(second.session.conversationGraph!.activities[0]).toBe(
+      session.conversationGraph!.activities[0]
+    )
+  })
+})
 
 describe('runtime Session projection', () => {
   it('projects an unexpected ACP close as a resumable, non-reportable interruption without provider wording', () => {

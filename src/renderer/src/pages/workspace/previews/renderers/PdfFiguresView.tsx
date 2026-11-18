@@ -630,7 +630,7 @@ const CandidateDetails = ({
         </p>
       ) : null}
       {hasIssues ? (
-        <p className="text-xs text-status-warning-foreground">
+        <p className="text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
           {hasTable && !showImage && hasUnassigned
             ? t('Some text could not be placed in the table. Review it below before copying.')
             : t('Check extracted content against the original PDF.')}
@@ -1209,7 +1209,7 @@ export const PdfFiguresView = ({
       {failed.length ? (
         <p
           role="status"
-          className="border-b border-border-200 px-5 py-2 text-xs text-status-warning-foreground"
+          className="border-b border-border-200 px-5 py-2 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground"
         >
           {t('Could not extract pages: {{pages}}', { pages: failed.join(', ') })}
         </p>

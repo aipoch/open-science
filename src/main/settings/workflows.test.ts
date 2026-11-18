@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import type { SettingsSnapshot } from '../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
-  XAI_SUBSCRIPTION_PROVIDER_ID,
-  type SettingsSnapshot
-} from '../../shared/settings'
+  XAI_SUBSCRIPTION_PROVIDER_ID
+} from '../../shared/settings-runtime'
 import {
   createSettingsWorkflows,
   type SettingsWorkflowEffects,

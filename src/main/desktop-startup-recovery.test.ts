@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { verifyDesktopRecoveryReadiness } from './desktop-recovery-readiness'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import * as occupancy from './update/installation-occupancy'
+import * as windowsProcessQuery from './windows-process-query'
 import * as runtimeStop from './runtime-stop-confirmation'
 import { acquireRuntimeDirectorySync } from './runtime-ownership'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -311,6 +312,7 @@ it.each(['missing', 'failed', 'unsafe-boot'])(
 it.each([false, true])(
   'uses fresh own UI process metrics while still refusing external occupants: %s',
   async (external) => {
+    vi.spyOn(windowsProcessQuery, 'windowsProcessIsAlive').mockReturnValue(true)
     const root = mkdtempSync(join(tmpdir(), 'startup-live-metrics-'))
     roots.push(root)
     const app = join(root, 'app'),
@@ -453,6 +455,7 @@ it.each([
 it.each(['live-pid', 'held-lock', 'changed-installation', 'occupied-installation'] as const)(
   'retains same-boot stopping protection for %s',
   async (blocker) => {
+    vi.spyOn(windowsProcessQuery, 'windowsProcessIsAlive').mockReturnValue(true)
     const { location, configRoot, installationRoot } = interruptedInstallationFixture(
       blocker === 'live-pid' ? process.pid : undefined
     )

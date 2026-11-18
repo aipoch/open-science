@@ -1,3 +1,5 @@
+import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
+import { SessionPromptAdmissionError } from './runtime-activity-port'
 import type { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
 
@@ -15,7 +17,7 @@ import type {
 import { formatPlanProtectedContext } from '../../shared/session-plan/contract'
 import type { AgentFramework } from '../agent-framework/types'
 import type { RuntimeSessionContinuationAdmission } from '../session-persistence/runtime-session-owner'
-import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import { DelegateMessagePreAcceptanceError } from '../delegation/execution-port'
 import { PLAN_FIRST_TURN_PROMPT_REMINDER } from '../session-plan/guidance'
 import {
@@ -61,6 +63,7 @@ type AcpPromptTurnMode =
   | Readonly<{
       kind: 'application'
       attribution: MessageAttribution
+      beforeSessionWrite?: () => Promise<void>
       promptAttemptId?: string
     }>
   | Readonly<{
@@ -206,6 +209,7 @@ type AcpPromptTurnFinalization = Readonly<{
 }>
 
 type AcpPromptTurnWorkflowOptions = Readonly<{
+  schedules?: import('../schedules/mcp').ScheduleMcp
   registry: Pick<AcpSessionRegistry, 'lookup' | 'select'>
   interactions: Pick<
     AcpSessionInteractionOwner,
@@ -253,7 +257,11 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     reviewOwner: 'task' | 'renderer',
     planDeliveryCommandId?: string,
     delegatedMessageId?: string,
-    applicationPrompt?: { text: string; attribution: MessageAttribution },
+    applicationPrompt?: {
+      text: string
+      attribution: MessageAttribution
+      beforeSessionWrite?: () => Promise<void>
+    },
     approvedHandoffContinuation?: boolean,
     continuationAdmission?: RuntimeSessionContinuationAdmission
   ) => Promise<void>
@@ -466,26 +474,40 @@ class AcpPromptTurnWorkflow {
         admittedRequest = { ...request, provenanceContext: admittedProvenanceContext }
       }
       if (this.options.beginRuntimeSessionTurn) {
-        await this.options.beginRuntimeSessionTurn(
-          admittedRequest,
-          interaction.turnToken,
-          mode.kind === 'user' ? (mode.runtimeReviewOwner ?? 'renderer') : 'renderer',
-          mode.kind === 'app-continuation' ? mode.planDelivery?.commandId : undefined,
-          mode.kind === 'app-continuation' ? mode.delegatedMessageId : undefined,
-          mode.kind === 'application'
-            ? { text: admittedRequest.text ?? '', attribution: mode.attribution }
-            : undefined,
-          mode.kind === 'app-continuation',
-          mode.kind === 'app-continuation'
-            ? {
-                signal: interaction.signal,
-                assertCurrent: () => {
-                  if (this.options.interactions.current(request.sessionId) !== interaction)
-                    throw new Error('ACP prompt interaction is no longer active')
+        try {
+          await this.options.beginRuntimeSessionTurn(
+            admittedRequest,
+            interaction.turnToken,
+            mode.kind === 'user' ? (mode.runtimeReviewOwner ?? 'renderer') : 'renderer',
+            mode.kind === 'app-continuation' ? mode.planDelivery?.commandId : undefined,
+            mode.kind === 'app-continuation' ? mode.delegatedMessageId : undefined,
+            mode.kind === 'application'
+              ? {
+                  text: admittedRequest.text ?? '',
+                  attribution: mode.attribution,
+                  ...(mode.beforeSessionWrite
+                    ? { beforeSessionWrite: mode.beforeSessionWrite }
+                    : {})
                 }
-              }
-            : undefined
-        )
+              : undefined,
+            mode.kind === 'app-continuation',
+            mode.kind === 'app-continuation'
+              ? {
+                  signal: interaction.signal,
+                  assertCurrent: () => {
+                    if (this.options.interactions.current(request.sessionId) !== interaction)
+                      throw new Error('ACP prompt interaction is no longer active')
+                  }
+                }
+              : undefined
+          )
+        } catch (error) {
+          if (mode.kind === 'application' && mode.attribution.feature === 'schedule')
+            throw new SessionPromptAdmissionError('The scheduled prompt could not be admitted.', {
+              cause: error
+            })
+          throw error
+        }
       }
       this.options.registry.select(admittedRequest.sessionId)
       this.options.recordAdmittedPrompt(admittedRequest)
@@ -547,6 +569,7 @@ class AcpPromptTurnWorkflow {
     const eventIdentity = interaction.promptMessageId
       ? { promptMessageId: interaction.promptMessageId }
       : {}
+    let promptBackend: AcpBackendGenerationView | undefined
     let artifact: ArtifactTurnHandle | undefined
     let prepared: PreparedPromptHandle | undefined
     let context: ContextWindowTurnHandle | undefined
@@ -574,6 +597,7 @@ class AcpPromptTurnWorkflow {
         ...(turn.mode.kind === 'application' ? { attribution: turn.mode.attribution } : {})
       })
     }
+    let scheduleTurn: { ref: string; close: () => void } | undefined
     const execute = async (): Promise<ProviderPromptOutcome> => {
       artifact = await artifacts.open(sessionId, turnToken, request.provenanceContext)
       if ((await this.checkpoint(interaction)) === 'cancelled') {
@@ -592,6 +616,7 @@ class AcpPromptTurnWorkflow {
         : request
       const snapshot = registry.lookup(sessionId)?.aggregate.snapshot()
       const backend = env.backend()
+      promptBackend = backend
       const planContext =
         turn.plan.active ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
       // Only an explicit user send carries the notice; continuations never consume it.
@@ -650,9 +675,44 @@ class AcpPromptTurnWorkflow {
         skillStarted = true
       }
       const promptSnapshot = registry.lookup(sessionId)?.aggregate.snapshot()
-      const promptBackend = env.backend()
+      promptBackend = env.backend()
       const framework = promptBackend.framework
       const cwd = promptSnapshot?.cwd ?? this.options.currentCwd()
+      const provenance = request.provenanceContext
+      const scheduled =
+        turn.mode.kind === 'application' && turn.mode.attribution.feature === 'schedule'
+          ? turn.mode.attribution
+          : undefined
+      if (
+        this.options.schedules &&
+        (env.role?.() ?? 'primary') === 'primary' &&
+        !snapshot?.specialistId &&
+        !request.continuation &&
+        !request.suppressUserMessage &&
+        (scheduled || (turn.mode.kind === 'user' && turn.mode.runtimeReviewOwner !== 'task')) &&
+        provenance?.agentFrameId &&
+        provenance.messageBranchId
+      ) {
+        const origin = scheduled
+          ? await this.options.schedules.originForOccurrence(
+              scheduled.occurrenceId,
+              this.options.resolveProjectId(sessionId),
+              sessionId
+            )
+          : undefined
+        scheduleTurn = this.options.schedules.open({
+          promptMessageId: provenance.promptMessageId,
+          target: {
+            projectId: this.options.resolveProjectId(sessionId),
+            sessionId,
+            agentFrameId: provenance.agentFrameId,
+            messageBranchId: provenance.messageBranchId
+          },
+          isCurrent: () =>
+            !interaction.signal.aborted && interactions.current(sessionId) === interaction,
+          origin
+        })
+      }
       let providerContent = readyPrepared.content
       let resumeAccepted: (() => Promise<void>) | undefined
       let resumeDispatch: (() => Promise<void>) | undefined
@@ -665,7 +725,20 @@ class AcpPromptTurnWorkflow {
       const executeProviderTurn = (): Promise<ProviderPromptOutcome> =>
         executor.execute({
           session,
-          content: providerContent,
+          content: scheduleTurn
+            ? [
+                ...(typeof providerContent === 'string'
+                  ? [{ type: 'text' as const, text: providerContent }]
+                  : providerContent),
+                {
+                  type: 'text',
+                  ...((promptSnapshot?.frameworkId ?? framework.id) === 'open-science-agent'
+                    ? { _meta: { [SCHEDULE_TURN_META]: scheduleTurn.ref } }
+                    : {}),
+                  text: `\n\nUse Schedule tools when requested. For research, connector calls or summaries, create a task with name, message and rule; use script only for explicitly requested code. Do not wrap arguments in draft or action. ${(promptSnapshot?.frameworkId ?? framework.id) === 'open-science-agent' ? 'The host supplies the turn identity and creation request ID; do not pass either.' : 'Supply this private turnRef in Schedule calls: ' + scheduleTurn.ref + '. For creation supply a stable requestId and reuse it for retries. Do not repeat the reference in replies.'}${scheduled ? ' This wake belongs to schedule ' + scheduled.scheduleId + '. Report the result normally. One-time tasks complete automatically after a successful run; recurring tasks keep their schedule. Do not call close to mark this run complete. Use manage_current_schedule only to change the next run time or intentionally cancel future runs; close records the task as cancelled and does not stop this running turn.' : ''}`
+                }
+              ]
+            : providerContent,
           cwd,
           frameworkId: promptSnapshot?.frameworkId ?? framework.id,
           ...(!accumulatedFacts && readyPrepared.preDispatchModelCalls
@@ -875,12 +948,14 @@ class AcpPromptTurnWorkflow {
       outcome = await execute()
     } catch (error) {
       outcome = Object.freeze({ kind: 'failed', error })
+    } finally {
+      scheduleTurn?.close()
     }
     if (sideChatRelay && !sideChatRelaySettled) {
       sideChatRelaySettled = true
       sideChatRelay.restore()
     }
-    const model = env.backend().session.model
+    const model = promptBackend?.context.model ?? promptBackend?.session.model
     return finalizer.finalize(
       {
         sessionId,
@@ -892,6 +967,7 @@ class AcpPromptTurnWorkflow {
         ...(context ? { context } : {}),
         skill,
         ...(model ? { model } : {}),
+        providerName: promptBackend?.providerName,
         emitUserMessage,
         emitArtifact: (onPublished) => artifacts.publish(sessionId, artifact, onPublished),
         disposeArtifact: () => artifacts.dispose(artifact),

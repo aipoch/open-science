@@ -8,7 +8,11 @@ import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
-import { applyCachedPdfTableSources } from '../../src/reader/table-source.js'
+import { applyCachedPdfStructureSources } from '../../src/reader/structure-source.js'
+import {
+  applyCachedPdfTableSources,
+  getPdfTableOriginalRetention
+} from '../../src/reader/table-source.js'
 import {
   applyCachedPdfFigureSources,
   preservePdfFigureSources
@@ -945,9 +949,10 @@ describe('transactional fallback for incomplete whole-unit allocations', () => {
       if (reverse) f.cached.elements.reverse()
       const before = structuredClone(f.cached)
       const result = await applyCachedPdfTableSources(f.context)
-      expect(result.source.units.find((u) => u.id === 'group')).toEqual(
-        f.extraction.source.units[0]
-      )
+      expect(result.source.units.find((u) => u.id === 'group')).toEqual({
+        ...f.extraction.source.units[0],
+        sourceOnly: true
+      })
       expect(
         result.source.units.filter((u) => u.id.startsWith('table-source:')).map((u) => u.source)
       ).toEqual(['Prose'])
@@ -990,8 +995,14 @@ describe('transactional fallback for incomplete whole-unit allocations', () => {
       }
     })
     const result = await applyCachedPdfTableSources(f.context)
-    expect(result.source.units.find((u) => u.id === 'group')).toEqual(f.extraction.source.units[0])
-    expect(result.source.units.filter((u) => u.sourceOnly).map((u) => u.source)).toEqual(['Prose'])
+    expect(result.source.units.find((u) => u.id === 'group')).toEqual({
+      ...f.extraction.source.units[0],
+      sourceOnly: true
+    })
+    expect(result.source.units.filter((u) => u.sourceOnly).map((u) => u.source)).toEqual([
+      result.source.units.find((u) => u.id === 'group')!.source,
+      'Prose'
+    ])
   })
 
   it('rolls back a transitive unit-table component without leaving staged replacements', async () => {
@@ -1057,10 +1068,13 @@ describe('transactional fallback for incomplete whole-unit allocations', () => {
     }))
     const result = await applyCachedPdfTableSources(f.context)
     expect(result.source.units.filter((u) => u.sourceOnly).map((u) => u.source)).toEqual([
+      ...f.context.extraction.source.units.slice(0, 2).map((u) => u.source),
       'Independent'
     ])
-    expect(result.source.units.filter((u) => !u.sourceOnly)).toEqual(
-      f.context.extraction.source.units.slice(0, 2)
+    expect(result.source.units.filter((u) => ['group', 'bridge'].includes(u.id))).toEqual(
+      f.context.extraction.source.units
+        .slice(0, 2)
+        .map((u) => ({ ...u, sourceOnly: true as const }))
     )
     expect(
       result.source.units
@@ -1119,10 +1133,14 @@ describe('transactional fallback for incomplete whole-unit allocations', () => {
       }
     })
     const result = await applyCachedPdfTableSources(f.context)
-    expect(result.source.units.find((u) => u.id === 'group')).toEqual(
-      f.context.extraction.source.units[0]
-    )
-    expect(result.source.units.filter((u) => u.sourceOnly).map((u) => u.source)).toEqual(['Prose'])
+    expect(result.source.units.find((u) => u.id === 'group')).toEqual({
+      ...f.context.extraction.source.units[0],
+      sourceOnly: true
+    })
+    expect(result.source.units.filter((u) => u.sourceOnly).map((u) => u.source)).toEqual([
+      result.source.units.find((u) => u.id === 'group')!.source,
+      'Prose'
+    ])
     expect(
       result.source.units
         .flatMap((u) => u.fragments.flatMap((fr) => fr.items))
@@ -1263,48 +1281,55 @@ describe('cached PDF table source ownership', () => {
     ).toBe(false)
   })
 
-  it('keeps uncertain table native units while applying an independent reliable table', async () => {
-    const f = setup()
-    f.cached.elements[0].table!.issues = [
-      { code: 'native-table-structure-ambiguous', detail: 'No unique row owner' }
-    ]
-    f.cached.elements.push({
-      ...structuredClone(f.cached.elements[0]),
-      id: 'independent',
-      regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
-      table: {
-        rowCount: 1,
-        columnCount: 1,
-        issues: [],
-        unassignedText: [],
-        cells: [
-          {
-            row: 0,
-            column: 0,
-            rowSpan: 1,
-            columnSpan: 1,
-            text: 'Prose',
-            regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
-            sourceItems: [{ pageNumber: 1, index: 2, text: 'Prose' }]
-          }
-        ]
-      }
-    })
-    const result = await applyCachedPdfTableSources(f.context)
-    expect(result.source.units.find((unit) => unit.id === 'group')).toEqual(
-      f.extraction.source.units[0]
-    )
-    expect(
-      result.source.units
-        .filter((unit) => unit.id.startsWith('table-source:'))
-        .map((unit) => unit.source)
-    ).toEqual(['Prose'])
-    expect(result.coverage.warnings).toContainEqual({
-      unitId: 'group',
-      reasons: ['table-layout', 'table-structure-unreliable']
-    })
-    expect(f.cached.elements).toHaveLength(2)
-  })
+  it.each(['complete origins', 'missing cell origin'])(
+    'keeps uncertain table native units while applying an independent reliable table: %s',
+    async (mode) => {
+      const f = setup()
+      f.cached.elements[0].table!.issues = [
+        { code: 'native-table-structure-ambiguous', detail: 'No unique row owner' }
+      ]
+      if (mode === 'missing cell origin') delete f.cached.elements[0].table!.cells[0].sourceItems
+      f.cached.elements.push({
+        ...structuredClone(f.cached.elements[0]),
+        id: 'independent',
+        regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
+        table: {
+          rowCount: 1,
+          columnCount: 1,
+          issues: [],
+          unassignedText: [],
+          cells: [
+            {
+              row: 0,
+              column: 0,
+              rowSpan: 1,
+              columnSpan: 1,
+              text: 'Prose',
+              regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
+              sourceItems: [{ pageNumber: 1, index: 2, text: 'Prose' }]
+            }
+          ]
+        }
+      })
+      const result = await applyCachedPdfTableSources(f.context)
+      expect(result.source.units.find((unit) => unit.id === 'group')).toEqual(
+        f.extraction.source.units[0]
+      )
+      expect(
+        result.source.units
+          .filter((unit) => unit.id.startsWith('table-source:'))
+          .map((unit) => unit.source)
+      ).toEqual(['Prose'])
+      expect(
+        result.coverage.warnings.find((warning) => warning.unitId === 'group')?.reasons
+      ).toEqual(
+        mode === 'complete origins'
+          ? ['table-layout', 'table-structure-unreliable']
+          : ['table-layout']
+      )
+      expect(f.cached.elements).toHaveLength(2)
+    }
+  )
 
   it('keeps the entire native unit when a reliable table shares it with a conflicting table', async () => {
     const f = setup()
@@ -1480,7 +1505,11 @@ describe('cached PDF table source ownership', () => {
     const rejected = setup()
     rejected.cached.elements[0].table!.cells.pop()
     const retained = await applyCachedPdfTableSources(rejected.context)
-    expect(retained.source).toEqual(rejected.extraction.source)
+    expect(retained.source.units).toEqual(
+      rejected.extraction.source.units.map((u) =>
+        u.id === 'group' ? { ...u, sourceOnly: true } : u
+      )
+    )
     expect(retained.coverage.warnings).toEqual([
       { unitId: 'group', reasons: ['table-layout', 'table-structure-unreliable'] }
     ])
@@ -2519,7 +2548,11 @@ describe('cached PDF table source ownership', () => {
     if (kind === 'read-error') f.readCached.mockRejectedValue(new Error('Cache unavailable'))
     const result = await applyCachedPdfTableSources(f.context)
     if (kind === 'mixed-unit') {
-      expect(result.source).toEqual(f.context.extraction.source)
+      expect(result.source.units).toEqual(
+        f.context.extraction.source.units.map((u) =>
+          u.id === 'group' ? { ...u, sourceOnly: true } : u
+        )
+      )
       expect(result.coverage.warnings).toEqual([
         { unitId: 'group', reasons: ['table-layout', 'table-structure-unreliable'] }
       ])
@@ -3047,7 +3080,11 @@ describe('complete original native text boundary witnesses', () => {
     f.glyphs[1].transform[4] = 20.08
     f.refreshRegions()
     const result = await applyCachedPdfTableSources(f.context)
-    expect(result.source).toEqual(f.context.extraction.source)
+    expect(result.source.units).toEqual(
+      f.context.extraction.source.units.map((u) =>
+        u.id === 'native-glyphs' ? { ...u, sourceOnly: true } : u
+      )
+    )
     expect(result.coverage.warnings).toEqual([
       { unitId: 'native-glyphs', reasons: ['table-structure-unreliable'] }
     ])
@@ -3545,9 +3582,13 @@ it.each(['complete', 'detached', 'wide-mark', 'other-order-change'])(
 
 function scientificOwnerSetup(kind: string) {
   const f = setup()
-  const values = ['1', '.', '5', '×', '10', '−', '2']
-  const positions = [10, 14, 16, 23, 32, 40, 44]
-  const widths = [4, 2, 4, 6, 8, 4, 3]
+  const paired = kind.startsWith('paired-')
+  const coefficient = paired ? '1.5 (1.2)' : '1.5'
+  const extra = paired ? 20 : 0
+  const values = ['1', '.', paired ? '5 (1.2)' : '5', '×', '10', '−', '2']
+  const positions = [10, 14, 16, 23 + extra, 32 + extra, 40 + extra, 44 + extra]
+  const widths = [4, 2, 4 + extra, 6, 8, 4, 3]
+  const width = (37 + extra) / 100
   f.items.splice(
     0,
     f.items.length,
@@ -3561,7 +3602,7 @@ function scientificOwnerSetup(kind: string) {
         0,
         index < 5 ? 10 : 6,
         positions[index],
-        index < 5 || kind === 'flat-native' ? 80 : 84
+        index < 5 || kind.endsWith('flat-native') ? 80 : 84
       ],
       width: widths[index],
       height: index < 5 ? 10 : 6,
@@ -3589,12 +3630,12 @@ function scientificOwnerSetup(kind: string) {
       units: [
         {
           id: 'scientific',
-          source: '1.5 × 10⁻²' + (kind === 'partial-owner' ? ' Prose' : ''),
+          source: coefficient + ' × 10⁻²' + (kind === 'partial-owner' ? ' Prose' : ''),
           ...(kind !== 'ordinary-owner' ? { sourceOnly: true } : {}),
           fragments: [
             {
               pageNumber: 1,
-              rect: { x: 0.1, y: 0.1, width: 0.37, height: kind === 'partial-owner' ? 0.6 : 0.1 },
+              rect: { x: 0.1, y: 0.1, width, height: kind === 'partial-owner' ? 0.6 : 0.1 },
               items: (kind === 'partial-owner'
                 ? [...claims, { pageNumber: 1, index: 7, text: 'Prose' }]
                 : claims
@@ -3626,7 +3667,7 @@ function scientificOwnerSetup(kind: string) {
     }
   }
   const element = f.cached.elements[0]
-  element.regions = [{ page: 1, x: 0.1, y: 0.09, width: 0.37, height: 0.12 }]
+  element.regions = [{ page: 1, x: 0.1, y: 0.09, width, height: 0.12 }]
   element.table!.columnCount = 1
   element.table!.issues = []
   element.table!.cells = [
@@ -3635,12 +3676,12 @@ function scientificOwnerSetup(kind: string) {
       column: 0,
       rowSpan: 1,
       columnSpan: 1,
-      text: '1.5 × 10−' + (kind === 'wrong-script' ? '3' : '2'),
-      ...(kind === 'missing-runs'
+      text: coefficient + ' × 10−' + (kind === 'wrong-script' ? '3' : '2'),
+      ...(kind.endsWith('missing-runs')
         ? {}
         : {
             textRuns: [
-              { text: '1.5 × 10', position: 'normal' as const },
+              { text: coefficient + ' × 10', position: 'normal' as const },
               {
                 text: '−' + (kind === 'wrong-script' ? '3' : '2'),
                 position: 'superscript' as const
@@ -3666,22 +3707,29 @@ it.each([
   'flat-native',
   'wrong-script',
   'partial-owner',
-  'ordinary-owner'
+  'ordinary-owner',
+  'paired-complete',
+  'paired-missing-runs',
+  'paired-flat-native'
 ])(
   'preserves a canonical scientific owner only with complete native script evidence: %s',
   async (kind) => {
     const f = scientificOwnerSetup(kind),
       before = structuredClone(f.cached)
     const result = await applyCachedPdfTableSources(f.context)
-    if (kind === 'complete') {
+    if (kind.endsWith('complete')) {
       expect(result.source.units.find((u) => u.id.startsWith('table-source:'))?.source).toBe(
-        '1.5 × 10⁻²'
+        kind === 'paired-complete' ? '1.5 (1.2) × 10⁻²' : '1.5 × 10⁻²'
       )
       expect(result.source.units.find((u) => u.id === 'prose')).toEqual(
         f.context.extraction.source.units[1]
       )
     } else {
-      expect(result.source.units).toEqual(f.context.extraction.source.units)
+      expect(result.source.units).toEqual(
+        f.context.extraction.source.units.map((u) =>
+          u.id === 'scientific' ? { ...u, sourceOnly: true } : u
+        )
+      )
       expect(result.source.units.some((u) => u.id.startsWith('table-source:'))).toBe(false)
       expect(
         result.coverage.warnings.some((w) => w.reasons.includes('table-structure-unreliable'))
@@ -3945,5 +3993,663 @@ it.each(['compound', 'shared', 'maximal-run', 'whole-scientific', 'no-canonical'
     } finally {
       await f.destroy()
     }
+  }
+)
+
+describe('original-only incomplete native owners', () => {
+  it.each([false, true])(
+    'protects the complete native owner without a crop, saved: %s',
+    async (saved) => {
+      const f = setup()
+      f.cached.elements[0].table!.cells.pop()
+      f.cached.elements[0].table!.columnCount = 1
+      const before = JSON.stringify(f.extraction)
+      const out = await applyCachedPdfStructureSources({
+        ...f.context,
+        preserveUnitIdentity: saved
+      })
+      expect(out.extraction.source.units.find((u) => u.id === 'group')).toEqual({
+        ...f.extraction.source.units[0],
+        sourceOnly: true
+      })
+      expect(out.extraction.source.units.find((u) => u.id === 'prose')).toEqual(
+        f.extraction.source.units[1]
+      )
+      expect(out.retainedUnitIds).toEqual(['group'])
+      expect(out.retainedSourcePageNumbers).toEqual([1])
+      expect(out.extraction.source.originalRegions ?? []).toEqual([])
+      expect(
+        out.extraction.source.units
+          .flatMap((u) => u.fragments.flatMap((f) => f.items.map((i) => i.index)))
+          .sort()
+      ).toEqual([0, 1, 2])
+      expect(JSON.stringify(f.extraction)).toBe(before)
+    }
+  )
+})
+
+function blockedCaptionedRecordTable() {
+  const f = setup(),
+    labels = ['Record', 'Models', 'One', 'First model', 'Two', 'Second model'],
+    native = labels.map((str, index) => ({
+      ...f.items[0],
+      str,
+      transform: [10, 0, 0, 10, index % 2 ? 40 : 10, 80 - Math.floor(index / 2) * 20]
+    }))
+  native.push({
+    ...native[0],
+    str: 'Table 1: Comparative records.',
+    width: 70,
+    height: 5,
+    transform: [5, 0, 0, 5, 10, 95]
+  })
+  native.push({ ...native[0], str: 'Independent prose', transform: [10, 0, 0, 10, 10, 10] })
+  f.items.splice(0, f.items.length, ...native)
+  const fragment = (indices: number[]) => ({
+    pageNumber: 1,
+    rect: {
+      x: Math.min(...indices.map((i) => native[i].transform[4])) / 100,
+      y: (100 - Math.max(...indices.map((i) => native[i].transform[5] + native[i].height))) / 100,
+      width:
+        (Math.max(...indices.map((i) => native[i].transform[4] + native[i].width)) -
+          Math.min(...indices.map((i) => native[i].transform[4]))) /
+        100,
+      height:
+        (Math.max(...indices.map((i) => native[i].transform[5] + native[i].height)) -
+          Math.min(...indices.map((i) => native[i].transform[5]))) /
+        100
+    },
+    items: indices.map((index) => ({ index, text: native[index].str }))
+  })
+  f.context.extraction = {
+    ...f.extraction,
+    source: createPdfTranslationSource({
+      ...f.extraction.source,
+      units: [[0], [1], [2], [3, 5], [4], [6], [7]].map((indices, index) => ({
+        id: 'owner-' + index,
+        source: indices.map((i) => native[i].str).join(' '),
+        fragments: [fragment(indices)]
+      }))
+    })
+  }
+  f.cached.elements[0].regions = [{ page: 1, x: 0.1, y: 0.1, width: 0.5, height: 0.5 }]
+  f.cached.elements[0].caption = {
+    text: native[6].str,
+    regions: [{ page: 1, ...fragment([6]).rect }]
+  }
+  f.cached.elements[0].table = {
+    rowCount: 3,
+    columnCount: 2,
+    unassignedText: [],
+    issues: [{ code: 'native-table-structure-ambiguous', detail: 'Uncertain row allocation' }],
+    cells: labels.map((text, index) => ({
+      row: Math.floor(index / 2),
+      column: index % 2,
+      rowSpan: 1,
+      columnSpan: 1,
+      text,
+      regions: [{ page: 1, ...fragment([index]).rect }],
+      sourceItems: [{ pageNumber: 1, index, text }]
+    }))
+  }
+  return f
+}
+
+it.each([false, true])(
+  'retains native captioned blocked record owners, saved: %s',
+  async (saved) => {
+    const f = blockedCaptionedRecordTable(),
+      before = JSON.stringify(f.context.extraction.source)
+    const out = await applyCachedPdfStructureSources({ ...f.context, preserveUnitIdentity: saved })
+    expect(out.extraction.source.units.find((u) => u.id === 'owner-3')).toEqual({
+      ...f.context.extraction.source.units[3],
+      sourceOnly: true
+    })
+    expect(out.retainedUnitIds).toEqual(['owner-0', 'owner-1', 'owner-2', 'owner-3', 'owner-4'])
+    expect(out.retainedSourcePageNumbers).toEqual([1])
+    expect(out.extraction.source.units.slice(5)).toEqual(f.context.extraction.source.units.slice(5))
+    expect(out.extraction.source.originalRegions ?? []).toEqual([])
+    expect(JSON.stringify(f.context.extraction.source)).toBe(before)
+  }
+)
+
+it.each(['no-caption', 'foreign-caption', 'cell-region', 'native-literal', 'mixed-prose'])(
+  'does not infer blocked record retention without exact native closure: %s',
+  async (fault) => {
+    const f = blockedCaptionedRecordTable()
+    if (fault === 'no-caption') delete f.cached.elements[0].caption
+    if (fault === 'foreign-caption') f.cached.elements[0].caption!.text = 'Table 1: Other records.'
+    if (fault === 'cell-region') f.cached.elements[0].table!.cells[3].regions[0].y += 0.1
+    if (fault === 'native-literal') f.items[3].str = 'Changed model'
+    if (fault === 'mixed-prose') {
+      const units = structuredClone(f.context.extraction.source.units)
+      units[3].fragments.push(...units[6].fragments)
+      units[3].source += ' Independent prose'
+      units.splice(6, 1)
+      f.context.extraction = {
+        ...f.context.extraction,
+        source: createPdfTranslationSource({ ...f.context.extraction.source, units })
+      }
+    }
+    const out = await applyCachedPdfTableSources(f.context)
+    expect(out.source.units.find((u) => u.id === 'owner-3')?.sourceOnly).toBeUndefined()
+    expect(out.source.originalRegions ?? []).toEqual([])
+  }
+)
+
+it.each(['clone', 'native-text', 'method', 'fingerprint', 'abort'])(
+  'withdraws current blocked-record exclusion proof: %s',
+  async (fault) => {
+    const f = blockedCaptionedRecordTable(),
+      out = await applyCachedPdfTableSources(f.context)
+    expect(getPdfTableOriginalRetention(out)?.retainedUnitIds).toContain('owner-3')
+    if (fault === 'clone') expect(getPdfTableOriginalRetention({ ...out })).toBeUndefined()
+    else {
+      if (fault === 'native-text') f.items[3].str = 'Changed model'
+      if (fault === 'method')
+        f.page.getTextContent = vi.fn(async () => ({ items: f.items, styles: {} }))
+      if (fault === 'fingerprint') f.document.fingerprints[0] = 'changed'
+      if (fault === 'abort') f.controller.abort()
+      expect(getPdfTableOriginalRetention(out)).toBeUndefined()
+    }
+  }
+)
+
+it('retains blocked owners when an independent saved cell already has its replacement ID', async () => {
+  const f = blockedCaptionedRecordTable(),
+    units = structuredClone(f.context.extraction.source.units)
+  units[6].id = 'table-source:cached-1:independent:0:0:0'
+  f.context.extraction = {
+    ...f.context.extraction,
+    source: createPdfTranslationSource({ ...f.context.extraction.source, units })
+  }
+  const prose = units[6].fragments[0]
+  f.cached.elements.push({
+    id: 'independent',
+    kind: 'table',
+    issues: [],
+    regions: [{ page: 1, ...prose.rect }],
+    table: {
+      rowCount: 1,
+      columnCount: 1,
+      issues: [],
+      unassignedText: [],
+      cells: [
+        {
+          row: 0,
+          column: 0,
+          rowSpan: 1,
+          columnSpan: 1,
+          text: units[6].source,
+          regions: [{ page: 1, ...prose.rect }],
+          sourceItems: prose.items.map((item) => ({ pageNumber: 1, ...item }))
+        }
+      ]
+    }
+  })
+  const out = await applyCachedPdfTableSources(f.context)
+  expect(out.source.units.find((u) => u.id === 'owner-3')?.sourceOnly).toBe(true)
+  expect(getPdfTableOriginalRetention(out)?.retainedUnitIds).toContain('owner-3')
+  expect(out.source.units[6]).toEqual(units[6])
+  expect(out.source.originalRegions ?? []).toEqual([])
+})
+
+it.each(['clone', 'native-text', 'method', 'fingerprint', 'abort'])(
+  'never transfers stale incomplete-owner retention: %s',
+  async (fault) => {
+    const f = setup()
+    f.cached.elements[0].table!.cells.pop()
+    const out = await applyCachedPdfTableSources(f.context)
+    expect(getPdfTableOriginalRetention(out)?.retainedUnitIds).toEqual(['group'])
+    if (fault === 'clone') {
+      expect(getPdfTableOriginalRetention({ ...out })).toBeUndefined()
+      return
+    }
+    if (fault === 'native-text') f.items[1].str = 'changed'
+    if (fault === 'method')
+      f.page.getTextContent = vi.fn(async () => ({ items: f.items, styles: {} }))
+    if (fault === 'fingerprint') f.document.fingerprints[0] = 'changed'
+    if (fault === 'abort') f.controller.abort()
+    expect(getPdfTableOriginalRetention(out)).toBeUndefined()
+  }
+)
+it('does not mint incomplete-owner retention when an omitted native item differs', async () => {
+  const f = setup()
+  f.cached.elements[0].table!.cells.pop()
+  f.items[1].str = 'changed'
+  const out = await applyCachedPdfTableSources(f.context)
+  expect(out).toBe(f.extraction)
+  expect(getPdfTableOriginalRetention(out)).toBeUndefined()
+})
+
+it('carries every page of a proved incomplete whole owner for reflow without inventing a crop', async () => {
+  const f = setup()
+  f.document.numPages = 2
+  f.cached.pageCount = 2
+  f.cached.elements[0].table!.cells.pop()
+  const [group, prose] = f.extraction.source.units
+  f.context.extraction = {
+    ...f.extraction,
+    source: createPdfTranslationSource({
+      ...f.extraction.source,
+      pages: [...f.extraction.source.pages, ...f.extraction.source.pages],
+      units: [
+        {
+          ...group,
+          fragments: [
+            { ...group.fragments[0], items: [group.fragments[0].items[0]] },
+            { ...group.fragments[0], pageNumber: 2, items: [group.fragments[0].items[1]] }
+          ]
+        },
+        prose
+      ]
+    })
+  }
+  f.readCached.mockImplementation(async ({ page }) => (page === 1 ? f.cached : undefined))
+  const stored = JSON.stringify(f.context.extraction.source)
+  const out = await applyCachedPdfStructureSources({ ...f.context, preserveUnitIdentity: true })
+  expect(out.retainedUnitIds).toEqual(['group'])
+  expect(out.retainedSourcePageNumbers).toEqual([1, 2])
+  expect(out.extraction.source.originalRegions ?? []).toEqual([])
+  expect(out.extraction.source.units[0]).toEqual({
+    ...f.context.extraction.source.units[0],
+    sourceOnly: true
+  })
+  expect(out.extraction.source.units[1]).toEqual(prose)
+  expect(JSON.stringify(f.context.extraction.source)).toBe(stored)
+})
+
+it('reproves negative table eligibility after serializing source, without changing saved target strings', async () => {
+  const f = setup()
+  f.cached.elements[0].table!.cells.pop()
+  const fresh = await applyCachedPdfStructureSources(f.context)
+  const stored = JSON.stringify({
+    source: fresh.extraction.source,
+    targets: [{ id: 'group', translation: 'Historical accepted text' }]
+  })
+  const restored = JSON.parse(stored)
+  const extraction = { ...f.extraction, source: createPdfTranslationSource(restored.source) }
+  expect(getPdfTableOriginalRetention(extraction)).toBeUndefined()
+  const saved = await applyCachedPdfStructureSources({
+    ...f.context,
+    extraction,
+    preserveUnitIdentity: true
+  })
+  expect(saved.retainedUnitIds).toEqual(['group'])
+  expect(saved.retainedSourcePageNumbers).toEqual([1])
+  expect(saved.extraction.source.units).toEqual(extraction.source.units)
+  expect(JSON.stringify(restored)).toBe(stored)
+})
+
+async function blockedNativeSpanningHeaders(offBaseline = false) {
+  const pdf = await PDFDocument.create(),
+    sheet = pdf.addPage([400, 300]),
+    specs = [
+      ['Samples', 150, 250],
+      ['Features', 250, 250],
+      ['Group', 40, 232],
+      ['Clean', 150, 232],
+      ['Altered', 200, 232],
+      ['Raw', 250, 232],
+      ['Used', 300, 232],
+      ['Alpha', 40, 210],
+      ['11', 150, 210],
+      ['12', 200, 210],
+      ['13', 250, 210],
+      ['14', 300, 210],
+      ['Beta', 40, 190],
+      ['21', 150, 190],
+      ['22', 200, 190],
+      ['23', 250, 190],
+      ['24', 300, 190],
+      ['Table 1: Example counts.', 40, 275],
+      ['Independent prose', 40, 150]
+    ] as const
+  for (const [text, x, y] of specs)
+    sheet.drawText(text, { x, y: offBaseline && text === 'Clean' ? y - 2 : y, size: 10 })
+  const bytes = await pdf.save(),
+    assets = path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),
+    task = getDocument({
+      data: bytes.slice(),
+      standardFontDataUrl: path.join(assets, 'standard_fonts') + '/'
+    }),
+    document = await task.promise,
+    page = await document.getPage(1),
+    content = await page.getTextContent(),
+    entries = specs.map(([text]) => {
+      const index = content.items.findIndex((i) => 'str' in i && i.str === text),
+        raw = content.items[index]
+      if (!raw || !('str' in raw)) throw Error('Missing anonymous native item')
+      return {
+        index,
+        raw,
+        rect: {
+          x: raw.transform[4] / 400,
+          y: (300 - raw.transform[5] - raw.height) / 300,
+          width: raw.width / 400,
+          height: raw.height / 300
+        }
+      }
+    }),
+    fragment = (indices: number[]) => ({
+      pageNumber: 1,
+      rect: {
+        x: Math.min(...indices.map((i) => entries[i].rect.x)),
+        y: Math.min(...indices.map((i) => entries[i].rect.y)),
+        width:
+          Math.max(...indices.map((i) => entries[i].rect.x + entries[i].rect.width)) -
+          Math.min(...indices.map((i) => entries[i].rect.x)),
+        height:
+          Math.max(...indices.map((i) => entries[i].rect.y + entries[i].rect.height)) -
+          Math.min(...indices.map((i) => entries[i].rect.y))
+      },
+      items: indices.map((i) => ({ index: entries[i].index, text: entries[i].raw.str }))
+    }),
+    groups = [[0, 1], [2, 3, 4, 5, 6], ...entries.slice(7).map((_, i) => [i + 7])],
+    source = createPdfTranslationSource({
+      resourceRequestKey: 'anonymous-records',
+      fingerprint: document.fingerprints[0],
+      pages: [{ width: 400, height: 300 }],
+      units: groups.map((indices, i) => ({
+        id: 'native-owner-' + i,
+        source: indices.map((i) => entries[i].raw.str).join(' '),
+        fragments: [fragment(indices)]
+      }))
+    }),
+    f = setup(),
+    sourceIdentity = {
+      sourceChecksum: createHash('sha256').update(bytes).digest('hex'),
+      sourceSizeBytes: bytes.length
+    },
+    cached: PdfStructureResult = {
+      ...f.cached,
+      ...sourceIdentity,
+      pages: [{ page: 1, width: 400, height: 300, rotation: 0 }],
+      elements: [
+        {
+          id: 'records',
+          kind: 'table',
+          issues: [{ code: 'native-table-structure-ambiguous', detail: 'Uncertain record rows' }],
+          regions: [{ page: 1, x: 0.08, y: 0.12, width: 0.8, height: 0.3 }],
+          caption: { text: entries[17].raw.str, regions: [{ page: 1, ...entries[17].rect }] },
+          table: {
+            rowCount: 5,
+            columnCount: 5,
+            issues: [],
+            unassignedText: [],
+            cells: [
+              ...entries.slice(0, 17).map((e, i) => ({
+                row: i < 3 ? 0 : i < 7 ? 1 : i < 12 ? 2 : 3,
+                column:
+                  i === 0 ? 1 : i === 1 ? 3 : i === 2 ? 0 : i < 7 ? i - 2 : i < 12 ? i - 7 : i - 12,
+                rowSpan: i === 2 ? 2 : 1,
+                columnSpan: i < 2 ? 2 : 1,
+                text: e.raw.str,
+                sourceItems: [{ pageNumber: 1, index: e.index, text: e.raw.str }],
+                regions: [{ page: 1, ...e.rect }]
+              })),
+              ...Array.from({ length: 5 }, (_, column) => ({
+                row: 4,
+                column,
+                rowSpan: 1,
+                columnSpan: 1,
+                text: '',
+                regions: []
+              }))
+            ]
+          }
+        }
+      ]
+    },
+    extraction: PdfTranslationExtraction = {
+      source,
+      coverage: {
+        pageCount: 1,
+        textItemCount: entries.length,
+        includedItemCount: entries.length,
+        excludedItemCount: 0,
+        pagesWithoutText: [],
+        exclusions: [],
+        warnings: []
+      }
+    },
+    context = {
+      ...f.context,
+      extraction,
+      document,
+      sourceIdentity,
+      nativeDocumentFactory: getDocument,
+      readCached: async () => cached
+    }
+  return { context, cached, entries, fragment, destroy: () => task.destroy() }
+}
+
+it.each([false, true])(
+  'protects only complete multi-cell native header owners, saved: %s',
+  async (saved) => {
+    const f = await blockedNativeSpanningHeaders()
+    try {
+      const before = JSON.stringify(f.context.extraction),
+        cached = JSON.stringify(f.cached),
+        out = await applyCachedPdfStructureSources({ ...f.context, preserveUnitIdentity: saved })
+      expect(out.retainedUnitIds).toEqual(['native-owner-0', 'native-owner-1'])
+      expect(out.extraction.source.units.slice(0, 2).map((u) => u.sourceOnly)).toEqual([true, true])
+      expect(out.extraction.source.units.slice(2)).toEqual(
+        f.context.extraction.source.units.slice(2)
+      )
+      expect(out.extraction.source.originalRegions ?? []).toEqual([])
+      expect(out.retainedSourcePageNumbers).toEqual([1])
+      expect(JSON.stringify(f.context.extraction)).toBe(before)
+      expect(JSON.stringify(f.cached)).toBe(cached)
+    } finally {
+      await f.destroy()
+    }
+  }
+)
+
+it.each([
+  'no-caption',
+  'foreign-caption',
+  'foreign-native',
+  'cell-region',
+  'no-records',
+  'one-record',
+  'off-baseline',
+  'mixed-prose',
+  'partial-cell',
+  'empty-region'
+] as const)(
+  'does not infer multi-cell header exclusion from incomplete evidence: %s',
+  async (fault) => {
+    const f = await blockedNativeSpanningHeaders(fault === 'off-baseline')
+    try {
+      const element = f.cached.elements[0],
+        table = element.table!
+      if (fault === 'no-caption') delete element.caption
+      if (fault === 'foreign-caption') element.caption!.text = 'Table 1: Different counts.'
+      if (fault === 'foreign-native') table.cells[3].sourceItems![0].text = 'Different label'
+      if (fault === 'cell-region') table.cells[3].regions[0].x += 0.01
+      if (fault === 'empty-region') table.cells.at(-1)!.regions = [table.cells[3].regions[0]]
+      if (fault === 'no-records')
+        table.cells = table.cells.filter((c) => c.row < 2 || c.column === 0)
+      if (fault === 'one-record')
+        table.cells = table.cells.filter((c) => c.row < 3 || c.column === 0)
+      if (fault === 'mixed-prose' || fault === 'partial-cell') {
+        const units = structuredClone(f.context.extraction.source.units)
+        if (fault === 'mixed-prose') {
+          const prose = units.pop()!
+          units[1].source += ' ' + prose.source
+          units[1].fragments.push(...prose.fragments)
+        } else {
+          const used = table.cells[6]
+          table.cells[5].text += ' ' + used.text
+          table.cells[5].sourceItems!.push(...used.sourceItems!)
+          table.cells[5].regions.push(...used.regions)
+          table.cells[5].columnSpan = 2
+          table.cells.splice(6, 1)
+          units[1].fragments = [f.fragment([2, 3, 4, 5])]
+          units[1].source = units[1].fragments[0].items.map((i) => i.text).join(' ')
+          units.push({ id: 'separate-native-owner', source: 'Used', fragments: [f.fragment([6])] })
+        }
+        f.context.extraction = {
+          ...f.context.extraction,
+          source: createPdfTranslationSource({ ...f.context.extraction.source, units })
+        }
+      }
+      const before = JSON.stringify(f.context.extraction),
+        out = await applyCachedPdfStructureSources({ ...f.context, preserveUnitIdentity: true })
+      expect(out.retainedUnitIds).not.toContain('native-owner-1')
+      expect(
+        out.extraction.source.units.find((u) => u.id === 'native-owner-1')?.sourceOnly
+      ).toBeUndefined()
+      expect(JSON.stringify(f.context.extraction)).toBe(before)
+      expect(out.extraction.source.originalRegions ?? []).toEqual([])
+    } finally {
+      await f.destroy()
+    }
+  }
+)
+
+it('withdraws real native spanning-header retention on clone or source epoch change', async () => {
+  const f = await blockedNativeSpanningHeaders()
+  try {
+    const out = await applyCachedPdfTableSources(f.context)
+    expect(getPdfTableOriginalRetention(out)?.retainedUnitIds).toEqual([
+      'native-owner-0',
+      'native-owner-1'
+    ])
+    expect(getPdfTableOriginalRetention({ ...out })).toBeUndefined()
+    f.context.document.fingerprints[0] = 'different-source'
+    expect(getPdfTableOriginalRetention(out)).toBeUndefined()
+  } finally {
+    await f.destroy()
+  }
+})
+
+it('keeps normal cell publication for a valid native spanning header', async () => {
+  const f = await blockedNativeSpanningHeaders()
+  try {
+    f.cached.elements[0].issues = []
+    const before = JSON.stringify(f.context.extraction),
+      out = await applyCachedPdfTableSources(f.context)
+    expect(getPdfTableOriginalRetention(out)?.retainedUnitIds).toEqual([])
+    expect(out.source.units.some((u) => u.id.startsWith('table-source:'))).toBe(true)
+    expect(JSON.stringify(f.context.extraction)).toBe(before)
+  } finally {
+    await f.destroy()
+  }
+})
+
+it.each(['complete', 'changed-literal', 'broken-region'])(
+  'keeps an exact shared native header without retaining neighboring prose (%s)',
+  async (variant) => {
+    const f = setup()
+    const specs = [
+      ['Label', 10, 82, 13, 10],
+      ['Mode Size', 32, 82, 40, 10],
+      ['Value', 73, 82, 12, 10],
+      ['Alpha', 10, 65, 12, 10],
+      ['10', 32, 65, 9, 10],
+      ['20', 52, 65, 9, 10],
+      ['30', 73, 65, 9, 10],
+      ['Beta', 10, 49, 11, 10],
+      ['12', 32, 49, 9, 10],
+      ['24', 52, 49, 9, 10],
+      ['36', 73, 49, 9, 10],
+      ['Table 1: Example records.', 10, 96, 68, 4],
+      ['Independent prose', 10, 20, 61, 10]
+    ] as const
+    const native = specs.map(([str, x, y, width, height]) => ({
+      ...f.items[0],
+      str,
+      width,
+      height,
+      transform: [height, 0, 0, height, x, y]
+    }))
+    f.items.splice(0, f.items.length, ...native)
+    const region = (
+      index: number
+    ): { page: number; x: number; y: number; width: number; height: number } => {
+      const [, x, y, width, height] = specs[index]
+      return {
+        page: 1,
+        x: x / 100,
+        y: (100 - y - height) / 100,
+        width: width / 100,
+        height: height / 100
+      }
+    }
+    const origin = (index: number): { pageNumber: number; index: number; text: string } => ({
+      pageNumber: 1,
+      index,
+      text: native[index].str
+    })
+    const source = createPdfTranslationSource({
+      ...f.extraction.source,
+      units: [
+        {
+          id: 'header',
+          source: 'Label Mode Size Value',
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.1, y: 0.08, width: 0.75, height: 0.1 },
+              items: [0, 1, 2].map(origin)
+            }
+          ]
+        },
+        ...native.slice(3).map((item, index) => ({
+          id: 'record-' + index,
+          source: item.str,
+          fragments: [{ pageNumber: 1, rect: region(index + 3), items: [origin(index + 3)] }]
+        }))
+      ]
+    })
+    f.context.extraction = { ...f.extraction, source }
+    const element = f.cached.elements[0]
+    element.regions = [{ page: 1, x: 0.09, y: 0.07, width: 0.78, height: 0.5 }]
+    element.caption = { text: native[11].str, regions: [region(11)] }
+    element.table = {
+      rowCount: 3,
+      columnCount: 4,
+      unassignedText: [],
+      issues: [{ code: 'native-table-structure-ambiguous', detail: 'Uncertain record allocation' }],
+      cells: [
+        ...[
+          { text: 'Label', index: 0, rect: region(0) },
+          {
+            text: variant === 'changed-literal' ? 'Kind' : 'Mode',
+            index: 1,
+            rect: { ...region(1), x: variant === 'broken-region' ? 0.325 : 0.32, width: 0.14 }
+          },
+          { text: 'Size', index: 1, rect: { ...region(1), x: 0.52, width: 0.2 } },
+          { text: 'Value', index: 2, rect: region(2) }
+        ].map(({ text, index, rect }, column) => ({
+          row: 0,
+          column,
+          rowSpan: 1,
+          columnSpan: 1,
+          text,
+          sourceItems: [origin(index)],
+          regions: [rect]
+        })),
+        ...native.slice(3, 11).map((item, index) => ({
+          row: Math.floor(index / 4) + 1,
+          column: index % 4,
+          rowSpan: 1,
+          columnSpan: 1,
+          text: item.str,
+          sourceItems: [origin(index + 3)],
+          regions: [region(index + 3)]
+        }))
+      ]
+    }
+    const out = await applyCachedPdfStructureSources(f.context)
+    expect(out.extraction.source.units).toEqual([
+      { ...source.units[0], ...(variant === 'complete' ? { sourceOnly: true } : {}) },
+      ...source.units.slice(1)
+    ])
+    expect(out.retainedSourcePageNumbers ?? []).toEqual([])
+    expect(out.extraction.source.originalRegions).toEqual(source.originalRegions)
   }
 )

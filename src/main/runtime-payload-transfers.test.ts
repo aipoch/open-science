@@ -5,6 +5,8 @@ import { afterEach, beforeEach, expect, it, vi, type Mock } from 'vitest'
 import { RuntimePayloadTransfers } from './runtime-payload-transfers'
 import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
 import { createWebCallerContext } from './caller-context'
+import { createRuntimePayloadClient } from '../shared/runtime-payload-client'
+import { parseRpcJson, stringifyRpcJson } from './rpc-json'
 import {
   RUNTIME_PAYLOAD_PAGE_BYTES,
   runtimePayloadDescriptorSchema,
@@ -162,27 +164,67 @@ it('rejects incomplete uploads and never invokes or leaves their temporary files
   expect(await readdir(root)).toEqual([])
 })
 
-it('binds tokens to their document lease, command and current authorization', async () => {
-  const client = caller('a')
-  const foreign = caller('b')
-  const { $payload } = runtimePayloadDescriptorSchema.parse(
-    await client.invoke('sessions:save-session', [], { kind: 'upload', byteLength: 10 })
-  )
-  const release = { kind: 'release' as const, snapshotId: $payload.snapshotId }
-  await expect(foreign.invoke('sessions:save-session', [], release)).rejects.toThrow(
-    'no longer available'
-  )
-  await expect(client.invoke('sessions:load-one', [], release)).rejects.toThrow(
-    'no longer available'
-  )
-  client.revoke()
-  await expect(client.invoke('sessions:save-session', [], release)).rejects.toThrow(
-    'no longer authorized'
-  )
-  leases.dispose()
-  await owner.settleReleased()
+it.each(['sessions:save-session', 'pdf-translation:generate-pdf'])(
+  'binds %s tokens to their document lease, command and current authorization',
+  async (channel) => {
+    const client = caller('a')
+    const foreign = caller('b')
+    const { $payload } = runtimePayloadDescriptorSchema.parse(
+      await client.invoke(channel, [], { kind: 'upload', byteLength: 10 })
+    )
+    const release = { kind: 'release' as const, snapshotId: $payload.snapshotId }
+    await expect(foreign.invoke(channel, [], release)).rejects.toThrow('no longer available')
+    await expect(client.invoke('sessions:load-one', [], release)).rejects.toThrow(
+      'no longer available'
+    )
+    client.revoke()
+    await expect(client.invoke(channel, [], release)).rejects.toThrow('no longer authorized')
+    leases.dispose()
+    await owner.settleReleased()
+    expect(await readdir(root)).toEqual([])
+  }
+)
+
+it('pages a binary PDF request and result through the same authorized owner below the frame budget', async () => {
+  const channel = 'pdf-translation:generate-pdf',
+    document = caller(),
+    backing = Buffer.alloc(13 * 1024 * 1024 + 17, 128),
+    data = backing.subarray(7, backing.length - 10),
+    operations: string[] = [],
+    frames: number[] = []
+  data[0] = 37
+  data[data.length - 1] = 255
+  document.dispatch.mockImplementation(async (args) => {
+    expect(args).toHaveLength(1)
+    const received = (args[0] as { data: Uint8Array }).data
+    expect(received).toBeInstanceOf(Uint8Array)
+    expect(Buffer.compare(Buffer.from(received), data)).toBe(0)
+    return { data, layoutFailures: [], cacheHit: false }
+  })
+  const client = createRuntimePayloadClient({
+    encode: stringifyRpcJson,
+    decode: parseRpcJson,
+    signal: () => new AbortController().signal,
+    invoke: async (name, args, options) => {
+      const frame = stringifyRpcJson({ channel: name, args, ...options })
+      frames.push(Buffer.byteLength(frame))
+      expect(Buffer.byteLength(frame)).toBeLessThan(16 * 1024 * 1024)
+      if (options?.transfer) operations.push(options.transfer.kind)
+      if (options?.transfer?.kind === 'append') expect(document.dispatch).not.toHaveBeenCalled()
+      return parseRpcJson(stringifyRpcJson(await document.invoke(name, args, options?.transfer)))
+    }
+  })
+  expect(Buffer.byteLength(stringifyRpcJson([{ data }]))).toBeGreaterThan(16 * 1024 * 1024)
+  const result = (await client.invoke(channel, [{ data }])) as { data: Uint8Array }
+  expect(result.data).toBeInstanceOf(Uint8Array)
+  expect(Buffer.compare(Buffer.from(result.data), data)).toBe(0)
+  expect(document.dispatch).toHaveBeenCalledOnce()
+  expect(operations.filter((kind) => kind === 'commit')).toHaveLength(1)
+  expect(operations).toContain('read')
+  expect(operations.at(-1)).toBe('release')
+  expect(Math.max(...frames)).toBeLessThan(16 * 1024 * 1024)
   expect(await readdir(root)).toEqual([])
-})
+}, 30_000)
 
 it('rejects malformed base64 and invalid offsets without accepting partial saves', async () => {
   for (const request of [

@@ -17,6 +17,9 @@ test('new Markdown publications replace the head while edits, restoration and dr
 }, testInfo) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
+  // This journey needs the editor and Provenance visible together before its narrow-layout check.
+  const wideViewport = { width: 1440, height: 900 }
+  await app.setMainWindowSize(wideViewport.width, wideViewport.height)
   // Register the actual local interpreter in the isolated app, without authorizing installation.
   const python = process.env.OPEN_SCIENCE_TASK_PYTHON
     ? realpathSync(process.env.OPEN_SCIENCE_TASK_PYTHON)
@@ -284,6 +287,7 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await preview.getByRole('button', { name: `Close preview of ${name}` }).click()
   await verifyTaskRead('restored', second.selectedVersionId)
   page = await app.restart()
+  await app.setMainWindowSize(wideViewport.width, wideViewport.height)
   provenance = page.getByTestId('artifact-provenance')
   warning = provenance.locator('[data-notice-level="warning"]')
   await openRecentSession(page, 'Create a provenance artifact.')
@@ -291,6 +295,10 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await openFile()
   preview = page.getByRole('dialog', { name: `Preview ${name}` })
   await preview.getByRole('button', { name: `Open Provenance for ${name}` }).click()
+  await expect(preview.getByRole('separator', { name: 'Resize provenance panel' })).toBeVisible()
+  await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
+    'v4 contains manual edits'
+  )
   await preview.getByRole('button', { name: `Edit ${name}`, exact: true }).click()
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
     'v4 contains manual edits'
@@ -421,10 +429,14 @@ test('legacy Markdown v3 opens from an old message card as current after restart
     await expect(page.getByTestId('artifact-provenance')).toContainText(
       'Execution evidence is incomplete for v3'
     )
-    expect(
-      (await client.artifactLineage.findUniqueOrThrow({ where: { id: first.artifactId } }))
-        .currentVersionId
-    ).toBe(third.versionId)
+    await expect
+      .poll(async () => {
+        const lineage = await client.artifactLineage.findUniqueOrThrow({
+          where: { id: first.artifactId }
+        })
+        return lineage.currentVersionId
+      })
+      .toBe(third.versionId)
     await page.screenshot({ path: testInfo.outputPath('legacy-opened-v3.png') })
     await preview.getByRole('button', { name: 'Previous file version' }).click()
     await expect(preview.getByText('Manually corrected result.', { exact: true })).toBeVisible()

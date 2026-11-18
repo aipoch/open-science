@@ -1,8 +1,10 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ClaudeIsolatedAuthController, type ClaudeIsolatedTokenStore } from './claude-isolated-auth'
+import * as windowsOwnedProcess from '../process-tree-windows'
 
 // The browser flow spawns `claude setup-token`; mock node:child_process so tests can script the
 // subprocess's stdout/stderr/exit without launching anything. Each test sets `nextSpawn` to the
@@ -15,21 +17,39 @@ const spawnCalls: {
 }[] = []
 let nextSpawn: (() => FakeChild) | undefined
 
-vi.mock('node:child_process', () => ({
+vi.mock('node:child_process', async (original) => ({
+  ...(await original<typeof import('node:child_process')>()),
   spawn: (
     command: string,
     args: string[],
     options?: { env?: NodeJS.ProcessEnv; windowsHide?: boolean }
   ) => {
+    // Assert the logical CLI invocation; real admission-pipe behavior lives in verification tests.
+    if (process.platform === 'darwin') {
+      expect(command).toBe('/bin/sh')
+      expect(args.slice(0, 3)).toEqual([
+        '-c',
+        'IFS= read -r start <&3 && [ "$start" = start ] || exit 125; exec 3<&-; exec "$@"',
+        'open-science-verification-start'
+      ])
+      command = args[3]
+      args = args.slice(4)
+    }
     spawnCalls.push({ command, args, env: options?.env, windowsHide: options?.windowsHide })
     return (nextSpawn ?? (() => new FakeChild()))()
   }
+}))
+vi.mock('../process-tree-windows', async (original) => ({
+  ...(await original<typeof import('../process-tree-windows')>()),
+  spawnWindowsOwnedProcess: vi.fn(),
+  reapWindowsOwnedJob: vi.fn(async () => true)
 }))
 
 // Minimal fake child process exposing the stdout/stderr/close surface the controller consumes.
 class FakeChild extends EventEmitter {
   stdout = new EventEmitter()
   stderr = new EventEmitter()
+  stdio = [null, this.stdout, this.stderr, new PassThrough()]
 }
 
 // Returns a child that emits the given stdout/stderr then closes with `code` on the next tick, so the
@@ -80,6 +100,22 @@ const createStore = (
 
   return store
 }
+
+beforeEach(() => {
+  spawnCalls.length = 0
+  nextSpawn = undefined
+  vi.mocked(windowsOwnedProcess.spawnWindowsOwnedProcess).mockImplementation(
+    (_jobName, command, args, options) => {
+      spawnCalls.push({
+        command,
+        args: [...args],
+        env: options.env,
+        windowsHide: options.windowsHide ?? (process.platform === 'win32' ? true : undefined)
+      })
+      return (nextSpawn ?? (() => new FakeChild()))() as never
+    }
+  )
+})
 
 describe('ClaudeIsolatedAuthController', () => {
   it('reports authenticated: true when the stored token decrypts', async () => {

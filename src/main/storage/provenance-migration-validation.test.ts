@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { NotebookRunRepository } from '../notebook/repository'
+import { createRootNotebookLane } from '../notebook/lane-identity'
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
+import { SessionJournalStore, sessionJournalPath } from '../session-persistence/journal'
+import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { operationJournalPath, RuntimeOperationJournal } from '@aipoch/environment'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ArtifactReproducibilityReceiptStore } from '../artifacts/artifact-reproducibility-receipts'
@@ -485,6 +489,46 @@ describe('validateProvenanceMigrationState', () => {
     )
   })
 
+  it('validates the latest journal graph during migration without rewriting the primary', async () => {
+    const authorityRoot = join(root, 'config')
+    const directory = join(authorityRoot, 'sessions', 'project-1')
+    await mkdir(directory, { recursive: true })
+    const path = join(directory, 'session-1.json')
+    const journal = new SessionJournalStore({ maxBytes: 1024 * 1024 })
+    const session = materializeSessionConversationGraph({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Journal',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    await journal.write(path, {
+      expectedRevision: 0,
+      document: { version: 2, session }
+    })
+    const primary = await readFile(sessionJournalPath(path), 'utf8')
+    await expect(validateProvenanceMigrationState(root, authorityRoot)).resolves.toBeUndefined()
+    expect(await readFile(sessionJournalPath(path), 'utf8')).toBe(primary)
+    await journal.write(path, {
+      expectedRevision: 1,
+      document: {
+        version: 2,
+        session: {
+          ...session,
+          revision: 2,
+          conversationGraph: { ...session.conversationGraph, rootFrameId: 'missing-frame' }
+        }
+      }
+    })
+    await expect(validateProvenanceMigrationState(root, authorityRoot)).rejects.toThrow(
+      /Session graph ownership is invalid/i
+    )
+  })
+
   it('refuses a malformed Session conversation graph in the fixed config root', async () => {
     const authorityRoot = join(root, 'config')
     const sessionDirectory = join(authorityRoot, 'sessions', 'project-1')
@@ -681,37 +725,76 @@ describe('validateProvenanceMigrationState', () => {
     )
   })
 
-  it('validates only Environment manifests referenced by retained Notebook runs', async () => {
-    const manifest = JSON.stringify({ schemaVersion: 1, environmentName: 'default-python' })
-    const manifestChecksum = createHash('sha256').update(manifest).digest('hex')
-    const manifestDirectory = join(root, 'runtime', 'provenance', 'environment-manifests')
-    await mkdir(manifestDirectory, { recursive: true })
-    await writeFile(join(manifestDirectory, `${manifestChecksum}.json`), manifest)
-    await writeFile(join(manifestDirectory, `${'e'.repeat(64)}.json`), 'corrupt unused cache entry')
-    const notebookDirectory = join(root, 'notebooks', 'project-1', 'notebook-session-1')
-    await mkdir(notebookDirectory, { recursive: true })
-    await writeFile(
-      join(notebookDirectory, 'run.json'),
-      JSON.stringify({
-        version: 1,
-        projectId: 'project-1',
-        sessionId: 'notebook-session-1',
-        runs: [
-          {
+  it.each([1, 2])(
+    'validates Environment manifests in version %s Notebook records',
+    async (version) => {
+      const manifest = JSON.stringify({ schemaVersion: 1, environmentName: 'default-python' })
+      const manifestChecksum = createHash('sha256').update(manifest).digest('hex')
+      const manifestDirectory = join(root, 'runtime', 'provenance', 'environment-manifests')
+      await mkdir(manifestDirectory, { recursive: true })
+      await writeFile(join(manifestDirectory, `${manifestChecksum}.json`), manifest)
+      await writeFile(
+        join(manifestDirectory, `${'e'.repeat(64)}.json`),
+        'corrupt unused cache entry'
+      )
+      const notebookDirectory = join(root, 'notebooks', 'project-1', 'notebook-session-1')
+      await mkdir(notebookDirectory, { recursive: true })
+      await writeFile(
+        join(notebookDirectory, 'run.json'),
+        JSON.stringify({
+          version: 1,
+          projectId: 'project-1',
+          sessionId: 'notebook-session-1',
+          runs: [
+            {
+              runId: 'run-1',
+              environmentCapture: { state: 'available', manifestChecksum },
+              environmentManifestChecksum: manifestChecksum
+            }
+          ]
+        })
+      )
+
+      if (version === 2) {
+        await rm(join(notebookDirectory, 'run.json'))
+        const repository = new NotebookRunRepository(root)
+        const scope = { projectId: 'project-1', sessionId: 'notebook-session-1' }
+        const lane = createRootNotebookLane(scope.projectId, scope.sessionId, 'root-frame')
+        await repository.loadOrCreate({ ...scope, lane, workspaceCwd: root })
+        await repository.appendRun({
+          ...scope,
+          lane,
+          run: {
             runId: 'run-1',
+            cellId: 'cell-1',
+            source: 'agent',
+            kernelKind: 'python',
+            script: 'print(data)',
+            status: 'completed',
+            startedAt: 1,
+            text: { stdout: 'x'.repeat(100000), stderr: '', traceback: '', plain: [] },
+            outputs: [],
+            artifacts: [],
+            workingFiles: [],
             environmentCapture: { state: 'available', manifestChecksum },
             environmentManifestChecksum: manifestChecksum
           }
-        ]
-      })
-    )
+        })
+        expect(
+          JSON.parse(await readFile(join(notebookDirectory, 'run.json'), 'utf8')).version
+        ).toBe(2)
+      }
 
-    await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
-    await writeFile(join(manifestDirectory, `${manifestChecksum}.json`), 'corrupt referenced entry')
-    await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
-      /Notebook Environment manifest checksum mismatch/i
-    )
-  })
+      await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
+      await writeFile(
+        join(manifestDirectory, `${manifestChecksum}.json`),
+        'corrupt referenced entry'
+      )
+      await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
+        /Notebook Environment manifest checksum mismatch/i
+      )
+    }
+  )
 
   it('validates content-addressed Environment locks referenced by Notebook runs', async () => {
     const manifest = JSON.stringify({ schemaVersion: 1, environmentName: 'default-python' })

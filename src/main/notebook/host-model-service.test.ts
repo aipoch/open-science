@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import {
-  CODEX_SHARED_PROVIDER_ID,
-  type ClaudeSubscriptionProviderId,
-  type ProviderView
-} from '../../shared/settings'
+import type { ClaudeSubscriptionProviderId, ProviderView } from '../../shared/settings'
+import { CODEX_SHARED_PROVIDER_ID } from '../../shared/settings-runtime'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import { getAgentFramework } from '../agent-framework'
 import type { AcpBackendGenerationView } from '../acp/backend-generation-owner'

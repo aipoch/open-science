@@ -318,3 +318,69 @@ it('does not mistake repeated baseline bars for table rules connecting every row
   }
   expect(nativeCaptionedVectorTableGrid(page, caption, [caption], [])).toBeUndefined()
 })
+
+function overlappingCaptionFixture(): ReturnType<typeof JSON.parse> {
+  const f = fixture()
+  f.captions[0].lines.push('The remaining native explanation.', 'Final caption continuation.')
+  f.captions[1].rect = [310, 235, 560, 245]
+  f.tokens[1].rect = [310, 235, 560, 245]
+  f.tokens[1].baseline = 245
+  for (const [n, text] of f.captions[0].lines.slice(1).entries()) {
+    const y = 220 + n * 10
+    f.tokens.push({
+      text,
+      sourceItem: { pageNumber: 1, index: n + 2, text },
+      horizontal: true,
+      height: 10,
+      baseline: y + 10,
+      rect: [50, y, 295, y + 10]
+    })
+  }
+  for (const g of f.page.graphicsBounds)
+    if (g.kind === 'path' && g.normalizedRect[3] > 225 / 800) g.normalizedRect[3] = 225 / 800
+  f.page.graphicsBounds.at(-1).normalizedRect[1] = 200 / 800
+  f.page.lines = f.tokens.map((t: ReturnType<typeof JSON.parse>) => ({
+    text: t.text,
+    x: t.rect[0],
+    y: t.rect[1],
+    width: t.rect[2] - t.rect[0],
+    height: t.height,
+    fontSize: t.height
+  }))
+  return f
+}
+it('keeps complete independent vector paint out of an overlapping wrapped-caption band', () => {
+  const f = overlappingCaptionFixture(),
+    before = structuredClone(f)
+  expect(strip(f)).toBeUndefined()
+  const results = associateFigures(f.page, f.captions, [], [], [], f.tokens)
+  expect(results[0].rect).toEqual([70, 60, 270, 195])
+  expect(results[1].rect[0]).toBeGreaterThanOrEqual(340)
+  expect(f).toEqual(before)
+})
+
+it.each(['missing-tail', 'duplicate-tail', 'stale-tail', 'shared-path'])(
+  'retains the overlapping strip when complete native caption ownership is absent: %s',
+  (kind) => {
+    const f = overlappingCaptionFixture()
+    if (kind === 'missing-tail') f.tokens.pop()
+    if (kind === 'duplicate-tail') f.tokens.push(structuredClone(f.tokens.at(-1)))
+    if (kind === 'stale-tail') f.tokens.at(-1).sourceItem.text += ' Another word.'
+    if (kind === 'shared-path')
+      f.page.graphicsBounds.push({
+        kind: 'path',
+        operationIndex: 301,
+        normalizedRect: [60 / 600, 60 / 800, 550 / 600, 200 / 800]
+      })
+    expect(strip(f)).toBeDefined()
+  }
+)
+
+it('proves the independent vector peer from its full native packet without inventing a frame', () => {
+  const f = overlappingCaptionFixture()
+  f.page.graphicsBounds.splice(1, 1)
+  expect(strip(f)).toBeUndefined()
+  expect(associateFigures(f.page, f.captions, [], [], [], f.tokens)[0].rect).toEqual([
+    70, 60, 270, 195
+  ])
+})

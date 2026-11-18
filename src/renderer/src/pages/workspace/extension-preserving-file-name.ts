@@ -2,42 +2,85 @@ type ExtensionPreservingFileNameParts = {
   head: string
   tail: string
   extension: string
-  isCompactAbbreviation: boolean
+  isAbbreviated: boolean
 }
 
-const COMPACT_BASENAME_MIN_LENGTH = 24
 const DEFAULT_TAIL_LENGTH = 5
-const CARD_HEAD_LENGTH = 3
-const CARD_TAIL_LENGTH = 1
 
-// Keeps a small basename tail outside the flex-truncated head so normal surfaces respond to width.
+// Measured surfaces prefer complete filename words around the omission marker.
 const getExtensionPreservingFileNameParts = (
   name: string,
-  compact = false
+  layout?: { width: number; measure: (text: string) => number }
 ): ExtensionPreservingFileNameParts => {
   const extensionIndex = name.lastIndexOf('.')
   const hasExtension = extensionIndex > 0
   const basename = hasExtension ? name.slice(0, extensionIndex) : name
   const extension = hasExtension ? name.slice(extensionIndex) : ''
-  // File names can end in emoji; split by Unicode code point so a compact tail never becomes a
-  // lone UTF-16 surrogate and renders as a replacement character.
-  const basenameCharacters = Array.from(basename)
-  const isCompactAbbreviation = compact && basenameCharacters.length >= COMPACT_BASENAME_MIN_LENGTH
+  const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+  const basenameCharacters = Array.from(segmenter.segment(basename), ({ segment }) => segment)
 
-  if (isCompactAbbreviation) {
-    return {
-      head: basenameCharacters.slice(0, CARD_HEAD_LENGTH).join(''),
-      tail: basenameCharacters.slice(-CARD_TAIL_LENGTH).join(''),
-      extension,
-      isCompactAbbreviation
+  if (layout) {
+    const { width, measure } = layout
+    if (measure(name) <= width) {
+      return { head: basename, tail: '', extension, isAbbreviated: false }
     }
+    // Reserve the extension and omission marker before allocating the basename width.
+    const budget = Math.max(0, width - Math.min(measure(extension), width / 2) - measure('…'))
+    // Filename separators should be word boundaries too (Unicode treats underscores as
+    // part of a word). Equal-length replacement retains offsets into the original name.
+    const words = Array.from(
+      new Intl.Segmenter(undefined, { granularity: 'word' }).segment(
+        basename.replace(/[_\-.]/g, ' ')
+      )
+    )
+    const separator = /^[_\s.-]+$/u
+    const fragments = words.filter(({ segment }) => !separator.test(segment))
+    const heads = [
+      '',
+      ...fragments.map(({ index, segment }) => basename.slice(0, index + segment.length))
+    ]
+    const tails = ['', ...fragments.reverse().map(({ index }) => basename.slice(index))]
+    const fit = (candidates: string[], limit: number, maxLength = basename.length): string => {
+      const eligible = candidates.filter((candidate) => candidate.length <= maxLength)
+      let low = 0
+      let high = eligible.length - 1
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2)
+        if (measure(eligible[middle]) <= limit) low = middle
+        else high = middle - 1
+      }
+      return eligible[low]
+    }
+    // Reserve a readable prefix before allocating room to the ending.
+    const first = heads.find((head) => Array.from(segmenter.segment(head)).length >= 3) ?? basename
+    const last = tails[1] ?? basename
+    const minimumHeadWidth = measure(first)
+    const minimumTailWidth = measure(last)
+    const keepTail =
+      first.length + last.length < basename.length && minimumHeadWidth + minimumTailWidth <= budget
+    const tail = keepTail
+      ? fit(
+          tails,
+          Math.min(Math.max(budget / 2, minimumTailWidth), budget - minimumHeadWidth),
+          basename.length - first.length - 1
+        )
+      : ''
+    let head = fit(heads, budget - measure(tail), basename.length - tail.length)
+    // A single token can exceed the entire label width. Only then fall back to complete
+    // graphemes, retaining the beginning rather than an arbitrary slice of its ending.
+    if (!head) {
+      const prefixes = ['']
+      for (const character of basenameCharacters) prefixes.push(prefixes.at(-1)! + character)
+      head = fit(prefixes, budget)
+    }
+    return { head, tail, extension, isAbbreviated: true }
   }
 
   return {
     head: basenameCharacters.slice(0, -DEFAULT_TAIL_LENGTH).join(''),
     tail: basenameCharacters.slice(-DEFAULT_TAIL_LENGTH).join(''),
     extension,
-    isCompactAbbreviation
+    isAbbreviated: false
   }
 }
 

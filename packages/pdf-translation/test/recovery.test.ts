@@ -404,6 +404,31 @@ it.each([
   expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(true)
 })
 
+it.each([
+  ['Related Work', '相关工作'],
+  ['Input Sequence', '输入序列'],
+  ['Atom Attention Encoder', '原子注意力编码器'],
+  ['Physical Validity Constraints', '物理有效性约束'],
+  ['Polarisation Controller', '偏振控制器'],
+  ['Polarization Controller', '偏振控制器'],
+  ['Date Range', '日期范围'],
+  ['Chl Range', 'Chl 范围'],
+  ['COMMUTATIVE ALGEBRA', '交换代数']
+])('translates a complete ordinary scientific label: %s', (source, target) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(false)
+  expect(pdfTranslationCopiesEnglishProse(source, source, 'Chinese')).toBe(true)
+})
+
+it.each([
+  ['Related Work Institute', '相关工作研究所'],
+  ['Input Sequence NimbusNet', '输入序列'],
+  ['Physical Validity Foundation', '物理有效性基金会'],
+  ['Date Range Research', '日期范围研究'],
+  ['Polarization Controller Institute', '偏振控制器研究所']
+])('keeps names containing ordinary label words protected: %s', (source, target) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(true)
+})
+
 it('rejects a translated standalone proper name', () => {
   expect(pdfTranslationDropsStandaloneProperName('Hugging Face', '抱抱脸')).toBe(true)
   expect(pdfTranslationDropsStandaloneProperName('Hugging Face', 'Hugging Face')).toBe(false)
@@ -427,6 +452,26 @@ it('rejects a translated standalone proper name', () => {
   expect(pdfTranslationDropsStandaloneProperName('Open Access Institute', '开放获取研究所')).toBe(
     true
   )
+})
+
+it.each(
+  readPdfTranslationCases<{
+    name: string
+    source: string
+    translation: string
+    negativeTranslation?: string
+  }>('scientific-role-heading-labels.jsonl')
+)('$name', ({ source, translation, negativeTranslation }) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, translation)).toBe(false)
+  expect(
+    reconcilePdfTranslationCheckpoint(
+      { ...saved, sources: [source], translatedSourceIndices: [0], translations: [translation] },
+      'fp',
+      [source]
+    )?.translations
+  ).toEqual([translation])
+  if (negativeTranslation)
+    expect(pdfTranslationDropsStandaloneProperName(source, negativeTranslation)).toBe(true)
 })
 
 it.each([
@@ -807,10 +852,14 @@ it.each([
   ['Implementation Details', '实现细节'],
   ['Data Availability', '数据可用性'],
   ['Ethical Considerations', '伦理考量'],
+  ['COMPUTATION DETAILS', '计算细节'],
+  ['TARGET SIMULATIONS', '靶材模拟'],
   ['A.1 Ethics Statement', 'A.1 伦理声明'],
   ['A.2 Open Science Statement', 'A.2 开放科学声明'],
   ['3.1 Training Details', '3.1 训练细节'],
   ['3.2. Ablation Study', '3.2. 消融研究'],
+  ['4 LIMITATIONS AND OUTLOOK', '4 局限与展望'],
+  ['Limitations and Future Work', '局限与未来工作'],
   ['  ETHICS\t STATEMENT  ', '伦理声明']
 ])('translates a complete academic heading and rejects copied English: %s', (source, target) => {
   expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(false)
@@ -834,6 +883,7 @@ it.each([
   ['Implementation Details Association', '实现细节协会'],
   ['Data Availability Foundation', '数据可用性基金会'],
   ['Ablation Study Foundation', '消融研究基金会'],
+  ['Outlook Research Institute', '展望研究所'],
   ['EthicsStatement', '伦理声明'],
   ['OpenScience', '开放科学'],
   ['ABC Ethics Statement', 'ABC 伦理声明'],
@@ -853,6 +903,8 @@ it.each([
   ['Non-Hispanic White', '非西班牙裔白人'],
   ['SEX-BASED ANALYSES', '基于性别的分析'],
   ['COMPETING INTERESTS STATEMENT', '利益冲突声明'],
+  ['COMPETING INTERESTS', '利益冲突'],
+  ['Supplementary Information', '补充信息'],
   ['CONTRIBUTORSHIP STATEMENT', '作者贡献声明'],
   ['Structural Metadata', '结构元数据'],
   ['Technical Metadata', '技术元数据'],
@@ -875,6 +927,7 @@ it.each([
   ['Non-Hispanic Blue', '非西班牙裔蓝色'],
   ['Sex-Based Analyses Lab', '基于性别的分析实验室'],
   ['Competing Interests Statement Foundation', '利益冲突声明基金会'],
+  ['Supplementary Information Foundation', '补充信息基金会'],
   ['ABC Weighting Scheme', 'ABC 权重方案'],
   ['Structural Metadata Institute', '结构元数据研究所'],
   ['Metadata Registry Foundation', '元数据注册表基金会'],

@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   inspectOwnedCrashpadProcesses,
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   readdir: vi.fn(),
   arguments: vi.fn(),
   warn: vi.fn(),
+  info: vi.fn(),
   stat: vi.fn(),
   resolveNative: vi.fn(),
   windows: {
@@ -33,7 +35,10 @@ const mocks = vi.hoisted(() => ({
   }
 }))
 vi.mock('../windows-process-query', () => mocks.windows)
-vi.mock('@aipoch/diagnostics/node', () => ({ createLogger: () => ({ warn: mocks.warn }) }))
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
+  createLogger: () => ({ warn: mocks.warn, info: mocks.info })
+}))
 vi.mock('node:module', () => ({
   createRequire: () =>
     Object.assign(() => ({ getDarwinProcessArguments: mocks.arguments }), {
@@ -54,6 +59,7 @@ vi.mock('node:child_process', async (importOriginal) => ({
 vi.mock('./verification-process', () => ({ runVerificationProcess: mocks.run }))
 beforeEach(() => {
   vi.resetAllMocks()
+  Object.assign(mocks.realpath, { native: mocks.realpath })
   mocks.resolveNative.mockReturnValue('/native/process_tree_native.node')
   mocks.readdir.mockReturnValue([])
   mocks.readFile.mockReturnValue('')
@@ -131,6 +137,22 @@ describe('cold Windows resource scans', () => {
     })
   })
 
+  it('logs bounded, redacted scanner stderr while retaining unknown occupancy', async () => {
+    const failure = Object.assign(new Error('Installation verification failed'), {
+      stderr: 'EACCES 安装目录 api_key=secret\n' + 'detail\n'.repeat(3000)
+    })
+    mocks.run.mockRejectedValue(failure)
+    await expect(inspectInstallationProcessesAsync('C:/Apps/Science')).rejects.toMatchObject({
+      reason: 'installation-busy',
+      cause: failure
+    })
+    const fields = mocks.warn.mock.calls[0][1]
+    expect(fields.stderr).toMatchObject({ truncated: true })
+    expect(fields.stderr.text).toContain('EACCES 安装目录')
+    expect(fields.stderr.text).not.toContain('secret')
+    expect(fields.stderr.text.length).toBeLessThan(7800)
+  })
+
   it.each(['', '[]', '{"root":42,"pids":[]}', '{"root":"C:/Apps/Science","pids":null}'])(
     'fails closed on malformed scanner output %j',
     async (stdout) => {
@@ -140,6 +162,98 @@ describe('cold Windows resource scans', () => {
       })
     }
   )
+
+  it('enumerates every file and distinct directory but registers only payload resources', async () => {
+    const root = join(process.cwd(), 'installation ü')
+    const nested = join(root, 'nested')
+    const linked = join(root, 'directory-link')
+    const cycle = join(linked, 'ancestor')
+    const entry = (
+      parentPath: string,
+      name: string,
+      type: string
+    ): Pick<import('node:fs').Dirent, 'parentPath' | 'name' | 'isFile' | 'isDirectory'> => ({
+      parentPath,
+      name,
+      isFile: () => type === 'file',
+      isDirectory: () => type === 'directory'
+    })
+    const entries = new Map([
+      [
+        root,
+        [
+          entry(root, 'app.exe', 'file'),
+          entry(root, 'LICENSE', 'file'),
+          entry(root, 'nested', 'directory'),
+          entry(root, 'directory-link', 'link'),
+          entry(root, 'file-link', 'link'),
+          entry(root, 'broken-link', 'link')
+        ]
+      ],
+      [nested, [entry(nested, 'data.json', 'file')]],
+      [linked, [entry(linked, 'archive.asar', 'file'), entry(linked, 'ancestor', 'link')]]
+    ])
+    const stat = vi.fn((file: string) => {
+      if (file === root || file === linked || file === cycle) return { isDirectory: () => true }
+      if (file === join(root, 'file-link')) return { isDirectory: () => false }
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+    })
+    const readdir = vi.fn((directory: string, options: unknown) => {
+      expect(options).toEqual({ withFileTypes: true })
+      return entries.get(directory)
+    })
+    const occupants = vi.fn(() => [123, 456])
+    mocks.run.mockImplementation(async (_command, args) => {
+      let stdout = ''
+      runInNewContext(args[1], {
+        require: (name: string) =>
+          name === 'node:fs'
+            ? {
+                realpathSync: Object.assign((file: string) => file, {
+                  native: (file: string) => (file === cycle ? root : file)
+                }),
+                statSync: stat,
+                readdirSync: readdir
+              }
+            : name === 'node:path'
+              ? { join }
+              : { listWindowsInstallationOccupants: occupants },
+        process: {
+          argv: ['', args[2], root],
+          pid: 123,
+          stdout: {
+            write: (text: string) => {
+              stdout += text
+            }
+          },
+          stderr: { write: () => {} }
+        }
+      })
+      return { stdout }
+    })
+    await expect(inspectInstallationProcessesAsync(root)).resolves.toEqual([456])
+    expect(occupants).toHaveBeenCalledWith([join(root, 'app.exe'), join(linked, 'archive.asar')])
+    expect(mocks.info).toHaveBeenCalledWith(
+      'Windows installation occupancy inspected',
+      expect.objectContaining({ fileCount: 4, resourceCount: 2 })
+    )
+    expect(stat.mock.calls.map(([file]) => file)).toEqual([
+      root,
+      linked,
+      join(root, 'file-link'),
+      join(root, 'broken-link'),
+      cycle
+    ])
+    expect(readdir).toHaveBeenCalledTimes(3)
+    // Traversal errors must still reject the whole scan, never return a partial resource list.
+    readdir.mockImplementation(() => {
+      throw new Error('directory unavailable')
+    })
+    await expect(inspectInstallationProcessesAsync(root)).rejects.toMatchObject({
+      reason: 'installation-busy'
+    })
+    expect(occupants).toHaveBeenCalledTimes(1)
+  })
 
   it('passes the unpacked binary and literal installation path to the scanner', async () => {
     const root = 'C:/Apps/Science "quoted" & space'
@@ -300,14 +414,23 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     mocks.realpath.mockImplementation((path: string) => path)
     mocks.stat.mockReturnValue({ isDirectory: () => true })
-    mocks.readdir.mockReturnValue([
+    mocks.readdir.mockReturnValue([]).mockReturnValueOnce([
       { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'node.exe' },
-      { isFile: () => false, parentPath: 'c:\\apps\\science', name: 'resources' }
+      { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'LICENSE.txt' },
+      { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'Resources.PAK' },
+      { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'grammar.wasm' },
+      {
+        isFile: () => false,
+        isDirectory: () => true,
+        parentPath: 'c:\\apps\\science',
+        name: 'resources'
+      }
     ])
     mocks.windows.listWindowsInstallationOccupants.mockReturnValue(resourcePids)
     // Execute the child script against fixture dependencies; integration tests cover its process.
     mocks.run.mockImplementation(async (_command, args: string[]) => {
       let stdout = ''
+      let stderr = ''
       const requireFixture = (id: string): unknown => {
         if (id === 'node:fs')
           return { realpathSync: mocks.realpath, statSync: mocks.stat, readdirSync: mocks.readdir }
@@ -320,9 +443,14 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
           write: (value: string) => {
             stdout += value
           }
+        },
+        stderr: {
+          write: (value: string) => {
+            stderr += value
+          }
         }
       })
-      return { stdout, stderr: '' }
+      return { stdout, stderr }
     })
     mocks.windows.listWindowsProcesses.mockReturnValue([])
   }
@@ -352,10 +480,38 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
       ])
       expect(await inspect('c:\\apps\\science')).toEqual([43, 42])
       const query = mocks.windows.listWindowsInstallationOccupants
-      expect(query).toHaveBeenCalledWith([join('c:\\apps\\science', 'node.exe')])
+      // Ordinary data files are left to the installer's staged removal and rollback.
+      expect(query).toHaveBeenCalledWith([
+        join('c:\\apps\\science', 'node.exe'),
+        join('c:\\apps\\science', 'Resources.PAK'),
+        join('c:\\apps\\science', 'grammar.wasm')
+      ])
       expect(mocks.spawnSync).not.toHaveBeenCalled()
       if (mode === 'sync') expect(mocks.run).not.toHaveBeenCalled()
       else expect(mocks.run).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.skipIf(mode === 'sync')(
+    'records Windows scan stage evidence without changing the occupancy result',
+    async () => {
+      windows([])
+      expect(await inspect('c:\\apps\\science')).toEqual([])
+      expect(mocks.info).toHaveBeenCalledWith('Windows installation occupancy inspected', {
+        fileCount: 4,
+        resourceCount: 3,
+        enumMs: expect.any(Number),
+        rmMs: expect.any(Number),
+        durationMs: expect.any(Number)
+      })
+      const stderr = await mocks.run.mock.results[0].value.then(
+        (output: { stderr: string }) => output.stderr
+      )
+      expect(JSON.parse(stderr)).toMatchObject({
+        stage: 'resource-query',
+        fileCount: 4,
+        resourceCount: 3
+      })
     }
   )
 

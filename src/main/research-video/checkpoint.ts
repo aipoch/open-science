@@ -4,10 +4,13 @@ import { join } from 'node:path'
 import { readFileWithinLimit, writeDurableJsonFile } from '@aipoch/durable-files'
 import { z } from 'zod'
 import type { FilmAuthoringCheckpoint, ResearchVideoSessionSource } from '@aipoch/research-film'
+import {
+  researchFilmModeSchema,
+  type ResearchFilmMode
+} from '../../shared/research-video-presentation'
 import { researchFilmReceiptSchema } from './stored-presentation'
 
-const pendingFilm = z.object({
-  version: z.literal(1),
+const pendingFilmFields = {
   id: z.string().uuid(),
   conversation: z.string().regex(/^[a-f0-9]{64}$/),
   source: z.string().regex(/^[a-f0-9]{64}$/),
@@ -18,8 +21,41 @@ const pendingFilm = z.object({
   completed: z.number().int().nonnegative().optional(),
   total: z.number().int().positive().optional(),
   built: researchFilmReceiptSchema.optional()
-})
-export type PendingFilm = z.infer<typeof pendingFilm>
+}
+export const pendingFilmSchema = z.discriminatedUnion('version', [
+  z.object({ ...pendingFilmFields, version: z.literal(1), mode: z.undefined().optional() }),
+  z.object({ ...pendingFilmFields, version: z.literal(2), mode: researchFilmModeSchema }).strict()
+])
+export type PendingFilm = z.infer<typeof pendingFilmSchema>
+export const PENDING_FILM_OWNER = 'pending-owner.json'
+const identity = z.string().min(1).max(512)
+const ownerFields = {
+  id: z.string().uuid(),
+  projectId: identity,
+  sessionId: identity,
+  branchId: identity.optional()
+}
+export const pendingFilmOwnerSchema = z.discriminatedUnion('version', [
+  z.object({ ...ownerFields, version: z.literal(1), mode: z.undefined().optional() }).strict(),
+  z.object({ ...ownerFields, version: z.literal(2), mode: researchFilmModeSchema }).strict()
+])
+
+export function savePendingFilmOwner(
+  directory: string,
+  owner: {
+    id: string
+    projectId: string
+    sessionId: string
+    branchId?: string
+    mode?: ResearchFilmMode
+  }
+): Promise<void> {
+  return writeDurableJsonFile(
+    join(directory, PENDING_FILM_OWNER),
+    JSON.stringify({ ...owner, version: 2, mode: owner.mode ?? 'research-explanation' })
+  )
+}
+
 export const digestFilmInput = (value: string): string =>
   createHash('sha256').update(value).digest('hex')
 
@@ -36,7 +72,7 @@ export async function readPendingFilm(base: string): Promise<PendingFilm | undef
   if (!info?.isFile() || info.size > 4096) return undefined
   let parsed
   try {
-    parsed = pendingFilm.safeParse(JSON.parse(await readFileWithinLimit(path, 4096)))
+    parsed = pendingFilmSchema.safeParse(JSON.parse(await readFileWithinLimit(path, 4096)))
   } catch (error) {
     if (error instanceof SyntaxError) return undefined
     throw error
@@ -53,6 +89,9 @@ export function savePendingFilm(base: string, value: PendingFilm): Promise<void>
   return writeDurableJsonFile(join(base, 'pending.json'), JSON.stringify(value))
 }
 
+// Budget for the serialized recovery file, independent of the model response size.
+const MAX_AUTHORING_CHECKPOINT_BYTES = 8 * 1024 * 1024
+
 /** Each validated unit has its own atomic file, including independent concurrent scenes. */
 export function filmAuthoringCheckpoint(
   directory: string,
@@ -65,9 +104,9 @@ export function filmAuthoringCheckpoint(
       const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error
       })
-      if (!info?.isFile() || info.size > 512 * 1024) return undefined
+      if (!info?.isFile() || info.size > MAX_AUTHORING_CHECKPOINT_BYTES) return undefined
       try {
-        const entry = JSON.parse(await readFileWithinLimit(path, 512 * 1024))
+        const entry = JSON.parse(await readFileWithinLimit(path, MAX_AUTHORING_CHECKPOINT_BYTES))
         if (typeof entry?.value === 'string' && digestFilmInput(entry.value) === entry.digest) {
           event('reused')
           return entry.value
@@ -78,10 +117,10 @@ export function filmAuthoringCheckpoint(
       return undefined
     },
     async save(key, value) {
-      await writeDurableJsonFile(
-        file(key),
-        JSON.stringify({ digest: digestFilmInput(value), value })
-      )
+      if (Buffer.byteLength(value) > MAX_AUTHORING_CHECKPOINT_BYTES) return
+      const entry = JSON.stringify({ digest: digestFilmInput(value), value })
+      if (Buffer.byteLength(entry) > MAX_AUTHORING_CHECKPOINT_BYTES) return
+      await writeDurableJsonFile(file(key), entry)
       event('saved')
     }
   }

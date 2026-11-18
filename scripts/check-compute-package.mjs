@@ -114,7 +114,7 @@ await cp(
   join(root, 'packages/compute/test/packed-runtime.mjs'),
   join(consumer, 'packed-runtime.mjs')
 )
-const types = `import { computeProviderId, type ComputeJob, type ComputeJobRepository } from '@aipoch/compute';\nimport { createComputeExecution } from '@aipoch/compute/node';\nconst id: string = computeProviderId('cluster');\nconst runtime = createComputeExecution();\nconst finish: () => void = runtime.holdDispatch(id); finish();\nconst check = (job: ComputeJob, store: ComputeJobRepository) => store.get(job.job_id); void check;\n`
+const types = `import { computeProviderId, type ComputeJob, type ComputeJobRepository } from '@aipoch/compute';\nimport { createComputeExecution } from '@aipoch/compute/node';\nimport { resolveRayJobsEndpoint } from '@aipoch/compute/ray';\nimport { normalizeRayDashboardEndpoint } from '@aipoch/compute/ray-endpoint';\nconst id: string = computeProviderId('cluster');\nconst runtime = createComputeExecution();\nconst finish: () => void = runtime.holdDispatch(id); finish();\nconst endpoint: string = resolveRayJobsEndpoint(); void endpoint;\nconst normalized: string = normalizeRayDashboardEndpoint(endpoint); void normalized;\nconst check = (job: ComputeJob, store: ComputeJobRepository) => store.get(job.job_id); void check;\n`
 for (const extension of ['mts', 'cts']) {
   await writeFile(join(consumer, 'check.' + extension), types)
   await run(

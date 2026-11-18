@@ -44,6 +44,7 @@ type ReaperOptions = Readonly<{
   retryDelayMs?: (attempt: number) => number
   makeLeaseToken?: () => string
   intervalMs?: number
+  fallbackIntervalMs?: number
   onConfirmed?: (jobId: string) => void | Promise<void>
   onFailed?: (
     jobId: string,
@@ -121,12 +122,17 @@ class ComputeJobCancellationReaper {
   private readonly retryDelayMs: (attempt: number) => number
   private readonly makeLeaseToken: () => string
   private readonly intervalMs: number
+  private readonly fallbackIntervalMs: number
   private readonly onConfirmed?: (jobId: string) => void | Promise<void>
   private readonly onFailed?: ReaperOptions['onFailed']
   private timer: ReturnType<typeof setInterval> | undefined
+  private fallbackTimer: ReturnType<typeof setInterval> | undefined
+  private retryTimer: ReturnType<typeof setTimeout> | undefined
+  private retryDueAt: number | undefined
   private inFlight: Promise<void> | undefined
   private started = false
   private paused = false
+  private wakePending = false
 
   constructor(
     private readonly operations: ComputeJobOperationRepository,
@@ -141,6 +147,7 @@ class ComputeJobCancellationReaper {
       options.retryDelayMs ?? ((attempt) => Math.min(60_000, 1_000 * 2 ** Math.min(attempt, 6)))
     this.makeLeaseToken = options.makeLeaseToken ?? randomUUID
     this.intervalMs = options.intervalMs ?? 1_000
+    this.fallbackIntervalMs = options.fallbackIntervalMs ?? 60_000
     this.onConfirmed = options.onConfirmed
     this.onFailed = options.onFailed
   }
@@ -148,7 +155,7 @@ class ComputeJobCancellationReaper {
   start(): void {
     if (this.started) return
     this.started = true
-    this.schedule()
+    this.scheduleFallback()
     this.tickInBackground()
   }
 
@@ -156,22 +163,73 @@ class ComputeJobCancellationReaper {
     this.started = false
     if (this.timer) clearInterval(this.timer)
     this.timer = undefined
+    if (this.fallbackTimer) clearInterval(this.fallbackTimer)
+    this.fallbackTimer = undefined
+    this.clearRetryTimer()
+    this.wakePending = false
     await this.inFlight
   }
 
   async pause(): Promise<void> {
     this.paused = true
+    this.clearActive()
+    this.clearRetryTimer()
     await this.inFlight
   }
 
   resume(): void {
     this.paused = false
-    if (this.started) this.tickInBackground()
+    if (this.started) this.wake()
   }
 
-  private schedule(): void {
+  wake = (): void => {
+    if (!this.started || this.paused) return
+    if (this.inFlight) {
+      this.wakePending = true
+      return
+    }
+    this.tickInBackground()
+  }
+
+  private scheduleActive(): void {
+    if (this.timer || !this.started || this.paused) return
     this.timer = setInterval(() => this.tickInBackground(), this.intervalMs)
     this.timer.unref?.()
+  }
+
+  private clearActive(): void {
+    if (!this.timer) return
+    clearInterval(this.timer)
+    this.timer = undefined
+  }
+
+  private scheduleFallback(): void {
+    if (this.fallbackTimer) return
+    this.fallbackTimer = setInterval(() => this.wake(), this.fallbackIntervalMs)
+    this.fallbackTimer.unref?.()
+  }
+
+  private clearRetryTimer(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer)
+    this.retryTimer = undefined
+    this.retryDueAt = undefined
+  }
+
+  private scheduleRetryWake(retryAt: Date): void {
+    if (!this.started || this.paused) return
+    const dueAt = retryAt.getTime()
+    if (this.retryTimer && this.retryDueAt !== undefined && this.retryDueAt <= dueAt) return
+    this.clearRetryTimer()
+    this.retryDueAt = dueAt
+    this.retryTimer = setTimeout(
+      () => {
+        this.retryTimer = undefined
+        this.retryDueAt = undefined
+        this.wake()
+      },
+      Math.max(0, dueAt - this.now().getTime())
+    )
+    this.retryTimer.unref?.()
   }
 
   private tickInBackground(): void {
@@ -183,9 +241,16 @@ class ComputeJobCancellationReaper {
   private tick(): Promise<void> {
     if (!this.started || this.paused) return Promise.resolve()
     if (this.inFlight) return this.inFlight
-    const work = this.runOnce().then(() => undefined)
+    const work = this.runOnce().then((hasWork) => {
+      if (hasWork) this.scheduleActive()
+      else this.clearActive()
+    })
     const tracked = work.finally(() => {
       if (this.inFlight === tracked) this.inFlight = undefined
+      if (this.wakePending && this.started && !this.paused) {
+        this.wakePending = false
+        this.tickInBackground()
+      }
     })
     this.inFlight = tracked
     return this.inFlight
@@ -394,6 +459,7 @@ class ComputeJobCancellationReaper {
       now.getTime() + this.retryDelayMs(Math.max(1, claim.operation.attemptCount))
     )
     if (await this.operations.retry(claim, now, retryAt)) {
+      this.scheduleRetryWake(retryAt)
       // Keep repeated outages diagnosable without logging credentials, commands, or remote paths.
       // Log the first attempt and powers of two so an offline host cannot flood the log forever.
       const attempt = claim.operation.attemptCount

@@ -1,3 +1,4 @@
+import { SessionPromptAdmissionError } from './runtime-activity-port'
 import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -3529,6 +3530,42 @@ describe('AcpRuntimeCoordinator', () => {
 
     expect(created[0].sendAppContinuation).toHaveBeenCalledWith(request, 'prompt-attempt-1')
     expect(created[0].sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('preserves a scheduled begin rejection after the write fence inside the dispatch guard', async () => {
+    const rejected = new SessionPromptAdmissionError('Session became busy')
+    const fence = vi.fn(async () => undefined)
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const { runtime } = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      vi.mocked(runtime.sendApplicationPrompt).mockImplementation(
+        async (_request, _attribution, options) => {
+          await options?.beforeSessionWrite?.()
+          throw rejected
+        }
+      )
+      return runtime
+    })
+    const session = await coordinator.createSession()
+    coordinator.setPromptDispatchAdmissionGuard((_sessionId, dispatch) => dispatch())
+    await expect(
+      coordinator.sendApplicationPrompt(
+        { sessionId: session.sessionId, text: 'Check progress' },
+        {
+          kind: 'application',
+          feature: 'schedule',
+          purpose: 'scheduled-wake',
+          scheduleId: 'job',
+          occurrenceId: 'slot',
+          scheduledAt: 1
+        },
+        { beforeSessionWrite: fence }
+      )
+    ).rejects.toBe(rejected)
+    expect(fence).toHaveBeenCalledOnce()
   })
 
   it('classifies a continuation dispatch-guard rejection as proven pre-acceptance', async () => {
@@ -8385,3 +8422,35 @@ it('bounds repeated Skill invalidation during admission without sending a prompt
   expect(created.every((runtime) => runtime.sendPrompt.mock.calls.length === 0)).toBe(true)
   await coordinator.disconnect()
 })
+
+it.each(['claude-code', 'opencode', 'codex', 'codebuddy', 'pi', 'open-science-agent'] as const)(
+  'creates on the current generation when a Skill refresh overlaps provider startup (%s)',
+  async (frameworkId) => {
+    const creating = createDeferred<void>()
+    const finish = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({ frameworkId, sessionIds: ['fresh'], callbacks })
+      if (created.length === 0) {
+        fake.createSession.mockImplementationOnce(async (_request, beforePublish) => {
+          creating.resolve()
+          await finish.promise
+          beforePublish?.()
+          return { sessionId: 'stale', cwd: '/workspace', frameworkId }
+        })
+      }
+      created.push(fake)
+      return fake.runtime
+    })
+    const creation = coordinator.createSession()
+    await creating.promise
+    await coordinator.requestSkillsReload()
+    finish.resolve()
+    const session = await creation
+    expect(session.sessionId).toBe('fresh')
+    await coordinator.sendPrompt({ sessionId: session.sessionId, text: 'first turn' })
+    expect(created[0].sendPrompt).not.toHaveBeenCalled()
+    expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+    await coordinator.disconnect()
+  }
+)

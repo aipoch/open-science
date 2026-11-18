@@ -17,6 +17,7 @@ import {
   TERMINAL_COMMIT_RETRY_BUDGET_MS,
   type RuntimeSessionTurnScope
 } from './runtime-session-owner'
+import type { RuntimeSessionMutationOptions } from './runtime-session-mutation'
 
 afterEach(() => vi.useRealTimers())
 
@@ -183,19 +184,31 @@ const artifact = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
   ...overrides
 })
 
+const freezeDeep = (value: unknown): void => {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return
+  for (const child of Object.values(value)) freezeDeep(child)
+  Object.freeze(value)
+}
+
 // The inferred return preserves the concrete Vitest mock call signatures used by failure tests.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const harness = (initial = [session()]) => {
   const sessions = new Map(initial.map((value) => [value.id, structuredClone(value)]))
   const scheduled: Array<() => void> = []
+  const changes: Array<ReturnType<NonNullable<RuntimeSessionMutationOptions['getChanges']>>> = []
   const mutateSession = vi.fn(
     async (
       turn: RuntimeSessionTurnScope,
-      mutate: (latest: PersistedChatSession) => PersistedChatSession
+      mutate: (latest: PersistedChatSession) => PersistedChatSession,
+      options?: RuntimeSessionMutationOptions
     ) => {
       const latest = sessions.get(turn.sessionId)
       if (!latest) throw new Error('missing')
-      const next = mutate(structuredClone(latest))
+      const input = structuredClone(latest)
+      if (options?.immutableCanonicalTranscript) freezeDeep(input)
+      const next = mutate(input)
+      if (options?.immutableCanonicalTranscript) expect(input).toEqual(latest)
+      changes.push(options?.getChanges?.({ ...next, runtimeTranscriptOwner: 'main' }))
       sessions.set(turn.sessionId, structuredClone(next))
       return next
     }
@@ -219,8 +232,49 @@ const harness = (initial = [session()]) => {
     },
     now: () => 10
   })
-  return { owner, sessions, scheduled, mutateSession, finalizeArtifacts }
+  return { owner, sessions, scheduled, mutateSession, finalizeArtifacts, changes }
 }
+
+describe('Runtime owner business changes', () => {
+  it('binds a coalesced retry to the actual projected entities', async () => {
+    const h = harness()
+    const turn = scope()
+    await h.owner.begin(turn)
+    h.owner.accept(messageEvent(turn, 'first', 'First '))
+    h.owner.accept(messageEvent(turn, 'second', 'answer'))
+    h.mutateSession.mockRejectedValueOnce(new Error('temporary save failure'))
+    await expect(h.owner.flush(turn.sessionId, turn.promptMessageId)).rejects.toThrow(
+      'temporary save failure'
+    )
+    await h.owner.flush(turn.sessionId, turn.promptMessageId)
+    expect(h.changes.at(-1)?.messages).toHaveLength(1)
+    expect(h.changes.at(-1)?.messages[0]).toMatchObject({
+      content: 'First answer',
+      eventIds: ['first', 'second']
+    })
+    const durable = h.sessions.get(turn.sessionId)!
+    const getChanges = h.mutateSession.mock.calls.at(-1)?.[2]?.getChanges
+    expect(getChanges).toBeDefined()
+    // A later/equivalent cloned transcript cannot reuse an earlier callback's after-images.
+    expect(getChanges?.(durable)).toBeUndefined()
+  })
+
+  it('keeps terminal and replay-cleanup mutations on the complete-save path', async () => {
+    const turn = scope()
+    const initial = session(turn)
+    initial.pendingHistoryReplay = { kind: 'all' }
+    initial.branchContextResetRequired = true
+    const h = harness([initial])
+    await h.owner.begin(turn)
+    h.owner.accept(messageEvent(turn, 'answer', 'Answer'))
+    await h.owner.consumeReplay(turn.sessionId, turn.promptMessageId)
+    expect(h.changes.at(-1)).toBeUndefined()
+    expect(h.sessions.get(turn.sessionId)?.pendingHistoryReplay).toBeUndefined()
+    await h.owner.commitTerminal(stopEvent(turn, 20), vi.fn())
+    expect(h.changes.at(-1)).toBeUndefined()
+    expect(h.sessions.get(turn.sessionId)?.activeRun).toBeUndefined()
+  })
+})
 
 describe('Main terminal commit recovery', () => {
   it('does not retry durable terminal writes when an observer throws', async () => {
@@ -600,6 +654,39 @@ describe('RuntimeSessionOwner', () => {
     const applicationScope = (): RuntimeSessionTurnScope => ({
       ...scope(),
       promptMessageId: 'application-prompt'
+    })
+
+    it('rejects a scheduled wake if permission becomes pending at the write boundary', async () => {
+      const turn = applicationScope()
+      const { owner, sessions } = harness([idle()])
+      const attribution = {
+        kind: 'application',
+        feature: 'schedule',
+        purpose: 'scheduled-wake',
+        scheduleId: 'check',
+        occurrenceId: 'slot',
+        scheduledAt: 1
+      } as const
+      const prompt = { text: 'Check progress', attribution }
+      await expect(
+        owner.begin(turn, {
+          applicationPrompt: {
+            ...prompt,
+            beforeSessionWrite: async () => {
+              sessions.get(turn.sessionId)!.status = 'waiting-permission'
+            }
+          }
+        })
+      ).rejects.toThrow('needs attention')
+      expect(
+        sessions.get(turn.sessionId)?.messages.some((m) => m.id === turn.promptMessageId)
+      ).toBe(false)
+      sessions.get(turn.sessionId)!.status = 'idle'
+      const saved = await owner.begin(turn, { applicationPrompt: prompt })
+      expect(saved.messages.find((m) => m.id === turn.promptMessageId)?.attribution).toEqual(
+        attribution
+      )
+      expect(saved.activeRun?.promptMessageId).toBe(turn.promptMessageId)
     })
 
     it.each(['background-results', 'reviewer'] as const)(
@@ -2339,6 +2426,36 @@ describe('approved Handoff turn ownership', () => {
       1
     )
     expect(h.sessions.get(scope().sessionId)).toEqual(cancelled)
+  })
+
+  it('consumes replay without mutating authority when an approved failure becomes stale', async () => {
+    const h = await cancelledTurn()
+    const turn = scope()
+    const cancelled = h.sessions.get(turn.sessionId)!
+    cancelled.pendingHistoryReplay = { kind: 'all' }
+    cancelled.branchContextResetRequired = true
+    const previousMessages = structuredClone(cancelled.conversationGraph!.messages)
+    h.mutateSession.mockRejectedValueOnce(new Error('replay write unavailable'))
+    await expect(h.owner.consumeReplay(turn.sessionId, turn.promptMessageId)).rejects.toThrow(
+      'replay write unavailable'
+    )
+    const mutate = h.mutateSession.getMockImplementation()!
+    let current = true
+    h.mutateSession.mockImplementationOnce(async (turn, update, options) => {
+      current = false
+      return mutate(turn, update, options)
+    })
+    await h.owner.commitApprovedHandoffFailure(
+      failureEvent(turn),
+      () => undefined,
+      () => current,
+      1
+    )
+    const result = h.sessions.get(turn.sessionId)!
+    expect(result.pendingHistoryReplay).toBeUndefined()
+    expect(result.branchContextResetRequired).toBeUndefined()
+    expect(result.conversationGraph!.messages).toEqual(previousMessages)
+    expect(result.messages[0].turnOutcome?.kind).toBe('cancelled')
   })
 
   it.each(['cancelled', 'failed'] as const)(

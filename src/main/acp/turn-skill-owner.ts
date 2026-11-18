@@ -9,10 +9,7 @@ import type {
   ResponsesSkillCandidate,
   ResponsesSkillInput
 } from '../settings/responses-transport-contract'
-import {
-  loadSkillDocumentContent,
-  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
-} from '../skills/runtime-mcp-server'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import type { SessionCapabilityPolicy } from './session-capability-owner'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 
@@ -399,6 +396,7 @@ class AcpTurnSkillOwner {
     if (!root) return this.selectionFailed('document-error', 'CodeBuddy')
     const allowedNames = new Set(names)
     try {
+      const { loadSkillDocumentContent } = await import('../skills/runtime-mcp-server')
       return await Promise.all(
         names.map(async (name) => {
           // Notebook tools do not inherit CodeBuddy's provider environment.

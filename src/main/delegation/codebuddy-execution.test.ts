@@ -1,4 +1,8 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { terminateProcessTree } from '../process-tree'
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -194,6 +198,88 @@ delegatedWorkCertificationContract((options) => {
 })
 
 describe('CodeBuddy delegated-work production adapter', () => {
+  it.skipIf(process.platform === 'win32')(
+    'reaps real descendants when runtime construction fails',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'codebuddy-construction-'))
+      const pidFile = join(root, 'descendant')
+      const child = spawn(
+        process.execPath,
+        [
+          '-e',
+          [
+            "const { spawn } = require('node:child_process')",
+            "const { writeFileSync } = require('node:fs')",
+            "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })",
+            `writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid))`,
+            'setInterval(() => {}, 1000)'
+          ].join('\n')
+        ],
+        { stdio: 'pipe' }
+      )
+      let descendant: number | undefined
+      try {
+        await vi.waitFor(async () => {
+          descendant = Number(await readFile(pidFile, 'utf8'))
+          expect(descendant).toBeGreaterThan(0)
+        })
+        const execution = createCodeBuddyDelegateExecution({
+          capacity: 1,
+          framework: { spawn: () => child },
+          prepare: (input) => ({
+            executionId: input.attemptId,
+            provenance: {
+              projectId: input.session.projectId,
+              sessionId: input.session.sessionId,
+              agentFrameId: input.frameId,
+              runtimeSegmentId: input.runtimeSegmentId
+            },
+            workspace: { cwd: root },
+            runtimeHome: root,
+            frameworkId: 'codebuddy',
+            spawn: codeBuddySpawn(root),
+            capability: { revoke: () => undefined }
+          }),
+          createRuntime: () => {
+            throw new Error('runtime construction failed')
+          }
+        })
+        const reservation = await execution.reserve(1)
+        const running = execution.run(
+          {
+            session: { projectId: 'project', sessionId: 'session' },
+            frameId: 'frame',
+            attemptId: 'attempt',
+            runtimeSegmentId: 'segment',
+            task: 'task',
+            inputs: [],
+            continuation: false
+          },
+          reservation.slotIds[0]
+        )
+        await expect(running.accepted).rejects.toThrow('runtime construction failed')
+        await vi.waitFor(
+          () => {
+            expect(() => process.kill(descendant!, 0)).toThrow(
+              expect.objectContaining({ code: 'ESRCH' })
+            )
+          },
+          { timeout: 3_000 }
+        )
+      } finally {
+        await terminateProcessTree(child)
+        if (descendant) {
+          try {
+            process.kill(descendant, 'SIGKILL')
+          } catch {
+            /* Already reaped. */
+          }
+        }
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('audits the exact tool allowlist and process locks', () => {
     expect(auditCodeBuddyNativeDelegation(codeBuddySpawn('/runtime/audit'))).toEqual([
       { entryPoint: 'task', status: 'disabled' },

@@ -28,6 +28,7 @@ export type WebRpcErrorCode = (typeof WEB_RPC_ERROR_CODES)[number]
 // methods have browser adapters or require native WebContents/filesystem capabilities and therefore
 // remain outside the Web RPC seam.
 export const WEB_RPC_UNAVAILABLE_CHANNELS = [
+  'artifacts:open-in-browser',
   'file:artifact-save-progress',
   'file:cancel-artifact-save',
   'file:save-blob',
@@ -36,7 +37,6 @@ export const WEB_RPC_UNAVAILABLE_CHANNELS = [
   'sessions:inspect-diagnostics',
   'sessions:export-diagnostics',
   'sessions:cancel-diagnostics',
-  'sessions:fork',
   'sessions:open-recovery-folder',
   'file:save-session-artifacts',
   'file:save-project-artifacts',

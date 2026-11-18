@@ -133,6 +133,8 @@ type TaskSettingsPort = {
   get(): Promise<SettingsSnapshot>
 }
 
+type TaskArtifactLease = AcquiredTaskArtifact & { release: () => Promise<void> }
+
 type TaskPreviewResourcePort = {
   acquire(request: {
     source: 'artifact'
@@ -140,8 +142,13 @@ type TaskPreviewResourcePort = {
     fileId: string
     versionId?: string
     mimeType?: string
-  }): Promise<{ id: string; url: string; size: number; mimeType?: string }>
-  release(resourceId: string): Promise<void>
+  }): Promise<{
+    id: string
+    url: string
+    size: number
+    mimeType?: string
+    release: () => Promise<void>
+  }>
 }
 
 type TaskAgentSession = {
@@ -428,6 +435,7 @@ const createTaskRunActivities = (
   }))
 
 const cloneRun = (run: MutableTaskRun): TaskRun => ({
+  ...(run.requestId ? { requestId: run.requestId } : {}),
   id: run.id,
   sessionId: run.sessionId,
   projectId: run.projectId,
@@ -1172,14 +1180,12 @@ class TaskRunner {
     return [...((await this.findSession(sessionId)).artifacts ?? [])]
   }
 
-  async acquireArtifact(artifactId: string): Promise<AcquiredTaskArtifact> {
+  async acquireArtifact(artifactId: string): Promise<TaskArtifactLease> {
     const sessions = await this.dependencies.sessions.list()
-    const owner = sessions
-      .map((session) => ({
-        session,
-        artifact: (session.artifacts ?? []).find((candidate) => candidate.id === artifactId)
-      }))
-      .find((candidate) => candidate.artifact)
+    const candidates = sessions.flatMap((session) =>
+      (session.artifacts ?? []).map((artifact) => ({ session, artifact }))
+    )
+    const owner = candidates.find((candidate) => candidate.artifact.id === artifactId)
     if (!owner?.artifact) {
       throw new TaskRunnerError('artifact_not_found', `Artifact not found: ${artifactId}`)
     }
@@ -1205,6 +1211,7 @@ class TaskRunner {
       mimeType: artifact.mimeType
     })
     return {
+      release: resource.release,
       resourceId: resource.id,
       url: resource.url,
       name: artifact.name ?? artifact.path.split(/[\\/]/).at(-1) ?? artifact.id,
@@ -1213,12 +1220,18 @@ class TaskRunner {
     }
   }
 
-  async releaseArtifact(resourceId: string): Promise<void> {
-    await this.dependencies.previewResources.release(resourceId)
+  private assertAcceptingRuns(): void {
+    if (this.disposed)
+      throw new TaskRunnerError(
+        'submission_unavailable',
+        'The service is stopping. Run preparation cannot continue.'
+      )
   }
 
-  async startRun(request: StartTaskRunRequest): Promise<TaskRun> {
+  async startRun(request: StartTaskRunRequest, requestId?: string): Promise<TaskRun> {
+    this.assertAcceptingRuns()
     await this.initialize()
+    this.assertAcceptingRuns()
     if (!request || typeof request !== 'object') {
       throw new TaskRunnerError('invalid_request', 'Run request must be an object.')
     }
@@ -1321,6 +1334,12 @@ class TaskRunner {
       : undefined
     if (request.sessionId && !existing) {
       throw new TaskRunnerError('session_not_found', `Session not found: ${request.sessionId}`)
+    }
+    if (existing?.packageOrigin) {
+      throw new TaskRunnerError(
+        'session_read_only',
+        `Imported research history is read-only. Fork Session ${existing.id} before continuing.`
+      )
     }
     if (existing?.archivedAt !== undefined) {
       throw new TaskRunnerError('session_archived', archiveAvailabilityMessage('session-archived'))
@@ -1446,9 +1465,11 @@ class TaskRunner {
       ): ReturnType<TaskRunner['prepareSession']> =>
         this.prepareSession(project, existing, requestForPreparation, prompt, userMessageId)
       const acceptPrepared = async (prepared: PreparedSession): Promise<typeof accepted> => {
+        this.assertAcceptingRuns()
         let session = prepared.session
         this.reserveSession(session.id, runId)
         const run = {
+          ...(requestId ? { requestId } : {}),
           id: runId,
           sessionId: session.id,
           projectId: project.id,
@@ -1538,6 +1559,10 @@ class TaskRunner {
       throw error
     }
     const { prepared, session, run } = accepted
+    if (this.disposed) {
+      this.releaseSession(session.id, runId)
+      this.assertAcceptingRuns()
+    }
     this.publishProgress(run, 'accepted')
     this.publishProgress(run, 'session-ready')
     this.scheduleHeartbeat(run)
@@ -1550,14 +1575,23 @@ class TaskRunner {
       prepared.contextReset,
       prepared.resumeFallback,
       prepared.persistOnPromptAdmission
-    ).finally(() => this.releaseSession(session.id, runId))
-    return cloneRun(run)
+    ).finally(() => {
+      this.releaseSession(session.id, runId)
+      if (run.status !== 'running') this.publishProgress(run, run.status)
+    })
+    return this.getRun(run.id)
   }
 
   getRun(runId: string): TaskRun {
     const run = this.runs.get(runId)
     if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
-    return cloneRun(run)
+    const snapshot = cloneRun(run)
+    // A terminal fact is public only after all Session admission ownership has been released.
+    if (this.activeRunBySession.get(run.sessionId) === run.id) {
+      snapshot.status = 'running'
+      snapshot.completedAt = undefined
+    }
+    return snapshot
   }
 
   async waitForRun(runId: string): Promise<TaskRun> {
@@ -1570,7 +1604,10 @@ class TaskRunner {
   async cancelRun(runId: string): Promise<TaskRun> {
     const run = this.runs.get(runId)
     if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
-    if (run.status !== 'running') return cloneRun(run)
+    if (run.status !== 'running') {
+      await run.completion
+      return cloneRun(run)
+    }
     if (run.terminalStatus) {
       await run.completion
       return cloneRun(run)
@@ -1732,6 +1769,7 @@ class TaskRunner {
     contextReset?: boolean
     resumeFallback?: TaskAgentPromptRequest['resumeFallback']
   }> {
+    this.assertAcceptingRuns()
     const now = this.dependencies.now()
     const permissionProfile =
       request.permissionProfile ?? existing?.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
@@ -1822,6 +1860,7 @@ class TaskRunner {
       })
     }
 
+    this.assertAcceptingRuns()
     if (existing) {
       const cwd = sessionInfo.cwd ?? existing.cwd
       const agentFrameworkId = sessionInfo.frameworkId ?? existing.agentFrameworkId
@@ -2550,6 +2589,11 @@ class TaskRunner {
     heartbeat = false
   ): void {
     const timestamp = this.dependencies.now()
+    if (
+      ['completed', 'failed', 'cancelled'].includes(phase) &&
+      this.activeRunBySession.get(run.sessionId) === run.id
+    )
+      return
     if (!heartbeat) run.progressPhase = phase
     const event: TaskRunProgressEvent = Object.freeze({
       runId: run.id,

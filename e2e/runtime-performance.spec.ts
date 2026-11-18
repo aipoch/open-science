@@ -3,7 +3,12 @@ import {
   RUNTIME_PERFORMANCE_PROMPT_TIMEOUT_MS,
   runtimePerformanceTestTimeoutMs
 } from '../scripts/performance/runtime-profile-timeout'
-import { createProject, openProjectSession, sendPrompt } from './certification/helpers'
+import {
+  createProject,
+  openProjectSession,
+  sendPrompt,
+  sendReviewedPrompt
+} from './certification/helpers'
 import { test } from './fixtures/electron-app'
 
 test.use({ windowMode: 'normal' })
@@ -75,7 +80,13 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
       await app.sampleResourceProfileNow()
 
       await app.markResourceProfilePhase('notebook-tool')
-      await sendPrompt(page, NOTEBOOK_PROMPT, NOTEBOOK_REPLY, RUNTIME_PERFORMANCE_PROMPT_TIMEOUT_MS)
+      await sendReviewedPrompt(
+        page,
+        NOTEBOOK_PROMPT,
+        NOTEBOOK_REPLY,
+        [`node -e "setTimeout(() => console.log('notebook-lifecycle-e2e'), 1500)"`],
+        RUNTIME_PERFORMANCE_PROMPT_TIMEOUT_MS
+      )
       await app.captureResourceTimings(`notebook-${cycle + 1}:`)
       await app.sampleResourceProfileNow()
     }
@@ -88,9 +99,9 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
     })
     app.recordResourceTiming('workspace-reopen-visible', performance.now() - recoveryStartedAt)
     await app.captureResourceTimings('recovery:')
-    // Opening the recovered workspace starts file/runtime probes. Sample after the same
-    // settling window as idle, rather than immediately after that new work is triggered.
-    await page.waitForTimeout(phaseDurationMs)
+    // Reopening a Notebook can start the file-evidence worker. Its idle lease lasts 30s.
+    // Include retirement in the observation window before comparing with the idle baseline.
+    await page.waitForTimeout(Math.max(phaseDurationMs, 35_000))
     await app.sampleResourceProfileNow()
   } finally {
     result = await app.finishResourceProfile().catch((error: unknown) => {

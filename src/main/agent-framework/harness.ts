@@ -3,17 +3,17 @@ import {
   resolveMessagesReasoningTransport,
   resolveResponsesReasoningTransport
 } from '@aipoch/providers/protocol'
-import { getOfficialVendor } from '@aipoch/providers'
-import { preferredEndpoint } from '../../shared/settings'
+import { resolveProviderOutputLimit } from '../settings/provider-env'
+import { preferredEndpoint } from '../../shared/settings-runtime'
 import { spawn } from 'node:child_process'
 import { isAbsolute, join } from 'node:path'
 import { resolvePermissionProfileApplication } from '../acp/permission-profile-controller'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
 import {
   createSkillRuntimeAcpServerConfig,
-  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
   type SkillRuntimeMcpServerConfig
-} from '../skills/runtime-mcp-server'
+} from '../skills/runtime-mcp-config'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import {
   HARNESS_ACP_ARG,
   HARNESS_AUTH_METHOD,
@@ -107,12 +107,7 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
         : {}),
       contextWindow,
       maxOutputTokens:
-        provider.maxOutputTokens ??
-        (protocol === 'messages' && provider.vendorId
-          ? getOfficialVendor(provider.vendorId)?.models.find(
-              (entry) => entry.id === provider.model
-            )?.maxOutputTokens
-          : undefined),
+        protocol === 'messages' ? resolveProviderOutputLimit(provider) : provider.maxOutputTokens,
       parameters:
         protocol === 'responses'
           ? {

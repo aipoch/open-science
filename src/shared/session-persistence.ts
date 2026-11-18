@@ -89,6 +89,9 @@ export type {
   LoadSessionRequest,
   RetryRuntimeTerminalCommitRequest,
   OpenSessionRecoveryFolderRequest,
+  RenameSessionRequest,
+  SetSessionPinnedRequest,
+  SessionMetadataReceipt,
   DeleteSessionRequest,
   DeleteSessionRecoveryFileRequest,
   SessionDeletionResult,
@@ -104,6 +107,10 @@ export {
   deleteSessionRecoveryFileRequestSchema,
   SESSION_RECOVERY_COMPUTE_JOBS_ERROR,
   editSessionDetailsRequestSchema,
+  renameSessionRequestSchema,
+  setSessionPinnedRequestSchema,
+  sessionMetadataReceiptSchema,
+  sessionMetadataReceipt,
   SessionDeletionCommittedError,
   sessionDeletionResultSchema,
   updateSessionArchiveRequestSchema,
@@ -135,12 +142,15 @@ export {
   isReviewerCorrectionAttribution,
   isComputeJobCompletionAttribution,
   isAgentResultDeliveryAttribution,
+  isScheduledWakeAttribution,
   sanitizeMessageAttribution,
+  sanitizeMessage,
   sanitizeMessagePresentation,
   isComputeJobCompletionPresentation
 } from './session-persistence/message-codec'
 export { sanitizeToolActivity, sanitizeActivityGroup } from './session-persistence/tool-activity'
 export {
+  sanitizeArtifact,
   sanitizeMessageParts,
   sanitizeSessionReferences,
   sanitizeMessageImages,

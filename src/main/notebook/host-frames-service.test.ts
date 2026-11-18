@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
-import type { PersistedChatMessage, PersistedChatSession } from '../../shared/session-persistence'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatMessage,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import { HostFramesService, type HostFramesRepository } from './host-frames-service'
 
 const message = (
@@ -476,6 +480,54 @@ describe('HostFramesService', () => {
     ).rejects.toThrow(
       /cursor is no longer valid.*Restart host\.(frames|sessions)\.(list|get).*omit (cursor|before)/u
     )
+  })
+
+  it('keeps cursor pagination stable when Session metadata changes during pagination', async () => {
+    const target = session({
+      messages: Array.from({ length: 201 }, (_, index) =>
+        message(`message-${index + 1}`, index % 2 ? 'agent' : 'user', index + 1)
+      )
+    })
+    const graph = target.conversationGraph!
+    let reads = 0
+    const readSession = vi.fn(async () => {
+      reads += 1
+      const snapshot = structuredClone(target)
+      if (reads === 6) {
+        snapshot.updatedAt = 202
+        snapshot.messages.push(message('message-202', 'agent', 202))
+      }
+      return {
+        status: 'found' as const,
+        session: materializeSessionConversationGraph(snapshot)
+      }
+    })
+    const service = new HostFramesService({
+      readProject: vi.fn(),
+      readSession
+    })
+    const frameId = graph.rootFrameId
+    const options = { session_id: target.id, branch_id: graph.branches[0].id, limit: 40 }
+
+    let page = (await service.get(frameId, options, context)) as {
+      transcript: { previous_cursor?: string; has_more_before: boolean }
+    }
+    for (let index = 0; index < 4; index += 1) {
+      page = (await service.get(
+        frameId,
+        { ...options, before: page.transcript.previous_cursor },
+        context
+      )) as typeof page
+    }
+
+    const last = (await service.get(
+      frameId,
+      { ...options, before: page.transcript.previous_cursor },
+      context
+    )) as { transcript: { messages: Array<{ message_id: string }>; has_more_before: boolean } }
+    expect(last.transcript.messages.map((item) => item.message_id)).toEqual(['message-1'])
+    expect(last.transcript.has_more_before).toBe(false)
+    expect(readSession).toHaveBeenCalledTimes(6)
   })
 
   it('requires full exact ids and uses Session narrowing to disambiguate within the Project', async () => {

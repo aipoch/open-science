@@ -14,7 +14,8 @@ import { KubernetesTargetCatalog } from './kubernetes-target-catalog'
 import { HostedTargetCatalog } from './hosted-target-catalog'
 import { RayTargetCatalog } from './ray-target-catalog'
 import { ModalTargetCatalog } from './modal-target-catalog'
-import { createComputeExecution, verifyRayJobsAccess } from '@aipoch/compute/node'
+import { verifyRayJobsAccess } from '@aipoch/compute/ray'
+import { createComputeExecution } from '@aipoch/compute/node'
 import { randomUUID } from 'node:crypto'
 import { desktopShellInteraction } from '../desktop-interaction'
 import type { ArtifactResolver } from './compute-job-workflow-owner'
@@ -205,6 +206,7 @@ const createComputeHandlers = (
                 service.wakeExternalJobs(mode)
                 return
               }
+              service.wakeJobPoller()
             }
             await dispatchJob(queuedJobId, {
               connectionBroker,

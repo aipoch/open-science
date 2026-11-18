@@ -1,0 +1,43 @@
+{
+  "ownerPaths": [
+    "src/renderer/src/pages/workspace/schedules/ScheduleDialog.tsx",
+    "src/renderer/src/pages/workspace/schedules/ScheduleMessageCard.tsx",
+    "src/renderer/src/pages/workspace/schedules/SchedulePage.tsx",
+    "src/renderer/src/pages/workspace/schedules/ScheduleRunPanel.tsx",
+    "src/renderer/src/pages/workspace/schedules/ScheduleRunResultDialog.tsx",
+    "src/renderer/src/pages/workspace/schedules/use-schedule-selection.ts",
+    "src/renderer/src/pages/workspace/schedules/use-schedules.ts",
+    "src/renderer/src/pages/workspace/schedules/ScheduleRunProblem.tsx",
+    "src/renderer/src/pages/workspace/schedules/ScheduleRunStatus.tsx",
+    "src/renderer/src/pages/workspace/schedules/schedule-reason.ts",
+    "src/renderer/src/pages/workspace/schedules/schedule-reason.test.ts",
+    "src/renderer/src/pages/workspace/schedules/use-schedule-selection.test.tsx",
+    "src/renderer/src/pages/workspace/schedules/use-schedules.test.tsx",
+    "src/renderer/src/pages/workspace/schedules/ScheduleExamples.tsx",
+    "src/renderer/src/pages/workspace/schedules/ScheduleListHeader.tsx",
+    "src/renderer/src/pages/workspace/schedules/ScheduleStarterPanel.tsx",
+    "src/renderer/src/pages/workspace/schedules/schedule-task-actions.ts",
+    "src/renderer/src/pages/workspace/schedules/ScheduleDialog.test.tsx",
+    "src/renderer/src/pages/workspace/schedules/schedule-menu.ts",
+    "src/renderer/src/pages/workspace/schedules/schedule-menu.test.ts"
+  ],
+  "interfacePaths": [
+    "src/renderer/src/pages/workspace/schedules/SchedulePage.tsx",
+    "src/renderer/src/pages/workspace/schedules/ScheduleMessageCard.tsx",
+    "src/renderer/src/pages/workspace/schedules/ScheduleStarterPanel.tsx"
+  ],
+  "consumerModules": ["workspace_conversation", "workspace_session_controls"],
+  "testFiles": {
+    "owner": [
+      "src/renderer/src/pages/workspace/schedules/use-schedule-selection.test.tsx",
+      "src/renderer/src/pages/workspace/schedules/schedule-reason.test.ts",
+      "src/renderer/src/pages/workspace/schedules/use-schedules.test.tsx",
+      "src/renderer/src/pages/workspace/schedules/ScheduleDialog.test.tsx",
+      "src/renderer/src/pages/workspace/schedules/schedule-menu.test.ts"
+    ],
+    "contract": [],
+    "consumer": ["src/renderer/src/pages/workspace/WorkspaceSidebar.render.test.tsx"]
+  },
+  "capabilityOverlays": ["e2e_regressions"],
+  "fallbackCapability": "renderer_view"
+}

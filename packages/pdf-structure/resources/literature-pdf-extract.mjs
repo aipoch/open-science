@@ -1,4 +1,8 @@
-import { workerData } from 'node:worker_threads'
+import { installPdfCanvasReset } from './literature-pdf-canvas-reset.mjs'
+import { parentPort, workerData } from 'node:worker_threads'
+import { requestOnnxProcess } from './onnx-process.mjs'
+import { nativeFigureTablePanel } from './literature-pdf-figure-native-table-panel.mjs'
+import { nativeFormSourceCrop } from './literature-pdf-figure-native-form-crop.mjs'
 import { nativeKeyedPhotoTimelineCropPlan } from './literature-pdf-figure-native-captioned-illustration.mjs'
 import { isSearchableScan, readScannedPageElements } from './literature-pdf-scanned-page.mjs'
 import { createNativeTableFontRoleWitness } from './literature-pdf-native-table-font-role.mjs'
@@ -8,7 +12,7 @@ import {
 } from './literature-pdf-native-owned-figure-labels.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Candidate extractor adapted from the reviewed offline experiment. Main owns authorization/cache.
-// Usage: node resources/pdf-structure/literature-pdf-extract.mjs PDF ASSETS ORT_PACKAGE PAGES NEW_OUTPUT
+// Supervisor Worker argv: PDF ASSETS ORT_PACKAGE PAGES NEW_OUTPUT
 import assert from 'node:assert/strict'
 import {
   ordinaryTableCompetitionRect,
@@ -34,14 +38,19 @@ import { getDocument, OPS, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { createCanvas } from '@napi-rs/canvas'
 import {
   retainNativeRecoveryInputs,
-  createNativeNonisolatedGroupCropProfile
+  createNativeNonisolatedGroupCropProfile,
+  createNativeNonisolatedExclusionCropProfile,
+  createNativeCompositeGroupCropProfile
 } from './literature-pdf-native-figure-recovery-profile.mjs'
 import {
   findNativeAlgorithmCandidates,
   acceptsNativeScopedAlgorithmPng
 } from './literature-pdf-algorithm-native-body.mjs'
 import { needsPreviousFigureProse } from './literature-pdf-figure-cross-page-prose.mjs'
-import { nativeUncaptionedFormPlate } from './literature-pdf-figure-native-form-plate.mjs'
+import {
+  nativeInlinePolygonFigure,
+  nativeUncaptionedFormPlate
+} from './literature-pdf-figure-native-form-plate.mjs'
 import {
   nativeSingleVectorGroupPng,
   nativeRenderedGroupPixelCrop,
@@ -49,7 +58,10 @@ import {
   nativeRenderedGroupPixelPngSafe,
   nativePairedDescriptionGroupPixelCrop,
   nativePairedDescriptionGroupPixelCurrent,
-  nativePairedDescriptionGroupPixelPngSafe
+  nativePairedDescriptionGroupPixelPngSafe,
+  nativeStrokeTaskRasterPairPixelCrop,
+  nativeStrokeTaskRasterPairPixelPngSafe,
+  renderNativeStrokeTaskPairPng
 } from './literature-pdf-figure-native-group.mjs'
 import {
   proveNativeDiffCodeFigure,
@@ -87,6 +99,7 @@ import {
 import {
   reviewNativeTableSources,
   reviewFinalNativeTableSources,
+  retainNativeCenteredRecordGraphic,
   trimNativeTablePageCounterCrop
 } from './literature-pdf-table-source-integrity.mjs'
 import {
@@ -323,6 +336,7 @@ import {
   nativeFigureLabelBounds,
   nativeOwnedFigureInkBottom,
   nativeFigureCaptionBottomLimit,
+  nativeAdjacentRasterCaptionBottom,
   nativeGroupedRasterCaptionBottom,
   nativeGroupedRasterCaptionPngSafe,
   nativeProseInkTopLimit
@@ -401,9 +415,7 @@ assert(
   pdfArgument && assetArgument && runtimeArgument && pageArgument && outputArgument,
   'Supply all five arguments.'
 )
-const pdfPath = resolve(pdfArgument),
-  assets = resolve(assetArgument),
-  runtime = resolve(runtimeArgument)
+const pdfPath = resolve(pdfArgument)
 const output = resolve(outputArgument)
 const requestedPages = pageArgument
   .split(',')
@@ -428,6 +440,9 @@ const run = async (script, args) => {
     process.argv = previous
   }
 }
+// Geometry starts only after the separately owned ORT process has closed.
+const runOnnxWorker = () => requestOnnxProcess(parentPort)
+await runOnnxWorker()
 const structurePhase = await run('./literature-pdf-structure.mjs', [
   pdfPath,
   join(output, 'geometry'),
@@ -436,15 +451,8 @@ const structurePhase = await run('./literature-pdf-structure.mjs', [
   'production',
   'caption-raster'
 ])
+console.log(JSON.stringify({ phase: 'geometry:completed', memory: process.memoryUsage() }))
 try {
-  await run('./literature-pdf-onnx.mjs', [
-    pdfPath,
-    assets,
-    runtime,
-    pageArgument,
-    join(output, 'inference'),
-    'production'
-  ])
   const geometry = JSON.parse(await readFile(join(output, 'geometry/probe.json'), 'utf8'))
   const originalPages = new Map(geometry.pages.map((page) => [page.pageNumber, page]))
   geometry.pages = excludeRepeatedMarginContent(geometry.pages)
@@ -556,6 +564,7 @@ try {
     writtenFigurePngs.delete(relativePath)
   }
   const assetRoot = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))
+  console.log(JSON.stringify({ phase: 'publication:pdf:create', memory: process.memoryUsage() }))
   const task = getDocument({
     data: new Uint8Array(bytes),
     isEvalSupported: false,
@@ -719,6 +728,7 @@ try {
   })
   try {
     const document = await task.promise
+    installPdfCanvasReset(document.canvasFactory)
     const pageLabels = await document.getPageLabels()
     const separatedFigures =
       document.numPages > 20 &&
@@ -1585,12 +1595,8 @@ try {
           for (const table of stackedCaptionFrames.tables)
             continuationCaptions.set(table.id, canonical)
         }
-        let splitTableIndex = Math.max(
-          0,
-          ...pageInference.tables.map((table) =>
-            Number(/^page-\d+-table-(\d+)$/.exec(table.id)?.[1] ?? 0)
-          )
-        )
+        const tableIndex = (table) => Number(/^page-\d+-table-(\d+)$/.exec(table.id)?.[1] ?? 0)
+        let splitTableIndex = Math.max(0, ...pageInference.tables.map(tableIndex))
         pageInference.tables = pageInference.tables.flatMap((table) =>
           splitCaptionedTableRegions(table, pageCaptions, rules, {
             items: tokens,
@@ -1622,6 +1628,7 @@ try {
         )
         pageInference.tables.push(...recoveredCaptionedTables)
         for (const table of recoveredCaptionedTables) {
+          splitTableIndex = Math.max(splitTableIndex, tableIndex(table))
           if (!table.caption) continue
           // `pageCaptions` uses the source viewport (scale 1.5), while the
           // serialized caption contract is scale-1. Recoveries carry the
@@ -1649,7 +1656,7 @@ try {
           return overlap >= (frame[2] - frame[0]) * (frame[3] - frame[1]) * 0.98
         }
         // An explicit caption, one native header divider and a continuous stub
-        // fence can prove a compact scalar inventory that the detector missed.
+        // fence can prove a compact table that the detector missed.
         // Seed only that complete source plan; an open rectangle alone is never
         // sufficient table evidence, and existing covered candidates keep priority.
         const partialRuleTables = pageCaptions
@@ -1657,14 +1664,14 @@ try {
             findCaptionedNativePartialRuleTable(caption, tokens, rules, measuredRuns)
           )
           .filter(Boolean)
-        for (const [index, plan] of partialRuleTables.entries()) {
+        for (const plan of partialRuleTables) {
           if (
             pageInference.tables.some((table) => coversClosedFrame(table.cropRect, plan.cropRect))
           )
             continue
           const crop = plan.cropRect,
             seed = {
-              id: `p${pageNumber}-native-partial-rule-table-${index + 1}`,
+              id: `page-${pageNumber}-table-${++splitTableIndex}`,
               pageNumber,
               cropRect: crop,
               structure: {
@@ -2565,7 +2572,7 @@ try {
             : []
         })
         const nativeNotationIndices = new Set(nativeNotationFrames.map((f) => f.index))
-        const acceptedTables = refined.map(
+        const eligibleTableSources = refined.map(
           (table, index) =>
             !nativeNotationIndices.has(index) &&
             !narrativeDuplicates.has(index) &&
@@ -2642,8 +2649,10 @@ try {
                   r[1] >= f.rect[1] - 12 &&
                   r[3] <= f.rect[3] + 12
                 )
-              })) &&
-            hasSourceTableEvidence(table, index)
+              }))
+        )
+        const acceptedTables = refined.map(
+          (table, index) => eligibleTableSources[index] && hasSourceTableEvidence(table, index)
         )
         let recognizedTableRects = refined
           .filter((_, index) => acceptedTables[index])
@@ -3190,6 +3199,24 @@ try {
             captions,
             recognizedTableRects
           )
+        if (
+          !legendPage &&
+          !pageFigures.length &&
+          !recognizedTableRects.length &&
+          !pageAlgorithms.length
+        ) {
+          const inline = nativeInlinePolygonFigure(
+            figureAssociationPage,
+            captions,
+            recognizedTableRects,
+            nativeFigureTokens,
+            nativeFigureContext
+          )
+          if (inline) {
+            captions.push(inline.caption)
+            pageFigures = [inline]
+          }
+        }
         if (!legendPage && !pageFigures.length && !recognizedTableRects.length) {
           const plate = nativeUncaptionedFormPlate(
             pageGeometry,
@@ -3675,6 +3702,16 @@ try {
                       figureAssociationPage,
                       nativeFigureTokens,
                       nativeFigureContext
+                    ),
+                    createNativeNonisolatedExclusionCropProfile(
+                      figureAssociationPage,
+                      nativeFigureTokens,
+                      nativeFigureContext
+                    ),
+                    createNativeCompositeGroupCropProfile(
+                      figureAssociationPage,
+                      nativeFigureTokens,
+                      nativeFigureContext
                     )
                   ))
             const rasterTitlePixelCrop =
@@ -3872,26 +3909,32 @@ try {
               rasterPlatePixelCrop ??
               sharedFramePixelCrop ??
               isolatedRasterPixelCrop
-            const groupedCaptionProof =
+            const bottomCandidate = {
+              ...candidate,
+              rect: legacyRect,
+              caption: serializedCaption ?? candidate.caption
+            }
+            const captionBottomProof =
               legacyRect &&
               !oldNativePixelCrop &&
               !fixedNativeCrop &&
               !candidate.sourceItems?.length &&
               !candidate.headerRaster &&
               !candidate.formCropRaster &&
-              nativeGroupedRasterCaptionBottom(
+              (nativeGroupedRasterCaptionBottom(
                 pageGeometry,
-                {
-                  ...candidate,
-                  rect: legacyRect,
-                  caption: serializedCaption ?? candidate.caption
-                },
+                bottomCandidate,
                 nativeFigureContext
-              )
+              ) ??
+                nativeAdjacentRasterCaptionBottom(
+                  figureAssociationPage,
+                  bottomCandidate,
+                  nativeFigureContext
+                ))
             const oldFinalRect =
               oldNativePixelCrop?.rect ??
-              (groupedCaptionProof
-                ? [...legacyRect.slice(0, 3), groupedCaptionProof.bottom]
+              (captionBottomProof
+                ? [...legacyRect.slice(0, 3), captionBottomProof.bottom]
                 : legacyRect)
             // Preserve the established final native/grouped crop unless the new
             // optional observer proves missing or foreign paint in that boundary.
@@ -3944,6 +3987,27 @@ try {
                 pairedDescriptionPixelCrop,
                 figureAssociationPage
               )
+            const strokeTaskPairPixelCrop =
+              oldFinalRect &&
+              !completePixelCrop &&
+              !certifiedPixelCrop &&
+              !pairedDescriptionCurrent &&
+              !sixPanelHatchPixelCrop &&
+              !categoricalHatchPixelCrop &&
+              !oldNativePixelCrop &&
+              nativeFigureContext
+                ? nativeStrokeTaskRasterPairPixelCrop(
+                    figureAssociationPage,
+                    { ...candidate, caption: serializedCaption ?? candidate.caption },
+                    captions,
+                    figureExclusions,
+                    nativeFigureTokens,
+                    nativeFigureContext,
+                    pageFigures.filter((peer) => peer !== candidate),
+                    oldFinalRect,
+                    { nativePage: page, pageContent: originalContent, operators }
+                  )
+                : undefined
             const nativePixelCrop = keyedPhotoPlan
               ? undefined
               : (completePixelCrop ??
@@ -3951,8 +4015,40 @@ try {
                 (pairedDescriptionCurrent ? pairedDescriptionPixelCrop : undefined) ??
                 sixPanelHatchPixelCrop ??
                 categoricalHatchPixelCrop ??
+                strokeTaskPairPixelCrop ??
                 oldNativePixelCrop)
-            let rect = keyedPhotoPlan?.rect ?? nativePixelCrop?.rect ?? oldFinalRect
+            let sourceFormCrop =
+              !keyedPhotoPlan && !nativePixelCrop && !captionBottomProof && !pairedRasterRect
+                ? await nativeFormSourceCrop(
+                    figureAssociationPage,
+                    candidate,
+                    serializedCaption,
+                    oldFinalRect,
+                    nativeFigureTokens,
+                    nativeFigureContext,
+                    [
+                      ...figureExclusions,
+                      ...captions
+                        .filter(
+                          (peer) =>
+                            peer.page === pageNumber &&
+                            peer !== candidate.caption &&
+                            peer !== serializedCaption
+                        )
+                        .map((peer) => peer.rect)
+                        .filter((rect) => rect && rect !== serializedCaption?.rect),
+                      ...pageFigures
+                        .filter((peer) => peer !== candidate)
+                        .map((peer) => peer.rect)
+                        .filter(Boolean)
+                    ],
+                    page,
+                    pageFigures.filter((peer) => peer !== candidate)
+                  )
+                : undefined
+            if (sourceFormCrop && !sourceFormCrop.current()) sourceFormCrop = undefined
+            let rect =
+              keyedPhotoPlan?.rect ?? nativePixelCrop?.rect ?? sourceFormCrop?.rect ?? oldFinalRect
             // Association supplies only independently proved whole-font owners.
             // Recheck the actual rendered crop: clipping even one font invalidates
             // this optional set rather than publishing a partial source claim.
@@ -4002,33 +4098,35 @@ try {
               ? (png) =>
                   (pairedDescriptionCurrent
                     ? nativePairedDescriptionGroupPixelPngSafe
-                    : certifiedPixelCrop
-                      ? nativeCertifiedFigurePixelPngSafe
-                      : sixPanelHatchPixelCrop
-                        ? nativeSixPanelHatchPixelPngSafe
-                        : categoricalHatchPixelCrop
-                          ? nativeCategoricalHatchPixelPngSafe
-                          : closedProgramPixelCrop
-                            ? nativeClosedProgramPixelPngSafe
-                            : closedPaintPixelCrop
-                              ? (plan, png, rect, page) =>
-                                  nativeClosedPaintPixelPngSafe(plan, png, rect, page) ||
-                                  nativeSavedPaintPixelPngSafe(plan, png, rect, page) ||
-                                  nativeFillStrokeTextPixelPngSafe(plan, png, rect, page) ||
-                                  nativePhysicalFramePixelPngSafe(plan, png, rect, page)
-                              : renderedGroupPixelCrop
-                                ? nativeRenderedGroupPixelPngSafe
-                                : rasterTitlePixelCrop
-                                  ? nativeRasterTitlePixelPngSafe
-                                  : formPixelCrop
-                                    ? nativeCaptionedFormPixelPngSafe
-                                    : keyedImagePairPixelCrop
-                                      ? nativeKeyedImagePairPixelPngSafe
-                                      : rasterPlatePixelCrop
-                                        ? nativeCompleteRasterPlatePixelPngSafe
-                                        : sharedFramePixelCrop
-                                          ? nativeSharedFramePixelPngSafe
-                                          : nativeIsolatedOpaqueRasterPngSafe)(
+                    : strokeTaskPairPixelCrop
+                      ? nativeStrokeTaskRasterPairPixelPngSafe
+                      : certifiedPixelCrop
+                        ? nativeCertifiedFigurePixelPngSafe
+                        : sixPanelHatchPixelCrop
+                          ? nativeSixPanelHatchPixelPngSafe
+                          : categoricalHatchPixelCrop
+                            ? nativeCategoricalHatchPixelPngSafe
+                            : closedProgramPixelCrop
+                              ? nativeClosedProgramPixelPngSafe
+                              : closedPaintPixelCrop
+                                ? (plan, png, rect, page) =>
+                                    nativeClosedPaintPixelPngSafe(plan, png, rect, page) ||
+                                    nativeSavedPaintPixelPngSafe(plan, png, rect, page) ||
+                                    nativeFillStrokeTextPixelPngSafe(plan, png, rect, page) ||
+                                    nativePhysicalFramePixelPngSafe(plan, png, rect, page)
+                                : renderedGroupPixelCrop
+                                  ? nativeRenderedGroupPixelPngSafe
+                                  : rasterTitlePixelCrop
+                                    ? nativeRasterTitlePixelPngSafe
+                                    : formPixelCrop
+                                      ? nativeCaptionedFormPixelPngSafe
+                                      : keyedImagePairPixelCrop
+                                        ? nativeKeyedImagePairPixelPngSafe
+                                        : rasterPlatePixelCrop
+                                          ? nativeCompleteRasterPlatePixelPngSafe
+                                          : sharedFramePixelCrop
+                                            ? nativeSharedFramePixelPngSafe
+                                            : nativeIsolatedOpaqueRasterPngSafe)(
                     nativePixelCrop,
                     png,
                     rect,
@@ -4039,7 +4137,7 @@ try {
             const deferredInputsCurrent =
               nativeFigureContext &&
               rect === paddedRect &&
-              !groupedCaptionProof &&
+              !captionBottomProof &&
               !sourceItems?.length &&
               !candidate.reason &&
               !candidate.issue &&
@@ -4073,104 +4171,121 @@ try {
                   deferredInputsCurrent,
                   legacyPngValidator,
                   baselinePngValidator,
-                  groupedCaptionProof,
+                  groupedCaptionProof: captionBottomProof,
                   nativePixelCrop,
                   pairedRasterRect,
                   isolatedRasterPixelCrop,
                   sourceBearingFormPlan
                 })
-            let thumbnail = plainFigureCrop
-              ? (plainFigureRasterQueue.push(plainFigureCrop), plainFigureCrop.relativePath)
-              : rect && !deferredInputsCurrent
-                ? await crop(
-                    rect,
-                    id,
-                    (candidate.reason === 'native-uncaptioned-form-plate' &&
-                      candidate.clipToForm === true) ||
-                      [
-                        'native-captioned-form-scope',
-                        'native-single-vector-group',
-                        'native-balanced-vector-scope',
-                        'native-repeated-header-vector-scope'
-                      ].includes(candidate.reason)
-                      ? [rect]
-                      : undefined,
-                    sourceBearingFormPlan
-                      ? legacyPngValidator
-                      : candidate.headerRaster
-                        ? (png) => {
-                            headerSources = nativeOpenAxisHeaderSourceItems(
-                              png,
-                              rect,
-                              pageGeometry,
-                              candidate,
-                              nativeFigureTokens
-                            )
-                            return !legacyPngValidator || legacyPngValidator(png)
-                          }
-                        : candidate.formCropRaster
-                          ? (png) =>
-                              (nativeIsolatedRasterFigurePngSafe(
+            let thumbnail = sourceFormCrop
+              ? await crop(
+                  rect,
+                  id,
+                  undefined,
+                  (png) => sourceFormCrop.current() && png === sourceFormCrop.png,
+                  false,
+                  () => sourceFormCrop.png
+                )
+              : plainFigureCrop
+                ? (plainFigureRasterQueue.push(plainFigureCrop), plainFigureCrop.relativePath)
+                : rect && !deferredInputsCurrent
+                  ? await crop(
+                      rect,
+                      id,
+                      (candidate.reason === 'native-uncaptioned-form-plate' &&
+                        candidate.clipToForm === true) ||
+                        [
+                          'native-captioned-form-scope',
+                          'native-single-vector-group',
+                          'native-balanced-vector-scope',
+                          'native-repeated-header-vector-scope'
+                        ].includes(candidate.reason)
+                        ? [rect]
+                        : undefined,
+                      sourceBearingFormPlan
+                        ? legacyPngValidator
+                        : candidate.headerRaster
+                          ? (png) => {
+                              headerSources = nativeOpenAxisHeaderSourceItems(
                                 png,
                                 rect,
-                                figureAssociationPage,
-                                candidate
-                              ) ??
-                                nativeRecoveryFigurePngSafe(
-                                  png,
-                                  rect,
-                                  figureAssociationPage,
-                                  candidate
-                                ) ??
-                                nativeIsolatedFormPngSafe(
-                                  png,
-                                  rect,
-                                  figureAssociationPage,
-                                  candidate
-                                ) ??
-                                nativeOrderedFormRasterPngSafe(
-                                  png,
-                                  rect,
-                                  figureAssociationPage,
-                                  candidate
-                                ) ??
-                                nativeClosedProgramPngSafe(
-                                  png,
-                                  rect,
-                                  figureAssociationPage,
-                                  candidate
-                                ) ??
-                                nativeCompleteFormCropPngSafe(
-                                  png,
-                                  rect,
-                                  pageGeometry,
-                                  candidate
-                                )) &&
-                              (!legacyPngValidator || legacyPngValidator(png))
-                          : groupedCaptionProof
+                                pageGeometry,
+                                candidate,
+                                nativeFigureTokens
+                              )
+                              return !legacyPngValidator || legacyPngValidator(png)
+                            }
+                          : candidate.formCropRaster
                             ? (png) =>
-                                nativeGroupedRasterCaptionPngSafe(
-                                  groupedCaptionProof,
+                                (nativeIsolatedRasterFigurePngSafe(
                                   png,
                                   rect,
-                                  pageGeometry
-                                ) &&
+                                  figureAssociationPage,
+                                  candidate
+                                ) ??
+                                  nativeRecoveryFigurePngSafe(
+                                    png,
+                                    rect,
+                                    figureAssociationPage,
+                                    candidate
+                                  ) ??
+                                  nativeIsolatedFormPngSafe(
+                                    png,
+                                    rect,
+                                    figureAssociationPage,
+                                    candidate
+                                  ) ??
+                                  nativeOrderedFormRasterPngSafe(
+                                    png,
+                                    rect,
+                                    figureAssociationPage,
+                                    candidate
+                                  ) ??
+                                  nativeClosedProgramPngSafe(
+                                    png,
+                                    rect,
+                                    figureAssociationPage,
+                                    candidate
+                                  ) ??
+                                  nativeCompleteFormCropPngSafe(
+                                    png,
+                                    rect,
+                                    figureAssociationPage,
+                                    candidate
+                                  )) &&
                                 (!legacyPngValidator || legacyPngValidator(png))
-                            : legacyPngValidator,
-                    !!(nativePixelCrop || pairedRasterRect),
-                    !keyedPhotoPlan && isolatedRasterPixelCrop
-                      ? () =>
-                          nativeIsolatedRasterImagePng(
-                            isolatedRasterPixelCrop,
-                            page,
-                            rect,
-                            pageGeometry.renderRotation
-                          )
-                      : undefined
-                  )
-                : deferredInputsCurrent
-                  ? 'thumbnails/' + id + '.png'
-                  : undefined
+                            : captionBottomProof
+                              ? (png) =>
+                                  nativeGroupedRasterCaptionPngSafe(
+                                    captionBottomProof,
+                                    png,
+                                    rect,
+                                    pageGeometry
+                                  ) &&
+                                  (!legacyPngValidator || legacyPngValidator(png))
+                              : legacyPngValidator,
+                      !!(nativePixelCrop || pairedRasterRect),
+                      strokeTaskPairPixelCrop && nativePixelCrop === strokeTaskPairPixelCrop
+                        ? () =>
+                            renderNativeStrokeTaskPairPng(
+                              strokeTaskPairPixelCrop,
+                              page,
+                              rect,
+                              pageGeometry.renderRotation
+                            )
+                        : !keyedPhotoPlan && isolatedRasterPixelCrop
+                          ? () =>
+                              nativeIsolatedRasterImagePng(
+                                isolatedRasterPixelCrop,
+                                page,
+                                rect,
+                                pageGeometry.renderRotation
+                              )
+                          : undefined
+                    )
+                  : deferredInputsCurrent
+                    ? 'thumbnails/' + id + '.png'
+                    : undefined
             // A byte-budget retry or changed input can invalidate the proof.
             // Withdraw stale images before choosing any permitted fallback.
             if (keyedPhotoPlan && (!thumbnail || !keyedPhotoPlan.current())) {
@@ -4192,6 +4307,10 @@ try {
               certifiedCrops.get(thumbnail)?.withdraw()
               thumbnail = undefined
             }
+            if (sourceFormCrop && !thumbnail) {
+              rect = oldFinalRect
+              thumbnail = await crop(rect, id, undefined, baselinePngValidator)
+            }
             if (nativePixelCrop && !thumbnail) {
               if (completePixelCrop || completeCertifiedPixelCrop || pairedDescriptionPixelCrop)
                 rect = undefined
@@ -4200,7 +4319,7 @@ try {
                 thumbnail = rect ? await crop(rect, id, undefined, baselinePngValidator) : undefined
               }
             }
-            if (!keyedPhotoPlan && groupedCaptionProof && !thumbnail) {
+            if (!keyedPhotoPlan && captionBottomProof && !thumbnail) {
               rect = legacyRect
               thumbnail = await crop(rect, id, undefined, legacyPngValidator)
             }
@@ -4898,6 +5017,7 @@ try {
                     : true),
               !!ownedInkProof
             ))
+          let fallbackDeferred = false
           if (ownedInkProof && !bodyThumbnail && !graphicalThumbnail) {
             const certificate = thumbnail && certifiedCrops.get(thumbnail)
             if (thumbnail && !certificate?.current()) {
@@ -4909,19 +5029,37 @@ try {
               finalTableCropChecks.push(() => certificate.current())
             } else {
               const fallbackCrop = getNativeOwnedGlyphOverhangCropFallback(ownedInkProof, table)
-              assert(fallbackCrop, 'Owned table crop source changed before fallback.')
-              table = { ...table, cropRect: fallbackCrop }
-              const fallbackTable = table
-              thumbnail = await crop(
-                fallbackCrop.map((v) => v / 1.5),
-                table.id
-              )
-              finalTableCropChecks.push(
-                () => !!getNativeOwnedGlyphOverhangCropFallback(ownedInkProof, fallbackTable)
-              )
+              if (fallbackCrop) {
+                table = { ...table, cropRect: fallbackCrop }
+                const fallbackTable = table
+                thumbnail = await crop(
+                  fallbackCrop.map((v) => v / 1.5),
+                  table.id
+                )
+                finalTableCropChecks.push(
+                  () => !!getNativeOwnedGlyphOverhangCropFallback(ownedInkProof, fallbackTable)
+                )
+              } else {
+                fallbackDeferred = true
+                thumbnail = await crop(
+                  table.cropRect.map((v) => v / 1.5),
+                  table.id
+                )
+                const note = {
+                  text: 'Native table crop ownership proof became stale; detector crop retained for review.',
+                  rect: table.cropRect
+                }
+                table = {
+                  ...table,
+                  notes: [...(table.notes ?? []), note],
+                  repairs: [...(table.repairs ?? []), 'native-owned-crop-fallback-deferred']
+                }
+                result.notes = table.notes
+                result.repairs = table.repairs
+              }
             }
           }
-          if (interiorFenceProof && !thumbnail) continue
+          if (!thumbnail && (interiorFenceProof || fallbackDeferred)) continue
           tables.push({
             ...result,
             cropRect: table.cropRect,
@@ -5045,6 +5183,13 @@ try {
                   .map((caption) => caption.rect)
               },
               () => readFile(join(output, currentTable.thumbnail))
+            )
+            tables[i] = retainNativeCenteredRecordGraphic(
+              tables[i],
+              wholeOwnerFonts,
+              rules,
+              measuredRuns,
+              reviewContext
             )
           }
         }
@@ -5425,6 +5570,55 @@ try {
           for (const entry of deferredFigureCrops.values()) {
             const index = figures.indexOf(entry.figure)
             assert(index >= 0 && entry.current(), 'Deferred figure input changed')
+            const localOwners = () =>
+              [...figures, ...algorithms, ...tables].filter((item) => item.page === pageNumber)
+            const owners = localOwners()
+            const localCaptions = () => captions.filter((caption) => caption.page === pageNumber)
+            const pageCaptions = localCaptions()
+            const sameReferences = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])
+            const mixedPanels = owners.flatMap((table) => {
+              if (!tables.includes(table)) return []
+              const peers = owners
+                .filter((item) => item !== table && item !== entry.figure && item.region)
+                .map((item) =>
+                  item.region.map(
+                    (n, axis) => n * (axis % 2 ? pageGeometry.height : pageGeometry.width)
+                  )
+                )
+              const proof = nativeFigureTablePanel({
+                page: figureAssociationPage,
+                figure: entry.candidate,
+                rect: entry.rect,
+                table,
+                tokens: nativeFigureTokens,
+                rules,
+                viewport: nativeFigureContext.viewport,
+                peers,
+                captions: pageCaptions
+              })
+              return proof ? [{ table, proof }] : []
+            })
+            if (mixedPanels.length === 1) {
+              const [{ table, proof }] = mixedPanels
+              const ownerCurrent = retainNativeRecoveryInputs([owners, pageCaptions])
+              const current = () =>
+                entry.current() &&
+                proof.current() &&
+                ownerCurrent?.() &&
+                sameReferences(localOwners(), owners) &&
+                sameReferences(localCaptions(), pageCaptions)
+              const thumbnail = await crop(proof.rect, entry.figure.id, undefined, current, true)
+              if (thumbnail && certifiedCrops.get(thumbnail)?.current()) {
+                figures[index] = {
+                  ...entry.figure,
+                  thumbnail,
+                  region: normalize(proof.rect, pageGeometry.width, pageGeometry.height)
+                }
+                tables.splice(tables.indexOf(table), 1)
+                continue
+              }
+              if (thumbnail) certifiedCrops.get(thumbnail)?.withdraw()
+            }
             if (proveBarCrop(entry)) {
               pendingBarCrops.push(entry)
               continue

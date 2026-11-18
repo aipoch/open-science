@@ -1,3 +1,8 @@
+import {
+  registerScheduleCommands,
+  scheduleCommandGroup,
+  type ScheduleCommands
+} from './schedules/application-commands'
 import { allowedDuringServiceStop } from './service-command-admission'
 import { ApplicationCommandError } from '../shared/application-command-contract'
 import {
@@ -160,6 +165,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   memory: MemoryCommandOwner
   specialist: SpecialistApplicationOwner
   literature: LiteratureCommandOwner
+  schedules: ScheduleCommands
   bookmarks: BookmarkCommandOwner
   sessionReplay: SessionReplayCommandOwner
   pdfAnnotations: PdfAnnotationCommandOwner
@@ -180,6 +186,13 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'office-preview:attach-frame',
   'office-preview:close',
   'office-preview:report-state',
+  'pptx-edit:open',
+  'pptx-edit:apply',
+  'pptx-edit:save',
+  'pptx-edit:close',
+  'pptx-draft:get',
+  'pptx-draft:accept',
+  'pptx-draft:reject',
   'preview-resources:export-research-video',
   'preview-resources:cancel-research-video-export',
   'preview-resources:research-video-progress',
@@ -231,12 +244,14 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'artifacts:list-reproducibility-receipts',
   'artifacts:start-reproducibility-check',
   'artifacts:cancel-reproducibility-check',
+  'artifacts:open-in-browser',
 
   'locale:initialize',
   'locale:set-preference',
   'network:get-info',
   'network:check-connectivity',
   'managed-file-versions:save-text-edit',
+  'managed-file-versions:save-binary-edit',
   'managed-file-versions:diff-text',
   'managed-file-versions:cancel-diff',
   'background-result-delivery:session-activity',
@@ -250,7 +265,6 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'remote-access:set-pinggy-token',
   'remote-access:set-pinggy-region',
   'sessions:export-conversation',
-  'sessions:fork',
   'sessions:inspect-diagnostics',
   'sessions:export-diagnostics',
   'sessions:cancel-diagnostics',
@@ -310,6 +324,7 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'reviewer:run',
   'artifacts:finalize-run',
   'artifacts:resolve-version-descriptors',
+  'managed-file-versions:inspect',
   'preview-resources:acquire',
   'preview-resources:release'
 ])
@@ -394,6 +409,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([literatureApplicationCommandGroup], (registrar) =>
       registerLiteratureApplicationCommands(registrar, dependencies.literature)
+    ),
+    defineApplicationCommandModule([scheduleCommandGroup], (registrar) =>
+      registerScheduleCommands(registrar, dependencies.schedules)
     ),
     defineApplicationCommandModule([bookmarkApplicationCommandGroup], (registrar) =>
       registerBookmarkApplicationCommands(registrar, dependencies.bookmarks)

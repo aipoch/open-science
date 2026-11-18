@@ -491,7 +491,7 @@ describe('independent source regression', () => {
         expect(result.status).toBe(0)
         expect(result.stdout).toContain(`--shard=${shard}`)
         expect(result.stdout).toContain('--grep-invert\n@capacity')
-        expect(result.stdout).toContain('--global-timeout=1800000')
+        expect(result.stdout).toContain('--global-timeout=2400000')
       }
       const capacity = run('capacity', 'false')
       expect(capacity.status).toBe(0)

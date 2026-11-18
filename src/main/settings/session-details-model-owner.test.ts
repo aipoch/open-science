@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { SessionDetailsModelConfiguration } from '../../shared/settings'
 import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
-  CODEX_SHARED_PROVIDER_ID,
-  type SessionDetailsModelConfiguration
-} from '../../shared/settings'
+  CODEX_SHARED_PROVIDER_ID
+} from '../../shared/settings-runtime'
 import { SessionDetailsModelOwner } from './session-details-model-owner'
 import type { SettingsRepository } from './repository'
 import type { ProviderAccountsModule } from './provider-accounts'

@@ -491,7 +491,7 @@ for (const { count, contextLines } of [
         // Flushing the 26 MB capacity fixture can take longer than an ordinary restart.
         page = await app.restart({
           resourceProfilePhase: 'restart',
-          gracefulTimeoutMs: count === 1000 ? 90_000 : undefined
+          gracefulTimeoutMs: count === 1000 ? 120_000 : undefined
         })
         metrics.restartToReadyMs = performance.now() - restartAt
         const restoredAt = performance.now()

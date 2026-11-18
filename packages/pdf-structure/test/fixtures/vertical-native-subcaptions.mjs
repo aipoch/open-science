@@ -80,8 +80,11 @@ export async function captureAnonymousVerticalFigure(objects, rect) {
     .slice(1)
     .map((o) => String(o).padStart(10, '0') + ' 00000 n \n')
     .join('')}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
-  const bytes = Buffer.from(source),
-    assets = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))
+  return captureAnonymousVerticalFigureBytes(Buffer.from(source), rect)
+}
+
+export async function captureAnonymousVerticalFigureBytes(bytes, rect) {
+  const assets = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))
   const pdf = await getDocument({
     data: new Uint8Array(bytes),
     fontExtraProperties: true,
@@ -126,8 +129,8 @@ export async function captureAnonymousVerticalFigure(objects, rect) {
   )
   const page = {
     pageNumber: 1,
-    width: 600,
-    height: 700,
+    width: v.width,
+    height: v.height,
     rotation: 0,
     renderRotation: 0,
     lines: projectPdfTextLines(content, v),

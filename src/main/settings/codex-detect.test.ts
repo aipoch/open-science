@@ -1,8 +1,8 @@
 import type { ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, win32 } from 'node:path'
+import { delimiter, join, win32 } from 'node:path'
 import { installManagedCodex, managedCodexBinary } from './managed-codex'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -37,7 +37,8 @@ vi.mock('../process-tree', async (importActual) => ({
 }))
 
 import {
-  collectCandidateDirs,
+  candidateDirs,
+  createDefaultDetectDeps,
   detectCodex,
   runAcpInitializeSmoke,
   type CodexDetectDeps
@@ -59,6 +60,74 @@ const createDeps = (
 })
 
 describe('codex-detect', () => {
+  it.skipIf(process.platform === 'win32').each<{
+    name: string
+    command: string
+    run: (executable: string, signal: AbortSignal) => Promise<unknown>
+  }>([
+    {
+      name: 'Codex npm prefix',
+      command: 'npm',
+      run: (_executable, signal) => createDefaultDetectDeps().resolveNpmBinDirs(signal)
+    },
+    {
+      name: 'Codex JavaScript adapter version probe',
+      command: 'codex-adapter.js',
+      run: (executable, signal) => createDefaultDetectDeps().getAdapterVersion(executable, signal)
+    },
+    {
+      name: 'Codex native version probe',
+      command: 'codex',
+      run: (executable, signal) => createDefaultDetectDeps().getCodexVersion(executable, signal)
+    }
+  ])('reaps the real $name descendants before cancellation settles', async ({ command, run }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'codex-version-probe-'))
+    const executable = join(directory, command)
+    const pidFile = join(directory, 'pids.json')
+    const controller = new AbortController()
+    let result: Promise<unknown> | undefined
+    let pids: { parent: number; descendant: number } | undefined
+    const actual = await vi.importActual<typeof import('../process-tree')>('../process-tree')
+    terminateProcessTreeSpy.mockImplementation((...args) =>
+      actual.terminateProcessTree(...(args as Parameters<typeof actual.terminateProcessTree>))
+    )
+    try {
+      await writeFile(
+        executable,
+        `#!${process.execPath}\n` +
+          "const { spawn } = require('node:child_process');\n" +
+          "const { writeFileSync } = require('node:fs');\n" +
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });\n" +
+          `writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify({ parent: process.pid, descendant: child.pid }));\n` +
+          'setInterval(() => {}, 1000);\n'
+      )
+      await chmod(executable, 0o755)
+      vi.stubEnv('PATH', `${directory}${delimiter}${process.env.PATH ?? ''}`)
+      result = run(executable, controller.signal).catch((error: unknown) => error)
+      await vi.waitFor(async () => {
+        pids = JSON.parse(await readFile(pidFile, 'utf8'))
+      })
+      controller.abort()
+      expect(await result).toMatchObject({ name: 'AbortError' })
+      for (const pid of [pids!.descendant, pids!.parent]) {
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+      }
+    } finally {
+      controller.abort()
+      await result
+      for (const pid of Object.values(pids ?? {})) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          // The successful cancellation path has already reaped both processes.
+        }
+      }
+      terminateProcessTreeSpy.mockImplementation(() => Promise.resolve({ reaped: true }))
+      vi.unstubAllEnvs()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it.each(['0.153.4', '0.157.0', '0.157.1-alpha.1'])(
     'rejects an obsolete native CLI %s even when ACP initializes',
     async (nativeVersion) => {
@@ -82,10 +151,15 @@ describe('codex-detect', () => {
   )
 
   it('finds a runnable codex-acp on PATH and reports its adapter version', async () => {
+    const resolveNpmBinDirs = vi.fn().mockResolvedValue([])
     const result = await detectCodex(
-      createDeps({ '/usr/local/bin/codex-acp': '@agentclientprotocol/codex-acp 1.6.2' })
+      createDeps(
+        { '/usr/local/bin/codex-acp': '@agentclientprotocol/codex-acp 1.6.2' },
+        { resolveNpmBinDirs }
+      )
     )
 
+    expect(resolveNpmBinDirs).not.toHaveBeenCalled()
     expect(result).toEqual({
       adapterPath: '/usr/local/bin/codex-acp',
       adapterVersion: '1.6.2'
@@ -140,7 +214,7 @@ describe('codex-detect', () => {
       controller.signal
     )
 
-    expect(resolveNpmBinDirs).toHaveBeenCalledWith(controller.signal)
+    expect(resolveNpmBinDirs).not.toHaveBeenCalled()
     expect(getAdapterVersion).toHaveBeenCalledWith(adapterPath, controller.signal)
     expect(getCodexVersion).toHaveBeenCalledWith(codexPath, controller.signal)
     expect(smokeInitialize).toHaveBeenCalledWith(adapterPath, { codexPath }, controller.signal)
@@ -193,13 +267,15 @@ describe('codex-detect', () => {
   })
 
   it('searches home, extra, well-known, and npm locations without duplicates', async () => {
-    const dirs = await collectCandidateDirs(
-      createDeps(
-        {},
-        {
-          extraDirs: ['/data/codex-managed/adapter/dist'],
-          resolveNpmBinDirs: () => Promise.resolve(['/usr/local/bin', '/home/user/.npm/bin'])
-        }
+    const dirs = await Array.fromAsync(
+      candidateDirs(
+        createDeps(
+          {},
+          {
+            extraDirs: ['/data/codex-managed/adapter/dist'],
+            resolveNpmBinDirs: () => Promise.resolve(['/usr/local/bin', '/home/user/.npm/bin'])
+          }
+        )
       )
     )
 
@@ -384,12 +460,70 @@ describe('codex-detect: real ACP initialize smoke', () => {
   })
 
   afterEach(async () => {
+    // Outcome-injection tests still own real adapters: retire their actual POSIX trackers only
+    // after the assertions, including cases that intentionally keep installation admission fenced.
+    const actual = await vi.importActual<typeof import('../process-tree')>('../process-tree')
+    for (const child of new Set(
+      terminateProcessTreeSpy.mock.calls.map(([child]) => child as ChildProcess)
+    ))
+      await actual.terminateProcessTree(child)
     await rm(tempRoot, { recursive: true, force: true }).catch(() => undefined)
     warnLogSpy.mockClear()
     errorLogSpy.mockClear()
     terminateProcessTreeSpy.mockClear()
     terminateProcessTreeSpy.mockImplementation(() => Promise.resolve({ reaped: true }))
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'reaps escaped ACP descendants after the adapter leader exits',
+    async () => {
+      const adapterPath = join(tempRoot, 'escaped-adapter.js')
+      const pidFile = join(tempRoot, 'escaped.pid')
+      let descendant: number | undefined
+      const actual = await vi.importActual<typeof import('../process-tree')>('../process-tree')
+      terminateProcessTreeSpy.mockImplementation(async (...args) => {
+        const child = args[0] as ChildProcess
+        // Exercise teardown after the adapter really exited and its original group disappeared.
+        if (child.exitCode === null && child.signalCode === null) await once(child, 'close')
+        return actual.terminateProcessTree(
+          ...(args as Parameters<typeof actual.terminateProcessTree>)
+        )
+      })
+      await writeFile(
+        adapterPath,
+        `
+        require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+          const request = JSON.parse(line);
+          if (request.id !== 1) return;
+          const worker = require('node:child_process').spawn(process.execPath,
+            ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+          worker.unref();
+          require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(worker.pid));
+          process.stdout.write(JSON.stringify({ id: 1, result: { protocolVersion: 1 } }) + '\\n',
+            () => process.exit(0));
+        });
+      `
+      )
+      try {
+        await expect(runAcpInitializeSmoke(process.platform)(adapterPath, {})).resolves.toBe(true)
+        descendant = Number(await readFile(pidFile, 'utf8'))
+        expect(() => process.kill(descendant!, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+        expect(warnLogSpy).not.toHaveBeenCalled()
+      } finally {
+        // Preserve fixture cleanup even when detection or the leak assertion fails.
+        descendant ??= await readFile(pidFile, 'utf8').then(Number, () => undefined)
+        if (descendant) {
+          try {
+            process.kill(descendant, 'SIGKILL')
+          } catch {
+            /* Already reaped by production. */
+          }
+        }
+      }
+    }
+  )
 
   it('reports an adapter whose real initialize handshake returns protocolVersion 1 as ready', async () => {
     const adapterPath = await writeFakeAdapter('ready-adapter.js', {
@@ -721,6 +855,7 @@ describe('detectNativeCodex', () => {
     // /opt/homebrew/bin. detectNativeCodex must search the same dirs so a successful adapter
     // handshake never disagrees with the independent native-CLI probe (which would block Continue).
     const { detectNativeCodex } = await import('./codex-detect')
+    const resolveNpmBinDirs = vi.fn().mockResolvedValue([])
     const result = await detectNativeCodex({
       platform: 'darwin',
       env: { PATH: '/usr/bin' }, // raw PATH does NOT include /opt/homebrew/bin
@@ -729,10 +864,11 @@ describe('detectNativeCodex', () => {
         path === '/opt/homebrew/bin/codex'
           ? Promise.resolve('codex-cli 0.157.0')
           : Promise.resolve(undefined),
-      resolveNpmBinDirs: () => Promise.resolve([])
+      resolveNpmBinDirs
     })
 
     expect(result).toEqual({ path: '/opt/homebrew/bin/codex', version: '0.157.0' })
+    expect(resolveNpmBinDirs).not.toHaveBeenCalled()
   })
 
   it('finds native Codex in an npm global bin dir', async () => {
@@ -769,12 +905,22 @@ describe('detectNativeCodex', () => {
 })
 
 describe('detectCodexComponents', () => {
-  it('cancels diagnostic discovery before starting version probes', async () => {
+  it('queries npm once for native CLI and adapter misses per diagnostic', async () => {
+    const { detectCodexComponents } = await import('./codex-detect')
+    const resolveNpmBinDirs = vi.fn().mockRejectedValue(new Error('npm unavailable'))
+    const deps = createDeps({}, { resolveNpmBinDirs })
+    await detectCodexComponents(deps)
+    expect(resolveNpmBinDirs).toHaveBeenCalledTimes(1)
+    await detectCodexComponents(deps)
+    expect(resolveNpmBinDirs).toHaveBeenCalledTimes(2)
+  })
+
+  it('cancels diagnostic npm fallback before probing its candidates', async () => {
     const { detectCodexComponents } = await import('./codex-detect')
     const controller = new AbortController()
     const entered = Promise.withResolvers<AbortSignal | undefined>()
     const release = Promise.withResolvers<void>()
-    const getCodexVersion = vi.fn(async () => undefined)
+    const getCodexVersion = vi.fn<CodexDetectDeps['getCodexVersion']>().mockResolvedValue(undefined)
     const pending = detectCodexComponents(
       createDeps(
         {},
@@ -782,7 +928,7 @@ describe('detectCodexComponents', () => {
           resolveNpmBinDirs: async (signal) => {
             entered.resolve(signal)
             await release.promise
-            return []
+            return ['/cancelled/bin']
           },
           getCodexVersion
         }
@@ -798,7 +944,7 @@ describe('detectCodexComponents', () => {
     release.resolve()
     expect(await outcome).toBe('AbortError')
     expect(signal).toBe(controller.signal)
-    expect(getCodexVersion).not.toHaveBeenCalled()
+    expect(getCodexVersion).not.toHaveBeenCalledWith('/cancelled/bin/codex', controller.signal)
   })
 
   it('ignores a global adapter when the app-owned adapter is missing', async () => {

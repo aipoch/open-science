@@ -1,15 +1,57 @@
+diff --git a/node_modules/app-builder-lib/templates/nsis/include/allowOnlyOneInstallerInstance.nsh b/node_modules/app-builder-lib/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
+index a5cb3fe..ad4444a 100644
+--- a/node_modules/app-builder-lib/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
++++ b/node_modules/app-builder-lib/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
+@@ -63,7 +63,8 @@
+
+ !macro FIND_PROCESS _FILE _RETURN
+   ${if} $IsPowerShellAvailable == 0
+-    nsExec::Exec `"$PowerShellPath" -C "if ((Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')}).Count -gt 0) { exit 0 } else { exit 1 }"`
++    System::Call 'kernel32::SetEnvironmentVariable(t "OPEN_SCIENCE_PROCESS_ROOT", t "$INSTDIR")'
++    nsExec::Exec `"$PowerShellPath" -C "$$root = $$env:OPEN_SCIENCE_PROCESS_ROOT.TrimEnd('\') + '\'; if (@(Get-CimInstance -ClassName Win32_Process | ? {$$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$root, 'CurrentCultureIgnoreCase')}).Count -gt 0) { exit 0 } else { exit 1 }"`
+     Pop ${_RETURN}
+   ${else}
+     !ifdef INSTALL_MODE_PER_ALL_USERS
+@@ -91,7 +92,8 @@
+   ${endIf}
+
+   ${if} $IsPowerShellAvailable == 0
+-    nsExec::Exec `"$PowerShellPath" -C "Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')} | % { Stop-Process -Id $$_.ProcessId $0 }"`
++    System::Call 'kernel32::SetEnvironmentVariable(t "OPEN_SCIENCE_PROCESS_ROOT", t "$INSTDIR")'
++    nsExec::Exec `"$PowerShellPath" -C "$$root = $$env:OPEN_SCIENCE_PROCESS_ROOT.TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | ? {$$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$root, 'CurrentCultureIgnoreCase')} | % { Stop-Process -Id $$_.ProcessId $0 }"`
+   ${else}
+     !ifdef INSTALL_MODE_PER_ALL_USERS
+       nsExec::Exec `taskkill /IM "${_FILE}" /FI "PID ne $pid"`
+diff --git a/node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh b/node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh
+index f5470bf..f1f4010 100644
+--- a/node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh
++++ b/node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh
+@@ -90,6 +90,9 @@
+ !macroend
+
+ !macro extractUsing7za FILE
++  !ifmacrodef customExtractAppPackage
++    !insertmacro customExtractAppPackage "${FILE}"
++  !else
+   Push $OUTDIR
+   CreateDirectory "$PLUGINSDIR\7z-out"
+   ClearErrors
+@@ -135,4 +138,5 @@
+     Goto LoopExtract7za
+
+   DoneExtract7za:
++  !endif
+ !macroend
 diff --git a/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh b/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
+index 4736774..dae111f 100644
 --- a/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
 +++ b/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
-@@ -209,34 +209,24 @@ Function uninstallOldVersion
+@@ -207,36 +207,26 @@ Function uninstallOldVersion
+   ${endif}
+
    StrCpy $uninstallerFileNameTemp "$PLUGINSDIR\old-uninstaller.exe"
 -  !insertmacro copyFile "$uninstallerFileName" "$uninstallerFileNameTemp"
-+  !ifmacrodef customCopyUninstaller
-+    !insertmacro customCopyUninstaller
-+  !else
-+    !insertmacro copyFile "$uninstallerFileName" "$uninstallerFileNameTemp"
-+  !endif
-
+-
 -  # Retry counter
 -  StrCpy $R5 0
 -
@@ -24,25 +66,30 @@ diff --git a/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
 -  OneMoreAttempt:
 -    ExecWait '"$uninstallerFileNameTemp" /S /KEEP_APP_DATA $0 _?=$installationDir' $R0
 -    ifErrors TryInPlace CheckResult
-+  ExecWait '"$uninstallerFileNameTemp" /S /KEEP_APP_DATA $0 _?=$installationDir' $R0
-+  ifErrors TryInPlace CheckResult
++  !ifmacrodef customCopyUninstaller
++    !insertmacro customCopyUninstaller
++  !else
++    !insertmacro copyFile "$uninstallerFileName" "$uninstallerFileNameTemp"
++  !endif
 
 -    TryInPlace:
 -      # the execution failed - might have been caused by some group policy restrictions
 -      # we try to execute the uninstaller in place
 -      ExecWait '"$uninstallerFileName" /S /KEEP_APP_DATA $0 _?=$installationDir' $R0
 -      ifErrors DoesNotExist
++  ExecWait '"$uninstallerFileNameTemp" /S /KEEP_APP_DATA $0 _?=$installationDir' $R0
++  ifErrors TryInPlace CheckResult
+
+-    CheckResult:
+-      ${if} $R0 == 0
+-        Return
+-      ${endIf}
 +  TryInPlace:
 +    # the execution failed - might have been caused by some group policy restrictions
 +    # we try to execute the uninstaller in place
 +    ExecWait '"$uninstallerFileName" /S /KEEP_APP_DATA $0 _?=$installationDir' $R0
 +    ifErrors DoesNotExist
 
--    CheckResult:
--      ${if} $R0 == 0
--        Return
--      ${endIf}
--
 -    Sleep 1000
 -    Goto UninstallLoop
 +  CheckResult:
@@ -53,21 +100,3 @@ diff --git a/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
 
    DoesNotExist:
      SetErrors
-diff --git a/node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh b/node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh
---- a/node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh
-+++ b/node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh
-@@ -104,5 +104,8 @@ !macroend
-
- !macro extractUsing7za FILE
-+  !ifmacrodef customExtractAppPackage
-+    !insertmacro customExtractAppPackage "${FILE}"
-+  !else
-   Push $OUTDIR
-   CreateDirectory "$PLUGINSDIR\7z-out"
-   ClearErrors
-@@ -155,4 +158,5 @@ !macro extractUsing7za FILE
-     Goto LoopExtract7za
-
-   DoneExtract7za:
-+  !endif
- !macroend

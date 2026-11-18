@@ -16,6 +16,7 @@
     "src/main/process-tree-native-loading.macos.integration.test.ts",
     "src/main/update/installation-occupancy.ts",
     "src/main/process-birth-identity.ts",
+    "src/main/update/windows-update-handoff.ts",
     "src/main/windows-process-query.ts"
   ],
   "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc": [
@@ -124,10 +125,7 @@
     "src/main/notebook/kernel-executor.ts",
     "src/main/notebook/runtime-service.ts"
   ],
-  "resources/notebook/file_evidence_codec.mjs": [
-    "resources/notebook/file_evidence_shadow.js",
-    "src/main/artifacts/execution-evidence-log.ts"
-  ],
+  "resources/notebook/file_evidence_codec.mjs": ["resources/notebook/file_evidence_shadow.js"],
   "resources/notebook/file_evidence_shadow.js": ["resources/notebook/file_evidence_worker.js"],
   "resources/notebook/file_evidence_worker.js": ["src/main/notebook/working-file-observer.ts"],
   "resources/find-overlay/index.html": [
@@ -209,7 +207,12 @@
   ],
   "packages/research-film/src/generation-worker.ts": [
     "packages/research-film/src/resources.ts",
-    "packages/research-film/src/generation.ts"
+    "packages/research-film/src/generation.ts",
+    "packages/research-film/src/speech-process.ts"
+  ],
+  "packages/research-film/src/speech-process.ts": [
+    "packages/research-film/src/resources.ts",
+    "packages/research-film/src/speech-client.ts"
   ],
   "packages/research-film/resources/stage/index.html": [
     "packages/research-film/src/build-player.ts"
@@ -218,16 +221,19 @@
     "packages/research-film/src/build-player.ts"
   ],
   "packages/research-film/resources/stage/ui/os-kit.css": [
-    "packages/research-film/src/build-player.ts"
+    "packages/research-film/src/build-player.ts",
+    "packages/research-film/src/replay-player.ts"
   ],
   "packages/research-film/resources/stage/ui/os-session.js": [
     "packages/research-film/src/build-player.ts"
   ],
   "packages/research-film/resources/stage/ui/os-app.css": [
-    "packages/research-film/src/build-player.ts"
+    "packages/research-film/src/build-player.ts",
+    "packages/research-film/src/replay-player.ts"
   ],
   "packages/research-film/resources/stage/ui/os-kit.js": [
-    "packages/research-film/src/build-player.ts"
+    "packages/research-film/src/build-player.ts",
+    "packages/research-film/src/replay-player.ts"
   ],
   "packages/research-film/resources/stage/css/stage.css": [
     "packages/research-film/src/build-player.ts"
@@ -245,7 +251,8 @@
     "packages/research-film/src/build-player.ts"
   ],
   "packages/research-film/resources/stage/brand/logos/open-science-symbol-black.svg": [
-    "packages/research-film/src/build-player.ts"
+    "packages/research-film/src/build-player.ts",
+    "packages/research-film/src/replay-player.ts"
   ],
   "packages/research-film/resources/stage/brand/logos/open-science-lockup-black.svg": [
     "packages/research-film/src/build-player.ts"
@@ -254,22 +261,28 @@
     "packages/research-film/src/build-player.ts"
   ],
   "packages/research-film/resources/stage/brand/fonts/LICENSE-Inter.txt": [
-    "packages/research-film/src/build-player.ts"
+    "packages/research-film/src/build-player.ts",
+    "packages/research-film/src/replay-player.ts"
   ],
   "packages/research-film/resources/stage/brand/fonts/Inter-latin.woff2": [
-    "packages/research-film/src/build-player.ts"
+    "packages/research-film/src/build-player.ts",
+    "packages/research-film/src/replay-player.ts"
   ],
   "packages/research-film/resources/stage/brand/fonts/RobotoMono-latin.woff2": [
-    "packages/research-film/src/build-player.ts"
+    "packages/research-film/src/build-player.ts",
+    "packages/research-film/src/replay-player.ts"
   ],
   "packages/research-film/resources/stage/brand/fonts/LICENSE-RobotoMono.txt": [
-    "packages/research-film/src/build-player.ts"
+    "packages/research-film/src/build-player.ts",
+    "packages/research-film/src/replay-player.ts"
   ],
   "packages/research-film/resources/stage/brand/fonts/fonts.css": [
-    "packages/research-film/src/build-player.ts"
+    "packages/research-film/src/build-player.ts",
+    "packages/research-film/src/replay-player.ts"
   ],
   "packages/research-film/resources/stage/icons/LICENSE-lucide.txt": [
-    "packages/research-film/src/build-player.ts"
+    "packages/research-film/src/build-player.ts",
+    "packages/research-film/src/replay-player.ts"
   ],
   "packages/research-film/resources/stage/icons/lucide.js": [
     "packages/research-film/src/build-player.ts"
@@ -290,5 +303,11 @@
   "resources/compute-hf-auth.py": ["src/main/compute/compute-account-hf.ts"],
   "resources/compute-modal-auth.py": ["src/main/compute/modal-account-auth.ts"],
   "resources/compute-hf-check.py": ["src/main/compute/compute-python-runtime.ts"],
-  "resources/compute-modal-check.py": ["src/main/compute/compute-python-runtime.ts"]
+  "resources/compute-modal-check.py": ["src/main/compute/compute-python-runtime.ts"],
+  "packages/research-film/resources/replay/player.js": [
+    "packages/research-film/src/replay-player.ts"
+  ],
+  "packages/research-film/resources/replay/player.css": [
+    "packages/research-film/src/replay-player.ts"
+  ]
 }

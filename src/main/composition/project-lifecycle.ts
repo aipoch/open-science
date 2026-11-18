@@ -61,6 +61,7 @@ export function composeProjectLifecycle({
   uploadRepository,
   managedFileVersionService,
   runtimeRef,
+  scheduleRepository,
   backgroundResultDelivery,
   sideChatOwnerRef,
   projectRepository,
@@ -89,6 +90,7 @@ export function composeProjectLifecycle({
   uploadRepository: ReturnType<typeof createDefaultUploadRepository>
   managedFileVersionService: ManagedFileVersionService
   runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined }
+  scheduleRepository?: import('../schedules/repository').ScheduleRepository
   backgroundResultDelivery: BackgroundResultDeliveryOwner
   sideChatOwnerRef: { current: SideChatRuntimeOwner | undefined }
   projectRepository: ReturnType<typeof createDefaultProjectRepository>
@@ -153,6 +155,9 @@ export function composeProjectLifecycle({
   projectFilesHandlers: ReturnType<typeof createProjectFilesHandlers>
   managedFileVersionHandlers: ReturnType<typeof createManagedFileVersionCommandOwner>
 } {
+  const schedulesChanged = (projectId: string, sessionId: string | null): void => {
+    applicationEvents.publish('schedules:changed', { projectId, sessionId })
+  }
   const sideChatRelay = new SideChatRelayOwner({
     targetState: (parentSessionId) => {
       const runtime = runtimeRef.current
@@ -219,6 +224,8 @@ export function composeProjectLifecycle({
         await getNotebookService().deleteProjectFileEvidence(projectId)
         await getNotebookService().deleteProjectInputs(projectId)
         await backgroundResultDelivery.commitProjectDeletion(projectId)
+        await scheduleRepository?.deleteTarget(projectId)
+        schedulesChanged(projectId, null)
       },
       completeProjectDeletion: (projectId) => {
         archiveCoordinator.releaseProjectDeletion(projectId)
@@ -260,14 +267,9 @@ export function composeProjectLifecycle({
     projectRepository,
     sessionPersistenceCoordinator,
     {
-      isSessionBusy: async (projectId, sessionId) => {
-        const computeJobs = computeJobActivityRef.current
-        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
-        const jobs = await computeJobs.countNonTerminalBySession(sessionId)
-        // Read synchronous activity after the database await so a newly active runtime is visible.
+      isSessionLocallyBusy(projectId, sessionId) {
         const snapshot = runtimeRef.current?.getSnapshot()
         return (
-          jobs > 0 ||
           snapshot?.pendingPermissions?.some((request) => request.sessionId === sessionId) ===
             true ||
           snapshot?.pendingElicitations?.some((request) => request.sessionId === sessionId) ===
@@ -277,6 +279,13 @@ export function composeProjectLifecycle({
             (session) => session.projectId === projectId && session.sessionId === sessionId
           )
         )
+      },
+      async isSessionBusy(projectId, sessionId) {
+        const computeJobs = computeJobActivityRef.current
+        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
+        const jobs = await computeJobs.countNonTerminalBySession(sessionId)
+        // Read synchronous activity after the database await so a newly active runtime is visible.
+        return jobs > 0 || this.isSessionLocallyBusy!(projectId, sessionId)
       },
       isSessionExportBusy: async (projectId, sessionId) => {
         const computeJobs = computeJobActivityRef.current
@@ -303,10 +312,16 @@ export function composeProjectLifecycle({
       liveSessionProjectId: (sessionId) => runtimeRef.current?.liveSessionProjectId(sessionId)
     },
     {
-      cancelProject: async (projectId) =>
-        artifactReproducibilityAttemptOwnerRef.current?.cancelProject(projectId),
-      cancelSession: async (projectId, sessionId) =>
-        artifactReproducibilityAttemptOwnerRef.current?.cancelSession(projectId, sessionId)
+      cancelProject: async (projectId) => {
+        await scheduleRepository?.pauseTarget(projectId)
+        schedulesChanged(projectId, null)
+        await artifactReproducibilityAttemptOwnerRef.current?.cancelProject(projectId)
+      },
+      cancelSession: async (projectId, sessionId) => {
+        await scheduleRepository?.pauseTarget(projectId, sessionId)
+        schedulesChanged(projectId, sessionId)
+        await artifactReproducibilityAttemptOwnerRef.current?.cancelSession(projectId, sessionId)
+      }
     }
   )
   notificationInbox.setSessionAvailability((sessionId) =>
@@ -337,17 +352,41 @@ export function composeProjectLifecycle({
         visionEvidenceRepository.deleteSessions(sessionIds),
         bookmarkRepository.deleteSessions(sessionIds),
         researchFilmLifecycle.deleteSessions(sessionIds),
-        harnessStorageCleanup.commit(sessionIds)
+        harnessStorageCleanup.commit(sessionIds),
+        scheduleRepository?.deleteSessions(sessionIds).then((targets) => {
+          for (const target of targets) schedulesChanged(target.projectId, target.sessionId)
+        })
       ])
       // The coordinator must retain deleted identities until every cleanup has settled.
       const failed = results.find((result) => result.status === 'rejected')
       if (failed) throw failed.reason
     },
-    onSessionsReconciled: (sessionIds) => visionEvidenceRepository.reconcileSessions(sessionIds),
-    planSessionsReconciliation: async (sessionIds) => [
-      ...(await researchFilmLifecycle.planSessionReconciliation(sessionIds)),
-      ...(await harnessStorageCleanup.planReconciliation(sessionIds))
-    ]
+    onSessionsReconciled: async (sessionIds, archivedIds) => {
+      await visionEvidenceRepository.reconcileSessions(sessionIds)
+      const archived = new Set(archivedIds)
+      for (const target of (await scheduleRepository?.sessionTargets()) ?? []) {
+        if (!archived.has(target.sessionId)) continue
+        await scheduleRepository!.pauseTarget(target.projectId, target.sessionId)
+        schedulesChanged(target.projectId, target.sessionId)
+      }
+    },
+    planSessionsReconciliation: async (sessionIds) => {
+      const existing = new Set(sessionIds)
+      return [
+        ...(await researchFilmLifecycle.planSessionReconciliation(sessionIds)),
+        ...(await harnessStorageCleanup.planReconciliation(sessionIds)),
+        ...((await scheduleRepository?.sessionTargets(true)) ?? [])
+          .filter((target) => !existing.has(target.sessionId))
+          .map((target) => ({
+            ...target,
+            apply: async () => {
+              // The catalog owner revalidates absence under the Session recovery reservation.
+              await scheduleRepository!.deleteTarget(target.projectId, target.sessionId)
+              schedulesChanged(target.projectId, target.sessionId)
+            }
+          }))
+      ]
+    }
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
     promptOptimization,

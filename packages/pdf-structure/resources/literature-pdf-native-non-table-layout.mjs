@@ -404,6 +404,145 @@ function hasCaptionDirectory(table, items) {
   return true
 }
 
+// A theorem's final prose line, one complete display, and the terminal page
+// folio form a paragraph tail, even when the detector invents empty table rows.
+function hasProseDisplayFolio(table, items) {
+  const frame = table.cropRect
+  if (items.length > 8192) return false
+  const source = items.filter(
+    (i) =>
+      i.text?.trim() &&
+      i.rect?.[0] < frame[2] &&
+      i.rect[2] > frame[0] &&
+      i.rect[1] < frame[3] &&
+      i.rect[3] > frame[1]
+  )
+  const page = table.page ?? source[0]?.sourceItem?.pageNumber
+  if (
+    !Number.isSafeInteger(page) ||
+    page < 1 ||
+    source.length < 8 ||
+    source.some(
+      (i) =>
+        !i.horizontal ||
+        !(i.height > 0) ||
+        !Number.isFinite(i.baseline) ||
+        i.rect.length !== 4 ||
+        !i.rect.every(Number.isFinite) ||
+        i.rect[0] < frame[0] ||
+        i.rect[1] < frame[1] ||
+        i.rect[2] > frame[2] ||
+        i.rect[3] > frame[3] ||
+        i.sourceItem?.pageNumber !== page ||
+        !Number.isSafeInteger(i.sourceItem.index) ||
+        i.sourceItem.text !== i.text ||
+        i.sourceSegment
+    )
+  )
+    return false
+  source.sort((a, b) => a.sourceItem.index - b.sourceItem.index)
+  const folio = source.at(-1),
+    first = source[0],
+    h = first.height
+  if (
+    new Set(source.map((i) => i.sourceItem.index)).size !== source.length ||
+    folio.text !== String(page) ||
+    (first.text.match(/\p{Ll}{2,}/gu) ?? []).length < 4 ||
+    items.some(
+      (i) =>
+        i.text?.trim() &&
+        i.sourceItem?.index >= first.sourceItem.index &&
+        (!source.includes(i) || i.sourceItem.index > folio.sourceItem.index)
+    )
+  )
+    return false
+  const introduction = source.filter((i) => Math.abs(i.baseline - first.baseline) < h * 0.1),
+    display = source.filter((i) => !introduction.includes(i) && i !== folio)
+  if (
+    display.length < 5 ||
+    introduction[0] !== first ||
+    introduction.some(
+      (i, n) =>
+        Math.abs(i.height - h) > h * 0.05 ||
+        (n &&
+          (i.rect[0] < introduction[n - 1].rect[2] - h * 0.05 ||
+            i.rect[0] - introduction[n - 1].rect[2] > h * 0.8))
+    ) ||
+    display.some((i) => i.rect[1] < first.baseline + h * 0.5) ||
+    Math.max(...display.map((i) => i.rect[3])) - Math.min(...display.map((i) => i.rect[1])) >
+      h * 2 ||
+    folio.rect[1] - Math.max(...display.map((i) => i.rect[3])) < h ||
+    !display.some((i) => /^[=≃≅≈↔]$/u.test(i.text)) ||
+    display.at(-1).text !== '.'
+  )
+    return false
+  const previous = items.filter(
+    (i) =>
+      i.text?.trim() &&
+      i.sourceItem?.pageNumber === page &&
+      i.sourceItem.index < first.sourceItem.index &&
+      i.rect?.[1] > first.rect[1] - h * 8
+  )
+  return previous.some((i) => /\b(?:Corollary|Theorem|Proposition|Lemma)\s+\d/u.test(i.text))
+}
+
+// An unruled detector crop can cut into a centered two-column reference list.
+function hasCenteredAuthorDateReferences(table, items) {
+  if (
+    !table.issues?.includes('text-crosses-crop-boundary') ||
+    table.grid.some((row) => row.length !== 2)
+  )
+    return false
+  const [left, top, right, bottom] = table.cropRect
+  const headings = items.filter(
+    (item) =>
+      item.horizontal &&
+      /^(?:References|Bibliography)$/iu.test(item.text.trim()) &&
+      item.rect[3] <= top &&
+      top - item.rect[3] < item.height * 2.5 &&
+      item.rect[0] > left &&
+      item.rect[2] < right
+  )
+  if (headings.length !== 1) return false
+  const heading = headings[0]
+  const middle = (heading.rect[0] + heading.rect[2]) / 2
+  const rows = items.filter(
+    (item) =>
+      item.text.trim() &&
+      item.rect[1] >= heading.rect[3] &&
+      item.rect[1] < bottom &&
+      item.rect[0] < right
+  )
+  if (rows.some((item) => !item.horizontal || (item.rect[0] < middle && item.rect[2] > middle)))
+    return false
+  return [true, false].every((leftLane) => {
+    const lane = rows.filter((item) => item.rect[0] < middle === leftLane)
+    if (!lane.length) return false
+    const em = lane[0].height
+    const body = lane.filter((item) => Math.abs(item.height - em) < em * 0.03)
+    const margin = Math.min(...body.map((item) => item.rect[0]))
+    const starts = body.filter((item) => Math.abs(item.rect[0] - margin) < em * 0.1)
+    const last = body.at(-1)
+    return (
+      starts.length >= 4 &&
+      starts[0] === body[0] &&
+      starts[0].rect[1] - heading.rect[3] < 1.5 * em &&
+      last.rect[3] > bottom - 0.24 * (bottom - top) &&
+      starts.every((item) => /^\p{Lu}[\p{L}’'-]+ (?:[A-Z]\.)/u.test(item.text.trim())) &&
+      body.filter((item) => /\b(?:19|20)\d{2}[a-z]?,/u.test(item.text)).length >= 4 &&
+      body.some((item) => item.rect[0] - margin > em * 0.7 && item.rect[0] - margin < em * 1.2) &&
+      lane.every(
+        (item) =>
+          body.includes(item) ||
+          (leftLane &&
+            item.height < em * 0.95 &&
+            item.rect[1] > last.rect[3] + em &&
+            /^(?:\d{1,2}|https?:\/\/\S+)$/u.test(item.text.trim()))
+      )
+    )
+  })
+}
+
 export function hasNativeNonTableLayout(table, items, rules) {
   if (!table.cropRect || !Array.isArray(rules)) return false
   const [left, top, right, bottom] = table.cropRect,
@@ -428,10 +567,12 @@ export function hasNativeNonTableLayout(table, items, rules) {
   // native font. Preserve that whole font; two complete lanes and all repeated
   // navigation roles must close before treating the page numbers as prose.
   if (hasCaptionDirectory(table, items)) return true
+  if (hasProseDisplayFolio(table, items)) return true
   const wholeRows = wholeNativeRows(table.cropRect, items, rules)
   if (hasWholeFontContents(wholeRows, left, width)) return true
   if (hasWholeFontNumberedReferences(wholeRows, table, left, width)) return true
   if (hasNativeBracketedReferenceTail(table, items, rules)) return true
+  if (!rules.length && hasCenteredAuthorDateReferences(table, items)) return true
   const rows = []
   for (const item of [...source].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
     const row = rows.find(

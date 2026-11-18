@@ -319,6 +319,7 @@ const composeAcpRuntimePromptOwners = (
     }
   })
   const promptTurnWorkflow = new AcpPromptTurnWorkflow({
+    schedules: options.schedules,
     registry: session.sessionRegistry,
     interactions: base.sessionInteractions,
     skills: base.turnSkills,

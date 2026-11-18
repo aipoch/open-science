@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -10,6 +10,7 @@ import { materializeSessionConversationGraph } from '../../shared/session-persis
 import { initDataRoot } from '../storage-root'
 import { SessionPersistenceCoordinator, type SessionFileIndex } from './coordinator'
 import { loadSessionMutationAuthority, SessionRepository } from './repository'
+import { SessionJournalStore, sessionJournalPath } from './journal'
 import {
   RuntimeSessionOwner,
   TERMINAL_ADMISSION_WAIT_BUDGET_MS,
@@ -160,10 +161,11 @@ describe('terminal recovery through the real Session persistence scheduler', () 
     const terminal = h.owner.commitTerminal(h.event, publish)
     try {
       await entered.promise
-      const file = join(h.root, 'sessions', h.scope.projectId, `${h.scope.sessionId}.json`)
-      expect(JSON.parse(await readFile(file, 'utf8'))).toMatchObject({
-        session: { status: 'idle' }
-      })
+      const file = sessionJournalPath(
+        join(h.root, 'sessions', h.scope.projectId, `${h.scope.sessionId}.json`)
+      )
+      const current = await new SessionJournalStore({ maxBytes: 8 * 1024 * 1024 }).read(file)
+      expect(current?.document).toMatchObject({ session: { status: 'idle' } })
       await terminal
       expect(publish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: h.event.id }))
       expect(h.coordinator.listRuntimeTerminalFailures()).toHaveLength(0)

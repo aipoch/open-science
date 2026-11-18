@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { terminateProcessTree } from '../process-tree'
 
 import { codeBuddyFramework, type AgentFramework, type AgentSpawnInput } from '../agent-framework'
 import {
@@ -93,7 +94,7 @@ const createCodeBuddyDelegateExecution = (
       try {
         return options.createRuntime(codeBuddyScope, callbacks, agentProcess)
       } catch (error) {
-        agentProcess.kill()
+        void terminateProcessTree(agentProcess)
         throw error
       }
     }

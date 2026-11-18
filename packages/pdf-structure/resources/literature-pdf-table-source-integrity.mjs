@@ -4135,6 +4135,50 @@ export function reviewFinalNativeTableSources(table, inventory, rules, measuredR
   return withoutStaleMath
 }
 
+// The source proves separate fields but not every shared/multiline span. Keep
+// the original graphic instead of publishing a known collapsed copyable grid.
+export function retainNativeCenteredRecordGraphic(table, inventory, rules, measuredRuns, context) {
+  // Keep the existing publication boundary for other proved record contradictions.
+  const conflicts = nativeTableLayoutConflicts(
+    table,
+    inventory,
+    rules,
+    measuredRuns,
+    context
+  ).filter((code) =>
+    [
+      'native-centered-headed-record-lanes-collapsed',
+      'native-fused-tuple-crosses-cell-wall',
+      'native-section-label-value-records-merged',
+      'native-group-heading-merged-with-record'
+    ].includes(code)
+  )
+  if (!conflicts.length) return table
+  return {
+    id: table.id,
+    page: table.page,
+    caption: table.caption,
+    notes: table.notes,
+    captionIssue: table.captionIssue,
+    sourceViewport: table.sourceViewport,
+    cropRect: table.cropRect,
+    region: table.region,
+    thumbnail: table.thumbnail,
+    grid: [],
+    cells: [],
+    unassigned: [],
+    reviewCandidate: false,
+    issues: [
+      ...new Set([
+        ...(table.issues ?? []),
+        'native-table-structure-ambiguous',
+        'no-source-cell-grid',
+        ...conflicts
+      ])
+    ]
+  }
+}
+
 export function trimNativeTablePageCounterCrop(table, inventory, rules, context) {
   if (
     !rect(table.cropRect) ||

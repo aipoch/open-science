@@ -1173,9 +1173,8 @@ it.each(['missing-font', 'missing-glyph', 'not-in-font', 'glyph-outside-clip', '
   }
 )
 
-const { nativeUncaptionedFormPlate } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-figure-native-form-plate.mjs')).href
-)
+const { nativeInlinePolygonFigure, nativeSideBySideFormFigureCrops, nativeUncaptionedFormPlate } =
+  await import(pathToFileURL(resolve('resources/literature-pdf-figure-native-form-plate.mjs')).href)
 function textFreeFormPlate(): ReturnType<typeof JSON.parse> {
   const page = {
     pageNumber: 1,
@@ -5004,7 +5003,7 @@ it('uses a real bounded transparency canvas without granting its labels Source o
         `/Type /XObject /Subtype /Form /BBox [100 100 300 280] /Group << /S /Transparency /I false /K false >> /Resources << /Font << /Text ${face} 0 R /Type3 ${type3} 0 R >> /Pattern << /Shade ${pattern} 0 R /Tile ${tile} 0 R >> /XObject << /PanelImage ${secondImage} 0 R >> >>`
       ),
       content = stream(
-        'BT /Text 10 Tf 1 0 0 1 90 350 Tm (Running header.) Tj ET q /Picture Do Q BT /Text 10 Tf 1 0 0 1 90 80 Tm (Figure 1: Three complete measured sample panels.) Tj ET'
+        'BT /Text 10 Tf 1 0 0 1 90 350 Tm (Running header.) Tj ET q /Picture Do Q BT /Text 10 Tf 1 0 0 1 90 80 Tm (Figure 1: Three complete measured sample panels.) Tj /Text 6 Tf 1 0 0 1 118 53 Tm (r) Tj 1 0 0 1 118 39 Tm (s) Tj ET q .339 w 115 47 m 130 47 l S 155 35 m 165 35 l S Q'
       )
     ids.push(
       add(
@@ -5043,6 +5042,7 @@ it('uses a real bounded transparency canvas without granting its labels Source o
     const document = await task.promise
     for (const pageNumber of [1, 2]) {
       const nativePage = await document.getPage(pageNumber),
+        witnessPage = await document.getPage(pageNumber === 1 ? 2 : 1),
         viewport = nativePage.getViewport({ scale: 1 }),
         content = await nativePage.getTextContent(),
         canvas = createCanvas(400, 400),
@@ -5078,7 +5078,15 @@ it('uses a real bounded transparency canvas without granting its labels Source o
               sourceSha256
             ),
             pageNumber,
-            sourceSha256
+            sourceSha256,
+            runningHeadWitness: {
+              sourceSha256,
+              currentPageNumber: pageNumber,
+              witnessPageNumber: witnessPage.pageNumber,
+              currentContent: content,
+              witnessContent: await witnessPage.getTextContent(),
+              witnessViewport: witnessPage.getViewport({ scale: 1 })
+            }
           },
           tokens = context.content.items
             .filter((r: ReturnType<typeof JSON.parse>) => r.str?.trim())
@@ -5142,6 +5150,38 @@ it('uses a real bounded transparency canvas without granting its labels Source o
           expect(plan).toEqual({ rect: [99.5, 119.5, 300.5, 300.5] })
           expect(plan.sourceItems).toBeUndefined()
           expect(figure.reason).toBe('native-raster-composite-grid')
+          const marginTokens = tokens.filter(
+              (t: ReturnType<typeof JSON.parse>) => t.text !== 'Running header.'
+            ),
+            marginPlan = nativeNonisolatedGroupPixelCrop(
+              page,
+              figure,
+              [caption],
+              [],
+              marginTokens,
+              context,
+              figure.rect,
+              live,
+              createNativeNonisolatedGroupCropProfile(page, marginTokens, context)
+            )
+          expect(marginPlan).toEqual(plan)
+          expect(marginPlan.sourceItems).toBeUndefined()
+          const missingLabelTokens = marginTokens.filter(
+            (t: ReturnType<typeof JSON.parse>) => t.text !== 'Right label'
+          )
+          expect(
+            nativeNonisolatedGroupPixelCrop(
+              page,
+              figure,
+              [caption],
+              [],
+              missingLabelTokens,
+              context,
+              figure.rect,
+              live,
+              createNativeNonisolatedGroupCropProfile(page, missingLabelTokens, context)
+            )
+          ).toBeUndefined()
           const sourceColor =
               context.operators.argsArray[
                 context.operators.fnArray.findIndex(
@@ -5224,6 +5264,116 @@ it('uses a real bounded transparency canvas without granting its labels Source o
             )
           ).toBeUndefined()
           const png = await renderPdfCrop(nativePage, plan.rect, 0)
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          const outside = context.graphicsBounds.find(
+              (g: ReturnType<typeof JSON.parse>) =>
+                g.kind === 'path' &&
+                g.operationIndex > context.operators.fnArray.lastIndexOf(OPS.endGroup)
+            ),
+            ledgers = [...new Set([context.graphicsBounds, page.graphicsBounds])],
+            slots = ledgers.map((ledger) => ({
+              ledger,
+              index: ledger.findIndex(
+                (g: ReturnType<typeof JSON.parse>) => g.operationIndex === outside.operationIndex
+              )
+            })),
+            originals = slots.map(({ ledger, index }) => ledger[index]),
+            freshPlan = (): ReturnType<typeof nativeNonisolatedGroupPixelCrop> =>
+              nativeNonisolatedGroupPixelCrop(
+                page,
+                figure,
+                [caption],
+                [],
+                tokens,
+                context,
+                figure.rect,
+                live,
+                createNativeNonisolatedGroupCropProfile(page, tokens, context)
+              )
+          expect(outside).toBeDefined()
+          const witness = context.runningHeadWitness,
+            witnessViewport = witness.witnessViewport,
+            widthBefore = witnessViewport.width,
+            viewportPrototype = Object.getPrototypeOf(witnessViewport),
+            sourceHashBefore = witness.sourceSha256
+          witnessViewport.width++
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          witnessViewport.width = widthBefore
+          Object.setPrototypeOf(witnessViewport, {})
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          Object.setPrototypeOf(witnessViewport, viewportPrototype)
+          const converterSlot = Object.getOwnPropertyDescriptor(
+            viewportPrototype,
+            'convertToViewportPoint'
+          )!
+          Object.defineProperty(viewportPrototype, 'convertToViewportPoint', {
+            ...converterSlot,
+            value: (): number[] => []
+          })
+          try {
+            expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          } finally {
+            Object.defineProperty(viewportPrototype, 'convertToViewportPoint', converterSlot)
+          }
+          witness.sourceSha256 = '0'.repeat(64)
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          witness.sourceSha256 = sourceHashBefore
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          let witnessGetterCalls = 0
+          for (const [object, key] of [
+            [witness, 'witnessViewport'],
+            [witnessViewport, 'width']
+          ] as const) {
+            const descriptor = Object.getOwnPropertyDescriptor(object, key)!
+            Object.defineProperty(object, key, {
+              configurable: true,
+              get() {
+                witnessGetterCalls++
+                return descriptor.value
+              }
+            })
+            try {
+              expect(freshPlan()).toBeUndefined()
+            } finally {
+              Object.defineProperty(object, key, descriptor)
+            }
+          }
+          expect(witnessGetterCalls).toBe(0)
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          // The exterior fraction is still native source, never part of the picture.
+          expect(
+            (await nativePage.getTextContent()).items.filter(
+              (i) => 'str' in i && ['r', 's'].includes(i.str)
+            )
+          ).toHaveLength(2)
+          for (const { ledger, index } of slots) ledger.splice(index, 1)
+          expect(freshPlan()).toBeUndefined()
+          slots.forEach(({ ledger, index }, n) => ledger.splice(index, 0, originals[n]))
+          for (const { ledger, index } of slots)
+            ledger[index] = { ...ledger[index], normalizedRect: [0.4, 0.4, 0.5, 0.5] }
+          expect(freshPlan()).toBeUndefined()
+          slots.forEach(({ ledger, index }, n) => {
+            ledger[index] = originals[n]
+          })
+          // A conservative bound can miss the group yet reach the final raster halo.
+          for (const { ledger, index } of slots) {
+            const box = ledger[index].normalizedRect
+            ledger[index] = {
+              ...ledger[index],
+              normalizedRect: [box[0], 300.6 / 400, box[2], box[3]]
+            }
+          }
+          const haloPlan = freshPlan()
+          expect(haloPlan).toBeDefined()
+          expect(nativeRenderedGroupPixelPngSafe(haloPlan, png, haloPlan.rect, page)).toBe(false)
+          slots.forEach(({ ledger, index }, n) => {
+            ledger[index] = originals[n]
+          })
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          const exteriorTop = outside.normalizedRect[1]
+          outside.normalizedRect[1] = exteriorTop + 0.001
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          outside.normalizedRect[1] = exteriorTop
           expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
           tileProgram.argsArray[nestedIndex] = [...nestedImage]
           expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
@@ -6312,4 +6462,245 @@ it('rejects a wrapped-proof PNG when its native path changes', async () => {
     operators.argsArray[index][1][0][1] += 1
     expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(false)
   })
+})
+
+function inlineDiagram(): ReturnType<typeof JSON.parse> {
+  const width = 600,
+    height = 800,
+    graphicsBounds = [],
+    content = { items: [] },
+    operators = { fnArray: [], argsArray: [] }
+  const emit = (op: number, args: unknown): number => {
+    operators.fnArray.push(op)
+    return operators.argsArray.push(args) - 1
+  }
+  const clip = [390, 480, 530, 600],
+    [l, b, r, t] = clip
+  emit(OPS.save, null)
+  emit(OPS.clip, null)
+  emit(OPS.constructPath, [OPS.endPath, [[0, l, b, 1, r, b, 1, r, t, 1, l, t, 4]], clip])
+  for (let i = 0; i < 24; i++) {
+    const x = 400 + (i % 6) * 16,
+      y = 569 - Math.floor(i / 6) * 27
+    const vertices =
+      i % 2
+        ? [
+            [0, 10],
+            [5, 0],
+            [15, 0],
+            [20, 10],
+            [15, 20],
+            [5, 20]
+          ]
+        : [
+            [0, 0],
+            [20, 10],
+            [10, 20]
+          ]
+    const path = [...vertices, vertices[0]].flatMap(([u, v], j) => [j ? 1 : 0, x + u, y + v])
+    emit(OPS.setFillRGBColor, [i % 2 ? '#777777' : '#171717'])
+    const operationIndex = emit(OPS.constructPath, [OPS.eoFill, [path], [x, y, x + 20, y + 20]])
+    graphicsBounds.push({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: [
+        x / width,
+        (height - y - 20) / height,
+        (x + 20) / width,
+        (height - y) / height
+      ]
+    })
+  }
+  emit(OPS.restore, null)
+  const caption = [
+    'A tessellated surface',
+    'shown in a bounded',
+    'region with alternating',
+    'tiles'
+  ]
+  const tokens = caption.map((text, index) => {
+    const y = 318 + index * 12,
+      x = index === 3 ? 441 : 409,
+      w = index === 3 ? 18 : 82
+    const sourceItem = { pageNumber: 1, index, text }
+    content.items.push({ str: text, fontName: 'caption' })
+    return {
+      text,
+      sourceItem,
+      horizontal: true,
+      rect: [x, y, x + w, y + 9],
+      height: 9,
+      baseline: y + 9
+    }
+  })
+  const lines = [230, 260, 290].map((y) => ({ x: 104, y, width: 260, fontSize: 10 }))
+  const page = { pageNumber: 1, width, height, graphicsBounds, invalidGraphicsBounds: 0, lines }
+  const context = {
+    content,
+    operators,
+    graphicsBounds,
+    viewport: { rotation: 0, transform: [1, 0, 0, -1, 0, height] }
+  }
+  return { page, tokens, context, caption }
+}
+
+it('recovers a closed unnumbered diagram with its complete native caption', () => {
+  const { page, tokens, context, caption } = inlineDiagram()
+  const result = nativeInlinePolygonFigure(page, [], [], tokens, context)
+  expect(result?.graphicsCount).toBe(24)
+  expect(result?.caption.lines).toEqual(caption)
+  expect(result?.rect).toEqual([400, 211, 500, 312])
+})
+
+it.each<[string, (fixture: ReturnType<typeof JSON.parse>) => void]>([
+  [
+    'open clip',
+    ({ context }) => {
+      context.operators.fnArray[1] = OPS.save
+    }
+  ],
+  [
+    'non-gray polygon',
+    ({ context }) => {
+      context.operators.argsArray[3][0] = '#171811'
+    }
+  ],
+  [
+    'stroked polygon',
+    ({ context }) => {
+      context.operators.argsArray[4][0] = OPS.stroke
+    }
+  ],
+  [
+    'open polygon',
+    ({ context }) => {
+      context.operators.argsArray[4][1][0][11] += 1
+    }
+  ],
+  [
+    'missing tail',
+    ({ tokens }) => {
+      tokens.pop()
+    }
+  ],
+  [
+    'foreign text',
+    ({ tokens }) => {
+      tokens.push({ rect: [415, 228, 480, 244] })
+    }
+  ],
+  [
+    'foreign caption font',
+    ({ context }) => {
+      context.content.items[3].fontName = 'body'
+    }
+  ],
+  [
+    'no neighboring prose',
+    ({ page }) => {
+      page.lines = []
+    }
+  ]
+])('keeps %s outside figure recovery', (_name, mutate) => {
+  const fixture = inlineDiagram()
+  mutate(fixture)
+  expect(
+    nativeInlinePolygonFigure(fixture.page, [], [], fixture.tokens, fixture.context)
+  ).toBeUndefined()
+})
+
+function independentDiagramForms(): ReturnType<typeof JSON.parse> {
+  const width = 600,
+    height = 800
+  const captions = [40, 320].map((x, index) => ({
+    page: 1,
+    rect: [x, 224, x + 240, 234],
+    lines: [`Figure ${2 + index}: Diagram caption.`]
+  }))
+  const tokenData: [string, number[]][] = [
+    ['Diagram label', [50, 108, 120, 118]],
+    ['}', [54, 216, 55, 220]],
+    [captions[0].lines[0], captions[0].rect],
+    ['Second label', [330, 108, 400, 118]],
+    [captions[1].lines[0], captions[1].rect]
+  ]
+  const tokens = tokenData.map(([text, rect], index) => ({
+    text,
+    rect,
+    height: 10,
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index, text }
+  }))
+  const context = {
+    viewport: { rotation: 0, transform: [1, 0, 0, -1, 0, height] },
+    content: { items: tokenData.map(([str]) => ({ str })) },
+    operators: { fnArray: [] as number[], argsArray: [] as unknown[] },
+    graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+  }
+  const emit = (op: number, args: unknown): number => {
+    context.operators.fnArray.push(op)
+    return context.operators.argsArray.push(args) - 1
+  }
+  for (const [i, x] of [40, 320].entries()) {
+    emit(OPS.save, null)
+    emit(OPS.transform, [1, 0, 0, 1, x, 585])
+    emit(OPS.paintFormXObjectBegin, [null, [0, 0, 240, 135]])
+    emit(OPS.showText, [[{ unicode: i ? 'Second label' : 'Diagram label}' }]])
+    for (const kind of ['image', 'path', 'path', 'path']) {
+      const operationIndex = emit(kind === 'image' ? OPS.paintImageXObject : OPS.constructPath, [])
+      context.graphicsBounds.push({
+        kind,
+        operationIndex,
+        normalizedRect: [x / width, 80 / height, (x + 240) / width, 215 / height]
+      })
+    }
+    emit(OPS.paintFormXObjectEnd, null)
+    emit(OPS.restore, null)
+  }
+  const page = {
+    pageNumber: 1,
+    width,
+    height,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: context.graphicsBounds
+  }
+  const figures = [
+    { caption: captions[0], rect: [40, 130, 540, 212], reason: 'native-raster-vector-strip' },
+    { caption: captions[1], rect: [319, 78, 562, 216] }
+  ]
+  return { page, captions, tokens, context, figures, tables: [] }
+}
+
+it('corrects the truncated mixed crop to its complete side-by-side Form and keeps the peer', () => {
+  const f = independentDiagramForms()
+  const result = nativeSideBySideFormFigureCrops(
+    f.page,
+    f.captions,
+    f.tables,
+    f.tokens,
+    f.context,
+    f.figures
+  )
+  expect(result?.[0].rect).toEqual([40, 80, 280, 215])
+  expect(result?.[1]).toBe(f.figures[1])
+})
+
+it.each([
+  'wrong-glyph-stream',
+  'crossing-table',
+  'foreign-caption-gap',
+  'overlapping-forms',
+  'unbalanced-save'
+])('retains regular figure handling without exact disjoint Form proof: %s', (kind) => {
+  const f = independentDiagramForms()
+  if (kind === 'wrong-glyph-stream')
+    f.context.operators.argsArray[3][0][0].unicode = 'Wrong diagram label'
+  if (kind === 'crossing-table') f.tables.push([53, 112, 90, 190])
+  if (kind === 'foreign-caption-gap') f.tokens[1].sourceItem.index = 4
+  if (kind === 'overlapping-forms') f.context.operators.argsArray[11][4] = 160
+  if (kind === 'unbalanced-save') f.context.operators.fnArray[9] = OPS.save
+  expect(
+    nativeSideBySideFormFigureCrops(f.page, f.captions, f.tables, f.tokens, f.context, f.figures)
+  ).toBeUndefined()
 })

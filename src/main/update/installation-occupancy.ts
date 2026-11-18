@@ -3,7 +3,7 @@ import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, sep, win32 } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { createLogger, runtimeChildProcessErrorFields } from '@aipoch/diagnostics/node'
 import {
   listWindowsProcesses,
   splitWindowsCommandLine,
@@ -205,7 +205,7 @@ export async function inspectInstallationProcessesAsync(
   signal?: AbortSignal
 ): Promise<number[]> {
   signal?.throwIfAborted()
-  const { runVerificationProcess } = await import('./verification-process')
+  const { runVerificationProcess } = await import('./verification-process.js')
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
@@ -228,15 +228,49 @@ export async function inspectInstallationProcessesAsync(
           const fs = require('node:fs')
           const { join } = require('node:path')
           const native = require(process.argv[1])
+          const started = Date.now()
           let root = process.argv[2]
           try { root = fs.realpathSync(root) } catch { /* The installation may have moved. */ }
-          const files = fs.statSync(root).isDirectory()
-            ? fs.readdirSync(root, { recursive: true, withFileTypes: true })
-                .filter(entry => entry.isFile()).map(entry => join(entry.parentPath, entry.name))
-            : [root]
+          const files = []
+          if (!fs.statSync(root).isDirectory()) files.push(root)
+          else {
+            // Node's recursive readdir stats every non-directory, including known regular files.
+            // Reuse Dirent types while retaining its directory-link traversal and file-link exclusion.
+            // Keep physical ASAR archives as resources; Electron recursive readdir expands virtual entries.
+            const directories = [root]
+            const visited = new Set()
+            for (let index = 0; index < directories.length; index++) {
+              // Canonical paths stop self/ancestor junction cycles without dropping distinct targets.
+              // Resolution failures remain unknown occupancy, not proof that a directory is empty.
+              const canonical = fs.realpathSync.native(directories[index])
+              if (visited.has(canonical)) continue
+              visited.add(canonical)
+              for (const entry of fs.readdirSync(directories[index], { withFileTypes: true })) {
+                const file = join(entry.parentPath, entry.name)
+                if (entry.isFile()) files.push(file)
+                else if (entry.isDirectory()) directories.push(file)
+                else {
+                  // Match recursive readdir's best-effort directory probe for other entry types.
+                  try { if (fs.statSync(file).isDirectory()) directories.push(file) } catch {}
+                }
+              }
+            }
+          }
+          // Like Inno Setup's default CloseApplicationsFilter, query only loaded or mapped payload:
+          // executables, libraries, native addons, WebAssembly modules, ASAR archives and Chromium's
+          // mapped .pak/.dat/.bin.
+          // Every registered file scales the cold Restart Manager query. Ordinary data files held
+          // without delete sharing make the installer's staged removal fail and roll back instead.
+          const resources = files.filter(file =>
+            /\.(?:exe|dll|node|wasm|asar|pyd|pak|dat|bin)$/i.test(file)
+          )
+          const stats = { fileCount: files.length, resourceCount: resources.length, enumMs: Date.now() - started }
+          // A timed-out scanner has no stdout; stderr progress identifies the stage that was reached.
+          process.stderr.write(JSON.stringify({ stage: 'resource-query', ...stats }) + '\n')
+          const queried = Date.now()
           // Only this short-lived scanner is exempt; the parent and other occupants remain.
-          const pids = native.listWindowsInstallationOccupants(files).filter(pid => pid !== process.pid)
-          process.stdout.write(JSON.stringify({ root, pids }))
+          const pids = native.listWindowsInstallationOccupants(resources).filter(pid => pid !== process.pid)
+          process.stdout.write(JSON.stringify({ root, pids, ...stats, rmMs: Date.now() - queried }))
         `,
           nativePath,
           installationRoot
@@ -254,10 +288,23 @@ export async function inspectInstallationProcessesAsync(
         !Array.isArray(result.pids)
       )
         throw new Error('Invalid installation resource scan result.')
+      // Stage timings are diagnostic only; malformed values are omitted, never trusted.
+      const stat = (key: string): number | undefined => {
+        const value = (result as Record<string, unknown>)[key]
+        return Number.isSafeInteger(value) ? (value as number) : undefined
+      }
+      createLogger('update').info('Windows installation occupancy inspected', {
+        fileCount: stat('fileCount'),
+        resourceCount: stat('resourceCount'),
+        enumMs: stat('enumMs'),
+        rmMs: stat('rmMs'),
+        durationMs: Date.now() - started
+      })
       return windowsInstallationOccupants(result.pids, result.root)
     } catch (cause) {
       if (signal?.aborted) throw cause
       createLogger('update').warn('Windows installation occupancy inspection failed', {
+        ...runtimeChildProcessErrorFields(cause),
         durationMs: Date.now() - started,
         message: cause instanceof Error ? cause.message : 'Unknown inspection error'
       })
@@ -328,7 +375,7 @@ export async function inspectProcessNamesAsync(
   if (pids.length === 0) return names
   if (process.platform !== 'darwin') return inspectProcessNames(pids)
   try {
-    const { runVerificationProcess } = await import('./verification-process')
+    const { runVerificationProcess } = await import('./verification-process.js')
     const { stdout } = await runVerificationProcess(
       '/bin/ps',
       ['-o', 'pid=,comm=', '-p', pids.join(',')],

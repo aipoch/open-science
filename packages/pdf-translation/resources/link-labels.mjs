@@ -517,28 +517,28 @@ export function translatedPdfLinkLabel(source, translation, label, offset) {
 // complete-list occurrences and ordered numeric identities must agree.
 // Undefined leaves non-citation labels on their existing path; null forbids a
 // bare-number fallback after a complete source citation fails identity proof.
+export function pdfBracketedReferenceBlocks(text) {
+  const entry = '\\d{1,4}(?:\\s*[–-]\\s*\\d{1,4})?'
+  const body = `${entry}(?:\\s*[,，]\\s*${entry})*`
+  const list = new RegExp(`\\[\\s*${body}\\s*\\]|［\\s*${body}\\s*］`, 'gu')
+  return [...text.matchAll(list)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+    text: match[0],
+    numbers: [...match[0].matchAll(/\d+/gu)],
+    key: match[0].slice(1, -1).replace(/\s/gu, '').replace(/，/gu, ',').replace(/–/gu, '-')
+  }))
+}
+
 export function translatedPdfBracketedReference(source, translation, label, offset) {
   if (!/^\d{1,4}$/u.test(label) || source.slice(offset, offset + label.length) !== label)
     return undefined
-  const blocks = (text) =>
-    [
-      ...text.matchAll(
-        /\[\s*\d{1,4}(?:\s*[,，]\s*\d{1,4})*\s*\]|［\s*\d{1,4}(?:\s*[,，]\s*\d{1,4})*\s*］/gu
-      )
-    ].map((match) => ({
-      start: match.index,
-      end: match.index + match[0].length,
-      text: match[0],
-      numbers: [...match[0].matchAll(/\d+/gu)]
-    }))
-  const from = blocks(source),
-    to = blocks(translation),
+  const from = pdfBracketedReferenceBlocks(source),
+    to = pdfBracketedReferenceBlocks(translation),
     block = from.find((b) => b.numbers.some((n) => b.start + n.index === offset && n[0] === label))
   if (!block) return undefined
-  const identity = (b) => b.numbers.map((n) => n[0]).join(','),
-    key = identity(block),
-    sourceMatches = from.filter((b) => identity(b) === key),
-    targetMatches = to.filter((b) => identity(b) === key)
+  const sourceMatches = from.filter((b) => b.key === block.key),
+    targetMatches = to.filter((b) => b.key === block.key)
   if (!sourceMatches.length || sourceMatches.length !== targetMatches.length) return null
   const occurrence = sourceMatches.indexOf(block),
     ordinal = block.numbers.findIndex((n) => block.start + n.index === offset),
@@ -845,7 +845,7 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
   if (/^\d+[A-Za-z]?$/u.test(label)) {
     const panels = (text) => [
         ...text.matchAll(
-          /(?:\b(?:Figure|Fig\.?)\s*|[图圖]\s*)(\d+(?:[A-Za-z]|[（(]\s*[A-Za-z]\s*[)）]))(?![A-Za-z\d])/gu
+          /(?:\b(?:Figure|Fig\.?)\s*|[图圖]\s*)(\d+(?:[A-Za-z]|[（(]\s*[A-Za-z]\s*[)）]))(?![A-Za-z\d])/giu
         )
       ],
       identity = (match) => match[1].normalize('NFKC').replace(/\s/gu, '')
@@ -860,6 +860,22 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
       if (from.length !== to.length) return null
       const target = to[index]
       return { start: target.index + target[0].length - target[1].length, text: label }
+    }
+  }
+  // A wrapped native run can begin with the complete compound, without its
+  // preceding figure prefix. The digit alone still proves no panel identity.
+  if (/^\d+$/u.test(label)) {
+    const reference = source.match(/^\s*(\d+)[（(]\s*([A-Za-z])\s*[)）](?![A-Za-z\d])/u)
+    if (reference?.[1] === label && reference[0].indexOf(label) === offset) {
+      const compounds = (value) => [
+          ...value.matchAll(/(?<![A-Za-z\d_.])(\d+)[（(]\s*([A-Za-z])\s*[)）](?![A-Za-z\d])/gu)
+        ],
+        same = (match) => match[1] === label,
+        from = compounds(source).filter(same),
+        to = compounds(translation).filter(same)
+      return from.length === 1 && to.length === 1 && to[0][2] === reference[2]
+        ? { start: to[0].index, text: label }
+        : null
     }
   }
   const number = label.match(/^(\d+)(\.)?$/u)

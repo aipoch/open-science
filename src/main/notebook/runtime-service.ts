@@ -2,6 +2,12 @@ import { withDataRootWrite } from '../storage/migration-state'
 import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { randomUUID } from 'node:crypto'
 import { NotebookIdleReclamation } from './idle-reclamation'
+import { NotebookProcessMonitor, type MonitoredInterpreter } from './process-monitor'
+import type {
+  NotebookProcessMonitorSnapshot,
+  NotebookProcessMonitorRequest,
+  TerminateNotebookProcessRequest
+} from '../../shared/notebook-process-monitor'
 import { existsSync, realpathSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -170,7 +176,10 @@ import type {
   AgentResultFollowUpDelivery,
   BackgroundResultSourceRef
 } from '../../shared/background-result-delivery'
-import { notebookRunSourceRef } from '../background-result-delivery/notebook-adapter'
+import {
+  notebookRunSourceRef,
+  deliversNotebookResultToAgent
+} from '../background-result-delivery/notebook-adapter'
 import {
   assertNotebookCodeAppendWithinLimit,
   assertNotebookCodeWithinLimit
@@ -324,6 +333,7 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
 }
 
 export type NotebookExecutionApproval = (request: {
+  projectId?: string
   sessionId: string
   title: string
   rawInput: unknown
@@ -332,6 +342,7 @@ export type NotebookExecutionApproval = (request: {
 }) => Promise<boolean>
 
 export type NotebookRuntimeBindingApproval = (request: {
+  projectId?: string
   sessionId: string
   title: string
   rawInput: unknown
@@ -553,6 +564,7 @@ class NotebookRuntimeService {
       )
     }
     const pending = approval({
+      projectId: session.projectId,
       sessionId: session.sessionId,
       title: (this.options.translate ?? englishNativeTranslator)(
         'Confirm Notebook kernel and environment'
@@ -682,7 +694,8 @@ class NotebookRuntimeService {
     session: RuntimeSession,
     run: NotebookRunRecord,
     context: NotebookSourceFileAccessContext | undefined,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    permissionPrompts?: 'none'
   ): Promise<void> {
     if (!this.executionApproval || (run.source === 'user' && !run.promptMessageId)) return
     signal?.throwIfAborted()
@@ -729,6 +742,7 @@ class NotebookRuntimeService {
     signal?.throwIfAborted()
     if (!risks.length) return
     const approved = await this.executionApproval({
+      projectId: session.projectId,
       sessionId: session.sessionId,
       title: (this.options.translate ?? englishNativeTranslator)(
         'Review potentially destructive code'
@@ -747,7 +761,8 @@ class NotebookRuntimeService {
           risks
         }
       },
-      signal
+      signal,
+      permissionPrompts
     })
     signal?.throwIfAborted()
     if (!approved)
@@ -791,6 +806,7 @@ class NotebookRuntimeService {
   >
   private disposalPromise: Promise<{ reaped: boolean }> | undefined
   private readonly idleReclamation: NotebookIdleReclamation
+  private readonly processMonitor = new NotebookProcessMonitor(() => this.monitoredInterpreters())
   private readonly shellProcess: NotebookShellProcess
   private environmentStartupBarrier: Promise<void> = Promise.resolve()
   private runLifecycleRecovery: Promise<void> | undefined
@@ -1058,7 +1074,11 @@ class NotebookRuntimeService {
             lane: notebookLaneKey(session.lane)
           })
         })
-        if (run.executionMode === 'background' && options.onBackgroundRunTerminal) {
+        if (
+          run.executionMode === 'background' &&
+          deliversNotebookResultToAgent(run) &&
+          options.onBackgroundRunTerminal
+        ) {
           await options
             .onBackgroundRunTerminal(notebookRunSourceRef(session, run))
             .catch((error) => {
@@ -1146,6 +1166,80 @@ class NotebookRuntimeService {
 
   noteSessionActivity(sessionId: string): void {
     this.idleReclamation.activityChanged(sessionId)
+  }
+
+  async getProcessMonitor(
+    request: NotebookProcessMonitorRequest = {}
+  ): Promise<NotebookProcessMonitorSnapshot> {
+    if (
+      !request ||
+      (request.sourceIds !== undefined &&
+        (!Array.isArray(request.sourceIds) ||
+          request.sourceIds.length > 100 ||
+          request.sourceIds.some((id) => typeof id !== 'string')))
+    )
+      throw new Error('Invalid kernel source selection.')
+    const sourceIds = new Set(request.sourceIds ?? [])
+    const snapshot = await this.processMonitor.snapshot()
+    return {
+      ...snapshot,
+      instances: snapshot.instances.map(({ lastCell, ...item }) =>
+        sourceIds.has(item.id) ? { ...item, lastCell } : item
+      )
+    }
+  }
+
+  terminateMonitoredProcess(request: TerminateNotebookProcessRequest): Promise<void> {
+    return this.processMonitor.terminateRequest(request)
+  }
+
+  manualKernelTerminations(
+    projectId: string,
+    sessionId: string
+  ): import('../../shared/notebook-process-monitor').ManualKernelTermination[] {
+    return this.processMonitor.manualTerminations(projectId, sessionId).slice(-10)
+  }
+
+  private monitoredInterpreters(): MonitoredInterpreter[] {
+    return [
+      ...[...this.sessions.values()].flatMap((session) =>
+        session.monitoredProcesses().map((item) => {
+          const kind =
+            item.processKey === 'repl'
+              ? ('repl' as const)
+              : item.processKey.startsWith('r:')
+                ? ('r' as const)
+                : ('python' as const)
+          const environment =
+            kind === 'repl' ? undefined : item.processKey.slice(item.processKey.indexOf(':') + 1)
+          const epoch = session.currentKernelEpochId(item.processKey)
+          return {
+            ...item,
+            projectId: session.projectId,
+            sessionId: session.sessionId,
+            lane: notebookLaneKey(session.lane),
+            kind,
+            environment,
+            terminate: async () => {
+              const stopping = item.terminate().then(async () => {
+                if (
+                  this.sessions.get(session.lane) === session &&
+                  session.currentKernelEpochId(item.processKey) === epoch
+                )
+                  await this.sessionLifecycle.projectKernelIdleShutdown(
+                    session.lane,
+                    kind,
+                    environment
+                  )
+              })
+              session.blockKernelExecutionUntil(item.processKey, stopping)
+              await stopping
+            }
+          }
+        })
+      ),
+      ...(this.shellProcess.monitoredProcesses?.() ?? [])
+    ]
   }
 
   private async resolveRuntimeEnablement(
@@ -1813,7 +1907,7 @@ class NotebookRuntimeService {
     run: NotebookRunRecord
   ): void {
     const observe = this.options.onBackgroundRunAdmitted
-    if (!observe) return
+    if (!observe || !deliversNotebookResultToAgent(run)) return
     void observe(notebookRunSourceRef({ projectId, sessionId }, run)).catch((error) => {
       this.runtimeLogger.error('Background Run activity projection failed', {
         ...errorLogFields(error),
@@ -2688,7 +2782,7 @@ class NotebookRuntimeService {
       if (this.options.onBackgroundRunTerminal) {
         await Promise.all(
           recoveredRuns.map(async ({ projectId, sessionId, run }) => {
-            if (run.executionMode !== 'background') return
+            if (run.executionMode !== 'background' || !deliversNotebookResultToAgent(run)) return
             await this.options.onBackgroundRunTerminal!(
               notebookRunSourceRef({ projectId, sessionId }, run)
             ).catch((error) => {

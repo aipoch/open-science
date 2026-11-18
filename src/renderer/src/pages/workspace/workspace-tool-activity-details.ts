@@ -1,3 +1,7 @@
+import {
+  scheduleToolPresentation,
+  scheduleToolResult
+} from './schedules/schedule-tool-presentation'
 import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotocol/sdk'
 
 import { formatByteSize } from '@/lib/utils'
@@ -71,7 +75,12 @@ type ToolLiteratureSection = {
   summary: LiteratureToolSummary
 }
 
-type ToolSummarySection = { kind: 'summary'; summary: ToolSummary; file?: boolean }
+type ToolSummarySection = {
+  kind: 'summary'
+  summary: ToolSummary
+  file?: boolean
+  schedule?: boolean
+}
 type ToolDetailSection =
   | ToolCodeSection
   | ToolDiffSection
@@ -1358,6 +1367,23 @@ const buildToolActivityDetails = (
         ? [{ kind: 'authorized-directories', snapshot }]
         : (buildGenericDetails(activity)?.sections ?? [])
     }
+  }
+  const schedule =
+    scheduleToolPresentation(activity.providerToolName, activity.rawInput, t) ??
+    scheduleToolPresentation(activity.title, activity.rawInput, t)
+  if (schedule) {
+    const summary = scheduleToolResult(
+      schedule.summary,
+      activity.rawOutput ?? getOutputText(activity)?.code,
+      activity.status === 'failed',
+      t
+    )
+    const sections: ToolDetailSection[] = [{ kind: 'summary', summary, schedule: true }]
+    if (schedule.script) {
+      const script = createCodeSection('Script', schedule.script.code, schedule.script.language)
+      if (script) sections.push({ ...script, collapsible: true })
+    }
+    return { displayName: summary.title, subtitle: summary.subtitle, sections }
   }
   const literatureDetails = buildLiteratureDetails(activity)
   if (literatureDetails) return literatureDetails

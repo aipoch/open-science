@@ -17,8 +17,8 @@ name: AI PR Review (Single)
 # CODEX_REVIEW_MODEL and CODEX_REVIEW_EFFORT select its model and effort. A selected legacy
 # credential pair uses model/effort from the same scope; generic credentials keep ordered fallbacks.
 # Set FORK_REVIEW_MODE to disabled, manual, or automatic (default: manual). Same-repository PRs
-# always run. Manual mode permits workflow_dispatch reviews of forks; automatic mode also reviews
-# fork PRs on opened, synchronize, and reopened events. Disabled mode blocks both fork paths.
+# are eligible when ready. Manual mode permits workflow_dispatch reviews of forks; automatic mode also reviews
+# fork PRs on opened, synchronize, reopened, and ready_for_review events. Disabled mode blocks both fork paths.
 # Set CODEX_REVIEW_MAX_ROUNDS to the maximum successful comments per PR (default: 20,
 # 0 means unlimited). Rapid updates use concurrency cancellation so only the latest surviving run
 # publishes a review and consumes a round.
@@ -29,7 +29,7 @@ on:
   pull_request_target:
     branches:
       - main
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
     inputs:
       pull_request_number:
@@ -119,7 +119,7 @@ jobs:
           fi
 
           gh pr view "$pr_number" --repo "$GH_REPO" \
-            --json number,headRefName,headRefOid,baseRefOid,title,isCrossRepository,state,mergeCommit \
+            --json number,headRefName,headRefOid,baseRefOid,title,isCrossRepository,isDraft,state,mergeCommit \
             > pr.json
           state="$(jq -r '.state' pr.json)"
           head_sha="$(jq -r '.headRefOid' pr.json)"
@@ -138,6 +138,10 @@ jobs:
             [[ "$REVIEW_EVENT" == "workflow_dispatch" && "$FORK_REVIEW_MODE" != "disabled" ]] ||
             [[ "$REVIEW_EVENT" != "workflow_dispatch" && "$FORK_REVIEW_MODE" == "automatic" ]]; then
             review_allowed=true
+          fi
+          # Drafts are never reviewed, including manual dispatches.
+          if [[ "$(jq -r '.isDraft' pr.json)" == "true" ]]; then
+            review_allowed=false
           fi
           effective_auth_mode="$CODEX_REVIEW_AUTH_MODE"
           credential_scope=none
@@ -334,8 +338,8 @@ jobs:
               repo: context.repo.repo,
               pull_number: issueNumber,
             });
-            if (pullRequest.state !== 'open') {
-              core.notice('Removing ready-to-merge because the pull request is not open.');
+            if (pullRequest.state !== 'open' || pullRequest.draft) {
+              core.notice('Removing ready-to-merge because the pull request is not open or is a draft.');
               await removeReadyLabel();
               return;
             }

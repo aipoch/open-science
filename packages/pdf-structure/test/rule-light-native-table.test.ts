@@ -2,7 +2,7 @@ import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
 
-const { refineTable } = await import(
+const { refineTable, recoverCaptionedRuledTables: recoverNativeRuled } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
 )
 const { associateTableCaptions } = await import(
@@ -18,6 +18,36 @@ const token = (text: string, x: number, y: number, width = 70): object => ({
   baseline: y + 10,
   height: 10,
   horizontal: true
+})
+
+it('recovers every native column beyond a partial detector grid', () => {
+  const items = [
+    ['Key', 'Mean', 'Spread'],
+    ['Alpha', '2', '3'],
+    ['Beta', '5', '7']
+  ].flatMap((row, r) => row.map((text, c) => token(text, [30, 70, 210][c], [35, 60, 85][r], 18)))
+  const existing = {
+    cropRect: [20, 25, 120, 115],
+    structure: {
+      objects: [
+        ...[5, 30, 55].map((y) => ({ label: 'table row', rect: [0, y, 100, y + 20] })),
+        ...[0, 50].map((x) => ({ label: 'table column', rect: [x, 0, x + 50, 90] }))
+      ]
+    }
+  }
+  const [recovered] = recoverCaptionedRuledTables(
+    items,
+    [30, 50, 110].map((y) => [20, y, 300, y]),
+    [{ page: 1, lines: ['Table I: Native values'], rect: [20, 10, 300, 20] }],
+    1,
+    [existing]
+  )
+  expect(recovered.cropRect).toEqual([20, 30, 300, 110])
+  expect(
+    recovered.structure.objects.filter(
+      (object: { label: string }) => object.label === 'table column'
+    )
+  ).toHaveLength(3)
 })
 
 const table = (): ReturnType<typeof JSON.parse> => ({
@@ -180,6 +210,42 @@ it('recovers every table in a stacked open-rule page and keeps caption order', (
         table.structure.objects.filter((object) => object.label === 'table row').length
     )
   ).toEqual([4, 4])
+})
+
+it('rejects a duplicate open-rule table crossing a distinct appendix caption', () => {
+  const captions = [
+      { page: 1, lines: ['Table C.1.1: First group.'], rect: [72, 20, 180, 30] },
+      { page: 1, lines: ['Table C.1.2: Second group.'], rect: [76, 180, 180, 190] }
+    ],
+    rows = (top: number): ReturnType<typeof token>[] =>
+      [
+        ['Method', 'Mean', 'Spread'],
+        ['Alpha', '1.0', '2.0'],
+        ['Beta', '3.0', '4.0'],
+        ['Gamma', '5.0', '6.0']
+      ].flatMap((row, r) => row.map((text, c) => token(text, 30 + c * 75, top + r * 22, 20))),
+    items = [...rows(46), token(captions[1].lines[0], 76, 180, 104), ...rows(206)],
+    rules = [
+      ...[40, 62, 138].map((y) => [20, y, 220, y]),
+      ...[200, 222, 298].map((y) => [25, y, 225, y])
+    ],
+    existing = [40, 200].map((y) => ({
+      cropRect: [20, y, 220, y + 98],
+      structure: {
+        objects: [
+          ...[0, 25, 50, 75].map((r) => ({ label: 'table row', rect: [0, r, 200, r + 23] })),
+          ...[0, 75, 150].map((x) => ({ label: 'table column', rect: [x, 0, x + 50, 98] }))
+        ]
+      }
+    }))
+  expect(recoverCaptionedRuledTables(items, rules, captions, 1, existing)).toEqual([])
+  const [isolated] = recoverCaptionedRuledTables(
+    rows(46),
+    rules.slice(0, 3),
+    captions.slice(0, 1),
+    1
+  )
+  expect(isolated.cropRect).toEqual([20, 40, 220, 138])
 })
 
 it('stops an open-rule crop before a shifted chart grid below the table', () => {
@@ -406,3 +472,73 @@ it('does not merge two complete side-by-side tables into one open-rule candidate
   }))
   expect(recoverCaptionedRuledTables(items, rules, [caption], 1, existing)).toEqual([])
 })
+
+function groupedMetricFixture(): ReturnType<typeof JSON.parse> {
+  const caption = {
+    page: 1,
+    lines: ['TABLE IV', 'Measured results in three settings'],
+    rect: [95, 81, 265, 105]
+  }
+  const cuts = [60, 100, 140, 180, 220, 260, 300]
+  const rules = [
+    [60, 110, 300, 110],
+    [60, 210, 300, 210],
+    ...cuts.flatMap((x) => [
+      [x, 110, x, 149],
+      [x, 152, x, 210]
+    ])
+  ]
+  const items = Array.from({ length: 10 }, (_, row) =>
+    cuts.slice(0, -1).flatMap((x, col) => {
+      const text = !row
+        ? ['Model', 'Size', 'ScoreA', 'ScoreB', 'ScoreC', 'ScoreD'][col]
+        : col === 0
+          ? row % 3 === 2
+            ? 'Method' + Math.ceil(row / 3)
+            : ''
+          : col === 1
+            ? ['A', 'B', 'C'][(row - 1) % 3]
+            : (row + col / 10).toFixed(2)
+      return text
+        ? [
+            {
+              text,
+              rect: [x + 5, 109 + row * 10, x + 29, 117 + row * 10],
+              baseline: 117 + row * 10,
+              height: 8,
+              horizontal: true,
+              sourceItem: { pageNumber: 1, index: row * 6 + col, text }
+            }
+          ]
+        : []
+    })
+  ).flat()
+  return { caption, items, rules }
+}
+
+it('seeds a missed native grouped metric table with exact three-row stub spans', () => {
+  const { caption, items, rules } = groupedMetricFixture()
+  const seeds = recoverNativeRuled(items, rules, [caption], 1)
+  const seed = seeds.find((table: ReturnType<typeof JSON.parse>) => table.nativeGroupedMetricPlan)
+  expect(seed?.cropRect).toEqual([60, 109, 300, 210])
+  const result = refineTable(seed, items, [caption], [], rules)
+  expect(result.grid).toHaveLength(10)
+  expect(result.grid[0]).toHaveLength(6)
+  expect(
+    result.cells.filter((cell: ReturnType<typeof JSON.parse>) => cell.rowSpan === 3)
+  ).toHaveLength(3)
+  expect(result.unassigned).toHaveLength(0)
+})
+
+it.each(['unmatched rail', 'wrong setting', 'mixed ownership'])(
+  'withholds grouped metric recovery for %s',
+  (what) => {
+    const { caption, items, rules } = groupedMetricFixture()
+    if (what === 'unmatched rail') rules[3][1] += 1
+    if (what === 'wrong setting')
+      items.find((i: ReturnType<typeof JSON.parse>) => i.sourceItem.index === 25).text = 'D'
+    if (what === 'mixed ownership') items.at(-1).sourceItem.pageNumber = 2
+    const seeds = recoverNativeRuled(items, rules, [caption], 1)
+    expect(seeds.some((t: ReturnType<typeof JSON.parse>) => t.nativeGroupedMetricPlan)).toBe(false)
+  }
+)

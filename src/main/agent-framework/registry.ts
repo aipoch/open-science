@@ -7,10 +7,8 @@ import { opencodeFramework } from './opencode'
 import { createPiFramework } from './pi'
 import { assertPiAdapter } from './pi-runtime'
 import { resolvePermissionProfileApplication } from '../acp/permission-profile-controller'
-import {
-  createSkillRuntimeAcpServerConfig,
-  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
-} from '../skills/runtime-mcp-server'
+import { createSkillRuntimeAcpServerConfig } from '../skills/runtime-mcp-config'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 import type { AgentFramework } from './types'
 
 const FRAMEWORKS: Record<AgentFrameworkId, AgentFramework> = {
@@ -30,7 +28,7 @@ const FRAMEWORKS: Record<AgentFrameworkId, AgentFramework> = {
   'open-science-agent': harnessFramework
 }
 
-export { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/settings'
+export { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/settings-runtime'
 
 // Resolves a framework by id for the runtime/settings; ids come from a fixed union so this is total.
 export const getAgentFramework = (id: AgentFrameworkId): AgentFramework => FRAMEWORKS[id]

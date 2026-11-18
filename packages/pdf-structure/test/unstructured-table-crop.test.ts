@@ -219,14 +219,25 @@ it('publishes the completed PNG through the real extractor context and graphical
   }
 })
 
-async function realPublicationSetup() {
+async function realPublicationSetup(filledHeader = false) {
   const f = setup(),
     program = [
-      '0 g 20 179 160 1 re f 20 119 160 1 re f 69 119 1 61 re f 119 119 1 61 re f 20 150 160 1 re f',
+      ...(filledHeader
+        ? [
+            '1 .8 .5 rg',
+            ...[171, 161].flatMap((y) => [20, 70, 120].map((x) => `${x} ${y} 50 10 re f`)),
+            '0 g 20 160.5 150 0.5 re f 20 119 150 1 re f',
+            ...[175, 165].flatMap((y) =>
+              [29, 79, 129].map((x, i) => `BT /F 7 Tf 1 0 0 1 ${x} ${y} Tm (Label ${i + 1}) Tj ET`)
+            )
+          ]
+        : [
+            '0 g 20 179 160 1 re f 20 119 160 1 re f 69 119 1 61 re f 119 119 1 61 re f 20 150 160 1 re f'
+          ]),
       ...Array.from(
         { length: 12 },
         (_, i) =>
-          `BT /F 8 Tf 1 0 0 1 ${25 + (i % 3) * 50} ${170 - Math.floor(i / 3) * 15} Tm (${i}) Tj ET`
+          `BT /F 8 Tf 1 0 0 1 ${25 + (i % 3) * 50} ${filledHeader ? 152 - Math.floor(i / 3) * 10 : 170 - Math.floor(i / 3) * 15} Tm (${i}) Tj ET`
       ),
       'BT /F 8 Tf 1 0 0 1 20 108 Tm (Table 1: Record values) Tj ET'
     ].join('\n'),
@@ -310,6 +321,10 @@ async function realPublicationSetup() {
         'str' in item ? { ...item, sourceItem: { pageNumber: 1, index, text: item.str } } : item
       )
     }
+  if (filledHeader) {
+    f.table.rect = [18, 39, 172, 82]
+    f.table.caption.rect = [20, 85, 180, 100]
+  }
   expect(capture.content.items.length).toBeGreaterThan(12)
   return {
     ...f,
@@ -325,3 +340,25 @@ async function realPublicationSetup() {
     }
   }
 }
+
+it('restores both clipped lines of a graphical table header with a native cell-fill grid', async () => {
+  const f = await realPublicationSetup(true)
+  try {
+    const proof = completeNativeUnstructuredTableCrop(f.table, f.scope)
+    expect(proof?.nativeCrop).toEqual([18, expect.closeTo(18.16, 2), 172, 82])
+    expect(proof.table.sourceItems).toBeUndefined()
+    expect(proof.table.cells).toBeUndefined()
+    const png = await f.renderPdfCrop(f.nativePage, proof.nativeCrop, 0)
+    expect(validateNativeGraphicalTableCropPng(png, proof)).toBe(true)
+    expect(
+      completeNativeUnstructuredTableCrop(f.table, {
+        ...f.scope,
+        competingRects: [[26, 21, 38, 27]]
+      })
+    ).toBeUndefined()
+    f.scope.context.nativeGlyphContext.content.items[0].width++
+    expect(proof.current()).toBe(false)
+  } finally {
+    await f.task.destroy()
+  }
+})

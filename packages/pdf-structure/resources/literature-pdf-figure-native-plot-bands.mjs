@@ -332,6 +332,21 @@ export function nativeCaptionedPlotBand(
     )
   )
     return
+  const mixed =
+    horizontal &&
+    nativeCaptionedSchematicAndPlotPair(
+      page,
+      caption,
+      ownCaps,
+      tables,
+      frames,
+      allFrames,
+      closedFrames,
+      nativeTokens,
+      rect,
+      font
+    )
+  if (mixed) return mixed
   const measured = vertical
     ? nativeRepeatedPlotMeasurementTails(
         page,
@@ -350,6 +365,129 @@ export function nativeCaptionedPlotBand(
     graphicsCount: frames.length,
     ...(describedCurvePair ? { reason: 'native-described-curve-pair' } : {})
   }
+}
+
+// A closed upper plot and separate raster/schematic can belong to the two
+// closed plots below. Bind their five printed labels before extending the
+// lower band's already proved caption and ownership.
+function nativeCaptionedSchematicAndPlotPair(
+  page,
+  caption,
+  captions,
+  tables,
+  lower,
+  frames,
+  closedFrames,
+  tokens,
+  rect,
+  font
+) {
+  if (
+    page.rotation !== 0 ||
+    page.renderRotation !== 0 ||
+    page.invalidGraphicsBounds !== 0 ||
+    captions.length !== 1 ||
+    lower.length !== 2 ||
+    frames.length !== 3 ||
+    !tokens.length ||
+    !/^(?:Fig\.?|Figure)\s+\d+[.:]/u.test(caption.lines[0]) ||
+    [...caption.lines.join(' ').matchAll(/\(([a-z])\)/gu)].map((m) => m[1]).join('') !== 'abcde'
+  )
+    return
+  const [left, right] = lower.slice().sort((a, b) => a[0] - b[0])
+  const upper = frames.find((f) => !lower.includes(f))
+  if (
+    !upper ||
+    !closedFrames.some((f) => f.every((v, i) => Math.abs(v - upper[i]) < 0.01)) ||
+    upper[3] >= right[1] ||
+    right[1] - upper[3] > font * 3 ||
+    Math.abs(upper[0] - right[0]) > font ||
+    Math.abs(upper[2] - right[2]) > font ||
+    left[2] >= upper[0]
+  )
+    return
+  const lane = [caption.rect[0] - font * 0.25, 0, caption.rect[2] + font * 0.25, caption.rect[1]]
+  const inside = (box, r) =>
+    r?.length === 4 &&
+    area(r) > 0 &&
+    r.every((v, i) => Number.isFinite(v) && (i < 2 ? v >= box[i] : v <= box[i]))
+  const native = page.graphicsBounds ?? []
+  if (native.length < 12 || native.length > 256) return
+  const paint = native.map((g) => ({
+    ...g,
+    rect: (g.paintedNormalizedRect ?? g.normalizedRect)?.map(
+      (v, n) => v * (n % 2 ? page.height : page.width)
+    )
+  }))
+  if (
+    paint.some(
+      (g) =>
+        !inside(lane, g.rect) ||
+        !['image', 'path'].includes(g.kind) ||
+        !Number.isSafeInteger(g.operationIndex) ||
+        g.operationIndex < 0
+    ) ||
+    new Set(paint.map((g) => g.operationIndex)).size !== paint.length
+  )
+    return
+  const images = paint.filter((g) => g.kind === 'image')
+  const raster = images[0]?.rect
+  if (
+    images.length !== 1 ||
+    !images[0].imageHash ||
+    raster[2] >= upper[0] ||
+    raster[1] >= rect[1] ||
+    raster[3] <= rect[1] ||
+    raster[3] > left[1] ||
+    !paint.some((g) => g.kind === 'path' && g.rect[2] < upper[0] && g.rect[3] < raster[1])
+  )
+    return
+  // Enumerate whole native label tokens, as grouped text can combine a/c.
+  const labels = tokens.filter((t) => t.text?.trim() && intersection(t.rect, lane) > 0)
+  if (
+    labels.some(
+      (t) => !inside(lane, t.rect) || t.text.trim().length > 50 || t.height > font * 1.3
+    ) ||
+    page.lines.some(
+      (l) =>
+        l.text.trim() &&
+        intersection(lineRect(l), lane) > 0 &&
+        (!inside(lane, lineRect(l)) || l.text.trim().length > 50)
+    )
+  )
+    return
+  const markers = labels.filter((t) => /^\([a-z]\)$/.test(t.text.trim()))
+  if (
+    markers.length !== 5 ||
+    markers.some(
+      (t) =>
+        !t.horizontal ||
+        t.sourceItem?.pageNumber !== page.pageNumber ||
+        t.sourceItem.text !== t.text ||
+        !Number.isSafeInteger(t.sourceItem.index) ||
+        tokens.filter((other) => other.sourceItem?.index === t.sourceItem.index).length !== 1
+    )
+  )
+    return
+  const [a, b, c, d, e] = markers.slice().sort((l, r) => l.text.localeCompare(r.text))
+  if (
+    [a, b, c, d, e].map((t) => t.text.trim()[1]).join('') !== 'abcde' ||
+    a.rect[3] >= b.rect[1] ||
+    Math.abs(a.rect[0] - b.rect[0]) > font ||
+    Math.abs(a.rect[1] - c.rect[1]) > font ||
+    b.rect[0] > raster[0] ||
+    Math.abs(b.rect[1] - raster[1]) > font ||
+    c.rect[0] <= raster[2] ||
+    c.rect[0] > upper[0] ||
+    Math.abs(d.rect[0] - a.rect[0]) > font ||
+    Math.abs(d.rect[1] - e.rect[1]) > font ||
+    Math.abs(e.rect[0] - c.rect[0]) > font ||
+    d.rect[1] < raster[3] - font
+  )
+    return
+  const whole = union([rect, ...paint.map((g) => g.rect), ...labels.map((t) => t.rect)])
+  if (!inside(lane, whole) || tables.some((t) => intersection(t, whole) > 0)) return
+  return { caption, rect: whole, graphicsCount: paint.length }
 }
 
 // Caption references and a complete ordered native key inventory bind rows of
@@ -1602,6 +1740,110 @@ export function nativeDisjointPlotColumn(page, caption, captions, tables, tokens
   return { caption, rect, graphicsCount: supported.length }
 }
 
+// A closed folio with a filled title tab can be narrower than a conventional
+// rule above a wide text lane. Require the complete independent frame and ink.
+function nativeFramedFigureHead(page, source, captions, rules) {
+  if (!source.some((line) => line.token)) return
+  const horizontal = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      r[3] < page.height * 0.1 &&
+      r[2] - r[0] >= page.width * 0.55 &&
+      Math.abs((r[0] + r[2] - page.width) / 2) < page.width * 0.02
+  )
+  const [opening, closing, ...later] = horizontal.sort((a, b) => a[1] - b[1])
+  if (!opening || !closing) return
+  const [left, top, right] = opening,
+    bottom = closing[1],
+    height = bottom - top
+  if (
+    !(height > 5) ||
+    height > page.height * 0.025 ||
+    Math.abs(closing[0] - left) > 0.05 ||
+    Math.abs(closing[2] - right) > 0.05 ||
+    captions.some((caption) => caption.rect[1] <= bottom)
+  )
+    return
+  const vertical = rules
+    .filter(
+      (r) =>
+        r[0] === r[2] &&
+        Math.abs(r[1] - top) < height * 0.05 &&
+        Math.abs(r[3] - bottom) < height * 0.05
+    )
+    .sort((a, b) => a[0] - b[0])
+  if (vertical.length !== 3) return
+  const [start, tab, end] = vertical.map((r) => r[0])
+  const width = right - left
+  if (Math.abs(start - left) >= height * 0.05 || Math.abs(end - right) >= height * 0.05) return
+  const labels = source
+    .filter((l) => intersection(lineRect(l), [left, top, right, bottom]) > 0)
+    .sort((a, b) => a.x - b.x)
+  const [title, journal, number] = labels.length === 3 ? labels : [labels[0], undefined, labels[1]]
+  const compact = labels.length === 3
+  if (!compact && (labels.length !== 2 || later.length)) return
+  if (
+    compact
+      ? tab - left < width * 0.05 ||
+        tab - left > width * 0.09 ||
+        later.some((r) => r[1] < bottom + height * 0.5) ||
+        !/^\p{L}+(?:[ -]\p{L}+)+$/u.test(journal.text.trim()) ||
+        journal.x <= (left + right) / 2 ||
+        number.x - journal.x - journal.width <= 0 ||
+        number.x - journal.x - journal.width > height * 2
+      : tab - left < width * 0.1 || tab - left > width * 0.3
+  )
+    return
+  if (
+    !/^[\p{L}][\p{L}\s-]{2,42}$/u.test(title.text.trim()) ||
+    number.text.trim() !== String(page.pageNumber) ||
+    labels.some((l) => l.y < top || l.y + l.height > bottom || l.fontSize < height * 0.3) ||
+    labels.some(
+      (l) =>
+        Math.abs(title.fontSize - l.fontSize) > height * 0.03 ||
+        Math.abs(title.y - l.y) > height * 0.08
+    ) ||
+    title.x < left ||
+    title.x + title.width >= tab ||
+    right - number.x - number.width > height ||
+    number.x <= tab ||
+    number.x + number.width > right
+  )
+    return
+  const ink = page.graphicsBounds.map((g) => ({
+    g,
+    r: g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+  }))
+  const margin = page.height / 128
+  const decorations = ink.filter(
+    ({ r }) => intersection(r, [left - margin, top - margin, right + margin, bottom + margin]) > 0
+  )
+  const wordRect = lineRect(title)
+  if (
+    !(compact ? decorations.length === 4 : [5, 6].includes(decorations.length)) ||
+    decorations.some(
+      ({ g, r }) => g.kind !== 'path' || r[1] < top - margin || r[3] > bottom + margin
+    ) ||
+    decorations.filter(({ r }) => intersection(wordRect, r) > area(wordRect) * 0.9).length !== 1 ||
+    !ink.some(({ r }) => area(r) > page.width * page.height * 0.01 && r[1] > bottom + height)
+  )
+    return
+  const printed = page.lines.filter(
+    (line) =>
+      line.text.replace(/\s/gu, '') ===
+        labels
+          .map((l) => l.text)
+          .join('')
+          .replace(/\s/gu, '') &&
+      intersection(lineRect(line), [left, top, right, bottom]) > area(lineRect(line)) * 0.95
+  )
+  return {
+    lines: printed,
+    tokens: labels.map((l) => l.token),
+    decorations: decorations.map(({ g }) => g)
+  }
+}
+
 // A printed page number and an independent opposite running title share one
 // baseline above a shallow full-width separator. Without a separator, require
 // independent native items, a tightly centered short title and a separate paired
@@ -1620,6 +1862,8 @@ export function nativeFigureRunningHead(page, captions, tokens = [], rules = [],
           fontSize: t.height
         }))
     : page.lines
+  const framed = nativeFramedFigureHead(page, source, captions, rules)
+  if (framed) return framed
   const numbers = source.filter(
     (l) =>
       l.text.trim() === String(page.pageNumber) &&

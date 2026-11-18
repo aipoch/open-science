@@ -1,8 +1,11 @@
-import { posix, win32 } from 'node:path'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { delimiter, join, posix, win32 } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-  collectCandidateDirs,
+  candidateDirs,
+  createDefaultDetectDeps,
   detectOpencode,
   parseVersion,
   type OpencodeDetectDeps
@@ -24,6 +27,64 @@ const createDeps = (
 })
 
 describe('opencode-detect', () => {
+  it.skipIf(process.platform === 'win32').each<{
+    name: string
+    command: string
+    run: (executable: string, signal: AbortSignal) => Promise<unknown>
+  }>([
+    {
+      name: 'OpenCode npm prefix',
+      command: 'npm',
+      run: (_executable, signal) => createDefaultDetectDeps().resolveNpmBinDirs(signal)
+    },
+    {
+      name: 'OpenCode version probe',
+      command: 'opencode',
+      run: (executable, signal) => createDefaultDetectDeps().probeVersion!(executable, signal)
+    }
+  ])('reaps the real $name descendants before cancellation settles', async ({ command, run }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'opencode-version-probe-'))
+    const executable = join(directory, command)
+    const pidFile = join(directory, 'pids.json')
+    const controller = new AbortController()
+    let result: Promise<unknown> | undefined
+    let pids: { parent: number; descendant: number } | undefined
+    try {
+      await writeFile(
+        executable,
+        `#!${process.execPath}\n` +
+          "const { spawn } = require('node:child_process');\n" +
+          "const { writeFileSync } = require('node:fs');\n" +
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });\n" +
+          `writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify({ parent: process.pid, descendant: child.pid }));\n` +
+          'setInterval(() => {}, 1000);\n'
+      )
+      await chmod(executable, 0o755)
+      vi.stubEnv('PATH', `${directory}${delimiter}${process.env.PATH ?? ''}`)
+      result = run(executable, controller.signal).catch((error: unknown) => error)
+      await vi.waitFor(async () => {
+        pids = JSON.parse(await readFile(pidFile, 'utf8'))
+      })
+      controller.abort()
+      expect(await result).toMatchObject({ name: 'AbortError' })
+      for (const pid of [pids!.descendant, pids!.parent]) {
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+      }
+    } finally {
+      controller.abort()
+      await result
+      for (const pid of Object.values(pids ?? {})) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          // The successful cancellation path has already reaped both processes.
+        }
+      }
+      vi.unstubAllEnvs()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('parses a version string out of --version output', () => {
     expect(parseVersion('1.18.3')).toBe('1.18.3')
     expect(parseVersion('opencode 1.0.0-beta.2')).toBe('1.0.0-beta.2')
@@ -34,23 +95,27 @@ describe('opencode-detect', () => {
   })
 
   it('finds opencode on PATH and records its absolute path and version', async () => {
-    const result = await detectOpencode(createDeps({ '/usr/local/bin/opencode': '1.18.0' }))
+    const resolveNpmBinDirs = vi.fn(async () => [])
+    const result = await detectOpencode(
+      createDeps({ '/usr/local/bin/opencode': '1.18.0' }, { resolveNpmBinDirs })
+    )
+    expect(resolveNpmBinDirs).not.toHaveBeenCalled()
 
     expect(result).toEqual({ resolvedPath: '/usr/local/bin/opencode', version: '1.18.0' })
   })
 
   it('passes cancellation through npm discovery and version probing', async () => {
     const controller = new AbortController()
-    const resolveNpmBinDirs = vi.fn().mockResolvedValue([])
+    const resolveNpmBinDirs = vi.fn().mockResolvedValue(['/npm/bin'])
     const getVersion = vi.fn().mockResolvedValue('1.18.0')
 
     await detectOpencode(
-      createDeps({ '/usr/local/bin/opencode': '1.18.0' }, { resolveNpmBinDirs, getVersion }),
+      createDeps({ '/npm/bin/opencode': '1.18.0' }, { resolveNpmBinDirs, getVersion }),
       controller.signal
     )
 
     expect(resolveNpmBinDirs).toHaveBeenCalledWith(controller.signal)
-    expect(getVersion).toHaveBeenCalledWith('/usr/local/bin/opencode', controller.signal)
+    expect(getVersion).toHaveBeenCalledWith('/npm/bin/opencode', controller.signal)
   })
 
   it('finds a managed opencode via extraDirs even when it is not on PATH', async () => {
@@ -105,13 +170,10 @@ describe('opencode-detect', () => {
 
   it('tolerates a failing npm bin resolution', async () => {
     const result = await detectOpencode(
-      createDeps(
-        { '/usr/local/bin/opencode': '1.0.0' },
-        { resolveNpmBinDirs: () => Promise.reject(new Error('npm missing')) }
-      )
+      createDeps({}, { resolveNpmBinDirs: () => Promise.reject(new Error('npm missing')) })
     )
 
-    expect(result?.version).toBe('1.0.0')
+    expect(result).toBeUndefined()
   })
 
   describe('windows', () => {
@@ -130,7 +192,7 @@ describe('opencode-detect', () => {
       })
 
     it('probes %APPDATA%\\npm and the home install dirs, not the Unix dirs', async () => {
-      const dirs = await collectCandidateDirs(winDeps({}))
+      const dirs = await Array.fromAsync(candidateDirs(winDeps({})))
 
       expect(dirs).toContain(win32.join('C:\\Users\\me\\AppData\\Roaming', 'npm'))
       expect(dirs).toContain(win32.join('C:\\Users\\me', '.opencode', 'bin'))

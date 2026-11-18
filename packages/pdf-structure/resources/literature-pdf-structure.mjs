@@ -2,6 +2,7 @@
 
 // Read-only feasibility probe, not a production layout parser.
 // Usage: node resources/pdf-structure/literature-pdf-structure.mjs input.pdf output-directory [render-pages]
+import { installPdfCanvasReset } from './literature-pdf-canvas-reset.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises'
@@ -48,7 +49,8 @@ export const nativeFigureRenderContexts = new Map()
 export const nativePageRasterFiles = new Set()
 const assetRoot = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))
 const task = getDocument({
-  data: new Uint8Array(bytes),
+  // PDF.js needs a Uint8Array, but copying the whole source duplicates large PDFs.
+  data: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
   standardFontDataUrl: `${join(assetRoot, 'standard_fonts')}/`,
   cMapUrl: `${join(assetRoot, 'cmaps')}/`,
   wasmUrl: `${join(assetRoot, 'wasm')}/`,
@@ -61,6 +63,7 @@ const task = getDocument({
 bytes = undefined
 const started = performance.now()
 const document = await task.promise
+installPdfCanvasReset(document.canvasFactory)
 const pages = []
 let rendered = 0
 try {
@@ -88,7 +91,7 @@ try {
       const renderRotation = readingRotation(page, content)
       const viewport = page.getViewport({ scale: 1, rotation: renderRotation })
       const structure = await page.getStructTree()
-      const operators = await page.getOperatorList()
+      let operators = await page.getOperatorList()
       content = excludePdfLineNumbers(await repairPdfSymbolText(page, content, operators), viewport)
       const roles = {}
       const visit = (node) => {
@@ -131,6 +134,12 @@ try {
       if (
         geometryPages ? geometryPages.includes(pageNumber) : captionStarts.length && rendered < 2
       ) {
+        // Drop the raw operator-list owner before creating the genuine render
+        // program. Real PDF.js pages expose the intent cache; the lightweight
+        // probe page used by lifecycle tests does not and is cleaned in finally.
+        operators = undefined
+        if (page?._intentStates instanceof Map)
+          assert(page.cleanup(), 'PDF operator cache cleanup is incomplete.')
         const scaled = page.getViewport({ scale: 1.5, rotation: renderRotation })
         if (Math.ceil(scaled.width) * Math.ceil(scaled.height) > 4_000_000)
           throw new Error('PDF render pixel budget exceeded')
@@ -222,6 +231,10 @@ try {
     } finally {
       if (canvas) canvas.width = canvas.height = 1
       page?.cleanup()
+      // Page cleanup leaves shared decoded images in the document cache.
+      await document.cleanup().catch((error) => {
+        if (!auxiliary) throw error
+      })
     }
   }
   const summary = {

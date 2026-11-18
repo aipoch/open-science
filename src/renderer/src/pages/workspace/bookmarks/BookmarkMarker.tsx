@@ -42,7 +42,7 @@ export const BookmarkMarker = ({
           data-annotation-trigger="true"
           title={note}
           aria-label={t('Edit bookmark note')}
-          className="absolute z-10 rounded-sm text-status-warning-foreground hover:bg-status-warning-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="absolute z-10 rounded-sm text-status-warning-foreground dark:text-status-warning-dark-foreground hover:bg-status-warning-surface dark:hover:bg-status-warning-dark-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           style={{ left, top }}
         >
           <BookmarkIcon className="h-2.5 w-2" strokeWidth={1.5} aria-hidden="true" />

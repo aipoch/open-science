@@ -1,0 +1,131 @@
+{
+  "page": {
+    "view": [0, 0, 612, 792]
+  },
+  "styles": {
+    "NativeFace0": {
+      "fontFamily": "sans-serif",
+      "ascent": 0,
+      "descent": 0,
+      "vertical": false
+    },
+    "NativeFace1": {
+      "fontFamily": "sans-serif",
+      "ascent": 0.67,
+      "descent": -0.205,
+      "vertical": false
+    }
+  },
+  "items": [
+    {
+      "str": "Writer, A., Reader, B., and Author Author, C. D. (2030).",
+      "dir": "ltr",
+      "width": 311.55251200000004,
+      "height": 11.9552,
+      "transform": [11.9552, 0, 0, 11.9552, 72, 708.045],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": " ",
+      "dir": "ltr",
+      "width": 13.162675200000024,
+      "height": 0,
+      "transform": [11.9552, 0, 0, 11.9552, 383.55251200000015, 708.045],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "Generic reference title.",
+      "dir": "ltr",
+      "width": 143.2830720000001,
+      "height": 11.9552,
+      "transform": [11.9552, 0, 0, 11.9552, 396.7151872000002, 708.045],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "",
+      "dir": "ltr",
+      "width": 0,
+      "height": 0,
+      "transform": [11.9552, 0, 0, 11.9552, 83.706, 693.5989999999999],
+      "fontName": "NativeFace1",
+      "hasEOL": true
+    },
+    {
+      "str": "ToyJournal",
+      "dir": "ltr",
+      "width": 53.20064,
+      "height": 11.9552,
+      "transform": [11.9552, 0, 0, 11.9552, 83.706, 693.5989999999999],
+      "fontName": "NativeFace1",
+      "hasEOL": false
+    },
+    {
+      "str": ", 10(2):30-40.",
+      "dir": "ltr",
+      "width": 86.0057088,
+      "height": 11.9552,
+      "transform": [11.9552, 0, 0, 11.9552, 136.90664000000004, 693.5989999999999],
+      "fontName": "NativeFace0",
+      "hasEOL": true
+    },
+    {
+      "str": "Writer, A. (2030). Generic prose explains a small anonymous reference for testing.",
+      "dir": "ltr",
+      "width": 409.54928639999986,
+      "height": 11.9552,
+      "transform": [11.9552, 0, 0, 11.9552, 72, 669.1909999999999],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "ToyJournal",
+      "dir": "ltr",
+      "width": 51.71819519999997,
+      "height": 11.9552,
+      "transform": [11.9552, 0, 0, 11.9552, 485.291264, 669.1909999999999],
+      "fontName": "NativeFace1",
+      "hasEOL": false
+    },
+    {
+      "str": "Reader, A. B. and Writer, C. D. (2031). Generic prose keeps native reference order.",
+      "dir": "ltr",
+      "width": 408.1146624000001,
+      "height": 11.9552,
+      "transform": [11.9552, 0, 0, 11.9552, 72, 630.3359999999999],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "ToyJournal",
+      "dir": "ltr",
+      "width": 51.71819519999997,
+      "height": 11.9552,
+      "transform": [11.9552, 0, 0, 11.9552, 485.2912640000001, 630.3359999999999],
+      "fontName": "NativeFace1",
+      "hasEOL": false
+    },
+    {
+      "str": "Author, A. B. and Reader, C. (2032). Other reference prose provides another ordinary example.",
+      "dir": "ltr",
+      "width": 410.3383296,
+      "height": 11.9552,
+      "transform": [11.9552, 0, 0, 11.9552, 72, 261.7189999999996],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "ToyJournal",
+      "dir": "ltr",
+      "width": 51.71819519999997,
+      "height": 11.9552,
+      "transform": [11.9552, 0, 0, 11.9552, 485.291264, 261.7189999999996],
+      "fontName": "NativeFace1",
+      "hasEOL": false
+    }
+  ],
+  "expectedBefore": "Generic reference title.",
+  "expectedAfter": "ToyJournal"
+}

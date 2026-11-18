@@ -3,11 +3,19 @@ import { z } from 'zod'
 import { sanitizeExportFilename } from './conversation-export'
 import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
 
+export const RESEARCH_VIDEO_STATUS_TIMEOUT_MS = 30_000
+export const RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE = 'Research film status timed out. Try again.'
+export const RESEARCH_FILM_BUSY_MESSAGE = 'Another film is being generated. Wait for it to finish.'
+
+export const researchFilmModeSchema = z.enum(['research-explanation', 'operation-replay'])
+export type ResearchFilmMode = z.infer<typeof researchFilmModeSchema>
+
 export const researchVideoPresentationRequestSchema = z
   .object({
     projectId: z.string().min(1).max(512),
     sessionId: z.string().min(1).max(512),
-    branchId: z.string().min(1).max(512).optional()
+    branchId: z.string().min(1).max(512).optional(),
+    mode: researchFilmModeSchema.optional()
   })
   .strict()
 export type ResearchVideoPresentationRequest = z.infer<

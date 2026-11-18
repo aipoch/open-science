@@ -66,3 +66,67 @@ it('keeps an ambiguously owned terminal tail even when earlier peers are safe', 
   expect(x.rows.filter((r) => r.rect[1] === 158.5)).toHaveLength(2)
   expect(x.rows.some((r) => r.rect[3] === 158.5)).toBe(true)
 })
+
+it.each([
+  'complete',
+  'midrule',
+  'incomplete divider',
+  'separate label',
+  'one peer',
+  'missing footer'
+])('retains the two fields of a complete terminal ruled narrative record: %s', (mode): void => {
+  const rows = [
+    [10, 22],
+    [28, 54],
+    [56, 83],
+    [84, 98],
+    [98, 122]
+  ].map(([top, bottom]) => ({
+    origin: 'model',
+    rect: [20, top, 300, bottom]
+  }))
+  const source: [string, number, number][] = [
+    ['Notes', 130, 20],
+    ['First', 30, 36],
+    ['The line continues', 130, 36],
+    ['on a new line', 130, 48],
+    ['Second', 30, 64],
+    ['The note continues', 130, 64],
+    ['in this field', 130, 76],
+    ['Testing', 30, 93],
+    ['Some trials may proceed with', 130, 93],
+    ['and safety', 30, 105],
+    ['complete records', 130, 105],
+    ['in the same archive.', 130, 117]
+  ]
+  if (mode === 'separate label') source[9][0] = 'More trials'
+  if (mode === 'one peer') source.splice(3, 1)
+  const items = source.map(([text, x, baseline], index) => ({
+    text,
+    rect: [x, baseline - 10, x + text.length * 4, baseline],
+    height: 10,
+    baseline,
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index, text }
+  }))
+  const rules = [20, 120, 300].map((x) => [x, 85, x, 121])
+  if (mode === 'incomplete divider') rules[1][3] = 104
+  if (mode === 'midrule') rules.push([20, 99, 300, 99])
+  if (mode !== 'missing footer') rules.push([20, 121.3, 300, 121.3])
+  const repair: string[] = []
+  const stock = structuredClone(rows)
+  mergeWrappedStubTails({
+    rows,
+    items,
+    rules,
+    columnRects: [
+      [20, 0, 120, 130],
+      [120, 0, 300, 130]
+    ],
+    repairs: repair
+  })
+  expect(rows).toEqual(
+    mode === 'complete' ? [...stock.slice(0, 3), { ...stock[3], rect: [20, 84, 300, 122] }] : stock
+  )
+  expect(repair).toEqual(mode === 'complete' ? ['wrapped-comparison-record-recovered'] : [])
+})

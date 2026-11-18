@@ -278,7 +278,7 @@ it('binds a durable request before launch and waits for the executor acknowledge
   expect(mocks.spawn).toHaveBeenCalledWith(
     prepared.nodePath,
     [prepared.executorPath, join(prepared.directory, 'request.json')],
-    { detached: true, stdio: 'ignore' }
+    { detached: true, stdio: ['pipe', 'ignore', 'ignore'] }
   )
   expect(child.unref).toHaveBeenCalledOnce()
   await expect(discardPreparedInstallation(prepared)).rejects.toThrow('cannot be discarded')

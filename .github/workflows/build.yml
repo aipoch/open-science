@@ -436,7 +436,8 @@ jobs:
 
       - name: Test Windows sandbox native source
         if: ${{ matrix.platform == 'win' }}
-        run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml
+        # Native ACL tests can lease the same ancestors of separate temporary directories.
+        run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml -- --test-threads=1
 
       - name: Build Windows sandbox native host
         if: ${{ matrix.platform == 'win' }}

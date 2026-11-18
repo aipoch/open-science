@@ -12,7 +12,7 @@ import {
   type EvidenceBody,
   type PackedGeneration,
   type ViewRow
-} from '../../../resources/notebook/file_evidence_codec.mjs'
+} from './file-evidence-codec.mjs'
 import { sha256 } from './provenance-canonical'
 import { assertRegularStoragePath } from './provenance-storage'
 

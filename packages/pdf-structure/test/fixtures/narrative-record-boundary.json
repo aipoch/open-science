@@ -1,0 +1,356 @@
+{
+  "model": {
+    "id": "anonymous-table",
+    "cropRect": [0, 80, 500, 500],
+    "structure": {
+      "objects": [
+        {
+          "label": "table row",
+          "score": 1,
+          "rect": [0, 10, 500, 137]
+        },
+        {
+          "label": "table row",
+          "score": 1,
+          "rect": [0, 131, 500, 270]
+        },
+        {
+          "label": "table row",
+          "score": 1,
+          "rect": [0, 275, 500, 410]
+        },
+        {
+          "label": "table column",
+          "score": 1,
+          "rect": [0, 0, 100, 420]
+        },
+        {
+          "label": "table column",
+          "score": 1,
+          "rect": [100, 0, 200, 420]
+        },
+        {
+          "label": "table column",
+          "score": 1,
+          "rect": [200, 0, 300, 420]
+        },
+        {
+          "label": "table column",
+          "score": 1,
+          "rect": [300, 0, 400, 420]
+        },
+        {
+          "label": "table column",
+          "score": 1,
+          "rect": [400, 0, 500, 420]
+        }
+      ]
+    }
+  },
+  "tokens": [
+    {
+      "text": "Value A0",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 0,
+        "text": "Value A0"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 100,
+      "rect": [5, 90, 85, 100]
+    },
+    {
+      "text": "Value A1",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 1,
+        "text": "Value A1"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 100,
+      "rect": [105, 90, 185, 100]
+    },
+    {
+      "text": "Value A2",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 2,
+        "text": "Value A2"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 100,
+      "rect": [205, 90, 285, 100]
+    },
+    {
+      "text": "Value A3",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 3,
+        "text": "Value A3"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 100,
+      "rect": [305, 90, 385, 100]
+    },
+    {
+      "text": "Description A",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 4,
+        "text": "Description A"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 100,
+      "rect": [405, 90, 485, 100]
+    },
+    {
+      "text": "continued field a",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 5,
+        "text": "continued field a"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 112,
+      "rect": [405, 102, 485, 112]
+    },
+    {
+      "text": "continued field b",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 6,
+        "text": "continued field b"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 124,
+      "rect": [405, 114, 485, 124]
+    },
+    {
+      "text": "continued field c",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 7,
+        "text": "continued field c"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 136,
+      "rect": [405, 126, 485, 136]
+    },
+    {
+      "text": "continued field d",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 8,
+        "text": "continued field d"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 148,
+      "rect": [405, 138, 485, 148]
+    },
+    {
+      "text": "continued field e",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 9,
+        "text": "continued field e"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 160,
+      "rect": [405, 150, 485, 160]
+    },
+    {
+      "text": "continued field f",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 10,
+        "text": "continued field f"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 172,
+      "rect": [405, 162, 485, 172]
+    },
+    {
+      "text": "continued field g",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 11,
+        "text": "continued field g"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 184,
+      "rect": [405, 174, 485, 184]
+    },
+    {
+      "text": "continued field h",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 12,
+        "text": "continued field h"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 196,
+      "rect": [405, 186, 485, 196]
+    },
+    {
+      "text": "continued field i",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 13,
+        "text": "continued field i"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 208,
+      "rect": [405, 198, 485, 208]
+    },
+    {
+      "text": "final clause.",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 14,
+        "text": "final clause."
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 220,
+      "rect": [405, 210, 485, 220]
+    },
+    {
+      "text": "Value B0",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 15,
+        "text": "Value B0"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 232,
+      "rect": [5, 222, 85, 232]
+    },
+    {
+      "text": "Value B1",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 16,
+        "text": "Value B1"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 232,
+      "rect": [105, 222, 185, 232]
+    },
+    {
+      "text": "Value B2",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 17,
+        "text": "Value B2"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 232,
+      "rect": [205, 222, 285, 232]
+    },
+    {
+      "text": "Value B3",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 18,
+        "text": "Value B3"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 232,
+      "rect": [305, 222, 385, 232]
+    },
+    {
+      "text": "Description B",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 19,
+        "text": "Description B"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 232,
+      "rect": [405, 222, 485, 232]
+    },
+    {
+      "text": "Value C0",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 20,
+        "text": "Value C0"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 364,
+      "rect": [5, 354, 85, 364]
+    },
+    {
+      "text": "Value C1",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 21,
+        "text": "Value C1"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 364,
+      "rect": [105, 354, 185, 364]
+    },
+    {
+      "text": "Value C2",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 22,
+        "text": "Value C2"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 364,
+      "rect": [205, 354, 285, 364]
+    },
+    {
+      "text": "Value C3",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 23,
+        "text": "Value C3"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 364,
+      "rect": [305, 354, 385, 364]
+    },
+    {
+      "text": "Description C",
+      "sourceItem": {
+        "pageNumber": 1,
+        "index": 24,
+        "text": "Description C"
+      },
+      "horizontal": true,
+      "height": 10,
+      "baseline": 364,
+      "rect": [405, 354, 485, 364]
+    }
+  ],
+  "captions": [],
+  "notes": [],
+  "rules": [],
+  "observedRuns": []
+}

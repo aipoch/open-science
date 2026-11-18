@@ -223,6 +223,47 @@ describe('runtime resource profiler', () => {
     }
   })
 
+  it('counts JSON and JSONL primaries and retains sidecar bytes without extra Sessions', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-journal-storage-profile-'))
+    try {
+      const sessions = join(storageRoot, 'sessions', 'project-1')
+      await mkdir(sessions, { recursive: true })
+      const generation = 'ec721a30-6c48-4675-8627-31452e44f1d9'
+      const older = 'c9b90694-7556-4185-bab4-804cdf313b08'
+      const entries = [
+        ['session-1.json', 'manifest'],
+        [`session-1.journal.${generation}.checkpoint`, 'checkpoint'],
+        [`session-1.journal.${generation}.jsonl`, 'events'],
+        [`session-1.journal.${older}.checkpoint`, 'old checkpoint'],
+        [`session-1.journal.${older}.jsonl`, 'old events'],
+        [`session-1.pre-journal.${older}.backup`, 'legacy snapshot'],
+        ['legacy-session.json', 'legacy'],
+        ['new-session.jsonl', 'new events'],
+        ['new-session.legacy-json.backup', 'retained snapshot'],
+        [`session-1.journal.${generation}.checkpoint.123-1.tmp`, 'pending'],
+        ['manifest.json', 'ignored navigation'],
+        ['unrelated.txt', 'unrelated contents'],
+        ['unrelated.backup', 'unrelated backup']
+      ] as const
+      await Promise.all(
+        entries.map(([name, contents]) => writeFile(join(sessions, name), contents))
+      )
+
+      await expect(readRuntimeStorageSnapshot(storageRoot)).resolves.toEqual({
+        sessionFileCount: 3,
+        sessionBytes: entries
+          .slice(0, 9)
+          .reduce((total, [, contents]) => total + Buffer.byteLength(contents), 0),
+        notebookRunFileCount: 0,
+        notebookRunBytes: 0,
+        temporaryFileCount: 1,
+        temporaryBytes: 7
+      })
+    } finally {
+      await rm(storageRoot, { force: true, recursive: true })
+    }
+  })
+
   it('excludes a sample when Electron metrics are unavailable', () => {
     const sample = mergeResourceSample(
       2_000,

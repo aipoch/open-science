@@ -1,9 +1,12 @@
 import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
-const { findCaptionCandidates, groupPageLines, captionKind } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href
-)
+const {
+  findCaptionCandidates,
+  groupPageLines,
+  captionKind,
+  nativeConditionalFigureReferenceStarts
+} = await import(pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href)
 const { nativeConditionalFigureReference } = await import(
   pathToFileURL(resolve('resources/literature-pdf-native-conditional-figure-reference.mjs')).href
 )
@@ -109,3 +112,82 @@ it.each([
 it('keeps the isolated conditional string as a candidate without inventing page context', () => {
   expect(captionKind('Fig. 2. If a parameter is small, the errors are reduced.')).toBe('figure')
 })
+
+function wrappedReferencePage(): NativePage {
+  const p = page()
+  p.lines = [
+    {
+      text: 'Figure 7: An independent picture.',
+      x: 60,
+      y: 110,
+      width: 280,
+      height: 10,
+      fontSize: 10
+    },
+    {
+      text: 'The complete construction is described here. As illustrated in',
+      x: 60,
+      y: 150,
+      width: 280,
+      height: 10,
+      fontSize: 10
+    },
+    {
+      text: 'Figure 7 (b), the component contains three independent paths that',
+      x: 60,
+      y: 163.2,
+      width: 280,
+      height: 10,
+      fontSize: 10
+    },
+    {
+      text: 'share their inputs and produce the complete output.',
+      x: 60,
+      y: 176.4,
+      width: 281.8,
+      height: 10,
+      fontSize: 10
+    }
+  ]
+  return p
+}
+
+it('keeps a natively wrapped panel reference in its body paragraph', () => {
+  const p = wrappedReferencePage(),
+    before = JSON.stringify(p)
+  const candidates = findCaptionCandidates([p])
+  expect(
+    candidates.filter((c: { lines: string[] }) => c.lines[0].startsWith('Figure 7 (b),'))
+  ).toHaveLength(0)
+  expect(
+    candidates.filter((c: { lines: string[] }) => c.lines[0].startsWith('Figure 7:'))
+  ).toHaveLength(1)
+  const starts = p.lines.filter((l) => captionKind(l.text))
+  expect(
+    nativeConditionalFigureReferenceStarts({ ...p, captionStarts: starts }).has(p.lines[2])
+  ).toBe(true)
+  expect(JSON.stringify(p)).toBe(before)
+})
+
+it.each(['prefix', 'font', 'leading', 'column', 'foreign-graphic', 'duplicate-line'])(
+  'retains a panel-caption candidate without complete native continuation evidence: %s',
+  (fault) => {
+    const p = wrappedReferencePage()
+    if (fault === 'prefix') p.lines[1].text = 'A separate independent paragraph ends here.'
+    if (fault === 'font') p.lines[3].fontSize = 12
+    if (fault === 'leading') p.lines[3].y += 8
+    if (fault === 'column') p.lines[1].x -= 20
+    if (fault === 'foreign-graphic')
+      p.graphicsBounds.push({
+        kind: 'path',
+        operationIndex: 2,
+        normalizedRect: [0.2, 0.535, 0.8, 0.54]
+      })
+    if (fault === 'duplicate-line') p.lines.push({ ...p.lines[3] })
+    expect(
+      findCaptionCandidates([p]).some((c: { lines: string[] }) =>
+        c.lines[0].startsWith('Figure 7 (b),')
+      )
+    ).toBe(true)
+  }
+)

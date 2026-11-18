@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { nativeSideBySideFormFigureCrops } from './literature-pdf-figure-native-form-plate.mjs'
 // Shared offline association; candidate geometry does not prove semantic correctness.
 import assert from 'node:assert/strict'
 import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
@@ -51,6 +52,12 @@ import {
   nativeTableDividerGraphic
 } from './literature-pdf-native-owned-figure-labels.mjs'
 import { nativeRasterCaptionColumn } from './literature-pdf-native-raster-column.mjs'
+import {
+  nativeCaptionAboveRasterStack,
+  nativeRasterPeerOwnership,
+  nativeWhiteBackedTiledFigures,
+  nativeRasterCaptionPacket
+} from './literature-pdf-native-raster-peer-ownership.mjs'
 import { nativeOpenAxisArray } from './literature-pdf-native-open-axis-array.mjs'
 import { nativeOpenAxisBottomEvidence } from './literature-pdf-figure-native-open-axis-bottom.mjs'
 import { nativeCrossPageProse } from './literature-pdf-figure-cross-page-prose.mjs'
@@ -67,6 +74,8 @@ import {
   nativeAxisTitlePacket,
   nativePageTextPacketInventory,
   nativeClosedProgramInkPacket,
+  createNativeFigurePaintCertificate,
+  nativeFigurePaintCertificateData,
   createNativeFooterCaptionMetadata,
   nativeFooterCaptionMetadataData
 } from './literature-pdf-figure-native-plot-labels.mjs'
@@ -1810,6 +1819,306 @@ function nativeFigureBeforeBodyDiagram(page, caption, captions, tables, items, t
   }
 }
 
+// A caption naming two panels can own two native letter tags just outside
+// the paint bounds. Require separate neighboring graphics and a clear gutter.
+export function completeNativeLetteredPairCrop(
+  page,
+  figure,
+  captions,
+  tables,
+  tokens,
+  foreignOwns
+) {
+  const { caption, rect } = figure
+  const text = caption?.lines?.join(' ') ?? ''
+  if (
+    !/^(?:Fig\.|Figure)\s*\d+[.:]/iu.test(text) ||
+    [...text.matchAll(/\([a-z]\)/gu)].map((match) => match[0]).join('') !== '(a)(b)' ||
+    caption.page !== page.pageNumber ||
+    !(rect[3] < caption.rect[1])
+  )
+    return
+  const options = tokens.filter((token) => {
+    const [left, top, right, bottom] = token.rect
+    const h = token.height
+    return (
+      /^[ab]$/u.test(token.text) &&
+      token.horizontal &&
+      h >= 6 &&
+      h <= 16 &&
+      token.sourceItem?.pageNumber === page.pageNumber &&
+      token.sourceItem.text === token.text &&
+      Number.isSafeInteger(token.sourceItem.index) &&
+      !token.sourceSegment &&
+      token.rect.every(Number.isFinite) &&
+      right > left &&
+      right - left < h &&
+      left >= rect[0] - h * 1.2 &&
+      right <= rect[2] &&
+      top >= rect[1] - h * 0.85 &&
+      bottom <= rect[3]
+    )
+  })
+  if (options.length !== 2) return
+  const a = options.find((token) => token.text === 'a')
+  const b = options.find((token) => token.text === 'b')
+  if (!a || !b || a.sourceItem.index === b.sourceItem.index) return
+  const h = a.height
+  const w = rect[2] - rect[0]
+  const height = rect[3] - rect[1]
+  if (
+    Math.abs(a.height - b.height) > h * 0.03 ||
+    Math.abs(a.rect[1] - rect[1]) > h * 0.8 ||
+    a.rect[0] > rect[0] + h * 0.25
+  )
+    return
+  const dx = b.rect[0] - a.rect[0]
+  const dy = b.rect[1] - a.rect[1]
+  const sideBySide = Math.abs(dy) <= h * 0.08 && dx >= w * 0.35 && dx <= w * 0.65
+  const stacked = Math.abs(dx) <= h * 0.08 && dy >= height * 0.35 && dy <= height * 0.65
+  if (!sideBySide && !stacked) return
+  const graphics = (page.graphicsBounds ?? [])
+    .map((graphic) => figureGraphicRect(page, graphic))
+    .filter((r) => r && intersection(rect, r) > 0)
+  const supported = (tag, other) => {
+    const lane = [
+      tag.rect[0],
+      tag.rect[1] - h,
+      sideBySide && tag === a ? other.rect[0] - h * 0.15 : rect[2],
+      stacked && tag === a ? other.rect[1] - h * 0.15 : rect[3]
+    ]
+    const peers = graphics.filter(
+      (g) =>
+        g[0] >= lane[0] &&
+        g[2] <= lane[2] &&
+        g[1] >= lane[1] &&
+        g[3] <= lane[3] &&
+        g[0] <= tag.rect[0] + h * 8 &&
+        g[1] <= tag.rect[1] + h * 2.5
+    )
+    const bounds = peers.length && union(peers)
+    return bounds && bounds[2] - bounds[0] >= h * 5 && bounds[3] - bounds[1] >= h * 2
+  }
+  if (!supported(a, b) || !supported(b, a)) return
+  const model = [
+    Math.min(rect[0], a.rect[0] - 1, b.rect[0] - 1),
+    Math.min(rect[1], a.rect[1] - 1, b.rect[1] - 1),
+    rect[2],
+    rect[3]
+  ]
+  if (model[0] < 0 || model[1] < 0 || (model[0] === rect[0] && model[1] === rect[1])) return
+  const added = [
+    [model[0], model[1], rect[0], rect[3]],
+    [rect[0], model[1], rect[2], rect[1]]
+  ].filter((r) => r[2] > r[0] && r[3] > r[1])
+  if (
+    added.some(
+      (r) =>
+        captions.some((c) => c.page === page.pageNumber && intersection(r, c.rect) > 0) ||
+        tables.some((table) => intersection(r, table) > 0) ||
+        foreignOwns(r)
+    )
+  )
+    return
+  if (
+    tokens.some(
+      (item) =>
+        item !== a &&
+        item !== b &&
+        item.text?.trim() &&
+        intersection(item.rect, rect) < area(item.rect) * 0.75 &&
+        added.some((r) => intersection(item.rect, r) > 0)
+    )
+  )
+    return
+  return { rect: model, sourceItems: [a.sourceItem, b.sourceItem] }
+}
+
+// Independent full letter tags printed above two owned native rasters are
+// part of their paired crop when the same caption enumerates those two panels.
+export function completeCenteredNativeRasterTags(
+  page,
+  figure,
+  captions,
+  tables,
+  tokens,
+  foreignOwns
+) {
+  const { caption, rect } = figure
+  const text = caption?.lines?.join(' ') ?? ''
+  if (
+    figure.reason !== 'native-aligned-raster-pair' ||
+    caption?.page !== page.pageNumber ||
+    !/^(?:Fig\.|Figure)\s*\d+[.:]/iu.test(text) ||
+    [...text.matchAll(/\([a-z]\)/gu)].map((m) => m[0]).join('') !== '(a)(b)' ||
+    rect[3] >= caption.rect[1]
+  )
+    return
+  const rasters = page.graphicsBounds
+    .filter((g) => g.kind === 'image' && g.imageHash)
+    .map((g) =>
+      figureGraphicRect(page, { normalizedRect: g.paintedNormalizedRect ?? g.normalizedRect })
+    )
+    .filter((r) => intersection(r, rect) > area(r) * 0.95)
+    .sort((a, b) => a[0] - b[0])
+  if (rasters.length !== 2) return
+  const [left, right] = rasters
+  if (!(left[2] < right[0]) || Math.abs(left[1] - right[1]) > 1 || Math.abs(left[3] - right[3]) > 1)
+    return
+  const tags = rasters.map((r, n) =>
+    tokens.filter(
+      (t) =>
+        t.text === '(' + 'ab'[n] + ')' &&
+        t.horizontal &&
+        t.sourceItem?.pageNumber === page.pageNumber &&
+        t.sourceItem.text === t.text &&
+        Number.isSafeInteger(t.sourceItem.index) &&
+        !t.sourceSegment &&
+        t.height >= 6 &&
+        t.height <= 16 &&
+        t.rect[3] < rect[1] &&
+        r[1] - t.rect[3] >= 0 &&
+        r[1] - t.rect[3] <= t.height &&
+        Math.abs((t.rect[0] + t.rect[2] - r[0] - r[2]) / 2) <= t.height * 0.3
+    )
+  )
+  if (tags.some((group) => group.length !== 1)) return
+  const [a, b] = tags.flat()
+  if (
+    a.sourceItem.index === b.sourceItem.index ||
+    Math.abs(a.baseline - b.baseline) > a.height * 0.08 ||
+    Math.abs(a.height - b.height) > a.height * 0.03
+  )
+    return
+  const top = Math.min(a.rect[1], b.rect[1]) - 1
+  if (top < 0) return
+  const added = [rect[0], top, rect[2], rect[1]]
+  if (
+    captions.some((c) => c.page === page.pageNumber && intersection(c.rect, added) > 0) ||
+    tables.some((t) => intersection(t, added) > 0) ||
+    tokens.some((t) => t !== a && t !== b && t.text.trim() && intersection(t.rect, added) > 0) ||
+    foreignOwns(added)
+  )
+    return
+  return [rect[0], top, rect[2], rect[3]]
+}
+
+// Centered native sublabels may identify two neighboring rasters on a page
+// with additional figures. Restrict side-by-side recovery to that caption row.
+export function completeCaptionLocalRasterPair(
+  page,
+  figure,
+  captions,
+  tables,
+  tokens,
+  foreignOwns
+) {
+  const { caption, rect } = figure
+  const captionText = caption?.lines?.join(' ') ?? ''
+  if (
+    !/^(?:Fig\.|Figure)\s*\d+[.:]/iu.test(captionText) ||
+    [...captionText.matchAll(/\([a-z]\)/gu)].map((match) => match[0]).join('') !== '(a)(b)' ||
+    caption.page !== page.pageNumber ||
+    rect[3] >= caption.rect[1] ||
+    figure.parts ||
+    figure.cropRects ||
+    figure.headerRaster
+  )
+    return
+  const peers = captions.filter((other) => other.page === page.pageNumber)
+  const font = Math.max(
+    ...page.lines
+      .filter((line) => intersection(lineRect(line), caption.rect) > 0)
+      .map((line) => line.fontSize)
+  )
+  if (!(font > 0) || !Number.isFinite(font)) return
+  const overlapWidth = (a, b) => Math.min(a[2], b[2]) - Math.max(a[0], b[0])
+  const candidates = page.graphicsBounds
+    .filter((g) => g.kind === 'image')
+    .map((g) =>
+      figureGraphicRect(page, { normalizedRect: g.paintedNormalizedRect ?? g.normalizedRect })
+    )
+    .filter((r) => {
+      return (
+        r &&
+        r[3] < caption.rect[1] &&
+        Math.abs(r[1] - rect[1]) <= font &&
+        overlapWidth(r, caption.rect) >= (r[2] - r[0]) * 0.9
+      )
+    })
+  if (candidates.length !== 2) return
+  const [left, right] = candidates.sort((a, b) => a[0] - b[0])
+  if (
+    intersection(left, rect) < area(left) * 0.8 ||
+    intersection(right, rect) > area(right) * 0.05 ||
+    Math.abs(left[1] - right[1]) > font * 0.3 ||
+    Math.abs(left[3] - right[3]) > font * 0.3
+  )
+    return
+  if (
+    [left, right].some((r) => r[2] - r[0] < font * 8 || r[3] - r[1] < font * 7.5) ||
+    right[0] <= left[2] ||
+    right[0] - left[2] > font / 2 ||
+    Math.abs(left[2] - left[0] - (right[2] - right[0])) > font
+  )
+    return
+  const sublabels = [left, right].map((r, index) => {
+    const items = tokens
+      .filter(
+        (item) =>
+          item.horizontal &&
+          item.text.trim() &&
+          item.rect[0] >= r[0] &&
+          item.rect[2] <= r[2] &&
+          item.rect[3] >= r[3] &&
+          item.rect[3] <= r[3] + font * 1.5 &&
+          item.rect[1] >= r[3] - font &&
+          item.sourceItem?.pageNumber === page.pageNumber &&
+          item.sourceItem.text === item.text
+      )
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    const text = items
+      .map((item) => item.text)
+      .join('')
+      .trim()
+    if (
+      items.length < 1 ||
+      items.length > 6 ||
+      !new RegExp('^\\(' + 'ab'[index] + '\\)\\s*\\p{L}[\\p{L}\\p{N} ]{0,30}$', 'u').test(text) ||
+      items.some((item) => Math.abs(item.baseline - items[0].baseline) > font * 0.12)
+    )
+      return
+    const bounds = union(items.map((item) => item.rect))
+    if (Math.abs((bounds[0] + bounds[2] - r[0] - r[2]) / 2) > font) return
+    return { items, bounds }
+  })
+  if (
+    sublabels.some((label) => !label) ||
+    Math.abs(sublabels[0].items[0].baseline - sublabels[1].items[0].baseline) > font * 0.1
+  )
+    return
+  const next = union([rect, left, right, ...sublabels.map((label) => label.bounds)])
+  if (
+    next[3] + font * 0.3 >= caption.rect[1] ||
+    peers.some((other) => other !== caption && intersection(other.rect, next) > 0) ||
+    tables.some((table) => intersection(table, next) > 0) ||
+    foreignOwns(next)
+  )
+    return
+  const labels = new Set(sublabels.flatMap((label) => label.items))
+  if (
+    tokens.some(
+      (item) =>
+        item.text.trim() &&
+        !labels.has(item) &&
+        intersection(item.rect, next) > 0 &&
+        intersection(item.rect, rect) < area(item.rect) * 0.8
+    )
+  )
+    return
+  return next
+}
+
 function associateNativeFigures(
   page,
   candidates,
@@ -2081,6 +2390,7 @@ function associateNativeFigures(
       tableRects,
       nativeTokens
     )
+    if (composite?.independentPanelLabels) return { ...figure, ...composite, issue: undefined }
     const outerFrame = closedCaptionFigureFrame(
       page,
       figure.caption,
@@ -2117,14 +2427,28 @@ function associateNativeFigures(
       rules,
       nativeTokens
     )
-    const completePlots = preserveStrip
-      ? undefined
-      : closedPlots &&
-          figure.rect &&
-          figure.reason === 'native-raster-vector-strip' &&
-          figure.rect[3] < figure.caption.rect[1]
-        ? { ...closedPlots, rect: union([figure.rect, closedPlots.rect]) }
-        : closedPlots
+    // A closed band can combine side-by-side frames with different captions.
+    // Keep the native chart crop if the band takes paint from a disjoint peer.
+    const crossesOwnedPeer =
+      closedPlots &&
+      figure.rect &&
+      figure.reason === 'native-vector-bar-chart' &&
+      associated.some(
+        (peer, index) =>
+          index !== figureIndex &&
+          peer.rect &&
+          intersection(figure.rect, peer.rect) === 0 &&
+          intersection(closedPlots.rect, peer.rect) > 0
+      )
+    const completePlots =
+      preserveStrip || crossesOwnedPeer
+        ? undefined
+        : closedPlots &&
+            figure.rect &&
+            figure.reason === 'native-raster-vector-strip' &&
+            figure.rect[3] < figure.caption.rect[1]
+          ? { ...closedPlots, rect: union([figure.rect, closedPlots.rect]) }
+          : closedPlots
     const complete =
       completePlots ??
       rasterFrame ??
@@ -2470,7 +2794,47 @@ function associateNativeFigures(
             (other, n) => n !== figureIndex && other.rect && intersection(other.rect, r) > 0
           )
       )
-      return annotation ? { ...candidate, rect: annotation } : candidate
+      if (annotation) candidate = { ...candidate, rect: annotation }
+      const rasterPair = completeCaptionLocalRasterPair(
+        page,
+        candidate,
+        candidates,
+        tableRects,
+        nativeTokens,
+        foreignOwns
+      )
+      if (rasterPair) candidate = { ...candidate, rect: rasterPair }
+      const centeredTags = completeCenteredNativeRasterTags(
+        page,
+        candidate,
+        candidates,
+        tableRects,
+        nativeTokens,
+        foreignOwns
+      )
+      if (centeredTags) candidate = { ...candidate, rect: centeredTags }
+      const panelPair = completeNativeLetteredPairCrop(
+        page,
+        candidate,
+        candidates,
+        tableRects,
+        nativeTokens,
+        foreignOwns
+      )
+      if (!panelPair) return candidate
+      // Keep the original whole-crop policy on generic plots. Mixed strips
+      // use explicit tag ownership so the enlarged crop cannot claim labels.
+      if (candidate.reason !== 'native-raster-vector-strip' && !candidate.sourceItems?.length)
+        return { ...candidate, rect: panelPair.rect }
+      const sourceItems = [...(candidate.sourceItems ?? [])]
+      for (const item of panelPair.sourceItems) {
+        const previous = sourceItems.find(
+          (other) => other.pageNumber === item.pageNumber && other.index === item.index
+        )
+        if (previous && previous.text !== item.text) return candidate
+        if (!previous) sourceItems.push(item)
+      }
+      return { ...candidate, rect: panelPair.rect, sourceItems }
     }
     // A long listing can contain hundreds of stroked glyphs. It looks like a
     // large connected drawing to the geometry pass, but it is not a figure
@@ -2588,6 +2952,10 @@ function associateNativeFigures(
               /\p{L}/u.test(l.text) &&
               intersection(lineRect(l), expanded) > intersection(lineRect(l), partialAxes.rect)
           )
+        const stackedPlotPlate = addsIndependentContent
+          ? completeStackedMixedPlotPlate(page, figure, partialAxes, candidates, tableRects)
+          : undefined
+        if (stackedPlotPlate) return { ...figure, ...stackedPlotPlate }
         return { ...figure, rect: addsIndependentContent ? partialAxes.rect : expanded }
       })
       .map((figure, _index, figures) => {
@@ -3027,10 +3395,87 @@ function associateNativeFigures(
   )
 }
 
+// A broad mixed strip can inherit paths from an independently captioned plot
+// in the other column. Prefer the complete native raster quad only when that
+// neighbor accounts for the strip extending across the gutter.
+export function nativeRasterQuadBesideCaptionedFigure(page, figure, peers, captions, tables) {
+  if (figure.reason !== 'native-raster-vector-strip' || !figure.rect || figure.sourceItems?.length)
+    return
+  const caption = figure.caption
+  const ordinal = (c) => /^(?:fig\.?|figure)\s+(\d+)[.:]/iu.exec(c?.lines?.[0] ?? '')?.[1]
+  const own = ordinal(caption)
+  if (!own) return
+  const quad = nativeCaptionedRasterQuad(page, caption, captions, tables)
+  if (!quad) return
+  const mid = page.width / 2
+  const side = (rect) => (rect[2] < mid ? -1 : rect[0] > mid ? 1 : 0)
+  const lane = side(caption.rect)
+  const strip = figure.rect
+  if (!lane || side(quad.rect) !== lane || side(strip)) return
+  const tolerance = page.width / 128
+  if (
+    Math.abs(strip[lane < 0 ? 0 : 2] - quad.rect[lane < 0 ? 0 : 2]) > tolerance ||
+    Math.abs(strip[1] - quad.rect[1]) > tolerance ||
+    Math.abs(strip[3] - quad.rect[3]) > tolerance
+  )
+    return
+  const neighbors = peers.filter((peer) => {
+    if (
+      peer === figure ||
+      !peer.rect ||
+      peer.caption?.page !== caption.page ||
+      !(peer.graphicsCount >= 4)
+    )
+      return false
+    const number = ordinal(peer.caption)
+    if (!number || number === own || side(peer.caption.rect) !== -lane || side(peer.rect) !== -lane)
+      return false
+    const opposite = lane < 0 ? 2 : 0
+    return (
+      Math.abs(strip[opposite] - peer.rect[opposite]) <= tolerance &&
+      peer.rect[1] <= strip[1] + tolerance &&
+      peer.rect[3] > strip[3] + tolerance * 2 &&
+      peer.rect[3] <= peer.caption.rect[1] + tolerance &&
+      peer.caption.rect[1] > caption.rect[1] + tolerance * 2
+    )
+  })
+  if (neighbors.length !== 1) return
+  // Do not discard a physical connector across the two figure lanes.
+  for (const graphic of page.graphicsBounds ?? []) {
+    const rect = figureGraphicRect(page, graphic)
+    if (
+      rect &&
+      rect[0] < mid - tolerance &&
+      rect[2] > mid + tolerance &&
+      rect[1] <= strip[3] &&
+      rect[3] >= strip[1]
+    )
+      return
+  }
+  return quad
+}
+
 export function associateFigures(...args) {
-  const figures = associateNativeFigures(...args)
+  const peers = nativeRasterPeerOwnership(args[0], args[1], args[2] ?? [], args[5])
+  if (peers) return peers
+  const whiteBacked = nativeWhiteBackedTiledFigures(args[0], args[1], args[2] ?? [], args[5])
+  if (whiteBacked) return whiteBacked
+  const nativeFigures = associateNativeFigures(...args).map(
+    (figure) =>
+      nativeRasterCaptionPacket(args[0], figure.caption, args[1], args[2] ?? [], args[5]) ?? figure
+  )
+  const figures = nativeFigures.map(
+    (figure) =>
+      nativeRasterQuadBesideCaptionedFigure(
+        args[0],
+        figure,
+        nativeFigures,
+        args[1],
+        args[2] ?? []
+      ) ?? figure
+  )
   if (!args[6]) return figures
-  return figures.map((figure, index) => {
+  const completed = figures.map((figure, index) => {
     const closedSave = nativeClosedSaveFigureCrop(
       args[0],
       figure,
@@ -3103,6 +3548,285 @@ export function associateFigures(...args) {
         ? { fallbackFigure: figure }
         : {})
     }
+  })
+  const recovered = recoverNativePeerFigureBarrier(args[0], args[1], completed, ...args.slice(2))
+  return (
+    nativeCaptionAboveRasterStack(
+      args[0],
+      args[1],
+      args[2] ?? [],
+      args[5] ?? [],
+      args[6],
+      recovered
+    ) ??
+    nativeSideBySideFormFigureCrops(
+      args[0],
+      args[1],
+      args[2] ?? [],
+      args[5] ?? [],
+      args[6],
+      recovered
+    ) ??
+    recovered
+  )
+}
+
+// A captioned vector column can initially borrow its neighbor's complete plate.
+// The original paint must prove an empty gutter before rerunning the ordinary matcher.
+function recoverOverlappingFigureColumns(
+  page,
+  captions,
+  figures,
+  tables,
+  rules,
+  frames,
+  tokens,
+  context,
+  previous
+) {
+  if (figures.length !== 2 || page.invalidGraphicsBounds !== 0 || !page.graphicsBounds?.length)
+    return
+  const [wide, peer] = figures
+    .slice()
+    .sort((a, b) => area(b.rect ?? [0, 0, 0, 0]) - area(a.rect ?? [0, 0, 0, 0]))
+  if (
+    !wide.rect ||
+    !peer.rect ||
+    wide.reason ||
+    peer.reason ||
+    wide.fallbackFigure ||
+    peer.fallbackFigure ||
+    wide.rect[2] - wide.rect[0] < page.width * 0.75 ||
+    peer.rect[2] - peer.rect[0] > page.width * 0.48 ||
+    intersection(wide.rect, peer.rect) < area(peer.rect) * 0.9 ||
+    ![wide, peer].every(
+      (f) =>
+        captionKind(f.caption.lines[0]) === 'figure' &&
+        f.caption.rect[2] - f.caption.rect[0] < page.width * 0.48 &&
+        f.rect[3] <= f.caption.rect[1]
+    ) ||
+    Math.abs(wide.caption.rect[1] - peer.caption.rect[1]) > page.height * 0.035
+  )
+    return
+  const left = wide.caption.rect[2] < peer.rect[0]
+  if (!left && wide.caption.rect[0] <= peer.rect[2]) return
+  const gutter = left
+    ? (wide.caption.rect[2] + peer.rect[0]) / 2
+    : (wide.caption.rect[0] + peer.rect[2]) / 2
+  const paintInCrop = page.graphicsBounds
+    .map((graphic) => figureGraphicRect(page, graphic))
+    .filter((r) => intersection(r, wide.rect) > 0)
+  if (paintInCrop.some((r) => r[0] < gutter && r[2] > gutter)) return
+  const own = paintInCrop.filter((r) => (left ? r[2] <= gutter : r[0] >= gutter))
+  if (own.length < 3) return
+  const paint = union(own)
+  const recovered = associateNativeFigures(
+    page,
+    captions,
+    [...tables, peer.rect],
+    rules,
+    frames,
+    tokens,
+    context,
+    previous
+  ).find((item) => item.caption === wide.caption)
+  if (
+    !recovered?.rect ||
+    recovered.reason ||
+    recovered.fallbackFigure ||
+    intersection(peer.rect, recovered.rect) > 0 ||
+    (left ? recovered.rect[2] > gutter : recovered.rect[0] < gutter) ||
+    recovered.rect.some((v, i) => Math.abs(v - paint[i]) > page.height / 256 + 1)
+  )
+    return
+  return figures.map((figure) => (figure === wide ? recovered : figure))
+}
+
+// Two independent chart columns can share the upper band while a third
+// graphic follows both. Reuse the complete raster-peer proof only after
+// accounting for the lower image packet and the separately ruled header.
+function recoverUpperRasterPeerColumns(page, captions, figures, tables, rules, tokens) {
+  if (
+    figures.length !== 3 ||
+    page.invalidGraphicsBounds !== 0 ||
+    !page.graphicsBounds?.length ||
+    figures.some(
+      (f) =>
+        !f.rect ||
+        f.reason ||
+        f.issue ||
+        f.fallbackFigure ||
+        f.sourceItems?.length ||
+        f.parts ||
+        f.cropRects ||
+        f.formCropRaster ||
+        f.headerRaster ||
+        captionKind(f.caption.lines[0]) !== 'figure' ||
+        f.rect[3] >= f.caption.rect[1]
+    )
+  )
+    return
+  const ordered = figures.slice().sort((a, b) => a.caption.rect[1] - b.caption.rect[1])
+  const [first, second, below] = ordered
+  const upper = [first, second]
+  const wide = upper.find((f) => f.rect[2] - f.rect[0] >= page.width * 0.75)
+  const peer = upper.find((f) => f !== wide)
+  const cutoff = Math.max(first.caption.rect[3], second.caption.rect[3])
+  if (
+    !wide ||
+    !peer ||
+    peer.rect[2] - peer.rect[0] >= page.width * 0.48 ||
+    !intersection(wide.rect, peer.rect) ||
+    below.rect[1] <= cutoff ||
+    below.rect[2] - below.rect[0] >= page.width * 0.48 ||
+    Math.min(first.caption.rect[2], second.caption.rect[2]) >
+      Math.max(first.caption.rect[0], second.caption.rect[0])
+  )
+    return
+  const localCaptions = captions.filter((c) => c.page === page.pageNumber)
+  const head = nativeFigureRunningHead(page, localCaptions, tokens, rules, tables)
+  if (!head?.tokens.length) return
+  const headRect = union(head.tokens.map((t) => t.rect))
+  const yUnit = page.height / 256
+  const xUnit = page.width / 256
+  const bars = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      r[2] - r[0] > page.width * 0.65 &&
+      r[1] >= headRect[3] &&
+      r[1] - headRect[3] <= yUnit * 2 &&
+      r[0] <= headRect[0] &&
+      r[2] >= headRect[2]
+  )
+  if (bars.length !== 1) return
+  const [bar] = bars
+  const contains = (outer, inner) => inner.every((v, n) => (n < 2 ? v >= outer[n] : v <= outer[n]))
+  const graphics = page.graphicsBounds
+  const lower = graphics.filter((g) => g.kind === 'image' && figureGraphicRect(page, g)[1] > cutoff)
+  if (
+    lower.length < 4 ||
+    lower.some((g) => {
+      const r = figureGraphicRect(page, {
+        normalizedRect: g.paintedNormalizedRect ?? g.normalizedRect
+      })
+      return !g.imageHash || !contains(below.rect, r)
+    })
+  )
+    return
+  const headBand = [
+    bar[0] - xUnit * 2,
+    headRect[1] - yUnit * 2,
+    bar[2] + xUnit * 2,
+    bar[3] + yUnit * 2
+  ]
+  if (
+    graphics.some((g) => g.kind === 'image' && intersection(figureGraphicRect(page, g), headBand))
+  )
+    return
+  const scoped = {
+    ...page,
+    graphicsBounds: graphics.filter(
+      (g) =>
+        !lower.includes(g) && !(g.kind === 'path' && contains(headBand, figureGraphicRect(page, g)))
+    )
+  }
+  const upperCaptions = upper.map((f) => f.caption)
+  const otherCaptions = localCaptions.filter((c) => !upperCaptions.includes(c))
+  const recovered = nativeRasterPeerOwnership(
+    scoped,
+    upperCaptions,
+    [...tables, below.rect, ...otherCaptions.map((c) => c.rect)],
+    tokens.filter((t) => !head.tokens.includes(t))
+  )
+  const narrow = recovered?.find((f) => f.caption === peer.caption)
+  if (
+    !narrow ||
+    intersection(narrow.rect, peer.rect) < area(peer.rect) * 0.95 ||
+    recovered.some((f) => f.rect[1] <= headBand[3] || intersection(f.rect, below.rect))
+  )
+    return
+  return figures.map((f) => {
+    const ownership = recovered.find((next) => next.caption === f.caption)
+    return ownership ? { ...f, rect: ownership.rect } : f
+  })
+}
+
+// A narrow caption is not its drawing's horizontal extent. A verified peer
+// excludes paths only; the ordinary association must still prove the remainder.
+export function recoverNativePeerFigureBarrier(
+  page,
+  captions,
+  completed,
+  tables = [],
+  rules = [],
+  frames = [],
+  tokens = [],
+  context,
+  previous
+) {
+  const columns = recoverOverlappingFigureColumns(
+    page,
+    captions,
+    completed,
+    tables,
+    rules,
+    frames,
+    tokens,
+    context,
+    previous
+  )
+  if (columns) return columns
+  const upper = recoverUpperRasterPeerColumns(page, captions, completed, tables, rules, tokens)
+  if (upper) return upper
+  if (!completed.some((figure) => figure.reason === 'ambiguous-graphic-direction')) return completed
+  const handle = createNativeFigurePaintCertificate(page, tokens, context),
+    paint = nativeFigurePaintCertificateData(handle, page, tokens, context)
+  if (!paint) return completed
+  const contains = (outer, inner) =>
+    inner[0] >= outer[0] && inner[1] >= outer[1] && inner[2] <= outer[2] && inner[3] <= outer[3]
+  return completed.map((figure) => {
+    if (figure.rect || figure.reason !== 'ambiguous-graphic-direction') return figure
+    const peers = completed.filter((peer) => {
+      if (
+        peer === figure ||
+        !peer.rect ||
+        peer.reason ||
+        peer.fallbackFigure ||
+        peer.rect[2] >= figure.caption.rect[0] ||
+        peer.caption.rect[2] >= figure.caption.rect[0] ||
+        peer.caption.rect[1] <= figure.caption.rect[3] ||
+        peer.rect[3] >= peer.caption.rect[1] ||
+        tables.some((rect) => intersection(rect, peer.rect) > 0)
+      )
+        return false
+      const paths = paint.pieces.filter(
+        (piece) => piece.kind === 'path' && intersection(piece.fullInk, peer.rect) > 0
+      )
+      return (
+        paths.length >= 3 &&
+        paths.every((piece) => contains(peer.rect, piece.fullInk)) &&
+        !paint.pieces.some(
+          (piece) => piece.kind === 'image' && intersection(piece.rect, peer.rect) > 0
+        )
+      )
+    })
+    if (peers.length !== 1) return figure
+    const recovered = associateNativeFigures(
+      page,
+      captions,
+      [...tables, peers[0].rect],
+      rules,
+      frames,
+      tokens,
+      context,
+      previous
+    ).find((item) => item.caption === figure.caption)
+    return recovered?.rect &&
+      !recovered.reason &&
+      !recovered.fallbackFigure &&
+      completed.every((peer) => !peer.rect || intersection(peer.rect, recovered.rect) === 0)
+      ? recovered
+      : figure
   })
 }
 
@@ -4090,6 +4814,87 @@ export function recoverIsolatedNativeVectorBand(
   )
     return
   if (outlined || !figure.rect || area(figure.rect) > area(rect) * 3) return rect
+}
+
+function completeStackedMixedPlotPlate(page, figure, plots, captions, tables) {
+  const { caption } = figure
+  if (
+    figure.reason !== 'native-raster-vector-strip' ||
+    !plots ||
+    plots.graphicsCount < 2 ||
+    page.rotation !== 0 ||
+    page.invalidGraphicsBounds !== 0 ||
+    !/^Fig(?:ure)?\.?\s+\d+[.:]\s+Top:/iu.test(caption.lines[0]) ||
+    !/\bBottom:/iu.test(caption.lines.join(' '))
+  )
+    return
+  const font = Math.max(
+    ...page.lines
+      .filter((line) => intersection(lineRect(line), caption.rect) > 0)
+      .map((line) => line.fontSize)
+  )
+  const [left, plotTop, right, bottom] = plots.rect
+  if (
+    !(font > 0) ||
+    right - left > page.width * 0.5 ||
+    (left < page.width / 2 && right > page.width / 2) ||
+    bottom >= caption.rect[1]
+  )
+    return
+  const upper = page.graphicsBounds.flatMap((graphic) => {
+    const rect = (graphic.paintedNormalizedRect ?? graphic.normalizedRect)?.map(
+      (value, axis) => value * (axis % 2 ? page.height : page.width)
+    )
+    return rect &&
+      rect[0] >= left - font * 0.5 &&
+      rect[2] <= right + font * 0.5 &&
+      rect[3] <= plotTop
+      ? [{ kind: graphic.kind, rect }]
+      : []
+  })
+  const rasters = upper.filter(({ kind }) => kind === 'image')
+  if (rasters.length !== 1) return
+  const raster = rasters[0].rect
+  if (
+    plotTop - raster[3] > font ||
+    raster[3] - raster[1] < font * 4 ||
+    raster[2] - raster[0] < (right - left) * 0.35
+  )
+    return
+
+  const paths = upper.filter(
+    ({ kind, rect }) =>
+      kind === 'path' && rect[1] >= raster[1] && rect[3] <= raster[3] && area(rect) > 0
+  )
+  if (paths.length < 8) return
+  const vector = union(paths.map(({ rect }) => rect))
+  const gap = Math.max(raster[0] - vector[2], vector[0] - raster[2])
+  if (
+    gap < 0 ||
+    gap > font ||
+    vector[2] - vector[0] < (right - left) * 0.2 ||
+    vector[3] - vector[1] < (raster[3] - raster[1]) * 0.5
+  )
+    return
+
+  // The caption names both rows. Only the adjacent raster and its separate
+  // vector drawing can extend the isolated plot band within the same column.
+  const rect = union([plots.rect, raster, vector])
+  const upperBand = [rect[0], rect[1], rect[2], plotTop]
+  if (
+    tables.some((table) => intersection(table, rect) > 0) ||
+    captions.some(
+      (other) =>
+        other !== caption && other.page === caption.page && intersection(other.rect, rect) > 0
+    ) ||
+    page.lines.some(
+      (line) =>
+        intersection(lineRect(line), upperBand) > 0 &&
+        (line.fontSize > font * 0.8 || line.text.trim().split(/\s+/u).length > 4)
+    )
+  )
+    return
+  return { rect, graphicsCount: plots.graphicsCount + rasters.length + paths.length }
 }
 
 // A complete, caption-wide keyed plate owns every native source above its
@@ -5184,6 +5989,7 @@ function associateFigureFaces(
   previousProseEvidence
 ) {
   const originalLines = page.lines
+  const sourceGraphics = page.graphicsBounds
   const captionGeometryPage = candidates.some((c) =>
     /^Figure\s+[A-Z]?\d+:\s+(?:We|Our)\b/u.test(c.lines?.[0] ?? '')
   )
@@ -6262,6 +7068,68 @@ function associateFigureFaces(
         )
     })
   )
+  // Three contiguous, separately drawn axis frames can share a side legend.
+  // The upper panels lie beyond the ordinary caption distance.
+  const sideStacks = captions.map((caption) => {
+    const markers = [
+      ...caption.lines.join(' ').matchAll(/(?:^|\s)(?:\(([a-c])\)|([a-c]):)(?=\s|$)/giu)
+    ]
+    if (
+      captionKind(caption.lines[0]) !== 'figure' ||
+      [...new Set(markers.map((m) => (m[1] ?? m[2]).toLowerCase()))].join('') !== 'abc'
+    )
+      return
+    const c = caption.rect
+    const frames = closedFrames
+      .filter(
+        (r) =>
+          r[2] - r[0] > page.width * 0.3 &&
+          r[3] - r[1] > page.height * 0.05 &&
+          r[3] - r[1] < page.height * 0.15 &&
+          ((r[2] <= c[0] && c[0] - r[2] < page.width * 0.08) ||
+            (r[0] >= c[2] && r[0] - c[2] < page.width * 0.08))
+      )
+      .sort((a, b) => a[1] - b[1])
+    if (frames.length !== 3) return
+    const [top, middle, bottom] = frames
+    const equal = (a, b) => Math.abs(a - b) < page.height / 256 + 1
+    if (
+      Math.min(c[3], bottom[3]) - Math.max(c[1], bottom[1]) < (bottom[3] - bottom[1]) * 0.45 ||
+      ![middle, bottom].every(
+        (r, i) =>
+          equal(r[0], top[0]) &&
+          equal(r[2], top[2]) &&
+          equal(r[3] - r[1], top[3] - top[1]) &&
+          Math.abs(r[1] - frames[i][3]) < 0.02
+      )
+    )
+      return
+    const stack = union(frames)
+    if (
+      tableRects.some((r) => intersection(r, stack) > 0) ||
+      pageCaptions.some((other) => other !== caption && intersection(other.rect, stack) > 0) ||
+      pathBarriers.some((line) => intersection(lineRect(line), stack) > 0)
+    )
+      return
+    // Require distributed native marks in each plot interior. Empty frames
+    // or page furniture with bare borders cannot claim the intervening area.
+    if (
+      !frames.every((r) => {
+        const inside = axes.filter(
+          (mark) =>
+            mark[0] > r[0] + edgeTolerance &&
+            mark[2] < r[2] - edgeTolerance &&
+            mark[1] > r[1] + edgeTolerance &&
+            mark[3] < r[3] - edgeTolerance
+        )
+        if (inside.length < 16) return false
+        const ink = union(inside)
+        return ink[2] - ink[0] > (r[2] - r[0]) * 0.55 && ink[3] - ink[1] > (r[3] - r[1]) * 0.15
+      })
+    )
+      return
+    return stack
+  })
   // A side legend can describe a vector chart followed by a raster panel.
   // The far panel exceeds caption-distance limits, but an aligned neighboring
   // axis frame and explicit panel references establish the shared figure.
@@ -6702,17 +7570,28 @@ function associateFigureFaces(
         const verticalGap = Math.max(c[1] - rect[3], rect[1] - c[3], 0)
         const side = rect[2] <= c[0] ? 'left' : rect[0] >= c[2] ? 'right' : undefined
         const horizontalGap = Math.max(c[0] - rect[2], rect[0] - c[2], 0)
-        const sidePlot =
+        const stack = sideStacks[index]
+        const stackMark =
           side &&
-          sidePlots[index].some(
-            (r) =>
-              rect[0] >= r[0] - 48 &&
-              (side === 'left' ? rect[2] <= c[0] : rect[0] >= c[2]) &&
-              // Recorded graphics are quantized to 1/256 of the page. Include
-              // the whole title glyph when its box grazes the upper margin.
-              rect[1] >= r[1] - 24 - page.height / 256 &&
-              rect[3] <= r[3] + 24
-          )
+          stack &&
+          graphic.kind === 'path' &&
+          rect[0] >= stack[0] - 48 &&
+          rect[2] <= stack[2] + 48 &&
+          rect[1] >= stack[1] - edgeTolerance &&
+          rect[3] <= stack[3] + 24 &&
+          (side === 'left' ? stack[2] <= c[0] : stack[0] >= c[2])
+        const sidePlot =
+          stackMark ||
+          (side &&
+            sidePlots[index].some(
+              (r) =>
+                rect[0] >= r[0] - 48 &&
+                (side === 'left' ? rect[2] <= c[0] : rect[0] >= c[2]) &&
+                // Recorded graphics are quantized to 1/256 of the page. Include
+                // the whole title glyph when its box grazes the upper margin.
+                rect[1] >= r[1] - 24 - page.height / 256 &&
+                rect[3] <= r[3] + 24
+            ))
         const framedSide =
           side && sideFrames(caption).some((frame) => intersection(frame, rect) / area(rect) > 0.95)
         const beside =
@@ -6727,7 +7606,7 @@ function associateFigureFaces(
                     Math.min(rect[3], c[3]) - Math.max(rect[1], c[1]) > (c[3] - c[1]) * 0.4
                   ? Math.max(60, page.width * 0.2)
                   : 60)) &&
-          verticalGap <= 120
+          (stackMark || verticalGap <= 120)
         const shortImageCaption =
           graphic.kind === 'image' &&
           verticalGap <= Math.max(24, Math.min(36, (c[3] - c[1]) * 4)) &&
@@ -7435,7 +8314,8 @@ function associateFigureFaces(
       page,
       caption,
       pageCaptions,
-      tableRects
+      tableRects,
+      sourceGraphics
     )
     if (captionedRasterModerateGap) return captionedRasterModerateGap
     const captionedRasterFragment = nativeCaptionedRasterArrayFragment(
@@ -9216,7 +10096,8 @@ export function associateGraphicalTables(page, candidates, tableRects = [], empt
   const matches = tables.flatMap((caption) => {
     const proxy = { ...caption, lines: ['Figure 1. Graphical table'] }
     const proxies = candidates.map((c) => (c === caption ? proxy : c))
-    let match = associateFigures(page, proxies, tableRects).find((m) => m.caption === proxy)
+    const figureMatches = associateFigures(page, proxies, tableRects)
+    let match = figureMatches.find((m) => m.caption === proxy)
     // Outlined glyph tables have no native text. A model region below the
     // caption disambiguates the graphic from publisher decoration above it.
     const below = emptyDetections.filter(
@@ -9252,6 +10133,26 @@ export function associateGraphicalTables(page, candidates, tableRects = [], empt
       area(match.rect) < page.width * page.height * 0.04 ||
       tableRects.some(
         (r) => intersection(r, match.rect) / Math.min(area(r), area(match.rect)) > 0.8
+      )
+    )
+      return []
+    // An off-column table caption cannot take a crop already assigned to
+    // a numbered figure in the crop's own column.
+    const rect = match.rect
+    if (
+      match.reason === 'no-unambiguous-adjacent-graphics' &&
+      (caption.rect[2] <= rect[0] || caption.rect[0] >= rect[2]) &&
+      figureMatches.some(
+        (figure) =>
+          figure.caption !== proxy &&
+          figure.caption.page === page.pageNumber &&
+          captionKind(figure.caption.lines?.[0]) === 'figure' &&
+          figure.rect &&
+          !figure.reason &&
+          intersection(rect, figure.rect) >= Math.max(area(rect), area(figure.rect)) * 0.9 &&
+          Math.min(figure.rect[2], figure.caption.rect[2]) -
+            Math.max(figure.rect[0], figure.caption.rect[0]) >=
+            (figure.rect[2] - figure.rect[0]) * 0.8
       )
     )
       return []
@@ -10520,26 +11421,46 @@ function associateCompleteNativeBelowTableCaptions(page, tables, candidates, rul
           Math.abs(r[0] - rect[0]) <= tolerance &&
           Math.abs(r[2] - rect[2]) <= tolerance &&
           r[1] >= rect[1] - em * 2 &&
-          r[1] <= rect[3] + em
+          r[1] <= rect[3] + em * 1.25
       )
       const closing = edges.filter(
         (r) =>
-          Math.abs(r[1] - rect[3]) <= em &&
+          Math.abs(r[1] - rect[3]) <= em * 1.25 &&
           r[1] <= caption.rect[1] &&
           caption.rect[1] - r[1] <= em * 3 &&
           Math.abs((r[0] + r[2] - caption.rect[0] - caption.rect[2]) / 2) <= em * 2
       )
-      if (closing.length !== 1) return false
-      const last = closing[0]
+      const last = closing.at(-1)
+      if (!last) return false
       const same = edges.filter(
         (r) => Math.abs(r[0] - last[0]) < 0.05 && Math.abs(r[2] - last[2]) < 0.05
       )
       const first = same[0]
+      // A double-rule frame has the same narrow gap at both ends. Use the
+      // outside rails only when both gaps are empty and the next rule is a divider.
+      const openingGap = same[1]?.[1] - first?.[1]
+      const pairedEdges =
+        closing.length === 2 &&
+        same.length >= 5 &&
+        same.at(-2) === closing[0] &&
+        openingGap > 0 &&
+        openingGap < em * 0.35 &&
+        Math.abs(last[1] - closing[0][1] - openingGap) < em * 0.02 &&
+        closing[0][1] >= rect[3] &&
+        !page.lines.some(
+          (line) =>
+            intersection(lineRect(line), [first[0], first[1], first[2], same[1][1]]) > 0 ||
+            intersection(lineRect(line), [last[0], closing[0][1], last[2], last[1]]) > 0
+        )
+      if (!pairedEdges && (closing.length !== 1 || Math.abs(last[1] - rect[3]) > em)) return false
+      const divider = same[pairedEdges ? 2 : 1]
       if (
         same.length < 3 ||
         first === last ||
         Math.abs(first[1] - rect[1]) > em * 2 ||
-        !same.some((r) => r[1] > first[1] + em * 0.5 && r[1] <= first[1] + em * 4)
+        !(pairedEdges ? [divider] : same).some(
+          (r) => r[1] > first[1] + em * 0.5 && r[1] <= first[1] + em * 4
+        )
       )
         return false
       const frame = [first[0], first[1], first[2], last[1]]
@@ -10567,10 +11488,10 @@ function associateCompleteNativeBelowTableCaptions(page, tables, candidates, rul
       const source = nativeLines.filter(
         (l) => l.y >= first[1] && l.bottom <= last[1] && l.x >= first[0] && l.right <= first[2]
       )
-      const header = source.filter((l) => l.bottom <= same[1][1])
+      const header = source.filter((l) => l.bottom <= divider[1])
       const bands = []
       for (const line of source
-        .filter((l) => l.y >= same[1][1])
+        .filter((l) => l.y >= divider[1])
         .sort((a, b) => a.bottom - b.bottom || a.x - b.x)) {
         const band = bands.find(
           (b) => Math.abs(b[0].bottom - line.bottom) <= Math.max(b[0].fontSize, line.fontSize) * 0.2
@@ -10585,7 +11506,8 @@ function associateCompleteNativeBelowTableCaptions(page, tables, candidates, rul
             b.reduce(
               (count, l) => count + (l.text.match(/[-+−]?\d+(?:\.\d+)?/gu) ?? []).length,
               0
-            ) >= 2
+            ) >= 2 ||
+            (pairedEdges && /^\p{L}.*\s[-+−]?\d+(?:\.\d+)?$/u.test(b.map((l) => l.text).join(' ')))
         ).length >= 3
       )
     })
