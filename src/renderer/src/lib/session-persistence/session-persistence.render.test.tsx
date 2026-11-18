@@ -261,6 +261,66 @@ describe('session persistence startup', () => {
     expect(displayed.historyPage?.hasMore).toBe(true)
   })
 
+  it('replays pending Session Details recovery after an existing history load finishes', async () => {
+    const persisted = createPersistedSession({ number: 1 })
+    const loadOne = installHistory([persisted])
+    let resolveHistoryPage!: (value: {
+      projectId: string
+      sessionId: string
+      revision: number
+      session: PersistedChatSession
+      totalItems: number
+      hasMore: boolean
+    }) => void
+    const historyPage = new Promise<{
+      projectId: string
+      sessionId: string
+      revision: number
+      session: PersistedChatSession
+      totalItems: number
+      hasMore: boolean
+    }>((resolve) => {
+      resolveHistoryPage = resolve
+    })
+    window.api.sessions.loadHistoryPage = vi.fn().mockReturnValue(historyPage)
+
+    await act(async () => root.render(<Probe />))
+    await act(async () => {
+      useSessionStore.getState().selectSession(persisted.id)
+      await Promise.resolve()
+    })
+    expect(window.api.sessions.loadHistoryPage).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      useSessionStore.getState().requestSessionDetailsRecovery({
+        projectId: persisted.projectId,
+        sessionId: persisted.id
+      })
+      await Promise.resolve()
+    })
+    expect(loadOne).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveHistoryPage({
+        projectId: persisted.projectId,
+        sessionId: persisted.id,
+        revision: 0,
+        session: persisted,
+        totalItems: 1,
+        hasMore: false
+      })
+      await historyPage
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(loadOne).toHaveBeenCalledWith({
+      projectId: persisted.projectId,
+      sessionId: persisted.id,
+      recoverSessionDetails: true
+    })
+  })
+
   it('recovers Session Details when an existing history page is reopened', async () => {
     const persisted = createPersistedSession({ number: 1 })
     const loadOne = installHistory([persisted])

@@ -4305,7 +4305,17 @@ const useSessionPersistence = (): SessionPersistenceState => {
                   [sessionLoadKey]: SESSION_LOAD_ERROR_KEY
                 }))
             })
-            .finally(() => loadingSessionContent.delete(selected.id))
+            .finally(() => {
+              loadingSessionContent.delete(selected.id)
+              const pendingRecovery = useSessionStore.getState().sessionDetailsRecoveryRequest
+              if (
+                isMounted &&
+                pendingRecovery?.projectId === selected.projectId &&
+                pendingRecovery.sessionId === selected.id
+              ) {
+                onStoreChange(useSessionStore.getState())
+              }
+            })
         }
         void save(state).then(trimReadOnlyHistory).catch(reportPersistenceError)
       }
