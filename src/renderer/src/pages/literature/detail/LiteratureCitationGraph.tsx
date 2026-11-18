@@ -280,6 +280,7 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
   })
   const marker = useId().replace(/:/g, '')
   const inspector = useRef<CitationInspectorHandle>(null)
+  const sidebarToggle = useRef<HTMLButtonElement>(null)
   const [detailsOpen, setDetailsOpen] = useState(
     () => typeof window === 'undefined' || window.innerWidth >= 1024
   )
@@ -372,6 +373,9 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
           }}
           marker={marker}
           visible={visible}
+          sidebarExpanded={detailsOpen}
+          sidebarToggle={sidebarToggle}
+          onToggleSidebar={() => setDetailsOpen((value) => !value)}
           onViewSelected={() => {
             setDetailsOpen(true)
             inspector.current?.focus()
@@ -379,9 +383,12 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
         />
         <LiteratureCitationInspector
           ref={inspector}
+          toggle={sidebarToggle}
           expanded={detailsOpen}
           onExpandedChange={setDetailsOpen}
           model={{
+            filter: controller.filter,
+            setDirection: controller.setDirection,
             selected: controller.selected,
             selectedNode: controller.selectedNode,
             graph: controller.graph,

@@ -1,7 +1,8 @@
 import { CitationAbstract } from './LiteratureDetailText'
 import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, ChevronRight, List, Inbox, FileText } from 'lucide-react'
+import { List, Inbox, FileText } from 'lucide-react'
+import { Tabs } from 'radix-ui'
 import { Button } from '@/components/ui/button'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { fullCreatorLabel, getExternalLiteratureUrl } from '../literature-item-display'
@@ -11,7 +12,15 @@ import type { CitationGraphController } from './useCitationGraphController'
 
 export type CitationInspectorModel = Pick<
   CitationGraphController,
-  'selected' | 'selectedNode' | 'graph' | 'blocked' | 'saving' | 'save' | 'exploreSelected'
+  | 'selected'
+  | 'selectedNode'
+  | 'graph'
+  | 'blocked'
+  | 'saving'
+  | 'save'
+  | 'exploreSelected'
+  | 'filter'
+  | 'setDirection'
 > & {
   setSelected(id: string): void
   receipt: CitationGraphController['receipts'][string] | undefined
@@ -30,6 +39,7 @@ export function LiteratureCitationInspector({
   visible,
   expanded,
   onExpandedChange,
+  toggle,
   onOpenInbox,
   ref
 }: {
@@ -41,6 +51,7 @@ export function LiteratureCitationInspector({
   visible: boolean
   expanded: boolean
   onExpandedChange(expanded: boolean): void
+  toggle: React.RefObject<HTMLButtonElement | null>
   onOpenInbox?(): void
   ref: React.Ref<CitationInspectorHandle>
 }): React.JSX.Element {
@@ -59,8 +70,9 @@ export function LiteratureCitationInspector({
     exploreSelected
   } = model
   const [listOpen, setListOpen] = useState(true)
-  const listScroll = useRef(0)
-  const toggle = useRef<HTMLButtonElement>(null)
+  const [listDirection, setListDirection] = useState<'references' | 'citations'>('references')
+  const direction = model.filter === 'all' ? listDirection : model.filter
+  const listScroll = useRef({ references: 0, citations: 0 })
   const pane = useRef<HTMLElement>(null)
   const outer = useRef<HTMLDivElement>(null)
   const inspectorTitle = useRef<HTMLHeadingElement>(null)
@@ -80,7 +92,7 @@ export function LiteratureCitationInspector({
       pendingFocus.current = false
       inspectorTitle.current?.focus({ preventScroll: true })
     }
-  }, [expanded, resetScroll])
+  }, [expanded, resetScroll, toggle])
   useLayoutEffect(() => {
     if (visible && graph && outer.current) outer.current.scrollTop = scroll.current
   }, [visible, graph])
@@ -92,23 +104,23 @@ export function LiteratureCitationInspector({
     ref,
     () => ({
       showDetails() {
-        if (listOpen) listScroll.current = outer.current?.scrollTop ?? 0
+        if (listOpen) listScroll.current[direction] = outer.current?.scrollTop ?? 0
         setListOpen(false)
         resetScroll()
       },
       focus() {
-        if (listOpen) listScroll.current = outer.current?.scrollTop ?? 0
+        if (listOpen) listScroll.current[direction] = outer.current?.scrollTop ?? 0
         setListOpen(false)
         pendingFocus.current = !expanded
         resetScroll()
         inspectorTitle.current?.focus({ preventScroll: true })
       }
     }),
-    [expanded, resetScroll, listOpen]
+    [expanded, resetScroll, listOpen, direction]
   )
   useLayoutEffect(() => {
-    if (outer.current) outer.current.scrollTop = listOpen ? listScroll.current : 0
-  }, [listOpen])
+    if (outer.current) outer.current.scrollTop = listOpen ? listScroll.current[direction] : 0
+  }, [listOpen, direction, expanded])
   const relationLabel = (relation: CitationGraphRelation): string =>
     relation === 'references'
       ? t('References')
@@ -125,7 +137,7 @@ export function LiteratureCitationInspector({
         aria-pressed={selectedNode?.id === node.id}
         className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left hover:bg-muted aria-pressed:bg-primary/10 focus-visible:outline-2 focus-visible:outline-ring"
         onClick={() => {
-          listScroll.current = outer.current?.scrollTop ?? 0
+          listScroll.current[direction] = outer.current?.scrollTop ?? 0
           setSelected(node.id)
           setListOpen(false)
           resetScroll()
@@ -176,59 +188,16 @@ export function LiteratureCitationInspector({
             ?.focus()
         } else collapse()
       }}
-      className={`flex min-h-0 flex-col overflow-x-hidden overflow-y-auto overscroll-contain border-t border-border-300 bg-background lg:border-t-0 lg:border-l ${expanded ? 'sm:max-h-[42vh] lg:max-h-none lg:w-80' : 'lg:w-11'}`}
+      className={
+        expanded
+          ? 'flex min-h-0 flex-col overflow-x-hidden overflow-y-auto overscroll-contain border-t border-border-300 bg-background sm:max-h-[42vh] lg:max-h-none lg:w-80 lg:border-t-0 lg:border-l'
+          : 'hidden'
+      }
     >
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border-300 px-2">
-        <Button
-          ref={toggle}
-          size="sm"
-          variant="ghost"
-          data-citation-inspector-toggle
-          aria-label={listOpen ? t('Paper list') : t('Selected paper')}
-          title={
-            listOpen ? t('Paper list') : (selectedNode?.record.item.title ?? t('Selected paper'))
-          }
-          aria-expanded={expanded}
-          aria-controls={`${marker}-inspector-content`}
-          className={`min-w-0 flex-1 justify-start gap-2 ${!expanded ? 'lg:justify-center lg:px-0' : ''}`}
-          onClick={() => {
-            if (expanded) collapse()
-            else {
-              onExpandedChange(true)
-            }
-          }}
-        >
-          {expanded ? (
-            <ChevronDown className="size-4 shrink-0" aria-hidden="true" />
-          ) : (
-            <ChevronRight className="size-4 shrink-0" aria-hidden="true" />
-          )}
-          <span className={`min-w-0 truncate text-xs ${!expanded ? 'lg:hidden' : ''}`}>
-            {expanded ? (
-              listOpen ? (
-                t('Paper list')
-              ) : (
-                t('Selected paper')
-              )
-            ) : (
-              <span
-                data-citation-inspector-summary
-                className="flex min-w-0 flex-col items-start leading-tight"
-              >
-                <span className="max-w-full truncate">
-                  {listOpen
-                    ? t('Paper list')
-                    : (selectedNode?.record.item.title ?? t('Selected paper'))}
-                </span>
-                {selectedNode && !listOpen ? (
-                  <span className="max-w-full truncate text-[10px] font-normal text-muted-foreground">
-                    {relationLabel(selectedNode.relation)}
-                  </span>
-                ) : null}
-              </span>
-            )}
-          </span>
-        </Button>
+        <h3 className="min-w-0 flex-1 truncate px-1 text-sm font-medium">
+          {listOpen ? t('Paper list') : t('Selected paper')}
+        </h3>
         {expanded && onOpenInbox ? (
           <Button
             size="icon-sm"
@@ -251,7 +220,7 @@ export function LiteratureCitationInspector({
             aria-expanded={listOpen}
             aria-controls={`${marker}-paper-list`}
             onClick={() => {
-              if (listOpen) listScroll.current = outer.current?.scrollTop ?? 0
+              if (listOpen) listScroll.current[direction] = outer.current?.scrollTop ?? 0
               setListOpen((value) => !value)
             }}
           >
@@ -263,17 +232,64 @@ export function LiteratureCitationInspector({
           </Button>
         ) : null}
       </div>
-      <div
+      <Tabs.Root
+        value={direction}
+        onValueChange={(value) => {
+          const next = value as typeof direction
+          listScroll.current[direction] = outer.current?.scrollTop ?? 0
+          setListDirection(next)
+          if (model.filter !== 'all') model.setDirection(next)
+        }}
         id={`${marker}-inspector-content`}
         hidden={!expanded}
         className={expanded ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
       >
-        <div
+        {listOpen ? (
+          <Tabs.List
+            aria-label={t('Paper list')}
+            className="flex shrink-0 border-b border-border-300 px-3"
+          >
+            {(['references', 'citations'] as const).map((value) => {
+              const loaded =
+                statusModel.unfilteredGraph?.nodes.filter(
+                  (node) => !node.center && (node.relation === value || node.relation === 'both')
+                ).length ?? 0
+              return (
+                <Tabs.Trigger
+                  key={value}
+                  value={value}
+                  disabled={
+                    model.filter !== 'all' &&
+                    (statusModel.interactionBusy || statusModel.invalidated)
+                  }
+                  className="flex min-w-0 flex-1 items-center justify-center gap-2 border-b-2 border-transparent px-2 py-3 text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-50 data-[state=active]:border-primary data-[state=active]:text-primary"
+                >
+                  {value === 'references' ? t('References') : t('Cited by')}
+                  {statusModel.states[value].pages > 0 ? (
+                    <span
+                      className="tabular-nums"
+                      title={t('Loaded: {{loaded}}', { loaded })}
+                      aria-label={t('Loaded: {{loaded}}', { loaded })}
+                    >
+                      {loaded}
+                    </span>
+                  ) : null}
+                </Tabs.Trigger>
+              )
+            })}
+          </Tabs.List>
+        ) : null}
+        <Tabs.Content
+          forceMount
+          value={direction}
           ref={outer}
           data-citation-inspector
           data-citation-graph-scroll
           onScroll={(event) => {
-            if (visible) scroll.current = event.currentTarget.scrollTop
+            if (visible && expanded) {
+              scroll.current = event.currentTarget.scrollTop
+              if (listOpen) listScroll.current[direction] = event.currentTarget.scrollTop
+            }
           }}
           className="min-h-24 flex-1 overflow-y-auto overscroll-auto px-3 py-3 sm:px-4"
         >
@@ -344,11 +360,9 @@ export function LiteratureCitationInspector({
           ) : null}
           {listOpen && visible ? (
             <section id={`${marker}-paper-list`} aria-label={t('Paper list')}>
-              {graph?.nodes.find((node) => node.center) ? (
-                <ol>{paperRow(graph.nodes.find((node) => node.center)!)}</ol>
-              ) : null}
               <LiteratureCitationStatus
                 model={statusModel}
+                direction={direction}
                 sourceName={sourceName}
                 onRestart={onRestart}
                 renderRecords={(direction) => (
@@ -364,7 +378,7 @@ export function LiteratureCitationInspector({
               />
             </section>
           ) : null}
-        </div>
+        </Tabs.Content>
         {selectedNode && (!selectedNode.center || temporaryCenter || receipt) ? (
           <div
             data-citation-inspector-actions
@@ -411,7 +425,7 @@ export function LiteratureCitationInspector({
             ) : null}
           </div>
         ) : null}
-      </div>
+      </Tabs.Root>
     </section>
   )
 }

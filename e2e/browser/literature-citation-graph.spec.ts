@@ -639,3 +639,44 @@ test('all relationships merge a mutual paper while retaining both actual arrow d
     await expect(hidden).toHaveCount(0)
   }
 })
+
+test('keeps sidebar category tabs fixed and removes the collapsed rail', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await openCitationGraph(page, citationGraphPath, undefined, 'all')
+  const frame = page.locator('[data-current-frame="true"]')
+  const inspector = frame.locator('[data-citation-inspector-pane]')
+  const tabs = inspector.getByRole('tablist', { name: 'Paper list' })
+  const references = tabs.getByRole('tab', { name: /^References/ })
+  const citing = tabs.getByRole('tab', { name: /^Cited by/ })
+  const body = inspector.locator('[data-citation-inspector]')
+  const before = (await tabs.boundingBox())!
+  await body.hover()
+  await page.mouse.wheel(0, 500)
+  await expect.poll(() => body.evaluate((el) => el.scrollTop)).toBeGreaterThan(100)
+  expect((await tabs.boundingBox())!.y).toBe(before.y)
+  const saved = await body.evaluate((el) => el.scrollTop)
+  await citing.click()
+  await expect(inspector.getByRole('region', { name: 'References', exact: true })).toHaveCount(0)
+  await expect(inspector.getByRole('region', { name: 'Papers citing this paper' })).toBeVisible()
+  await expect.poll(() => body.evaluate((el) => el.scrollTop)).toBe(0)
+  await references.focus()
+  await page.keyboard.press('Enter')
+  await expect(references).toHaveAttribute('aria-selected', 'true')
+  await expect.poll(() => body.evaluate((el) => el.scrollTop)).toBe(saved)
+  await page.screenshot({ path: info.outputPath('sidebar-fixed-tabs.png') })
+  const canvas = frame.locator('[data-citation-canvas]')
+  const width = (await canvas.boundingBox())!.width
+  await frame.getByRole('button', { name: 'Collapse sidebar panel' }).click()
+  await expect(inspector).toBeHidden()
+  expect((await canvas.boundingBox())!.width).toBeGreaterThan(width + 300)
+  const expandedCanvas = (await canvas.boundingBox())!
+  const workspace = (await frame.locator('[data-citation-workspace]').boundingBox())!
+  expect(
+    Math.abs(expandedCanvas.x + expandedCanvas.width - workspace.x - workspace.width)
+  ).toBeLessThan(2)
+  await page.screenshot({ path: info.outputPath('sidebar-fully-collapsed.png') })
+  await frame.getByRole('button', { name: 'Expand sidebar panel' }).click()
+  await expect(inspector).toBeVisible()
+  await expect(references).toHaveAttribute('aria-selected', 'true')
+  await expect.poll(() => body.evaluate((el) => el.scrollTop)).toBe(saved)
+})

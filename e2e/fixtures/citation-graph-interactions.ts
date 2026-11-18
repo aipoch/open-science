@@ -461,7 +461,7 @@ export async function verifyCitationInspectorLifecycle(page: Page): Promise<void
   await details.click()
   await expect(details).toHaveAttribute('aria-expanded', 'false')
   await expect(node(page, 1100)).toHaveAttribute('aria-pressed', 'true')
-  await expect(details).toHaveAttribute('title', paperTitle(1100))
+  await expect(details).toHaveAttribute('title', 'Expand sidebar panel')
 
   // Reopening the disclosure is an in-place return to the same paper, without a lookup.
   await details.click()

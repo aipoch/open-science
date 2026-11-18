@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Shrink } from 'lucide-react'
+import { Shrink, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ZoomControls } from '@/components/ui/zoom-controls'
 import { fullCreatorLabel } from '../literature-item-display'
@@ -34,12 +34,18 @@ export function LiteratureCitationCanvas({
   model,
   marker,
   visible,
-  onViewSelected
+  onViewSelected,
+  sidebarExpanded,
+  sidebarToggle,
+  onToggleSidebar
 }: {
   model: CitationCanvasModel
   marker: string
   visible: boolean
   onViewSelected(): void
+  sidebarExpanded: boolean
+  sidebarToggle: React.RefObject<HTMLButtonElement | null>
+  onToggleSidebar(): void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const {
@@ -366,6 +372,24 @@ export function LiteratureCitationCanvas({
             canZoomIn={zoom < 3}
             canZoomOut={zoom > 0.5}
           />
+          <Button
+            ref={sidebarToggle}
+            variant="ghost"
+            size="icon-xs"
+            data-citation-inspector-toggle
+            className="text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
+            aria-expanded={sidebarExpanded}
+            aria-controls={`${marker}-inspector-content`}
+            aria-label={sidebarExpanded ? t('Collapse sidebar panel') : t('Expand sidebar panel')}
+            title={sidebarExpanded ? t('Collapse sidebar panel') : t('Expand sidebar panel')}
+            onClick={onToggleSidebar}
+          >
+            {sidebarExpanded ? (
+              <PanelRightClose aria-hidden="true" />
+            ) : (
+              <PanelRightOpen aria-hidden="true" />
+            )}
+          </Button>
           <span className="sr-only" data-citation-source>
             {t('Source: {{source}}', { source: sourceName })}
           </span>
