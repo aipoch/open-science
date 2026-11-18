@@ -8,6 +8,8 @@ const object = (value: unknown): ObjectValue =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as ObjectValue) : {}
 const identifier = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,199}$/.test(value)
+const toolIdentity = (value: unknown): value is string =>
+  typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199}$/.test(value)
 const numbers =
   'settledAt endedAt acceptedAt uncertainAt dispatchStartedAt sequence laneSequence queuedAt callIndex version schemaVersion number revision createdAt updatedAt completedAt failedAt startedAt archivedAt sortIndex index inputTokens cacheTokens cachedReadTokens cachedWriteTokens outputTokens turnCount contextUsedTokens contextWindowSize terminalExitCode computeConcurrencyLimit round maxRounds respondedAt'.split(
     ' '
@@ -394,6 +396,16 @@ export function projectDiagnosticLog(
   if (typeof source.msg === 'string') result.event = diagnosticText(source.msg, options, 2_000)
   const data = object(source.data)
   const diagnostic = fields(data, options)
+  if (source.msg === 'tool call failed') {
+    // 工具失败事件本身是诊断边界；保留安全身份，继续丢弃调用参数和返回值。
+    diagnostic.toolCallObserved = true
+    if (typeof data.tool === 'string') {
+      diagnostic.hasReportedToolName = true
+      if (toolIdentity(data.tool)) diagnostic.tool = diagnosticText(data.tool, options, 200)
+    }
+    if (identifier(data.toolCallId))
+      diagnostic.toolCallId = diagnosticText(data.toolCallId, options, 200)
+  }
   if (source.scope === 'research-video') {
     if (
       typeof data.totalUnits === 'number' &&
