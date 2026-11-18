@@ -86,8 +86,9 @@ describe('independent protocol adapter subpaths', () => {
         )
     })
     await expect(finish(model)).rejects.toMatchObject({
-      code: 'protocol',
-      message: 'Responses protocol error'
+      code: 'provider',
+      message: 'Responses provider error',
+      diagnostics: { source: 'provider-stream', phase: 'provider' }
     })
   })
   it('maps Anthropic Messages SSE thinking, tool use and stop reason', async () => {

@@ -735,20 +735,43 @@ export function createHarnessAcpAgent(directory: string): {
               .catch(async (error: unknown) => {
                 await entry.flush()
                 if (!entry.cancelled) assertKnown(await entry.session.inspect())
-                if (
-                  error instanceof ResponsesError &&
-                  [
+                if (error instanceof ResponsesError) {
+                  const source = error.diagnostics?.source
+                  const providerFailure =
+                    source === 'provider-http' ||
+                    source === 'provider-stream' ||
+                    source === 'provider-transport'
+                  const knownProviderCode = [
                     'insufficient_quota',
                     'rate_limit_exceeded',
                     'model_not_found',
                     'authentication_error'
                   ].includes(error.code)
-                )
-                  throw new acp.RequestError(-32603, error.message, {
-                    errorName: 'APIError',
-                    errorKind: error.code,
-                    ...(error.status === undefined ? {} : { status: error.status })
-                  })
+                  throw new acp.RequestError(
+                    -32603,
+                    source === 'provider-transport'
+                      ? 'Could not connect to the model provider'
+                      : error.message,
+                    {
+                      ...(knownProviderCode || providerFailure
+                        ? {
+                            errorName: 'APIError',
+                            errorKind:
+                              source === 'provider-transport' ? 'connection_error' : error.code
+                          }
+                        : {}),
+                      ...(error.diagnostics?.requestId
+                        ? { requestId: error.diagnostics.requestId }
+                        : {}),
+                      adapter: 'responses',
+                      adapterCode: error.code,
+                      ...(error.status === undefined || source === 'provider-transport'
+                        ? {}
+                        : { status: error.status }),
+                      ...(error.diagnostics ? { diagnostics: error.diagnostics } : {})
+                    }
+                  )
+                }
                 throw error
               })
             await entry.flush()

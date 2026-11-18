@@ -109,7 +109,11 @@ export async function* dataEvents(
   try {
     while (true) {
       signal.throwIfAborted()
-      const chunk = await reader.read()
+      const chunk = await reader.read().catch(() => {
+        signal.throwIfAborted()
+        // Only a body read rejection establishes transport failure; decoding stays separate.
+        throw new ChatCompletionsError('network')
+      })
       signal.throwIfAborted()
       size += chunk.value?.byteLength ?? 0
       if (size > limit) throw new ChatCompletionsError('limit')

@@ -591,6 +591,20 @@ export function projectDiagnosticLog(
     )
     if (projectedError) diagnostic.error = projectedError
   }
+  if (
+    source.scope === 'provider-response' &&
+    ['provider-http', 'provider-stream', 'provider-transport'].includes(String(data.source))
+  ) {
+    const response: ObjectValue = { source: data.source }
+    for (const key of ['model', 'endpoint', 'origin', 'message', 'code', 'type', 'transportCode']) {
+      if (typeof data[key] === 'string')
+        response[key] = diagnosticText(data[key], options, key === 'message' ? 1024 : 200)
+    }
+    if (typeof data.status === 'number' && Number.isInteger(data.status))
+      response.status = data.status
+    if (typeof data.bodyComplete === 'boolean') response.bodyComplete = data.bodyComplete
+    diagnostic.providerResponse = response
+  }
   if (Object.keys(diagnostic).length) result.diagnostics = diagnostic
   return result
 }

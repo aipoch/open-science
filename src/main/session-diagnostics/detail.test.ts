@@ -83,3 +83,39 @@ describe('diagnostic error projection', () => {
     expect(serialized).toContain('[truncated]')
   })
 })
+
+it('exports only the fixed Responses parser evidence inside ACP data', () => {
+  const result = projectDiagnosticError({
+    code: -32603,
+    message: 'Responses HTTP 502',
+    data: {
+      adapter: 'responses',
+      diagnostics: {
+        source: 'provider-http',
+        phase: 'response',
+        httpStatus: 502,
+        eventCount: 0,
+        receivedDone: false,
+        receivedCompletion: false,
+        requestId: 'req-123',
+        body: 'PRIVATE_BODY',
+        headers: { authorization: 'PRIVATE_KEY' }
+      }
+    }
+  })
+  expect(result).toMatchObject({
+    data: {
+      adapter: 'responses',
+      diagnostics: {
+        source: 'provider-http',
+        phase: 'response',
+        httpStatus: 502,
+        eventCount: 0,
+        receivedDone: false,
+        receivedCompletion: false,
+        requestId: 'req-123'
+      }
+    }
+  })
+  expect(JSON.stringify(result)).not.toMatch(/PRIVATE_BODY|PRIVATE_KEY/)
+})

@@ -1481,3 +1481,198 @@ it('injects Schedule identity outside model arguments and fences a cancelled per
   expect(f.approvals).toHaveLength(approvals)
   expect(create).toHaveBeenCalledTimes(1)
 })
+
+it.each([500, 502, 'missing-completion'] as const)(
+  'preserves Responses %s evidence through the real ACP boundary',
+  async (scenario) => {
+    const server = createServer(async (request, response) => {
+      request.resume()
+      await once(request, 'end')
+      if (typeof scenario === 'number') {
+        response.writeHead(scenario, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ error: { message: 'private account' } }))
+      } else {
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end(
+          'data: {"type":"response.output_text.delta","delta":"partial"}\n\ndata: [DONE]\n\n'
+        )
+      }
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    cleanup.push(async () => {
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    })
+    const f = await fixture(
+      `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/responses`
+    )
+    const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: []
+    })
+    const failure = await prompt(f.connection, sessionId).catch((error: unknown) => error)
+    expect(failure).toMatchObject({
+      code: -32603,
+      data: {
+        adapter: 'responses',
+        adapterCode: typeof scenario === 'number' ? 'http' : 'protocol',
+        diagnostics: {
+          phase: typeof scenario === 'number' ? 'response' : 'missing-completion',
+          httpStatus: typeof scenario === 'number' ? scenario : 200,
+          eventCount: typeof scenario === 'number' ? 0 : 1
+        }
+      }
+    })
+    expect(JSON.stringify(failure)).not.toContain('private account')
+  }
+)
+
+it('classifies a provider disconnect after partial Responses output through real HTTP and ACP', async () => {
+  let upstreamResponse: ServerResponse | undefined
+  const server = createServer(async (request, response) => {
+    request.resume()
+    await once(request, 'end')
+    upstreamResponse = response
+    response.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'x-request-id': 'stream-request-123'
+    })
+    response.write('data: {"type":"response.output_text.delta","delta":"partial"}\n\n')
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  cleanup.push(async () => {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  })
+  const bridge = new ProtocolForwardingBridge(
+    [
+      {
+        id: 'target',
+        wire: 'responses',
+        endpoint: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/responses`,
+        model: 'fixture'
+      }
+    ],
+    'target',
+    fetch,
+    { token: 'local-test-token' }
+  )
+  const bridgeConnection = await bridge.start()
+  cleanup.push(() => bridge.close())
+  const f = await fixture(bridgeConnection.baseUrl + '/v1/responses')
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: []
+  })
+  const pending = prompt(f.connection, sessionId).catch((error: unknown) => error)
+  await vi.waitFor(() => expect(JSON.stringify(f.updates)).toContain('partial'))
+  upstreamResponse!.destroy(new Error('private upstream connection details'))
+  const failure = await pending
+  expect(failure).toMatchObject({
+    code: -32603,
+    data: {
+      errorName: 'APIError',
+      errorKind: 'connection_error',
+      adapter: 'responses',
+      adapterCode: 'network',
+      requestId: 'stream-request-123',
+      diagnostics: {
+        source: 'provider-transport',
+        phase: 'stream',
+        httpStatus: 200,
+        eventCount: 1,
+        receivedDone: false,
+        receivedCompletion: false
+      }
+    }
+  })
+  expect(classifyFailure(collectPromptFailureFacts(failure))).toMatchObject({
+    category: 'service',
+    reason: 'service/connection-failed'
+  })
+  expect(JSON.stringify(failure)).not.toContain('private')
+})
+
+it.each(['http', 'auth', 'network', 'application', 'stream'] as const)(
+  'classifies %s failures through upstream, forwarding bridge, Responses and ACP',
+  async (scenario) => {
+    const target = new ProtocolForwardingBridge(
+      [
+        {
+          id: 'target',
+          wire: 'responses',
+          endpoint: 'https://fixture.example/v1/responses',
+          model: 'fixture',
+          key: 'secret-fixture-key',
+          ...(scenario === 'application'
+            ? {
+                adaptRequest: () => {
+                  throw new Error('private application state')
+                }
+              }
+            : {})
+        }
+      ],
+      'target',
+      async () => {
+        if (scenario === 'network') throw new TypeError('connect ECONNRESET secret-fixture-key')
+        if (scenario === 'auth')
+          return new Response(JSON.stringify({ error: { message: 'Unauthorized' } }), {
+            status: 401
+          })
+        if (scenario === 'http')
+          return new Response(JSON.stringify({ error: { message: 'Upstream failed' } }), {
+            status: 502,
+            headers: {
+              'x-request-id': 'upstream-123',
+              'x-open-science-error-source': 'application'
+            }
+          })
+        return new Response(
+          'data: {"type":"response.failed","response":{"error":{"code":"server_error","message":"Upstream failed"}}}\n\n',
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      },
+      { token: 'local-test-token' }
+    )
+    const targetConnection = await target.start()
+    cleanup.push(() => target.close())
+    const actual = await fixture(targetConnection.baseUrl + '/v1/responses')
+    const { sessionId } = await actual.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: actual.directory,
+      mcpServers: []
+    })
+    const failure = await prompt(actual.connection, sessionId).catch((error: unknown) => error)
+    expect(failure).toMatchObject({
+      code: -32603,
+      data: {
+        adapter: 'responses',
+        diagnostics: {
+          source:
+            scenario === 'http' || scenario === 'auth'
+              ? 'provider-http'
+              : scenario === 'network'
+                ? 'provider-transport'
+                : scenario === 'stream'
+                  ? 'provider-stream'
+                  : 'application'
+        }
+      }
+    })
+    const classified = classifyFailure(
+      collectPromptFailureFacts(failure, { providerName: 'MiniMax', model: 'MiniMax-M3.1-Flash' })
+    )
+    expect(classified.category).toBe(
+      scenario === 'application' ? 'internal' : scenario === 'auth' ? 'configuration' : 'service'
+    )
+    if (scenario === 'auth') expect(classified.reason).toBe('configuration/auth-failed')
+    if (scenario === 'http') {
+      expect(classified.reason).toBe('service/unavailable')
+      expect(classified.diagnostics.requestId).toBe('upstream-123')
+    }
+    if (scenario === 'network') expect(classified.reason).toBe('service/connection-failed')
+    expect(JSON.stringify(failure)).not.toMatch(/secret-fixture-key|private application state/)
+  }
+)

@@ -289,6 +289,28 @@ describe('independent Chat Completions wire adapter', () => {
     ).rejects.toThrow('Chat Completions network error')
   })
 
+  it('redacts response-body transport failures after partial output', async () => {
+    let bodyController!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        bodyController = controller
+        controller.enqueue(new TextEncoder().encode(encode([chunk({ content: 'partial' })], false)))
+      }
+    })
+    const model = adapter(
+      async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } })
+    )
+    const stream = model.stream(request(), new AbortController().signal)[Symbol.asyncIterator]()
+    expect((await stream.next()).value).toMatchObject({ type: 'text-delta' })
+    bodyController.error(new TypeError('private endpoint disconnected'))
+    const error = await stream.next().catch((error: unknown) => error)
+    expect(error).toMatchObject({
+      code: 'network',
+      diagnostics: { phase: 'stream', eventCount: 1, receivedDone: false }
+    })
+    expect(JSON.stringify(error)).not.toContain('private')
+  })
+
   it('closes the reader when cancelled or when a consumer stops reading deltas', async () => {
     const controller = new AbortController()
     const cancel = vi.fn()
