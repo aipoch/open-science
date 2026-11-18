@@ -8,6 +8,7 @@ import { createResearchFilmLifecycle } from '../research-video/lifecycle'
 import { composeResearchFilm } from './research-film'
 import { RestrictedInferenceError } from '../acp/restricted-inference-contract'
 import { computePreflight } from '../settings/preflight'
+import { RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE } from '../../shared/research-video-presentation'
 
 const mocks = vi.hoisted(() => ({
   root: '',
@@ -49,6 +50,9 @@ const outcomes = [
   'target-unavailable',
   'target-stalled',
   'target-timeout',
+  'model-timeout',
+  'model-cancelled',
+  'model-failure-after-deadline',
   'usage-stalled',
   'usage-timeout',
   'session-missing',
@@ -347,6 +351,73 @@ it.each(outcomes)(
         )
         expect(mocks.run).not.toHaveBeenCalled()
         expect(JSON.stringify(mocks.log.mock.calls)).not.toContain('private target failure')
+        return
+      }
+      if (
+        outcome === 'model-timeout' ||
+        outcome === 'model-cancelled' ||
+        outcome === 'model-failure-after-deadline'
+      ) {
+        const deadline = new AbortController()
+        const realTimeout = AbortSignal.timeout
+        const timeout = vi
+          .spyOn(AbortSignal, 'timeout')
+          .mockImplementation((ms) => (ms === 300_000 ? deadline.signal : realTimeout(ms)))
+        mocks.run.mockImplementation(
+          ({ signal }: { signal: AbortSignal }) =>
+            new Promise((_, reject) => {
+              signal.addEventListener(
+                'abort',
+                () =>
+                  reject(
+                    outcome === 'model-failure-after-deadline'
+                      ? new RestrictedInferenceError(
+                          'transport-unavailable',
+                          'Transport failed before cleanup.'
+                        )
+                      : new RestrictedInferenceError(
+                          'cancelled',
+                          'Restricted inference was cancelled.'
+                        )
+                  ),
+                { once: true }
+              )
+            })
+        )
+        try {
+          await owner.start(request)
+          await vi.waitFor(() => expect(mocks.run).toHaveBeenCalledOnce())
+          if (outcome !== 'model-cancelled')
+            deadline.abort(new DOMException('Timed out', 'TimeoutError'))
+          else owner.cancel(request)
+          await vi.waitFor(async () => {
+            const status = await owner.status(request)
+            expect(status.progress?.phase).toBe(
+              outcome !== 'model-cancelled' ? 'failed' : 'cancelled'
+            )
+            expect(status.error).toBe(
+              outcome === 'model-timeout'
+                ? RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE
+                : outcome === 'model-failure-after-deadline'
+                  ? 'Transport failed before cleanup.'
+                  : undefined
+            )
+          })
+          expect(mocks.log).toHaveBeenCalledWith(
+            'film model failure',
+            expect.objectContaining({
+              errorCategory:
+                outcome === 'model-timeout'
+                  ? 'timeout'
+                  : outcome === 'model-failure-after-deadline'
+                    ? 'transport-unavailable'
+                    : 'cancelled'
+            })
+          )
+          expect(mocks.run).toHaveBeenCalledOnce()
+        } finally {
+          timeout.mockRestore()
+        }
         return
       }
       if (

@@ -7834,7 +7834,6 @@
     "Generate research film": "연구 단편 영상 생성",
     "View research film": "연구 단편 영상 보기",
     "Play research film": "연구 단편 영상 재생",
-    "Continue generation": "생성 계속",
     "Generating animations…": "애니메이션 생성 중…",
     "Writing research film…": "연구 단편 영상 구성 중…",
     "Generating a new film may take several minutes. Continue?": "새 영상을 생성하는 데 몇 분이 걸릴 수 있습니다. 계속하시겠습니까?",
@@ -8386,6 +8385,15 @@
     "Compare with input image": "입력 이미지와 비교",
     "Video ready": "동영상 준비 완료",
     "Your {{resolution}} video has been saved.": "{{resolution}} 동영상이 저장되었습니다.",
-    "Play video": "동영상 재생"
+    "Play video": "동영상 재생",
+    "The model reached its output limit. Increase the limit or select another model.": "모델이 출력 한도에 도달했습니다. 한도를 늘리거나 다른 모델을 선택하세요.",
+    "Could not retrieve generation status.": "생성 상태를 가져오지 못했습니다.",
+    "Generation preparation timed out. Try again.": "생성 준비 시간이 초과되었습니다. 다시 시도하세요.",
+    "The model declined to generate this content.": "모델이 이 콘텐츠 생성을 거부했습니다.",
+    "Model request timed out. Try again.": "모델 요청 시간이 초과되었습니다. 다시 시도하세요.",
+    "Retry_step": "다시 시도",
+    "Waiting for storage. Try again after it responds.": "저장소의 응답을 기다리는 중입니다. 응답이 돌아오면 다시 시도하세요.",
+    "Model setup timed out. Try again.": "모델 준비 시간이 초과되었습니다. 다시 시도하세요.",
+    "The model stopped before completing this step. Try again.": "이 단계를 완료하기 전에 모델이 중단되었습니다. 다시 시도하세요."
   }
 }

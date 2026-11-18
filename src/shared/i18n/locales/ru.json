@@ -8317,7 +8317,6 @@
     "Generate research film": "Создать исследовательский фильм",
     "View research film": "Посмотреть исследовательский фильм",
     "Play research film": "Воспроизвести исследовательский фильм",
-    "Continue generation": "Продолжить создание",
     "Generating animations…": "Создание анимаций…",
     "Writing research film…": "Подготовка исследовательского фильма…",
     "Generating a new film may take several minutes. Continue?": "Создание нового фильма может занять несколько минут. Продолжить?",
@@ -8893,6 +8892,15 @@
     "Compare with input image": "Сравнить с исходным изображением",
     "Video ready": "Видео готово",
     "Your {{resolution}} video has been saved.": "Видео в разрешении {{resolution}} сохранено.",
-    "Play video": "Воспроизвести видео"
+    "Play video": "Воспроизвести видео",
+    "The model reached its output limit. Increase the limit or select another model.": "Модель достигла лимита вывода. Увеличьте лимит или выберите другую модель.",
+    "Could not retrieve generation status.": "Не удалось получить статус создания.",
+    "Model request timed out. Try again.": "Время ожидания ответа модели истекло. Повторите попытку.",
+    "Model setup timed out. Try again.": "Время подготовки модели истекло. Повторите попытку.",
+    "Generation preparation timed out. Try again.": "Время подготовки к созданию истекло. Повторите попытку.",
+    "The model declined to generate this content.": "Модель отказалась создавать это содержимое.",
+    "Retry_step": "Повторить попытку",
+    "Waiting for storage. Try again after it responds.": "Ожидание ответа хранилища. Повторите попытку после восстановления ответа.",
+    "The model stopped before completing this step. Try again.": "Модель остановилась до завершения этого шага. Повторите попытку."
   }
 }

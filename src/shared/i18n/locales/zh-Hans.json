@@ -7836,7 +7836,6 @@
     "Generate research film": "生成研究短片",
     "View research film": "查看研究短片",
     "Play research film": "播放研究短片",
-    "Continue generation": "继续生成",
     "Generating animations…": "生成动画…",
     "Writing research film…": "正在编写研究短片…",
     "Generating a new film may take several minutes. Continue?": "生成新短片可能需要几分钟，是否继续？",
@@ -8388,6 +8387,15 @@
     "Compare with input image": "与输入图对比",
     "Video ready": "视频已就绪",
     "Your {{resolution}} video has been saved.": "您的 {{resolution}} 视频已保存。",
-    "Play video": "播放视频"
+    "Play video": "播放视频",
+    "The model reached its output limit. Increase the limit or select another model.": "模型已达到输出上限。请提高上限或选择其他模型。",
+    "Could not retrieve generation status.": "无法获取生成状态。",
+    "Generation preparation timed out. Try again.": "生成准备超时，请重新尝试。",
+    "The model declined to generate this content.": "模型拒绝生成此内容。",
+    "Model request timed out. Try again.": "模型请求超时，请重新尝试。",
+    "Retry_step": "重新尝试",
+    "Waiting for storage. Try again after it responds.": "正在等待存储响应，请在恢复后重新尝试。",
+    "Model setup timed out. Try again.": "模型准备超时，请重新尝试。",
+    "The model stopped before completing this step. Try again.": "模型在完成此步骤前中断，请重新尝试。"
   }
 }
