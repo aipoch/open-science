@@ -1,4 +1,9 @@
-import type { ModelProtocol, OfficialVendorId } from '@aipoch/providers'
+import { isDeepStrictEqual } from 'node:util'
+import {
+  isCatalogModelAvailable,
+  resolveOfficialModelCatalog
+} from '../../shared/provider-model-catalog'
+import type { CatalogModel, ModelProtocol, OfficialVendorId } from '@aipoch/providers'
 import type {
   AgentFrameworkId,
   ProviderType,
@@ -78,6 +83,59 @@ const missingTargetMatchesProbe = (
     missing.endpoint === undefined &&
     missing.frameworkId === undefined)
 
+function retainFailureTargets(
+  failure: NonNullable<StoredProvider['lastValidationFailure']>,
+  targets: ProviderValidationTarget[]
+): StoredProvider['lastValidationFailure'] {
+  if (!targets.length) return undefined
+  const retained = { ...failure, target: targets[0] }
+  delete retained.targets
+  if (!failure.target || !providerValidationTargetMatches(failure.target, retained.target)) {
+    // HTTP details belong to the original primary target.
+    delete retained.status
+    delete retained.message
+  }
+  if (targets.length > 1) retained.targets = targets
+  return retained
+}
+
+// A model/protocol verdict belongs to the catalog address that was tested.
+export function reconcileCatalogHealth(
+  previous: StoredProvider,
+  next: StoredProvider
+): StoredProvider {
+  const failure = next.lastValidationFailure
+  if (
+    next.type !== 'official' ||
+    (!next.lastValidatedTarget && !failure?.target) ||
+    isDeepStrictEqual(previous.modelCatalog, next.modelCatalog)
+  )
+    return next
+  const routes = (provider: StoredProvider): Map<string, CatalogModel['routes']> =>
+    new Map(
+      resolveOfficialModelCatalog(provider)
+        .filter(isCatalogModelAvailable)
+        .map((model) => [model.id, model.routes])
+    )
+  const before = routes(previous)
+  const after = routes(next)
+  const stillMatches = ({ model, endpoint }: ProviderValidationTarget): boolean =>
+    !model ||
+    (endpoint
+      ? before.get(model)?.[endpoint] === after.get(model)?.[endpoint]
+      : isDeepStrictEqual(before.get(model), after.get(model)))
+
+  if (next.lastValidatedTarget && !stillMatches(next.lastValidatedTarget))
+    next = { ...next, lastValidatedAt: undefined, lastValidatedTarget: undefined }
+  if (failure?.target) {
+    const targets = failure.targets ?? [failure.target]
+    const remaining = targets.filter(stillMatches)
+    if (remaining.length !== targets.length)
+      next = { ...next, lastValidationFailure: retainFailureTargets(failure, remaining) }
+  }
+  return next
+}
+
 export const buildProviderValidationPatch = (
   provider: StoredProvider,
   result: ValidateProviderResult,
@@ -112,21 +170,10 @@ export const buildProviderValidationPatch = (
     const remaining = target
       ? previousMissingTargets.filter((failed) => !missingTargetMatchesProbe(failed, target))
       : []
-    const retainedFailure =
-      remaining.length > 0 ? { ...priorFailure, target: remaining[0] } : undefined
-    if (retainedFailure) {
-      delete retainedFailure.targets
-      if (!providerValidationTargetMatches(priorFailure.target, retainedFailure.target)) {
-        // Only the primary target owns the stored HTTP details; don't reuse them for another model.
-        delete retainedFailure.status
-        delete retainedFailure.message
-      }
-      if (remaining.length > 1) retainedFailure.targets = remaining
-    }
     return {
       lastValidatedAt: at,
       lastValidatedTarget: target,
-      lastValidationFailure: retainedFailure
+      lastValidationFailure: retainFailureTargets(priorFailure, remaining)
     }
   }
 

@@ -376,54 +376,47 @@ export const providerKindPatch = (
   key: string,
   customApiEndpoint: ModelProtocol = 'messages'
 ): Partial<ProviderFormValue> => {
+  const reset = {
+    key: '',
+    catalogParameters: undefined,
+    vendorId: undefined,
+    region: undefined,
+    model: '',
+    contextWindow: '',
+    maxInputTokens: '',
+    maxOutputTokens: ''
+  }
   if (key === 'codex-subscription') {
     const identity = codexSubscriptionProviderIdentity()
     return {
+      ...reset,
       type: 'codex-shared',
       name: identity.name,
       apiEndpoint: 'responses',
-      baseUrl: '',
-      model: '',
-      contextWindow: '',
-      maxInputTokens: '',
-      maxOutputTokens: '',
-      key: '',
-      vendorId: undefined,
-      region: undefined
+      baseUrl: ''
     }
   }
 
   if (key === 'claude-subscription') {
     const identity = claudeIsolatedProviderIdentity()
     return {
+      ...reset,
       type: 'claude-shared',
       name: identity.name,
       apiEndpoint: 'messages',
-      baseUrl: '',
-      model: '',
-      contextWindow: '',
-      maxInputTokens: '',
-      maxOutputTokens: '',
-      key: '',
-      vendorId: undefined,
-      region: undefined
+      baseUrl: ''
     }
   }
 
   if (key === 'xai-subscription') {
     const identity = xaiSubscriptionProviderIdentity()
     return {
+      ...reset,
       type: 'xai-subscription',
       name: identity.name,
       apiEndpoint: 'responses',
       baseUrl: '',
-      model: defaultVendorModel('xai') ?? '',
-      contextWindow: '',
-      maxInputTokens: '',
-      maxOutputTokens: '',
-      key: '',
-      vendorId: undefined,
-      region: undefined
+      model: defaultVendorModel('xai') ?? ''
     }
   }
 
@@ -431,28 +424,19 @@ export const providerKindPatch = (
     const vendorId = key.slice('official:'.length) as OfficialVendorId
     const vendor = getOfficialVendor(vendorId)
 
-    // No per-provider model: the vendor catalog is fixed and the chosen model is the global selection.
     return {
+      ...reset,
       type: 'official',
       name: vendor?.label,
       vendorId,
-      region: vendor?.regions?.[0]?.id,
-      model: '',
-      contextWindow: '',
-      maxInputTokens: '',
-      maxOutputTokens: ''
+      region: vendor?.regions?.[0]?.id
     }
   }
 
   return {
+    ...reset,
     type: 'custom',
-    apiEndpoint: customApiEndpoint,
-    vendorId: undefined,
-    region: undefined,
-    model: '',
-    contextWindow: '',
-    maxInputTokens: '',
-    maxOutputTokens: ''
+    apiEndpoint: customApiEndpoint
   }
 }
 

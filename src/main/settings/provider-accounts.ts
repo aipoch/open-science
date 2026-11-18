@@ -75,6 +75,7 @@ import {
 } from './provider-runtime-projection'
 import { resolveCustomTokenLimits } from './provider-token-limits'
 import {
+  reconcileCatalogHealth,
   buildProviderValidationPatch,
   targetForValidationResult
 } from './provider-validation-state'
@@ -458,7 +459,11 @@ class ProviderAccountsModule {
       provider,
       existing
     )
-    return { provider, settings, catalogBaseline }
+    return {
+      provider: existing ? reconcileCatalogHealth(existing, provider) : provider,
+      settings,
+      catalogBaseline
+    }
   }
 
   private async upsertProviderNow(request: UpsertProviderRequest): Promise<void> {
@@ -508,12 +513,9 @@ class ProviderAccountsModule {
     const saved = prepared.settings.providers.find(({ id }) => id === prepared.provider.id)
     // Validation metadata can change without a configuration revision. A successful probe of the
     // same connection must not overwrite a newer health observation while waiting to commit.
+    const tested = this.resolveProvider(prepared.provider)
     const expectedValidationState =
-      saved &&
-      this.sameValidationTarget(
-        this.resolveProvider(prepared.provider),
-        this.resolveProvider(saved)
-      )
+      saved && this.sameValidationTarget(tested, this.resolveProvider(saved))
         ? {
             lastValidatedAt: saved.lastValidatedAt,
             lastValidatedTarget: saved.lastValidatedTarget,
@@ -547,7 +549,15 @@ class ProviderAccountsModule {
         {
           catalogBaseline: prepared.catalogBaseline,
           expectedConfigRevision: prepared.expectedConfigRevision,
-          expectedValidationState
+          expectedValidationState,
+          validationMatches: (merged) => {
+            const matches = this.sameValidationTarget(
+              tested,
+              this.resolveProvider(merged, tested.model)
+            )
+            if (!matches) validation.applied = false
+            return matches
+          }
         }
       )
     })
@@ -669,6 +679,18 @@ class ProviderAccountsModule {
         (!current || (current.configRevision ?? 0) !== prepared.expectedConfigRevision)
       )
         return { ...result, applied: false }
+      if (current) {
+        const model = result.testedTarget.model
+        const original = prepared.settings.providers.find(({ id }) => id === current.id)
+        if (original && !isDeepStrictEqual(original.modelCatalog, current.modelCatalog)) {
+          const tested = this.resolveProvider(prepared.provider, model)
+          if (
+            this.sameValidationTarget(tested, this.resolveProvider(original, model)) &&
+            !this.sameValidationTarget(tested, this.resolveProvider(current, model))
+          )
+            return { ...result, applied: false }
+        }
+      }
       return result
     }
     if (request.draft) {
@@ -1065,6 +1087,7 @@ class ProviderAccountsModule {
       left.codexTransport === right.codexTransport &&
       left.baseUrl === right.baseUrl &&
       left.chatCompletionsBaseUrl === right.chatCompletionsBaseUrl &&
+      left.responsesBaseUrl === right.responsesBaseUrl &&
       left.model === right.model &&
       left.key === right.key &&
       (left.apiEndpoints ?? []).join(',') === (right.apiEndpoints ?? []).join(',')

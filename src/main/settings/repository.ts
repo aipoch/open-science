@@ -56,7 +56,7 @@ import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
 import type { LocalShellRuntimeMutation } from './local-shell-runtime-contract'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
-import { buildProviderValidationPatch } from './provider-validation-state'
+import { buildProviderValidationPatch, reconcileCatalogHealth } from './provider-validation-state'
 import { imageProviderConfiguration } from '../../shared/image-model-service-policy'
 import { sanitizeImageSettings, sanitizePackageMirror } from './record-codec'
 import {
@@ -238,6 +238,7 @@ class SettingsRepository {
     configEdit?: {
       expectedConfigRevision?: number
       catalogBaseline?: ProviderCatalogState
+      validationMatches?: (merged: StoredProvider) => boolean
       expectedValidationState?: Pick<
         StoredProvider,
         'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'
@@ -292,7 +293,15 @@ class SettingsRepository {
           ? !isDeepStrictEqual(catalog, configEdit.catalogBaseline)
           : sameCatalogTarget(existing, provider) &&
             (existing.fetchedModels || existing.modelCatalog || existing.modelCatalogStatus)
-        if (keepCatalog) provider = { ...provider, ...catalog }
+        if (keepCatalog) {
+          provider = reconcileCatalogHealth(provider, { ...provider, ...catalog })
+          // A concurrent refresh can move the model while its old route is being tested.
+          if (configEdit?.validationMatches && !configEdit.validationMatches(provider)) {
+            provider.lastValidatedAt = existing.lastValidatedAt
+            provider.lastValidatedTarget = existing.lastValidatedTarget
+            provider.lastValidationFailure = existing.lastValidationFailure
+          }
+        }
         // Full-provider saves can be based on a snapshot read before the runtime learned its Auto
         // fallback. Keep that main-owned state across Auto-to-Auto replacement; explicit transport
         // changes still clear it because either side of this guard is no longer Auto.
@@ -344,11 +353,11 @@ class SettingsRepository {
       }
 
       const providers = [...settings.providers]
-      providers[index] = {
+      providers[index] = reconcileCatalogHealth(currentProvider, {
         ...currentProvider,
         ...(fetchedModels ? { fetchedModels } : {}),
         ...catalogPatch
-      }
+      })
       applied = true
       return { ...settings, providers }
     })

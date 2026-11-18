@@ -1350,7 +1350,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       if (generation === catalogOperationGeneration.current)
         setCatalogPreview({
           signature: catalogSignature,
-          result: { ...visibleCatalogPreview, ok: false, category: 'network', code: 'network' }
+          result: {
+            ok: false,
+            category: 'unknown',
+            catalog: visibleCatalogPreview?.catalog,
+            draftToken: visibleCatalogPreview?.draftToken
+          }
         })
     } finally {
       if (generation === catalogOperationGeneration.current) setIsRefreshingModels(false)

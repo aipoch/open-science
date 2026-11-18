@@ -392,6 +392,7 @@ describe('provider-kind helpers', () => {
       vendorId: 'minimax',
       region: 'global',
       model: '',
+      key: '',
       contextWindow: '',
       maxInputTokens: '',
       maxOutputTokens: ''
@@ -402,6 +403,7 @@ describe('provider-kind helpers', () => {
       vendorId: 'tencent',
       region: 'international',
       model: '',
+      key: '',
       contextWindow: '',
       maxInputTokens: '',
       maxOutputTokens: ''
@@ -412,6 +414,7 @@ describe('provider-kind helpers', () => {
       vendorId: 'tencentcodingplan',
       region: undefined,
       model: '',
+      key: '',
       contextWindow: '',
       maxInputTokens: '',
       maxOutputTokens: ''
@@ -422,6 +425,7 @@ describe('provider-kind helpers', () => {
       vendorId: 'tencenttokenplan',
       region: undefined,
       model: '',
+      key: '',
       contextWindow: '',
       maxInputTokens: '',
       maxOutputTokens: ''
@@ -435,6 +439,7 @@ describe('provider-kind helpers', () => {
       vendorId: 'openai',
       region: undefined,
       model: '',
+      key: '',
       contextWindow: '',
       maxInputTokens: '',
       maxOutputTokens: ''
@@ -451,6 +456,7 @@ describe('provider-kind helpers', () => {
       vendorId: undefined,
       region: undefined,
       model: '',
+      key: '',
       contextWindow: '',
       maxInputTokens: '',
       maxOutputTokens: ''

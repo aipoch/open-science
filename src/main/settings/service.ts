@@ -658,6 +658,7 @@ class SettingsService {
     })
     const providerHealth = new ProviderRuntimeHealthOwner(
       this.repository,
+      this.providers,
       options.onProviderHealthChanged
     )
     this.harnessSessions = new HarnessSessionOwner(

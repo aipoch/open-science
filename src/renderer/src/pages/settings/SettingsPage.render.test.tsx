@@ -2122,7 +2122,7 @@ describe('SettingsPage layout', () => {
     expect(refresh).toHaveBeenCalledTimes(1)
   })
 
-  it('shows an error when refreshing a provider model catalog rejects', async () => {
+  it('keeps a local catalog write failure distinct from a vendor network failure', async () => {
     const provider: ProviderView = {
       id: 'anthropic-provider',
       configRevision: 4,
@@ -2137,7 +2137,7 @@ describe('SettingsPage layout', () => {
       supportsImageInput: true
     }
     useSettingsStore.setState({ providers: [provider], activeProviderId: provider.id })
-    const refreshProviderModels = vi.fn().mockRejectedValue(new Error('transport failed'))
+    const refreshProviderModels = vi.fn().mockRejectedValue(new Error('settings.json write failed'))
     useSettingsStore.setState({ refreshProviderModels: refreshProviderModels as never })
 
     useSettingsStore.getState().openSettingsToPanel('model')
@@ -2159,7 +2159,8 @@ describe('SettingsPage layout', () => {
     })
     const alertText = document.body.querySelector('[role="alert"]')?.textContent ?? ''
     expect(alertText).toContain('Model refresh failed. The previous list is kept.')
-    expect(alertText).toContain('Could not connect to the model catalog. Check your network.')
+    expect(alertText).toContain('Something went wrong. Try again.')
+    expect(alertText).not.toContain('Check your network')
   })
 
   it('opens Usage as a standalone history-driven settings panel', async () => {
@@ -5259,6 +5260,30 @@ describe('Provider editor leave protection', () => {
     fireEvent.change(field('Provider name'), { target: { value: 'Research endpoint draft' } })
   }
 
+  it('refreshes a switched provider with only its own key and catalog parameters', async () => {
+    await mountEditor(true)
+    selectSettingsOption('Provider type', 'Anthropic')
+    act(() => {
+      fireEvent.change(field('API key'), { target: { value: 'first-provider-key' } })
+      fireEvent.change(document.getElementById('catalog-workspaceId')!, {
+        target: { value: 'first-workspace' }
+      })
+    })
+    selectSettingsOption('Provider type', 'OpenAI')
+    expect(field('API key').value).toBe('')
+    const refresh = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
+    useSettingsStore.setState({ refreshProviderModels: refresh })
+    act(() => fireEvent.change(field('API key'), { target: { value: 'second-provider-key' } }))
+    await clickLabel('Refresh model list')
+    expect(refresh).toHaveBeenCalledWith({
+      draft: expect.objectContaining({
+        vendorId: 'openai',
+        key: 'second-provider-key',
+        catalogParameters: undefined
+      })
+    })
+  })
+
   it('locks the new provider type through a pending save and allows retry after failure', async () => {
     let reject!: (error: Error) => void
     const saveValidatedProvider = vi
@@ -5293,6 +5318,8 @@ describe('Provider editor leave protection', () => {
     expect(document.body.textContent).toContain('Write failed')
     selectSettingsOption('Provider type', 'OpenAI')
     selectSettingsOption('Provider type', 'Anthropic')
+    expect(field('API key').value).toBe('')
+    act(() => fireEvent.change(field('API key'), { target: { value: 'new-provider-key' } }))
     await clickLabel('Save')
     expect(saveValidatedProvider).toHaveBeenCalledTimes(2)
     expect(field('Provider type')).toBeNull()

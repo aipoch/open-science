@@ -4857,7 +4857,7 @@ describe('SettingsService: image-input capability', () => {
       vi
         .fn()
         .mockResolvedValue(
-          new Response(JSON.stringify({ data: [{ id: 'claude-opus-5-unreleased' }] }))
+          Response.json({ data: [{ id: 'claude-opus-5-unreleased' }], has_more: false })
         )
     )
 
@@ -4870,7 +4870,7 @@ describe('SettingsService: image-input capability', () => {
       })
     ).providers[0]
 
-    await service.refreshProviderModels({ providerId: created.id })
+    expect((await service.refreshProviderModels({ providerId: created.id })).ok).toBe(true)
     // Activate the fetched model, then read the active provider's view.
     const view = (
       await service.setActiveProvider(created.id, 'claude-opus-5-unreleased')

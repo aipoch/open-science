@@ -1,3 +1,4 @@
+import type { CatalogSnapshot } from '@aipoch/providers'
 import { listAgentFrameworks } from '../agent-framework/registry'
 import { providerValidationRoute, providerValidationSucceeded } from '../../shared/settings-runtime'
 import { configureTestElectronHost } from '../../../test/runtime-host'
@@ -2382,6 +2383,98 @@ describe('ProviderAccountsModule', () => {
     ).toBe('https://token.sensenova.ai/v1')
   })
 
+  it.each(['account', 'editor'] as const)(
+    'discards a pending %s probe when only the Responses URL changes',
+    async (source) => {
+      await repository.setAgentFramework('open-science-agent')
+      const catalog = (path: string): CatalogSnapshot => ({
+        fetchedAt: 1,
+        models: [{ id: 'model-a', routes: { responses: 'https://opencode.ai/' + path } }]
+      })
+      const account = {
+        id: 'zen',
+        type: 'official' as const,
+        name: 'Zen',
+        vendorId: 'opencode' as const,
+        keyRef: 'plain:' + Buffer.from('fixture').toString('base64'),
+        modelCatalog: catalog('first')
+      }
+      await repository.upsertProvider(account)
+      const started = deferred<void>()
+      const response = deferred<Response>()
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => {
+          started.resolve()
+          return response.promise
+        })
+      )
+      const probe = module.validateProvider(
+        source === 'account'
+          ? { providerId: account.id, model: 'model-a' }
+          : {
+              edit: {
+                id: account.id,
+                type: account.type,
+                vendorId: account.vendorId,
+                name: 'Edited'
+              }
+            }
+      )
+      await started.promise
+      await repository.updateProviderModelCatalogIfTargetMatches(account, ['model-a'], {
+        modelCatalog: catalog('second')
+      })
+      response.resolve(
+        source === 'account'
+          ? new Response(null, { status: 401 })
+          : Response.json({
+              object: 'response',
+              id: 'test',
+              status: 'completed',
+              output: [
+                {
+                  type: 'message',
+                  role: 'assistant',
+                  content: [{ type: 'output_text', text: 'OK' }]
+                }
+              ]
+            })
+      )
+      expect(await probe).toMatchObject({ ok: source === 'editor', applied: false })
+      expect((await repository.getSettings()).providers[0].lastValidationFailure).toBeUndefined()
+    }
+  )
+
+  it('keeps the complete saved catalog when a cursor page lacks its end marker', async () => {
+    await module.upsertProvider({
+      id: 'anthropic',
+      type: 'official',
+      vendorId: 'anthropic',
+      key: 'fixture'
+    })
+    const request = { providerId: 'anthropic' }
+    const http = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ data: [{ id: 'previous' }], has_more: false }))
+      .mockResolvedValueOnce(
+        Response.json({ data: [{ id: 'first' }], has_more: true, last_id: 'first' })
+      )
+      .mockResolvedValueOnce(Response.json({ data: [{ id: 'second' }] }))
+    vi.stubGlobal('fetch', http)
+    expect((await module.refreshProviderModels(request)).ok).toBe(true)
+    const before = (await repository.getSettings()).providers[0]
+    expect(await module.refreshProviderModels(request)).toMatchObject({
+      ok: false,
+      code: 'invalid-response'
+    })
+    expect(http.mock.calls[2][0]).toContain('after_id=first')
+    const saved = (await new SettingsRepository(dir).getSettings()).providers[0]
+    expect(saved.modelCatalog).toEqual(before.modelCatalog)
+    expect(saved.fetchedModels).toEqual(['previous'])
+    expect(saved.modelCatalogStatus?.code).toBe('invalid-response')
+  })
+
   it.each(['save', 'validated save'] as const)(
     'keeps the completed refresh when an older preview reaches %s',
     async (operation) => {
@@ -2435,7 +2528,13 @@ describe('ProviderAccountsModule', () => {
             usage: { input_tokens: 1, output_tokens: 1 }
           })
         )
-        expect((await saving).providerId).toBe(account.id)
+        expect(await saving).toMatchObject({
+          providerId: account.id,
+          validation: { ok: true, applied: false }
+        })
+        expect((await repository.getSettings()).providers[0].lastValidatedAt).toBe(
+          refreshed.lastValidatedAt
+        )
       } else {
         await module.upsertProvider(request)
       }
@@ -2606,7 +2705,11 @@ describe('ProviderAccountsModule', () => {
       await module.setActiveProvider(providerId, model)
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockResolvedValue(Response.json({ data: [{ id: 'replacement-model' }] }))
+        vi
+          .fn()
+          .mockResolvedValue(
+            Response.json({ data: [{ id: 'replacement-model' }], has_more: false })
+          )
       )
 
       await expect(module.refreshProviderModels({ providerId })).resolves.toMatchObject({

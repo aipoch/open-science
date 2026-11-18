@@ -28,7 +28,9 @@ export function modelCatalogErrorMessage(code: CatalogErrorCode | undefined, t: 
       return t('The model catalog exceeds the supported size limit.')
     case 'stale':
       return t('The provider changed while loading models. Try again.')
-    default:
+    case 'invalid-response':
       return t('The vendor returned an invalid or empty model catalog.')
+    default:
+      return t('Something went wrong. Try again.')
   }
 }

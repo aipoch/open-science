@@ -137,6 +137,30 @@ test('shows only the curated OpenRouter catalog and offers no online refresh', a
   await settings.screenshot({ path: testInfo.outputPath('openrouter-curated.png') })
 })
 
+test('clears the previous vendor key and workspace when switching provider', async ({
+  app
+}, testInfo) => {
+  const page = await app.completeOnboarding()
+  const settings = await openSettingsPage(page, 'Model')
+  await settings.locator('[data-settings-anchor="model.add-provider"]').click()
+  const kind = settings.getByRole('combobox', { name: 'Provider type', exact: true })
+  await kind.click()
+  await page.getByRole('option', { name: 'Anthropic', exact: true }).click()
+  const key = settings.getByLabel('API key', { exact: true })
+  const workspace = settings.getByLabel('Workspace ID', { exact: true })
+  await key.fill('synthetic-draft-key')
+  await workspace.fill('previous-workspace')
+  await kind.click()
+  await page.getByRole('option', { name: 'OpenAI', exact: true }).click()
+  await expect(key).toHaveValue('')
+  await expect(settings.getByRole('button', { name: 'Refresh model list' })).toBeDisabled()
+  await kind.click()
+  await page.getByRole('option', { name: 'Anthropic', exact: true }).click()
+  await expect(workspace).toHaveValue('')
+  await expect(key).toHaveValue('')
+  await settings.screenshot({ path: testInfo.outputPath('switched-provider.png') })
+})
+
 // Real vendor acceptance: the key is supplied only by the test runner and is never persisted in
 // evidence. The isolated Electron profile is discarded by the fixture after the test.
 test('accepts OpenCode Go catalog with a real vendor key', async ({ app }, testInfo) => {

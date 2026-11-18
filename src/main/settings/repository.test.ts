@@ -99,6 +99,50 @@ describe('settings repository', () => {
     })
   })
 
+  it('retires only health evidence for moved catalog routes, including on a later stale form save', async () => {
+    const dir = await createStorageRoot()
+    const repository = new SettingsRepository(dir)
+    const moved = { model: 'model-a', endpoint: 'responses' } as const
+    const stable = { model: 'model-b', endpoint: 'messages' } as const
+    const other = { id: stable.model, routes: { messages: 'https://opencode.ai/stable' } }
+    const saved = provider({
+      type: 'official',
+      vendorId: 'opencode',
+      modelCatalog: {
+        fetchedAt: 1,
+        models: [{ id: moved.model, routes: { responses: 'https://opencode.ai/old' } }, other]
+      },
+      lastValidatedAt: 1,
+      lastValidatedTarget: moved,
+      lastValidationFailure: {
+        at: 2,
+        category: 'model-not-found',
+        status: 404,
+        target: moved,
+        targets: [moved, stable]
+      }
+    })
+    await repository.upsertProvider(saved)
+    await repository.updateProviderModelCatalogIfTargetMatches(saved, [moved.model, stable.model], {
+      modelCatalog: {
+        fetchedAt: 3,
+        models: [{ id: moved.model, routes: { responses: 'https://opencode.ai/new' } }, other]
+      }
+    })
+    await repository.upsertProvider({ ...saved, name: 'Renamed' }, saved.id, {
+      expectedConfigRevision: 0
+    })
+    const current = (await new SettingsRepository(dir).getSettings()).providers[0]
+    expect(current.lastValidatedAt).toBeUndefined()
+    expect(current.lastValidationFailure).toEqual({
+      at: 2,
+      category: 'model-not-found',
+      target: stable
+    })
+    expect(providerValidationFailed(current, moved)).toBe(false)
+    expect(providerValidationFailed(current, stable)).toBe(true)
+  })
+
   it('publishes only committed provider changes and isolates observers', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
     const first = vi.fn(() => {

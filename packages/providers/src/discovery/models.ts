@@ -344,7 +344,6 @@ export const listProviderModels = async (
       if (!paging) break
       if (paging.type === 'cursor') {
         const more = at(body, paging.morePath)
-        if (more === undefined && !at(body, paging.cursorPath)) break
         if (typeof more !== 'boolean')
           throw new CatalogFailure(
             'invalid-response',
