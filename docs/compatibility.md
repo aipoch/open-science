@@ -56,22 +56,18 @@ upgrade; a binary downgrade is not a data rollback. Preserve the existing requir
 conflicting runtimes and use matching desktop/backend versions. This policy does not promise mixed
 version operation or arbitrary cross-platform transfer of OS-protected credentials.
 
-Image service settings add optional `imageServices` and `imageModel` fields to the existing
-version-2 settings document, without a database migration. Older profiles remain unconfigured.
-An older build can discard these fields on its next ordinary settings write after a downgrade.
-Official services reference an existing provider account; custom services use the existing
-credential-storage mode and never include credential references in renderer snapshots.
+The application database applies `0060_image_models` after `0059_session_history`. The
+migration updates the constraints on `SessionAuxiliaryTurnUsage` to accept the
+`image-generation` usage source and on `ArtifactVersion` to accept image edits made
+outside a conversation turn. It preserves existing rows, indexes and foreign keys and
+retains a pre-upgrade backup. Returning to a build whose manifest ends at `0059_session_history`
+requires restoring a compatible backup. The usage table records measurements only. Image
+provenance uses the existing connector evidence format.
 
-Image-generation token measurements add the `image-generation` auxiliary usage source.
-Migration `0060_image_models` updates the usage and Artifact version constraints in one transaction.
-The earlier development ledger ending at `0059_image_models` is recognized by its exact checksum and prefix.
-It upgrades through `0059_session_history` and `0060_image_models` while preserving usage rows and session history.
-The image migration preserves historical rows, indexes and foreign keys. The migration
-uses the existing retained-backup policy. No prompt text or image bytes are stored in this table.
-Older application manifests reject the upgraded database with `database_newer_than_app`;
-returning to an older build requires restoring a compatible pre-upgrade backup. Image provenance
-continues to use the existing connector evidence format; session-package compatibility is a
-separate contract from opening the application database.
+Image service configuration lives in the version-2 settings document. The optional
+`imageServices` and `imageModel` fields default to no configured service or selected model
+when absent. Official services reference an existing provider account. Custom services use
+the configured credential store, and renderer snapshots omit credential references.
 
 The historical compatibility policy is a maintenance commitment, not evidence that every released
 0.x version has been individually tested against 1.0. Record the source version, platform and checked

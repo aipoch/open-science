@@ -2447,37 +2447,28 @@ const migrateApplicationDatabaseWithManifest = async (
   // intermediate fork releases used 0055 and 0058 before upstream reassigned those numbers.
   // Only bridge an exact, complete released ledger. Keep the derived tables and authoritative
   // Session files intact; the 0059 history migration adopts them after the upstream suffix.
-  // The image development branch likewise used 0059 before the history merge.
-  const legacyCandidates = [
-    {
-      migration: { ...imageModelsMigration, id: '0059_image_models' },
-      expectedThroughId: '0058_session_schedules',
-      canonicalId: imageModelsMigration.id
-    },
+  const legacyHistoryCandidates = [
     {
       migration: jsonlSessionHistory0058Migration,
-      expectedThroughId: '0057_project_optimization_prompt',
-      canonicalId: sessionHistoryMigration.id
+      expectedThroughId: '0057_project_optimization_prompt'
     },
     {
       migration: legacySessionHistoryMigration,
-      expectedThroughId: '0050_literature_translation',
-      canonicalId: sessionHistoryMigration.id
+      expectedThroughId: '0050_literature_translation'
     },
     {
       migration: jsonlSessionHistory0055Migration,
-      expectedThroughId: '0054_slurm_job_reliability',
-      canonicalId: sessionHistoryMigration.id
+      expectedThroughId: '0054_slurm_job_reliability'
     }
   ] as const
-  const legacyEntry = legacyCandidates
+  const legacyHistory = legacyHistoryCandidates
     .map((candidate) => ({
       ...candidate,
       row: ledger.find(({ id }) => id === candidate.migration.id)
     }))
     .find(({ row }) => row !== undefined)
-  if (legacyEntry?.row && manifest.some(({ id }) => id === legacyEntry.canonicalId)) {
-    const { row, migration, expectedThroughId } = legacyEntry
+  if (legacyHistory?.row && manifest.some(({ id }) => id === sessionHistoryMigration.id)) {
+    const { row, migration, expectedThroughId } = legacyHistory
     const prefix = ledger.slice(0, -1)
     const expectedPrefix = MIGRATION_MANIFEST.filter(({ id }) => id <= expectedThroughId)
     const legacyChecksum = checksumMigrationPayload(
@@ -2493,7 +2484,7 @@ const migrateApplicationDatabaseWithManifest = async (
     ) {
       throw new DatabaseMigrationError(
         'database_history_invalid',
-        'The fork database migration history does not match its recorded migration.',
+        'The fork database migration history does not match its released history migration.',
         false,
         migration.id
       )
