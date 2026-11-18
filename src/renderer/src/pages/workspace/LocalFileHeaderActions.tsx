@@ -1,8 +1,8 @@
 // Action cluster shown in the preview header for local ("This computer") files, replacing the
 // artifact/upload "Download" button row. The primary action reloads the preview from disk; the
-// "…" menu shows the file identity, Copy path, and an "On this machine" group with Download
-// (same save pipeline as managed files) and Save as artifact (same staging pipeline as composer
-// uploads). Kept in its own module so PreviewFileSurface stays source-neutral.
+// "…" menu shows the file identity, Copy path, and an "On this machine" group with HTML actions,
+// Download (same save pipeline as managed files), and Save as artifact (same staging pipeline as
+// composer uploads). Kept in its own module so PreviewFileSurface stays source-neutral.
 import { Check, ExternalLink, File, MoreHorizontal, RotateCw } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -116,7 +116,9 @@ export const LocalFileHeaderActions = ({
   const identityEntries = previewActions.entries.filter(
     (entry) => entry.kind === 'action' && entry.action === 'copy-path'
   )
-  const machineEntries = (['download', 'save-as-artifact'] as const).flatMap((action) =>
+  const machineEntries = (
+    ['open-in-browser', 'reveal-in-folder', 'download', 'save-as-artifact'] as const
+  ).flatMap((action) =>
     previewActions.entries.filter((entry) => entry.kind === 'action' && entry.action === action)
   )
 

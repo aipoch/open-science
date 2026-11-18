@@ -126,32 +126,14 @@ const PptxSlideAnnotationSurface = ({
   const canAnnotate = !disabled && source !== undefined && outline !== undefined
 
   return (
-    <div className="relative size-full">
-      <OfficePreviewContent
-        item={item}
-        source={item.source}
-        slideRequest={slideRequest}
-        onSlideView={setSlideView}
-      />
-      {outline ? (
-        <PptxSlideAnnotationLayer
-          outline={outline}
-          slideIndex={slideIndex}
-          slideView={slideView}
-          markers={markers}
-          revealedId={revealed?.id}
-          active={annotating && !pick}
-          disabled={!canAnnotate}
-          onPick={setPick}
-        />
-      ) : null}
+    <div className="flex size-full flex-col">
       {canAnnotate ? (
         <Button
           type="button"
           variant={annotating ? 'default' : 'secondary'}
           size="sm"
           aria-pressed={annotating}
-          className="absolute top-14 right-3 z-30"
+          className="my-1 mr-3 shrink-0 self-end"
           onClick={() => {
             setAnnotating(!annotating)
             setPick(undefined)
@@ -162,7 +144,29 @@ const PptxSlideAnnotationSurface = ({
           {t('Annotate slide')}
         </Button>
       ) : null}
-      {pick ? <PptxSlideNoteEditor onSubmit={submit} onCancel={() => setPick(undefined)} /> : null}
+      <div className="relative min-h-0 flex-1">
+        <OfficePreviewContent
+          item={item}
+          source={item.source}
+          slideRequest={slideRequest}
+          onSlideView={setSlideView}
+        />
+        {outline ? (
+          <PptxSlideAnnotationLayer
+            outline={outline}
+            slideIndex={slideIndex}
+            slideView={slideView}
+            markers={markers}
+            revealedId={revealed?.id}
+            active={annotating && !pick}
+            disabled={!canAnnotate}
+            onPick={setPick}
+          />
+        ) : null}
+        {pick ? (
+          <PptxSlideNoteEditor onSubmit={submit} onCancel={() => setPick(undefined)} />
+        ) : null}
+      </div>
     </div>
   )
 }

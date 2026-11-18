@@ -1,6 +1,7 @@
+import { buildSync } from 'esbuild'
 import { runInNewContext } from 'node:vm'
 import { EventEmitter } from 'node:events'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import {
@@ -13,10 +14,11 @@ import {
   rm,
   stat,
   symlink,
-  writeFile
+  writeFile,
+  type FileHandle
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, sep } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -82,13 +84,19 @@ const fsFaults = vi.hoisted(() => ({
   adapterReplaceFailureCode: 'EPERM' as 'EPERM' | 'EBUSY',
   pauseNextWrite: false,
   partialWritePublished: undefined as (() => void) | undefined,
-  resumeWrite: undefined as Promise<void> | undefined
+  resumeWrite: undefined as Promise<void> | undefined,
+  extractionOpened: undefined as ((file: FileHandle) => Promise<void>) | undefined
 }))
 
 vi.mock('node:fs/promises', async (importActual) => {
   const actual = await importActual<typeof import('node:fs/promises')>()
   return {
     ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const file = await actual.open(...args)
+      if (String(args[0]).endsWith('cancelled-entry')) await fsFaults.extractionOpened?.(file)
+      return file
+    },
     rename: vi.fn(async (src: string, dest: string) => {
       if (fsFaults.renameOnStagedMove && src.includes('.codex-install-') && !src.endsWith('.tmp')) {
         fsFaults.renameOnStagedMove = false
@@ -240,6 +248,58 @@ it('aborts a running Codex version check', async () => {
   expect(Date.now() - startedAt).toBeLessThan(750)
 })
 
+it.skipIf(process.platform === 'win32')(
+  'reaps Codex version descendants before cancellation completes',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-version-tree-'))
+    const childPidFile = join(root, 'child-pid')
+    const controller = new AbortController()
+    const actual = await vi.importActual<typeof import('../process-tree')>('../process-tree')
+    terminateProcessTreeSpy.mockImplementation((...args) =>
+      actual.terminateProcessTree(...(args as Parameters<typeof actual.terminateProcessTree>))
+    )
+    const probe = runManagedCodexVersion(
+      process.execPath,
+      [
+        '-e',
+        [
+          "const { spawn } = require('node:child_process')",
+          "const { writeFileSync } = require('node:fs')",
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })",
+          `writeFileSync(${JSON.stringify(childPidFile)}, String(child.pid))`,
+          'setInterval(() => {}, 1000)'
+        ].join('\n')
+      ],
+      undefined,
+      process.platform,
+      undefined,
+      controller.signal
+    )
+    let childPid: number | undefined
+    try {
+      await vi.waitFor(async () => {
+        childPid = Number(await readFile(childPidFile, 'utf8'))
+        expect(childPid).toBeGreaterThan(0)
+      })
+      controller.abort()
+      await expect(probe).resolves.toBeUndefined()
+      expect(() => process.kill(childPid!, 0)).toThrow()
+    } finally {
+      controller.abort()
+      await probe
+      terminateProcessTreeSpy.mockImplementation(() => Promise.resolve({ reaped: true }))
+      if (childPid) {
+        try {
+          process.kill(childPid, 'SIGKILL')
+        } catch {
+          /* Already reaped. */
+        }
+      }
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
+
 const tarEntry = (name: string, content: Buffer, mode = 0o644): Buffer => {
   const header = Buffer.alloc(512)
   header.write(name, 0, 'ascii')
@@ -316,12 +376,63 @@ describe('installManagedCodex', () => {
   let root: string | undefined
 
   afterEach(async () => {
+    fsFaults.extractionOpened = undefined
     if (root) await rm(root, { recursive: true, force: true })
     root = undefined
     errorLogSpy.mockClear()
     warnLogSpy.mockClear()
     terminateProcessTreeSpy.mockClear()
     terminateProcessTreeSpy.mockImplementation(() => Promise.resolve({ reaped: true }))
+  })
+
+  it('closes a vendor file opened while extraction is being cancelled', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-codex-cancel-'))
+    const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
+    const adapterTgz = buildTgz([
+      { name: 'package/dist/index.js', content: adapterFixture('cancel-test') }
+    ])
+    const nativeTgz = buildTgz([
+      {
+        name: `package/vendor/${platform.target}/cancelled-entry`,
+        content: Buffer.alloc(64 * 1024, 'x')
+      }
+    ])
+    const controller = new AbortController()
+    const opened = Promise.withResolvers<FileHandle>()
+    const resume = Promise.withResolvers<void>()
+    fsFaults.extractionOpened = async (file) => {
+      opened.resolve(file)
+      await resume.promise
+    }
+    const installation = installManagedCodex({
+      installId: 'cancel-extraction',
+      onEvent: () => undefined,
+      dataRoot: root,
+      platform,
+      registries: ['https://reg'],
+      fetchJson: async (url) => ({
+        dist: url.includes('codex-acp')
+          ? { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) }
+          : { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) }
+      }),
+      fetchTarball: async (url) => {
+        const bytes = url.includes('adapter') ? adapterTgz : nativeTgz
+        return { stream: Readable.from(bytes), totalBytes: bytes.length }
+      },
+      integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) },
+      signal: controller.signal
+    })
+    const file = await opened.promise
+    try {
+      controller.abort()
+      resume.resolve()
+      expect((await installation).result.ok).toBe(false)
+      await expect(file.stat()).rejects.toThrow()
+    } finally {
+      resume.resolve()
+      await installation
+      await file.close()
+    }
   })
 
   it('verifies an installed adapter and Codex binary with a real ACP initialize exchange', async () => {
@@ -419,6 +530,127 @@ describe('installManagedCodex', () => {
     )
   })
 
+  it.each(['pair', 'detection'] as const)(
+    'contains real stdin closure during the %s initialize handshake',
+    async (mode) => {
+      const fixture = await mkdtemp(join(process.cwd(), 'node_modules/.cache/codex-stdin-'))
+      const closed = join(fixture, 'closed.js')
+      try {
+        await writeFile(join(fixture, 'package.json'), '{"type":"commonjs"}')
+        await writeFile(
+          closed,
+          [
+            "const fs = require('node:fs')",
+            'fs.closeSync(0)',
+            "fs.writeFileSync(__filename + '.ready', String(process.pid))",
+            'setInterval(() => {}, 1000)',
+            // Bound the fixture's lifetime even if the isolated host dies before cleanup.
+            'setTimeout(() => process.exit(0), 4000)'
+          ].join('\n')
+        )
+        const valid = join(fixture, 'valid.js')
+        await writeFile(
+          valid,
+          [
+            "require('node:readline').createInterface({ input: process.stdin }).on('line', line => {",
+            '  const request = JSON.parse(line)',
+            "  process.stdout.write(JSON.stringify({ id: request.id, result: { protocolVersion: 1 } }) + '\\n')",
+            '})'
+          ].join('\n')
+        )
+        const runner = join(fixture, 'runner.cjs')
+        buildSync({
+          stdin: {
+            contents: `
+              import { verifyManagedCodexPair } from './src/main/settings/managed-codex';
+              import { runAcpInitializeSmoke } from './src/main/settings/codex-detect';
+              const hold = setInterval(() => {}, 1000);
+              (async () => {
+                let ok = false;
+                let message;
+                try {
+                  const signal = AbortSignal.timeout(1500);
+                  if (process.argv[2] === 'pair') {
+                    await verifyManagedCodexPair(process.argv[3], process.argv[3], process.argv[4], signal);
+                    ok = true;
+                  } else ok = await runAcpInitializeSmoke(process.platform)(process.argv[3], {}, signal);
+                } catch (error) { message = error.message }
+                console.log('HANDSHAKE_RESULT', JSON.stringify({ ok, message }));
+              })().catch(error => { console.error(error); process.exitCode = 2 }).finally(() => clearInterval(hold));
+            `,
+            resolveDir: resolve('.')
+          },
+          // Schedule the actual child before returning its handle, as can happen if the parent is
+          // descheduled after spawn. No fake streams, emitted events or cleanup results are used.
+          banner: {
+            js: `
+            const cp = require('node:child_process');
+            const fs = require('node:fs');
+            const actualSpawn = cp.spawn;
+            cp.spawn = (...args) => {
+              const child = actualSpawn(...args);
+              const adapter = args[1]?.[0];
+              if (adapter?.endsWith('closed.js')) {
+                const until = Date.now() + 1000;
+                while (!fs.existsSync(adapter + '.ready') && Date.now() < until)
+                  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+                if (!fs.existsSync(adapter + '.ready')) throw new Error('Fixture did not close stdin');
+              }
+              return child;
+            };
+          `
+          },
+          outfile: runner,
+          bundle: true,
+          platform: 'node',
+          format: 'cjs',
+          packages: 'external'
+        })
+        for (const adapter of [valid, closed]) {
+          const result = spawnSync(
+            process.execPath,
+            [runner, mode, adapter, join(fixture, 'home')],
+            {
+              encoding: 'utf8',
+              timeout: 5000
+            }
+          )
+          expect(result.error).toBeUndefined()
+          expect(result.status, result.stderr).toBe(0)
+          const line = result.stdout
+            .split('\n')
+            .find((line) => line.startsWith('HANDSHAKE_RESULT '))
+          expect(line).toBeDefined()
+          const outcome = JSON.parse(line!.slice('HANDSHAKE_RESULT '.length))
+          expect(outcome.ok).toBe(adapter === valid)
+          if (adapter === closed && mode === 'pair')
+            expect(outcome.message).toMatch(/ACP initialize check/)
+          if (adapter === closed) {
+            const pid = Number(await readFile(closed + '.ready', 'utf8'))
+            expect(pid).toBeGreaterThan(0)
+            await vi.waitFor(
+              () =>
+                expect(() => process.kill(pid, 0)).toThrow(
+                  expect.objectContaining({ code: 'ESRCH' })
+                ),
+              { timeout: 1000 }
+            )
+          }
+        }
+      } finally {
+        const pid = Number(await readFile(closed + '.ready', 'utf8').catch(() => '0'))
+        if (pid) {
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch {
+            /* Already reaped. */
+          }
+        }
+        await rm(fixture, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('rejects an adapter pair that does not complete ACP initialize', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-pair-'))
     const adapterPath = join(root, 'broken-adapter.js')
@@ -482,6 +714,53 @@ describe('installManagedCodex', () => {
     ).rejects.toThrow(/ACP initialize check/)
     expect(terminateProcessTreeSpy).toHaveBeenCalledTimes(1)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'reaps a real app-server descendant after the pairing adapter crashes',
+    async () => {
+      root = await mkdtemp(join(tmpdir(), 'managed-codex-pair-tree-'))
+      const adapterPath = join(root, 'crashed-adapter.cjs')
+      const pidFile = join(root, 'app-server-pid')
+      const actual = await vi.importActual<typeof import('../process-tree')>('../process-tree')
+      terminateProcessTreeSpy.mockImplementation((...args) =>
+        actual.terminateProcessTree(...(args as Parameters<typeof actual.terminateProcessTree>))
+      )
+      await writeFile(
+        adapterPath,
+        [
+          "const { spawn } = require('node:child_process')",
+          "const { writeFileSync } = require('node:fs')",
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })",
+          `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid))`,
+          'process.exit(1)'
+        ].join('\n')
+      )
+      let childPid: number | undefined
+      try {
+        await expect(
+          verifyManagedCodexPair(adapterPath, join(root, 'codex'), join(root, 'home'))
+        ).rejects.toThrow(/ACP initialize check/)
+        childPid = Number(await readFile(pidFile, 'utf8'))
+        expect(childPid).toBeGreaterThan(0)
+        await vi.waitFor(
+          () =>
+            expect(() => process.kill(childPid!, 0)).toThrow(
+              expect.objectContaining({ code: 'ESRCH' })
+            ),
+          { timeout: 3_000 }
+        )
+      } finally {
+        childPid ??= Number(await readFile(pidFile, 'utf8').catch(() => '0'))
+        if (childPid) {
+          try {
+            process.kill(childPid, 'SIGKILL')
+          } catch {
+            /* Already reaped. */
+          }
+        }
+      }
+    }
+  )
 
   it('surfaces a degraded reap (reaped:false) as a warning while the handshake still succeeds', async () => {
     // A taskkill fallback / surviving descendant leaves the tree only partially reaped. The pairing is
@@ -2721,3 +3000,85 @@ async function command() {
     ).toThrow('no longer matches')
   })
 })
+
+it.each(['pair', 'detection'] as const)(
+  'contains real unterminated ACP output without crashing the %s host',
+  async (mode) => {
+    const fixture = await mkdtemp(join(process.cwd(), 'node_modules/.cache/codex-output-'))
+    const adapter = join(fixture, 'adapter.js')
+    const pidFile = join(fixture, 'adapter.pid')
+    try {
+      await writeFile(join(fixture, 'package.json'), '{"type":"commonjs"}')
+      await writeFile(
+        adapter,
+        `
+        require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+        setTimeout(() => process.exit(0), 6000).unref();
+        if (process.argv.includes('--valid')) process.stdout.write(JSON.stringify({ id: 1, result: { protocolVersion: 1 } }) + '\\n');
+        else {
+          const chunk = 'x'.repeat(256 * 1024);
+          let remaining = 512;
+          const write = () => { while (remaining-- > 0) if (!process.stdout.write(chunk)) { process.stdout.once('drain', write); return; } };
+          write();
+        }
+        setInterval(() => {}, 1000);
+      `
+      )
+      const runner = join(fixture, 'runner.cjs')
+      buildSync({
+        stdin: {
+          contents: `
+        import { verifyManagedCodexPair } from './src/main/settings/managed-codex';
+        import { runAcpInitializeSmoke } from './src/main/settings/codex-detect';
+        const hold = setInterval(() => {}, 1000);
+        (async () => {
+          let ok = false;
+          try {
+            if (${JSON.stringify(mode)} === 'pair') { await verifyManagedCodexPair(process.argv[2], process.argv[2], process.argv[3], AbortSignal.timeout(3000)); ok = true; }
+            else ok = await runAcpInitializeSmoke(process.platform)(process.argv[2], {}, AbortSignal.timeout(3000));
+          } catch {}
+          console.log('OUTPUT_RESULT', JSON.stringify({ ok }));
+        })().catch(() => { process.exitCode = 2 }).finally(() => clearInterval(hold));
+      `,
+          resolveDir: resolve('.')
+        },
+        outfile: runner,
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        packages: 'external'
+      })
+      const validAdapter = join(fixture, 'valid.js')
+      await writeFile(
+        validAdapter,
+        (await readFile(adapter, 'utf8')).replace("process.argv.includes('--valid')", 'true')
+      )
+      // A small host heap contains the real OOM inside a disposable process, not the test runner.
+      for (const [path, ok] of [
+        [validAdapter, true],
+        [adapter, false]
+      ] as const) {
+        const result = spawnSync(
+          process.execPath,
+          ['--max-old-space-size=32', runner, path, join(fixture, 'home')],
+          { encoding: 'utf8', timeout: 5000 }
+        )
+        expect(result.error).toBeUndefined()
+        expect(result.status, result.stderr).toBe(0)
+        expect(result.stdout).toContain('OUTPUT_RESULT ' + JSON.stringify({ ok }))
+        const pid = Number(await readFile(pidFile, 'utf8'))
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+      }
+    } finally {
+      const pid = Number(await readFile(pidFile, 'utf8').catch(() => '0'))
+      if (pid) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          /* Already reaped. */
+        }
+      }
+      await rm(fixture, { recursive: true, force: true })
+    }
+  }
+)

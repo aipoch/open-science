@@ -42,6 +42,7 @@ import {
 import type { PendingPdfContext } from '../../stores/preview-workbench-contract'
 import { useSessionStore } from '../../stores/session-store'
 import type { ChatSession } from '../../stores/session-store-contract'
+import { ensureSessionContentLoaded } from '../session-persistence/session-history'
 import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { isRuntimeWriter } from './runtime-writer-client'
 import { useAcpRuntime } from './useAcpRuntime'
@@ -130,6 +131,11 @@ const setWorkspacePermissionProfile = async (
   sessionId: string,
   profile: PermissionProfileId
 ): Promise<boolean> => {
+  const source = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
+  if (source?.contentLoaded === false) {
+    const loaded = await ensureSessionContentLoaded({ projectId: source.projectId, sessionId })
+    if (!loaded) return false
+  }
   let persistedProfile = profile
   if (runtime.state.sessionIds.includes(sessionId)) {
     const snapshot = await runtime.setPermissionProfile(sessionId, profile)

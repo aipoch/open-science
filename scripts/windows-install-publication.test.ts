@@ -14,19 +14,17 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 
-let script = resolve('build/windows-install-publication.ps1')
-let helper: string
+let installHelper: string
 beforeAll(() => {
   if (process.platform !== 'win32') return
   const root = fixture().root
-  helper = join(root, 'windows-install-publication.dll')
-  createRequire(import.meta.url)('../build/compile-windows-install-publication.cjs')(
-    resolve('build/windows-install-publication.cs'),
-    helper
+  // Test seams record process bitness and inject a staging cleanup failure. The shipped helper is
+  // built without OPEN_SCIENCE_HELPER_TEST_SEAMS and has neither.
+  installHelper = join(root, 'windows-install-helper.exe')
+  createRequire(import.meta.url)('../build/compile-windows-install-publication.cjs').installHelper(
+    installHelper,
+    ['OPEN_SCIENCE_HELPER_TEST_SEAMS']
   )
-  const source = readFileSync(script)
-  script = join(root, 'windows-install-publication.ps1')
-  writeFileSync(script, source)
 }, 30_000)
 const powershell = join(
   process.env.SystemRoot || 'C:\\Windows',
@@ -64,21 +62,14 @@ function action(
   env = process.env
 ): SpawnSyncReturns<string> {
   const result = spawnSync(
-    powershell,
+    installHelper,
     [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      script,
-      '-Action',
       operation,
-      '-InstallPath',
+      '--install-path',
       f.install,
-      '-StatePath',
+      '--state',
       f.state,
-      '-ReportPath',
+      '--report',
       join(f.root, `${operation}-evidence.json`)
     ],
     {
@@ -221,7 +212,8 @@ describe.skipIf(process.platform !== 'win32')('real Windows payload publication'
 
       const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
       const report = join(f.root, 'locked-publication.json')
-      const command = `$stream=[IO.File]::Open(${quote(join(state.stage, 'locales/en.pak'))},'Open','Read','Read'); try { & ${quote(powershell)} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${quote(script)} -Action publish -InstallPath ${quote(f.install)} -StatePath ${quote(f.state)} -ReportPath ${quote(report)}; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
+      // PowerShell only holds the lock; the helper under test performs the publication.
+      const command = `$stream=[IO.File]::Open(${quote(join(state.stage, 'locales/en.pak'))},'Open','Read','Read'); try { & ${quote(installHelper)} publish --install-path ${quote(f.install)} --state ${quote(f.state)} --report ${quote(report)}; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
       const failed = spawnSync(
         powershell,
         [
@@ -451,15 +443,15 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         const extractor = join(extractorDirectory, '7za.exe')
         writeFileSync(extractor, readFileSync(sevenZip!))
         writeFileSync(
-          join(extractorDirectory, 'windows-install-publication.dll'),
-          readFileSync(helper)
+          join(extractorDirectory, 'windows-install-helper.exe'),
+          readFileSync(installHelper)
         )
         if (mode === 'universal-x64') {
           mkdirSync(join(f.root, 'out/windows-installer/arm64'), { recursive: true })
           // Wrong selection must fail to launch instead of accidentally passing on x64.
           writeFileSync(join(f.root, 'out/windows-installer/arm64/7za.exe'), 'not an x64 tool')
           writeFileSync(
-            join(f.root, 'out/windows-installer/arm64/windows-install-publication.dll'),
+            join(f.root, 'out/windows-installer/arm64/windows-install-helper.exe'),
             'wrong helper'
           )
         }
@@ -495,27 +487,14 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         mkdirSync(resources)
         for (const file of [
           'prepare-windows-extraction.cjs',
-          'windows-extract-payload.ps1',
           'windows-install-diagnostics.ps1',
           'windows-install-diagnostics.nsh'
         ])
           writeFileSync(join(resources, file), readFileSync(resolve('build', file)))
-        writeFileSync(
-          join(resources, 'windows-install-publication.ps1'),
-          readFileSync(script, 'utf8').replace(
-            '$handles =',
-            `[IO.File]::AppendAllText('${hostLog.replaceAll("'", "''")}', [Environment]::Is64BitProcess.ToString() + [Environment]::NewLine)\n$handles =`
-          )
-        )
-        if (mode === 'cleanup-failure') {
-          const helperScript = join(resources, 'windows-install-publication.ps1')
-          writeFileSync(
-            helperScript,
-            readFileSync(helperScript, 'utf8').replace(
-              "[IO.Directory]::Delete(('\\\\?\\' + $stage), $true)",
-              "throw [IO.IOException]::new('Fixture staging cleanup failure')"
-            )
-          )
+        // The seam build reads these from the inherited environment of the NSIS fixture.
+        const helperEnv = {
+          OPEN_SCIENCE_PUBLICATION_HOST_LOG: hostLog,
+          ...(mode === 'cleanup-failure' ? { OPEN_SCIENCE_PUBLICATION_CLEANUP_FAILURE: '1' } : {})
         }
         writeFileSync(
           source,
@@ -650,7 +629,12 @@ try {
                   '-EncodedCommand',
                   Buffer.from(observer, 'utf16le').toString('base64')
                 ],
-                { encoding: 'utf8', windowsHide: true, timeout: 60_000 }
+                {
+                  encoding: 'utf8',
+                  windowsHide: true,
+                  timeout: 60_000,
+                  env: { ...process.env, ...helperEnv }
+                }
               )
             })()
           : mode === 'locked-root'
@@ -667,16 +651,25 @@ try {
                     '-EncodedCommand',
                     Buffer.from(hold, 'utf16le').toString('base64')
                   ],
-                  { encoding: 'utf8', windowsHide: true, timeout: 60_000 }
+                  {
+                    encoding: 'utf8',
+                    windowsHide: true,
+                    timeout: 60_000,
+                    env: { ...process.env, ...helperEnv }
+                  }
                 )
               })()
             : spawnSync(exe, [], {
                 encoding: 'utf8',
                 windowsHide: true,
                 timeout: 60_000,
-                ...(['long-source-copy', 'unicode-profile'].includes(mode)
-                  ? { env: { ...process.env, TEMP: temporary, TMP: temporary } }
-                  : {})
+                env: {
+                  ...process.env,
+                  ...helperEnv,
+                  ...(['long-source-copy', 'unicode-profile'].includes(mode)
+                    ? { TEMP: temporary, TMP: temporary }
+                    : {})
+                }
               })
         writeFileSync(
           join(f.root, 'run.json'),
@@ -833,7 +826,12 @@ try {
           )
           // A later installer must copy the whole payload, not skip previously moved directories
           // or regard the failed run as ready.
-          const retry = spawnSync(exe, [], { encoding: 'utf8', windowsHide: true, timeout: 60_000 })
+          const retry = spawnSync(exe, [], {
+            encoding: 'utf8',
+            windowsHide: true,
+            timeout: 60_000,
+            env: { ...process.env, ...helperEnv }
+          })
           expect(retry.error).toBeUndefined()
           expect(retry.status).toBe(0)
           expect(readFileSync(join(f.install, 'app.exe'), 'utf8')).toBe('synthetic executable')

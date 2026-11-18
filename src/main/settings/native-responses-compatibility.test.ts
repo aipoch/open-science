@@ -1,5 +1,5 @@
 import { prepareNativeResponsesRequest } from '@aipoch/providers/protocol'
-import { createServer } from 'node:http'
+import { createServer, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { gzipSync } from 'node:zlib'
 
@@ -26,6 +26,111 @@ afterEach(() => {
 })
 
 describe('native Responses compatibility', () => {
+  it.each(['headers', 'body'] as const)(
+    'closes a real Skill selection still waiting for upstream %s',
+    async (phase) => {
+      const active = new Set<ServerResponse>()
+      let complete = false
+      const upstream = createServer((request, response) => {
+        request.resume()
+        active.add(response)
+        response.once('close', () => active.delete(response))
+        if (complete) {
+          response.setHeader('content-type', 'application/json')
+          response.end(
+            JSON.stringify({
+              output: [
+                {
+                  type: 'function_call',
+                  name: 'select_skills',
+                  arguments: '{"skill_names":["statistics"]}'
+                }
+              ]
+            })
+          )
+          return
+        }
+        if (phase === 'body') {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.write('{')
+        }
+      })
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+      const { port } = upstream.address() as AddressInfo
+      const proxy = new NativeResponsesCompatibilityProxy({
+        baseUrl: `http://127.0.0.1:${port}/v1`,
+        model: 'model-a'
+      })
+      const caller = new AbortController()
+      let settled = false
+      const selecting = proxy
+        .selectSkills(
+          'analyze numerical data',
+          [{ name: 'statistics', description: 'Analyze numerical datasets', path: '/statistics' }],
+          caller.signal
+        )
+        .finally(() => {
+          settled = true
+        })
+      try {
+        await vi.waitFor(() => expect(active.size).toBe(1), { timeout: 1_000 })
+        await proxy.close()
+        await vi.waitFor(
+          () => {
+            expect(active.size).toBe(0)
+            expect(settled).toBe(true)
+          },
+          { timeout: 1_000 }
+        )
+        await expect(selecting).resolves.toEqual([])
+        complete = true
+        await expect(
+          proxy.selectSkills('analyze numerical data', [
+            { name: 'statistics', description: 'Analyze numerical datasets', path: '/statistics' }
+          ])
+        ).resolves.toEqual([{ name: 'statistics', path: '/statistics' }])
+      } finally {
+        caller.abort()
+        await selecting
+        await proxy.close()
+        upstream.closeAllConnections()
+        await new Promise<void>((resolve) => upstream.close(() => resolve()))
+      }
+    }
+  )
+
+  it('closes a real upstream error response after Skill selection returns', async () => {
+    const active = new Set<ServerResponse>()
+    let requests = 0
+    const upstream = createServer((request, response) => {
+      request.resume()
+      requests++
+      active.add(response)
+      response.once('close', () => active.delete(response))
+      response.writeHead(503, { 'content-type': 'text/plain' })
+      response.write('unavailable')
+    })
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+    const { port } = upstream.address() as AddressInfo
+    const proxy = new NativeResponsesCompatibilityProxy({
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      model: 'model-a'
+    })
+    try {
+      await expect(
+        proxy.selectSkills('analyze numerical data', [
+          { name: 'statistics', description: 'Analyze data.', path: '/skills/stats/SKILL.md' }
+        ])
+      ).resolves.toEqual([])
+      expect(requests).toBe(1)
+      await vi.waitFor(() => expect(active.size).toBe(0), { timeout: 1_000 })
+    } finally {
+      await proxy.close()
+      upstream.closeAllConnections()
+      await new Promise<void>((resolve) => upstream.close(() => resolve()))
+    }
+  })
+
   it('normalizes MiniMax M3.1 effort on the forwarded model and stops after retargeting', async () => {
     const fetchImpl = vi.fn<typeof fetch>(
       async () =>

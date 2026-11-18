@@ -1,10 +1,9 @@
 import { nodeRuntimeEnvironment } from '../node-process-host'
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
-import { promisify } from 'node:util'
 
 import { isSupportedCodexAcpVersion, isSupportedCodexCliVersion } from '../../shared/codex-runtime'
 import {
@@ -14,10 +13,13 @@ import {
 } from '@aipoch/diagnostics/node'
 import { augmentedPathEnv, npmBinDirsForCheck, withNpmBinFallback } from './shell-path'
 import { stripCodexCredentialEnv } from './process-tree'
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
-import { spawnCodexWithInstallAdmission } from './managed-codex'
-
-const execFileAsync = promisify(execFile)
+import {
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
+  terminateProcessTree
+} from '../process-tree'
+import { spawnCodexWithInstallAdmission, MAX_ACP_INITIALIZE_RESPONSE_CHARS } from './managed-codex'
+import { runVerificationProcess } from '../update/verification-process'
 
 const log = createLogger('codex-detect')
 
@@ -311,6 +313,13 @@ const runAcpInitializeSmoke =
         let processError: Error | undefined
         let initializeError:
           { code?: number; message?: ReturnType<typeof boundedRuntimeDiagnostic> } | undefined
+        const ownership = createPosixProcessTreeOwnership({
+          ...stripCodexCredentialEnv(augmentedPathEnv(process.env)),
+          ...(isJavaScript ? { ...nodeRuntimeEnvironment() } : {}),
+          NO_BROWSER: '1',
+          CODEX_HOME: codexHome,
+          ...(opts.codexPath ? { CODEX_PATH: opts.codexPath } : {})
+        })
         const child = spawnCodexWithInstallAdmission(
           [adapterPath, ...(opts.codexPath ? [opts.codexPath] : [])],
           () =>
@@ -319,16 +328,10 @@ const runAcpInitializeSmoke =
               windowsHide: true,
               shell: useShell,
               stdio: ['pipe', 'pipe', 'pipe'],
-              env: {
-                ...stripCodexCredentialEnv(augmentedPathEnv(process.env)),
-                ...(isJavaScript ? { ...nodeRuntimeEnvironment() } : {}),
-                NO_BROWSER: '1',
-                CODEX_HOME: codexHome,
-                ...(opts.codexPath ? { CODEX_PATH: opts.codexPath } : {})
-              }
+              env: ownership.env
             })
         )
-        if (platform !== 'win32') registerOwnedPosixProcessGroup(child)
+        if (platform !== 'win32') trackOwnedPosixProcessTree(child, ownership.token)
 
         const finish = (ok: boolean): void => {
           if (settled) return
@@ -413,6 +416,13 @@ const runAcpInitializeSmoke =
 
         child.stdout.setEncoding('utf8')
         child.stdout.on('data', (chunk: string) => {
+          if (settled) return
+          if (buffer.length + chunk.length > MAX_ACP_INITIALIZE_RESPONSE_CHARS) {
+            buffer = ''
+            processError = new Error('ACP initialize response exceeded its limit')
+            finish(false)
+            return
+          }
           buffer += chunk
           for (;;) {
             const newline = buffer.indexOf('\n')
@@ -468,16 +478,20 @@ const runVersion =
       const executable = isJavaScript ? process.execPath : candidate
       const args = isJavaScript ? [candidate, '--version'] : ['--version']
       const useShell = platform === 'win32' && /\.(cmd|bat)$/i.test(candidate)
-      const { stdout } = await execFileAsync(useShell ? `"${executable}"` : executable, args, {
-        timeout: 10_000,
-        shell: useShell,
-        windowsHide: true,
-        env: {
-          ...augmentedPathEnv(process.env),
-          ...(isJavaScript ? { ...nodeRuntimeEnvironment(), NO_BROWSER: '1' } : {})
-        },
-        signal
-      })
+      const { stdout } = await runVerificationProcess(
+        useShell ? `"${executable}"` : executable,
+        args,
+        {
+          timeoutMs: 10_000,
+          maxBytes: 1024 * 1024,
+          shell: useShell,
+          env: {
+            ...augmentedPathEnv(process.env),
+            ...(isJavaScript ? { ...nodeRuntimeEnvironment(), NO_BROWSER: '1' } : {})
+          },
+          signal
+        }
+      )
 
       return parseVersion(stdout)
     } catch {
@@ -491,10 +505,10 @@ const resolveNpmBinDirs =
   async (signal?: AbortSignal): Promise<string[]> => {
     try {
       const useShell = platform === 'win32'
-      const { stdout } = await execFileAsync('npm', ['prefix', '-g'], {
-        timeout: 10_000,
+      const { stdout } = await runVerificationProcess('npm', ['prefix', '-g'], {
+        timeoutMs: 10_000,
+        maxBytes: 1024 * 1024,
         shell: useShell,
-        windowsHide: true,
         env: augmentedPathEnv(),
         signal
       })

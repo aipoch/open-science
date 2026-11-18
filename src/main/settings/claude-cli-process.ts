@@ -1,46 +1,38 @@
 import { nodeRuntimeEnvironment } from '../node-process-host'
-import { spawn, type SpawnOptions } from 'node:child_process'
+import {
+  runVerificationProcess,
+  VerificationProcessExitError
+} from '../update/verification-process'
 
-// Launches a resolved Claude CLI path on every supported installation shape. Windows npm shims are
-// resolved to cli.js/cli.mjs by the caller; Electron must run those entries in Node mode.
-export const spawnClaudeCli = (
+// Resolve npm shims before calling this helper; script entries need Electron's Node mode.
+export const runClaudeCli = async (
   resolvedPath: string,
   args: string[],
-  options: SpawnOptions
-): ReturnType<typeof spawn> => {
-  if (/\.(js|mjs)$/i.test(resolvedPath)) {
-    const env = { ...(options.env as NodeJS.ProcessEnv), ...nodeRuntimeEnvironment() }
-    return spawn(process.execPath, [resolvedPath, ...args], { ...options, env, windowsHide: true })
+  options: {
+    env: NodeJS.ProcessEnv
+    signal: AbortSignal
+    timeoutMs: number
+    preserveChildrenOnExit?: boolean
   }
-
-  return spawn(resolvedPath, args, { ...options, windowsHide: true })
-}
-
-const abortError = (signal: AbortSignal): Error => {
-  const error = new Error(String(signal.reason ?? 'aborted'))
-  error.name = 'AbortError'
-  return error
-}
-
-// Races a subprocess-backed operation against its AbortSignal and removes the listener when either
-// side settles, so repeated status checks do not retain listeners on completed controllers.
-export const waitForAbortableOperation = async <Value>(
-  operation: Promise<Value>,
-  signal: AbortSignal
-): Promise<Value> => {
-  if (signal.aborted) throw abortError(signal)
-
-  let rejectOnAbort: ((reason?: unknown) => void) | undefined
-  const aborted = new Promise<never>((_, reject) => {
-    rejectOnAbort = reject
-  })
-  const onAbort = (): void => rejectOnAbort?.(abortError(signal))
-
-  signal.addEventListener('abort', onAbort, { once: true })
-
+): Promise<{ stdout: string; stderr: string; code: number | null }> => {
+  const script = /\.(js|mjs)$/i.test(resolvedPath)
   try {
-    return await Promise.race([operation, aborted])
-  } finally {
-    signal.removeEventListener('abort', onAbort)
+    const output = await runVerificationProcess(
+      script ? process.execPath : resolvedPath,
+      [...(script ? [resolvedPath] : []), ...args],
+      {
+        ...options,
+        // Browser authentication can still be active before stdin receives anything.
+        stdin: 'pipe',
+        preserveChildrenOnExit: options.preserveChildrenOnExit,
+        env: script ? { ...options.env, ...nodeRuntimeEnvironment() } : options.env
+      }
+    )
+    return { ...output, code: 0 }
+  } catch (error) {
+    if (error instanceof VerificationProcessExitError) {
+      return { stdout: error.stdout, stderr: error.stderr, code: error.exitCode }
+    }
+    throw error
   }
 }

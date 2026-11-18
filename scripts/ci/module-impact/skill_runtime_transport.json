@@ -1,9 +1,15 @@
 {
   "ownerPaths": [
     "src/main/skills/runtime-mcp-server.test.ts",
+    "src/main/skills/runtime-mcp-config.ts",
+    "src/main/skills/runtime-mcp-constants.ts",
     "src/main/skills/runtime-mcp-server.ts"
   ],
-  "interfacePaths": ["src/main/skills/runtime-mcp-server.ts"],
+  "interfacePaths": [
+    "src/main/skills/runtime-mcp-config.ts",
+    "src/main/skills/runtime-mcp-constants.ts",
+    "src/main/skills/runtime-mcp-server.ts"
+  ],
   "testFiles": {
     "owner": ["src/main/skills/runtime-mcp-server.test.ts"],
     "contract": [
