@@ -1,4 +1,3 @@
-import { readPdfTranslationCases as readPackagePdfTranslationCases } from '../../../../../../../packages/pdf-translation/test/fixtures/read-cases'
 import { readPdfTranslationCases } from '../../../../../../../test/fixtures/pdf-translation/read-cases'
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs'
@@ -8084,7 +8083,14 @@ it.each(['owned formula', 'printable glyph', 'moved glyph', 'other owner', 'dupl
 )
 
 describe('native mixed bullet literals', () => {
-  const sample = readPackagePdfTranslationCases<{
+  const sample = JSON.parse(
+    readFileSync(
+      resolve('packages/pdf-translation/test/fixtures/mixed-bullet-native.jsonl'),
+      'utf8'
+    )
+      .trim()
+      .split('\n', 1)[0]
+  ) as {
     page: {
       items: {
         str: string
@@ -8097,7 +8103,7 @@ describe('native mixed bullet literals', () => {
         hasEOL?: boolean
       }[]
     }
-  }>('mixed-bullet-native.jsonl')[0]
+  }
   const positive = '• 80% 的试验：替换为 [TOKEN]，例如 red fox → red [TOKEN]'
   it.each([
     'valid',
