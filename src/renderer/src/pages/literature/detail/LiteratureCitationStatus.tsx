@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { ErrorNotice } from '@/components/error-notice'
+import { CitationLookupError } from './CitationLookupError'
 import { citationDirections, type CitationGraphController } from './useCitationGraphController'
 import type { CitationDirection } from './citation-graph'
 
@@ -48,6 +48,13 @@ export function LiteratureCitationStatus({
     !entries.some((entry) => entry.direction === direction)
   const shownDirections = directionMode === 'both' ? citationDirections : [activeDirection]
   const showStatus = shownDirections.some(showDirectionStatus) || outsideView
+  const compactStatuses = shownDirections.every(
+    (direction) =>
+      states[direction].result?.state === 'ready' &&
+      states[direction].pages < 5 &&
+      !states[direction].omitted &&
+      entries.some((entry) => entry.direction === direction)
+  )
   return showStatus ? (
     <div
       data-citation-status
@@ -66,15 +73,10 @@ export function LiteratureCitationStatus({
           const pageLimitReached =
             state.pages >= 5 && result?.state === 'ready' && result.nextOffset !== undefined
           const title = direction === 'references' ? t('References') : t('Papers citing this paper')
-          const compactDirection =
-            result?.state === 'ready' &&
-            !pageLimitReached &&
-            !state.omitted &&
-            entries.some((entry) => entry.direction === direction)
           return (
             <section
               key={direction}
-              className={`grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 py-2 ${compactDirection && shownDirections.length > 1 ? '' : 'col-span-2'}`}
+              className={`grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 py-2 ${compactStatuses && shownDirections.length > 1 ? '' : 'col-span-2'}`}
               aria-label={title}
             >
               <h3 className="min-w-0 text-xs font-medium">
@@ -87,40 +89,14 @@ export function LiteratureCitationStatus({
                   </p>
                 ) : null}
                 {result?.state === 'unavailable' ? (
-                  <ErrorNotice
-                    inline
-                    role="alert"
-                    description={
-                      result.issue === 'reference-changed'
-                        ? t('This reference changed. Reopen its details and try again.')
-                        : result.issue === 'expired'
-                          ? t('These results expired. Search again.')
-                          : result.issue === 'rate-limited'
-                            ? t('{{source}} is limiting requests. Try again later.', {
-                                source: sourceName
-                              })
-                            : result.issue === 'authentication'
-                              ? t('{{source}} rejected the request. Try again later.', {
-                                  source: sourceName
-                                })
-                              : result.issue === 'no-match'
-                                ? t('No matching paper was found in {{source}}.', {
-                                    source: sourceName
-                                  })
-                                : t('Citation discovery is temporarily unavailable. Try again.')
-                    }
-                    primaryButton={
-                      result.issue === 'reference-changed'
-                        ? undefined
-                        : {
-                            label: t('Retry'),
-                            disabled:
-                              interactionBusy || (invalidated && result.issue !== 'expired'),
-                            onClick: () =>
-                              result.issue === 'expired'
-                                ? onRestart()
-                                : void load(direction, state.pages ? (state.nextOffset ?? 0) : 0)
-                          }
+                  <CitationLookupError
+                    result={result}
+                    sourceName={sourceName}
+                    disabled={interactionBusy || (invalidated && result.issue !== 'expired')}
+                    onRetry={() =>
+                      result.issue === 'expired'
+                        ? onRestart()
+                        : void load(direction, state.pages ? (state.nextOffset ?? 0) : 0)
                     }
                   />
                 ) : result?.state === 'ready' && !state.pages ? null : result?.state === 'ready' &&

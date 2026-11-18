@@ -201,6 +201,7 @@ window.api = {
         ]
       })
     },
+    cancelRelated: async () => {},
     related: async (request: LiteratureRelatedRequest) => {
       fileRequests.push(request)
       if (params.has('citation-graph'))

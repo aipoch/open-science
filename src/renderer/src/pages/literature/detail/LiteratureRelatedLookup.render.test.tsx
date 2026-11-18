@@ -1,3 +1,4 @@
+import { CitationLookupError } from './CitationLookupError'
 // @vitest-environment jsdom
 import { FileTypeIcon } from '@/pages/workspace/file-type-icon'
 import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
@@ -57,7 +58,9 @@ beforeEach(() => {
   transact.mockReset()
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: { literature: { related, transact } }
+    value: {
+      literature: { related, transact, cancelRelated: vi.fn().mockResolvedValue(undefined) }
+    }
   })
 })
 afterEach(() => {
@@ -966,3 +969,44 @@ it.each([undefined, 'skg-if'] as const)(
     })
   }
 )
+
+it('honors the source cooldown and permits only an explicit retry after it expires', () => {
+  vi.useFakeTimers()
+  try {
+    const onRetry = vi.fn()
+    const view = render(
+      <CitationLookupError
+        result={result({ state: 'unavailable', issue: 'rate-limited', retryAt: Date.now() + 2000 })}
+        sourceName="Europe PMC"
+        onRetry={onRetry}
+      />
+    )
+    const button = screen.getByRole('button', { name: 'Retry in 2s' })
+    expect(button).toHaveProperty('disabled', true)
+    fireEvent.click(button)
+    expect(onRetry).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(2000))
+    expect(screen.getByRole('button', { name: 'Retry' })).toHaveProperty('disabled', false)
+    expect(onRetry).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+    view.unmount()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('cancels an unfinished lookup when its source session closes', async () => {
+  const pending = Promise.withResolvers<LiteratureRelatedResult>()
+  related.mockReturnValue(pending.promise)
+  const view = render(
+    <LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />
+  )
+  await waitFor(() => expect(related).toHaveBeenCalledTimes(1))
+  const requestId = related.mock.calls[0][0].requestId
+  expect(requestId).toEqual(expect.any(String))
+  view.unmount()
+  expect(window.api.literature.cancelRelated).toHaveBeenCalledWith({ requestId })
+  await act(async () => pending.resolve(result()))
+  expect(transact).not.toHaveBeenCalled()
+})

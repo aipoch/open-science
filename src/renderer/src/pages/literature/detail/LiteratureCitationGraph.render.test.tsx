@@ -66,7 +66,9 @@ beforeEach(() => {
   transact.mockReset().mockResolvedValue({ kind: 'candidate', id: 'candidate', state: 'pending' })
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: { literature: { related, transact } }
+    value: {
+      literature: { related, transact, cancelRelated: vi.fn().mockResolvedValue(undefined) }
+    }
   })
 })
 afterEach(cleanup)

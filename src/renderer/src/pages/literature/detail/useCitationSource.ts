@@ -30,22 +30,35 @@ export function useCitationSource(provider: CitationProviderChoice): {
     [selectedChoice]
   )
   const mounted = useRef(true)
+  const pending = useRef(new Set<string>())
   useEffect(() => {
     mounted.current = true
+    const requests = pending.current
     return () => {
       mounted.current = false
+      for (const requestId of requests)
+        void api.literature.cancelRelated({ requestId }).catch(() => undefined)
+      requests.clear()
     }
-  }, [])
+  }, [api])
   const requestRelated = useCallback<ScheduleRequest>(
     async (request, shouldRun) => {
       if (!mounted.current || !shouldRun()) throw new Error('Inactive citation source request.')
-      const response = literatureRelatedResultSchema.parse(
-        await api.literature.related({
-          ...request,
-          provider: source.provider,
-          ...(source.opencitationsMode ? { opencitationsMode: source.opencitationsMode } : {})
-        })
-      )
+      const requestId = crypto.randomUUID()
+      pending.current.add(requestId)
+      let response: LiteratureRelatedResult
+      try {
+        response = literatureRelatedResultSchema.parse(
+          await api.literature.related({
+            ...request,
+            requestId,
+            provider: source.provider,
+            ...(source.opencitationsMode ? { opencitationsMode: source.opencitationsMode } : {})
+          })
+        )
+      } finally {
+        pending.current.delete(requestId)
+      }
       if (!mounted.current || !shouldRun()) throw new Error('Inactive citation source response.')
       if (
         response.itemId !== request.itemId ||

@@ -8293,6 +8293,10 @@
     "Add to Inbox": "添加到收件箱",
     "Loaded 5 pages for this direction (up to 100 relationships). Explore the other direction or another paper.": "已加载此方向的5页结果（最多100条关系）。可继续探索另一方向或其他论文。",
     "OpenCitations · SKG-IF": "OpenCitations",
-    "OpenCitations · Index v2": "OpenCitations Index（备用）"
+    "OpenCitations · Index v2": "OpenCitations Index（备用）",
+    "The source returned an invalid response. Retry or choose another citation source.": "来源返回了无效响应。请重试或选择其他引文来源。",
+    "Check the paper identifiers or choose another citation source.": "请检查论文标识符，或选择其他引文来源。",
+    "Positions do not indicate similarity or importance.": "位置不表示相似度或重要程度。",
+    "Closing this view clears the exploration path.": "关闭此视图会清除探索路径。"
   }
 }

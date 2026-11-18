@@ -132,6 +132,21 @@ resolution tokens remain in memory and expire after 15 minutes. Pages contain at
 Europe PMC offsets are multiples of 20 mapped to one-based `page` parameters. Its references and
 citations response `request.offSet` fields use different bases, which are checked independently.
 
+The application assigns each lookup an optional UUID `requestId`. Closing the panel or changing
+its source cancels outstanding lookups through `literature:cancel-related`; cancellation is scoped
+to the originating caller lease and generation. Older callers may omit the ID. A short-lived,
+bounded cancellation record handles cancellation arriving before its lookup. These records, graph
+positions, navigation history and resolution tokens are memory-only, so closing the view clears
+its exploration path. Graph counts describe loaded records; positions do not encode similarity.
+
+Explicitly adding papers still uses Inbox review. Repeated discoveries preserve the candidate's
+original review snapshot and append source evidence. Citation sources store distinct paths in
+`rawMetadata.citationContexts`, including the original item/revision, explored or seed paper,
+direction and OpenCitations mode when available. Acceptance and item merges retain these paths.
+Existing top-level provenance fields are read into this collection on the next source update;
+there is no database migration or new review state. Previously overwritten paths cannot be
+reconstructed. This collection is provenance, not a saved graph or timestamped event history.
+
 Returned content is attributed to its actual source. Coverage is incomplete and changes over time;
 a small live comparison of three biomedical papers is not a coverage or reliability guarantee.
 See Europe's official [REST service documentation](https://europepmc.org/RestfulWebService).

@@ -21,6 +21,7 @@ export const literatureRelatedPaperIdSchema = z.string().refine((value) => {
 
 export const literatureRelatedRequestSchema = z
   .object({
+    requestId: z.string().uuid().optional(),
     itemId: z.string().trim().min(1).max(256),
     expectedMetadataRevision: z.number().int().positive(),
     direction: z.enum(['references', 'citations']),

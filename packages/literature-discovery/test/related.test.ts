@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { discoveryReferenceSchema, type DiscoveryReference } from '../src/contracts.js'
 import { LiteratureRelatedFinder } from '../src/related.js'
+import { resolveEuropePmc } from '../src/related-europe-pmc.js'
 import {
   literatureRelatedPaperIdSchema,
   literatureRelatedRequestSchema,
@@ -26,6 +27,22 @@ const request = {
 }
 const paper = { source: 'MED', id: '9999', title: 'Seed', doi: '10.1234/seed' }
 const rootId = 'europe-pmc:MED:9999'
+
+it.each([
+  ['Targeting &lt;i&gt;Cirsium japonicum&lt;/i&gt;', 'Targeting Cirsium japonicum'],
+  ['H<sub>2</sub>O &amp; &#945;', 'H2O & α'],
+  ['Effects at p < 0.05 & controls', 'Effects at p < 0.05 & controls'],
+  ['A &lt;gene&gt; marker', 'A <gene> marker'],
+  ['Broken <i>format', 'Broken <i>format']
+])('normalizes source title %s without interpreting arbitrary markup', async (title, expected) => {
+  const result = await resolveEuropePmc(
+    reference(),
+    async () => ({ hitCount: 1, resultList: { result: [{ ...paper, title }] } }),
+    async () => []
+  )
+  expect(result?.item.title).toBe(expected)
+})
+
 const json = (value: unknown): Response => new Response(JSON.stringify(value))
 const identity = (): Response => json({ hitCount: 1, resultList: { result: [paper] } })
 function page(input: string | URL | Request, ids: string[] = ['1'], count = ids.length): Response {

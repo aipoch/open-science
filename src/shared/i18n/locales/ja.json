@@ -8293,6 +8293,10 @@
     "Add to Inbox": "受信箱に追加",
     "Loaded 5 pages for this direction (up to 100 relationships). Explore the other direction or another paper.": "この方向の5ページを読み込みました（最大100件の関係）。逆方向または別の論文を探索してください。",
     "OpenCitations · SKG-IF": "OpenCitations",
-    "OpenCitations · Index v2": "OpenCitations Index（代替）"
+    "OpenCitations · Index v2": "OpenCitations Index（代替）",
+    "The source returned an invalid response. Retry or choose another citation source.": "データソースから無効な応答が返されました。再試行するか、別の引用データソースを選択してください。",
+    "Check the paper identifiers or choose another citation source.": "論文の識別子を確認するか、別の引用データソースを選択してください。",
+    "Positions do not indicate similarity or importance.": "位置は類似度や重要度を示すものではありません。",
+    "Closing this view clears the exploration path.": "このビューを閉じると探索経路が消去されます。"
   }
 }

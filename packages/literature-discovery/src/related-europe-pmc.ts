@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SaxesParser } from 'saxes'
 import {
   bibliographicRecordSchema,
   normalizeLiteratureIdentifierValue,
@@ -35,6 +36,36 @@ const paperSchema = z.object({
 })
 type Paper = z.infer<typeof paperSchema>
 type Read = (path: string, query: Record<string, string>) => Promise<unknown>
+
+function plainTitle(raw: string): string {
+  let value = raw.trim()
+  // Europe PMC supplies both XML formatting and entity-escaped XML in JSON titles.
+  for (let pass = 0; pass < 2 && /[<&]/u.test(value); pass++) {
+    const parser = new SaxesParser({ fragment: true })
+    let result = ''
+    let invalid = false
+    parser.on('error', () => {
+      invalid = true
+    })
+    parser.on('doctype', () => {
+      invalid = true
+    })
+    parser.on('opentag', ({ name }) => {
+      if (!/^(?:i|b|em|strong|italic|bold|sup|sub|sc)$/iu.test(name)) invalid = true
+    })
+    parser.on('text', (text) => {
+      result += text
+    })
+    try {
+      parser.write(value).close()
+    } catch {
+      invalid = true
+    }
+    if (invalid || !result.trim()) break
+    value = result.trim()
+  }
+  return value
+}
 
 function record(paper: Paper): LiteratureRelatedRecord | undefined {
   const identity = literatureRelatedPaperIdSchema.safeParse(
@@ -89,7 +120,7 @@ function record(paper: Paper): LiteratureRelatedRecord | undefined {
                   paper.journalAbbreviation
                 ? 'journalArticle'
                 : 'document',
-      title: paper.title.trim(),
+      title: plainTitle(paper.title),
       abstract: paper.abstractText ?? '',
       issuedYear:
         year !== undefined && Number.isInteger(year) && year > 0 && year <= 9999 ? year : undefined,

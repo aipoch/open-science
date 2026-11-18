@@ -198,6 +198,10 @@ export const contracts = {
   'literature.publicationCheck': callable<
     (request: LiteraturePublicationCheckRequest) => Promise<LiteraturePublicationCheckResult>
   >()('literature', ['literature:publication-check', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.cancelRelated': callable<(request: { requestId: string }) => Promise<void>>()(
+    'literature',
+    ['literature:cancel-related', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'literature.related': callable<
     (request: LiteratureRelatedRequest) => Promise<LiteratureRelatedResult>
   >()('literature', ['literature:related', WEB, undefined, undefined, RUNTIME_VALIDATED]),

@@ -423,6 +423,8 @@ export function LiteratureCitationCanvas({
                     'Exploration stays in this detail view and does not add papers to your library.'
                   )}
                 </p>
+                <p>{t('Positions do not indicate similarity or importance.')}</p>
+                <p>{t('Closing this view clears the exploration path.')}</p>
                 <p>{t('Zoom in to read all paper labels.')}</p>
               </TooltipContent>
             </Tooltip>
@@ -524,7 +526,7 @@ export function LiteratureCitationCanvas({
             <span className="h-3 w-px bg-border-300" aria-hidden="true" />
             <span className="inline-flex items-center gap-1 text-muted-foreground">
               <span className="size-1.5 rounded-full bg-chart-1" aria-hidden="true" />
-              {t('References')} {relationCounts.references}
+              {t('Loaded')}: {t('References')} {relationCounts.references}
             </span>
             <span className="inline-flex items-center gap-1 text-muted-foreground">
               <span className="size-1.5 rounded-full bg-chart-3" aria-hidden="true" />

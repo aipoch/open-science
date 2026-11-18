@@ -79,7 +79,8 @@
     "src/main/literature/pdf-structure/ocr.ts",
     "src/main/literature/pdf-structure/ocr.test.ts",
     "src/main/literature/overview-batch.ts",
-    "src/main/literature/overview-batch.test.ts"
+    "src/main/literature/overview-batch.test.ts",
+    "src/main/literature/citation-provenance.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",

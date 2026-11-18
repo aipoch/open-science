@@ -255,6 +255,7 @@ describe('application command composition', () => {
       'lifecycle:claim-runtime-writer',
       'literature:add-pdf',
       'literature:cancel-pdf-import',
+      'literature:cancel-related',
       'literature:citation-styles',
       'literature:collect',
       'literature:complete-metadata',
@@ -1394,3 +1395,69 @@ it('keeps real handoff admission held after renderer durability and releases it 
   ).resolves.not.toBe('The local service is stopping.')
   await composition.dispose()
 })
+
+it.each(['electron', 'localWeb', 'remoteWeb'] as const)(
+  'cancels citation lookups within their caller lease through %s',
+  async (surface) => {
+    const entered = Promise.withResolvers<AbortSignal>()
+    const related = vi.fn(async (_request: unknown, signal: AbortSignal) => {
+      entered.resolve(signal)
+      await new Promise<void>((_resolve, reject) =>
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      )
+    })
+    const composition = createApplicationCommandComposition({
+      ...dependencies(),
+      literature: { related } as never
+    })
+    const call = invocation(surface === 'remoteWeb' ? 'remote' : 'local')
+    const requestId = '11111111-1111-4111-8111-111111111111'
+    const request = {
+      requestId,
+      itemId: 'paper',
+      expectedMetadataRevision: 1,
+      direction: 'references'
+    }
+    try {
+      const lookup = composition[surface].invoke('literature:related', { ...call, args: [request] })
+      const rejected = expect(lookup).rejects.toThrow()
+      const signal = await entered.promise
+      const other = {
+        ...call,
+        callerContext: { ...call.callerContext, leaseId: 'other' },
+        callerLease: { ...call.callerLease, leaseId: 'other' }
+      }
+      await composition[surface].invoke('literature:cancel-related', {
+        ...other,
+        args: [{ requestId }]
+      })
+      expect(signal.aborted).toBe(false)
+      await composition[surface].invoke('literature:cancel-related', {
+        ...call,
+        args: [{ requestId }]
+      })
+      expect(signal.aborted).toBe(true)
+      await rejected
+      const nextId = '22222222-2222-4222-8222-222222222222'
+      await composition[surface].invoke('literature:cancel-related', {
+        ...call,
+        args: [{ requestId: nextId }]
+      })
+      await expect(
+        composition[surface].invoke('literature:related', {
+          ...call,
+          args: [{ ...request, requestId: nextId }]
+        })
+      ).rejects.toThrow()
+      expect(related).toHaveBeenCalledTimes(1)
+      await expect(
+        composition[surface].invoke('literature:cancel-related', {
+          ...call,
+          args: [{ requestId: '../invalid' }]
+        })
+      ).rejects.toThrow()
+    } finally {
+      await composition.dispose()
+    }
+  }
+)

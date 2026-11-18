@@ -8645,6 +8645,10 @@
     "Add to Inbox": "Ajouter à la boîte de réception",
     "Loaded 5 pages for this direction (up to 100 relationships). Explore the other direction or another paper.": "5 pages ont été chargées dans ce sens (jusqu’à 100 relations). Explorez l’autre sens ou une autre publication.",
     "OpenCitations · SKG-IF": "OpenCitations",
-    "OpenCitations · Index v2": "OpenCitations Index (solution de repli)"
+    "OpenCitations · Index v2": "OpenCitations Index (solution de repli)",
+    "The source returned an invalid response. Retry or choose another citation source.": "La source a renvoyé une réponse non valide. Réessayez ou choisissez une autre source de citations.",
+    "Check the paper identifiers or choose another citation source.": "Vérifiez les identifiants de la publication ou choisissez une autre source de citations.",
+    "Positions do not indicate similarity or importance.": "Les positions ne représentent ni la similarité ni l’importance.",
+    "Closing this view clears the exploration path.": "Fermer cette vue efface le parcours d’exploration."
   }
 }

@@ -448,6 +448,7 @@ describe('LiteratureLibraryPage', () => {
             issue: 'not-generated' as const
           })),
           related: vi.fn(),
+          cancelRelated: vi.fn().mockResolvedValue(undefined),
           publicationCheck: vi.fn(
             async (request: { itemId: string; expectedMetadataRevision: number }) => ({
               itemId: request.itemId,

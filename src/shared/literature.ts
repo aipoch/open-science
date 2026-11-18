@@ -143,6 +143,10 @@ const literatureApplicationCommandContracts = Object.freeze({
     validationCodec(z.tuple([literaturePublicationCheckRequestSchema])),
     validationCodec(literaturePublicationCheckResultSchema)
   ),
+  cancelRelated: defineApplicationCommandContract(
+    validationCodec(z.tuple([z.object({ requestId: z.string().uuid() }).strict()])),
+    validationCodec(z.void())
+  ),
   related: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureRelatedRequestSchema])),
     validationCodec(literatureRelatedResultSchema)

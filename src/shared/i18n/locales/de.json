@@ -8465,6 +8465,10 @@
     "Add to Inbox": "Zum Posteingang hinzufügen",
     "Loaded 5 pages for this direction (up to 100 relationships). Explore the other direction or another paper.": "Für diese Richtung wurden 5 Seiten geladen (bis zu 100 Beziehungen). Erkunden Sie die andere Richtung oder eine andere Publikation.",
     "OpenCitations · SKG-IF": "OpenCitations",
-    "OpenCitations · Index v2": "OpenCitations Index (Ausweichoption)"
+    "OpenCitations · Index v2": "OpenCitations Index (Ausweichoption)",
+    "The source returned an invalid response. Retry or choose another citation source.": "Die Quelle hat eine ungültige Antwort zurückgegeben. Versuchen Sie es erneut oder wählen Sie eine andere Zitationsquelle.",
+    "Check the paper identifiers or choose another citation source.": "Prüfen Sie die Kennungen der Publikation oder wählen Sie eine andere Zitationsquelle.",
+    "Positions do not indicate similarity or importance.": "Positionen geben weder Ähnlichkeit noch Bedeutung an.",
+    "Closing this view clears the exploration path.": "Beim Schließen dieser Ansicht wird der Erkundungspfad gelöscht."
   }
 }

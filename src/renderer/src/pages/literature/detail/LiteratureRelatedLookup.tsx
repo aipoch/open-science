@@ -1,3 +1,4 @@
+import { CitationLookupError } from './CitationLookupError'
 import { CitationAbstract } from './LiteratureDetailText'
 import { fullCreatorLabel, publicationSummary } from '../literature-item-display'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -484,18 +485,6 @@ function LiteratureRelatedList({
           : t('In Inbox')
   const issue = loadError?.issue ?? result?.issue
   const invalidated = referenceInvalidated || issue === 'expired' || issue === 'reference-changed'
-  const errorMessage =
-    issue === 'rate-limited'
-      ? t('{{source}} is limiting requests. Try again later.', { source: sourceName })
-      : issue === 'authentication'
-        ? t('{{source}} rejected the request. Try again later.', { source: sourceName })
-        : issue === 'no-match'
-          ? t('No matching paper was found in {{source}}.', { source: sourceName })
-          : issue === 'reference-changed'
-            ? t('This reference changed. Reopen its details and try again.')
-            : issue === 'expired'
-              ? t('These results expired. Search again.')
-              : t('Citation discovery is temporarily unavailable. Try again.')
   return (
     <Tabs.Root
       value={direction}
@@ -589,15 +578,13 @@ function LiteratureRelatedList({
             </div>
           </div>
         ) : result?.state === 'unavailable' ? (
-          <ErrorNotice
-            role="alert"
-            description={errorMessage}
-            primaryButton={{
-              label: t('Retry'),
-              disabled: busy || saving || referenceInvalidated,
-              loading: busy && busyVisible,
-              onClick: () => void lookup(direction, 0)
-            }}
+          <CitationLookupError
+            result={result}
+            sourceName={sourceName}
+            inline={false}
+            disabled={busy || saving || referenceInvalidated}
+            loading={busy && busyVisible}
+            onRetry={() => void lookup(direction, 0)}
           />
         ) : result?.records.length ? (
           <ul className="divide-y divide-border-300">
@@ -663,21 +650,18 @@ function LiteratureRelatedList({
         ) : null}
         {loadError ? (
           <div className="mt-4">
-            <ErrorNotice
-              inline
-              role="alert"
-              description={errorMessage}
-              primaryButton={{
-                label: t('Retry'),
-                disabled: busy || saving || referenceInvalidated,
-                loading: busy,
-                onClick: () =>
-                  void lookup(
-                    direction,
-                    invalidated ? 0 : result?.nextOffset,
-                    invalidated ? undefined : result?.resolutionToken
-                  )
-              }}
+            <CitationLookupError
+              result={loadError}
+              sourceName={sourceName}
+              disabled={busy || saving || referenceInvalidated}
+              loading={busy}
+              onRetry={() =>
+                void lookup(
+                  direction,
+                  invalidated ? 0 : result?.nextOffset,
+                  invalidated ? undefined : result?.resolutionToken
+                )
+              }
             />
           </div>
         ) : result?.nextOffset !== undefined ? (
