@@ -5,6 +5,7 @@ export type DarwinRecoveryIdentity = Readonly<{ pid: number; uniqueId: string }>
 type Receipt = Readonly<{
   pid: number
   ownerToken: string
+  posixBirthToken?: string
   darwinRecoveryProcesses?: readonly DarwinRecoveryIdentity[]
 }>
 type Dependencies = {
@@ -86,6 +87,8 @@ export function createDarwinKernelRecovery(
     const table = deps.listDarwinProcesses()
     if (!table) return unknown
     const knownBirths = new Set(retained.map((p) => p.uniqueId))
+    const leaderBirth = record.posixBirthToken?.match(/^darwin-proc-uniqueid:([1-9][0-9]*)$/u)?.[1]
+    if (leaderBirth) knownBirths.add(leaderBirth)
     for (const member of table.processes) {
       // Discover inherited tokens even when a shutdown handler forks into another session.
       if (

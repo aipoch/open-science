@@ -112,6 +112,16 @@ describe('Darwin kernel recovery', () => {
     expect(f.signal).toHaveBeenCalledWith(102, 'SIGTERM')
     expect(f.save.mock.calls.at(-1)![0]).toContainEqual({ pid: 102, uniqueId: '1102' })
   })
+  it('retains a detached child of the recorded leader on the first recovery scan', () => {
+    const f = fixture()
+    f.processes.clear()
+    f.processes.set(102, { ...member(102), pgid: 102, sid: 102, parentUniqueId: '1100' })
+    f.env.mockReturnValue(false)
+    const prior = { ...receipt, posixBirthToken: 'darwin-proc-uniqueid:1100' }
+    expect(f.recovery.probe(prior, f.save)).toBe('unknown')
+    expect(f.save).toHaveBeenCalledWith([{ pid: 102, uniqueId: '1102' }])
+    expect(f.signal).not.toHaveBeenCalled()
+  })
   it('checkpoints new descendants while a previously retained process is unreadable', () => {
     const f = fixture()
     const prior = { ...receipt, darwinRecoveryProcesses: [{ pid: 101, uniqueId: '1101' }] }
