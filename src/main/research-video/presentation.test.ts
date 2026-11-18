@@ -126,6 +126,46 @@ async function fixture(): Promise<{
     }
   }
 }
+it('keeps the previous film available while reviewing a replacement, and withholds failed revisions', async () => {
+  const f = await fixture()
+  const first = Promise.withResolvers<[]>()
+  const issue = { scene: 'scene-1', message: 'Panel covers the caption' }
+  const reviewPlayer = vi
+    .fn()
+    .mockResolvedValueOnce([])
+    .mockImplementationOnce(() => first.promise)
+    .mockResolvedValue([issue])
+  const owner = createResearchVideoPresentationOwner({ ...f.options, reviewPlayer })
+  try {
+    await owner.start(request)
+    await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+    const original = (await owner.status(request)).result!
+    await owner.start(request)
+    await vi.waitFor(() => expect(reviewPlayer).toHaveBeenCalledTimes(2))
+    expect(await owner.status(request)).toMatchObject({
+      result: original,
+      progress: { phase: 'verifying' }
+    })
+    first.resolve([])
+    await vi.waitFor(async () =>
+      expect((await owner.status(request)).result?.id).not.toBe(original.id)
+    )
+    const approved = (await owner.status(request)).result!
+    await owner.start(request)
+    await vi.waitFor(async () =>
+      expect(await owner.status(request)).toMatchObject({
+        result: approved,
+        progress: { phase: 'failed' },
+        error: expect.stringContaining(issue.message)
+      })
+    )
+    expect(reviewPlayer).toHaveBeenCalledTimes(6)
+  } finally {
+    first.resolve([])
+    await owner.close()
+  }
+})
+
 it('generates a persistent presentation directly from read-only history without changing it', async () => {
   const f = await fixture(),
     owner = createResearchVideoPresentationOwner(f.options)

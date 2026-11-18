@@ -14,6 +14,7 @@ export const researchVideoProgressSchema = z
       'rendering',
       'encoding',
       'verifying',
+      'repairing',
       'completed',
       'cancelled',
       'failed'

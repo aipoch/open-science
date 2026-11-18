@@ -20,7 +20,8 @@ const pendingFilmFields = {
   attempt: z.number().int().positive(),
   completed: z.number().int().nonnegative().optional(),
   total: z.number().int().positive().optional(),
-  built: researchFilmReceiptSchema.optional()
+  built: researchFilmReceiptSchema.optional(),
+  visualChecked: z.literal(true).optional()
 }
 export const pendingFilmSchema = z.discriminatedUnion('version', [
   z.object({ ...pendingFilmFields, version: z.literal(1), mode: z.undefined().optional() }),

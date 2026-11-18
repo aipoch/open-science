@@ -47,6 +47,10 @@
     "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "종료하면 완료되지 않은 작업이 중단됩니다. 저장된 대화와 파일은 유지됩니다."
   },
   "native": {
+    "Use {{name}} as a live illustration?": "{{name}}을(를) 움직이는 그림으로 사용할까요?",
+    "The film can run {{modules}} local JavaScript modules from this session in its offline player. You can use a drawn illustration instead.": "오프라인 플레이어에서 이 세션의 로컬 JavaScript 모듈 {{modules}}개를 실행할 수 있습니다. 대신 그림을 사용할 수도 있습니다.",
+    "Use a drawing": "그림 사용",
+    "Allow this app": "이 앱 허용",
     "Local State is in use by another process.": "다른 프로세스에서 Local State를 사용 중입니다.",
     "The Local State configuration file could not be read.": "Local State 구성 파일을 읽을 수 없습니다.",
     "The Local State configuration file is invalid.": "Local State 구성 파일이 올바르지 않습니다.",
@@ -193,6 +197,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "시스템 자격 증명에 접근하는 동안 시작이 중지되었습니다. 기존 자격 증명과 프로필 데이터는 보존되었습니다."
   },
   "renderer": {
+    "Includes the session app in motion.": "세션 앱이 실행되는 모습을 보여줍니다.",
+    "Uses a drawn illustration of the session app.": "세션 앱을 그림으로 보여줍니다.",
     "Pros": "장점",
     "Cons": "제약",
     "The conversation changed. Reopen the image editor and try again.": "대화가 변경되었습니다. 이미지 편집기를 다시 열고 재시도하세요.",
@@ -7784,7 +7790,9 @@
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "“{{title}}”의 보관된 변경 사항을 삭제하고 저장된 버전을 다시 불러오시겠습니까? 이 작업은 되돌릴 수 없습니다.",
     "Could not reload the saved conversation. Retained changes were kept. Please try again.": "저장된 대화를 다시 불러오지 못했습니다. 변경 사항은 보관되어 있습니다. 다시 시도하세요.",
     "Research narration": "연구 설명 내레이션",
-    "Export MP4": "MP4 내보내기",
+    "Render video (MP4)": "동영상 렌더링 (MP4)",
+    "Save shareable HTML": "공유용 HTML 저장",
+    "Save one HTML file with narration and visuals for browser playback.": "내레이션과 시각 자료가 포함된 HTML 파일을 저장하여 브라우저에서 재생합니다.",
     "Exporting MP4…": "MP4 내보내는 중…",
     "English narration. Downloads the speech engine and model only when installed.": "영어 내레이션입니다. 음성 엔진과 모델은 설치할 때만 다운로드됩니다.",
     "Preparing research materials…": "연구 자료 준비 중…",
@@ -7792,6 +7800,8 @@
     "Generating narration…": "내레이션 생성 중…",
     "Aligning captions…": "자막 타이밍 조정 중…",
     "Mixing narration…": "내레이션 믹싱 중…",
+    "Checking film visuals…": "영상의 시각적 요소 확인 중…",
+    "Repairing film visuals…": "영상의 시각적 요소 수정 중…",
     "Building player and source package…": "플레이어 및 소스 패키지 생성 중…",
     "Saving results…": "결과 저장 중…",
     "Rendering video frames…": "동영상 프레임 렌더링 중…",
@@ -7806,6 +7816,7 @@
     "Narration installation did not finish. Retry to continue.": "내레이션 리소스 설치가 완료되지 않았습니다. 다시 시도하세요.",
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "생성하려면 내레이션 리소스({{size}} MiB)를 설치하세요. 이후 해설에서도 재사용됩니다.",
     "Install and generate": "설치 후 생성",
+    "Narration rubric {{score}}/9": "내레이션 평가 {{score}}/9",
     "English narration": "영어 내레이션",
     "View generation progress": "생성 진행 상황 보기",
     "Generate again?": "다시 생성할까요?",

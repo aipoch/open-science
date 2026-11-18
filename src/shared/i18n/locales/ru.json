@@ -47,6 +47,10 @@
     "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "При выходе незавершённые задачи будут прерваны. Сохранённые диалоги и файлы останутся."
   },
   "native": {
+    "Use {{name}} as a live illustration?": "Использовать {{name}} как анимированную иллюстрацию?",
+    "The film can run {{modules}} local JavaScript modules from this session in its offline player. You can use a drawn illustration instead.": "Автономный проигрыватель может запустить локальные модули JavaScript из этого сеанса ({{modules}}). Можно также использовать рисунок.",
+    "Use a drawing": "Использовать рисунок",
+    "Allow this app": "Разрешить приложение",
     "Local State is in use by another process.": "Local State используется другим процессом.",
     "The Local State configuration file could not be read.": "Не удалось прочитать файл конфигурации Local State.",
     "The Local State configuration file is invalid.": "Файл конфигурации Local State недействителен.",
@@ -196,6 +200,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены."
   },
   "renderer": {
+    "Includes the session app in motion.": "Показана работа приложения из сеанса.",
+    "Uses a drawn illustration of the session app.": "Приложение из сеанса показано на рисунке.",
     "Pros": "Преимущества",
     "Cons": "Ограничения",
     "The conversation changed. Reopen the image editor and try again.": "Диалог изменился. Откройте редактор изображений заново и повторите попытку.",
@@ -8267,7 +8273,9 @@
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "Отменить удерживаемые изменения диалога «{{title}}» и загрузить сохранённую версию? Это действие нельзя отменить.",
     "Could not reload the saved conversation. Retained changes were kept. Please try again.": "Не удалось загрузить сохранённый диалог. Удерживаемые изменения сохранены в памяти. Повторите попытку.",
     "Research narration": "Озвучивание исследований",
-    "Export MP4": "Экспорт MP4",
+    "Render video (MP4)": "Создать видео (MP4)",
+    "Save shareable HTML": "Сохранить HTML для отправки",
+    "Save one HTML file with narration and visuals for browser playback.": "Сохранить один HTML-файл с озвучкой и визуальными материалами для просмотра в браузере.",
     "Exporting MP4…": "Экспорт MP4…",
     "English narration. Downloads the speech engine and model only when installed.": "Озвучивание на английском. Речевой движок и модель загружаются только при установке.",
     "Preparing research materials…": "Подготовка исследовательских материалов…",
@@ -8275,6 +8283,8 @@
     "Generating narration…": "Создание озвучивания…",
     "Aligning captions…": "Синхронизация субтитров…",
     "Mixing narration…": "Сведение озвучивания…",
+    "Checking film visuals…": "Проверка визуальных элементов фильма…",
+    "Repairing film visuals…": "Исправление визуальных элементов фильма…",
     "Building player and source package…": "Создание проигрывателя и пакета исходных файлов…",
     "Saving results…": "Сохранение результатов…",
     "Rendering video frames…": "Отрисовка кадров видео…",
@@ -8289,6 +8299,7 @@
     "Narration installation did not finish. Retry to continue.": "Установка ресурсов озвучивания не завершена. Повторите попытку.",
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "Установите ресурсы озвучивания ({{size}} МиБ) для создания объяснения. Они будут повторно использоваться в следующих объяснениях.",
     "Install and generate": "Установить и создать",
+    "Narration rubric {{score}}/9": "Оценка текста озвучки {{score}}/9",
     "English narration": "Озвучка на английском",
     "View generation progress": "Показать ход создания",
     "Generate again?": "Создать заново?",

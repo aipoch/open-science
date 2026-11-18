@@ -67,15 +67,7 @@
     if (!pn || !f || f === shownFile) return
     shownFile = f
     const k = PV.order.indexOf(f)
-    pn.querySelectorAll('.osk-tab').forEach((tb, j) => {
-      const on = j === k
-      tb.classList.toggle('osk-tab-active', on)
-      tb.classList.toggle('bg-bg-300', on)
-      tb.classList.toggle('text-text-000', on)
-      tb.classList.toggle('text-text-300', !on)
-    })
-    pn.querySelector('.osk-file-head span').textContent = f
-    pn.querySelector('.osk-file-body').replaceChildren(fileNode(f))
+    S.ws.panel.select(k, { title: f, body: fileNode(f) })
   }
   const marks = TL.scenes.map((sc) =>
     sc.highlight ? window.Session.mark(S.thread, sc.msg, sc.highlight) : null
@@ -264,6 +256,40 @@
     return [(r.left - s.left) * k, (r.top - s.top) * k, r.width * k, r.height * k].map(
       (x) => +x.toFixed(1)
     )
+  }
+  // Measure every phrase with the same words, font and box as live playback.
+  window.__checkCaptions = () => {
+    const issues = []
+    const keep = [...capBox.childNodes]
+    try {
+      for (const chunk of chunks) {
+        capBox.replaceChildren(...chunk.words.map(([word]) => h('span', { class: 'w on' }, word)))
+        const [x, y, w, height] = rectOf(capBox)
+        const rows = new Set([...capBox.children].map((span) => span.offsetTop))
+        if (
+          rows.size > 1 ||
+          x < 24 ||
+          y < 24 ||
+          x + w > W - 24 ||
+          y + height > H - 24 ||
+          capBox.scrollWidth > capBox.clientWidth + 2
+        ) {
+          const time = chunk.words[0][1]
+          const sc = TL.scenes[sceneAt(time)]
+          issues.push({
+            scene: sc.id,
+            line: sc.lines.findIndex((line) => time <= sc.start + line.t1 + 0.001),
+            message:
+              'This caption does not fit on one row inside the safe area: "' +
+              chunk.words.map(([word]) => word).join(' ') +
+              '". Rephrase the line and keep its evidence.'
+          })
+        }
+      }
+    } finally {
+      capBox.replaceChildren(...keep)
+    }
+    return issues
   }
   window.__layout = () => {
     const out = []

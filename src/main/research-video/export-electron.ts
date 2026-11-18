@@ -1,4 +1,5 @@
 import type { ResearchVideoProgress, ResearchVideoStep } from '@aipoch/research-film/contracts'
+import { filmVisualCheckSchema, type FilmVisualResult } from '@aipoch/research-film/contracts'
 import type { VideoEncoderPaths } from '@aipoch/research-film/export'
 import { BrowserWindow, session } from 'electron'
 import { readFile, writeFile, rm, mkdtemp, link, rename } from 'node:fs/promises'
@@ -90,16 +91,21 @@ export const readResearchVideoExportProgress = (request: {
   htmlPath: string
 }): ResearchVideoProgress | null => activeProgress.get(request.htmlPath) ?? null
 
-/** One export owns the dedicated partition through window and browser-data teardown. */
-export async function renderResearchVideoMp4(
-  request: { htmlPath: string } & VideoEncoderPaths,
-  parentSignal: AbortSignal
-): Promise<string> {
-  await acquireRenderSlot(parentSignal)
+type FilmStage = { duration: number; W: number; H: number }
+
+/** A single isolated partition is shared by HTML review and MP4 capture. */
+async function withFilmPlayer<T>(
+  htmlPath: string,
+  signal: AbortSignal,
+  inspectPlayer: (
+    window: BrowserWindow,
+    metadata: FilmStage,
+    setupSignal: AbortSignal
+  ) => Promise<T>
+): Promise<T> {
+  await acquireRenderSlot(signal)
   try {
-    parentSignal.throwIfAborted()
-    assertVideoEncoderReady()
-    return await renderWithSlot(request, parentSignal)
+    return await openFilmPlayer(htmlPath, signal, inspectPlayer)
   } finally {
     const next = renderWaiters.values().next().value
     if (next) next()
@@ -107,21 +113,19 @@ export async function renderResearchVideoMp4(
   }
 }
 
-async function renderWithSlot(
-  request: { htmlPath: string } & VideoEncoderPaths,
-  parentSignal: AbortSignal
-): Promise<string> {
-  const timeout = new AbortController()
-  const signal = AbortSignal.any([parentSignal, timeout.signal])
-  const { encoderPath, probePath } = request
-  const startedAt = Date.now()
-  const report = (step: ResearchVideoStep): void => {
-    activeProgress.set(request.htmlPath, { ...step, startedAt })
-  }
+async function openFilmPlayer<T>(
+  htmlPath: string,
+  signal: AbortSignal,
+  inspectPlayer: (
+    window: BrowserWindow,
+    metadata: FilmStage,
+    setupSignal: AbortSignal
+  ) => Promise<T>
+): Promise<T> {
   signal.throwIfAborted()
   const setupSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
   const html = await waitForFilmStep(setupSignal, () =>
-    readFile(request.htmlPath, { encoding: 'utf8', signal: setupSignal })
+    readFile(htmlPath, { encoding: 'utf8', signal: setupSignal })
   )
   if (
     Buffer.byteLength(html) > 200 * 1024 * 1024 ||
@@ -132,10 +136,7 @@ async function renderWithSlot(
   if (needsReset) await resetRenderSession(isolated, signal)
   signal.throwIfAborted()
   const playerUrl = `https://research-video.invalid/player?render&ratio=16x9&job=${randomUUID()}`
-  const outputPath = `${request.htmlPath}.mp4`
   let activeWindow: BrowserWindow | undefined
-  let directory: string | undefined
-  let encoderExit: Promise<void> | undefined
   needsReset = true
   try {
     isolated.protocol.handle(
@@ -168,31 +169,92 @@ async function renderWithSlot(
     }))
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', (event) => event.preventDefault())
-    report({ phase: 'preparing' })
-    const timer = setTimeout(
-      () => timeout.abort(new Error('Video export timed out')),
-      60 * 60 * 1000
-    )
     const renderCall = <T>(call: () => Promise<T>): Promise<T> => waitForFilmStep(setupSignal, call)
-    try {
-      await renderCall(() => window.loadURL(playerUrl))
-      signal.throwIfAborted()
-      const metadata = (await renderCall(() =>
-        window.webContents.executeJavaScript('window.__ready')
-      )) as {
-        duration: number
-        W: number
-        H: number
+    await renderCall(() => window.loadURL(playerUrl))
+    signal.throwIfAborted()
+    const metadata = (await renderCall(() =>
+      window.webContents.executeJavaScript('window.__ready')
+    )) as {
+      duration: number
+      W: number
+      H: number
+    }
+    if (
+      metadata.W !== 1920 ||
+      metadata.H !== 1080 ||
+      !Number.isFinite(metadata.duration) ||
+      metadata.duration <= 0 ||
+      metadata.duration > 3600
+    )
+      throw new Error('Invalid research video stage')
+    signal.throwIfAborted()
+    return await inspectPlayer(window, metadata, setupSignal)
+  } finally {
+    if (activeWindow && !activeWindow.isDestroyed()) activeWindow.destroy()
+    await resetRenderSession(isolated).catch((error: unknown) =>
+      log.warn('Failed to clear Film browser data', diagnosticErrorFields(error))
+    )
+  }
+}
+export async function checkResearchVideoHtml(
+  request: { htmlPath: string; includeFrames: boolean },
+  parentSignal: AbortSignal
+): Promise<FilmVisualResult> {
+  const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(120_000)])
+  return withFilmPlayer(request.htmlPath, signal, async (window, stage) => {
+    const inspect = <T>(work: () => Promise<T>): Promise<T> => waitForFilmStep(signal, work)
+    const result = filmVisualCheckSchema.parse(
+      await inspect(() => window.webContents.executeJavaScript('window.__checkFilm()'))
+    )
+    const frames: FilmVisualResult['frames'] = []
+    if (request.includeFrames && !result.issues.length) {
+      for (const { scene, time } of result.frames) {
+        if (time > stage.duration) throw new Error('Invalid film review time')
+        await inspect(() =>
+          window.webContents.executeJavaScript(
+            `window.__seek(${time}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
+          )
+        )
+        const image = await inspect(() =>
+          window.webContents.capturePage({ x: 0, y: 0, width: stage.W, height: stage.H })
+        )
+        if (image.isEmpty()) throw new Error('The HTML review frame was empty.')
+        const jpeg = image
+          .resize({ width: 960, height: 540, quality: 'best' })
+          .toJPEG(78)
+          .toString('base64')
+        frames.push({ scene, time, jpeg })
       }
-      if (
-        metadata.W !== 1920 ||
-        metadata.H !== 1080 ||
-        !Number.isFinite(metadata.duration) ||
-        metadata.duration <= 0 ||
-        metadata.duration > 3600
-      )
-        throw new Error('Invalid research video stage')
-      signal.throwIfAborted()
+    }
+    return { issues: result.issues, frames }
+  })
+}
+
+export async function renderResearchVideoMp4(
+  request: { htmlPath: string } & VideoEncoderPaths,
+  parentSignal: AbortSignal
+): Promise<string> {
+  parentSignal.throwIfAborted()
+  assertVideoEncoderReady()
+  const timeout = new AbortController()
+  const signal = AbortSignal.any([parentSignal, timeout.signal])
+  const { encoderPath, probePath } = request
+  const startedAt = Date.now()
+  let progress: ResearchVideoProgress | undefined
+  const report = (step: ResearchVideoStep): void => {
+    progress = { ...step, startedAt }
+    activeProgress.set(request.htmlPath, progress)
+  }
+  const outputPath = `${request.htmlPath}.mp4`
+  let directory: string | undefined
+  let encoderExit: Promise<void> | undefined
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await withFilmPlayer(request.htmlPath, signal, async (window, metadata, setupSignal) => {
+      report({ phase: 'preparing' })
+      timer = setTimeout(() => timeout.abort(new Error('Video export timed out')), 60 * 60 * 1000)
+      const renderCall = <T>(call: () => Promise<T>): Promise<T> =>
+        waitForFilmStep(setupSignal, call)
       const audio: unknown = await renderCall(() =>
         window.webContents.executeJavaScript("window.VIDEO_ASSETS['mix.wav']")
       )
@@ -257,10 +319,8 @@ async function renderWithSlot(
       })
       signal.throwIfAborted()
       await link(videoPath, outputPath)
-    } finally {
-      clearTimeout(timer)
-    }
-    return outputPath
+      return outputPath
+    })
   } catch (error) {
     if (error instanceof ResearchVideoEncoderCleanupError) {
       encoderExit = error.exited
@@ -268,23 +328,17 @@ async function renderWithSlot(
     }
     throw error
   } finally {
-    try {
-      if (activeWindow && !activeWindow.isDestroyed()) activeWindow.destroy()
-      await resetRenderSession(isolated).catch((error: unknown) => {
-        // Preserve the export result. The next export still has to reset before mounting a player.
-        log.warn('Failed to clear Film export browser data', diagnosticErrorFields(error))
-      })
-    } finally {
+    clearTimeout(timer)
+    if (progress && activeProgress.get(request.htmlPath) === progress)
       activeProgress.delete(request.htmlPath)
-      if (directory) {
-        const owned = directory
-        const remove = (): Promise<void> =>
-          rm(owned, { recursive: true, force: true, maxRetries: 3 }).catch((error: unknown) =>
-            log.warn('Failed to remove Film encoder scratch', diagnosticErrorFields(error))
-          )
-        if (encoderExit) void encoderExit.then(remove)
-        else await remove()
-      }
+    if (directory) {
+      const owned = directory
+      const remove = (): Promise<void> =>
+        rm(owned, { recursive: true, force: true, maxRetries: 3 }).catch((error: unknown) =>
+          log.warn('Failed to remove Film encoder scratch', diagnosticErrorFields(error))
+        )
+      if (encoderExit) void encoderExit.then(remove)
+      else await remove()
     }
   }
 }

@@ -47,6 +47,10 @@
     "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Beim Beenden werden nicht abgeschlossene Aufgaben unterbrochen. Ihre gespeicherten Konversationen und Dateien bleiben erhalten."
   },
   "native": {
+    "Use {{name}} as a live illustration?": "{{name}} als animierte Illustration verwenden?",
+    "The film can run {{modules}} local JavaScript modules from this session in its offline player. You can use a drawn illustration instead.": "Der Film kann {{modules}} lokale JavaScript-Module aus dieser Sitzung im Offline-Player ausführen. Alternativ können Sie eine Zeichnung verwenden.",
+    "Use a drawing": "Zeichnung verwenden",
+    "Allow this app": "Diese App zulassen",
     "Local State is in use by another process.": "Local State wird von einem anderen Prozess verwendet.",
     "The Local State configuration file could not be read.": "Die Konfigurationsdatei Local State konnte nicht gelesen werden.",
     "The Local State configuration file is invalid.": "Die Konfigurationsdatei Local State ist ungültig.",
@@ -194,6 +198,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten."
   },
   "renderer": {
+    "Includes the session app in motion.": "Zeigt die App aus der Sitzung in Bewegung.",
+    "Uses a drawn illustration of the session app.": "Zeigt eine Zeichnung der App aus der Sitzung.",
     "Pros": "Vorteile",
     "Cons": "Einschränkungen",
     "The conversation changed. Reopen the image editor and try again.": "Die Konversation hat sich geändert. Öffnen Sie den Bildeditor erneut und versuchen Sie es noch einmal.",
@@ -7950,7 +7956,9 @@
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "Aufbewahrte Änderungen für „{{title}}“ verwerfen und die gespeicherte Version neu laden? Dies kann nicht rückgängig gemacht werden.",
     "Could not reload the saved conversation. Retained changes were kept. Please try again.": "Die gespeicherte Konversation konnte nicht neu geladen werden. Die Änderungen bleiben erhalten. Versuchen Sie es erneut.",
     "Research narration": "Forschungsnarration",
-    "Export MP4": "MP4 exportieren",
+    "Render video (MP4)": "Video rendern (MP4)",
+    "Save shareable HTML": "HTML zum Teilen speichern",
+    "Save one HTML file with narration and visuals for browser playback.": "Eine HTML-Datei mit Sprechertext und visuellen Inhalten für die Wiedergabe im Browser speichern.",
     "Exporting MP4…": "MP4 wird exportiert…",
     "English narration. Downloads the speech engine and model only when installed.": "Englische Sprachausgabe. Die Sprach-Engine und das Modell werden erst bei der Installation heruntergeladen.",
     "Preparing research materials…": "Forschungsmaterialien werden vorbereitet…",
@@ -7958,6 +7966,8 @@
     "Generating narration…": "Sprechertext wird erzeugt…",
     "Aligning captions…": "Untertitel werden synchronisiert…",
     "Mixing narration…": "Sprecheraufnahme wird gemischt…",
+    "Checking film visuals…": "Filmgestaltung wird überprüft…",
+    "Repairing film visuals…": "Filmgestaltung wird korrigiert…",
     "Building player and source package…": "Player und Quellpaket werden erstellt…",
     "Saving results…": "Ergebnisse werden gespeichert…",
     "Rendering video frames…": "Videobilder werden gerendert…",
@@ -7972,6 +7982,7 @@
     "Narration installation did not finish. Retry to continue.": "Die Installation der Sprachressourcen wurde nicht abgeschlossen. Versuchen Sie es erneut.",
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "Installieren Sie die Sprachressourcen ({{size}} MiB) zum Erstellen. Sie werden für weitere Erklärungen wiederverwendet.",
     "Install and generate": "Installieren und erstellen",
+    "Narration rubric {{score}}/9": "Bewertung des Sprechertexts {{score}}/9",
     "English narration": "Englische Vertonung",
     "View generation progress": "Erstellungsfortschritt anzeigen",
     "Generate again?": "Erneut erstellen?",

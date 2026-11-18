@@ -1,4 +1,5 @@
 import { researchFilmResources } from './resources.js'
+import { createHash } from 'node:crypto'
 import { mkdtemp, writeFile, readFile, mkdir, symlink, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -59,6 +60,26 @@ describe('research video source boundaries', () => {
       path: 'engine/js/stage.js',
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
     })
+    const appOptions = { ...options, outputDirectory: join(root, 'app-output') }
+    await mkdir(join(root, 'libs'))
+    const appBytes = Buffer.from('window.APP = { position(t) { return t * 2 } };')
+    await writeFile(join(root, 'libs', 'app.js'), appBytes)
+    await writeFile(options.specPath, JSON.stringify({ ...spec, libs: ['libs/app.js'] }))
+    await expect(buildResearchVideoPlayer(appOptions)).rejects.toThrow('approval is required')
+    await expect(
+      buildResearchVideoPlayer({ ...appOptions, provenance: { sessionAppSha256: 'a'.repeat(64) } })
+    ).rejects.toThrow('approved session app changed')
+    const provenance = {
+      sessionAppSha256: createHash('sha256').update(appBytes).digest('hex'),
+      scriptScore: 9
+    }
+    const live = await buildResearchVideoPlayer({ ...appOptions, provenance })
+    const liveSources = unzipSync(await readFile(live.sourcePath))
+    expect(Buffer.from(liveSources['libs/app.js'])).toEqual(appBytes)
+    expect(JSON.parse(Buffer.from(liveSources['manifest.json']).toString()).provenance).toEqual(
+      provenance
+    )
+    expect(await readFile(live.playerPath, 'utf8')).toContain('"scriptScore":9')
     await writeFile(options.specPath, JSON.stringify({ ...spec, session: 'engine/js/stage.js' }))
     await expect(buildResearchVideoPlayer(options)).rejects.toThrow(
       'conflicts with generated bundle files'

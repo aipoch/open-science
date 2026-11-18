@@ -29,7 +29,9 @@ export const researchFilmReceiptSchema = z
   .object({
     id: z.string().uuid(),
     title: z.string().min(1).max(160),
-    duration: z.number().positive()
+    duration: z.number().positive(),
+    scriptScore: z.number().int().min(0).max(9).optional(),
+    sessionAppMode: z.enum(['live', 'drawn']).optional()
   })
   .strict()
 
@@ -94,7 +96,8 @@ export async function readStoredResearchFilm(
       !(await hasResearchFilmOutputs(directory))
     )
       throw error
-    return { id: known.id, title: known.title, duration: known.duration }
+    const { id, title, duration, scriptScore, sessionAppMode } = known
+    return { id, title, duration, scriptScore, sessionAppMode }
   })
   if (!receipt) return undefined
   const directory = join(base, receipt.id)

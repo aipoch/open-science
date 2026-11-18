@@ -3,6 +3,7 @@ export const RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES = 100 * 1024 * 1024
 export type ResearchVideoSessionSource = {
   sessionTitle: string
   project: string
+  sessionApp?: import('./session-app.js').SessionAppDescription
   messages: Array<{ i: number; id: string; role: string; md: string; artifactIds: string[] }>
   replay?: {
     schemaVersion: 1
@@ -15,6 +16,7 @@ export type ResearchVideoSessionSource = {
     branchId?: string
     mode?: 'research-explanation' | 'operation-replay'
     sourceRevision?: number
+    sessionAppSha256?: string
     sourceClaimsIndependentlyVerified: boolean
   }
 }

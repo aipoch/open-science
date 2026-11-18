@@ -866,7 +866,19 @@ function ResearchVideoModeButton({
                         <AudioLines className="size-3.5" aria-hidden="true" />
                         {t('English narration')}
                       </span>
+                      {playableResult.scriptScore !== undefined && (
+                        <span>
+                          {t('Narration rubric {{score}}/9', { score: playableResult.scriptScore })}
+                        </span>
+                      )}
                     </div>
+                    {playableResult.sessionAppMode && (
+                      <p className="text-xs text-muted-foreground">
+                        {playableResult.sessionAppMode === 'live'
+                          ? t('Includes the session app in motion.')
+                          : t('Uses a drawn illustration of the session app.')}
+                      </p>
+                    )}
                   </div>
                   <Button
                     className="min-h-10 w-full whitespace-normal"

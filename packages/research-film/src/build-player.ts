@@ -16,6 +16,7 @@ type SourceSpec = VideoSpec & {
   profile?: string
   disclaimer?: string
   start_file?: string
+  libs?: string[]
 }
 type SessionSnapshot = {
   messages: Array<{ md?: string; [key: string]: unknown }>
@@ -304,7 +305,8 @@ export async function buildResearchVideoPlayer(options: {
       title: spec.title,
       case: spec.case,
       profile: spec.profile ?? 'user',
-      disclaimer: spec.disclaimer ?? ''
+      disclaimer: spec.disclaimer ?? '',
+      ...(options.provenance?.scriptScore === 9 && { scriptScore: 9 })
     },
     timeline,
     session,
@@ -318,6 +320,24 @@ export async function buildResearchVideoPlayer(options: {
     svgs: {}
   }
   let scripts = `window.DATA=${scriptJson(data)};window.TOKENS=${scriptJson(tokens)};window.VIDEO_ASSETS=${scriptJson(dataUrls)};`
+  if (spec.libs?.length) {
+    if (
+      spec.libs.length !== 1 ||
+      spec.libs[0] !== 'libs/app.js' ||
+      !options.provenance?.sessionAppSha256
+    )
+      throw new Error('Session app approval is required for this film.')
+    const appBytes = await source('libs/app.js')
+    if (createHash('sha256').update(appBytes).digest('hex') !== options.provenance.sessionAppSha256)
+      throw new Error('The approved session app changed.')
+    const appCode = appBytes.toString()
+    new Script(appCode) // Only the isolated HTML player runs the consented module graph.
+    scripts +=
+      '\n;\nwindow.__filmAppUsed=false;try {\n' +
+      appCode +
+      '\nconst sessionApp=window.APP; Object.defineProperty(window,"APP",{get(){window.__filmAppUsed=true;return sessionApp}});' +
+      '\n} catch(error) {window.__filmAppError=String(error.message || error)}\n;\n'
+  }
   scripts += `window.ResearchVideoPlaybackClock=${ResearchVideoPlaybackClock.toString()};`
   for (const [key, code] of Object.entries(codes)) {
     const factory = `function(k,Math,Date,performance,requestAnimationFrame,setTimeout,setInterval){${code}\n}`
@@ -332,7 +352,8 @@ export async function buildResearchVideoPlayer(options: {
     'icons/lucide.js',
     'js/kit.js',
     'js/panels.js',
-    'js/stage.js'
+    'js/stage.js',
+    'js/visual-check.js'
   ])
     scripts += '\n;\n' + (await engine(name))
   const inner = `<!doctype html><html lang="en"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"><meta name="open-science-research-video" content="1"><title>${attr(spec.title)}</title><!-- Third-party licenses: ${notices.join('\n\n').replace(/--/g, '—')} --><style>${css}</style><div id="root"></div><div id="controls"></div><script>${scripts.replace(/<\/script/gi, '<\\/script')}</script></html>`

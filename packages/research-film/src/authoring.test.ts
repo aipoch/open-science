@@ -44,6 +44,153 @@ const spec = {
     }
   ]
 }
+
+it('repairs the faulty drawing, reuses good units, and checks the rebuilt HTML before returning', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'film-html-review-'))
+  try {
+    const story = {
+      ...spec,
+      scenes: [
+        spec.scenes[0],
+        {
+          ...spec.scenes[0],
+          id: 'result',
+          role: 'result',
+          panels: [{ type: 'animation', script: 'anims/result.js' }]
+        },
+        spec.scenes[1]
+      ]
+    }
+    const writeScreenplay = vi.fn(async () => JSON.stringify(story))
+    const writeAnimation = vi.fn<
+      NonNullable<Parameters<typeof generateResearchFilm>[0]['author']['writeAnimation']>
+    >(async (_source, input, _signal, correction) =>
+      correction ? 'k.ctx.fillRect(2,2,40,40)' : `// ${input.path}`
+    )
+    const generate = vi.fn(async () => ({
+      playerPath: 'player.html',
+      sourcePath: 'sources.zip',
+      duration: 4,
+      preparationMs: 2
+    }))
+    const issue = { scene: 'result', script: 'anims/result.js', message: 'Two labels overlap' }
+    const reviewPlayer = vi.fn().mockResolvedValueOnce([issue]).mockResolvedValueOnce([])
+    await generateResearchFilm({
+      source,
+      directory,
+      author: { writeScreenplay, writeAnimation },
+      generate,
+      reviewPlayer,
+      signal: new AbortController().signal,
+      modelDirectory: 'model',
+      engineDirectory: 'engine',
+      modelRevision: 'v'
+    })
+    expect(generate).toHaveBeenCalledTimes(2)
+    expect(reviewPlayer).toHaveBeenCalledTimes(2)
+    expect(writeScreenplay).toHaveBeenCalledOnce()
+    expect(writeAnimation).toHaveBeenCalledTimes(3)
+    expect(writeAnimation.mock.lastCall?.[3]).toEqual({
+      draft: '// anims/result.js',
+      error: expect.stringContaining(issue.message)
+    })
+    expect(await readFile(join(directory, 'anims/result.js'), 'utf8')).toContain('fillRect')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+it('replaces a failed session app with a drawing and rechecks later repairs', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'film-app-fallback-'))
+  try {
+    const writeScreenplay = vi
+      .fn()
+      .mockResolvedValueOnce(JSON.stringify({ ...spec, libs: ['libs/app.js'] }))
+      .mockResolvedValue(JSON.stringify(spec))
+    const writeAnimation = vi.fn().mockResolvedValue('k.ctx.fillRect(0,0,40,40)')
+    const reviewPlayer = vi
+      .fn()
+      .mockResolvedValueOnce([
+        { scene: 'hook', app: true, message: 'The approved app did not run.' }
+      ])
+      .mockResolvedValueOnce([
+        { scene: 'hook', script: 'anims/hook.js', message: 'Move the label.' }
+      ])
+      .mockResolvedValueOnce([])
+    const result = await generateResearchFilm({
+      source: {
+        ...source,
+        sessionApp: { name: 'orbit.zip', modules: 1, api: ['position(t)'], packages: [] }
+      },
+      directory,
+      author: { writeScreenplay, writeAnimation },
+      reviewPlayer,
+      generate: async () => ({
+        playerPath: 'player.html',
+        sourcePath: 'sources.zip',
+        duration: 2,
+        preparationMs: 1
+      }),
+      signal: new AbortController().signal,
+      modelDirectory: 'model',
+      modelRevision: 'v',
+      engineDirectory: 'engine'
+    })
+    expect(result.usedSessionApp).toBe(false)
+    expect(writeScreenplay).toHaveBeenCalledTimes(2)
+    expect(writeScreenplay.mock.calls[1][2].error).toContain('Omit libs')
+    expect(writeAnimation).toHaveBeenCalledTimes(3)
+    expect(reviewPlayer).toHaveBeenCalledTimes(3)
+    expect(JSON.parse(await readFile(join(directory, 'video.json'), 'utf8'))).not.toHaveProperty(
+      'libs'
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+it('repairs only the reported layout and preserves the narration and existing drawings', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'film-layout-repair-'))
+  try {
+    const replacement = structuredClone(spec)
+    replacement.scenes[0].lines[0].caption = 'Unrequested new narration.'
+    replacement.scenes[0].panels[0].text = 'Readable title'
+    replacement.scenes[1].lines[0].caption = 'Unrequested change in a good scene.'
+    const writeScreenplay = vi
+      .fn()
+      .mockResolvedValueOnce(JSON.stringify(spec))
+      .mockResolvedValueOnce('{')
+      .mockResolvedValueOnce(JSON.stringify(replacement))
+    const writeAnimation = vi.fn(async () => '// original drawing')
+    const reviewPlayer = vi
+      .fn()
+      .mockResolvedValueOnce([{ scene: 'hook', message: 'The title overlaps a panel.' }])
+      .mockResolvedValueOnce([])
+    await generateResearchFilm({
+      source,
+      directory,
+      author: { writeScreenplay, writeAnimation },
+      reviewPlayer,
+      generate: async () => ({
+        playerPath: 'player.html',
+        sourcePath: 'sources.zip',
+        duration: 4,
+        preparationMs: 1
+      }),
+      signal: new AbortController().signal,
+      modelDirectory: 'model',
+      engineDirectory: 'engine',
+      modelRevision: 'v'
+    })
+    const repaired = JSON.parse(await readFile(join(directory, 'video.json'), 'utf8'))
+    expect(repaired.scenes[0].lines).toEqual(spec.scenes[0].lines)
+    expect(repaired.scenes[0].panels[0].text).toBe('Readable title')
+    expect(repaired.scenes[1]).toEqual(spec.scenes[1])
+    expect(writeAnimation).toHaveBeenCalledOnce()
+    expect(reviewPlayer).toHaveBeenCalledTimes(2)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 it('uses the default comparison reveal for malformed timing while preserving content validation', () => {
   const parse = (right: Record<string, unknown>): VideoPanel =>
     parseResearchVideoScreenplay(

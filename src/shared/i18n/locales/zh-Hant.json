@@ -47,6 +47,10 @@
     "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "結束應用程式將中斷未完成的工作。已儲存的對話和檔案會保留。"
   },
   "native": {
+    "Use {{name}} as a live illustration?": "將 {{name}} 用作動態示範？",
+    "The film can run {{modules}} local JavaScript modules from this session in its offline player. You can use a drawn illustration instead.": "影片可以在離線播放器中執行本次工作階段的 {{modules}} 個本機 JavaScript 模組。你也可以選擇使用繪製的插圖。",
+    "Use a drawing": "使用插圖",
+    "Allow this app": "允許此應用程式",
     "Local State is in use by another process.": "Local State 正由其他處理程序使用。",
     "The Local State configuration file could not be read.": "無法讀取 Local State 設定檔。",
     "The Local State configuration file is invalid.": "Local State 設定檔無效。",
@@ -193,6 +197,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "啟動在存取系統憑證時停止。現有憑證和設定檔資料已保留。"
   },
   "renderer": {
+    "Includes the session app in motion.": "包含工作階段中應用程式的動態示範。",
+    "Uses a drawn illustration of the session app.": "使用插圖呈現本次工作階段中的應用程式。",
     "Pros": "優點",
     "Cons": "缺點",
     "The conversation changed. Reopen the image editor and try again.": "對話已變更。請重新開啟圖片編輯器後再試。",
@@ -7786,7 +7792,9 @@
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "要捨棄「{{title}}」的保留變更並重新載入已儲存的版本嗎？此操作無法復原。",
     "Could not reload the saved conversation. Retained changes were kept. Please try again.": "無法重新載入已儲存的對話。保留的變更仍在，請重試。",
     "Research narration": "研究短片旁白",
-    "Export MP4": "匯出 MP4",
+    "Render video (MP4)": "算繪影片 (MP4)",
+    "Save shareable HTML": "儲存可分享的 HTML",
+    "Save one HTML file with narration and visuals for browser playback.": "儲存包含旁白和畫面的獨立 HTML 檔案，可在瀏覽器中播放。",
     "Exporting MP4…": "正在匯出 MP4…",
     "English narration. Downloads the speech engine and model only when installed.": "英語旁白。僅在安裝時下載語音引擎和模型。",
     "Preparing research materials…": "正在準備研究素材…",
@@ -7794,6 +7802,8 @@
     "Generating narration…": "正在產生旁白…",
     "Aligning captions…": "正在對齊字幕…",
     "Mixing narration…": "正在混合旁白音軌…",
+    "Checking film visuals…": "正在檢查影片畫面…",
+    "Repairing film visuals…": "正在修正影片畫面…",
     "Building player and source package…": "正在建置播放器和原始檔套件…",
     "Saving results…": "正在儲存結果…",
     "Rendering video frames…": "正在繪製影片影格…",
@@ -7808,6 +7818,7 @@
     "Narration installation did not finish. Retry to continue.": "旁白資源未安裝完成，請重試以繼續。",
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "安裝旁白資源（{{size}} MiB）後即可產生，後續講解將重複使用這些資源。",
     "Install and generate": "安裝並產生",
+    "Narration rubric {{score}}/9": "旁白稿評分 {{score}}/9",
     "English narration": "英語旁白",
     "View generation progress": "查看產生進度",
     "Generate again?": "重新產生？",

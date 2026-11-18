@@ -64,6 +64,27 @@ describe('research video timeline', () => {
     expect(() => buildVideoTimeline(spec, {})).toThrow('Missing narration')
     expect(buildVideoTimeline(spec, {}, true).scenes[0].lines[0].voiced).toBe(false)
   })
+  it('keeps hyphenated cue words distinct from positive and negative timing offsets', () => {
+    const scene = buildVideoTimeline(
+      {
+        scenes: [
+          {
+            ...spec.scenes[0],
+            panels: [],
+            lines: [{ caption: 'Compare 2-opt with nearest-neighbor.' }]
+          }
+        ]
+      },
+      {},
+      true
+    ).scenes[0]
+    const start = scene.lines[0].words[1][1]
+    expect(resolveVideoCue('0:2-opt', scene)).toBe(start)
+    expect(resolveVideoCue('0:2-opt-0.2', scene)).toBeCloseTo(start - 0.2)
+    expect(resolveVideoCue('0:nearest-neighbor+0.1', scene)).toBeCloseTo(
+      scene.lines[0].words[3][1] + 0.1
+    )
+  })
   it('rejects unknown cues and invalid measured alignment', () => {
     const result = buildVideoTimeline(spec, voices)
     expect(() => resolveVideoCue('0:3.191', result.scenes[0])).toThrow('not found')

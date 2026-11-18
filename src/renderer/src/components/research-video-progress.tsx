@@ -35,7 +35,8 @@ export function ResearchVideoProgressLine({
     publishing: t('Saving results…'),
     rendering: t('Rendering video frames…'),
     encoding: t('Finishing video encoding…'),
-    verifying: t('Verifying video…'),
+    verifying: filmStep ? t('Checking film visuals…') : t('Verifying video…'),
+    repairing: t('Repairing film visuals…'),
     completed: t('Research film ready'),
     cancelled: t('Research video cancelled'),
     failed: t('Research video failed')
@@ -80,7 +81,7 @@ export function ResearchVideoProgressLine({
           <>
             <div className="flex items-baseline justify-between gap-2">
               <p className="text-sm font-medium text-foreground">
-                {terminal
+                {terminal || progress.phase === 'verifying' || progress.phase === 'repairing'
                   ? labels[progress.phase]
                   : [
                       t('Preparing research materials…'),

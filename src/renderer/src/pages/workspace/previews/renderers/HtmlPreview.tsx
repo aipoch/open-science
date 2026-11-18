@@ -22,7 +22,8 @@ import { usePreviewFileContent } from '../usePreviewFileContent'
 import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { SourcePreviewContent } from './SourcePreview'
 import { useRegisterPreviewContextMenuFrame } from '../../preview-actions/preview-action-hooks'
-import { Loader2, Video } from 'lucide-react'
+import { useManagedFileDownload } from '../../use-managed-file-download'
+import { Check, Download, Loader2, Video } from 'lucide-react'
 
 type HtmlPreviewMode = 'render' | 'source'
 
@@ -76,6 +77,14 @@ export const HtmlPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.
 const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element => {
   const { item } = props
   const { t } = useTranslation()
+  const htmlDownload = useManagedFileDownload({
+    source: item.source ?? 'artifact',
+    path: item.path,
+    projectId: item.projectId,
+    fileId: item.managedFileId,
+    versionId: item.selectedVersionId,
+    suggestedName: item.name
+  })
   const [videoKey, setVideoKey] = useState<string>()
   const [exporting, setExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState<ResearchVideoProgress>()
@@ -207,7 +216,7 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
   const modeToggle = (
     <div
       data-research-video-export-toolbar
-      className="flex min-w-0 shrink-0 items-center justify-between gap-3 border-b border-border-300 bg-bg-000 px-3 py-2"
+      className="flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border-300 bg-bg-000 px-3 py-2"
     >
       <div className="flex items-center gap-1 rounded-md bg-bg-200 p-0.5">
         {HTML_PREVIEW_MODES.map((option) => (
@@ -229,16 +238,42 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
       {!exporting &&
         mode === 'render' &&
         videoKey === requestKey &&
+        !hasFailed &&
+        resourceState.status === 'ready' &&
         document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true' && (
-          <Button
-            size="xs"
-            variant="ghost"
-            className="text-text-000"
-            onClick={() => void exportVideo(installBytes !== undefined)}
-          >
-            <Video aria-hidden="true" />
-            {t('Export MP4')}
-          </Button>
+          <div className="ml-auto flex min-w-0 flex-wrap justify-end gap-2">
+            <Button
+              size="xs"
+              variant="secondary"
+              disabled={htmlDownload.status === 'saving'}
+              onClick={() => void exportVideo(installBytes !== undefined)}
+            >
+              <Video aria-hidden="true" />
+              {t('Render video (MP4)')}
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={htmlDownload.status === 'saving'}
+              aria-busy={htmlDownload.status === 'saving'}
+              aria-label={t('Save shareable HTML')}
+              title={t('Save one HTML file with narration and visuals for browser playback.')}
+              onClick={() => void htmlDownload.execute()}
+            >
+              {htmlDownload.status === 'saving' ? (
+                <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              ) : htmlDownload.status === 'saved' ? (
+                <Check aria-hidden="true" />
+              ) : (
+                <Download aria-hidden="true" />
+              )}
+              {htmlDownload.status === 'saving'
+                ? t('Saving...')
+                : htmlDownload.status === 'saved'
+                  ? t('Saved')
+                  : t('Save shareable HTML')}
+            </Button>
+          </div>
         )}
     </div>
   )
@@ -297,6 +332,9 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
       {exportStatus}
       {installPrompt}
       {exportError && <ErrorNotice inline tone="amber" description={exportError} />}
+      {htmlDownload.status === 'error' && (
+        <ErrorNotice inline tone="amber" description={t('Download failed. Try again')} />
+      )}
     </>
   )
 

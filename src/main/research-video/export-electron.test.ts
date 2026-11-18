@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import { renderResearchVideoMp4 } from './export-electron'
+import { checkResearchVideoHtml, renderResearchVideoMp4 } from './export-electron'
 
 const electron = vi.hoisted(() => {
   const clearData = vi.fn(async () => {})
@@ -255,6 +255,26 @@ it('keeps encoder inputs when the cancelled backend request deletes its staging 
     reportFailure.resolve()
     exited.resolve()
     await task
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('seeks in the live player for visual defects without starting an encoder', async () => {
+  vi.clearAllMocks()
+  const root = await mkdtemp(join(tmpdir(), 'film-check-html-'))
+  const htmlPath = join(root, 'player.html')
+  try {
+    await writeFile(htmlPath, '<meta name="open-science-research-video" content="1">')
+    const issues = [{ scene: 'setup', script: 'anims/setup.js', message: 'Overlapping labels' }]
+    electron.executeJavaScript
+      .mockResolvedValueOnce({ W: 1920, H: 1080, duration: 3 })
+      .mockResolvedValueOnce({ issues, frames: [{ scene: 'setup', time: 1.5 }] })
+    await expect(
+      checkResearchVideoHtml({ htmlPath, includeFrames: true }, new AbortController().signal)
+    ).resolves.toEqual({ issues, frames: [] })
+    expect(electron.executeJavaScript).toHaveBeenCalledWith('window.__checkFilm()')
+    expect(encode).not.toHaveBeenCalled()
+  } finally {
     await rm(root, { recursive: true, force: true })
   }
 })

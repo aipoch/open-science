@@ -47,6 +47,10 @@
     "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Quitter interrompra les tâches inachevées. Vos conversations et fichiers enregistrés seront conservés."
   },
   "native": {
+    "Use {{name}} as a live illustration?": "Utiliser {{name}} comme illustration animée ?",
+    "The film can run {{modules}} local JavaScript modules from this session in its offline player. You can use a drawn illustration instead.": "Le film peut exécuter {{modules}} modules JavaScript locaux de cette session dans son lecteur hors ligne. Vous pouvez aussi utiliser un dessin.",
+    "Use a drawing": "Utiliser un dessin",
+    "Allow this app": "Autoriser cette application",
     "Local State is in use by another process.": "Local State est utilisé par un autre processus.",
     "The Local State configuration file could not be read.": "Le fichier de configuration Local State n’a pas pu être lu.",
     "The Local State configuration file is invalid.": "Le fichier de configuration Local State est invalide.",
@@ -195,6 +199,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés."
   },
   "renderer": {
+    "Includes the session app in motion.": "Montre l’application de la session en mouvement.",
+    "Uses a drawn illustration of the session app.": "Présente un dessin de l’application de la session.",
     "Pros": "Avantages",
     "Cons": "Limites",
     "The conversation changed. Reopen the image editor and try again.": "La conversation a changé. Rouvrez l’éditeur d’images et réessayez.",
@@ -8122,7 +8128,9 @@
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "Abandonner les modifications conservées pour « {{title}} » et recharger la version enregistrée? Cette action est irréversible.",
     "Could not reload the saved conversation. Retained changes were kept. Please try again.": "Impossible de recharger la conversation enregistrée. Les modifications sont conservées. Veuillez réessayer.",
     "Research narration": "Narration de recherche",
-    "Export MP4": "Exporter en MP4",
+    "Render video (MP4)": "Générer la vidéo (MP4)",
+    "Save shareable HTML": "Enregistrer le HTML à partager",
+    "Save one HTML file with narration and visuals for browser playback.": "Enregistrer un fichier HTML avec narration et visuels pour le lire dans un navigateur.",
     "Exporting MP4…": "Exportation MP4…",
     "English narration. Downloads the speech engine and model only when installed.": "Narration en anglais. Le moteur vocal et le modèle ne sont téléchargés qu’à l’installation.",
     "Preparing research materials…": "Préparation des documents de recherche…",
@@ -8130,6 +8138,8 @@
     "Generating narration…": "Génération de la narration…",
     "Aligning captions…": "Synchronisation des sous-titres…",
     "Mixing narration…": "Mixage de la narration…",
+    "Checking film visuals…": "Vérification des éléments visuels du film…",
+    "Repairing film visuals…": "Correction des éléments visuels du film…",
     "Building player and source package…": "Création du lecteur et du paquet source…",
     "Saving results…": "Enregistrement des résultats…",
     "Rendering video frames…": "Rendu des images vidéo…",
@@ -8144,6 +8154,7 @@
     "Narration installation did not finish. Retry to continue.": "L’installation des ressources de narration n’a pas abouti. Réessayez pour continuer.",
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "Installez les ressources de narration ({{size}} MiB) pour générer l’explication. Elles seront réutilisées pour les prochaines explications.",
     "Install and generate": "Installer et générer",
+    "Narration rubric {{score}}/9": "Évaluation de la narration {{score}}/9",
     "English narration": "Narration en anglais",
     "View generation progress": "Voir la progression de la génération",
     "Generate again?": "Générer à nouveau ?",

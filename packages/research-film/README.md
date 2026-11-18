@@ -40,7 +40,7 @@ Stage the approved `session.json` and `files/` into a fresh job directory before
 
 Resources and workers resolve relative to the installed package, not the application's working directory. Keep `dist` and `resources` together. Run the Node pipeline outside an ASAR; desktop hosts can stage this package into their ordinary Node backend. The package contains no downloaded narration weights, ONNX engine, voice binary, or FFmpeg executable. Catalogs pin downloads for the host's model manager. Existing `sharp` is reused through normal package dependency resolution.
 
-Authoring documentation: [format and constraints](resources/authoring/SKILL.md), [drawing API](resources/authoring/KIT.md). Syntax validation does not certify scientific accuracy or visual quality; review generated playback.
+Open-Science uses the selected model to review narration against the [nine-point rubric](resources/authoring/SCRIPT.md) before producing the illustrations. For a session with an eligible offline ES-module app, the host can offer to stage its modules with the user’s consent. Open-Science supplies `reviewPlayer` to inspect each generated research explanation in the desktop HTML renderer. An image-capable model also checks scene screenshots. The host publishes the rebuilt player after it passes review. See the [authoring format](resources/authoring/SKILL.md) and [drawing API](resources/authoring/KIT.md).
 
 ```sh
 npm run build
