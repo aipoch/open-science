@@ -2365,7 +2365,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                       <LiteratureSelectionToolbar
                                         onAddToComparison={() => {
                                           void resolveSelectedItemIds()
-                                            .then(setComparisonMembers)
+                                            .then((ids) => {
+                                              if (ids.length > 100) {
+                                                setError(
+                                                  t(
+                                                    'A comparison table can contain up to 100 references.'
+                                                  )
+                                                )
+                                                return
+                                              }
+                                              setError(undefined)
+                                              setComparisonMembers(ids)
+                                            })
                                             .catch(() =>
                                               setError(t('Comparison table could not be saved.'))
                                             )

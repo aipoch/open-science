@@ -3437,6 +3437,33 @@ describe('LiteratureLibraryPage', () => {
     expect(useNavigationStore.getState().pendingLiteratureItemId).toBeUndefined()
   })
 
+  it('keeps an oversized comparison selection editable and accepts exactly 100 references', async () => {
+    const records = Array.from({ length: 101 }, (_, index) => createLibraryItem(index))
+    search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+      if (request.scope !== 'library') return { entries: [] }
+      if (request.allItemIds) return { entries: [], itemIds: records.map(({ id }) => id) }
+      return { entries: records.slice(0, 25), totalCount: 101, nextOffset: 25 }
+    })
+    get.mockResolvedValue(libraryItem)
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await screen.findByText('Reference 0')
+    fireEvent.click(screen.getByLabelText('Select all references'))
+    fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 101' }))
+    const createFromSelection = async (): Promise<void> => {
+      fireEvent.click(await selectionButton('Create comparison table'))
+    }
+    await createFromSelection()
+    expect(
+      await screen.findByText('A comparison table can contain up to 100 references.')
+    ).toBeTruthy()
+    expect(screen.queryByRole('dialog', { name: 'Create comparison table' })).toBeNull()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Reference 0' }))
+    await createFromSelection()
+    const dialog = await screen.findByRole('dialog', { name: 'Create comparison table' })
+    expect(within(dialog).getByText('100 selected')).toBeTruthy()
+  })
+
   it('starts sidebar comparison creation by choosing references without changing the current view', async () => {
     get.mockResolvedValue(libraryItem)
     search.mockImplementation((request: { scope: string }) =>
