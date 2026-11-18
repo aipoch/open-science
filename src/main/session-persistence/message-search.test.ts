@@ -346,6 +346,25 @@ describe('message body search', () => {
     await search(request)
     expect(loadOne).toHaveBeenCalledTimes(2)
   })
+  it('treats pending catalog hydration as incomplete and refreshes after completion', async () => {
+    const loadOne = vi.fn(async () => session('s'))
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [summary('s')],
+        diagnostics: { isComplete: true, catalogHydrationPending: true as const }
+      })
+      .mockResolvedValueOnce({
+        sessions: [summary('s')],
+        diagnostics: { isComplete: true }
+      })
+    const search = createMessageSearch({ list, loadOne })
+    const request = { projectIds: ['p'], query: 'query', limit: 10 }
+
+    expect((await search(request)).isComplete).toBe(false)
+    expect((await search(request)).isComplete).toBe(true)
+    expect(loadOne).toHaveBeenCalledTimes(2)
+  })
   it('stops superseded scans and bounds concurrent reads across queries', async () => {
     let active = 0
     let maximum = 0

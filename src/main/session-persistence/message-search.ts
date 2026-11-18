@@ -16,7 +16,11 @@ import { z } from 'zod'
 type SearchBackend = {
   list: () => Promise<{
     sessions: readonly SessionSummary[]
-    diagnostics?: { isComplete: boolean; isProjectDeletionRecoveryComplete?: boolean }
+    diagnostics?: {
+      isComplete: boolean
+      catalogHydrationPending?: true
+      isProjectDeletionRecoveryComplete?: boolean
+    }
   }>
   loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
 }
@@ -85,7 +89,9 @@ export const createMessageSearch = (backend: SearchBackend) => {
     if (requestGeneration !== client.generation)
       return { items: [], totalCount: 0, isComplete: false }
     const catalogComplete =
-      diagnostics?.isComplete !== false && diagnostics?.isProjectDeletionRecoveryComplete !== false
+      diagnostics?.catalogHydrationPending !== true &&
+      diagnostics?.isComplete !== false &&
+      diagnostics?.isProjectDeletionRecoveryComplete !== false
     const sessions = all
       .filter((s) => projects.has(s.projectId) && s.archivedAt === undefined && !excluded.has(s.id))
       .sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
