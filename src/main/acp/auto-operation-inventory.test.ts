@@ -18,6 +18,8 @@ const registrations: Record<
   'allow_once' | 'inner_authorization' | 'legacy' | 'operations' | 'review'
 > = {
   "artifacts/mcp-server.ts:'write_artifact_file'": 'allow_once',
+  "image-model/mcp-server.ts:'generate_image'": 'allow_once',
+  "image-model/mcp-server.ts:'edit_image'": 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_SEARCH_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME': 'allow_once',
@@ -171,6 +173,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         // rejected in favor of source. Allow-once disposition and owner-checked source access are unchanged.
         'artifacts/mcp-server.ts':
           '9e0e7684e9ce91f56ba4e6bfc49bcd2a1bb97bf6dd2a22bd686307c9d634dde2',
+        // Image tools use the current turn capability and the configured model's operation schema.
+        'image-model/mcp-server.ts':
+          'a83381424a1c34c05d37c2a3fe9efc71ef47c08dfd561861170d4f165fae893c',
         // Reviewed: save_to_inbox/acquire_pdf advertise candidates as objects; the same strict
         // candidate schema now validates inline records in the handler before any save or download.
         // Citation tool descriptions are shortened only. Trusted origin, permission inputs and

@@ -246,6 +246,10 @@ describe('Artifact Provenance repository architecture', () => {
         'resolveReviewerTurnFileEvidence',
         'resolveVersionDescriptors',
         'validateFinalizationOwnership',
+        'publishImageTaskVersion',
+        'recoverImageTaskVersion',
+        'readImageInvocationVersion',
+        'verifyImageTaskResults',
         'writeAppGeneratedVersion',
         'writeCodeReconstructionCache'
       ].sort()
@@ -254,6 +258,7 @@ describe('Artifact Provenance repository architecture', () => {
       [
         'writeGeneratedVersion',
         'replayVersionWithinSession',
+        'recoverStagedImageVersion',
         'replayRoutingPublisher',
         'reconcileSessionWithinSession',
         'hasRecoverableFinalization',

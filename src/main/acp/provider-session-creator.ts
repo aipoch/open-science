@@ -52,6 +52,7 @@ type AcpProviderSessionCreatorDependencies = Readonly<{
   // undefined when the project has no Agent Context or the lookup fails; failures never block
   // session creation.
   resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
+  authorizedDirectories?: { initialize(session: ActiveSession): Promise<void> }
   registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
   updateCwd: (cwd: string) => void
   pushEvent: (event: CreationEvent) => void
@@ -64,7 +65,10 @@ export class AcpProviderSessionCreator {
 
   constructor(private readonly deps: AcpProviderSessionCreatorDependencies) {}
 
-  async create(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
+  async create(
+    request: AcpCreateSessionRequest = {},
+    beforePublish?: () => void
+  ): Promise<AcpCreateSessionResponse> {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
     let reservation: ReturnType<AcpSessionRegistry['reserve']>['reservation']
@@ -142,6 +146,7 @@ export class AcpProviderSessionCreator {
       log.info('createSession: configurePermissionProfile', this.deps.diagnosticContext())
       log.info('createSession: applySessionModel', this.deps.diagnosticContext())
       const permissionProfile = normalizePermissionProfile(request.permissionProfile)
+      await this.deps.authorizedDirectories?.initialize(session)
       let backend = this.deps.currentBackend()
       let configuration = await this.deps.configurator.configure({
         backend,
@@ -165,6 +170,7 @@ export class AcpProviderSessionCreator {
           continue
         }
         identityReservation.assertCurrent()
+        beforePublish?.()
         const { aggregate } = this.deps.registry.publish(identityReservation, session.sessionId, {
           session,
           cwd,

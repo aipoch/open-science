@@ -14,6 +14,7 @@ import {
   createArtifactMcpServerConfig,
   type ArtifactMcpEnvironment
 } from '../artifacts/mcp-server'
+import { IMAGE_MCP_SERVER_NAME, createImageMcpServerConfig } from '../image-model/mcp-server'
 import { getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
@@ -64,6 +65,7 @@ const log = createLogger('acp')
 
 const CURRENT_PRIMARY_CAPABILITIES = [
   'artifacts',
+  'images',
   'notebook',
   'skill-import',
   'plan',
@@ -155,6 +157,9 @@ export type SessionCapabilityArtifactOptions = {
   // A delegated Attempt owns this handoff path. Its runtime may use Artifact tools, but must not
   // create or replace the turn owned by DurableDelegatedWork.
   currentRunFile?: string
+  imageMcp?: {
+    getPresetId: () => Promise<string | undefined>
+  }
 }
 
 export type SessionCapabilityNotebookOptions = {
@@ -358,6 +363,7 @@ const safeLogError = (message: string, fields: Record<string, unknown>): void =>
 
 export class AcpSessionCapabilityOwner {
   // Concrete credentials prove cleanup ownership across independent runtime instances.
+  private imagePresetId: string | undefined
   private readonly sessionCapabilityTokens = new Map<string, readonly string[]>()
   private readonly artifactRoutingIds = new Map<string, string>()
   private readonly notebookRoutingIds = new Map<string, string>()
@@ -724,6 +730,7 @@ export class AcpSessionCapabilityOwner {
           const receiptRoutes: Record<ServerKind, string | undefined> = {
             notebook: routingIds.notebook,
             artifact: routingIds.artifact,
+            image: routingIds.artifact,
             'skill-import': routingIds.skillImport,
             plan: routingIds.plan,
             'host-message': routingIds.sideChat,
@@ -878,6 +885,11 @@ export class AcpSessionCapabilityOwner {
     const artifactsAllowed =
       policyAllowsSessionCapability(request.policy, 'artifacts') &&
       (request.nativeMcpEnabled || request.bridgeMcpAliasesEnabled)
+    const imagePresetId = artifactsAllowed
+      ? await this.options.artifacts?.imageMcp?.getPresetId()
+      : undefined
+    const imagesAllowed =
+      artifactsAllowed && Boolean(this.options.artifacts?.imageMcp) && Boolean(imagePresetId)
     const notebookAllowed = policyAllowsSessionCapability(request.policy, 'notebook')
     const shellRuntime =
       notebookAllowed && this.options.notebook
@@ -927,6 +939,8 @@ export class AcpSessionCapabilityOwner {
       transport === 'stdio'
         ? await this.buildStdioServers(request, {
             artifacts: artifactsAllowed,
+            images: imagesAllowed,
+            imagePresetId,
             notebook: notebookAllowed,
             skillImport: skillImportAllowed,
             plan: planAllowed,
@@ -937,6 +951,8 @@ export class AcpSessionCapabilityOwner {
         : transport === 'http'
           ? await this.buildHttpServers(request, {
               artifacts: artifactsAllowed,
+              images: imagesAllowed,
+              imagePresetId,
               notebook: notebookAllowed,
               skillImport: skillImportAllowed,
               plan: planAllowed,
@@ -1040,6 +1056,7 @@ export class AcpSessionCapabilityOwner {
     const capabilities: SessionCapabilityName[] = []
     if (canonicalMcpServerNames.includes('open-science-schedule')) capabilities.push('schedule')
     if (canonicalMcpServerNames.includes(ARTIFACT_MCP_SERVER_NAME)) capabilities.push('artifacts')
+    if (canonicalMcpServerNames.includes(IMAGE_MCP_SERVER_NAME)) capabilities.push('images')
     if (canonicalMcpServerNames.includes(NOTEBOOK_MCP_SERVER_NAME)) capabilities.push('notebook')
     if (canonicalMcpServerNames.includes(SKILL_IMPORT_MCP_SERVER_NAME)) {
       capabilities.push('skill-import')
@@ -1117,6 +1134,8 @@ export class AcpSessionCapabilityOwner {
       ? createCodexBridgeMcpTools({
           schedules: capabilities.includes('schedule'),
           artifacts: artifactsAllowed,
+          images: capabilities.includes('images'),
+          imagePresetId,
           notebook: notebookAllowed
             ? {
                 memoryTools: memoryToolsEnabled,
@@ -1145,6 +1164,7 @@ export class AcpSessionCapabilityOwner {
     const bridgeMcpNamespaces = request.bridgeMcpAliasesEnabled
       ? [
           namespaceFor(ARTIFACT_MCP_SERVER_NAME),
+          namespaceFor(IMAGE_MCP_SERVER_NAME),
           namespaceFor(NOTEBOOK_MCP_SERVER_NAME),
           // Always claim the Skill Import namespace so a capability refresh removes any stale
           // bridge-wide declaration; tools are still advertised only when the capability mounts.
@@ -1461,6 +1481,7 @@ export class AcpSessionCapabilityOwner {
       for (const tool of NOTEBOOK_RPC_TOOLS) allowed.add(`${NOTEBOOK_MCP_SERVER_NAME}/${tool.name}`)
     }
     if (descriptor.capabilities.includes('artifacts')) ownedServers.add(ARTIFACT_MCP_SERVER_NAME)
+    if (descriptor.capabilities.includes('images')) ownedServers.add(IMAGE_MCP_SERVER_NAME)
     if (descriptor.capabilities.includes('skill-import'))
       ownedServers.add(SKILL_IMPORT_MCP_SERVER_NAME)
     if (descriptor.capabilities.includes('plan')) ownedServers.add(PLAN_MCP_SERVER_NAME)
@@ -1625,6 +1646,7 @@ export class AcpSessionCapabilityOwner {
   // before projecting tooling guidance into backend-native instructions, which happens before the
   // concrete session capability set is built.
   async refreshDynamicAvailability(): Promise<void> {
+    this.imagePresetId = await this.options.artifacts?.imageMcp?.getPresetId()
     if (!this.options.skillImport) return
     this.skillImportEnabled = (await this.options.skillImport.isEnabled?.()) ?? true
   }
@@ -1636,6 +1658,7 @@ export class AcpSessionCapabilityOwner {
     policy: SessionCapabilityPolicy
   }): Readonly<{
     artifacts: boolean
+    images: boolean
     notebook: boolean
     skillImport: boolean
     plan: boolean
@@ -1648,6 +1671,11 @@ export class AcpSessionCapabilityOwner {
       Boolean(this.options.notebook) &&
       policyAllowsSessionCapability(input.policy, 'notebook')
     return Object.freeze({
+      images:
+        transportAvailable &&
+        Boolean(this.imagePresetId) &&
+        (input.nativeMcpEnabled || input.bridgeMcpAliasesEnabled) &&
+        policyAllowsSessionCapability(input.policy, 'artifacts'),
       artifacts:
         transportAvailable &&
         Boolean(this.options.artifacts) &&
@@ -1752,6 +1780,8 @@ export class AcpSessionCapabilityOwner {
     request: BuildSessionCapabilitiesRequest,
     enabled: {
       artifacts: boolean
+      images: boolean
+      imagePresetId?: string
       notebook: boolean
       skillImport: boolean
       plan: boolean
@@ -1770,6 +1800,23 @@ export class AcpSessionCapabilityOwner {
       if (environment && this.options.artifacts) {
         servers.push(
           createArtifactMcpServerConfig({
+            command: this.options.artifacts.mcpCommand ?? process.execPath,
+            entryPath: this.options.artifacts.mcpEntryPath,
+            ...environment
+          })
+        )
+      }
+    }
+    if (enabled.images) {
+      const environment = await this.buildArtifactEnvironment(
+        request.routingIds.artifact,
+        request.sessionCwd,
+        request.projectId
+      )
+      if (environment && this.options.artifacts) {
+        servers.push(
+          createImageMcpServerConfig({
+            presetId: enabled.imagePresetId,
             command: this.options.artifacts.mcpCommand ?? process.execPath,
             entryPath: this.options.artifacts.mcpEntryPath,
             ...environment
@@ -1836,6 +1883,8 @@ export class AcpSessionCapabilityOwner {
     request: BuildSessionCapabilitiesRequest,
     enabled: {
       artifacts: boolean
+      images: boolean
+      imagePresetId?: string
       notebook: boolean
       skillImport: boolean
       plan: boolean
@@ -1862,6 +1911,25 @@ export class AcpSessionCapabilityOwner {
           type: 'http',
           name: ARTIFACT_MCP_SERVER_NAME,
           url: host.urlFor('artifact', request.routingIds.artifact),
+          headers: [authHeader]
+        })
+      }
+    }
+    if (enabled.images) {
+      const environment = await this.buildArtifactEnvironment(
+        request.routingIds.artifact,
+        request.sessionCwd,
+        request.projectId
+      )
+      if (environment && this.canPublishHttpRoute(request)) {
+        host.registerImage(request.routingIds.artifact, {
+          ...environment,
+          presetId: enabled.imagePresetId
+        })
+        servers.push({
+          type: 'http',
+          name: IMAGE_MCP_SERVER_NAME,
+          url: host.urlFor('image', request.routingIds.artifact),
           headers: [authHeader]
         })
       }

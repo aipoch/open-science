@@ -38,7 +38,7 @@ it('upgrades the prior translation schema without changing its saved records and
   )
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     from: '0049_pascalcase_table_names',
-    to: '0059_session_history',
+    to: '0060_image_models',
     applied: [
       '0050_literature_translation',
       '0051_literature_reading_status',
@@ -49,7 +49,8 @@ it('upgrades the prior translation schema without changing its saved records and
       '0056_compute_kubernetes_workspace',
       '0057_project_optimization_prompt',
       '0058_session_schedules',
-      '0059_session_history'
+      '0059_session_history',
+      '0060_image_models'
     ]
   })
   expect(

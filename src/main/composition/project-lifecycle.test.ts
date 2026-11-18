@@ -82,6 +82,7 @@ const fixture = (() => {
       deleteSessions: vi.fn(),
       planSessionReconciliation: vi.fn(async () => [])
     },
+    imageTasks: { isBusy: vi.fn(() => false), cancelSessions: vi.fn(), cancelProject: vi.fn() },
     applicationEvents: { publish: vi.fn() },
     scheduleRepository: {
       pauseTarget: vi.fn(),
@@ -218,6 +219,7 @@ describe('Project lifecycle composition', () => {
     ])
     expect(dependencies.bookmarkRepository.deleteSessions).toHaveBeenCalledWith(['session-1'])
     expect(dependencies.researchFilmLifecycle.deleteSessions).toHaveBeenCalledWith(['session-1'])
+    expect(dependencies.imageTasks.cancelSessions).toHaveBeenCalledWith(['session-1'])
     expect(dependencies.notificationInbox.invalidateSessions).toHaveBeenCalledWith(['session-1'])
     await handlers.commit(['session-1'])
     await expect(next).resolves.toBe(false)

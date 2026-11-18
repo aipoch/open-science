@@ -33197,6 +33197,7 @@ describe('Specialist Skill scoping', () => {
       writeAppGeneratedVersion: async (
         input: Parameters<ArtifactProvenanceRepository['writeAppGeneratedVersion']>[0]
       ): Promise<ArtifactVersionFile> => {
+        if (typeof input.content !== 'string') throw new Error('Expected serialized Plan text.')
         serializedPlan = input.content
         await writeFile(planPath, serializedPlan, 'utf8')
         return {

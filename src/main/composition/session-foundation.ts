@@ -83,12 +83,27 @@ export async function composeSessionFoundation({
     (projectId, sessionId) => runtimeRef.current?.hasLiveSession(projectId, sessionId) ?? false
   )
   const auxiliaryUsageLog = createLogger('session-usage:auxiliary')
-  const auxiliaryUsageRecorder = new SessionAuxiliaryTurnUsageRecorder(() =>
-    getProjectDbClient(resolveConfigRoot())
+  const auxiliaryUsageRecorder = new SessionAuxiliaryTurnUsageRecorder(
+    () => getProjectDbClient(resolveConfigRoot()),
+    resolveConfigRoot
   )
+  void auxiliaryUsageRecorder
+    .flush()
+    .catch((error) =>
+      auxiliaryUsageLog.warn('image Usage recovery deferred', diagnosticErrorFields(error))
+    )
   const recordAuxiliaryUsage = async (record: SessionAuxiliaryTurnUsageRecord): Promise<void> => {
     try {
-      await auxiliaryUsageRecorder.record(record)
+      if (record.source === 'image-generation') {
+        await auxiliaryUsageRecorder.record(record, 'stage')
+        void auxiliaryUsageRecorder
+          .flushStaged()
+          .catch((error) =>
+            auxiliaryUsageLog.warn('image Usage recovery deferred', diagnosticErrorFields(error))
+          )
+      } else {
+        await auxiliaryUsageRecorder.record(record)
+      }
     } catch (error) {
       auxiliaryUsageLog.warn('auxiliary turn Usage persistence failed', {
         source: record.source,

@@ -334,6 +334,10 @@ export type AcpRuntimeArtifactOptions = {
   projectId: string
   mcpEntryPath: string
   mcpCommand?: string
+  enableImageGeneration?: boolean
+  imageMcp?: {
+    getPresetId: () => Promise<string | undefined>
+  }
   repository?: ArtifactRepository
   runRegistry?: ArtifactRunRegistry
   getRpcConnection?: () => Promise<NotebookRpcConnection>

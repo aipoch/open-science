@@ -1574,3 +1574,31 @@ describe('PermissionApprovalControls', () => {
     expect(host.querySelector('.shadow-sheet')).not.toBeNull()
   })
 })
+
+it('shows image generation arguments as a card without changing the approval controls', () => {
+  const html = renderToStaticMarkup(
+    <PermissionApprovalControls
+      requests={[
+        {
+          ...bashPermissionRequest,
+          isMcp: true,
+          toolKind: 'other',
+          providerToolName: 'mcp__open_science_images__generate_image',
+          title: 'Generate image',
+          rawInput: {
+            prompt: 'Draw a simple diagram',
+            filename: 'diagram.png',
+            options: { aspect_ratio: '16:9' }
+          }
+        }
+      ]}
+      onRespond={() => undefined}
+    />
+  )
+  expect(html).toContain('data-testid="image-tool-card"')
+  expect(html).not.toContain('<summary')
+  expect(html).toContain('Draw a simple diagram')
+  expect(html).toContain('diagram.png')
+  expect(html).toContain('data-testid="permission-actions"')
+  expect(html).not.toMatch(/<details[^>]*>/u)
+})

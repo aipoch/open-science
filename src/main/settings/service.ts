@@ -1119,6 +1119,10 @@ class SettingsService {
     return this.scenarioModels.vision.admit()
   }
 
+  get imageModels(): Pick<ScenarioModelOwner['image'], 'snapshot' | 'mutate' | 'resolve'> {
+    return this.scenarioModels.image
+  }
+
   async admitReviewerExecutionModel(): ReturnType<ScenarioModelOwner['reviewer']['admit']> {
     return this.scenarioModels.reviewer.admit()
   }

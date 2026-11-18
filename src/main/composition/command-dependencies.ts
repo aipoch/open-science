@@ -1,4 +1,5 @@
 import { sessionMetadataReceipt } from '../../shared/session-persistence'
+import type { ImageTaskOwner } from '../image-model/tasks'
 import { hasCallerAuthority } from '../caller-context'
 import type { ScheduleManagement } from '../schedules/management'
 import type { composeResearchFilm } from './research-film'
@@ -64,6 +65,7 @@ import type { composeStorageStartup } from './storage-startup'
 
 export function composeCommandDependencies({
   schedules,
+  imageTasks,
   localeOwner,
   reportUploadProgress,
   sideChatCommands,
@@ -108,6 +110,7 @@ export function composeCommandDependencies({
   reviewerCommandOwner,
   listAppIconPreviews
 }: {
+  imageTasks: ImageTaskOwner
   reportUploadProgress: ((clientId: string, progress: UploadTransferProgress) => void) | undefined
   localeOwner: LocalePreferenceOwner
   sideChatCommands: SideChatCommandOwner
@@ -396,6 +399,7 @@ export function composeCommandDependencies({
       },
       events: applicationEvents,
       managedPreview: managedFiles.managedPreviewOwners,
+      imageTasks,
       researchVideoPresentation: researchFilm.researchVideoPresentation,
       videoExportTools: researchFilm.videoExportTools,
       preview: {

@@ -558,6 +558,14 @@ describe('module test impact commands', () => {
         testFiles: []
       })
 
+      if (expectedModules[0] === 'settings_repository') {
+        const manifest = loadModuleImpactManifest()
+        expect(plan.mode).toBe('full')
+        expect(plan.reasonChains).toContain(
+          `settings_repository -> ${manifest.modules.settings_repository.fullTestReason} -> full`
+        )
+        return
+      }
       expect(plan.mode).toBe('selective')
       expect([...plan.modules].sort()).toEqual(expectedModules)
       const rootModule = path.startsWith('packages/providers/')

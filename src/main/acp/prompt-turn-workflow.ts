@@ -286,7 +286,6 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
 class AcpPromptTurnWorkflow {
   // A send outlives the provider generation replaced by a forced Skill reload.
   private readonly requests = new Map<string, AcpPromptRequestState>()
-
   captureCancellation(sessionId: string): (() => void) | undefined {
     const request = this.requests.get(sessionId)
     return request

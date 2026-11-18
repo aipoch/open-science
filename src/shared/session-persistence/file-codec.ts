@@ -14,11 +14,7 @@ import { asString, isRecord } from './primitives'
 import type { MaterializedPersistedChatSession, PersistedChatSession } from './session'
 import { sanitizeSession } from './session-codec'
 
-// ---------------------------------------------------------------------------
-// Per-session file storage (sessions/<projectId>/<sessionId>.json) + manifest.
-// ---------------------------------------------------------------------------
-
-// Wraps a session in the on-disk envelope written per file.
+// Materializes the Session envelope used by the legacy snapshot and JSONL writers.
 export const createSessionFile = (session: PersistedChatSession): PersistedSessionFile => {
   const { recordProblems: ignored, ...durable } = session
   void ignored

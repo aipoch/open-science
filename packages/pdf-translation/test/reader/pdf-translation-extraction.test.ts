@@ -314,6 +314,23 @@ describe('extractPdfTranslationSource', () => {
     return fixture
   }
 
+  it.each([
+    { str: '\u0000\u001c\u0011', opaque: true },
+    { str: 'Keep the visible \u0000 label.', opaque: false }
+  ])(
+    'retains only an opaque NUL-bearing run without a translation request',
+    async ({ str, opaque }) => {
+      const { source, coverage } = await extractPdfTranslationSource(setup([text(str)]).context)
+      expect(source.units).toHaveLength(1)
+      const [unit] = source.units
+      expect(unit.source).toBe(str)
+      expect(unit.sourceOnly).toBe(opaque ? true : undefined)
+      expect(unit.fragments[0].items).toEqual([{ index: 0, text: str }])
+      const warnings = coverage.warnings.flatMap(({ reasons }) => reasons)
+      expect(warnings.includes('unreliable-font-unicode')).toBe(opaque)
+    }
+  )
+
   it('retains a proven missing-Unicode small owner only as original', async () => {
     const str = '\u0012 X',
       fixture = missingControl(str)

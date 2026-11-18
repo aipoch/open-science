@@ -4,19 +4,11 @@ import { dirname, join, posix, win32 } from 'node:path'
 
 import type { NotebookLanguage } from './contracts'
 
-// Default environment version; bump when the default package set changes so a newer app triggers an
-// additive upgrade of an older user's environments (spec §6.3).
-//
-// This number also keys the immutable CDN bundle path (runtime-bundle/<version>/<subdir>/), which
-// stage-runtime-bundle.yml publishes and packaged apps fetch on demand. When the default env spec or
-// its solved transitive dependency set changes:
-//   1. edit DEFAULT_PYTHON_SPEC / DEFAULT_R_SPEC in provisioner.ts and the mirrored floorPackages in
-//      scripts/stage-default-envs.mjs (a guard test enforces their package names stay equal);
-//   2. bump this constant;
-//   3. run stage-runtime-bundle with the matching explicit version before releasing the app. A
-//      deliberate republish replaces that version, and build.yml verifies the matching platform
-//      manifest is live before packaging an installer.
+// Installed environment baseline used for readiness markers and legacy additive upgrades.
 export const DEFAULT_ENV_VERSION = 2
+
+// Immutable CDN payload used when creating or rebuilding a default environment.
+export const DEFAULT_BUNDLE_VERSION = 3
 
 // The runtime bundle publisher and consumer must agree on the conda platform segment. Keep this
 // mapping here rather than letting each caller infer a CDN key independently.

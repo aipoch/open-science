@@ -912,7 +912,7 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
 
     await handlers.get('acp:create-session')?.({}, request)
 
-    expect(createSession).toHaveBeenCalledWith(request)
+    expect(createSession).toHaveBeenCalledWith(request, expect.any(Function))
     expect(mkdir).not.toHaveBeenCalled()
   })
 
@@ -928,11 +928,14 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
       }
     )
 
-    expect(createSession).toHaveBeenCalledWith({
-      cwd: 'D:\\research\\chosen-workspace',
-      projectId: 'project-1',
-      permissionProfile: 'ask'
-    })
+    expect(createSession).toHaveBeenCalledWith(
+      {
+        cwd: 'D:\\research\\chosen-workspace',
+        projectId: 'project-1',
+        permissionProfile: 'ask'
+      },
+      expect.any(Function)
+    )
     expect(mkdir).not.toHaveBeenCalled()
   })
 

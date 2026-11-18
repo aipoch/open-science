@@ -259,7 +259,9 @@
     "src/main/composition/research-film.ts",
     "src/main/composition/research-film.test.ts",
     "src/main/composition/session-package-lifecycle.integration.test.ts",
-    "src/main/composition/notebook-approvals.test.ts"
+    "src/main/composition/notebook-approvals.test.ts",
+    "src/main/composition/image-model.ts",
+    "src/main/composition/image-tasks.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",

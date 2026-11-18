@@ -34,6 +34,9 @@ const DEFAULT_PORT = 44100
 const START_TIMEOUT_MS = 120_000
 // Cover the service's 40s authentication-aware stop budget plus exit-record observation.
 const STOP_TIMEOUT_MS = 42_000
+// Artifact content may be produced after a long-running task completes. Keep the CLI's
+// default transfer budget separate from the short control-request timeout used by the SDK.
+const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1_000
 const MAX_DOWNLOAD_SYMLINK_HOPS = 40
 
 const usage = `Usage: open-science <command> [options]
@@ -1993,7 +1996,9 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const artifactId = positionals[0]
     if (!artifactId) throw new CliUsageError('Artifact id is required.')
     if (!options.output) throw new CliUsageError('--output is required.')
-    const response = await client.downloadArtifact(artifactId)
+    const response = await client.downloadArtifact(artifactId, {
+      timeoutMs: options.timeoutMs ?? ARTIFACT_DOWNLOAD_TIMEOUT_MS
+    })
     await deps.writeDownload(response, options.output)
     outputValue({ artifactId, output: resolve(options.output) }, options, deps)
     return

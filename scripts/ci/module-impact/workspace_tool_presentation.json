@@ -19,7 +19,10 @@
     "src/renderer/src/pages/workspace/literature-candidate-session-context.ts",
     "src/renderer/src/pages/workspace/LiteratureToolReferenceList.tsx",
     "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-    "src/renderer/src/pages/workspace/pdf-text-coverage.test.tsx"
+    "src/renderer/src/pages/workspace/pdf-text-coverage.test.tsx",
+    "src/renderer/src/pages/workspace/WorkspaceImageToolCard.tsx",
+    "src/renderer/src/pages/workspace/WorkspaceImageToolCard.test.tsx",
+    "src/renderer/src/pages/workspace/image-tool-preview-context.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/AuthorizedDirectoriesList.tsx",
@@ -32,7 +35,9 @@
     "src/renderer/src/pages/workspace/WorkspaceToolActivityRowButton.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.tsx",
     "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx",
-    "src/renderer/src/pages/workspace/literature-candidate-session-context.ts"
+    "src/renderer/src/pages/workspace/literature-candidate-session-context.ts",
+    "src/renderer/src/pages/workspace/WorkspaceImageToolCard.tsx",
+    "src/renderer/src/pages/workspace/image-tool-preview-context.ts"
   ],
   "testFiles": {
     "owner": [
@@ -43,7 +48,8 @@
       "src/renderer/src/pages/workspace/WorkspaceSkillLoadRow.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-text-coverage.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-text-coverage.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceImageToolCard.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
@@ -164,5 +170,6 @@
   },
   "consumerModules": [],
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Image tool cards are shared by permissions, conversation and provenance beyond the reviewed presentation sources; retain full CI until the expanded boundary is reviewed."
 }

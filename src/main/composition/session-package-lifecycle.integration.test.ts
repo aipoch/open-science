@@ -57,6 +57,7 @@ type LifecycleFixture = {
   composed: Awaited<ReturnType<typeof composeSessionPackages>>
   surfaces: () => ReturnType<typeof composeSessionPackageSurfaces>
   getExportOwners: Parameters<typeof composeSessionPackages>[0]['getSessionExportOwners']
+  readImageTasks: Mock<Parameters<typeof composeSessionPackages>[0]['readImageTasks']>
   dispose: () => Promise<void>
 }
 
@@ -156,11 +157,15 @@ async function createLifecycleFixture(realWindowsOwner = false): Promise<Lifecyc
     sessionPersistenceCoordinator: persistence,
     notebookService: notebook
   }))
+  const readImageTasks = vi
+    .fn<Parameters<typeof composeSessionPackages>[0]['readImageTasks']>()
+    .mockResolvedValue([])
   const composed = await composeSessionPackages({
     settingsRepository: { getSettings: async () => ({}) },
     storedSettings: { pathsNormalizedAt: 1 },
     getDetectSessionExportBlockingSessions: () => () => [],
     getSessionExportOwners: getExportOwners,
+    readImageTasks,
     modules: { add: (_: undefined, create: () => { capability: unknown }) => create().capability }
   } as unknown as Parameters<typeof composeSessionPackages>[0])
   composed.packagePublicationOwner.current = persistence
@@ -189,6 +194,7 @@ async function createLifecycleFixture(realWindowsOwner = false): Promise<Lifecyc
     composed,
     surfaces,
     getExportOwners,
+    readImageTasks,
     dispose: async () => {
       cleanup.resolve()
       await composed.sessionPackageDesktopLifecycle.close()
@@ -360,6 +366,7 @@ it.skipIf(process.platform === 'win32')(
         if (failure) throw failure
         expect(f.archive.isSessionExporting(projectId, sessionId)).toBe(true)
       })
+      expect(f.readImageTasks).not.toHaveBeenCalled()
       expect(() => f.archive.admitSessionWork(projectId, sessionId)).toThrow(/export/i)
       await expect(
         f.persistence.runSessionMutation(
@@ -371,6 +378,7 @@ it.skipIf(process.platform === 'win32')(
       await expect(stat(destination)).rejects.toMatchObject({ code: 'ENOENT' })
       f.cleanup.resolve()
       await expect(pending).resolves.toMatchObject({ title: 'Retained research' })
+      expect(f.readImageTasks).toHaveBeenCalledExactlyOnceWith({ projectId, sessionId })
       expect(f.archive.isSessionExporting(projectId, sessionId)).toBe(false)
       const expanded = join(f.fixture.storageRoot, 'expanded')
       await mkdir(expanded)
@@ -402,6 +410,11 @@ it.each(['export', 'fork'] as const)(
     const f = await createLifecycleFixture()
     const request = { projectId: f.scope.projectId, sessionId: f.scope.sessionId }
     const { sessionPackageDesktop } = f.surfaces()
+    f.readImageTasks.mockImplementationOnce(async ({ projectId, sessionId }) => {
+      expect(f.archive.isSessionExporting(projectId, sessionId)).toBe(true)
+      await f.persistence.runSessionMutation(projectId, sessionId, async () => undefined)
+      return []
+    })
     try {
       if (kind === 'export') {
         const destination = join(f.fixture.storageRoot, 'desktop.science')
@@ -416,6 +429,7 @@ it.each(['export', 'fork'] as const)(
         expect(await f.persistence.sessionProjectId(child!.sessionId)).toBe(request.projectId)
       }
       expect(f.getExportOwners).toHaveBeenCalledOnce()
+      expect(f.readImageTasks).toHaveBeenCalledExactlyOnceWith(request)
       expect(f.archive.isSessionExporting(request.projectId, request.sessionId)).toBe(false)
       await expect(
         f.persistence.runSessionMutation(
@@ -605,7 +619,7 @@ it.skipIf(process.platform === 'win32')(
 
 it.each(
   (['export', 'fork'] as const).flatMap((kind) =>
-    (['persistence', 'idle', 'archive-after-callback'] as const).map((failure) => ({
+    (['images', 'persistence', 'idle', 'archive-after-callback'] as const).map((failure) => ({
       kind,
       failure
     }))
@@ -615,7 +629,9 @@ it.each(
   const request = { projectId: f.scope.projectId, sessionId: f.scope.sessionId }
   const destination = join(f.fixture.storageRoot, 'failed.science')
   try {
-    if (failure === 'persistence') {
+    if (failure === 'images') {
+      f.readImageTasks.mockRejectedValueOnce(new Error('Image task recovery failed'))
+    } else if (failure === 'persistence') {
       vi.spyOn(f.persistence, 'reserveSessionExport').mockRejectedValueOnce(
         new Error('Retained terminal write failed')
       )
@@ -687,6 +703,7 @@ it('releases the shared reservation when conversation Save As is cancelled', asy
       conversationExportService.exportConversation({ ...request, format: 'markdown' })
     ).resolves.toEqual({ saved: false })
     expect(f.getExportOwners).toHaveBeenCalledOnce()
+    expect(f.readImageTasks).not.toHaveBeenCalled()
     expect(f.archive.isSessionExporting(request.projectId, request.sessionId)).toBe(false)
     await expect(
       f.persistence.runSessionMutation(request.projectId, request.sessionId, async () => 'released')

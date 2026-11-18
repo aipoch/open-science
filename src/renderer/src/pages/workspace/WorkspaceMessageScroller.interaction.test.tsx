@@ -2651,6 +2651,60 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     )
   })
 
+  it('opens each same-name generated image at its own version in the same preview tab', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const artifacts = [1, 2, 3].map((versionNumber) => ({
+      id: `version-${versionNumber}`,
+      kind: 'managed-file' as const,
+      artifactId: 'image-lineage',
+      versionId: `version-${versionNumber}`,
+      versionNumber,
+      isPublished: true,
+      path: '/workspace/report.png',
+      fileUrl: 'file:///workspace/report.png',
+      name: 'report.png',
+      mimeType: 'image/png',
+      size: 2048,
+      mtimeMs: versionNumber
+    }))
+    const session = createSession({
+      id: 'session-42',
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'prompt-1' }),
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Created the images',
+          artifactIds: artifacts.map(({ id }) => id)
+        })
+      ],
+      artifacts
+    })
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+    const cards = container.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="Preview generated file report.png"]'
+    )
+    expect(cards).toHaveLength(3)
+    for (const index of [0, 1, 2, 0]) {
+      await act(async () => {
+        cards[index].dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+      expect(upsertAndActivateItem).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          id: 'image-lineage',
+          selectedVersionId: `version-${index + 1}`,
+          path: `artifact-version:default/session-42/image-lineage/version-${index + 1}`
+        })
+      )
+    }
+  })
+
   it('routes Markdown artifact links to the panel and Markdown artifact images to the dialog', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const session = createSession({
@@ -2856,6 +2910,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       mtimeMs: 1710000000100,
       artifactId: 'artifact-lineage-1',
       managedFileId: 'artifact-lineage-1',
+      selectedVersionId: 'artifact-version-1',
       versionNumber: 2
     })
   })
@@ -4552,7 +4607,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       fileId: 'managed-artifact-1',
       versionId: 'artifact-version-1',
       mimeType: 'image/png',
-      imagePreview: true
+      imagePreview: 'thumbnail'
     })
   })
 

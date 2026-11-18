@@ -1,3 +1,5 @@
+import { readStoredImageTasks, withImageTaskSnapshot } from '../image-model/stored-tasks'
+import { imageTaskIsActive, type ImageTaskScope, type ImageTask } from '../../shared/image-task'
 import { indexPortableEvidence } from '../artifacts/execution-evidence-log'
 import { ReviewRepository } from '../reviewer/repository'
 import { ComputeJobRepository } from '../compute/job-repository'
@@ -86,7 +88,13 @@ import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-
 import { sha256 } from '../artifacts/provenance-canonical'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { copySessionBookmarks, readSessionBookmarkTargets } from '../bookmarks/repository'
-import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
+import {
+  copyFileWithinBudget,
+  digestFileWithinBudget,
+  observeFile,
+  sameFileObservation,
+  type FileObservation
+} from '../bounded-file-io'
 import { paceFileIo } from '../file-io-pacing'
 import { encodeRunDocumentDataPaths } from '../notebook/run-document-data-path-codec'
 import { ensureWorkingFileEvidenceProject } from '../notebook/working-file-observer'
@@ -226,6 +234,7 @@ type PackageOptions = {
   getClient: () => Promise<PrismaClient>
   isSessionActive?: (projectId: string, sessionId: string) => boolean
   reserveExport?: (request: SessionPackageRequest, signal: AbortSignal) => Promise<() => void>
+  readImageTasks?: (scope: ImageTaskScope) => Promise<ImageTask[]>
   inspectPackage?: typeof inspectSessionPackage
   runSessionPublication?: (
     projectId: string,
@@ -606,6 +615,20 @@ export class SessionPackageService {
     return this.options.configRoot ?? this.options.storageRoot
   }
 
+  // Recovery writes must finish before the surface reserves/freeze-locks the Session.
+  async prepareExport(request: SessionPackageRequest): Promise<void> {
+    if (!this.options.readImageTasks) return
+    const safe = sessionPackageRequestSchema.parse(request)
+    const loaded = await loadSessionMutationAuthority(
+      new SessionRepository(this.configRoot),
+      safe.projectId,
+      safe.sessionId
+    )
+    // Imported history is immutable; its source task states must not be recovered as local work.
+    if (loaded.status === 'found' && !loaded.session.packageOrigin)
+      await this.options.readImageTasks(safe)
+  }
+
   async assertExportIdle(request: SessionPackageRequest): Promise<void> {
     const safe = sessionPackageRequestSchema.parse(request)
     const loaded = await loadSessionMutationAuthority(
@@ -663,7 +686,7 @@ export class SessionPackageService {
       const result = await withWorkingFileEvidenceRead(
         this.options.storageRoot,
         request.projectId,
-        () => this.exportSnapshot(request, path, options, diagnostic)
+        () => withImageTaskSnapshot(() => this.exportSnapshot(request, path, options, diagnostic))
       )
       diagnostic.complete()
       return result
@@ -1014,10 +1037,14 @@ export class SessionPackageService {
         : []
     )
     const literatureIds = sessionLiteratureReferences(session).versionIds
+    const imageTasks = await readStoredImageTasks(this.options.storageRoot, request)
+    if (imageTasks.some(imageTaskIsActive))
+      throw new Error('Wait for image tasks to finish before exporting this Session.')
     const versionIds = [
       ...new Set([
         ...sessionFileVersionIds(session).filter((id) => !literatureIds.has(id)),
         ...bookmarkVersionIds,
+        ...imageTasks.map((task) => task.edit.source.sourceVersionId),
         ...notebooks.flatMap((document) =>
           document.runs.flatMap((run) =>
             (run.inputFiles ?? []).map((input) => input.inputFileVersionId)
@@ -1026,6 +1053,7 @@ export class SessionPackageService {
       ])
     ]
     const records = await captureNativeRecords(client, request, versionIds)
+    if (imageTasks.length) records.imageTasks = imageTasks
     const retainedOrigin =
       session.forkOrigin || filmOrigin?.nativeLogOrigin ? filmOrigin : undefined
     if (retainedOrigin?.literature)
@@ -1100,6 +1128,18 @@ export class SessionPackageService {
     )
     const retainedFiles: PackageSelectionSummary['retainedFiles'] = []
     const measuredContent = new Map<string, { checksum: string; sizeBytes: number }>()
+    const immutableVersions = new Set(
+      [...records.tables.ArtifactVersion, ...records.tables.UploadVersion].flatMap((row) =>
+        typeof row.contentStorageKey === 'string' &&
+        (row.state === 'finalized' || row.state === 'ready')
+          ? [row.contentStorageKey]
+          : []
+      )
+    )
+    const sourceObservations = new Map<
+      string,
+      { observation: FileObservation; integrity: { checksum: string; sizeBytes: number } }
+    >()
     diagnostic.phase('measure-content')
     for (const key of new Set([
       ...nativeStorageKeys(records),
@@ -1124,18 +1164,17 @@ export class SessionPackageService {
         continue
       }
       const original = resolveStorageKey(this.options.storageRoot, sourceKey(key))
-      const metadata = await lstat(original)
-      // Shared evidence paths can name one immutable inode; do not reread it per activity.
-      const identity =
-        metadata.ino > 0
-          ? [metadata.dev, metadata.ino, metadata.size, metadata.mtimeMs, metadata.ctimeMs].join(
-              ':'
-            )
-          : key
+      const observation = observeFile(await lstat(original, { bigint: true }))
+      // Shared evidence paths can name one inode, with the same observation and digest.
+      const identity = observation.inode !== '0' ? JSON.stringify(observation) : key
       const integrity =
         measuredContent.get(identity) ??
-        (await digestFileWithinBudget(original, metadata.size, this.signal))
+        (await digestFileWithinBudget(original, observation.sizeBytes, this.signal))
+      if (!sameFileObservation(observation, observeFile(await lstat(original, { bigint: true }))))
+        throw new Error('The Session changed during export. Try again.')
       measuredContent.set(identity, integrity)
+      if (immutableVersions.has(key) && observation.inode !== '0')
+        sourceObservations.set(key, { observation, integrity })
       retainedFiles.push({ storageKey: key, filename: key, ...integrity })
     }
     const sessionJson = JSON.stringify({ version: 2, session: sharedSession })
@@ -1234,12 +1273,13 @@ export class SessionPackageService {
         for (const key of storageKeys) {
           await assertPackageSourcePath(this.options.storageRoot, sourceKey(key))
           const original = sourcePath(key)
-          const metadata = await lstat(original)
-          if (
-            isNotebookInputCopy(key) &&
-            excludedFiles.some((file) => file.sizeBytes === metadata.size)
-          ) {
-            const digest = await digestFileWithinBudget(original, metadata.size, this.signal)
+          const observation = observeFile(await lstat(original, { bigint: true }))
+          const observed = sourceObservations.get(key)
+          if (observed && !sameFileObservation(observed.observation, observation))
+            throw new Error('The Session changed during export. Try again.')
+          const size = observation.sizeBytes
+          if (isNotebookInputCopy(key) && excludedFiles.some((file) => file.sizeBytes === size)) {
+            const digest = await digestFileWithinBudget(original, size, this.signal)
             const omittedInput = excludedNotebookInputCopy(records, excludedFiles, {
               ...digest,
               storageKey: key
@@ -1249,10 +1289,20 @@ export class SessionPackageService {
               continue
             }
           }
-          sizes.set(key, metadata.size)
-          const integrity = await digestFileWithinBudget(original, metadata.size, this.signal)
-          if (integrity.sizeBytes !== metadata.size)
+          sizes.set(key, size)
+          const integrity =
+            observed?.integrity ?? (await digestFileWithinBudget(original, size, this.signal))
+          if (
+            integrity.sizeBytes !== size ||
+            (!observed &&
+              !sameFileObservation(
+                observation,
+                observeFile(await lstat(original, { bigint: true }))
+              ))
+          )
             throw new Error('The Session changed during export. Try again.')
+          if (immutableVersions.has(key) && observation.inode !== '0')
+            sourceObservations.set(key, { observation, integrity })
           contentIntegrity.set(key, integrity)
           const contentIdentity = `${integrity.sizeBytes}:${integrity.checksum}`
           if (!contentOwners.has(contentIdentity)) {
@@ -1284,13 +1334,18 @@ export class SessionPackageService {
           assertPortablePackageStorageKey(storageKey)
           await assertPackageSourcePath(this.options.storageRoot, sourceKey(storageKey))
           const original = sourcePath(storageKey)
-          const metadata = await lstat(original)
-          if (!metadata.isFile() || metadata.size > PACKAGE_MAX_FILE_BYTES)
+          const metadata = await lstat(original, { bigint: true })
+          const observation = observeFile(metadata)
+          const observed = sourceObservations.get(storageKey)
+          const size = observation.sizeBytes
+          if (observed && !sameFileObservation(observed.observation, observation))
+            throw new Error('The Session changed during export. Try again.')
+          if (!metadata.isFile() || size > PACKAGE_MAX_FILE_BYTES)
             throw new Error('Invalid or oversized package source file.')
           if (inventory.length >= 10000)
             throw new Error('Session package exceeds the export limit.')
           const measured = contentIntegrity.get(storageKey)
-          if (!measured || measured.sizeBytes !== metadata.size)
+          if (!measured || measured.sizeBytes !== size)
             throw new Error('The Session changed during export. Try again.')
           const contentIdentity = `${measured.sizeBytes}:${measured.checksum}`
           const existing = copiedContent.get(contentIdentity)
@@ -1300,8 +1355,9 @@ export class SessionPackageService {
           let copied: { sizeBytes: number; checksum: string }
           let objectPathForEntry = objectPath
           if (existing) {
-            const current = await digestFileWithinBudget(original, metadata.size, this.signal)
-            if (current.checksum !== measured.checksum || current.sizeBytes !== metadata.size)
+            const current =
+              observed?.integrity ?? (await digestFileWithinBudget(original, size, this.signal))
+            if (current.checksum !== measured.checksum || current.sizeBytes !== size)
               throw new Error('The Session changed during export. Try again.')
             copied = existing.integrity
             objectPathForEntry = existing.objectPath
@@ -1319,7 +1375,7 @@ export class SessionPackageService {
             copied = await copyFileWithinBudget(
               original,
               join(directory, objectPath),
-              metadata.size,
+              size,
               this.signal,
               (bytes) =>
                 options.onProgress?.({
@@ -1331,7 +1387,7 @@ export class SessionPackageService {
                   currentFile
                 })
             )
-            if (copied.sizeBytes !== metadata.size || copied.checksum !== measured.checksum)
+            if (copied.sizeBytes !== size || copied.checksum !== measured.checksum)
               throw new Error('The Session changed during export. Try again.')
             copiedContent.set(contentIdentity, { objectPath, integrity: copied })
             completedBytes += copied.sizeBytes
@@ -1431,11 +1487,19 @@ export class SessionPackageService {
         for (const entry of inventory) {
           if (!entry.storageKey) continue
           await assertPackageSourcePath(this.options.storageRoot, sourceKey(entry.storageKey))
-          const currentFile = await digestFileWithinBudget(
-            sourcePath(entry.storageKey),
-            entry.sizeBytes,
-            this.signal
+          const original = sourcePath(entry.storageKey)
+          const observed = sourceObservations.get(entry.storageKey)
+          if (
+            observed &&
+            !sameFileObservation(
+              observed.observation,
+              observeFile(await lstat(original, { bigint: true }))
+            )
           )
+            throw new Error('The Session changed during export. Try again.')
+          const currentFile =
+            observed?.integrity ??
+            (await digestFileWithinBudget(original, entry.sizeBytes, this.signal))
           if (currentFile.sizeBytes !== entry.sizeBytes || currentFile.checksum !== entry.checksum)
             throw new Error('The Session changed during export. Try again.')
         }
@@ -1445,6 +1509,8 @@ export class SessionPackageService {
           request.sessionId
         )
         const currentRecords = await captureNativeRecords(client, request, versionIds)
+        const currentImageTasks = await readStoredImageTasks(this.options.storageRoot, request)
+        if (currentImageTasks.length) currentRecords.imageTasks = currentImageTasks
         if (records.logEvidence)
           currentRecords.logEvidence = await collectPackageLogEvidence(
             this.options.storageRoot,

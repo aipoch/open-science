@@ -8,7 +8,7 @@ import {
 } from './session-record-codec'
 
 const replay = (before: JournalValue, records: readonly SessionBusinessRecord[]): JournalValue =>
-  records.reduce(applySessionRecord, before)
+  records.reduce((document, record) => applySessionRecord(document, record), before)
 type TestEntity = { id: string; content?: string; changed?: string }
 type TestDocument = {
   extraEnvelopeField?: string

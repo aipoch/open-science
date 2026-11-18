@@ -1,6 +1,7 @@
 import type { ScheduleSummary } from '../../../../shared/session-schedules'
 import { ScheduleStarterPanel } from './schedules/ScheduleStarterPanel'
 import { ScheduleRunPanel } from './schedules/ScheduleRunPanel'
+import { ImageEditingProvider } from './image-edit/ImageEditingProvider'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import {
   LibraryReferenceActionsContext,
@@ -2270,7 +2271,7 @@ const WorkspacePage = ({
       }
     >
       <LibraryPreviewNavigationContext.Provider value={onOpenLibraryMention}>
-        {content}
+        <ImageEditingProvider>{content}</ImageEditingProvider>
       </LibraryPreviewNavigationContext.Provider>
     </LibraryReferenceActionsContext.Provider>
   )

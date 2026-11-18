@@ -1,3 +1,4 @@
+import type { ImageTask, ImageTaskScope } from '../../shared/image-task'
 import { createLiteraturePackageSource } from '../literature/package-source'
 import { desktopInteraction } from '../desktop-interaction'
 import { join } from 'node:path'
@@ -50,6 +51,7 @@ export async function composeSessionPackages({
   sessionRepository,
   getDetectSessionExportBlockingSessions,
   getSessionExportOwners,
+  readImageTasks,
   modules
 }: {
   settingsRepository: SettingsRepository
@@ -64,6 +66,7 @@ export async function composeSessionPackages({
     sessionPersistenceCoordinator: Pick<SessionPersistenceCommands, 'reserveSessionExport'>
     notebookService: Pick<NotebookRuntimeService, 'waitForSessionTeardown'>
   }
+  readImageTasks: (scope: ImageTaskScope) => Promise<ImageTask[]>
   modules: ApplicationModuleBuilder
 }): Promise<{
   projectRepository: ReturnType<typeof createDefaultProjectRepository>
@@ -88,7 +91,11 @@ export async function composeSessionPackages({
     current?: Pick<SessionPersistenceCommands, 'adoptPublishedSession' | 'runSessionMutation'>
   } = {}
   // Package recovery precedes the Notebook runtime. Resolve live owners only for an export.
-  const reserveSessionExport: SessionExportReservation = async (request, signal) => {
+  const reserveSessionExport = async (
+    request: SessionPackageRequest,
+    signal?: AbortSignal,
+    prepare?: () => Promise<void>
+  ): Promise<() => void> => {
     const { archiveCoordinator, sessionPersistenceCoordinator, notebookService } =
       getSessionExportOwners()
     let releasePersistence: (() => void) | undefined
@@ -122,6 +129,10 @@ export async function composeSessionPackages({
             })
           } else await teardown
           signal?.throwIfAborted()
+          if (prepare) {
+            await prepare()
+            signal?.throwIfAborted()
+          }
           releasePersistence = await sessionPersistenceCoordinator.reserveSessionExport(
             request.projectId,
             request.sessionId
@@ -143,6 +154,7 @@ export async function composeSessionPackages({
   }
   const sessionPackageService = await modules.add(undefined, () => {
     const service = new SessionPackageService({
+      readImageTasks,
       literatureSource: createLiteraturePackageSource(() =>
         getProjectDbClient(resolveConfigRoot())
       ),
@@ -159,7 +171,8 @@ export async function composeSessionPackages({
       configRoot: resolveConfigRoot(),
       storageRoot: resolveDataRoot(),
       getClient: () => getProjectDbClient(resolveConfigRoot()),
-      reserveExport: reserveSessionExport,
+      reserveExport: (request, signal) =>
+        reserveSessionExport(request, signal, () => service.prepareExport(request)),
       isSessionActive: (projectId, sessionId) =>
         getDetectSessionExportBlockingSessions()().some(
           (item) => item.projectId === projectId && item.sessionId === sessionId

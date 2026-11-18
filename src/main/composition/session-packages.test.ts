@@ -109,6 +109,7 @@ async function createPublicationFixture(): Promise<{
         // Publication recovery has no Notebook runtime or live process resources.
         notebookService: { waitForSessionTeardown: async () => undefined }
       }),
+      readImageTasks: async () => [],
       modules: { add: (_: undefined, create: () => { capability: unknown }) => create().capability }
     } as unknown as Parameters<typeof composeSessionPackages>[0])
   return { target, archive, repository, owner, compose }

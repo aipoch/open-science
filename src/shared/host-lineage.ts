@@ -51,8 +51,8 @@ export type HostLineageVersion = {
   root_frame_id: string
   agent_frame_id: string
   message_branch_id: string
-  runtime_segment_id: string
-  prompt_message_id: string
+  runtime_segment_id?: string
+  prompt_message_id?: string
   created_at: string
   content_type?: string
   size_bytes: number
