@@ -118,9 +118,10 @@ it('keeps original Windows process receipts local through package export and col
     { laneKey: 'local-lane', processKey: 'repl', kernelEpochId: 'local-epoch' },
     'local-process-authority',
     {
-      path: 'C:\\Users\\Researcher\\local-proof.json',
+      path: 'C:/Users/Researcher/.open-science-process-tree-terminated-local-proof.proof',
       token: 'local-proof-authority',
-      requestPath: 'C:\\Users\\Researcher\\local-cleanup.json'
+      requestPath:
+        'C:/Users/Researcher/.open-science-process-tree-terminated-local-proof.proof.request'
     },
     true
   )
