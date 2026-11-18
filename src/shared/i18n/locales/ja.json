@@ -8269,6 +8269,7 @@
     "{{source}} did not provide relationships for this page; the paper may still have references or citations.": "{{source}} からこのページの引用関係は提供されませんでしたが、論文に参考文献や被引用がないとは限りません。",
     "Some relationships could not be matched to a record in {{source}} and are not shown.": "一部の引用関係は {{source}} のレコードと照合できなかったため、表示されていません。",
     "Loaded: {{loaded}}": "読み込み済み: {{loaded}}",
+    "No more results": "これ以上の結果はありません",
     "Loaded results only; source coverage may be incomplete.": "読み込み済みの結果のみです。データソースがすべてを網羅しているとは限りません。",
     "Scroll to zoom. Drag to pan.": "スクロールで拡大・縮小、ドラッグで移動します。",
     "Fit graph": "グラフを全体表示",

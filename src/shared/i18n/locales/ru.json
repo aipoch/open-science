@@ -8774,6 +8774,7 @@
     "{{source}} did not provide relationships for this page; the paper may still have references or citations.": "{{source}} не предоставил связи для этой страницы; у статьи всё же могут быть ссылки или цитирования.",
     "Some relationships could not be matched to a record in {{source}} and are not shown.": "Некоторые связи не удалось сопоставить с записями в {{source}}, поэтому они не показаны.",
     "Loaded: {{loaded}}": "Загружено: {{loaded}}",
+    "No more results": "Больше результатов нет",
     "Loaded results only; source coverage may be incomplete.": "Только загруженные результаты; охват источника может быть неполным.",
     "Scroll to zoom. Drag to pan.": "Прокручивайте для масштабирования. Перетаскивайте для перемещения.",
     "Fit graph": "Вписать граф",

@@ -8269,6 +8269,7 @@
     "{{source}} did not provide relationships for this page; the paper may still have references or citations.": "{{source}} 未提供此页的引用关系，但该论文仍可能有参考文献或被其他论文引用。",
     "Some relationships could not be matched to a record in {{source}} and are not shown.": "部分引用关系无法匹配到 {{source}} 中的记录，因此未显示。",
     "Loaded: {{loaded}}": "已加载：{{loaded}}",
+    "No more results": "没有更多结果",
     "Loaded results only; source coverage may be incomplete.": "仅统计已加载结果，数据源可能收录不全。",
     "Scroll to zoom. Drag to pan.": "滚动缩放，拖动平移。",
     "Fit graph": "适应图谱",

@@ -65,7 +65,7 @@ export function LiteratureCitationStatus({
         <h3 className="font-medium">
           {direction === 'references' ? t('References') : t('Cited by')}
         </h3>
-        {state.pages > 0 && !canPage && result?.state !== 'unavailable' ? (
+        {pageLimitReached ? (
           <span className="tabular-nums text-muted-foreground">{loadedLabel}</span>
         ) : null}
       </div>
@@ -138,18 +138,22 @@ export function LiteratureCitationStatus({
               : undefined
           }
         />
-      ) : canPage ? (
+      ) : result?.state === 'ready' && !pageLimitReached ? (
         <div className={footerClass}>
           <span className="tabular-nums">{loadedLabel}</span>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={blocked}
-            aria-busy={busy === direction || undefined}
-            onClick={() => void load(direction, nextOffset)}
-          >
-            <CitationPageActionLabel loading={busy === direction} />
-          </Button>
+          {canPage ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={blocked}
+              aria-busy={busy === direction || undefined}
+              onClick={() => void load(direction, nextOffset)}
+            >
+              <CitationPageActionLabel loading={busy === direction} />
+            </Button>
+          ) : (
+            <span role="status">{t('No more results')}</span>
+          )}
         </div>
       ) : !result && !busy ? (
         <Button

@@ -193,10 +193,13 @@ it('defaults to all directions and filters merged papers without moving or reque
   const originalPosition = position()
   expect(paper().querySelector('[data-node-mark]')?.getAttribute('data-node-kind')).toBe('both')
   expect(paper().querySelector('[data-node-kind="diamond"]')).toBeTruthy()
-  const legend = (): Element => document.querySelector('[data-citation-status]')!
-  expect(legend().textContent).toContain('ReferencesLoaded: 1')
+  expect(
+    within(screen.getByRole('region', { name: 'References' })).getByText('Loaded: 1')
+  ).toBeTruthy()
   showCategory('citations')
-  expect(legend().textContent).toContain('Cited byLoaded: 2')
+  expect(
+    within(screen.getByRole('region', { name: 'Papers citing this paper' })).getByText('Loaded: 2')
+  ).toBeTruthy()
   fireEvent.click(paper())
   fireEvent.click(screen.getByRole('tab', { name: 'References' }))
   expect(paper().getAttribute('aria-pressed')).toBe('true')
@@ -205,8 +208,10 @@ it('defaults to all directions and filters merged papers without moving or reque
   expect(screen.queryByRole('button', { name: 'Select Paper c' })).toBeNull()
   expect(document.querySelectorAll('[data-source][data-target]')).toHaveLength(1)
   showPaperList()
-  expect(legend().textContent).toContain('ReferencesLoaded: 1')
-  expect(legend().textContent).not.toContain('Cited by')
+  expect(
+    within(screen.getByRole('region', { name: 'References' })).getByText('Loaded: 1')
+  ).toBeTruthy()
+  expect(screen.queryByRole('region', { name: 'Papers citing this paper' })).toBeNull()
   fireEvent.click(screen.getByRole('tab', { name: 'Cited by' }))
   expect(paper().getAttribute('aria-pressed')).toBe('true')
   expect(position()).toEqual(originalPosition)
@@ -524,6 +529,7 @@ it.each(['references', 'citations'] as const)(
       await waitFor(() => expect(related).toHaveBeenCalledTimes(page + 1))
     }
     await within(full).findByText(directionPageLimitMessage)
+    expect(within(full).queryByText('No more results')).toBeNull()
     expect(within(full).queryByRole('button', { name: 'Load more' })).toBeNull()
     expect(
       screen.getByRole('group', { name: 'Citation graph' }).querySelectorAll('[data-node-mark]')
@@ -585,12 +591,13 @@ it('does not show a capacity warning when the fifth short page naturally ends', 
   render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
   await waitFor(() => expect(related).toHaveBeenCalledTimes(2))
   for (let page = 2; page <= 5; page++) {
-    const more = screen.getByRole('button', { name: 'Load more' })
+    const more = await screen.findByRole('button', { name: 'Load more' })
     await waitFor(() => expect(more).toHaveProperty('disabled', false))
     fireEvent.click(more)
     await waitFor(() => expect(related).toHaveBeenCalledTimes(page + 1))
   }
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull())
+  expect(screen.getByText('No more results')).toBeTruthy()
   expect(screen.queryByText(directionPageLimitMessage)).toBeNull()
   expect(
     screen.getByRole('group', { name: 'Citation graph' }).querySelectorAll('[data-node-mark]')

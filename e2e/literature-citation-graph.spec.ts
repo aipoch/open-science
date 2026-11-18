@@ -175,6 +175,10 @@ test('Electron keeps a failed citation page readable and retries in place', asyn
   await page.screenshot({ path: info.outputPath('citation-page-retry.png') })
   await retry.click()
   await expect(papers.locator('[data-citation-paper-id]')).toHaveCount(40)
+  await expect(papers.getByText('No more results', { exact: true })).toBeInViewport({ ratio: 1 })
+  await expect(more).toHaveCount(0)
+  await expect(retry).toHaveCount(0)
+  await page.screenshot({ path: info.outputPath('citation-last-page.png') })
   await expect(papers.locator('[data-citation-paper-id][aria-pressed="true"]')).toContainText(
     'Graph paper 1119'
   )

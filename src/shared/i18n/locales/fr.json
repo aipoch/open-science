@@ -8621,6 +8621,7 @@
     "{{source}} did not provide relationships for this page; the paper may still have references or citations.": "{{source}} n’a pas fourni de relations pour cette page ; l’article peut néanmoins avoir des références ou des citations.",
     "Some relationships could not be matched to a record in {{source}} and are not shown.": "Certaines relations n’ont pas pu être associées à une notice dans {{source}} et ne sont pas affichées.",
     "Loaded: {{loaded}}": "Chargés : {{loaded}}",
+    "No more results": "Aucun autre résultat",
     "Loaded results only; source coverage may be incomplete.": "Résultats chargés uniquement ; la couverture de la source peut être incomplète.",
     "Scroll to zoom. Drag to pan.": "Faites défiler pour zoomer. Faites glisser pour déplacer.",
     "Fit graph": "Ajuster le graphe",
