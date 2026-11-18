@@ -20,7 +20,7 @@ If you can't write the answer and the catch, you don't understand the research y
 ## 2 · The story
 
 - **One thread, question to answer.** Every scene moves the spine forward. A scene that doesn't help answer the hook's question is cut, however true it is.
-- **Each scene answers what the previous one raised.** Use the hinge words that show it: *But…*, *So…*, *Then…*, *Yet…*, *And…*. A short question as a hinge works well, as long as the next words answer it.
+- **Each scene answers what the previous one raised.** Use the hinge words that show it: _But…_, _So…_, _Then…_, _Yet…_, _And…_. A short question as a hinge works well, as long as the next words answer it.
   - Strong: "So does the definition change the picture? Barely: the total moves 1.08%."
   - Weak: "The next analysis compared the results across thresholds."
 - **Land the catch.** The result scene shows the finding, then the twist: "But the average hides the spread."
@@ -43,7 +43,7 @@ If you can't write the answer and the catch, you don't understand the research y
   - Strong: "Take away self-augmentation, a training trick."
   - Weak: "Ablating the self-augmentation component yields the following deltas."
 - **Short lines hit; long lines explain.** Mix them. A 2–4 word line after a long one lands the point: "Barely." "Twenty fits." "Really?"
-- **Name the agent the same way:** "An Open-Science agent" the first time, then "the agent" or "it". When the research is *about* an AI (a benchmark, a model's choices), "the AI" is the subject, and the agent stays "the agent".
+- **Name the agent the same way:** "An Open-Science agent" the first time, then "the agent" or "it". When the research is _about_ an AI (a benchmark, a model's choices), "the AI" is the subject, and the agent stays "the agent".
 - **The caption is what is said.** `say` only spells out numbers, units and symbols for the voice; it doesn't add or drop words.
 
 ## 4 · Never
@@ -57,15 +57,15 @@ If you can't write the answer and the catch, you don't understand the research y
 
 ## 5 · Scene recipes
 
-| Role | The lines… | Example (finished video) |
-|---|---|---|
-| `hook` | 1: a punch of about 6 words (the news, the tension or a surprising number). 2: the claim and the question. 3: the agent line, with the pill note cued to it. | "Twenty tokens per parameter. Really?" / "Chinchilla's scaling law set that rule. Epoch AI says its fit misses its own data." / "An Open-Science agent rebuilt the fit from scratch." |
-| `setup` | What was given or assumed, with anything hypothetical said as such. | "The study area: a fixed box near Iberia, Peru, 482.90 km², set before looking at any loss." |
-| `method` | How it was done, as a chain of verbs; the one idea a viewer needs to follow the rest. | "The wheels turn by distance; the crank follows through a 44 to 18 gear." |
-| `result` | The finding with its meaning, then the catch. | "5 marked correct before editing, 47 after: 5% to 47%." / "But the average hides the spread." |
-| `limit` | What doesn't hold or wasn't tested, plainly. | "What drove 2024, fire, clearing or something else, the maps can't tell." |
-| `check` | The verification, or the researcher's pushback and what came of it. | "Then the agent checked its own work." |
-| `outro` | The answer to the hook in one line, then the closing line (SKILL.md). | "Better-looking pictures don't guarantee consistency, and which metrics you pick changes the verdict." |
+| Role     | The lines…                                                                                                                                                   | Example (finished video)                                                                                                                                                              |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hook`   | 1: a punch of about 6 words (the news, the tension or a surprising number). 2: the claim and the question. 3: the agent line, with the pill note cued to it. | "Twenty tokens per parameter. Really?" / "Chinchilla's scaling law set that rule. Epoch AI says its fit misses its own data." / "An Open-Science agent rebuilt the fit from scratch." |
+| `setup`  | What was given or assumed, with anything hypothetical said as such.                                                                                          | "The study area: a fixed box near Iberia, Peru, 482.90 km², set before looking at any loss."                                                                                          |
+| `method` | How it was done, as a chain of verbs; the one idea a viewer needs to follow the rest.                                                                        | "The wheels turn by distance; the crank follows through a 44 to 18 gear."                                                                                                             |
+| `result` | The finding with its meaning, then the catch.                                                                                                                | "5 marked correct before editing, 47 after: 5% to 47%." / "But the average hides the spread."                                                                                         |
+| `limit`  | What doesn't hold or wasn't tested, plainly.                                                                                                                 | "What drove 2024, fire, clearing or something else, the maps can't tell."                                                                                                             |
+| `check`  | The verification, or the researcher's pushback and what came of it.                                                                                          | "Then the agent checked its own work."                                                                                                                                                |
+| `outro`  | The answer to the hook in one line, then the closing line (SKILL.md).                                                                                        | "Better-looking pictures don't guarantee consistency, and which metrics you pick changes the verdict."                                                                                |
 
 ## 6 · Rubric: score the draft before `check`
 

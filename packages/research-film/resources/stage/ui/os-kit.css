@@ -1,88 +1,311 @@
 /* Layout glue for os-kit.js (Open-Science 1.2.1). Visual styling comes from os-app.css (the app's own stylesheet) through the
    real class names; this file only sets what the app computes at runtime (window size, the macOS title bar, resizable panel
    widths, scroll areas) and the compact (9:16) layout, using the app's tokens. */
-.osk-window { position: absolute; left: 0; top: 0; transform-origin: 0 0; display: flex; flex-direction: column; overflow: hidden;
-  background: var(--bg-10); color: var(--foreground); font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
-  -webkit-font-smoothing: antialiased; text-align: left; letter-spacing: normal; }
-.osk-wide { width: 1536px; height: 864px; }
-.osk-compact { width: 720px; height: 1280px; }
-.osk-rounded { border-radius: 16px; }
+.osk-window {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-10);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-align: left;
+  letter-spacing: normal;
+}
+.osk-wide {
+  width: 1536px;
+  height: 864px;
+}
+.osk-compact {
+  width: 720px;
+  height: 1280px;
+}
+.osk-rounded {
+  border-radius: 16px;
+}
 
 /* native macOS title bar (not part of the renderer): 32px, centred lights, the window title to their right */
-.osk-titlebar { height: 32px; flex: none; box-sizing: border-box; display: flex; align-items: center; padding-left: 9px;
-  background: #fff; border-bottom: 1px solid #e6e6e6; }
-.osk-lights { display: flex; gap: 9px; }
-.osk-lights i { width: 14px; height: 14px; border-radius: 50%; background: #ff5f57; box-shadow: inset 0 0 0 .5px #0000001f; }
-.osk-lights i:nth-child(2) { background: #febc2e; } .osk-lights i:nth-child(3) { background: #28c840; }
-.osk-wintitle { margin-left: 16px; font: 600 13px/16px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; color: rgba(0, 0, 0, .7); white-space: nowrap; }
+.osk-titlebar {
+  height: 32px;
+  flex: none;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding-left: 9px;
+  background: #fff;
+  border-bottom: 1px solid #e6e6e6;
+}
+.osk-lights {
+  display: flex;
+  gap: 9px;
+}
+.osk-lights i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ff5f57;
+  box-shadow: inset 0 0 0 0.5px #0000001f;
+}
+.osk-lights i:nth-child(2) {
+  background: #febc2e;
+}
+.osk-lights i:nth-child(3) {
+  background: #28c840;
+}
+.osk-wintitle {
+  margin-left: 16px;
+  font:
+    600 13px/16px -apple-system,
+    BlinkMacSystemFont,
+    'SF Pro Text',
+    system-ui,
+    sans-serif;
+  color: rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
+}
 
 /* main > layout > resizable group (sidebar | conversation | preview) */
-.osk-main { flex: 1; min-height: 0; display: flex; }
-.osk-layout { flex: 1; }
-.osk-group { display: flex; }
-.osk-side-panel { flex: 0 0 var(--osk-side-w, 16%); min-width: 0; display: flex; }
-.osk-conv-panel { flex: 1 1 0; min-width: 0; display: flex; }
-.osk-preview-panel { flex: 0 0 var(--osk-panel-w, 40%); min-width: 0; display: flex; }
-.osk-handle { flex: none; z-index: 20; }
-.osk-handle-line { box-shadow: 1px 0 3px rgba(30, 28, 24, .08); }
+.osk-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.osk-layout {
+  flex: 1;
+}
+.osk-group {
+  display: flex;
+}
+.osk-side-panel {
+  flex: 0 0 var(--osk-side-w, 16%);
+  min-width: 0;
+  display: flex;
+}
+.osk-conv-panel {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+}
+.osk-preview-panel {
+  flex: 0 0 var(--osk-panel-w, 40%);
+  min-width: 0;
+  display: flex;
+}
+.osk-handle {
+  flex: none;
+  z-index: 20;
+}
+.osk-handle-line {
+  box-shadow: 1px 0 3px rgba(30, 28, 24, 0.08);
+}
 
 /* conversation */
-.osk-conv { flex: 1; }
-.osk-scroller { overflow: hidden; }
-.osk-thread { display: flex; flex-direction: column; padding-bottom: 300px; will-change: transform; }
-.osk-group-wrap { margin-top: 10px; }
-.osk-spin { animation: none; }
+.osk-conv {
+  flex: 1;
+}
+.osk-scroller {
+  overflow: hidden;
+}
+.osk-thread {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 300px;
+  will-change: transform;
+}
+.osk-group-wrap {
+  margin-top: 10px;
+}
+.osk-spin {
+  animation: none;
+}
 
 /* composer: a long draft shows its end, as after typing or pasting it */
-.osk-composer-input.osk-scroll-end { display: flex; flex-direction: column-reverse; }
+.osk-composer-input.osk-scroll-end {
+  display: flex;
+  flex-direction: column-reverse;
+}
 
 /* right preview panel: the content area (.osk-file-body) takes text, an image, or any element (iframe, canvas) */
-.osk-preview-panel > .osk-panel { flex: 1; }
-.osk-card-wrap { display: flex; }
-.osk-file-content { display: flex; flex-direction: column; overflow: hidden; }
-.osk-file-body { flex: 1; min-height: 0; position: relative; overflow: hidden; background: var(--bg-000); }
-.osk-file-body.osk-text { padding: 6px 14px; font: 12px/1.65 var(--font-mono); white-space: pre; color: var(--text-000); }
-.osk-file-body.osk-element { display: flex; flex-direction: column; }
-.osk-fill { display: block; width: 100%; height: 100%; flex: 1; min-height: 0; border: 0; }
-.osk-file-body img.osk-preview-img { display: block; width: 100%; height: auto; margin-top: 6px; }
-.osk-panel.osk-panel-custom .osk-file-body { padding: 0; font: inherit; white-space: normal; display: flex; flex-direction: column; }
+.osk-preview-panel > .osk-panel {
+  flex: 1;
+}
+.osk-card-wrap {
+  display: flex;
+}
+.osk-file-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.osk-file-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-000);
+}
+.osk-file-body.osk-text {
+  padding: 6px 14px;
+  font: 12px/1.65 var(--font-mono);
+  white-space: pre;
+  color: var(--text-000);
+}
+.osk-file-body.osk-element {
+  display: flex;
+  flex-direction: column;
+}
+.osk-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+  border: 0;
+}
+.osk-file-body img.osk-preview-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 6px;
+}
+.osk-panel.osk-panel-custom .osk-file-body {
+  padding: 0;
+  font: inherit;
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+}
 
 /* compact (9:16): the app's mobile layout (its max-md: variants don't apply at the page's desktop width) */
-.osk-compact .osk-main { padding: 0; }
-.osk-compact .osk-group { margin-right: 0; }
-.osk-compact .osk-conv { padding: 0; }
-.osk-compact .osk-header { padding: 8px 8px 8px; border-bottom: 1px solid var(--color-border-200); }
-.osk-compact .osk-item { padding-left: 16px; padding-right: 16px; }
-.osk-compact .osk-thread { padding: 4px 4px 420px; }
-.osk-compact .osk-dock-pad { padding: 0 8px 8px; }
-.osk-compact .osk-dock-pad > div > div { padding: 0 4px; }
-.osk-compact .osk-composer-input, .osk-compact .osk-placeholder { font-size: 15px; }
+.osk-compact .osk-main {
+  padding: 0;
+}
+.osk-compact .osk-group {
+  margin-right: 0;
+}
+.osk-compact .osk-conv {
+  padding: 0;
+}
+.osk-compact .osk-header {
+  padding: 8px 8px 8px;
+  border-bottom: 1px solid var(--color-border-200);
+}
+.osk-compact .osk-item {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+.osk-compact .osk-thread {
+  padding: 4px 4px 420px;
+}
+.osk-compact .osk-dock-pad {
+  padding: 0 8px 8px;
+}
+.osk-compact .osk-dock-pad > div > div {
+  padding: 0 4px;
+}
+.osk-compact .osk-composer-input,
+.osk-compact .osk-placeholder {
+  font-size: 15px;
+}
 
 /* editorial highlight (video layer, not part of the app) */
-mark.osk-hl { --p: 0; color: inherit; border-radius: 3px; padding: 0 2px; margin: 0 -2px;
-  background: linear-gradient(90deg, #FBDD67 0 calc(var(--p) * 100%), transparent calc(var(--p) * 100%)); }
+mark.osk-hl {
+  --p: 0;
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+  margin: 0 -2px;
+  background: linear-gradient(
+    90deg,
+    #fbdd67 0 calc(var(--p) * 100%),
+    transparent calc(var(--p) * 100%)
+  );
+}
 
 /* Import Session package dialog (positioned inside the window instead of fixed to the viewport) */
-.osk-dialog-layer { position: absolute; inset: 0; z-index: 50; }
-.osk-overlay { position: absolute; inset: 0; }
-.osk-dialog { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(560px, calc(100% - 2rem)); }
-.osk-meter { min-height: 8px; }
-.osk-indet { position: relative; }
+.osk-dialog-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+}
+.osk-overlay {
+  position: absolute;
+  inset: 0;
+}
+.osk-dialog {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, calc(100% - 2rem));
+}
+.osk-meter {
+  min-height: 8px;
+}
+.osk-indet {
+  position: relative;
+}
 
 /* replay panel */
-.osk-replay { height: 100%; }
-.osk-replay-head { height: 44px; flex: none; padding: 0 12px; }
-.osk-replay-transcript { flex: 1; }
-.osk-replay-inner { display: flex; flex-direction: column; gap: 16px; will-change: transform; }
-.osk-source { padding-bottom: 12px; border-bottom: 1px solid var(--color-border-200); }
-.osk-thumb { position: absolute; top: 6px; }
-.osk-play { margin-right: 2px; }
-.osk-replay-time { padding: 0 4px; white-space: nowrap; }
+.osk-replay {
+  height: 100%;
+}
+.osk-replay-head {
+  height: 44px;
+  flex: none;
+  padding: 0 12px;
+}
+.osk-replay-transcript {
+  flex: 1;
+}
+.osk-replay-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  will-change: transform;
+}
+.osk-source {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border-200);
+}
+.osk-thumb {
+  position: absolute;
+  top: 6px;
+}
+.osk-play {
+  margin-right: 2px;
+}
+.osk-replay-time {
+  padding: 0 4px;
+  white-space: nowrap;
+}
 
 /* project menu placement + separator */
-.osk-menu { position: absolute; z-index: 40; }
-.osk-menu-sep { height: 1px; margin: 4px -6px; background: var(--border); }
-.osk-menu [role=menuitem].osk-hi { background: var(--muted); color: var(--foreground); }
+.osk-menu {
+  position: absolute;
+  z-index: 40;
+}
+.osk-menu-sep {
+  height: 1px;
+  margin: 4px -6px;
+  background: var(--border);
+}
+.osk-menu [role='menuitem'].osk-hi {
+  background: var(--muted);
+  color: var(--foreground);
+}
 
 /* inline figures in agent messages */
-.osk-md-img { display: block; max-width: 100%; border: 1px solid var(--color-border-200); border-radius: 8px; margin: 6px 0; }
+.osk-md-img {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--color-border-200);
+  border-radius: 8px;
+  margin: 6px 0;
+}

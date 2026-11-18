@@ -30,7 +30,10 @@ Read [README.md](README.md) for the supported application subset, [SCRIPT.md](SC
 Write the question, answer, catch and two or three key numbers before composing the voice lines. Read the narration on its own and apply the nine SCRIPT.md criteria. The host scores the spoken script separately and returns failed criteria for revision. End with a plain answer to the hook, then this exact closing caption and spoken line, timed to the end card.
 
 ```json
-{"caption":"AIPOCH Open-Science — the AI research workbench for reproducible science.","say":"AIPOCH Open-Science. The AI research workbench for reproducible science."}
+{
+  "caption": "AIPOCH Open-Science — the AI research workbench for reproducible science.",
+  "say": "AIPOCH Open-Science. The AI research workbench for reproducible science."
+}
 ```
 
 ## Animation bodies
