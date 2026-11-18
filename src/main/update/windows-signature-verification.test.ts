@@ -37,6 +37,25 @@ it('rejects verification errors even when PowerShell itself is unavailable', asy
   ).rejects.toThrow('PowerShell unavailable')
 })
 
+it('repeats a signature check killed at its deadline once', async () => {
+  const file = 'C:\\path\\to\\installer.exe'
+  const execFile = vi
+    .spyOn(childProcess, 'execFile')
+    .mockImplementationOnce((...args: unknown[]) => {
+      const callback = args.at(-1) as (error: Error, stdout: string, stderr: string) => void
+      callback(Object.assign(new Error('timed out'), { killed: true }), '', '')
+      return {} as ReturnType<typeof childProcess.execFile>
+    })
+    .mockImplementationOnce((...args: unknown[]) => {
+      const callback = args.at(-1) as (error: null, stdout: string, stderr: string) => void
+      const signature = { Status: 0, Path: file, SignerCertificate: { Subject: 'CN=Fixture' } }
+      callback(null, JSON.stringify(signature), '')
+      return {} as ReturnType<typeof childProcess.execFile>
+    })
+  await expect(verifySignature(['CN=Fixture'], file, log)).resolves.toBeNull()
+  expect(execFile).toHaveBeenCalledTimes(2)
+})
+
 describe.runIf(process.platform === 'win32')('installed updater Authenticode verification', () => {
   it('validates a signed system binary with an empty PATH and preserves publisher checks', async () => {
     const executable = resolveWindowsPowerShellExecutable()
