@@ -51,6 +51,25 @@ describe('prepared business updates', () => {
     ).rejects.toBeInstanceOf(SessionJournalRevisionError)
     expect(await readFile(authority, 'utf8')).toBe(evidence)
   })
+  it('reads an over-budget source once for a prepared save', async () => {
+    const { path } = await fixture()
+    let replays = 0
+    const owner = new SessionJournalStore({
+      maxBytes: 1024 * 1024,
+      maxCacheBytes: 1,
+      dependencies: {
+        async *readChunks(file) {
+          replays++
+          yield await readFile(file)
+        }
+      }
+    })
+    const previous = (await owner.read(path))!
+    const prepared = owner.prepareWrite(path, doc(2, 'continued'), previous)
+    await owner.writePrepared(path, prepared, { expectedRevision: 1 })
+    expect(replays).toBe(1)
+    expect((await store().read(path))?.document).toEqual(doc(2, 'continued'))
+  })
   it('leaves legacy JSON preparation to the repository snapshot writer', async () => {
     const { root, path, owner } = await fixture('legacy')
     const evidence = await readFile(path, 'utf8')
