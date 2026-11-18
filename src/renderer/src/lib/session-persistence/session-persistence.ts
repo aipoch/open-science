@@ -4314,7 +4314,18 @@ const useSessionPersistence = (): SessionPersistenceState => {
                 pendingRecovery?.projectId === selected.projectId &&
                 pendingRecovery.sessionId === selected.id
               ) {
-                onStoreChange(useSessionStore.getState())
+                const current = useSessionStore
+                  .getState()
+                  .sessions.find((session) => session.id === selected.id)
+                if (current && current.contentLoaded !== false) {
+                  useSessionStore.setState((state) => ({
+                    sessions: state.sessions.map((session) =>
+                      session.id === selected.id ? { ...session, contentLoaded: false } : session
+                    )
+                  }))
+                } else {
+                  onStoreChange(useSessionStore.getState())
+                }
               }
             })
         }
