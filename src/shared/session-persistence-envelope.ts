@@ -3,7 +3,7 @@ import type {
   PersistedChatSession
 } from './session-persistence/session'
 
-// One JSON file per session (sessions/<projectId>/<sessionId>.json) carries this envelope version.
+// Version of the logical Session document stored in legacy JSON and reconstructed from JSONL.
 export const SESSION_FILE_VERSION = 2
 // Small manifest (sessions/manifest.json) that restores the user's last-open project + session.
 export const SESSION_MANIFEST_VERSION = 1
