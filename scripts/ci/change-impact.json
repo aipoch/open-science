@@ -794,6 +794,8 @@
       "role": "overlay",
       "paths": [
         "e2e/fixtures/fake-opencode.mjs",
+        "e2e/fixtures/kernel-fence.mjs",
+        "e2e/fixtures/macos-acceptance.mjs",
         "e2e/fixtures/research-analysis.mjs",
         "e2e/fixtures/session-outcome-fault.ts"
       ],
