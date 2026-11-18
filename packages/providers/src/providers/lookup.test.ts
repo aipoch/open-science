@@ -773,7 +773,7 @@ describe('provider registry', () => {
       'https://openrouter.ai/workspaces/default/keys'
     )
     // Curated (300+ live ids would flood the picker), so refresh-from-vendor is hidden.
-    expect(resolveVendorModelsUrl('openrouter')).toBe('https://openrouter.ai/api/v1/models')
+    expect(resolveVendorModelsUrl('openrouter')).toBeUndefined()
   })
 
   it('routes Requesty through both APIs after OpenRouter with a curated catalog', () => {

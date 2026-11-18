@@ -86,3 +86,15 @@ export const decodeCatalogParameters = (value: unknown): Record<string, string> 
     )
     .refine((v) => Object.keys(v).length <= 8)
     .safeParse(value).data
+
+export type ProviderCatalogState = {
+  modelCatalog?: CatalogSnapshot
+  modelCatalogStatus?: CatalogStatus
+  fetchedModels?: string[]
+}
+
+export const providerCatalogState = (provider?: ProviderCatalogState): ProviderCatalogState => ({
+  modelCatalog: provider?.modelCatalog,
+  modelCatalogStatus: provider?.modelCatalogStatus,
+  fetchedModels: provider?.fetchedModels
+})

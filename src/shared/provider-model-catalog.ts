@@ -28,10 +28,20 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
   if (!vendorId) return []
   const vendor = getOfficialVendor(vendorId)
   if (!vendor) return []
-  const ids = modelCatalog
-    ? modelCatalog.models.map((model) => model.id)
-    : (source.models ?? getOfficialVendorModelIds(vendorId, region, source.fetchedModels))
-  const live = new Map(modelCatalog?.models.map((model) => [model.id, model]))
+  const curated = vendorId === 'openrouter'
+  const live = new Map(
+    (curated ? undefined : modelCatalog)?.models.map((model) => [model.id, model])
+  )
+  const ids = curated
+    ? vendor.models.map((model) => model.id)
+    : modelCatalog
+      ? [...live.keys()]
+      : [...(source.models ?? getOfficialVendorModelIds(vendorId, region, source.fetchedModels))]
+  if (vendorId === 'deepseek' && modelCatalog) {
+    for (const alias of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+      if (!live.has(alias)) ids.push(alias)
+    }
+  }
   return ids
     .filter((id) => !/\[1m\]$/i.test(id))
     .map((id) => {

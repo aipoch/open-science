@@ -49,8 +49,11 @@ it('injects host network/resource policy and persists against the captured accou
     }
   })
 })
-it('rejects a model list if the account changed during discovery', async () => {
-  list.mockResolvedValue({ ok: true, models: ['model-a'] })
+it.each([
+  { ok: true, models: ['model-a'] },
+  { ok: false, code: 'authentication', status: 401 }
+])('discards a stale discovery result (ok=$ok) after an account change', async (result) => {
+  list.mockResolvedValue(result)
   const owner = new ProviderModelCatalogOwner(
     repository(false) as unknown as SettingsRepository,
     () => ({ key: 'decrypted' }) as ResolvedProvider,

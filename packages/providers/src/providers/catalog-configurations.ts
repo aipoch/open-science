@@ -63,23 +63,3 @@ export const openCodeCatalog: CatalogRequestOptions = {
     efforts: 'capabilities.reasoning.effort'
   }
 }
-export const openRouterCatalog: CatalogRequestOptions = {
-  ...publicCatalog,
-  pagination: {
-    type: 'offset',
-    parameter: 'offset',
-    sizeParameter: 'limit',
-    size: 500,
-    totalPath: 'total_count'
-  },
-  filter: { path: 'architecture.output_modalities', includes: 'text' },
-  routes: { type: 'endpoints', path: 'endpoints' },
-  fields: {
-    name: 'name',
-    contextWindow: 'context_length',
-    maxOutputTokens: 'top_provider.max_completion_tokens',
-    supportsImageInput: { path: 'architecture.input_modalities', includes: 'image' },
-    supportsTools: { path: 'supported_parameters', includes: 'tools' },
-    efforts: 'reasoning.supported_efforts'
-  }
-}

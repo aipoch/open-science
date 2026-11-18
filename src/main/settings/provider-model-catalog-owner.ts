@@ -14,7 +14,11 @@ import type {
 import { isXaiSubscriptionProvider } from '../../shared/settings-runtime'
 import { netFetchStandard } from '../network-fetch'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
-import { decodeCatalogParameters } from '../../shared/provider-model-catalog-codec'
+import {
+  decodeCatalogParameters,
+  providerCatalogState,
+  type ProviderCatalogState
+} from '../../shared/provider-model-catalog-codec'
 import type { ResolvedProvider } from './provider-env'
 import type { SettingsRepository } from './repository'
 import type { XaiAccessCredential } from './xai-oauth'
@@ -22,6 +26,7 @@ import type { StoredProvider } from './types'
 
 const log = createLogger('settings.model-catalog')
 type DraftCatalog = {
+  baseline?: ProviderCatalogState
   fingerprint: string
   expiresAt: number
   catalog: CatalogSnapshot
@@ -62,7 +67,7 @@ export class ProviderModelCatalogOwner {
     token: string | undefined,
     provider: StoredProvider,
     existing: StoredProvider | undefined
-  ): void {
+  ): ProviderCatalogState | undefined {
     if (!token) return
     const result = this.drafts.get(token)
     if (
@@ -81,6 +86,7 @@ export class ProviderModelCatalogOwner {
     provider.modelCatalog = result.catalog
     provider.modelCatalogStatus = result.catalogStatus
     provider.fetchedModels = result.catalog.models.map((model) => model.id)
+    return result.baseline
   }
 
   async refresh(request: RefreshProviderModelsRequest): Promise<RefreshProviderModelsResult> {
@@ -121,8 +127,8 @@ export class ProviderModelCatalogOwner {
       stored?.type === target.type &&
       stored.vendorId === target.vendorId &&
       stored.region === target.region
-    let key =
-      draft?.key || (stored && sameSavedTarget ? this.resolveProvider(stored).key : undefined)
+    const savedKey = stored && sameSavedTarget ? this.resolveProvider(stored).key : undefined
+    let key = draft?.key || savedKey
     let expectedProvider = target
     if (subscription) {
       try {
@@ -133,7 +139,10 @@ export class ProviderModelCatalogOwner {
         return { ok: false, category: 'auth', code: 'authentication' }
       }
     }
-    const identity = request.providerId ?? this.fingerprint(target, key)
+    const draftFingerprint = draft
+      ? this.fingerprint(target, key, stored?.id, stored?.configRevision)
+      : undefined
+    const identity = draftFingerprint ? `draft:${draftFingerprint}` : `saved:${target.id}`
     const generation = ++this.sequence
     this.generations.set(identity, generation)
     log.info('Refreshing model catalog', {
@@ -155,65 +164,69 @@ export class ProviderModelCatalogOwner {
     if (this.generations.get(identity) !== generation)
       return { ok: false, category: 'unknown', code: 'stale' }
     this.generations.delete(identity)
+    const models = subscription
+      ? result.models?.filter((m) => m.startsWith('grok-'))
+      : result.models
+    const code = result.ok && !models?.length ? 'invalid-response' : result.code
     const catalogStatus: CatalogStatus = {
       attemptedAt: Date.now(),
-      ok: result.ok,
-      code: result.code,
+      ok: result.ok && Boolean(models?.length),
+      code,
       status: result.status
     }
     log.info('Model catalog refresh completed', {
       vendor: providerId,
       phase: 'catalog',
       elapsedMs: Date.now() - start,
-      ok: result.ok,
-      code: result.code,
+      ok: catalogStatus.ok,
+      code,
       status: result.status,
-      count: result.models?.length ?? 0
+      count: models?.length ?? 0
     })
-    if (!result.ok || !result.models) {
-      if (!draft)
-        await this.repository.updateProviderModelCatalogIfTargetMatches(
+    if (!result.ok || !models?.length) {
+      if (!draft) {
+        const applied = await this.repository.updateProviderModelCatalogIfTargetMatches(
           expectedProvider,
           undefined,
           { modelCatalogStatus: catalogStatus }
         )
+        if (!applied) return { ok: false, category: 'unknown', code: 'stale' }
+      }
       const previousDraft = draft?.catalogDraftToken
         ? this.drafts.get(draft.catalogDraftToken)
         : undefined
-      if (
-        previousDraft &&
-        previousDraft.fingerprint ===
-          this.fingerprint(target, key, stored?.id, stored?.configRevision)
-      )
+      if (previousDraft && previousDraft.fingerprint === draftFingerprint)
         previousDraft.catalogStatus = catalogStatus
       return {
         ok: false,
         category:
-          result.code === 'authentication' ||
-          result.code === 'permission' ||
-          result.code === 'missing-key'
+          code === 'authentication' || code === 'permission' || code === 'missing-key'
             ? 'auth'
-            : result.code === 'network' || result.code === 'timeout'
+            : code === 'network' || code === 'timeout'
               ? 'network'
               : 'unknown',
-        code: result.code,
+        code,
         message: result.message,
         catalogStatus
       }
     }
-    const models = subscription ? result.models.filter((m) => m.startsWith('grok-')) : result.models
-    if (!models.length) return { ok: false, category: 'unknown', code: 'invalid-response' }
     const catalog: CatalogSnapshot = {
       fetchedAt: Date.now(),
       models: (result.catalog ?? models.map((id) => ({ id }))).filter((m) => models.includes(m.id))
     }
-    if (draft) {
+    if (draftFingerprint) {
       for (const [token, value] of this.drafts)
         if (value.expiresAt < Date.now()) this.drafts.delete(token)
       if (this.drafts.size >= 32) this.drafts.delete(this.drafts.keys().next().value!)
       const draftToken = randomUUID()
       this.drafts.set(draftToken, {
-        fingerprint: this.fingerprint(target, key, stored?.id, stored?.configRevision),
+        baseline:
+          stored &&
+          sameSavedTarget &&
+          draftFingerprint === this.fingerprint(stored, savedKey, stored.id, stored.configRevision)
+            ? providerCatalogState(stored)
+            : undefined,
+        fingerprint: draftFingerprint,
         expiresAt: Date.now() + 15 * 60_000,
         catalog,
         catalogStatus

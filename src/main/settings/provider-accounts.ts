@@ -1,4 +1,8 @@
-import { decodeCatalogParameters } from '../../shared/provider-model-catalog-codec'
+import {
+  decodeCatalogParameters,
+  providerCatalogState,
+  type ProviderCatalogState
+} from '../../shared/provider-model-catalog-codec'
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
 import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
@@ -105,6 +109,12 @@ type ProviderAccountsModuleOptions = {
   claudeSharedAuth?: ClaudeSharedAuthControllerPort
   xaiOAuth?: XaiOAuthControllerPort
 }
+type PreparedProvider = {
+  provider: StoredProvider
+  settings: StoredSettings
+  catalogBaseline?: ProviderCatalogState
+}
+
 // Owns durable provider records and every provider-specific validation/authentication lifecycle;
 // executable installation, runtime spawn, live ACP reconnect, and transports remain outside.
 class ProviderAccountsModule {
@@ -271,9 +281,7 @@ class ProviderAccountsModule {
   async upsertProvider(request: UpsertProviderRequest): Promise<void> {
     return this.auth.serializeAccountMutation(() => this.upsertProviderNow(request))
   }
-  private async prepareProvider(
-    request: UpsertProviderRequest
-  ): Promise<{ provider: StoredProvider; settings: StoredSettings }> {
+  private async prepareProvider(request: UpsertProviderRequest): Promise<PreparedProvider> {
     assertProviderDraftLimits(request)
     const settings = await this.repository.getSettings()
     if (
@@ -387,16 +395,13 @@ class ProviderAccountsModule {
       if (request.catalogParameters && !provider.catalogParameters)
         throw new Error('Invalid catalog parameters.')
       if (
-        existing?.fetchedModels &&
+        existing &&
         vendorId === existing.vendorId &&
         region === existing.region &&
         !request.key &&
-        JSON.stringify(provider.catalogParameters ?? {}) ===
-          JSON.stringify(existing.catalogParameters ?? {})
+        isDeepStrictEqual(provider.catalogParameters ?? {}, existing.catalogParameters ?? {})
       ) {
-        provider.modelCatalog = existing.modelCatalog
-        provider.modelCatalogStatus = existing.modelCatalogStatus
-        provider.fetchedModels = existing.fetchedModels
+        Object.assign(provider, providerCatalogState(existing))
       }
       if (!carryKey()) throw new Error('API key is required for an official provider.')
       credentialsChanged =
@@ -442,12 +447,16 @@ class ProviderAccountsModule {
     if (existing?.lastValidationFailure !== undefined && preserveValidationFailure)
       provider.lastValidationFailure = existing.lastValidationFailure
 
-    this.modelCatalog.applyDraft(request.catalogDraftToken, provider, existing)
-    return { provider, settings }
+    const catalogBaseline = this.modelCatalog.applyDraft(
+      request.catalogDraftToken,
+      provider,
+      existing
+    )
+    return { provider, settings, catalogBaseline }
   }
 
   private async upsertProviderNow(request: UpsertProviderRequest): Promise<void> {
-    const { provider, settings } = await this.prepareProvider(request)
+    const { provider, settings, catalogBaseline } = await this.prepareProvider(request)
     const editId = request.requireExisting ? request.id : undefined
     if (isClaudeSubscriptionProvider(provider.type)) {
       const outgoingId =
@@ -464,16 +473,17 @@ class ProviderAccountsModule {
     }
 
     await this.repository.upsertProvider(provider, editId, {
+      catalogBaseline,
       expectedConfigRevision: request.expectedConfigRevision
     })
   }
 
-  private async prepareProviderEdit(request: UpsertProviderRequest): Promise<{
-    provider: StoredProvider
-    settings: StoredSettings
-    requireExisting: boolean
-    expectedConfigRevision?: number
-  }> {
+  private async prepareProviderEdit(request: UpsertProviderRequest): Promise<
+    PreparedProvider & {
+      requireExisting: boolean
+      expectedConfigRevision?: number
+    }
+  > {
     if (request.type !== 'custom' && request.type !== 'official')
       throw new Error('Connection testing edits requires an API-key provider.')
     const prepared = await this.prepareProvider(request)
@@ -528,7 +538,11 @@ class ProviderAccountsModule {
       await this.repository.upsertProvider(
         provider,
         prepared.requireExisting ? provider.id : undefined,
-        { expectedConfigRevision: prepared.expectedConfigRevision, expectedValidationState }
+        {
+          catalogBaseline: prepared.catalogBaseline,
+          expectedConfigRevision: prepared.expectedConfigRevision,
+          expectedValidationState
+        }
       )
     })
     return { validation, providerId: provider.id }

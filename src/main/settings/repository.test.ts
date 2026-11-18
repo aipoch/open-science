@@ -56,6 +56,49 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('preserves a concurrent catalog refresh on ordinary saves and applies an explicit draft', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const saved = provider({
+      type: 'official',
+      vendorId: 'deepseek',
+      modelCatalog: { fetchedAt: 1, models: [{ id: 'old' }] },
+      fetchedModels: ['old']
+    })
+    await repository.upsertProvider(saved)
+    const refreshed = { fetchedAt: 2, models: [{ id: 'new' }] }
+    await repository.updateProviderModelCatalogIfTargetMatches(saved, ['new'], {
+      modelCatalog: refreshed
+    })
+    await repository.upsertProvider({ ...saved, name: 'Renamed' }, saved.id, {
+      expectedConfigRevision: 0
+    })
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      modelCatalog: refreshed,
+      fetchedModels: ['new']
+    })
+    await repository.upsertProvider(saved, saved.id, {
+      catalogBaseline: {
+        fetchedModels: ['old'],
+        modelCatalog: saved.modelCatalog,
+        modelCatalogStatus: undefined
+      },
+      expectedConfigRevision: 1
+    })
+    expect((await repository.getSettings()).providers[0].fetchedModels).toEqual(['new'])
+    await repository.upsertProvider(saved, saved.id, {
+      catalogBaseline: {
+        fetchedModels: ['new'],
+        modelCatalog: refreshed,
+        modelCatalogStatus: undefined
+      },
+      expectedConfigRevision: 2
+    })
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      modelCatalog: saved.modelCatalog,
+      fetchedModels: ['old']
+    })
+  })
+
   it('publishes only committed provider changes and isolates observers', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
     const first = vi.fn(() => {

@@ -145,6 +145,51 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   )
 
+  it('reads a large inventory once while enumerating its runtime targets', () => {
+    const models = Array.from({ length: 1000 }, (_, index) => ({ id: 'model-' + index }))
+    const readModels = vi.fn(() => models)
+    const stored: StoredProvider = {
+      id: 'directory',
+      type: 'official',
+      vendorId: 'requesty',
+      name: 'Directory',
+      modelCatalog: {
+        fetchedAt: 1,
+        get models() {
+          return readModels()
+        }
+      }
+    }
+    const targets = new ProviderRuntimeProjectionOwner().resolveRuntimeModelCatalog(
+      stored,
+      getAgentFramework('pi')
+    )
+    expect(targets.map((target) => target.effectiveModel)).toEqual(models.map((model) => model.id))
+    expect(readModels).toHaveBeenCalledTimes(1)
+  })
+
+  it('excludes a historical full OpenRouter snapshot from views and runtime targets', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const stored: StoredProvider = {
+      id: 'or',
+      name: 'OpenRouter',
+      type: 'official',
+      vendorId: 'openrouter'
+    }
+    const models = owner.toProviderView(stored).models
+    const historical = {
+      ...stored,
+      fetchedModels: ['directory-only'],
+      modelCatalog: { fetchedAt: 1, models: [{ id: 'directory-only' }] }
+    }
+    expect(owner.toProviderView(historical)).toMatchObject({ models, modelCatalog: undefined })
+    expect(
+      owner
+        .resolveRuntimeModelCatalog(historical, getAgentFramework('codex'))
+        .map((target) => target.effectiveModel)
+    ).toEqual(models)
+  })
+
   it('projects DeepSeek native Responses traffic to its documented origin', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
@@ -570,15 +615,18 @@ describe('ProviderRuntimeProjectionOwner', () => {
         name: 'DeepSeek',
         fetchedModels: ['deepseek-flash', 'deepseek-v4-pro']
       }
-      for (const model of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
-        expect(owner.toProviderView(provider).models).toContain(model)
-        expect(
-          owner.resolveRuntimeTarget(
-            provider,
-            { kind: 'required', model },
-            getAgentFramework(frameworkId)
-          )
-        ).toMatchObject({ effectiveModel: model, provider: { model }, frameworkCompatible: true })
+      const modelCatalog = { fetchedAt: 1, models: provider.fetchedModels!.map((id) => ({ id })) }
+      for (const record of [provider, { ...provider, modelCatalog }]) {
+        for (const model of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+          expect(owner.toProviderView(record).models).toContain(model)
+          expect(
+            owner.resolveRuntimeTarget(
+              record,
+              { kind: 'required', model },
+              getAgentFramework(frameworkId)
+            )
+          ).toMatchObject({ effectiveModel: model, provider: { model }, frameworkCompatible: true })
+        }
       }
     }
   )

@@ -155,11 +155,12 @@ export const listProviderModels = async (
   )
     return {
       ok: false,
-      ...(target.options ? { code: 'resource-limit' as const } : {}),
+      code: 'resource-limit',
       message: 'Invalid model-list resource limits.'
     }
   // Explicit SDK URLs retain their legacy authentication contract; registered catalogs always pass options.
   const options = target.options ?? {
+    ...(target.vendorId === 'anthropic' ? { headers: { 'anthropic-version': '2023-06-01' } } : {}),
     auth: {
       header: target.vendorId === 'anthropic' ? 'x-api-key' : 'authorization',
       prefix: target.vendorId === 'anthropic' ? '' : 'Bearer '
@@ -403,38 +404,26 @@ export const listProviderModels = async (
     return { ok: true, models: models.map((m) => m.id), catalog: models, status: 200 }
   } catch (error) {
     if (error instanceof CatalogFailure)
-      return target.options
-        ? {
-            ok: false,
-            code: error.code,
-            status: error.status,
-            message: error.message,
-            requestId: error.requestId
-          }
-        : {
-            ok: false,
-            ...((error.status ?? lastStatus) ? { status: error.status ?? lastStatus } : {}),
-            message: error.message
-          }
-    const reason =
-      signal.aborted && callerSignal?.aborted && callerSignal.reason instanceof Error
-        ? callerSignal.reason.message
-        : undefined
-    if (!target.options)
       return {
         ok: false,
-        ...(error instanceof CatalogFailure && (error.status ?? lastStatus)
-          ? { status: error.status ?? lastStatus }
-          : {}),
-        message:
-          reason ?? (error instanceof Error ? error.message : 'Could not load the model catalog.')
+        code: error.code,
+        status: error.status ?? (target.options ? undefined : lastStatus),
+        message: error.message,
+        requestId: error.requestId
       }
     if (error instanceof ResponseBodyLimitError)
       return { ok: false, code: 'resource-limit', message: error.message }
+    const message =
+      !target.options && error instanceof Error
+        ? error.message
+        : 'Could not load the model catalog.'
     return {
       ok: false,
-      code: signal.aborted ? (callerSignal?.aborted ? 'network' : 'timeout') : 'network',
-      message: 'Could not load the model catalog.'
+      code: signal.aborted && !callerSignal?.aborted ? 'timeout' : 'network',
+      message:
+        !target.options && callerSignal?.aborted && callerSignal.reason instanceof Error
+          ? callerSignal.reason.message
+          : message
     }
   } finally {
     clearTimeout(timer)

@@ -3,8 +3,7 @@ import {
   publicCatalog,
   anthropicCatalog,
   bailianCatalog,
-  openCodeCatalog,
-  openRouterCatalog
+  openCodeCatalog
 } from './catalog-configurations'
 import type { OfficialVendor } from './types'
 
@@ -1545,8 +1544,6 @@ const definitions: readonly OfficialVendor[] = [
   // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
   {
     id: 'openrouter',
-    modelsListUrl: 'https://openrouter.ai/api/v1/models',
-    modelsList: openRouterCatalog,
     label: 'OpenRouter',
     // The gateway aggregates unrelated model families, so every curated entry below declares its
     // own capability. Unknown additions stay conservative instead of pretending to support five.

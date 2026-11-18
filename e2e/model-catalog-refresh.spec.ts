@@ -98,6 +98,37 @@ test('accepts public catalogs and reports missing discovery prerequisites', asyn
   await app.captureMainLog('model-catalog.log')
 })
 
+test('shows only the curated OpenRouter catalog and offers no online refresh', async ({
+  app
+}, testInfo) => {
+  const page = await app.completeOnboarding()
+  const result = await page.evaluate(async () => {
+    const draft = {
+      type: 'official' as const,
+      vendorId: 'openrouter' as const,
+      name: 'OpenRouter',
+      key: 'synthetic-local-key'
+    }
+    const refresh = await window.api.settings.refreshProviderModels({ draft })
+    const saved = await window.api.settings.upsertProvider(draft)
+    return {
+      refresh,
+      models: saved.providers.find((provider) => provider.vendorId === 'openrouter')!.models
+    }
+  })
+  expect(result.refresh).toMatchObject({ ok: false, code: 'unsupported' })
+  const settings = await openSettingsPage(page, 'Model')
+  await settings
+    .locator('[data-slot="settings-list-row"]')
+    .filter({ hasText: 'OpenRouter' })
+    .getByRole('button')
+    .nth(1)
+    .click()
+  await expect(settings.getByText(result.models[0], { exact: true }).first()).toBeVisible()
+  await expect(settings.getByRole('button', { name: 'Refresh model list' })).toHaveCount(0)
+  await settings.screenshot({ path: testInfo.outputPath('openrouter-curated.png') })
+})
+
 // Real vendor acceptance: the key is supplied only by the test runner and is never persisted in
 // evidence. The isolated Electron profile is discarded by the fixture after the test.
 test('accepts OpenCode Go catalog with a real vendor key', async ({ app }, testInfo) => {

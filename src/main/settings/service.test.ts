@@ -4490,7 +4490,7 @@ describe('SettingsService: official vendors', () => {
     expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
   })
 
-  it('uses the complete refreshed DeepSeek catalog for available model membership', async () => {
+  it('stores the returned DeepSeek IDs and exposes its two compatible aliases in the picker', async () => {
     const service = createService()
     mockedNet.fetch.mockClear()
     vi.stubGlobal(
@@ -4521,13 +4521,18 @@ describe('SettingsService: official vendors', () => {
       expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) })
     )
 
-    // The refreshed catalog defines membership without appending unlisted compatibility aliases.
+    // The saved snapshot records the vendor response. The picker also resolves the legacy aliases.
     expect((await repository.getSettings()).providers[0].fetchedModels).toEqual([
       'deepseek-v5',
       'deepseek-v4-pro'
     ])
     const view = (await service.getSettingsView()).providers[0]
-    expect(view.models).toEqual(['deepseek-v5', 'deepseek-v4-pro'])
+    expect(view.models).toEqual([
+      'deepseek-v5',
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+      'deepseek-v4-flash-vision-exp'
+    ])
   })
 
   it('preserves a captured removed model id and requires reselection when it is used', async () => {
@@ -4542,14 +4547,14 @@ describe('SettingsService: official vendors', () => {
         key: 'k'
       })
     ).providers[0]
-    await service.setActiveProvider(created.id, 'deepseek-v4-flash')
+    await service.setActiveProvider(created.id, 'deepseek-v4-pro')
     const selection = await service.captureActiveAgentBackendSelection()
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            data: [{ id: 'deepseek-flash' }, { id: 'deepseek-v4-pro' }]
+            data: [{ id: 'deepseek-flash' }]
           })
         )
       )
@@ -4557,9 +4562,9 @@ describe('SettingsService: official vendors', () => {
     expect(await service.refreshProviderModels({ providerId: created.id })).toMatchObject({
       ok: true
     })
-    expect((await service.getSettingsView()).activeModel).toBe('deepseek-v4-flash')
+    expect((await service.getSettingsView()).activeModel).toBe('deepseek-v4-pro')
     await expect(service.resolveAgentBackend(selection)).rejects.toThrow(
-      'The configured model is no longer available from provider "DeepSeek": "deepseek-v4-flash". Pick another model in Settings → Model.'
+      'The configured model is no longer available from provider "DeepSeek": "deepseek-v4-pro". Pick another model in Settings → Model.'
     )
   })
 

@@ -2,6 +2,7 @@ import { resolveOfficialModelCatalog } from './provider-model-catalog'
 import type { CatalogSnapshot } from '@aipoch/providers'
 import {
   resolveVendorModelReasoningEffort,
+  reasoningProfileFromCapability,
   resolveReasoningEffortProfile,
   type ReasoningEffortPresetSetting,
   type ReasoningEffortProfile
@@ -81,14 +82,7 @@ export const resolveProviderReasoningEffortProfile = (
       const capability = resolveOfficialModelCatalog(provider).find(
         (entry) => entry.id === model
       )?.reasoningEffort
-      if (capability) {
-        if (!capability.supported || !capability.values.length) return { supported: false }
-        const v = capability.values
-        return {
-          supported: true,
-          slots: [v[0], v[1] ?? v[0], v[2] ?? v.at(-1)!, v[3] ?? v.at(-1)!, v[4] ?? v.at(-1)!]
-        }
-      }
+      if (capability) return reasoningProfileFromCapability(capability)
       return provider.vendorId
         ? resolveVendorModelReasoningEffort(provider.vendorId, model)
         : { supported: false }

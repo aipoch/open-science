@@ -50,6 +50,7 @@ describe('listProviderModels', () => {
     const headers = fetchImpl.mock.calls[0][1].headers as Record<string, string>
     expect(headers.authorization).toBeUndefined()
     expect(headers['x-api-key']).toBe('sk-ant-1')
+    expect(headers['anthropic-version']).toBe('2023-06-01')
   })
 
   it('reports a non-2xx status without throwing', async () => {
@@ -61,7 +62,7 @@ describe('listProviderModels', () => {
     )
 
     expect(result.ok).toBe(false)
-    expect(result.status).toBe(401)
+    expect(result).toMatchObject({ status: 401, code: 'authentication' })
   })
 
   it('cancels an unread error body before returning the failure', async () => {
@@ -71,7 +72,7 @@ describe('listProviderModels', () => {
     )
     await expect(
       listProviderModels({ url: 'https://example.test/models' }, { fetchImpl })
-    ).resolves.toMatchObject({ ok: false, status: 429 })
+    ).resolves.toMatchObject({ ok: false, status: 429, code: 'rate-limit' })
     expect(cancel).toHaveBeenCalledOnce()
   })
 
@@ -93,6 +94,7 @@ describe('listProviderModels', () => {
       )
     ).resolves.toEqual({
       ok: false,
+      code: 'resource-limit',
       message: 'Model list response exceeded 2097152 bytes.'
     })
   })
@@ -137,6 +139,7 @@ describe('listProviderModels', () => {
     ).resolves.toEqual({
       ok: false,
       status: 200,
+      code: 'resource-limit',
       message: 'The vendor returned more than 2000 models.'
     })
   })
@@ -152,6 +155,7 @@ describe('listProviderModels', () => {
     ).resolves.toEqual({
       ok: false,
       status: 200,
+      code: 'resource-limit',
       message: 'The vendor returned a model ID longer than 512 characters.'
     })
   })
@@ -166,7 +170,7 @@ it('does not send a pre-cancelled discovery request', async () => {
       signal: AbortSignal.abort(new Error('caller cancelled'))
     }
   )
-  expect(result).toEqual({ ok: false, message: 'caller cancelled' })
+  expect(result).toEqual({ ok: false, code: 'network', message: 'caller cancelled' })
   expect(fetchImpl).not.toHaveBeenCalled()
 })
 
@@ -209,7 +213,11 @@ it.each(['modelListResponseBytes', 'fetchedModels', 'modelIdCharacters'] as cons
           { url: 'https://example.test/models' },
           { fetchImpl, limits: { [field]: value } }
         )
-      ).toEqual({ ok: false, message: 'Invalid model-list resource limits.' })
+      ).toEqual({
+        ok: false,
+        code: 'resource-limit',
+        message: 'Invalid model-list resource limits.'
+      })
       expect(fetchImpl).not.toHaveBeenCalled()
     }
   }
@@ -228,7 +236,7 @@ it('retains default limits for undefined options and rejects overflowing timeout
   for (const timeoutMs of [0, -1, Infinity, 2_147_483_648]) {
     expect(
       await listProviderModels({ url: 'https://example.test/models' }, { fetchImpl, timeoutMs })
-    ).toEqual({ ok: false, message: 'Invalid model-list resource limits.' })
+    ).toEqual({ ok: false, code: 'resource-limit', message: 'Invalid model-list resource limits.' })
   }
   expect(fetchImpl).toHaveBeenCalledOnce()
 })

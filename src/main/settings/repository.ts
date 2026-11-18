@@ -1,3 +1,7 @@
+import {
+  providerCatalogState,
+  type ProviderCatalogState
+} from '../../shared/provider-model-catalog-codec'
 import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
@@ -115,6 +119,13 @@ const imageExecutionConfiguration = (settings: StoredSettings): unknown => {
   }
 }
 
+const sameCatalogTarget = (left: StoredProvider, right: StoredProvider): boolean =>
+  left.type === right.type &&
+  left.vendorId === right.vendorId &&
+  left.region === right.region &&
+  left.keyRef === right.keyRef &&
+  isDeepStrictEqual(left.catalogParameters ?? {}, right.catalogParameters ?? {})
+
 // Stable mutation facade; the document store owns atomic IO, and secrets stay above this layer.
 class SettingsRepository {
   private readonly providerListeners = new Set<(changes: readonly ProviderChange[]) => void>()
@@ -225,6 +236,7 @@ class SettingsRepository {
     existingId?: string,
     configEdit?: {
       expectedConfigRevision?: number
+      catalogBaseline?: ProviderCatalogState
       expectedValidationState?: Pick<
         StoredProvider,
         'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'
@@ -273,22 +285,13 @@ class SettingsRepository {
       const providers = [...settings.providers]
       if (index >= 0) {
         const existing = providers[index]
-        if (
-          existing.type === provider.type &&
-          existing.vendorId === provider.vendorId &&
-          existing.region === provider.region &&
-          existing.keyRef === provider.keyRef &&
-          JSON.stringify(existing.catalogParameters ?? {}) ===
-            JSON.stringify(provider.catalogParameters ?? {}) &&
-          !provider.modelCatalog &&
-          existing.fetchedModels
-        )
-          provider = {
-            ...provider,
-            fetchedModels: existing.fetchedModels,
-            modelCatalog: existing.modelCatalog,
-            modelCatalogStatus: existing.modelCatalogStatus
-          }
+        const catalog = providerCatalogState(existing)
+        // A same-target preview may replace only the catalog it was based on.
+        const keepCatalog = configEdit?.catalogBaseline
+          ? !isDeepStrictEqual(catalog, configEdit.catalogBaseline)
+          : sameCatalogTarget(existing, provider) &&
+            (existing.fetchedModels || existing.modelCatalog || existing.modelCatalogStatus)
+        if (keepCatalog) provider = { ...provider, ...catalog }
         // Full-provider saves can be based on a snapshot read before the runtime learned its Auto
         // fallback. Keep that main-owned state across Auto-to-Auto replacement; explicit transport
         // changes still clear it because either side of this guard is no longer Auto.
@@ -333,12 +336,7 @@ class SettingsRepository {
 
       const currentProvider = settings.providers[index]
       if (
-        currentProvider.type !== expectedProvider.type ||
-        currentProvider.vendorId !== expectedProvider.vendorId ||
-        currentProvider.region !== expectedProvider.region ||
-        currentProvider.keyRef !== expectedProvider.keyRef ||
-        JSON.stringify(currentProvider.catalogParameters ?? {}) !==
-          JSON.stringify(expectedProvider.catalogParameters ?? {}) ||
+        !sameCatalogTarget(currentProvider, expectedProvider) ||
         (currentProvider.configRevision ?? 0) !== (expectedProvider.configRevision ?? 0)
       ) {
         return settings
