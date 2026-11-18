@@ -314,7 +314,8 @@ it.skipIf(phase !== 'write' && phase !== 'probe')(
           for (const identity of [seed.imported.identity, seed.fork.identity]) {
             const path = join(root, 'sessions', identity.projectId, `${identity.sessionId}.json`)
             const document: unknown = JSON.parse(await readFile(path, 'utf8'))
-            const contents = JSON.stringify({ type: 'session_snapshot', document }) + '\n'
+            const contents =
+              JSON.stringify({ type: 'session_snapshot', journalVersion: 1, document }) + '\n'
             await writeFile(`${path}l`, contents, { encoding: 'utf8', flag: 'wx' })
             await rm(path)
             initializationBytes += Buffer.byteLength(contents)
