@@ -318,6 +318,7 @@ export const toPersistedSession = (
     liveInteractionState,
     activePlanProjection,
     contentLoaded,
+    needsStartupRecovery,
     historyPage,
     activeMessageCount,
     artifactCount,
@@ -355,6 +356,7 @@ export const toPersistedSession = (
   void liveInteractionState
   void activePlanProjection
   void contentLoaded
+  void needsStartupRecovery
   void historyPage
   void activeMessageCount
   void artifactCount
@@ -450,6 +452,7 @@ const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
   createdAt: summary.createdAt,
   updatedAt: summary.updatedAt,
   contentLoaded: false,
+  needsStartupRecovery: summary.needsStartupRecovery,
   activeMessageCount: summary.activeMessageCount,
   artifactCount: summary.artifactCount,
   ...(summary.wslSetup ? { wslSetup: true as const } : {}),
@@ -492,6 +495,7 @@ const mergeSessionSummaryWithLiveState = (
     updatedAt: Math.max(current.updatedAt, summary.updatedAt),
     status: preservesActiveStatus || !summaryIsNewer ? current.status : summary.status,
     contentLoaded: current.contentLoaded,
+    needsStartupRecovery: summary.needsStartupRecovery,
     activeMessageCount: summaryIsNewer ? summary.activeMessageCount : current.activeMessageCount,
     artifactCount: summaryIsNewer ? summary.artifactCount : current.artifactCount,
     recordProblems: summaryIsNewer ? summary.recordProblems : current.recordProblems,
@@ -499,7 +503,7 @@ const mergeSessionSummaryWithLiveState = (
   }
 }
 
-const hasLocalSessionWork = (session: ChatSession): boolean =>
+export const hasLocalSessionWork = (session: ChatSession): boolean =>
   session.activeRun !== undefined ||
   session.status === 'running' ||
   session.status.startsWith('waiting-') ||
@@ -632,6 +636,7 @@ const withTransientSessionState = (
     firstPromptDraft: source.firstPromptDraft,
     pendingBindingSessionId: source.pendingBindingSessionId,
     wslSetup: source.wslSetup,
+    needsStartupRecovery: source.needsStartupRecovery,
     interrupted: source.interrupted ?? hydrated.interrupted,
     fixLoopActive: source.fixLoopActive,
     compacting: source.compacting,

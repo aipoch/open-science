@@ -83,8 +83,8 @@ export function composeSessionProjection({
   sandboxNetworkApprovalOwner: SandboxNetworkApprovalOwner
   pendingSpecialistBindings: PendingSessionSpecialistBindings
   loadAllSessions: () => Promise<LoadAllSessionsResult>
-  hydrateSessionComputeHosts: () => Promise<LoadAllSessionsResult>
   loadStartupSessions: () => Promise<PersistedChatSession[]>
+  beginStartupProjection: () => Promise<unknown>
   createDeferredRecovery: (
     recoverDetails: (session: PersistedChatSession) => Promise<void>,
     complete?: (
@@ -173,11 +173,6 @@ export function composeSessionProjection({
     // Retain their warnings in the same cache used by subsequent projection-only reads.
     sessionProjectionDiagnostics.resolve(result.diagnostics)
     return result
-  }
-  const hydrateSessionComputeHosts = (): Promise<LoadAllSessionsResult> => {
-    const owner = sessionEnabledComputeHostsOwnerRef.current
-    if (!owner) throw new Error('Session enabled Compute Host ownership is not initialized.')
-    return owner.hydrateFromSessionCatalog(() => sessionPersistenceCoordinator.loadAllReadOnly())
   }
   type SessionProjectionLoad = Awaited<ReturnType<typeof sessionRepository.ensureSessionProjection>>
   let startupProjection: Promise<SessionProjectionLoad> | undefined
@@ -547,8 +542,8 @@ export function composeSessionProjection({
     sandboxNetworkApprovalOwner,
     pendingSpecialistBindings,
     loadAllSessions,
-    hydrateSessionComputeHosts,
     loadStartupSessions,
+    beginStartupProjection,
     createDeferredRecovery,
     ensureSessionProjection,
     sessionPersistenceBackend

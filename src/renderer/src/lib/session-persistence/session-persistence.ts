@@ -65,6 +65,7 @@ import {
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   getExternallyHydratedSessionAuthority,
+  hasLocalSessionWork,
   retainSessionRecoveryDrafts,
   hydrateSession,
   isExternallyHydratedSession,
@@ -4218,8 +4219,14 @@ const useSessionPersistence = (): SessionPersistenceState => {
             recoveryRequest.sessionId === selected.id
           const clearRecoveryRequest = (): void => {
             const pending = useSessionStore.getState().sessionDetailsRecoveryRequest
-            if (pending?.projectId === selected.projectId && pending.sessionId === selected.id)
-              useSessionStore.setState({ sessionDetailsRecoveryRequest: undefined })
+            if (pending?.projectId !== selected.projectId || pending.sessionId !== selected.id)
+              return
+            useSessionStore.setState((state) => ({
+              sessionDetailsRecoveryRequest: undefined,
+              sessions: state.sessions.map((session) =>
+                session.id === selected.id ? { ...session, needsStartupRecovery: false } : session
+              )
+            }))
           }
           const initialLoad = supportsPages
             ? recoverSessionDetails
@@ -4317,7 +4324,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
                 const current = useSessionStore
                   .getState()
                   .sessions.find((session) => session.id === selected.id)
-                if (current && current.contentLoaded !== false) {
+                if (current && current.contentLoaded !== false && !hasLocalSessionWork(current)) {
                   useSessionStore.setState((state) => ({
                     sessions: state.sessions.map((session) =>
                       session.id === selected.id ? { ...session, contentLoaded: false } : session

@@ -29,6 +29,7 @@ import { projectInterruptedRun } from './session-store-run-terminal-helpers'
 export {
   createInitialSessionState,
   getExternallyHydratedSessionAuthority,
+  hasLocalSessionWork,
   retainSessionRecoveryDrafts,
   hydrateSession,
   isExternallyHydratedSession,

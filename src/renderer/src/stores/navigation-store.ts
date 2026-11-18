@@ -245,20 +245,32 @@ const selectSessionForNavigation = (session: {
   projectId: string
   id: string
   contentLoaded?: boolean
+  needsStartupRecovery?: boolean
 }): void => {
   const request = { projectId: session.projectId, sessionId: session.id }
+  const recoverSessionDetails = session.needsStartupRecovery === true
   if (session.contentLoaded === false) {
     useSessionStore.setState({
       selectedSessionId: session.id,
-      sessionDetailsRecoveryRequest: request
+      sessionDetailsRecoveryRequest: recoverSessionDetails ? request : undefined
     })
     return
   }
   useSessionStore.getState().selectSession(session.id)
   useSessionStore.setState({ sessionDetailsRecoveryRequest: undefined })
+  if (!recoverSessionDetails) return
   const loadOne = typeof window === 'undefined' ? undefined : window.api?.sessions?.loadOne
   if (typeof loadOne !== 'function') return
-  void loadOne({ ...request, recoverSessionDetails: true }).catch(() => undefined)
+  void loadOne({ ...request, recoverSessionDetails: true })
+    .then((loaded) => {
+      if (!loaded) return
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((candidate) =>
+          candidate.id === session.id ? { ...candidate, needsStartupRecovery: false } : candidate
+        )
+      }))
+    })
+    .catch(() => undefined)
 }
 
 const isActiveProject = (projectId: string): boolean =>

@@ -283,7 +283,11 @@ describe('navigation store', () => {
   it('selects an unloaded Session and queues details recovery atomically', () => {
     useSessionStore.getState().hydrateSessions([createSession({})])
     useSessionStore.setState((state) => ({
-      sessions: state.sessions.map((session) => ({ ...session, contentLoaded: false }))
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        contentLoaded: false,
+        needsStartupRecovery: true
+      }))
     }))
     const snapshots: Array<{
       selectedSessionId: string | undefined
@@ -310,7 +314,11 @@ describe('navigation store', () => {
   it('queues details recovery for an automatic deep-link to an unloaded Session', () => {
     useSessionStore.getState().hydrateSessions([createSession({})])
     useSessionStore.setState((state) => ({
-      sessions: state.sessions.map((session) => ({ ...session, contentLoaded: false }))
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        contentLoaded: false,
+        needsStartupRecovery: true
+      }))
     }))
 
     useNavigationStore.getState().openSession('project-a', 'session-1', 'automatic')

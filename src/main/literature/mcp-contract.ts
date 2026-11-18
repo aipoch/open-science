@@ -49,6 +49,8 @@ const isRecord = (value: unknown): value is UnknownRecord =>
 const positiveInteger = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
 
+// Keeps the UI summary in its own small content block. Passage bodies can exceed the shared
+// transcript limit and be truncated mid-JSON; this block remains valid across every ACP adapter.
 export const literatureReadPresentation = (result: unknown): UnknownRecord | undefined => {
   if (!isRecord(result)) return undefined
   const documents = Array.isArray(result.documents)
@@ -101,6 +103,7 @@ export const literatureReadPresentation = (result: unknown): UnknownRecord | und
             ...new Set([...pages(coverage.unavailablePages), ...pages(coverage.uncheckedPages)])
           ]
             .sort((a, b) => a - b)
+            // The card lists at most 20 missing pages; retain one more for its ellipsis.
             .slice(0, 21),
           unverified: pages(coverage.unverifiedPages).slice(0, 21)
         }

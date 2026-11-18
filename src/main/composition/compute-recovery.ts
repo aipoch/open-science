@@ -27,7 +27,7 @@ export async function composeComputeRecovery({
   jobRepository,
   operationRepository,
   hostRepository,
-  hydrateSessionComputeHosts,
+  beginStartupProjection,
   dataRoot,
   modules,
   composition
@@ -41,7 +41,7 @@ export async function composeComputeRecovery({
   jobRepository: import('../compute/job-repository').ComputeJobRepository
   operationRepository: import('../compute/compute-job-operation-repository').ComputeJobOperationRepository
   hostRepository: import('../compute/repository').ComputeHostRepository
-  hydrateSessionComputeHosts: () => Promise<unknown>
+  beginStartupProjection: () => Promise<unknown>
   dataRoot: ReturnType<typeof resolveDataRoot>
   modules: ApplicationModuleBuilder
   composition: DiagnosticOperation
@@ -87,6 +87,7 @@ export async function composeComputeRecovery({
           })()
         }
       })
+      let disposed = false
       return {
         name: 'compute-job-runtime',
         capability: undefined,
@@ -154,21 +155,31 @@ export async function composeComputeRecovery({
           } finally {
             markComputeResultAuthorityReady()
           }
-          // Session Details recovery is local to the Session the user opens. Compute Host access
-          // is different: headless and early runtime paths can resolve targets before a renderer
-          // catalog read, so restore that per-Session authority before polling.
-          try {
-            await hydrateSessionComputeHosts()
-          } catch (error) {
-            createLogger('compute:session-hydration').warn(
-              'Session Compute Host hydration failed; Compute polling will continue.',
+          // Session catalog hydration owns Compute Host access reconciliation. Start it in the
+          // background so a large historical catalog cannot delay backend readiness, then start
+          // polling after that shared load has completed.
+          void (async () => {
+            try {
+              await beginStartupProjection()
+            } catch (error) {
+              createLogger('compute:session-hydration').warn(
+                'Session catalog hydration failed; Compute polling will continue.',
+                diagnosticErrorFields(error)
+              )
+            }
+            if (!disposed) await jobPoller.start()
+          })().catch((error) => {
+            createLogger('compute:job-polling').warn(
+              'Compute polling startup failed.',
               diagnosticErrorFields(error)
             )
-          }
-          await jobPoller.start()
+          })
         },
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
-        dispose: () => jobPoller.stop()
+        dispose: async () => {
+          disposed = true
+          await jobPoller.stop()
+        }
       }
     }
   )
