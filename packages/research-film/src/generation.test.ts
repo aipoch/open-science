@@ -1,10 +1,13 @@
 import { fork, type ChildProcess } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { EventEmitter, once } from 'node:events'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Worker } from 'node:worker_threads'
 import { describe, expect, it, vi } from 'vitest'
+import { unzipSync } from 'fflate'
+import { researchFilmResources } from './resources.js'
 import {
   createResearchVideoGenerator,
   generateResearchVideoInWorker,
@@ -290,6 +293,105 @@ it('rejects a missing session image before any speech inference', async () => {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it('generates an approved session-app film from frozen bytes through the real worker pipeline', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-approved-app-'))
+  try {
+    const appPath = join(root, 'libs', 'app.js')
+    const app = 'window.APP = { position(t) { return t * 2; } };'
+    await mkdir(join(root, 'libs'))
+    await writeFile(appPath, app)
+    await writeFile(join(root, 'libs', 'unapproved.js'), 'private unrelated code')
+    await writeFile(
+      join(root, 'video.json'),
+      JSON.stringify({
+        title: 'Evidence',
+        session: 'session.json',
+        libs: ['libs/app.js'],
+        scenes: [{ id: 's', msg: 0, lines: [{ caption: 'Evidence.' }], panels: [] }]
+      })
+    )
+    await writeFile(join(root, 'session.json'), JSON.stringify({ messages: [{ md: 'Evidence.' }] }))
+    const provenance = { sessionAppSha256: createHash('sha256').update(app).digest('hex') }
+    const synthesize = vi.fn(async () => {
+      // A source edit after preflight must not replace the bytes the user approved.
+      await writeFile(appPath, 'changed after freezing')
+      return { samples: new Float32Array(2400), sampleRate: 24000 }
+    })
+    const result = await generateResearchVideoInWorker(
+      {
+        specPath: join(root, 'video.json'),
+        temporaryDirectory: root,
+        engineDirectory: researchFilmResources().stageDirectory,
+        modelDirectory: root,
+        outputDirectory: join(root, 'output'),
+        provenance
+      },
+      () => {},
+      [{ identity: 'approved-app-test', synthesize }]
+    )
+    const bundle = unzipSync(await readFile(result.sourcePath))
+    expect(Buffer.from(bundle['libs/app.js']).toString()).toBe(app)
+    expect(bundle).not.toHaveProperty('libs/unapproved.js')
+    expect(JSON.parse(Buffer.from(bundle['manifest.json']).toString()).provenance).toEqual(
+      provenance
+    )
+    expect(await readFile(result.playerPath, 'utf8')).toContain(app)
+    expect(await readFile(join(root, 'source', 'libs', 'app.js'), 'utf8')).toBe(app)
+    expect(synthesize).toHaveBeenCalledOnce()
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it.each(['missing-approval', 'changed-app', 'extra-library', 'external-path'])(
+  'rejects a session app before narration when its approval boundary fails: %s',
+  async (failure) => {
+    const root = await mkdtemp(join(tmpdir(), 'film-app-preflight-'))
+    try {
+      const app = 'window.APP = { position(t) { return t; } };'
+      const digest = createHash('sha256').update(app).digest('hex')
+      await mkdir(join(root, 'libs'))
+      await writeFile(join(root, 'libs', 'app.js'), failure === 'changed-app' ? 'changed' : app)
+      const libs =
+        failure === 'external-path'
+          ? ['../app.js']
+          : failure === 'extra-library'
+            ? ['libs/app.js', 'libs/other.js']
+            : ['libs/app.js']
+      await writeFile(
+        join(root, 'video.json'),
+        JSON.stringify({
+          title: 'Evidence',
+          session: 'session.json',
+          libs,
+          // Model-authored metadata cannot stand in for the host's consent receipt.
+          provenance: { sessionAppSha256: digest },
+          scenes: [{ id: 's', msg: 0, lines: [{ caption: 'Evidence.' }], panels: [] }]
+        })
+      )
+      const synthesize = vi.fn()
+      await expect(
+        generateResearchVideoInWorker(
+          {
+            specPath: join(root, 'video.json'),
+            temporaryDirectory: root,
+            engineDirectory: researchFilmResources().stageDirectory,
+            modelDirectory: root,
+            outputDirectory: join(root, 'output'),
+            provenance: failure === 'missing-approval' ? undefined : { sessionAppSha256: digest }
+          },
+          () => {},
+          [{ identity: 'app-boundary-test', synthesize }]
+        )
+      ).rejects.toThrow(failure === 'changed-app' ? 'approved session app changed' : 'approval')
+      expect(synthesize).not.toHaveBeenCalled()
+      expect((await readdir(root)).sort()).toEqual(['libs', 'video.json'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
 
 it('routes scalar probes without PCM and transfers owned audio buffers to the generation worker', async () => {
   const root = await mkdtemp(join(tmpdir(), 'probe-worker-'))

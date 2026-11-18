@@ -321,11 +321,18 @@ export async function generateResearchVideoInWorker(
   const replay = input.mode === 'operation-replay'
   const { freezeReplaySource, buildReplayPlayer } = await import('./replay-player.js')
   const { replayNarrationSpec, REPLAY_RUNTIME_VERSION } = await import('./replay-case.js')
-  const specPath = await (replay ? freezeReplaySource : freezeResearchVideoSource)(
-    input.specPath,
-    join(input.temporaryDirectory, 'source'),
-    new AbortController().signal
-  )
+  const sourceDirectory = join(input.temporaryDirectory, 'source')
+  const freezeSignal = new AbortController().signal
+  const specPath = replay
+    ? await freezeReplaySource(input.specPath, sourceDirectory, freezeSignal)
+    : await freezeResearchVideoSource(
+        input.specPath,
+        sourceDirectory,
+        freezeSignal,
+        typeof input.provenance?.sessionAppSha256 === 'string'
+          ? input.provenance.sessionAppSha256
+          : undefined
+      )
   const spec = JSON.parse(await readFile(specPath, 'utf8'))
   const narrationSpec = replay ? replayNarrationSpec(spec) : spec
   progress({ phase: 'loading' })
