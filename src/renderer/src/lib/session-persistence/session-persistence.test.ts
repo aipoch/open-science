@@ -6142,7 +6142,7 @@ describe('passive summary hydration', () => {
           title: base.title,
           status: 'idle',
           presentedStatus: 'idle',
-          pinned: base.pinned,
+          pinned: base.pinned ?? false,
           revision: 5,
           activeMessageCount: 0,
           artifactCount: 0,
