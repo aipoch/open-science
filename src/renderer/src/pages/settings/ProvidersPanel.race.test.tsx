@@ -62,6 +62,26 @@ const render = (): void => {
   })
 }
 
+it('shows the main model picker with only a CodeBuddy subscription configured', async () => {
+  const [base] = useSettingsStore.getState().providers
+  useSettingsStore.setState({
+    agentFrameworkId: 'codebuddy',
+    providers: [
+      {
+        ...base,
+        id: 'builtin-codebuddy-china',
+        name: 'CodeBuddy (China)',
+        type: 'codebuddy-subscription',
+        model: 'hy4',
+        models: ['hy4']
+      }
+    ],
+    codeBuddyAccount: vi.fn().mockResolvedValue({ ok: true })
+  })
+  await act(async () => render())
+  expect(container.querySelector('[role="combobox"][aria-label="Main model"]')).not.toBeNull()
+})
+
 describe('ProvidersPanel: unexpected command failures', () => {
   it('shows a deletion failure instead of leaving an unhandled rejection', async () => {
     const deleteProvider = vi.fn().mockRejectedValue(new Error('settings write failed'))

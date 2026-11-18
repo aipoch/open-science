@@ -230,7 +230,7 @@ const ProvidersPanel = ({
   // Subscription accounts stay visible for the frameworks that own their authentication transport.
   const showCodeBuddyAccounts = agentFrameworkId === 'codebuddy' && isDesktopRenderer()
   const visibleProviders = providers.filter((provider) => {
-    if (provider.type === 'codebuddy-subscription') return false
+    if (provider.type === 'codebuddy-subscription') return showCodeBuddyAccounts
     if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
       return agentFrameworkId === 'claude-code'
     if (isCodexSubscriptionProvider(provider.type))
@@ -238,6 +238,10 @@ const ProvidersPanel = ({
 
     return true
   })
+
+  const listedProviders = visibleProviders.filter(
+    (provider) => provider.type !== 'codebuddy-subscription'
+  )
 
   const handleTest = async (provider: ProviderView): Promise<void> => {
     onBusyProviderChange(provider.id)
@@ -658,9 +662,9 @@ const ProvidersPanel = ({
             })}
           </div>
         )}
-        {(!showCodeBuddyAccounts || visibleProviders.length > 0) && (
+        {(!showCodeBuddyAccounts || listedProviders.length > 0) && (
           <ProviderList
-            providers={visibleProviders}
+            providers={listedProviders}
             activeProviderId={activeProviderId}
             activeModel={activeModel}
             agentFrameworkId={agentFrameworkId}
