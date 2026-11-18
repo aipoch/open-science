@@ -2,7 +2,7 @@ import { expect } from '@playwright/test'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { readFile, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve, relative, isAbsolute } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from './fixtures/electron-app'
 import { createProject, openRecentSession, sendPrompt } from './certification/helpers'
 import { fencePrompt, retryFencePrompt } from './fixtures/kernel-fence.mjs'
@@ -15,10 +15,7 @@ test('recovers a legacy Windows receipt before package tools across Sessions', a
   test.setTimeout(240_000)
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  const info = await page.evaluate(() => window.api.storage.getInfo())
-  const taskRoot = resolve('.dev-isolate')
-  const offset = relative(taskRoot, info.dataRoot)
-  expect(offset.startsWith('..') || isAbsolute(offset)).toBe(false)
+  const dataRoot = await app.isolatedDataRoot()
   const python = process.env.OPEN_SCIENCE_TEST_PYTHON!
   expect(python).toBeTruthy()
   await page.evaluate(async (path) => {
@@ -46,7 +43,7 @@ test('recovers a legacy Windows receipt before package tools across Sessions', a
   await once(child, 'exit')
   const deadPid = child.pid!
   expect(() => process.kill(deadPid, 0)).toThrow()
-  const proofPath = join(info.dataRoot, '.open-science-process-tree-terminated-repro.proof')
+  const proofPath = join(dataRoot, '.open-science-process-tree-terminated-repro.proof')
   const proof = {
     path: proofPath,
     requestPath: `${proofPath}.request`,
@@ -56,7 +53,7 @@ test('recovers a legacy Windows receipt before package tools across Sessions', a
     testInfo.outputPath('isolation.json'),
     JSON.stringify(
       {
-        dataRoot: info.dataRoot,
+        dataRoot,
         profile,
         python,
         enabled: true,
@@ -68,7 +65,7 @@ test('recovers a legacy Windows receipt before package tools across Sessions', a
     )
   )
   // Deliberate fault injection: model a legacy pre-Job receipt, never kill a user's process.
-  const owner = new KernelProcessLifecycleOwner({ storageRoot: info.dataRoot })
+  const owner = new KernelProcessLifecycleOwner({ storageRoot: dataRoot })
   const intent = owner.beginSpawn(
     {
       laneKey: JSON.stringify([projectId, session.id, 'root', null, null]),
@@ -145,7 +142,7 @@ test('recovers a legacy Windows receipt before package tools across Sessions', a
     await writeFile(testInfo.outputPath('recovered-inspection.txt'), retry)
     await testInfo.attach('recovered-inspection', { body: retry, contentType: 'text/plain' })
     await testInfo.attach('isolation', {
-      body: JSON.stringify({ dataRoot: info.dataRoot, python, enabled: true, deadPid }),
+      body: JSON.stringify({ dataRoot, python, enabled: true, deadPid }),
       contentType: 'application/json'
     })
   } finally {
@@ -153,6 +150,6 @@ test('recovers a legacy Windows receipt before package tools across Sessions', a
       proofPath,
       JSON.stringify({ version: 1, token: proof.token, processState: 'started-and-reaped' })
     )
-    await new KernelProcessLifecycleOwner({ storageRoot: info.dataRoot }).ensureReady()
+    await new KernelProcessLifecycleOwner({ storageRoot: dataRoot }).ensureReady()
   }
 })

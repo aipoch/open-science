@@ -1,3 +1,4 @@
+import { processBirthIdentity } from '../process-birth-identity'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
@@ -795,7 +796,10 @@ describe('KernelProcessLifecycleOwner', () => {
       let childPid: number | undefined
       try {
         childPid = Number((await once(leader.stdout!, 'data'))[0].toString())
-        first.recordSpawned(intent, { pid: leader.pid! })
+        first.recordSpawned(intent, {
+          pid: leader.pid!,
+          posixBirthToken: processBirthIdentity(leader.pid!)
+        })
         leader.kill('SIGKILL')
         await exited
         expect(processIsAlive(childPid)).toBe(true)
@@ -824,7 +828,7 @@ describe('KernelProcessLifecycleOwner', () => {
       processKey: 'python:default-python',
       kernelEpochId: 'old'
     })
-    const receipt = first.recordSpawned(intent, { pid: 4242 })
+    const receipt = first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
     const identities = [{ pid: 4243, uniqueId: '123456' }]
     const failed = new KernelProcessLifecycleOwner({
       storageRoot: root,
@@ -889,7 +893,10 @@ describe('KernelProcessLifecycleOwner', () => {
       const exited = once(leader, 'exit')
       try {
         await once(leader.stdout!, 'data')
-        first.recordSpawned(intent, { pid: leader.pid! })
+        first.recordSpawned(intent, {
+          pid: leader.pid!,
+          posixBirthToken: processBirthIdentity(leader.pid!)
+        })
         await new KernelProcessLifecycleOwner({ storageRoot: root }).ensureReady()
         await exited
         const childPid = Number(await readFile(childFile, 'utf8'))

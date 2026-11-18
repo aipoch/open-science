@@ -1,9 +1,10 @@
+import { processBirthIdentity } from '../src/main/process-birth-identity'
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
-import { join, relative, resolve } from 'node:path'
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProject, openRecentSession, sendPrompt } from './certification/helpers'
@@ -28,33 +29,32 @@ for (const scenario of ['normal', 'stale-live', 'orphan-group'] as const) {
     test.setTimeout(300_000)
     const evidence: Record<string, unknown> = {
       scenario,
-      branch: '1c76679ac95812c0f96fa30768781cc63d7a06d2'
+      revision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
     }
     evidence.recoverySourceSha256 = createHash('sha256')
       .update(await readFile('src/main/notebook/kernel-process-recovery.darwin.ts'))
       .digest('hex')
+    const faultLease = testInfo.outputPath('fault-process.lease')
     let faultPid: number | undefined
     let faultChildPid: number | undefined
     let dataRoot = ''
     let page = await app.completeOnboarding()
     try {
       page = await app.configureFakeAgent()
-      const storage = await page.evaluate(() => window.api.storage.getInfo())
-      dataRoot = storage.dataRoot
-      const canonical = await realpath(dataRoot)
-      expect(relative(taskRoot, canonical)).not.toMatch(/^\.\./u)
-      const runtimeRoot = join(canonical, 'runtime')
+      dataRoot = await app.isolatedDataRoot()
+      const runtimeRoot = join(dataRoot, 'runtime')
+      const temporary = join(runtimeRoot, 'tmp')
       const prefix = join(runtimeRoot, 'envs/default-python')
-      await mkdir(runtimeRoot, { recursive: true })
+      await mkdir(temporary, { recursive: true })
       // Reconstruct the real installed default from read-only export and task-owned cache.
       execFileSync('/bin/cp', ['-cR', join(taskRoot, 'seed-pkgs'), join(runtimeRoot, 'pkgs')])
       const env = {
         ...process.env,
         MAMBA_ROOT_PREFIX: runtimeRoot,
         CONDA_PKGS_DIRS: join(runtimeRoot, 'pkgs'),
-        TMPDIR: '/private/tmp/os4410',
-        TMP: '/private/tmp/os4410',
-        TEMP: '/private/tmp/os4410'
+        TMPDIR: temporary,
+        TMP: temporary,
+        TEMP: temporary
       }
       execFileSync(
         micromamba,
@@ -101,7 +101,6 @@ for (const scenario of ['normal', 'stale-live', 'orphan-group'] as const) {
       )
       evidence.isolation = {
         dataRoot,
-        canonical,
         python,
         version,
         runtime,
@@ -176,10 +175,22 @@ for (const scenario of ['normal', 'stale-live', 'orphan-group'] as const) {
           },
           token
         )
+        // Teardown releases only our fixture processes, even if their PIDs have been reused.
+        await writeFile(faultLease, '')
+        const waitForCleanup = [
+          'import os,time',
+          'deadline=time.monotonic()+180',
+          'while os.path.exists(' +
+            JSON.stringify(faultLease) +
+            ') and time.monotonic()<deadline: time.sleep(0.1)'
+        ].join('\n')
         const code =
           scenario === 'orphan-group'
-            ? 'import subprocess,sys,time\np=subprocess.Popen([sys.executable,"-u","-c","import time; time.sleep(180)"])\nprint(p.pid,flush=True)\ntime.sleep(180)'
-            : 'import time\ntime.sleep(180)'
+            ? 'import subprocess,sys\np=subprocess.Popen([sys.executable,"-u","-c",' +
+              JSON.stringify(waitForCleanup) +
+              '])\nprint(p.pid,flush=True)\n' +
+              waitForCleanup
+            : waitForCleanup
         const child = spawn(py, ['-u', '-c', code], {
           detached: true,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -192,7 +203,10 @@ for (const scenario of ['normal', 'stale-live', 'orphan-group'] as const) {
           faultChildPid = Number(String(buf).trim())
           expect(faultChildPid).toBeGreaterThan(0)
         }
-        const receipt = owner.recordSpawned(intent, { pid: faultPid })
+        const receipt = owner.recordSpawned(intent, {
+          pid: faultPid,
+          posixBirthToken: processBirthIdentity(faultPid)
+        })
         if (scenario === 'orphan-group') {
           const exited = once(child, 'exit')
           child.kill('SIGKILL')
@@ -289,6 +303,7 @@ for (const scenario of ['normal', 'stale-live', 'orphan-group'] as const) {
       evidence.error = String(error)
       throw error
     } finally {
+      await rm(faultLease, { force: true })
       if (dataRoot) {
         evidence.finalSessions = await page
           .evaluate(async () => (await window.api.sessions.loadAll()).sessions)
@@ -304,13 +319,6 @@ for (const scenario of ['normal', 'stale-live', 'orphan-group'] as const) {
           .catch(() => undefined)
       }
       await writeFile(testInfo.outputPath('evidence.json'), JSON.stringify(evidence, null, 2))
-      if (faultPid) {
-        try {
-          process.kill(-faultPid, 'SIGKILL')
-        } catch {
-          /* already reaped */
-        }
-      }
       if (faultChildPid)
         await expect
           .poll(

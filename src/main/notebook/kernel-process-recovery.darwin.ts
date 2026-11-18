@@ -75,11 +75,12 @@ export function createDarwinKernelRecovery(
     const unknown: Inspection = { state: 'unknown', members: [] }
     if (!Number.isSafeInteger(record.pid) || record.pid <= 0 || !record.ownerToken) return unknown
     const candidates = new Map<number, DarwinProcessIdentity>()
+    let unreadableRetainedProcess = false
     // Retained identities survive app crashes and group/session changes during TERM handling.
     for (const identity of retained) {
       const current = deps.getDarwinProcess(identity.pid)
       if (!current) {
-        if (deps.pidAlive(identity.pid)) return unknown
+        if (deps.pidAlive(identity.pid)) unreadableRetainedProcess = true
       } else if (current.uniqueId === identity.uniqueId) candidates.set(current.pid, current)
     }
     const table = deps.listDarwinProcesses()
@@ -111,7 +112,7 @@ export function createDarwinKernelRecovery(
     // Checkpoint even uncertain associated members BEFORE returning unknown. A later exec may
     // erase their ancestry, but must not erase the debt already observed by this recovery attempt.
     observe([...candidates.values()])
-    if (!table.complete) return unknown
+    if (!table.complete || unreadableRetainedProcess) return unknown
     // Only inspectable same-UID processes are listed; group absence needs independent ESRCH.
     if (!table.processes.some((p) => p.pgid === record.pid) && deps.groupAlive(record.pid))
       return unknown
