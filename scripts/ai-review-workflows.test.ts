@@ -610,6 +610,16 @@ describe('single Codex workflow contract', () => {
     })
   })
 
+  it('opts authorized fork reviews into checkout while keeping the review job read-only', () => {
+    const checkout = getStep(codexWorkflow, 'review', 'Checkout pull request review commit')
+    expect(checkout.with).toMatchObject({
+      'allow-unsafe-pr-checkout':
+        "${{ inputs.is_fork && inputs.review_event == 'pull_request_target' }}",
+      'persist-credentials': false
+    })
+    expect(codexWorkflow.jobs.review.permissions).toEqual({ contents: 'read' })
+  })
+
   pit('bootstraps managed subscription auth on a GitHub-hosted runner', () => {
     const seed = JSON.stringify({
       auth_mode: 'chatgpt',
