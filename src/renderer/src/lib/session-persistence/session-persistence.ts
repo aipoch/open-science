@@ -84,7 +84,7 @@ import {
   pendingSessionConversationCommands,
   retainActivePreparationCommands
 } from '../../stores/session-conversation-intents'
-import { ensureSessionContentLoaded, loadSessionHistoryPage } from './session-history'
+import { loadSessionHistoryPage } from './session-history'
 import type {
   LoadSessionHistoryPageRequest,
   SessionHistoryPage
@@ -4198,10 +4198,13 @@ const useSessionPersistence = (): SessionPersistenceState => {
           const needsSessionDetailsRecovery =
             recoveryRequest?.projectId === session.projectId &&
             recoveryRequest.sessionId === session.id
+          const canStartSessionDetailsRecovery =
+            needsSessionDetailsRecovery && !hasLocalSessionWork(session)
           return (
             session.id === state.selectedSessionId &&
-            session.contentLoaded === false &&
-            (!session.historyPage || needsSessionDetailsRecovery)
+            (canStartSessionDetailsRecovery ||
+              (session.contentLoaded === false &&
+                (!session.historyPage || needsSessionDetailsRecovery)))
           )
         })
         if (selected && !loadingSessionContent.has(selected.id)) {
@@ -4228,32 +4231,25 @@ const useSessionPersistence = (): SessionPersistenceState => {
               )
             }))
           }
-          const initialLoad = supportsPages
-            ? recoverSessionDetails
-              ? Promise.resolve()
-              : loadSessionHistoryPage({
+          const initialLoad = recoverSessionDetails
+            ? loadPersistedSession(
+                { projectId: selected.projectId, sessionId: selected.id },
+                undefined,
+                { bypassCache: true, recoverSessionDetails: true }
+              ).then((session) => {
+                return session
+              })
+            : supportsPages
+              ? loadSessionHistoryPage({
                   projectId: selected.projectId,
                   sessionId: selected.id
                 })
-            : loadPersistedSession(
-                { projectId: selected.projectId, sessionId: selected.id },
-                undefined,
-                recoverSessionDetails ? { recoverSessionDetails: true } : undefined
-              ).then((session) => {
-                if (recoverSessionDetails && session) clearRecoveryRequest()
-                return session
-              })
+              : loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id })
           void initialLoad
             .then(async (session) => {
-              if (recoverSessionDetails && supportsPages) {
-                await ensureSessionContentLoaded(
-                  {
-                    projectId: selected.projectId,
-                    sessionId: selected.id,
-                    recoverSessionDetails: true
-                  },
-                  window.api.sessions
-                )
+              if (recoverSessionDetails) {
+                if (!session) throw new Error('Selected Session JSON is missing.')
+                if (supportsPages) useSessionStore.getState().upsertPersistedSession(session)
                 clearRecoveryRequest()
               }
               if (!isMounted || !isCurrentSessionLoad()) return
