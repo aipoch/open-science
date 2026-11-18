@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Settings2, Zap } from 'lucide-react'
+import { LoaderCircle, Settings2, Zap } from 'lucide-react'
 import { OFFICIAL_VENDORS, type OfficialVendorId } from '@aipoch/providers'
 
 import { Button } from '@/components/ui/button'
@@ -690,7 +690,14 @@ const ProviderStep = ({
                             title={t('Test connection and connect')}
                             disabled={isSaving}
                           >
-                            <Zap aria-hidden="true" />
+                            {isSaving && quickCardId === card.id ? (
+                              <LoaderCircle
+                                className="animate-spin motion-reduce:animate-none"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <Zap aria-hidden="true" />
+                            )}
                           </Button>
                         </div>
                         {quickCardId === card.id && showProviderErrors && formErrors.key ? (
