@@ -108,9 +108,14 @@ diagnosis. Classification and gate validation continue to use trusted base code.
 ### Scheduled regression and publication
 
 Package Smoke runs `e2e/certification/update-occupancy.spec.ts` against the exact candidate package
-on all five platform/architecture rows. The candidate's real `update.recheck()` must admit its own
-runtime, reject a foreign bundled-Node process, recover after that process exits, and pass again
-after restart. IPC and OS occupancy are not mocked. Missing packaged identity or prerequisites fail
+on all five platform/architecture rows. In-place candidates' real `update.recheck()` must admit their
+own runtime, reject a foreign bundled-Node process, recover after that process exits, and pass again
+after restart. Ad-hoc macOS nightlies intentionally use the manual installer strategy, which has no
+update admission API: those candidates instead verify the actual packaged reader's owner identity,
+held SQLite lease and native occupancy, distinguish an unregistered foreign Node, and repeat after
+restart. Reports identify this narrower coverage explicitly; a stable macOS candidate selecting the
+manual fallback fails. Signed stable macOS packages must pass the real updater path. IPC and OS
+occupancy are not mocked. Missing packaged identity or prerequisites fail
 the job. Nightly and Release already require Package Smoke before publication, so this is a blocking
 pre-publication check. The existing post-release Windows Upgrade Smoke still covers actual binary
 replacement from older versions; its failure is advisory and cannot retroactively stop a release.
