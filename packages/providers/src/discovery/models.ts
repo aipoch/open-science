@@ -390,7 +390,8 @@ export const listProviderModels = async (
               })
           }
       } catch {
-        signal.throwIfAborted()
+        // Once the primary list is complete, only caller cancellation should discard it.
+        callerSignal?.throwIfAborted()
       }
     }
     const models = [...catalog.values()]
