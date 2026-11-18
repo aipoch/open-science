@@ -6,6 +6,11 @@
 - **Forschungsfilme, erneut abgespielt.** Filmoperationen lassen sich auf neue Zweige mit unabhängigen Ergebnissen übertragen, Filme öffnen sich direkt aus dem Sitzungsmenü, und der Film-Dialog erklärt den Tokenverbrauch, bevor Sie erzeugen. (#4389, #4414)
 - **Klügere Agentenfragen.** Wenn der Agent Ihre Eingabe benötigt, legt er jetzt die Abwägungen zwischen den angebotenen Optionen dar, sodass Sie mit Blick auf die Folgen entscheiden können. (#4357)
 
+## ⚠️ Scope & Safety
+
+- **Geplante Aufgaben laufen mit den Berechtigungen Ihres Projekts.** Ein Zeitplan startet seine Sitzung oder Notebook-Aufgabe ohne weitere Bestätigung, solange die App läuft. Der Lauf handelt mit den Ordnern, Anmeldedaten und dem Netzwerkzugang, die diesem Projekt bereits gewährt wurden, und verbraucht Ihr konfiguriertes Anbieterkontingent. Prüfen Sie Ziel, Rhythmus und die Berechtigungen des Projekts, bevor Sie einen Zeitplan aktivieren, und pausieren oder löschen Sie Zeitpläne, die Sie nicht mehr benötigen. Siehe die [Grenze geplanter Aufgaben im Register bekannter Einschränkungen](https://github.com/aipoch/open-science/blob/v1.3.0/docs/known-limitations.md). (#4380)
+- **Bilderzeugung und -bearbeitung geben Prompts und Quellbilder an Ihren konfigurierten Anbieter weiter.** Erzeugungsanfragen und die als Quelle dienenden Bilder werden über die von Ihnen konfigurierte Anbieterverbindung übertragen; ein lokales Abbrechen oder Löschen kann bereits beim Anbieter eingegangene Daten nicht zurückholen. Prüfen Sie die Datenbestimmungen des Anbieters, bevor Sie mit sensiblen Inhalten erzeugen. Siehe [Empfänger von Daten](https://github.com/aipoch/open-science/blob/v1.3.0/docs/security.md#data-recipients). (#4424)
+
 ## 🚀 New Features
 
 - Geplante Aufgaben erstellen, die eine Sitzung starten oder ein Notebook nach wiederkehrendem oder einmaligem Rhythmus ausführen: Jeder geplante Lauf öffnet sich im Workspace als eigener Datensatz, wobei der Ausführungsverlauf pro Zeitplan geführt wird. (#4380)

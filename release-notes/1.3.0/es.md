@@ -6,6 +6,11 @@
 - **Películas de investigación, reproducidas.** Las operaciones de película pueden reproducirse en ramas nuevas con resultados independientes, las películas se abren directamente desde el menú de sesión y el diálogo de película explica el uso de tokens antes de generar. (#4389, #4414)
 - **Preguntas de agente más inteligentes.** Cuando el agente necesita su aportación, ahora presenta las concesiones entre las opciones que ofrece, para que decida con las consecuencias a la vista. (#4357)
 
+## ⚠️ Alcance y seguridad
+
+- **Las tareas programadas se ejecutan con los permisos de su proyecto.** Una programación lanza su sesión o ejecución de Notebook sin una confirmación adicional mientras la aplicación está en marcha. La ejecución actúa con las carpetas, credenciales y acceso de red ya concedidos a ese proyecto, y consume la cuota de su proveedor configurado. Revise el destino y la cadencia de la programación, así como las concesiones del proyecto, antes de activarla, y pause o elimine las programaciones que ya no desee. Consulte la [frontera de tareas programadas en el registro de limitaciones conocidas](https://github.com/aipoch/open-science/blob/v1.3.0/docs/known-limitations.md). (#4380)
+- **La generación y edición de imágenes revela los prompts y las imágenes de origen a su proveedor configurado.** Las solicitudes de generación y las imágenes utilizadas como fuente se transmiten a través de la conexión del proveedor que usted configuró, y cancelar o eliminar localmente no puede retirar los datos que el proveedor ya ha recibido. Revise las condiciones de datos del proveedor antes de generar a partir de material sensible. Consulte [receptores de datos](https://github.com/aipoch/open-science/blob/v1.3.0/docs/security.md#data-recipients). (#4424)
+
 ## 🚀 New Features
 
 - Cree tareas programadas que lanzan una sesión o ejecutan un Notebook con una cadencia recurrente o puntual: cada ejecución programada se abre en el espacio de trabajo como su propio registro, y el historial de ejecuciones se conserva por programación. (#4380)

@@ -63,7 +63,7 @@ in the [release notes](../release-notes/1.2.2/en.md).
 
 ## Local-first storage does not prevent external disclosure
 
-- **Scope / status:** Model/scenario requests, Connectors, MCP servers, source-link previews, remote jobs, research-film
+- **Scope / status:** Model/scenario requests, image generation and editing, Connectors, MCP servers, source-link previews, remote jobs, research-film
   narration resources, and exports;
   documented boundary.
 - **Trigger and impact:** Requests disclose the content prepared for their recipients. Read-only
@@ -135,6 +135,19 @@ in the [release notes](../release-notes/1.2.2/en.md).
   target, command, resources, and outputs in the per-job approval.
 - **Details:** [Extension and automation precautions](usage-scope.md#extensions-remote-access-and-automation)
   and [Compute safety](../packages/compute/README.md#safety-and-integration).
+
+## Scheduled tasks run unattended with project-granted authority
+
+- **Scope / status:** Scheduled session and Notebook tasks (v1.3.0); documented boundary.
+- **Trigger and impact:** While the app is running, a schedule launches its session or Notebook
+  run without a further confirmation. The run acts with the project's identity and the folders,
+  credentials, and network access already granted to that project, and it consumes the configured
+  provider quota.
+- **Precautions:** Review each schedule's target and cadence, and keep the owning project's grants
+  scoped to what the recurring run needs. Pause or delete schedules that are no longer wanted
+  instead of relying on grants to expire.
+- **Details:** [Agent actions and permissions](security.md#agent-actions-and-permissions) and
+  [automation](usage-scope.md#extensions-remote-access-and-automation).
 
 ## Maintaining this register
 

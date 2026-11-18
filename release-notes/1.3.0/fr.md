@@ -6,6 +6,11 @@
 - **Films de recherche, rejoués.** Les opérations de film peuvent être rejouées sur de nouvelles branches avec des sorties indépendantes, les films s'ouvrent directement depuis le menu de session, et la boîte de dialogue du film explique la consommation de jetons avant la génération. (#4389, #4414)
 - **Questions d'agent plus judicieuses.** Lorsque l'agent a besoin de votre avis, il expose désormais les compromis entre les options proposées, pour que vous décidiez en connaissance des conséquences. (#4357)
 
+## ⚠️ Portée et sécurité
+
+- **Les tâches planifiées s'exécutent avec les permissions de votre projet.** Une planification lance sa session ou son exécution Notebook sans confirmation supplémentaire tant que l'application est en cours d'exécution. L'exécution agit avec les dossiers, les identifiants et l'accès réseau déjà accordés à ce projet, et elle consomme le quota de votre fournisseur configuré. Vérifiez la cible et la cadence de la planification ainsi que les droits accordés au projet avant de l'activer, et mettez en pause ou supprimez les planifications dont vous ne voulez plus. Voir la [limite des tâches planifiées dans le registre des limites connues](https://github.com/aipoch/open-science/blob/v1.3.0/docs/known-limitations.md). (#4380)
+- **La génération et l'édition d'images divulguent les invites et les images sources à votre fournisseur configuré.** Les requêtes de génération et les images utilisées comme source sont transmises via la connexion au fournisseur que vous avez configurée, et annuler ou supprimer localement ne peut pas rétracter les octets que le fournisseur a déjà reçus. Vérifiez les conditions relatives aux données du fournisseur avant de générer à partir de contenus sensibles. Voir [les destinataires de données](https://github.com/aipoch/open-science/blob/v1.3.0/docs/security.md#data-recipients). (#4424)
+
 ## 🚀 New Features
 
 - Créez des tâches planifiées qui lancent une session ou exécutent un Notebook selon une cadence récurrente ou ponctuelle : chaque exécution planifiée s'ouvre dans l'espace de travail comme son propre enregistrement, avec un historique d'exécutions conservé par planification. (#4380)

@@ -6,6 +6,11 @@
 - **Research films, replayed.** Film operations can be replayed onto new branches with independent outputs, films open straight from the session menu, and the film dialog explains token usage before you generate. (#4389, #4414)
 - **Smarter agent questions.** When the agent needs your input, it now lays out the trade-offs between the options it offers, so you can decide with the consequences in view. (#4357)
 
+## ⚠️ Scope & Safety
+
+- **Scheduled tasks run with your project's permissions.** A schedule launches its session or Notebook run without a further confirmation while the app is running. The run acts with the folders, credentials, and network access already granted to that project, and it consumes your configured provider quota. Review the schedule's target, cadence, and the project's grants before enabling it, and pause or delete schedules you no longer want. See the [scheduled-task boundary in the known-limitations register](https://github.com/aipoch/open-science/blob/v1.3.0/docs/known-limitations.md). (#4380)
+- **Image generation and editing disclose prompts and source images to your configured provider.** Generation requests and the images used as their source are transmitted through the provider connection you configured, and cancelling or deleting locally cannot retract bytes the provider has already received. Review the provider's data terms before generating from sensitive material. See [data recipients](https://github.com/aipoch/open-science/blob/v1.3.0/docs/security.md#data-recipients). (#4424)
+
 ## 🚀 New Features
 
 - Create scheduled tasks that launch a session or run a Notebook on a recurring or one-time cadence: each scheduled run opens in the workspace as its own record, with run history kept per schedule. (#4380)
