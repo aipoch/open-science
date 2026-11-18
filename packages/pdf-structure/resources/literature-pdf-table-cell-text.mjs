@@ -264,7 +264,9 @@ export function rejectNativeLetterFractionScriptMetadata(cells, rules) {
 // Keep this deliberately narrow: only reconstruct lists of scientific-notation
 // values over a letter or integer denominator, with a complete centered bar.
 export function recoverNativeStackedScientificFractions(items, rules, runs) {
-  if (!Array.isArray(items) || !Array.isArray(rules) || !Array.isArray(runs)) return
+  if (!Array.isArray(items) || !Array.isArray(rules) || !rules.length || !Array.isArray(runs))
+    return
+  items = items.filter((item) => item.text.replaceAll(BACKSPACE, '').trim())
   const proofs = []
   for (const [x1, y1, x2, y2] of rules) {
     if (y1 !== y2 || !(x2 > x1)) continue
@@ -317,6 +319,7 @@ export function recoverNativeStackedScientificFractions(items, rules, runs) {
   let text = runs
     .map((run) => run.text)
     .join('')
+    .replaceAll(BACKSPACE, '')
     .replace(/\s+/gu, '')
   // Reading order may put every numerator before every denominator. Rebuild
   // complete native fractions as atomic values before horizontal ordering.

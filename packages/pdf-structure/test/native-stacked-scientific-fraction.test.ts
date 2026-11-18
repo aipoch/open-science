@@ -149,8 +149,14 @@ it.each(['original', 'reversed', 'missing-bar', 'unrelated-prose', 'duplicate-ba
       height: 9,
       horizontal: true
     })
-    items.push(punctuation('[', -4), punctuation(',', 25), punctuation(']', 64))
-    let text = '[1e−3,1e−5]NN'
+    items.push(
+      punctuation('[', -4),
+      punctuation(',', 25),
+      punctuation(']', 64),
+      punctuation(' ', 28),
+      punctuation('\b', 32)
+    )
+    let text = '[1e−3, 1e−5]NN'
     if (variant === 'reversed') items.reverse()
     if (variant === 'missing-bar') rules.pop()
     if (variant === 'duplicate-bar') rules.push([...rules[0]])
