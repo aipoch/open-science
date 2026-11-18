@@ -303,7 +303,7 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
                   <ChevronDown aria-hidden="true" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="max-w-sm">
+              <DropdownMenuContent align="end" className="w-52">
                 {researchVideoResolutionSchema.options.map((resolution) => (
                   <DropdownMenuItem
                     key={resolution}
@@ -316,7 +316,7 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuSeparator />
-                <p className="max-w-xs px-2 py-1.5 text-xs text-muted-foreground">
+                <p className="px-2 py-1.5 text-xs text-muted-foreground">
                   {t(
                     'MP4 uses landscape (16:9). If export is interrupted, it restarts from the beginning.'
                   )}
