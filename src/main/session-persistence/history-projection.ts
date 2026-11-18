@@ -433,7 +433,7 @@ export class SessionHistoryProjectionRepository {
           index.sourceFingerprint !== sourceFingerprint
         )
           return undefined
-        const [, messageBranchId, linear] = JSON.parse(index.scopeKey) as [
+        const [agentFrameId, messageBranchId, linear] = JSON.parse(index.scopeKey) as [
           string | null,
           string | null,
           boolean?
@@ -476,7 +476,15 @@ export class SessionHistoryProjectionRepository {
           .map(({ payloadJson }) => JSON.parse(payloadJson) as PersistedChatMessage)
         const activities = selected
           .filter(({ kind }) => kind === 'activity')
-          .map(({ payloadJson }) => JSON.parse(payloadJson) as PersistedToolActivity)
+          .map(({ payloadJson, promptMessageId }) => {
+            const activity = JSON.parse(payloadJson) as PersistedToolActivity
+            // Graph projections omit this compatibility field, but pages also omit the graph.
+            // Restore its canonical ownership from the existing index for turn disclosure.
+            // Flat legacy indexes can infer this column from ordering; do not hide those tools.
+            return agentFrameId && messageBranchId && promptMessageId && !activity.promptMessageId
+              ? { ...activity, promptMessageId }
+              : activity
+          })
         const activityIds = new Set(activities.map(({ id }) => id))
         const groupIds = [...new Set(selected.flatMap(({ groupId }) => (groupId ? [groupId] : [])))]
         const groupRows = groupIds.length
