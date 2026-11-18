@@ -504,9 +504,14 @@ describe('Europe PMC first, source-pinned citation discovery', () => {
     })
     expect(limited).toMatchObject({ provider: 'europe-pmc', issue: 'rate-limited' })
     expect(limited.retryAt! - Date.now()).toBeLessThanOrEqual(300_000)
-    expect(await finder.run({ ...request, resolutionToken: root.resolutionToken })).toMatchObject({
-      retryAt: limited.retryAt
-    })
+    expect(
+      await finder.run({
+        ...request,
+        direction: 'citations',
+        resolutionToken: root.resolutionToken
+      })
+    ).toMatchObject({ retryAt: limited.retryAt })
+    expect(await finder.run(request)).toMatchObject({ state: 'ready', records: [] })
     expect(fetcher).toHaveBeenCalledTimes(3)
   })
 

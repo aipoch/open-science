@@ -311,8 +311,7 @@ describe('manual OpenCitations discovery with stable SKG-IF reference snapshots'
       json([metadata('9', { id: 'omid:br/9 doi:10.1234/CHILD' })]),
       identity([center], 'identifiers.scheme:doi,identifiers.id:10.1234/child'),
       json([metadata('10')]),
-      citationPage([], 0, 0, '10.1234/child'),
-      json([metadata('9')])
+      citationPage([], 0, 0, '10.1234/child')
     ])
     const first = await finder.run(request)
     const explored = await finder.run({
@@ -337,7 +336,7 @@ describe('manual OpenCitations discovery with stable SKG-IF reference snapshots'
       records: [{ paperId: 'opencitations:br/9' }]
     })
     expect(catalog.get.mock.calls.every(([id]) => id === 'local')).toBe(true)
-    expect(fetcher).toHaveBeenCalledTimes(6)
+    expect(fetcher).toHaveBeenCalledTimes(5)
   })
 
   it('does not cache a new center snapshot before the final original-root validation', async () => {
@@ -1160,6 +1159,30 @@ describe('explicit OpenCitations Index sessions', () => {
     }
   )
   afterEach(() => vi.restoreAllMocks())
+
+  it('keeps reopened page caches separate for SKG-IF, Index and Europe PMC', async () => {
+    const { finder, fetcher } = fixture([
+      identity(),
+      json([metadata('9')]),
+      indexIdentity(),
+      json([edge()]),
+      json([metadata('9')]),
+      json({ hitCount: 0, resultList: { result: [] } })
+    ])
+    const skg = await finder.run(request)
+    const index = await finder.run(indexRequest)
+    expect(skg.state).toBe('ready')
+    expect(index.state).toBe('ready')
+    expect(index.resolutionToken).not.toBe(skg.resolutionToken)
+    expect(await finder.run(request)).toEqual(skg)
+    expect(await finder.run(indexRequest)).toEqual(index)
+    expect(fetcher).toHaveBeenCalledTimes(5)
+    expect(await finder.run({ ...request, provider: 'europe-pmc' })).toMatchObject({
+      provider: 'europe-pmc',
+      issue: 'no-match'
+    })
+    expect(fetcher).toHaveBeenCalledTimes(6)
+  })
 
   it('fixes the explicit Index mode across directions, legacy requests and expiry checks', async () => {
     const { finder, fetcher } = fixture([

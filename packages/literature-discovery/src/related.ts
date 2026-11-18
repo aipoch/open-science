@@ -106,7 +106,10 @@ function sourceEndpoint(path: string, query: Record<string, string>): ReadTrace[
   if (path.endsWith('/citations') || query.filter?.startsWith('cf.cites')) return 'citations'
   return 'identity'
 }
+type RelatedPage = Pick<LiteratureRelatedResult, 'records' | 'nextOffset' | 'omitted'>
 type Resolution = {
+  root: boolean
+  pages: Map<string, RelatedPage>
   itemId: string
   revision: number
   seed: LiteratureRelatedRecord
@@ -339,11 +342,9 @@ export class LiteratureRelatedFinder {
     resolution: Resolution,
     request: LiteratureRelatedRequest,
     signal: AbortSignal
-  ): Promise<{
-    records: LiteratureRelatedRecord[]
-    nextOffset?: number
-    omitted?: number
-  }> {
+  ): Promise<RelatedPage> {
+    const cached = resolution.pages.get(`${request.direction}:${request.offset}`)
+    if (cached) return cached
     if (resolution.provider === 'europe-pmc')
       return readEuropePmcPage(resolution.seed, request.direction, request.offset, (path, query) =>
         this.read('europe-pmc', path, query, signal)
@@ -429,6 +430,18 @@ export class LiteratureRelatedFinder {
         : undefined
       let token = request.resolutionToken
       let publish = false
+      // Reopening a view may omit its token; reuse only the same saved root and source.
+      if (!token && !request.seedPaperId && !request.offset) {
+        const cached = [...this.resolutions].find(
+          ([, entry]) =>
+            entry.root &&
+            entry.itemId === item.id &&
+            entry.revision === item.metadataRevision &&
+            entry.provider === result.provider &&
+            entry.opencitationsMode === result.opencitationsMode
+        )
+        if (cached) [token, resolution] = cached
+      }
       if (
         request.resolutionToken &&
         (!resolution ||
@@ -461,6 +474,8 @@ export class LiteratureRelatedFinder {
           if (!seed) throw new SourceError('expired')
           resolution = {
             ...resolution,
+            root: false,
+            pages: new Map(),
             seed,
             opencitationsReferences: undefined,
             opencitationsIndexSnapshots: undefined,
@@ -496,6 +511,8 @@ export class LiteratureRelatedFinder {
                 }
           if (!found?.seed) throw new SourceError('no-match')
           const candidate: Resolution = {
+            root: true,
+            pages: new Map(),
             itemId: item.id,
             revision: item.metadataRevision,
             seed: found.seed,
@@ -567,6 +584,15 @@ export class LiteratureRelatedFinder {
         if (resolution.discovered.size > maxDiscoveredRecords)
           resolution.discovered.delete(resolution.discovered.keys().next().value!)
       }
+      // Retain only validated pages, under the same expiry as their exploration token.
+      const pageKey = `${request.direction}:${request.offset}`
+      resolution.pages.delete(pageKey)
+      resolution.pages.set(pageKey, {
+        records: result.records,
+        nextOffset: result.nextOffset,
+        omitted: result.omitted
+      })
+      if (resolution.pages.size > 10) resolution.pages.delete(resolution.pages.keys().next().value!)
       // A token only authorizes records from completed, root-revalidated pages.
       if (publish) this.remember(token!, resolution)
     } catch (error) {

@@ -130,7 +130,13 @@ record must be fetched again before becoming a seed. Expired tokens require a fr
 Requests use fixed HTTPS origins, one-request-per-second admission per provider, responses bounded
 to 2 MiB, and a single 30-second deadline. Caller cancellation and changed root references stop
 the lookup. HTTP 429 respects a capped Retry-After cooldown. Up to 200
-resolution tokens remain in memory and expire after 15 minutes. Pages contain at most 20 raw rows;
+resolution tokens remain in memory and expire after 15 minutes. Each session caches its ten most
+recent successful pages, keyed by direction and offset. Reopened views reuse the original root
+session only when item ID, metadata revision, provider and source mode match. Cache hits still
+validate the saved root and caller cancellation. Reads do not extend expiry; failures are not
+cached. Cached pages remain available during source cooldowns. Sessions and pages are discarded
+on process restart, with no disk persistence or migration. Concurrent in-flight requests retain
+independent cancellation ownership. Pages contain at most 20 raw rows;
 Europe PMC offsets are multiples of 20 mapped to one-based `page` parameters. Its references and
 citations response `request.offSet` fields use different bases, which are checked independently.
 

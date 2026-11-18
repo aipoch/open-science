@@ -94,6 +94,97 @@ function fixture(): {
 describe('citation discovery session safeguards', () => {
   afterEach(() => vi.restoreAllMocks())
 
+  it('reuses pages across reopened views, directions and pagination without sharing mutable output', async () => {
+    const { finder, fetcher } = fixture()
+    const first = await finder.run(request)
+    const original = structuredClone(first)
+    first.records[0].item.title = 'Changed in consumer'
+    expect(await finder.run(request)).toEqual(original)
+    const citations = await finder.run({ ...request, direction: 'citations' })
+    const next = await finder.run({
+      ...request,
+      resolutionToken: first.resolutionToken,
+      offset: 20
+    })
+    expect(citations.resolutionToken).toBe(first.resolutionToken)
+    expect(await finder.run({ ...request, direction: 'citations' })).toEqual(citations)
+    expect(
+      await finder.run({ ...request, resolutionToken: first.resolutionToken, offset: 20 })
+    ).toEqual(next)
+    expect(fetcher).toHaveBeenCalledTimes(4)
+    const child = await finder.run({
+      ...request,
+      resolutionToken: first.resolutionToken,
+      seedPaperId: 'europe-pmc:MED:1'
+    })
+    expect(child.seed?.paperId).toBe('europe-pmc:MED:1')
+    expect(await finder.run(request)).toEqual(original)
+    expect(fetcher).toHaveBeenCalledTimes(5)
+  })
+
+  it('caches successful empty pages but retries failures', async () => {
+    const { finder, fetcher, advance } = fixture()
+    const root = await finder.run(request)
+    const citations = {
+      ...request,
+      direction: 'citations' as const,
+      resolutionToken: root.resolutionToken
+    }
+    fetcher.mockImplementationOnce(async () => {
+      advance(1001)
+      return new Response('', { status: 503 })
+    })
+    expect(await finder.run(citations)).toMatchObject({ state: 'unavailable' })
+    fetcher.mockImplementationOnce(async (input) => {
+      advance(1001)
+      return page(input, [])
+    })
+    expect(await finder.run(citations)).toMatchObject({ state: 'ready', records: [] })
+    expect(await finder.run(citations)).toMatchObject({ state: 'ready', records: [] })
+    expect(fetcher).toHaveBeenCalledTimes(4)
+  })
+
+  it('refreshes reopened roots after absolute expiry or metadata changes', async () => {
+    const { finder, fetcher, catalog, advance } = fixture()
+    const root = await finder.run(request)
+    advance(14 * 60_000)
+    expect((await finder.run(request)).resolutionToken).toBe(root.resolutionToken)
+    advance(60_000)
+    const fresh = await finder.run(request)
+    expect(fresh.resolutionToken).not.toBe(root.resolutionToken)
+    expect(fetcher).toHaveBeenCalledTimes(4)
+    catalog.get.mockResolvedValue({ ...reference(), metadataRevision: 2 })
+    expect(await finder.run(request)).toMatchObject({ issue: 'reference-changed' })
+    expect(await finder.run({ ...request, expectedMetadataRevision: 2 })).toMatchObject({
+      state: 'ready',
+      metadataRevision: 2
+    })
+    expect(fetcher).toHaveBeenCalledTimes(6)
+  })
+
+  it('does not serve cached pages to deleted roots or cancelled callers', async () => {
+    const { finder, catalog, fetcher } = fixture()
+    await finder.run(request)
+    const controller = new AbortController()
+    controller.abort()
+    await expect(finder.run(request, controller.signal)).rejects.toThrow()
+    catalog.get.mockResolvedValue({ ...reference(), deletedAt: Date.now() })
+    expect(await finder.run(request)).toMatchObject({ issue: 'reference-changed', records: [] })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('bounds cached pages without preventing older pages from being loaded again', async () => {
+    const { finder, fetcher } = fixture()
+    const root = await finder.run(request)
+    for (let offset = 20; offset <= 200; offset += 20)
+      await finder.run({ ...request, resolutionToken: root.resolutionToken, offset })
+    expect(fetcher).toHaveBeenCalledTimes(12)
+    await finder.run({ ...request, resolutionToken: root.resolutionToken, offset: 200 })
+    expect(fetcher).toHaveBeenCalledTimes(12)
+    await finder.run(request)
+    expect(fetcher).toHaveBeenCalledTimes(13)
+  })
+
   it('rejects removed Semantic Scholar graph inputs before any catalog or transport access', async () => {
     const { finder, catalog, fetcher } = fixture()
     expect(
@@ -213,7 +304,7 @@ describe('citation discovery session safeguards', () => {
         return { ...reference(), metadataRevision: failure === 'changed' ? 2 : 1 }
       })
       const pending = finder.run(
-        { ...request, resolutionToken: root.resolutionToken },
+        { ...request, direction: 'citations', resolutionToken: root.resolutionToken },
         controller.signal
       )
       if (failure === 'cancelled') await expect(pending).rejects.toThrow()
@@ -272,17 +363,22 @@ describe('citation discovery session safeguards', () => {
   })
 
   it('bounds the number of retained sessions without invalidating the latest session', async () => {
-    const { finder, fetcher } = fixture()
+    const { finder, catalog, fetcher } = fixture()
     const first = await finder.run(request)
     let last = first
-    for (let index = 0; index < 200; index++) last = await finder.run(request)
+    for (let index = 0; index < 200; index++) {
+      catalog.get.mockResolvedValue({ ...reference(), id: `root-${index}` })
+      last = await finder.run({ ...request, itemId: `root-${index}` })
+    }
+    catalog.get.mockResolvedValue(reference())
     expect(await finder.run({ ...request, resolutionToken: first.resolutionToken })).toMatchObject({
       issue: 'expired'
     })
-    expect(await finder.run({ ...request, resolutionToken: last.resolutionToken })).toMatchObject({
-      state: 'ready'
-    })
-    expect(fetcher).toHaveBeenCalledTimes(403)
+    catalog.get.mockResolvedValue({ ...reference(), id: last.itemId })
+    expect(
+      await finder.run({ ...request, itemId: last.itemId, resolutionToken: last.resolutionToken })
+    ).toMatchObject({ state: 'ready' })
+    expect(fetcher).toHaveBeenCalledTimes(402)
   })
 
   it('retains only the latest 2000 observed neighbors while keeping the seed explorable', async () => {
