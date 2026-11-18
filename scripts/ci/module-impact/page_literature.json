@@ -114,6 +114,7 @@
     "src/renderer/src/pages/literature/imports/useLiteraturePdfStaging.tsx",
     "src/renderer/src/pages/literature/list/useLiteratureTable.ts",
     "src/renderer/src/pages/literature/detail/LiteratureBibliographicDetails.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureIdentifiers.tsx",
     "src/renderer/src/pages/literature/list/LiteratureCandidateDialog.tsx",
     "src/renderer/src/pages/literature/imports/useLiteratureImport.ts",
     "src/renderer/src/pages/literature/list/LiteratureSelection.tsx",

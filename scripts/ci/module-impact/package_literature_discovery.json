@@ -53,6 +53,7 @@
     "packages/literature-discovery/test/related-europe-pmc.test.ts",
     "packages/literature-discovery/src/related-opencitations.ts",
     "packages/literature-discovery/src/related-opencitations-index.ts",
+    "packages/literature-discovery/src/related-source-error.ts",
     "packages/literature-discovery/test/related-opencitations.test.ts"
   ],
   "interfacePaths": [
