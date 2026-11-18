@@ -209,10 +209,10 @@ const storageSummary = async (root: string, identity: Identity): Promise<Storage
   const lines = contents.split('\n')
   expect(lines.pop()).toBe('')
   const records = lines.map((line) => JSON.parse(line))
-  expect(Object.keys(records[0]).sort()).toEqual(['document', 'type'])
+  expect(Object.keys(records[0]).sort()).toEqual(['document', 'journalVersion', 'type'])
   expect(records[0].type).toBe('session_snapshot')
   for (const row of records.slice(1))
-    expect(Object.keys(row).sort()).toEqual(['records', 'revision', 'type'])
+    expect(Object.keys(row).sort()).toEqual(['journalVersion', 'records', 'revision', 'type'])
   return {
     format: 'journal',
     version: 2,
@@ -244,7 +244,7 @@ const probeBusinessRecord = async (
   )
   if (!content) return undefined
   const record = JSON.parse(content.trimEnd().split('\n').at(-1)!)
-  expect(Object.keys(record).sort()).toEqual(['records', 'revision', 'type'])
+  expect(Object.keys(record).sort()).toEqual(['journalVersion', 'records', 'revision', 'type'])
   expect(record.type).toBe('session_update')
   const entries = (record.records ?? []) as Array<{
     type: string
