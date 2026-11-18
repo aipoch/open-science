@@ -64,7 +64,6 @@ import type {
 } from '../agent-framework/types'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import { LITERATURE_MCP_SERVER_NAME } from '../literature/mcp-contract'
-import { matchPlanDelivery } from '../session-plan/plan-delivery'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { withDataRootWrite } from '../storage/migration-state'
