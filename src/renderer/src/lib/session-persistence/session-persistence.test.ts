@@ -6015,6 +6015,75 @@ describe('passive summary hydration', () => {
     expect(api.saveSession).not.toHaveBeenCalled()
     expect(api.loadOne).not.toHaveBeenCalled()
   })
+
+  it('preserves live session state while applying refreshed summary metadata', () => {
+    const base = createPersistedSession({
+      revision: 4,
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt-1', startedAt: 1 },
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Keep this loaded message',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    useSessionStore.getState().hydrateSessions([base])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        title: 'Unsaved title',
+        unsavedTitle: true,
+        interactionState: { permission: true, elicitation: false, plan: false }
+      }))
+    }))
+
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: base.id,
+          projectId: base.projectId,
+          title: 'Refreshed title',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: true,
+          revision: 5,
+          activeMessageCount: 1,
+          artifactCount: 2,
+          filesRevision: 3,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt + 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Unsaved title',
+      unsavedTitle: true,
+      status: 'running',
+      activeRun: base.activeRun,
+      pinned: true,
+      revision: 5,
+      artifactCount: 2,
+      filesRevision: 3,
+      interactionState: { permission: true, elicitation: false, plan: false }
+    })
+    expect(useSessionStore.getState().sessions[0].contentLoaded).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(
+      'Keep this loaded message'
+    )
+  })
 })
 
 describe('desktop disconnect write admission', () => {

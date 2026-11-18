@@ -261,8 +261,8 @@ export function composeSessionProjection({
     projection: SessionProjectionLoad
     catalogHydrationPending: boolean
   }> => {
-    const startup = startupProjection
-    if (!startup || startupProjectionSettled) {
+    const startup = startupProjection ?? beginStartupProjection()
+    if (startupProjectionSettled) {
       const projection = await ensureSessionProjection()
       if (projection.result) broadcastToRenderers('sessions:catalog-changed', undefined)
       return { projection, catalogHydrationPending: false }

@@ -83,7 +83,7 @@ import {
   pendingSessionConversationCommands,
   retainActivePreparationCommands
 } from '../../stores/session-conversation-intents'
-import { loadSessionHistoryPage } from './session-history'
+import { ensureSessionContentLoaded, loadSessionHistoryPage } from './session-history'
 import type {
   LoadSessionHistoryPageRequest,
   SessionHistoryPage
@@ -3556,7 +3556,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
     const result = await loadPersistedSessions(
       window.api.sessions,
       () => true,
-      () => ({ sessionId: selectedSessionId })
+      () => ({ sessionId: selectedSessionId }),
+      true
     )
     if (!result) return
     const pending = result.diagnostics?.catalogHydrationPending === true
@@ -4203,22 +4204,38 @@ const useSessionPersistence = (): SessionPersistenceState => {
           const supportsPages = typeof window.api.sessions.loadHistoryPage === 'function'
           const recoveryRequest = useSessionStore.getState().sessionDetailsRecoveryRequest
           const recoverSessionDetails =
-            !supportsPages &&
             recoveryRequest?.projectId === selected.projectId &&
             recoveryRequest.sessionId === selected.id
-          if (recoveryRequest && (recoverSessionDetails || supportsPages))
-            useSessionStore.setState({ sessionDetailsRecoveryRequest: undefined })
+          const clearRecoveryRequest = (): void => {
+            const pending = useSessionStore.getState().sessionDetailsRecoveryRequest
+            if (pending?.projectId === selected.projectId && pending.sessionId === selected.id)
+              useSessionStore.setState({ sessionDetailsRecoveryRequest: undefined })
+          }
           void (
             supportsPages
               ? loadSessionHistoryPage({
                   projectId: selected.projectId,
                   sessionId: selected.id
-                }).then(() => undefined)
+                }).then(async () => {
+                  if (!recoverSessionDetails) return
+                  await ensureSessionContentLoaded(
+                    {
+                      projectId: selected.projectId,
+                      sessionId: selected.id,
+                      recoverSessionDetails: true
+                    },
+                    window.api.sessions
+                  )
+                  clearRecoveryRequest()
+                })
               : loadPersistedSession(
                   { projectId: selected.projectId, sessionId: selected.id },
                   undefined,
                   recoverSessionDetails ? { recoverSessionDetails: true } : undefined
-                )
+                ).then((session) => {
+                  if (recoverSessionDetails && session) clearRecoveryRequest()
+                  return session
+                })
           )
             .then((session) => {
               if (!isMounted || !isCurrentSessionLoad()) return

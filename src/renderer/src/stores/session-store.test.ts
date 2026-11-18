@@ -7646,6 +7646,7 @@ describe('session store public contract', () => {
         'replaceMessageArtifacts',
         'replaceMessagePdfContext',
         'replaceMessageUploads',
+        'requestSessionDetailsRecovery',
         'reviseSessionFromElicitation',
         'selectSession',
         'setActivePlanProjection',

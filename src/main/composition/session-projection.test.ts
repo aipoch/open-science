@@ -225,11 +225,9 @@ describe('host network approval recovery', () => {
       archiveCoordinator: {}
     } as unknown as Parameters<typeof composeSessionProjection>[0])
 
-    const startup = composed.loadStartupSessions()
+    const pendingList = composed.sessionPersistenceBackend.list!()
     await vi.waitFor(() => expect(sessionRepository.ensureSessionProjection).toHaveBeenCalledOnce())
-
-    const pendingList = await composed.sessionPersistenceBackend.list!()
-    expect(pendingList).toMatchObject({
+    await expect(pendingList).resolves.toMatchObject({
       sessions: [summary],
       diagnostics: { catalogHydrationPending: true }
     })
@@ -237,9 +235,10 @@ describe('host network approval recovery', () => {
     expect(replaceSessionMetadata).toHaveBeenCalledWith([summary], false, 7)
 
     resolveProjection({ sessions: [summary] })
-    await expect(startup).resolves.toEqual([])
-    expect(replaceSessionMetadata).toHaveBeenLastCalledWith([summary], true, 7)
-    expect(broadcastToRenderers).toHaveBeenCalledWith('sessions:catalog-changed', undefined)
+    await vi.waitFor(() => {
+      expect(replaceSessionMetadata).toHaveBeenLastCalledWith([summary], true, 7)
+      expect(broadcastToRenderers).toHaveBeenCalledWith('sessions:catalog-changed', undefined)
+    })
 
     await expect(composed.sessionPersistenceBackend.list!()).resolves.toMatchObject({
       sessions: [newerSummary]
