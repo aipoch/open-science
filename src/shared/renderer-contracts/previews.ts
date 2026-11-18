@@ -1,4 +1,10 @@
-import type { ImageTask, ImageTaskStart, ImageTaskList, ImageTaskIdentity } from '../image-task'
+import type {
+  ImageTask,
+  ImageTaskStart,
+  ImageTaskList,
+  ImageTaskIdentity,
+  ImageTaskStartResult
+} from '../image-task'
 import type {
   ResearchVideoPresentationRequest,
   ResearchVideoStartRequest,
@@ -153,7 +159,7 @@ export const pptxDraftContracts = {
 } as const
 
 export const previewDeleteContracts = {
-  'imageTasks.start': callable<(request: ImageTaskStart) => Promise<ImageTask>>()(
+  'imageTasks.start': callable<(request: ImageTaskStart) => Promise<ImageTaskStartResult>>()(
     'preview-resources',
     ['image-tasks:start']
   ),

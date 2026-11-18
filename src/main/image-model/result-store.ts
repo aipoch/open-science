@@ -106,7 +106,14 @@ export class ImageResultStore {
     if (!path) throw new Error('Image result owner was removed.')
     await writeDurableJsonFile(path, JSON.stringify(recordSchema.parse(record)))
   }
-  async recover(context: Context, fingerprint?: string): Promise<ImageModelResult | undefined> {
+  async recover(
+    context: Context,
+    fingerprint?: string,
+    delivery?: {
+      signal: AbortSignal
+      reserveDelivery: (bytes: number) => Promise<void> | undefined
+    }
+  ): Promise<ImageModelResult | undefined> {
     const record = await this.read(context)
     if (!record) return undefined
     if (fingerprint && record.fingerprint !== fingerprint)
@@ -131,14 +138,20 @@ export class ImageResultStore {
           lease.size > MAX_IMAGE_BYTES
         )
           throw new Error('Unexpected image Version metadata.')
-        bytes = Buffer.from(await lease.readRange(0, lease.size))
+        if (delivery) {
+          await delivery.reserveDelivery(lease.size)
+          delivery.signal.throwIfAborted()
+        }
+        const range = await lease.readRange(0, lease.size)
+        bytes = Buffer.from(range.buffer, range.byteOffset, range.byteLength)
         await lease.verifyUnchanged()
         if (bytes.length !== lease.size || hash(bytes) !== record.checksum)
           throw new Error('Unexpected image Version bytes.')
       } finally {
         await lease.close()
       }
-    } catch {
+    } catch (error) {
+      if (delivery?.signal.aborted && error === delivery.signal.reason) throw error
       throw new ImageModelError(
         'OUTCOME_UNKNOWN',
         'Stored image result integrity could not be verified.'
@@ -158,12 +171,9 @@ export class ImageResultStore {
   }
 
   private throwFailure(record: Record): void {
-    if (record.error)
-      throw new ImageModelError(
-        record.error.code,
-        'The stored image request failed.',
-        record.error.httpStatus
-      )
+    if (!record.error) return
+    const { code, httpStatus, ...diagnostics } = record.error
+    throw new ImageModelError(code, 'The stored image request failed.', httpStatus, diagnostics)
   }
 
   async fail(context: Context, fingerprint: string, error: ImageModelError): Promise<void> {
@@ -175,7 +185,7 @@ export class ImageResultStore {
   async published(
     context: Context,
     result: ImageModelResult,
-    published: PublishedVersion
+    { artifactId, versionId }: PublishedVersion
   ): Promise<void> {
     const record = await this.read(context)
     if (!record) throw new Error('Image request receipt is unavailable.')
@@ -184,7 +194,7 @@ export class ImageResultStore {
       fingerprint: record.fingerprint,
       result: metadata,
       checksum: hash(bytes),
-      published
+      published: { artifactId, versionId }
     })
   }
 }

@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream'
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { publicDownloadUrl } from '@aipoch/resilient-download'
 import { downloadImageResult } from './download'
 import { MAX_IMAGE_BYTES } from './contract'
@@ -16,6 +16,7 @@ const response = (
 beforeEach(() => {
   get.mockReset()
 })
+afterEach(() => vi.unstubAllGlobals())
 it('revalidates redirect destinations and does not pass credentials to result hosts', async () => {
   get.mockImplementation(async (url) => {
     publicDownloadUrl(url)
@@ -53,4 +54,40 @@ it('downloads bounded bytes after a valid redirect and stops redirect loops', as
     downloadImageResult('https://cdn.example/loop', new AbortController().signal)
   ).rejects.toThrow('too many')
   expect(get).toHaveBeenCalledTimes(6)
+})
+
+it('reads relative loopback results without credentials and confines redirects to the provider origin', async () => {
+  const fetch = vi.fn()
+  vi.stubGlobal('fetch', fetch)
+  const providerUrl = 'http://127.0.0.1:8000/v1/images/edits'
+  const signal = new AbortController().signal
+  fetch
+    .mockResolvedValueOnce(
+      new Response(null, { status: 302, headers: { location: '/output.png' } })
+    )
+    .mockResolvedValueOnce(new Response('image'))
+  await expect(downloadImageResult('./result', signal, { providerUrl })).resolves.toEqual(
+    Buffer.from('image')
+  )
+  expect(fetch.mock.calls.map(([url]) => url.href)).toEqual([
+    'http://127.0.0.1:8000/v1/images/result',
+    'http://127.0.0.1:8000/output.png'
+  ])
+  expect(fetch.mock.calls[0][1]).toEqual({
+    redirect: 'manual',
+    credentials: 'omit',
+    headers: { accept: 'image/png,image/jpeg,image/webp' },
+    signal
+  })
+  fetch.mockClear().mockResolvedValueOnce(
+    new Response(null, {
+      status: 302,
+      headers: { location: 'http://127.0.0.1:8001/output.png' }
+    })
+  )
+  await expect(downloadImageResult('/result', signal, { providerUrl })).rejects.toThrow(
+    'configured loopback origin'
+  )
+  expect(fetch).toHaveBeenCalledOnce()
+  expect(get).not.toHaveBeenCalled()
 })

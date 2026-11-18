@@ -13,6 +13,7 @@ export type ComposerOperationFailure = Readonly<{
   occurredAt?: number
   origin?: FailureFacts['origin']
   blocksSend?: boolean
+  summary?: ComposerNotice['summary']
 }>
 
 export const useComposerNotices = (input: {
@@ -82,6 +83,7 @@ export const useComposerNotices = (input: {
       id: `${prefix}:${operation.id}:${operation.occurredAt ?? ''}:${operation.message ?? ''}`,
       source: 'operation',
       operation: operation.id,
+      summary: operation.summary,
       blocksSend: operation.blocksSend || failure.reason === 'configuration/auth-failed',
       occurredAt: operation.occurredAt ?? 0,
       failure: {

@@ -7,6 +7,7 @@ import {
   ImageModelError,
   MAX_IMAGE_BYTES,
   imageArtifactContent,
+  type ImageModelRequest,
   type ImageModelResult
 } from '../image-model/contract'
 import type { ImageModelService } from '../image-model/service'
@@ -15,7 +16,12 @@ import type { composeManagedFiles } from './managed-files'
 import type { composeSessionAuthority } from './session-authority'
 import { resolveDataRoot } from '../storage-root'
 import { assertResearchSessionWritable } from '../storage/session-package-state'
-import type { ImageTaskScope, ImageTaskStart, ImageTaskResult } from '../../shared/image-task'
+import {
+  ImageTaskIntegrityError,
+  type ImageTaskScope,
+  type ImageTaskStart,
+  type ImageTaskResult
+} from '../../shared/image-task'
 
 export async function composeImageTasks({
   imageModel,
@@ -32,38 +38,54 @@ export async function composeImageTasks({
 }): Promise<ImageTaskOwner> {
   const persistence = sessionAuthority.sessionPersistenceCoordinator
   const readSession = async (
-    projectId: string,
-    sessionId: string
-  ): Promise<PersistedChatSession | undefined> => {
-    const loaded = await sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
-      mode: 'read-only'
-    })
-    return loaded.status === 'found' ? loaded.session : undefined
+    scope: ImageTaskScope,
+    start?: ImageTaskStart
+  ): Promise<PersistedChatSession> => {
+    const loaded = await sessionRepository.loadSessionWithDiagnostics(
+      scope.projectId,
+      scope.sessionId,
+      {
+        mode: 'read-only'
+      }
+    )
+    if (
+      loaded.status === 'found' &&
+      loaded.session.id === scope.sessionId &&
+      loaded.session.projectId === scope.projectId
+    )
+      return loaded.session
+    if (start)
+      throw new ImageModelError('EDIT_CONTEXT_CHANGED', 'Image task Session is unavailable.')
+    throw new Error('Image task Session is unavailable.')
   }
   const authorize = async (scope: ImageTaskScope, start?: ImageTaskStart): Promise<void> => {
-    const session = await readSession(scope.projectId, scope.sessionId)
-    if (!session || session.id !== scope.sessionId || session.projectId !== scope.projectId)
-      throw new Error('Image task Session is unavailable.')
+    const session = await readSession(scope, start)
     if (start) {
-      if (session.archivedAt) throw new Error('Image tasks cannot start in an archived Session.')
+      if (session.archivedAt)
+        throw new ImageModelError(
+          'EDIT_CONTEXT_CHANGED',
+          'Image tasks cannot start in an archived Session.'
+        )
       await assertResearchSessionWritable(resolveDataRoot(), scope.projectId, scope.sessionId)
       const frame = session.conversationGraph?.frames.find(({ id }) => id === start.frameId)
       if (!frame || frame.activeBranchId !== start.branchId)
-        throw new Error('The image editor branch changed before submission.')
+        throw new ImageModelError(
+          'EDIT_CONTEXT_CHANGED',
+          'The image editor branch changed before submission.'
+        )
     }
   }
   const authorizeTask = async (
-    task: Pick<ImageTaskStart, 'projectId' | 'sessionId' | 'frameId' | 'branchId'>
+    task: Pick<ImageTaskStart, 'id' | 'projectId' | 'sessionId' | 'frameId' | 'branchId'>
   ): Promise<void> => {
-    await authorize(task)
-    const session = await readSession(task.projectId, task.sessionId)
+    const session = await readSession(task)
     if (
-      !session?.conversationGraph?.frames.some(({ id }) => id === task.frameId) ||
+      !session.conversationGraph?.frames.some(({ id }) => id === task.frameId) ||
       !session.conversationGraph.branches.some(
         ({ id, agentFrameId }) => id === task.branchId && agentFrameId === task.frameId
       )
     )
-      throw new Error('The image task branch is unavailable.')
+      throw new ImageTaskIntegrityError([task.id])
   }
   return modules.add(undefined, () => {
     const prepare = async (request: ImageTaskStart) => {
@@ -75,15 +97,21 @@ export async function composeImageTasks({
         inputFileVersionId: source.sourceVersionId,
         expectedSourceFileId: source.sourceFileId
       })
-      if (
-        !input ||
-        input.sourceSessionId !== source.sourceSessionId ||
-        input.sizeBytes > MAX_IMAGE_BYTES
-      )
-        throw new Error('Image task source Version is unavailable.')
-      const session = await readSession(request.projectId, request.sessionId)
-      const rootFrameId = session!.conversationGraph!.rootFrameId
-      return async (signal: AbortSignal, onStarted: () => Promise<void>) => {
+      if (!input || input.sourceSessionId !== source.sourceSessionId)
+        throw new ImageModelError('SOURCE_UNAVAILABLE', 'Image task source Version is unavailable.')
+      if (input.sizeBytes > MAX_IMAGE_BYTES)
+        throw new ImageModelError(
+          'SOURCE_LIMIT_EXCEEDED',
+          'Image task source Version exceeds the size limit.'
+        )
+      const session = await readSession(request, request)
+      const rootFrameId = session.conversationGraph?.rootFrameId
+      if (!rootFrameId)
+        throw new ImageModelError('EDIT_CONTEXT_CHANGED', 'Image task conversation is unavailable.')
+      return async (
+        signal: AbortSignal,
+        onStarted: NonNullable<ImageModelRequest['onStarted']>
+      ) => {
         await authorizeTask(request)
         const publishResult = async (result: ImageModelResult): Promise<ImageTaskResult> => {
           // A paid result must never be lost to a chat turn closing or a late cancellation.

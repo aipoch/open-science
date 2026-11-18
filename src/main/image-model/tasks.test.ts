@@ -1,10 +1,16 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import * as durableFiles from '@aipoch/durable-files'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ImageTaskOwner } from './tasks'
 import { ImageModelError } from './contract'
-import { readStoredImageTask, readStoredImageTasks, writeStoredImageTask } from './stored-tasks'
+import {
+  readStoredImageTask,
+  readStoredImageTasks,
+  withImageTaskSnapshot,
+  writeStoredImageTask
+} from './stored-tasks'
 import * as storedTasks from './stored-tasks'
 import {
   ImageTaskIntegrityError,
@@ -75,10 +81,14 @@ async function fixture(
   cleanup.push(() => rm(root, { recursive: true, force: true }))
   let tail = Promise.resolve()
   const prepare = vi.fn(
-    async () => async (signal: AbortSignal, onStarted?: () => Promise<void>) => {
-      await onStarted?.()
-      return execute(signal)
-    }
+    async () =>
+      async (
+        signal: AbortSignal,
+        onStarted?: (model: { provider: string; model: string }) => Promise<void>
+      ) => {
+        await onStarted?.({ provider: 'Test image service', model: 'test-image-model' })
+        return execute(signal)
+      }
   )
   const verifyResults = vi.fn<
     (tasks: readonly import('../../shared/image-task').ImageTask[]) => Promise<void>
@@ -200,6 +210,78 @@ it('waits for admissions during shutdown and never executes their provider reque
   expect(await readStoredImageTasks(root, input)).toEqual([])
 })
 
+it('finds an old unconfirmed task by exact source and owner without executing it', async () => {
+  const execute = vi.fn(async () => output)
+  const recover = vi.fn(async () => undefined)
+  const { owner, root } = await fixture(execute, recover)
+  const input = request()
+  const old = { ...input, state: 'outcome-unknown', createdAt: 1, updatedAt: 1 } as const
+  await writeStoredImageTask(root, old)
+  const folder = join(root, 'artifacts/project/session/.image-tasks')
+  await Promise.all(
+    Array.from({ length: 256 }, (_, index) => {
+      const id = crypto.randomUUID()
+      return writeFile(
+        join(folder, `${id}.json`),
+        JSON.stringify({
+          ...old,
+          id,
+          branchId: 'another',
+          createdAt: index + 3,
+          state: 'cancelled'
+        })
+      )
+    })
+  )
+  const scope = { projectId: input.projectId, sessionId: input.sessionId }
+  const recent = await owner.list(scope)
+  expect(recent.some(({ id }) => id === input.id)).toBe(false)
+  const recovery = {
+    frameId: input.frameId,
+    branchId: input.branchId,
+    sourceVersionId: input.edit.source.sourceVersionId
+  }
+  const read = vi.spyOn(durableFiles, 'readFileWithinLimit')
+  try {
+    await expect(owner.list({ ...scope, recovery })).resolves.toEqual([old])
+    expect(read).toHaveBeenCalledExactlyOnceWith(join(folder, `${old.id}.json`), 512 * 1024)
+    await expect(
+      owner.list({ ...scope, recovery: { ...recovery, frameId: 'other-frame' } })
+    ).resolves.toEqual([])
+    expect(read).toHaveBeenCalledOnce()
+  } finally {
+    read.mockRestore()
+  }
+  await expect(
+    owner.list({ ...scope, recovery: { ...recovery, branchId: 'another' } })
+  ).resolves.toEqual(recent)
+  const newest = {
+    ...input,
+    id: crypto.randomUUID(),
+    state: 'succeeded',
+    createdAt: 2,
+    updatedAt: 2,
+    result: output
+  } as const
+  await writeStoredImageTask(root, newest)
+  const otherSource = {
+    ...newest,
+    id: crypto.randomUUID(),
+    createdAt: 3,
+    edit: {
+      ...newest.edit,
+      source: { ...newest.edit.source, sourceVersionId: 'another-version' }
+    }
+  }
+  await writeStoredImageTask(root, otherSource)
+  const options = { limit: 1, recovery, onInvalid: vi.fn() }
+  await expect(readStoredImageTasks(root, scope, options)).resolves.toEqual([otherSource, newest])
+  await expect(readStoredImageTasks(root, scope, options)).resolves.toEqual([otherSource, newest])
+  expect(options.onInvalid).not.toHaveBeenCalled()
+  expect(recover).not.toHaveBeenCalled()
+  expect(execute).not.toHaveBeenCalled()
+})
+
 it.each([
   ['QUOTA_EXCEEDED', 'failed'],
   ['CANCELLED', 'cancelled'],
@@ -239,6 +321,24 @@ it('isolates a damaged history record for browsing while keeping export validati
     1
   )
   await expect(readStoredImageTasks(root, input)).rejects.toThrow()
+})
+
+it('invalidates an export snapshot when an existing image task file changes in place', async () => {
+  const { root } = await fixture(async () => output)
+  const task = {
+    ...request(),
+    prompt: 'alpha',
+    state: 'cancelled' as const,
+    createdAt: 1,
+    updatedAt: 1
+  }
+  await writeStoredImageTask(root, task)
+  await withImageTaskSnapshot(async () => {
+    expect(await readStoredImageTasks(root, task)).toMatchObject([{ prompt: 'alpha' }])
+    const path = join(root, 'artifacts/project/session/.image-tasks', `${task.id}.json`)
+    await writeFile(path, JSON.stringify({ ...task, prompt: 'bravo' }))
+    expect(await readStoredImageTasks(root, task)).toMatchObject([{ prompt: 'bravo' }])
+  })
 })
 
 it('marks an interrupted waiting request cancelled instead of suggesting a submitted provider request', async () => {
@@ -405,4 +505,39 @@ it('isolates invalid result references without mutating stored success or hiding
   await expect(owner.list(scope, true)).rejects.toThrow('integrity')
   verifyResults.mockRejectedValue(new Error('database unavailable'))
   await expect(owner.list(scope)).rejects.toThrow('database unavailable')
+})
+
+it('keeps healthy history visible when a single interrupted result cannot be recovered', async () => {
+  const input = request()
+  const recoveryError = new ImageTaskIntegrityError([input.id])
+  const recover = vi.fn<() => Promise<ImageTaskResult | undefined>>()
+  recover.mockRejectedValue(recoveryError)
+  const { root, owner, prepare } = await fixture(async () => output, recover)
+  const scope = { projectId: input.projectId, sessionId: input.sessionId }
+  await writeStoredImageTask(root, { ...input, state: 'running', createdAt: 1, updatedAt: 1 })
+  const healthyId = crypto.randomUUID()
+  await writeStoredImageTask(root, {
+    ...input,
+    id: healthyId,
+    state: 'succeeded',
+    result: output,
+    createdAt: 2,
+    updatedAt: 2
+  })
+
+  const page = await owner.list({ ...scope, history: { branchId: input.branchId } })
+  expect(page).toMatchObject([
+    { id: healthyId, state: 'succeeded' },
+    { id: input.id, state: 'failed', error: { code: 'SOURCE_UNAVAILABLE' } }
+  ])
+  expect((await readStoredImageTask(root, input))?.state).toBe('running')
+  await expect(owner.list(scope, true)).rejects.toThrow(input.id)
+  recover.mockRejectedValueOnce(new Error('database unavailable'))
+  await expect(owner.list(scope)).rejects.toThrow('database unavailable')
+  recover.mockResolvedValueOnce(output)
+  await expect(owner.get({ ...scope, id: input.id })).resolves.toMatchObject({
+    state: 'succeeded',
+    result: output
+  })
+  expect(prepare).not.toHaveBeenCalled()
 })

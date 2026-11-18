@@ -65,8 +65,9 @@ describe('image MCP server', () => {
           Object.entries(preset.operations[operation]?.options ?? {})
             .filter(
               ([key, spec]) =>
-                ['size', 'aspect_ratio', 'area', 'quality', 'output_format'].includes(key) ||
-                spec.required
+                ['size', 'aspect_ratio', 'area', 'quality', 'output_format', 'background'].includes(
+                  key
+                ) || spec.required
             )
             .map(([key]) => key)
         )
@@ -271,7 +272,12 @@ describe('image MCP server', () => {
   })
 
   it('retains a safe provider failure in the MCP text contract', async () => {
-    const imageError = { code: 'QUOTA_EXCEEDED', httpStatus: 429 }
+    const imageError = {
+      code: 'QUOTA_EXCEEDED',
+      httpStatus: 429,
+      providerCode: 'SetLimitExceeded',
+      requestId: '31f808fd-8eef-9004-b128-deaf00000000'
+    }
     vi.mocked(fetchLocalRpc).mockResolvedValue(
       Response.json(
         { error: { code: imageError.code, message: 'Quota exhausted.', imageError } },
@@ -354,7 +360,7 @@ describe('image MCP server', () => {
       args: ['/app/out/main/index.js', IMAGE_MCP_SERVER_ARG],
       env: [
         ...nodeRuntimeEnvironmentEntries(),
-        { name: 'OPEN_SCIENCE_IMAGE_PRESET_ID', value: 'minimax-h3/official' },
+        { name: 'OPEN_SCIENCE_IMAGE_PRESET_ID', value: environment.presetId },
         { name: 'OPEN_SCIENCE_IMAGE_PROJECT_ID', value: 'project-a' },
         { name: 'OPEN_SCIENCE_IMAGE_SESSION_ID', value: 'session-a' },
         { name: 'OPEN_SCIENCE_IMAGE_CURRENT_RUN_FILE', value: '/tmp/current-run.json' },

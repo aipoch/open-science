@@ -1158,6 +1158,7 @@ const archiveRuntime = (
     'reviewerProjectRuntime',
     'computeJobActivityRef',
     'runtimeRef',
+    'imageTasks',
     script
   )(
     { current: { hasForParent: hasSideChat } },
@@ -1165,7 +1166,8 @@ const archiveRuntime = (
     detectExport,
     { isProjectBusy: () => false },
     { current: jobs },
-    {}
+    {},
+    { isBusy: () => false }
   )
 }
 

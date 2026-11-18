@@ -64,7 +64,9 @@ credential-storage mode and never include credential references in renderer snap
 
 Image-generation token measurements add the `image-generation` auxiliary usage source.
 Migration `0060_image_models` updates the usage and Artifact version constraints in one transaction.
-It preserves historical rows, indexes and foreign keys. The migration
+The earlier development ledger ending at `0059_image_models` is recognized by its exact checksum and prefix.
+It upgrades through `0059_session_history` and `0060_image_models` while preserving usage rows and session history.
+The image migration preserves historical rows, indexes and foreign keys. The migration
 uses the existing retained-backup policy. No prompt text or image bytes are stored in this table.
 Older application manifests reject the upgraded database with `database_newer_than_app`;
 returning to an older build requires restoring a compatible pre-upgrade backup. Image provenance

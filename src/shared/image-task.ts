@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { imageModelErrorSchema } from './image-model-error'
+import { imageModelErrorSchema, type ImageErrorDetail } from './image-model-error'
 import { imageEditSnapshotSchema } from './image-edit-contract'
 
 const identity = z
@@ -25,13 +25,28 @@ export const imageTaskListSchema = imageTaskScopeSchema
           .optional()
       })
       .strict()
+      .optional(),
+    recovery: z
+      .object({ frameId: identity, branchId: identity, sourceVersionId: identity })
+      .strict()
       .optional()
   })
   .strict()
+  .refine(({ history, recovery }) => !history || !recovery)
 export type ImageTaskList = z.infer<typeof imageTaskListSchema>
+export const matchesImageTaskSource = (
+  task: Pick<ImageTask, 'frameId' | 'branchId'> & {
+    edit: { source: Pick<ImageTask['edit']['source'], 'sourceVersionId'> }
+  },
+  source: NonNullable<ImageTaskList['recovery']>
+): boolean =>
+  task.frameId === source.frameId &&
+  task.branchId === source.branchId &&
+  task.edit.source.sourceVersionId === source.sourceVersionId
+
 export class ImageTaskIntegrityError extends Error {
   constructor(readonly taskIds: readonly string[]) {
-    super('Image task output integrity could not be verified.')
+    super(`Image task integrity could not be verified: ${taskIds.join(', ')}.`)
     this.name = 'ImageTaskIntegrityError'
   }
 }
@@ -70,12 +85,18 @@ export const imageTaskResultSchema = z
   })
   .strict()
 export type ImageTaskResult = z.infer<typeof imageTaskResultSchema>
+const imageTaskExecutionModelSchema = z
+  .object({ provider: z.string().min(1).max(128).optional(), model: z.string().min(1).max(256) })
+  .strict()
+export type ImageTaskExecutionModel = z.infer<typeof imageTaskExecutionModelSchema>
+
 export const imageTaskSchema = z
   .object({
     ...imageTaskStartSchema.shape,
     state: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'outcome-unknown']),
     createdAt: z.number().finite(),
     updatedAt: z.number().finite(),
+    executionModel: imageTaskExecutionModelSchema.optional(),
     error: imageModelErrorSchema.optional(),
     result: imageTaskResultSchema.optional()
   })
@@ -96,5 +117,6 @@ export const imageTaskSchema = z
       ctx.addIssue({ code: 'custom', message: 'Invalid image task.' })
   })
 export type ImageTask = z.infer<typeof imageTaskSchema>
+export type ImageTaskStartResult = ImageTask | { error: ImageErrorDetail }
 export const imageTaskIsActive = (task: Pick<ImageTask, 'state'>): boolean =>
   task.state === 'queued' || task.state === 'running'

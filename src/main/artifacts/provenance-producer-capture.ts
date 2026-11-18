@@ -44,6 +44,9 @@ import { readNativeEvidence } from './execution-evidence-log'
 import { sealArtifactAnalysisRevision } from './provenance-analysis-revision'
 
 const CONNECTOR_ARGUMENTS_MAX_BYTES = 64 * 1024
+// Image prompts allow 32,000 characters; JSON escaping can require six bytes per character.
+const connectorArgumentsLimit = (connectorId: string): number =>
+  connectorId === 'image-model' ? 256 * 1024 : CONNECTOR_ARGUMENTS_MAX_BYTES
 const CONNECTOR_IDENTITY_MAX_LENGTH = 256
 const MAX_GRAPH_ACTIVITY_COUNT = 256
 const MAX_GRAPH_SOURCE_BYTES = 16 * 1024 * 1024
@@ -81,7 +84,7 @@ const prepareConnectorExecution = (
     throw new Error('Connector normalized arguments must be finite canonical JSON values.')
   }
   const serialized = canonicalJson(producer.normalizedArguments as CanonicalJson)
-  if (Buffer.byteLength(serialized, 'utf8') > CONNECTOR_ARGUMENTS_MAX_BYTES) {
+  if (Buffer.byteLength(serialized, 'utf8') > connectorArgumentsLimit(producer.connectorId)) {
     throw new Error('Connector normalized arguments exceed the provenance evidence limit.')
   }
   return {
@@ -105,7 +108,7 @@ const connectorEvidenceIsValid = (evidence: ArtifactVersionEvidence): boolean =>
   }
   const serialized = canonicalJson(execution.normalized_arguments as CanonicalJson)
   return (
-    Buffer.byteLength(serialized, 'utf8') <= CONNECTOR_ARGUMENTS_MAX_BYTES &&
+    Buffer.byteLength(serialized, 'utf8') <= connectorArgumentsLimit(producer.connector_id) &&
     sha256(serialized) === execution.arguments_checksum &&
     execution.arguments_checksum === producer.arguments_checksum
   )

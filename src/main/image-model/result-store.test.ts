@@ -86,12 +86,22 @@ it('stores only request metadata and replays published Version bytes after resta
     code: 'INVALID_REQUEST'
   })
   await writeFile(content, output.bytes)
-  await store.published(context, output, { artifactId: 'artifact', versionId: 'version' })
+  const published = {
+    artifactId: 'artifact',
+    versionId: 'version',
+    versionNumber: 2,
+    size: output.bytes.length
+  }
+  await store.published(context, output, published)
   const [name] = await readdir(directory)
   expect(JSON.parse(await readFile(join(directory, name), 'utf8'))).toMatchObject({
     published: { artifactId: 'artifact', versionId: 'version' }
   })
   expect(JSON.parse(await readFile(join(directory, name), 'utf8')).bytes).toBeUndefined()
+  expect(JSON.parse(await readFile(join(directory, name), 'utf8')).published).toEqual({
+    artifactId: 'artifact',
+    versionId: 'version'
+  })
   await expect(createStore().recover(context)).resolves.toEqual(output)
   expect(openVersion).toHaveBeenCalledWith(context, {
     artifactId: 'artifact',

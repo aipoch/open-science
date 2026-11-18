@@ -240,17 +240,16 @@ export function ImageEditHistory({
     node: ImageHistoryNode,
     isSelected: boolean,
     select: () => void,
-    edit: () => void,
-    resultNumber?: number
+    edit: () => void
   ): React.JSX.Element => (
     <HistoryTile
       item={node.item}
       label={
-        resultNumber === undefined || !complete
-          ? node.parentId
+        node.item.versionNumber !== undefined
+          ? `v${node.item.versionNumber}`
+          : node.parentId
             ? t('Result')
             : t('Source image')
-          : t('Result {{number}}', { number: resultNumber })
       }
       selected={isSelected}
       onClick={select}

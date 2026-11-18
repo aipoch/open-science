@@ -6,6 +6,7 @@ import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/applica
 import { createProjectDbClient } from '../projects/prisma-client'
 import {
   MIGRATION_MANIFEST,
+  type MigrationManifestEntry,
   migrateApplicationDatabase,
   migrateApplicationDatabaseWithManifest,
   verifyCurrentApplicationSchema
@@ -18,10 +19,10 @@ afterEach(async () => {
   await client?.$disconnect()
   if (root) await rm(root, { recursive: true, force: true })
 })
-async function setup(): Promise<void> {
+async function setup(manifest: readonly MigrationManifestEntry[] = historical): Promise<void> {
   root = await mkdtemp(join(tmpdir(), 'image-usage-migration-'))
   client = createProjectDbClient(root)
-  await createDatabaseAtReleasedManifest(client, historical)
+  await createDatabaseAtReleasedManifest(client, manifest)
 }
 const insert = (source: string, event = source): Promise<number> =>
   client.$executeRawUnsafe(
@@ -101,4 +102,38 @@ it('rolls back without dropping unknown historical columns or committing the new
     )
   ).toEqual([])
   await expect(insert('image-generation')).rejects.toThrow('CHECK')
+})
+
+it('resumes a development image database upgrade between the canonical history and image migrations', async () => {
+  const image = MIGRATION_MANIFEST.find(({ id }) => id === '0060_image_models')!
+  await setup([
+    ...historical.filter(({ id }) => id <= '0058_session_schedules'),
+    {
+      ...image,
+      id: '0059_image_models',
+      checksum: '1e37bf4d313b2d1f559695d9fb2bf3543fac95c0fb2046ce14e836b3b729e23e'
+    }
+  ])
+  await insert('image-generation')
+  const db = { databasePath: join(root, 'open-science.db') }
+  await expect(
+    migrateApplicationDatabase(client, {
+      ...db,
+      onProgress: (progress) => {
+        if (progress.phase === 'migrating' && progress.migrationId === image.id)
+          throw new Error('simulated restart')
+      }
+    })
+  ).rejects.toThrow('simulated restart')
+  expect(
+    await client.$queryRawUnsafe('SELECT id FROM "_open_science_migrations" WHERE id >= ?', '0059')
+  ).toEqual([{ id: '0059_session_history' }])
+  await expect(migrateApplicationDatabase(client, db)).resolves.toMatchObject({
+    applied: [image.id]
+  })
+  expect(await client.$queryRawUnsafe('SELECT source FROM "SessionAuxiliaryTurnUsage"')).toEqual([
+    { source: 'image-generation' }
+  ])
+  expect(await client.$queryRawUnsafe('SELECT * FROM "SessionHistoryIndex"')).toEqual([])
+  await expect(migrateApplicationDatabase(client, db)).resolves.toMatchObject({ applied: [] })
 })

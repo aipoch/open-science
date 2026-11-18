@@ -6,10 +6,12 @@ import {
 import type {
   ImageTask,
   ImageTaskStart,
-  ImageTaskScope,
+  ImageTaskList,
+  ImageTaskStartResult,
   ImageTaskIdentity
 } from '../shared/image-task'
 import type { ImageTaskOwner } from './image-model/tasks'
+import { ImageModelError } from './image-model/contract'
 import type { LocalModelSnapshot } from '../shared/local-models'
 import type {
   ResearchVideoPresentationRequest,
@@ -477,7 +479,7 @@ const dataContentApplicationCommands = Object.freeze({
   imageTaskStart: defineApplicationCommand<
     'image-tasks:start',
     readonly [request: ImageTaskStart],
-    ImageTask
+    ImageTaskStartResult
   >('image-tasks:start'),
   imageTaskGet: defineApplicationCommand<
     'image-tasks:get',
@@ -486,7 +488,7 @@ const dataContentApplicationCommands = Object.freeze({
   >('image-tasks:get'),
   imageTaskList: defineApplicationCommand<
     'image-tasks:list',
-    readonly [request: ImageTaskScope],
+    readonly [request: ImageTaskList],
     ImageTask[]
   >('image-tasks:list'),
   imageTaskCancel: defineApplicationCommand<
@@ -1109,9 +1111,14 @@ const registerDataContentApplicationCommands = (
           invocation.callerContext.clientId
         )
       },
-      'image-tasks:start': (invocation) => {
+      'image-tasks:start': async (invocation) => {
         if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
-        return dependencies.imageTasks.start(invocation.args[0])
+        try {
+          return await dependencies.imageTasks.start(invocation.args[0])
+        } catch (error) {
+          if (!(error instanceof ImageModelError)) throw error
+          return { error: error.detail }
+        }
       },
       'image-tasks:get': (invocation) => {
         if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')

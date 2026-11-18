@@ -53,6 +53,13 @@ export const IMAGE_VENDOR_PRESETS = {
 } as const satisfies Record<string, ImageModelPresetId>
 export type ImageVendorId = keyof typeof IMAGE_VENDOR_PRESETS
 
+// Bailian's OpenAI-compatible image endpoint can be scoped to an official workspace.
+export const isQwenWorkspaceBaseUrl = (url: string | undefined): url is string =>
+  !!url &&
+  /^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:cn-beijing|cn-hongkong|ap-southeast-1|us-east-1|eu-central-1|ap-northeast-1)\.maas\.aliyuncs\.com\/compatible-mode\/v1\/?$/.test(
+    url
+  )
+
 // A display catalog is independent of configured accounts; credentials never enter this object.
 export const IMAGE_VENDOR_CATALOG = Object.entries(IMAGE_VENDOR_PRESETS).map(([id, presetId]) => {
   const vendor = getProviderDefinition(id)!

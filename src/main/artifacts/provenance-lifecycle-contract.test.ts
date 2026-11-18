@@ -777,16 +777,50 @@ it('publishes an image task without a prompt and recovers its result without adv
       normalizedArguments: { imageTaskId: taskId }
     }
   }
-  const output = await value.repository.writeAppGeneratedVersion(request)
+  const interrupted = new ArtifactProvenanceRepository({
+    ...value.repositoryOptions,
+    durability: {
+      syncFile: async (path) => {
+        if (basename(path) === 'evidence.json') throw new Error('simulated staging write failure')
+      },
+      syncDirectory: async () => {}
+    }
+  })
+  await expect(interrupted.writeAppGeneratedVersion(request)).rejects.toThrow('simulated staging')
+  const output = await value.client.artifactVersion
+    .findUniqueOrThrow({
+      where: { writeOperationId: `artifact-app-write-${taskId}` },
+      select: { id: true, artifactId: true, state: true }
+    })
+    .then(({ id, ...row }) => ({ ...row, versionId: id }))
+  expect(output.state).toBe('staging')
   const pending = { projectId: 'project-1', sessionId: 'session-1', runId: taskId }
   expect(await value.compatibilityRepository.listPendingRunFiles(pending)).toHaveLength(1)
-  const published = await value.repository.publishImageTaskVersion({
+  const recovery = {
     projectId: 'project-1',
     appSessionId: 'session-1',
     taskId,
-    versionId: output.versionId,
     sourceVersionId: 'upload-source'
-  })
+  }
+  const stagedPath = join(
+    value.storageRoot,
+    'artifacts',
+    recovery.projectId,
+    recovery.appSessionId,
+    '.provenance',
+    '.staging',
+    'versions',
+    output.versionId,
+    'content'
+  )
+  const stagedBytes = await readFile(stagedPath)
+  await writeFile(stagedPath, Buffer.alloc(stagedBytes.length))
+  await expect(value.repository.recoverImageTaskVersion(recovery)).rejects.toThrow(
+    'staging content is corrupt'
+  )
+  await writeFile(stagedPath, stagedBytes)
+  const published = (await value.repository.recoverImageTaskVersion(recovery))!
+  expect(published.versionId).toBe(output.versionId)
   expect(published.isPublished).toBe(true)
   expect(await value.compatibilityRepository.listPendingRunFiles(pending)).toEqual([])
   expect(sha256(await readFile(published.path))).toBe(published.checksum)
@@ -835,6 +869,7 @@ it('publishes an image task without a prompt and recovers its result without adv
     ...request,
     artifactRunId: laterId,
     imageTaskId: laterId,
+    content: createPngBytes('distinct later result').toString('base64'),
     producer: {
       ...request.producer,
       invocationId: laterId,
@@ -874,32 +909,40 @@ it('publishes an image task without a prompt and recovers its result without adv
     expectedSourceFileId: published.artifactId
   })
   expect(input).toBeDefined()
+
   for (const filename of ['image.png', 'different-image.png']) {
-    const result = await value.repository.writeAppGeneratedVersion({
+    const conversationRequest = {
       ...request,
       ...versionRequest(durableSession(value.storageRoot)),
       filename,
       writeOperationId: `conversation-edit-${filename}`,
       imageTaskId: undefined,
       producer: { ...request.producer, normalizedArguments: {}, inputFiles: [input!] }
-    })
+    }
+    if (filename === 'different-image.png') {
+      await expect(interrupted.writeAppGeneratedVersion(conversationRequest)).rejects.toThrow(
+        'simulated staging'
+      )
+    } else {
+      await value.repository.writeAppGeneratedVersion(conversationRequest)
+    }
     const row = await value.client.artifactVersion.findUniqueOrThrow({
-      where: { id: result.versionId },
+      where: { writeOperationId: conversationRequest.writeOperationId },
       include: { inputs: true }
     })
     expect(row.basedOnVersionId).toBe(filename === 'image.png' ? published.versionId : null)
+    expect(row.state).toBe(filename === 'image.png' ? 'pending' : 'staging')
     const recheck = {
-      ...versionRequest(durableSession(value.storageRoot)),
-      writeOperationId: `conversation-edit-${filename}`,
+      ...conversationRequest,
       invocationId: request.producer.invocationId,
       promptMessageId: 'prompt-1'
     }
-    await expect(value.repository.readImageInvocationVersion(recheck)).resolves.toMatchObject({
-      descriptor: { versionId: result.versionId }
-    })
     await expect(
       value.repository.readImageInvocationVersion({ ...recheck, messageBranchId: 'other-branch' })
     ).resolves.toBeUndefined()
+    await expect(value.repository.readImageInvocationVersion(recheck)).resolves.toMatchObject({
+      descriptor: { versionId: row.id }
+    })
     expect(row.inputs).toEqual([
       expect.objectContaining({ inputFileVersionId: published.versionId })
     ])
@@ -1015,10 +1058,73 @@ it('publishes an image task without a prompt and recovers its result without adv
     ]
   })
 
+  // Editing v1 after v2 exists must publish a new current version, without flattening lineage.
+  const branches = []
+  for (const label of ['older branch', 'newest branch']) {
+    const id = crypto.randomUUID()
+    const result = await value.repository.writeAppGeneratedVersion({
+      ...request,
+      artifactRunId: id,
+      imageTaskId: id,
+      content: createPngBytes(label).toString('base64'),
+      producer: {
+        ...request.producer,
+        invocationId: id,
+        normalizedArguments: { imageTaskId: id },
+        inputFiles: [input!]
+      }
+    })
+    branches.push({ id, result })
+  }
+  const newest = branches[1]!.result
+  // A late completion/retry of the older branch must not roll Files back.
+  for (const branch of [...branches].reverse()) {
+    await value.repository.publishImageTaskVersion({
+      ...recovery,
+      taskId: branch.id,
+      versionId: branch.result.versionId,
+      sourceVersionId: published.versionId
+    })
+  }
+  await expect(
+    value.client.artifactLineage.findUniqueOrThrow({ where: { id: published.artifactId } })
+  ).resolves.toMatchObject({ currentVersionId: newest.versionId })
+  await expect(
+    value.client.artifactVersion.findUniqueOrThrow({ where: { id: newest.versionId } })
+  ).resolves.toMatchObject({ basedOnVersionId: published.versionId })
+  const catalog = new ManagedFileIndexRepository(
+    async () => value.client,
+    value.storageRoot,
+    new ManagedFileVersionService({
+      storageRoot: value.storageRoot,
+      getClient: async () => value.client
+    }),
+    new UploadRepository(value.storageRoot, { getClient: async () => value.client })
+  )
+  await catalog.syncSession(durableSession(value.storageRoot))
+  await expect(
+    value.client.managedFile.findFirstOrThrow({
+      where: { source: 'artifact', sourceFileId: newest.artifactId }
+    })
+  ).resolves.toMatchObject({
+    sourceVersionId: newest.versionId,
+    checksum: newest.checksum,
+    sizeBytes: BigInt(newest.size)
+  })
+
   const snapshots = new ProvenanceMessageSnapshotRepository(value.repositoryOptions)
   const deletion = await snapshots.prepareSessionDeletion(durableSession(value.storageRoot))
   expect(deletion.kind).toBe('retained')
   await snapshots.completeSessionDeletion(deletion)
-  expect(await value.client.artifactVersion.count()).toBe(37)
+  expect(await value.client.artifactVersion.count()).toBe(39)
   expect(sha256(await readFile(published.path))).toBe(published.checksum)
+  await unlink(later.path)
+  await expect(
+    value.repository.recoverImageTaskVersion({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      taskId: laterId,
+      sourceVersionId: output.versionId
+    })
+  ).rejects.toMatchObject({ name: 'ImageTaskIntegrityError', taskIds: [laterId] })
 })

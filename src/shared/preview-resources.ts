@@ -49,7 +49,8 @@ export type ManagedPreviewResource = {
   // Optional SHA-256 from the main-owned immutable content lease, never a PDF.js fingerprint.
   // Transient evidence for this acquired resource; older responses may omit it.
   sourceChecksum?: string
-  // Original, oriented pixel dimensions, even when display bytes are downsampled.
+  // Original, oriented pixel dimensions for image previews, even when downsampled.
+  // Thumbnail requests report the thumbnail dimensions for renderer cache accounting.
   // Absent for non-images and for images whose header could not be parsed.
   width?: number
   height?: number

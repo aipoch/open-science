@@ -67,7 +67,14 @@ const getProjectFilePreviewCacheKey = ({
   source,
   artifact
 }: Pick<ProjectFilePreviewTarget, 'id' | 'path' | 'source' | 'artifact'>): string =>
-  JSON.stringify([source, id, path, artifact.size ?? null, artifact.mtimeMs ?? null])
+  JSON.stringify([
+    source,
+    id,
+    artifact.versionId,
+    path,
+    artifact.size ?? null,
+    artifact.mtimeMs ?? null
+  ])
 
 // Builds the source-neutral capability and source-specific read metadata used by File tiles.
 const createProjectFilePreviewTarget = (file: ProjectFileItem): ProjectFilePreviewTarget => {
@@ -120,6 +127,7 @@ const readProjectFilePreview = async (
         path: target.path
       }),
       fileId: target.fileId,
+      versionId: target.artifact.versionId,
       maxBytes:
         target.encoding === 'base64' ? ARTIFACT_IMAGE_PREVIEW_BYTES : ARTIFACT_PREVIEW_BYTES,
       encoding: target.encoding

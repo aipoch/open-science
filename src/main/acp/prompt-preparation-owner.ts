@@ -20,7 +20,7 @@ import type { ShellRuntimeBinding } from '../../shared/notebook'
 import { resolveFileTextBudget } from '../../shared/history-preamble'
 import type { NotebookPromptInput } from '../../shared/notebook'
 import { hasCurrentPageIntent, hasFullDocumentIntent } from '../../shared/pdf-preparation-scope'
-import type { UploadedAttachment } from '../../shared/uploads'
+import { imageAttachmentMimeType, type UploadedAttachment } from '../../shared/uploads'
 import type { ResolvedAgentBackend, SkillSelectorUsageObservation } from '../agent-framework/types'
 import type { NotebookHandoffContext } from '../notebook/session-read-model'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
@@ -57,7 +57,7 @@ type AcpPromptPreparationOwnerOptions = Readonly<{
   shellRuntimeBindingFor?: (sessionId: string) => ShellRuntimeBinding | undefined
   promptContent: Pick<AcpPromptContentOwner, 'prepare'>
   classificationImages: Pick<AcpClassificationImageLoader, 'load'>
-  imageInputCompatibility?: Pick<ImageInputCompatibilityPort, 'prepare'>
+  imageInputCompatibility?: ImageInputCompatibilityPort
   presentation: Pick<
     AcpSessionPresentationPolicy,
     'buildTurnPromptPrefix' | 'computeExecutionTargetReminder' | 'continuationText'
@@ -534,6 +534,17 @@ class AcpPromptPreparationOwner {
           })
         }
       }
+      const imageReferencesOnly =
+        input.tooling.images === true &&
+        input.backend.context.supportsImageInput === false &&
+        references.some(
+          (reference) =>
+            (reference.source === 'artifact' || reference.source === 'upload') &&
+            Boolean(reference.versionId) &&
+            Boolean(imageAttachmentMimeType(reference.name, reference.mimeType))
+        ) &&
+        !(await this.options.imageInputCompatibility?.isAvailable())
+      if (input.signal.aborted || !input.isCurrent()) return cancelPrepared()
       const prepared = await this.options.promptContent.prepare({
         appSessionId: input.request.sessionId,
         projectId: input.projectId,
@@ -547,6 +558,7 @@ class AcpPromptPreparationOwner {
         references,
         codexSkillInputs,
         skillImportEnabled: input.skillImportEnabled,
+        ...(imageReferencesOnly ? { imageReferencesOnly } : {}),
         imageCompatibilityRelay:
           input.backend.context.supportsImageInput === false &&
           this.options.imageInputCompatibility !== undefined,

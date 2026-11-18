@@ -3,7 +3,7 @@ import { exceedsDecodedImagePixelLimit, MAX_DECODED_IMAGE_PIXELS } from './raste
 
 export const MAX_PREVIEW_SOURCE_PIXELS = 64_000_000
 export const IMAGE_THUMBNAIL_EDGE = 192
-const MAX_SOURCE_BYTES = 50 * 1024 * 1024
+const MAX_SOURCE_BYTES = 64 * 1024 * 1024
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 const MAX_RETAINED_BYTES = 128 * 1024 * 1024
 const MAX_PENDING_CONVERSIONS = 9
@@ -47,9 +47,10 @@ export const resizeImagePreview = async (
   thumbnail = false
 ): Promise<ResizedImagePreview> => {
   const outputBudget = thumbnail ? 512 * 1024 : MAX_OUTPUT_BYTES
-  const sourceLimitMiB = thumbnail ? 64 : MAX_SOURCE_BYTES / (1024 * 1024)
-  if (size > sourceLimitMiB * 1024 * 1024)
-    throw new Error(`Image preview source exceeds the ${sourceLimitMiB} MiB limit.`)
+  if (size > MAX_SOURCE_BYTES)
+    throw new Error(
+      `Image preview source exceeds the ${MAX_SOURCE_BYTES / (1024 * 1024)} MiB limit.`
+    )
   // Keep one position available when a grid fills the queue with thumbnails.
   if (pending >= MAX_PENDING_CONVERSIONS - (thumbnail ? 1 : 0))
     throw new Error(IMAGE_PREVIEW_BUSY_MESSAGE)

@@ -42,6 +42,7 @@ describe('imageGenerate Artifact RPC', () => {
   it.each([
     ['image/png', undefined, 'generated-image.png'],
     ['image/jpeg', 'diagram.png', 'diagram.jpg'],
+    ['image/jpeg', 'diagram.JPEG', 'diagram.JPEG'],
     ['image/webp', 'diagram.jpg', 'diagram.webp']
   ] as const)(
     'publishes %s once with its actual file extension',
@@ -130,7 +131,12 @@ describe('imageGenerate Artifact RPC', () => {
         filename: expectedName,
         mimeType: mime,
         producer: {
-          normalizedArguments: { generatedImages: 1, parameters: { size: 'auto' } }
+          normalizedArguments: {
+            prompt: params.prompt,
+            imageServiceId: 'service-a',
+            generatedImages: 1,
+            parameters: { size: 'auto' }
+          }
         }
       })
       expect(first.payload.result).toMatchObject({

@@ -7,7 +7,9 @@ import {
   type ImageTaskList,
   imageTaskIdentitySchema,
   imageTaskIsActive,
+  matchesImageTaskSource,
   type ImageTask,
+  type ImageTaskExecutionModel,
   type ImageTaskStart,
   type ImageTaskScope,
   type ImageTaskIdentity,
@@ -28,6 +30,13 @@ const digest = ({
     .update(JSON.stringify({ id, projectId, sessionId, frameId, branchId, prompt, edit }))
     .digest('hex')
 
+const unavailableResult = (task: ImageTask): ImageTask => ({
+  ...task,
+  state: 'failed',
+  result: undefined,
+  error: { code: 'SOURCE_UNAVAILABLE' }
+})
+
 // One owner per Host. Network work never holds the Session mutation lock.
 export class ImageTaskOwner {
   private readonly active = new Map<
@@ -45,7 +54,12 @@ export class ImageTaskOwner {
       authorize(request: ImageTaskScope, start?: ImageTaskStart): Promise<void>
       prepare(
         request: ImageTaskStart
-      ): Promise<(signal: AbortSignal, onStarted: () => Promise<void>) => Promise<ImageTaskResult>>
+      ): Promise<
+        (
+          signal: AbortSignal,
+          onStarted: (model: ImageTaskExecutionModel) => Promise<void>
+        ) => Promise<ImageTaskResult>
+      >
       verifyResults(tasks: readonly ImageTask[]): Promise<void>
       recover?(task: ImageTask): Promise<ImageTaskResult | undefined>
       reportError(error: unknown): void
@@ -145,15 +159,33 @@ export class ImageTaskOwner {
         : {
             limit: request.history ? 32 : 256,
             history: request.history,
+            recovery: request.recovery,
             onInvalid: this.options.reportError
           }
     )
     const results = await Promise.all(
-      tasks.map(async (task) =>
-        imageTaskIsActive(task) || task.state === 'outcome-unknown'
-          ? ((await this.readTask({ ...scope, id: task.id })) ?? task)
-          : task
-      )
+      tasks.map(async (task) => {
+        if (!imageTaskIsActive(task) && task.state !== 'outcome-unknown') return task
+        // The editor displays this task and checks its result explicitly through Refresh.
+        if (
+          request.recovery &&
+          task.state === 'outcome-unknown' &&
+          matchesImageTaskSource(task, request.recovery)
+        )
+          return task
+        try {
+          return (await this.readTask({ ...scope, id: task.id })) ?? task
+        } catch (error) {
+          if (
+            complete ||
+            !(error instanceof ImageTaskIntegrityError) ||
+            !error.taskIds.includes(task.id)
+          )
+            throw error
+          this.options.reportError(error)
+          return unavailableResult(task)
+        }
+      })
     )
     try {
       await this.options.verifyResults(results)
@@ -163,16 +195,7 @@ export class ImageTaskOwner {
       if (complete || !(error instanceof ImageTaskIntegrityError)) throw error
       this.options.reportError(error)
       const invalid = new Set(error.taskIds)
-      return results.map((task) =>
-        invalid.has(task.id)
-          ? {
-              ...task,
-              state: 'failed' as const,
-              result: undefined,
-              error: { code: 'SOURCE_UNAVAILABLE' as const }
-            }
-          : task
-      )
+      return results.map((task) => (invalid.has(task.id) ? unavailableResult(task) : task))
     }
   }
   async start(raw: ImageTaskStart): Promise<ImageTask> {
@@ -226,10 +249,11 @@ export class ImageTaskOwner {
         const done = Promise.resolve()
           .then(async () => {
             try {
-              task.result = await execute(controller.signal, async () => {
+              task.result = await execute(controller.signal, async (model) => {
                 await this.options.mutate(task, async () => {
                   controller.signal.throwIfAborted()
                   await this.options.authorize(task)
+                  task.executionModel = model
                   task.state = 'running'
                   task.updatedAt = Date.now()
                   await this.write(task)

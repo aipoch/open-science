@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
+import { imageAttachmentMimeType } from '../../shared/uploads'
 import type { ImageErrorDetail, ImageModelErrorCode } from '../../shared/image-model-error'
+import type { ImageTaskExecutionModel } from '../../shared/image-task'
 import type { ImageEditSnapshot } from '../../shared/image-edit-contract'
 import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import type { ImageOperation, ImageOptionValue } from '../../shared/image-model-presets'
@@ -12,7 +14,8 @@ export class ImageModelError extends Error {
   constructor(
     readonly code: ImageModelErrorCode,
     message: string,
-    readonly httpStatus?: number
+    readonly httpStatus?: number,
+    readonly diagnostics?: Pick<ImageErrorDetail, 'providerCode' | 'requestId' | 'parameter'>
   ) {
     super(message)
     this.name = 'ImageModelError'
@@ -20,7 +23,8 @@ export class ImageModelError extends Error {
   get detail(): ImageErrorDetail {
     return {
       code: this.code,
-      ...(this.httpStatus === undefined ? {} : { httpStatus: this.httpStatus })
+      ...(this.httpStatus === undefined ? {} : { httpStatus: this.httpStatus }),
+      ...this.diagnostics
     }
   }
 }
@@ -37,7 +41,7 @@ export type ImageModelRequest = {
   options?: unknown
   // Already authorized by the Host caller; no renderer paths or remote input URLs.
   source?: Buffer | (() => Promise<Buffer>)
-  onStarted?: () => Promise<void>
+  onStarted?: (model: ImageTaskExecutionModel) => Promise<void>
   onResult?: (result: ImageModelResult) => Promise<{ artifactId: string; versionId: string }>
   sourceIdentity?: string
   sourceSizeBytes?: number
@@ -76,7 +80,10 @@ export function imageArtifactContent(
   const extension = extname(request.filename)
   const suffix = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp' }[result.mime]
   return {
-    filename: `${request.filename.slice(0, request.filename.length - extension.length)}${suffix}`,
+    filename:
+      imageAttachmentMimeType(extension) === result.mime
+        ? request.filename
+        : request.filename.slice(0, request.filename.length - extension.length) + suffix,
     content: result.bytes,
     mimeType: result.mime,
     producer: {
@@ -88,9 +95,11 @@ export function imageArtifactContent(
       ...(request.inputFiles ? { inputFiles: request.inputFiles } : {}),
       normalizedArguments: {
         operation: request.operation,
+        prompt: request.prompt,
         promptSha256:
           result.promptSha256 ?? createHash('sha256').update(request.prompt).digest('hex'),
         promptLength: result.promptLength ?? Array.from(request.prompt).length,
+        imageServiceId: result.serviceId,
         presetId: result.presetId,
         model: result.model,
         parameters: result.parameters,

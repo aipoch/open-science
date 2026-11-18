@@ -3,8 +3,9 @@ import { isDesktopRuntimeConnectionError } from '../../../../../shared/desktop-r
 import {
   imageTaskIsActive,
   type ImageTask,
-  type ImageTaskScope,
+  type ImageTaskList,
   type ImageTaskStart,
+  type ImageTaskStartResult,
   type ImageTaskIdentity
 } from '../../../../../shared/image-task'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -149,9 +150,10 @@ export function ImageEditingProvider({ children }: { children: ReactNode }): Rea
     },
     []
   )
-  const reloadTasks = useCallback(async (scope: ImageTaskScope): Promise<void> => {
-    const next = await window.api.imageTasks.list(scope)
+  const reloadTasks = useCallback(async (request: ImageTaskList): Promise<ImageTask[]> => {
+    const next = await window.api.imageTasks.list(request)
     setTasks((previous) => mergeTasks(previous, next))
+    return next
   }, [])
   const checkTask = useCallback(
     (scope: ImageTaskIdentity): Promise<ImageTask | undefined> => {
@@ -214,8 +216,8 @@ export function ImageEditingProvider({ children }: { children: ReactNode }): Rea
     [observation]
   )
   const startTask = useCallback(
-    async (request: ImageTaskStart): Promise<ImageTask> => {
-      let task: ImageTask
+    async (request: ImageTaskStart): Promise<ImageTaskStartResult> => {
+      let task: ImageTaskStartResult
       try {
         task = await window.api.imageTasks.start(request)
       } catch (error) {
@@ -228,7 +230,7 @@ export function ImageEditingProvider({ children }: { children: ReactNode }): Rea
         if (!admitted) throw error
         return admitted
       }
-      setTasks((previous) => mergeTasks(previous, [task]))
+      if ('state' in task) setTasks((previous) => mergeTasks(previous, [task]))
       return task
     },
     [checkTask]

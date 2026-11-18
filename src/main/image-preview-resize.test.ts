@@ -174,10 +174,16 @@ describe('bounded image preview conversion', () => {
     expect(pipeline.metadata).not.toHaveBeenCalled()
   })
 
-  it('rejects oversized encoded sources before reading them', async () => {
+  it('accepts the image generation byte budget and rejects oversized sources before reading', async () => {
     const { resizeImagePreview } = await import('./image-preview-resize')
+    const { MAX_IMAGE_BYTES } = await import('./image-model/contract')
+    const source = Buffer.alloc(MAX_IMAGE_BYTES)
+    for (const thumbnail of [false, true]) {
+      const preview = await resizeImagePreview(source.length, async () => source, thumbnail)
+      preview.release()
+    }
     const read = vi.fn()
-    await expect(resizeImagePreview(50 * 1024 * 1024 + 1, read)).rejects.toThrow(/50 MiB/)
+    await expect(resizeImagePreview(MAX_IMAGE_BYTES + 1, read)).rejects.toThrow(/64 MiB/)
     expect(read).not.toHaveBeenCalled()
   })
 

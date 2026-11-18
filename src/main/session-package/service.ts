@@ -1,4 +1,4 @@
-import { readStoredImageTasks } from '../image-model/stored-tasks'
+import { readStoredImageTasks, withImageTaskSnapshot } from '../image-model/stored-tasks'
 import { imageTaskIsActive, type ImageTaskScope, type ImageTask } from '../../shared/image-task'
 import { indexPortableEvidence } from '../artifacts/execution-evidence-log'
 import { ReviewRepository } from '../reviewer/repository'
@@ -666,7 +666,7 @@ export class SessionPackageService {
       const result = await withWorkingFileEvidenceRead(
         this.options.storageRoot,
         request.projectId,
-        () => this.exportSnapshot(request, path, options, diagnostic)
+        () => withImageTaskSnapshot(() => this.exportSnapshot(request, path, options, diagnostic))
       )
       diagnostic.complete()
       return result

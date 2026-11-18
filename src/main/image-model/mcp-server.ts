@@ -99,7 +99,7 @@ const optionSchema = (spec: ImageOptionSpec): z.ZodType => {
         .string()
         .max(32)
         .describe(
-          `Output size WIDTHxHEIGHT in pixels${spec.auto ? ', or auto' : ''}${spec.namedSizes?.length ? ', or ' + spec.namedSizes.join(', ') : ''}. Pixel area ${spec.minPixels}..${spec.maxPixels}${spec.maxRatio ? '; longest/shortest <= ' + spec.maxRatio : ''}. Do not combine explicit pixel size with aspect_ratio/area.`
+          `Output size WIDTHxHEIGHT in pixels${spec.auto ? ', or auto' : ''}${spec.namedSizes?.length ? ', or ' + spec.namedSizes.join(', ') : ''}. Pixel area ${spec.minPixels}..${spec.maxPixels}${spec.maxRatio ? ', longest/shortest <= ' + spec.maxRatio : ''}${spec.maxEdge ? ', longest edge <= ' + spec.maxEdge : ''}${spec.edgeMultiple ? ', both edges divisible by ' + spec.edgeMultiple : ''}.`
         )
       break
   }
@@ -109,7 +109,14 @@ const optionSchema = (spec: ImageOptionSpec): z.ZodType => {
 }
 
 // Keep the conversational contract small; the editor retains the full provider preset.
-const conversationalOptions = new Set(['size', 'aspect_ratio', 'area', 'quality', 'output_format'])
+const conversationalOptions = new Set([
+  'size',
+  'aspect_ratio',
+  'area',
+  'quality',
+  'output_format',
+  'background'
+])
 
 const imageOptionsSchema = (presetId: string | undefined, operation: ImageOperation): z.ZodType => {
   const specs = (presetId && getImageModelPreset(presetId)?.operations[operation]?.options) || {}
@@ -127,7 +134,11 @@ const imageOptionsSchema = (presetId: string | undefined, operation: ImageOperat
                   ? 'Resolution preset (MiniMax): 1K, 2K or 4K. This field is named area, not resolution. Omit for model default.'
                   : key === 'quality'
                     ? 'Image quality. Omit for model default.'
-                    : (field.description ?? 'Output setting; omit for model default.')
+                    : key === 'background'
+                      ? 'Transparent output requires PNG or WebP. Omit for model default.'
+                      : key === 'size' && 'aspect_ratio' in specs
+                        ? `${field.description} Explicit pixel size cannot be combined with aspect_ratio or area.`
+                        : (field.description ?? 'Output setting; omit for model default.')
               )
             ]
           })
@@ -276,16 +287,14 @@ const callImageRpc = async (
         ? (payload.error.imageError ?? { code: payload.error.code })
         : undefined
     )
+    const { code, httpStatus, ...diagnostics } = parsed.success ? parsed.data : {}
     throw new ImageModelError(
-      detail.includes('OUTCOME_UNKNOWN')
-        ? 'OUTCOME_UNKNOWN'
-        : parsed.success
-          ? parsed.data.code
-          : 'PROVIDER_ERROR',
+      detail.includes('OUTCOME_UNKNOWN') ? 'OUTCOME_UNKNOWN' : (code ?? 'PROVIDER_ERROR'),
       detail.includes('OUTCOME_UNKNOWN')
         ? `${detail} Do not start another generation. Recover only in this turn with idempotencyKey ${idempotencyKey}.`
         : detail,
-      parsed.success ? parsed.data.httpStatus : undefined
+      httpStatus,
+      diagnostics
     )
   }
   return payload.result

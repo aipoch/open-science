@@ -162,6 +162,7 @@ export const imageOptionLabels = (t: TFunction): Record<string, string> => ({
   aspect_ratio: t('Aspect ratio'),
   area: t('Resolution'),
   output_format: t('Output format'),
+  background: t('Image background'),
   output_compression: t('Compression'),
   seed: t('Seed'),
   quality: t('Image quality'),

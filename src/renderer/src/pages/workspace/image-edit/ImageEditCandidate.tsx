@@ -13,6 +13,7 @@ import type { ImageEditSnapshot } from '../../../../../shared/image-edit-contrac
 import { useCachedPreviewImage } from '../previews/useCachedPreviewImage'
 import { WorkspaceCollapsiblePanel } from '../WorkspaceCollapsiblePanel'
 import { Button } from '@/components/ui/button'
+import { imageLineageRequest } from './image-editor-state'
 
 export function ImageEditCandidate({
   item,
@@ -29,20 +30,12 @@ export function ImageEditCandidate({
   edit?: ImageEditSnapshot
   prompt?: string
 }): React.JSX.Element {
-  const container = useRef<HTMLDivElement>(null)
-  const [visible, setVisible] = useState(false)
-  useEffect(() => {
-    if (!container.current) return
-    const observer = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), {
-      rootMargin: '80px'
-    })
-    observer.observe(container.current)
-    return () => observer.disconnect()
-  }, [])
-  const image = useCachedPreviewImage(item, visible, false, true)
+  // This strip is already mounted in the editor viewport. Eagerly load its small thumbnails;
+  // IntersectionObserver can miss an initially visible item inside an independently scrolling
+  // overlay and leave a blank card until another layout pass.
+  const image = useCachedPreviewImage(item, true, false, true)
   return (
     <div
-      ref={container}
       className={`flex shrink-0 items-center gap-1 rounded-lg border p-1 ${selected ? 'border-primary bg-primary/5' : 'border-border-300/60'}`}
     >
       <Tooltip>
@@ -68,7 +61,7 @@ export function ImageEditCandidate({
         </TooltipTrigger>
         <TooltipContent side="top">{label}</TooltipContent>
       </Tooltip>
-      {edit ? <ImageEditDetails item={item} edit={edit} prompt={prompt} /> : null}
+      <ImageEditDetails key={item.selectedVersionId} item={item} edit={edit} prompt={prompt} />
     </div>
   )
 }
@@ -79,16 +72,42 @@ export function ImageEditDetails({
   prompt
 }: {
   item: PreviewFileItem
-  edit: ImageEditSnapshot
+  edit?: ImageEditSnapshot
   prompt?: string
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
-  const [details, setDetails] = useState<{ model: string; parameters: Record<string, unknown> }>()
+  const [details, setDetails] = useState<{
+    model?: string
+    prompt?: string
+    parameters: Record<string, unknown>
+  }>()
   const [detailsError, setDetailsError] = useState(false)
+  const [sourceVersion, setSourceVersion] = useState<{ id: string; number: number }>()
+  const source = edit?.source
+  const hasNoProvenance =
+    !item.artifactId || !item.projectId || !item.sessionId || !item.selectedVersionId
+  useEffect(() => {
+    if (!open || !source || sourceVersion?.id === source.sourceVersionId) return
+    let active = true
+    void window.api.artifacts
+      .getLineage(imageLineageRequest(source))
+      .then(unwrapProvenanceRead)
+      .then((lineage) => {
+        const version = [lineage?.selectedVersion, ...(lineage?.versions ?? [])].find(
+          (value) => value?.versionId === source.sourceVersionId
+        )
+        if (active && version)
+          setSourceVersion({ id: version.versionId, number: version.versionNumber })
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [open, source, sourceVersion])
   const labels = imageOptionLabels(t)
   useEffect(() => {
-    if (!open || !edit || details) return
+    if (!open || details || hasNoProvenance) return
     let active = true
     void window.api.artifacts
       .getVersionProvenance({
@@ -100,11 +119,24 @@ export function ImageEditDetails({
       .then(unwrapProvenanceRead)
       .then((value) => {
         if (!active) return
+        setDetailsError(false)
+        const producer = value?.evidence.producer
+        if (
+          producer?.state !== 'available' ||
+          !('kind' in producer) ||
+          producer.kind !== 'connector' ||
+          producer.connector_id !== 'image-model'
+        ) {
+          setDetails({ parameters: {} })
+          return
+        }
         const args = value?.evidence.connector_execution?.normalized_arguments
         if (!args || typeof args.model !== 'string') throw new Error('Image details unavailable.')
         const spec =
           typeof args.presetId === 'string'
-            ? getImageModelPreset(args.presetId as ImageModelPresetId)?.operations.edit
+            ? getImageModelPreset(args.presetId as ImageModelPresetId)?.operations[
+                producer.tool_id === 'generate_image' ? 'generate' : 'edit'
+              ]
             : undefined
         const parameters =
           args.parameters && typeof args.parameters === 'object'
@@ -115,8 +147,11 @@ export function ImageEditDetails({
                 )
               )
             : {}
-        setDetailsError(false)
-        setDetails({ model: args.model, parameters })
+        setDetails({
+          model: args.model,
+          prompt: typeof args.prompt === 'string' ? args.prompt : undefined,
+          parameters
+        })
       })
       .catch(() => {
         if (active) setDetailsError(true)
@@ -124,10 +159,20 @@ export function ImageEditDetails({
     return () => {
       active = false
     }
-  }, [open, edit, details, item.projectId, item.sessionId, item.artifactId, item.selectedVersionId])
+  }, [
+    open,
+    details,
+    hasNoProvenance,
+    item.projectId,
+    item.sessionId,
+    item.artifactId,
+    item.selectedVersionId
+  ])
   const [expanded, setExpanded] = useState(false)
   const [clipped, setClipped] = useState(false)
   const [parametersOpen, setParametersOpen] = useState(false)
+  const missingValue = detailsError ? '—' : details || hasNoProvenance ? t('Not recorded') : '…'
+  const modelLabel = details?.model ?? missingValue
   const parametersId = useId()
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(closeTimer.current), [])
@@ -146,8 +191,12 @@ export function ImageEditDetails({
           aria-label={t('Image generation details')}
           onMouseEnter={enter}
           onMouseLeave={leave}
-
-          className="grid size-7 place-items-center rounded-md text-text-300 hover:bg-muted hover:text-text-000 focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={(event) => {
+            // Hover has already opened the popover before a pointer click reaches the trigger.
+            event.preventDefault()
+            enter()
+          }}
+          className="grid size-7 place-items-center rounded-md text-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Info className="size-3.5" />
         </button>
@@ -159,21 +208,29 @@ export function ImageEditDetails({
         onMouseLeave={leave}
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
-        <div className="flex min-w-0 items-center gap-3 text-xs">
-          <span className="shrink-0 text-text-300">{t('Input')}</span>
-          <span className="min-w-0 truncate text-text-100" title={edit.source.name}>
-            {edit.source.name}
-          </span>
-        </div>
+        {edit ? (
+          <div className="flex min-w-0 items-center gap-3 text-xs">
+            <span className="shrink-0 text-text-300">{t('Input')}</span>
+            <span className="min-w-0 truncate text-text-100" title={edit.source.name}>
+              {edit.source.name}
+            </span>
+            {sourceVersion?.id === edit.source.sourceVersionId ? (
+              <span className="shrink-0 text-text-100">v{sourceVersion.number}</span>
+            ) : null}
+          </div>
+        ) : null}
         <div
           ref={(node) => {
             if (node && !expanded) setClipped(node.scrollHeight > node.clientHeight)
           }}
           className={`${expanded ? 'max-h-48 overflow-auto whitespace-pre-wrap' : 'line-clamp-2'} break-words text-xs leading-relaxed text-text-000`}
         >
-          {[prompt, ...edit.regions.map((r) => `${r.number}. ${r.instruction}`)]
+          {[
+            prompt ?? details?.prompt,
+            ...(edit?.regions ?? []).map((r) => `${r.number}. ${r.instruction}`)
+          ]
             .filter(Boolean)
-            .join('\n')}
+            .join('\n') || missingValue}
         </div>
         {clipped || expanded ? (
           <button
@@ -187,8 +244,8 @@ export function ImageEditDetails({
         <div className="border-t border-border-300/50 pt-2">
           <div className="flex min-w-0 items-center justify-between gap-3 text-xs">
             <span className="shrink-0 text-text-300">{t('Model')}</span>
-            <span className="min-w-0 truncate font-medium" title={details?.model ?? '…'}>
-              {details?.model ?? '…'}
+            <span className="min-w-0 truncate font-medium" title={modelLabel}>
+              {modelLabel}
             </span>
           </div>
           {detailsError ? (

@@ -2124,7 +2124,7 @@ class NotebookLocalRpcServer {
     if (!opened)
       throw new ImageModelError(
         'SOURCE_UNAVAILABLE',
-        'Image source Version is not available in this turn. Resolve the exact referenced image Version in the current Project; do not guess identifiers.',
+        'Image source Version is not available in this turn. Ask the user to mention the exact image Version in this conversation, or use the right-side image editor.',
         403
       )
     const { input, lease } = opened

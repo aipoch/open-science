@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { ImageSpatialReference } from './image-model-presets'
+import type { ImageModelPresetId } from './image-model-settings'
 
 export const IMAGE_EDIT_TEXT_LIMIT = 16_000
 export const IMAGE_EDIT_LASSO_POINT_LIMIT = 256
@@ -112,18 +113,54 @@ export function imagePromptFits(prompt: string): boolean {
 export function buildImageEditPrompt(
   prompt: string,
   regions: readonly ImageEditRegion[],
-  spatial: ImageSpatialReference
+  spatial: ImageSpatialReference,
+  presetId: ImageModelPresetId
 ): string {
   const mainInstruction = prompt.trim()
   if (!regions.length) return mainInstruction
+  const seedream = presetId === 'seedream/5.5'
   const guide =
     spatial === 'separate-reference'
       ? 'Edit Picture 1, the clean original. Use Picture 2 only to locate the numbered instructions. Keep the guide marks out of the output.'
-      : 'Use the numbered shapes to locate the editing instructions. Keep the guide marks out of the output.'
-  const instructions = regions.map(({ number, instruction }) => `${number}. ${instruction.trim()}`)
+      : 'Use the numbered marks to locate the editing instructions. Keep the guide marks out of the output.'
+  const percent = (value: number): string => `${Number((value * 100).toFixed(2))}%`
+  const position = ({ x, y }: z.infer<typeof point>): string =>
+    `${percent(x)} from the left edge, ${percent(y)} from the top edge`
+  const seedreamCoordinate = (value: number): number => Math.min(999, Math.round(value * 1000))
+  const seedreamPoint = ({ x, y }: z.infer<typeof point>): string =>
+    `图1<point>${seedreamCoordinate(x)} ${seedreamCoordinate(y)}</point>`
+  const instructions = regions.map(({ number, instruction, geometry }) => {
+    const line = `${number}. ${instruction.trim()}`
+    switch (geometry.kind) {
+      case 'point':
+        if (seedream) return `Point ${number} at ${seedreamPoint(geometry.point)}.\n${line}`
+        return `Target point ${number}: ${position(geometry.point)}.\nInstruction for the teal badge labeled ${number}: ${instruction.trim()}`
+      case 'rectangle':
+        if (seedream) {
+          // Keep tiny rectangles non-empty after rounding to Seedream's 0–999 grid.
+          const left = Math.min(998, seedreamCoordinate(geometry.start.x))
+          const top = Math.min(998, seedreamCoordinate(geometry.start.y))
+          const right = Math.max(left + 1, seedreamCoordinate(geometry.end.x))
+          const bottom = Math.max(top + 1, seedreamCoordinate(geometry.end.y))
+          return `Rectangle ${number} at 图1<bbox>${left} ${top} ${right} ${bottom}</bbox>.\n${line}`
+        }
+        return `Rectangle ${number}: upper-left (${position(geometry.start)}), lower-right (${position(geometry.end)}).\n${line}`
+      case 'arrow':
+        if (seedream)
+          return `Arrow ${number} points to ${seedreamPoint(geometry.end)} from (${position(geometry.start)}).\n${line}`
+        return `Arrow ${number}: tip (${position(geometry.end)}), tail (${position(geometry.start)}).\n${line}`
+      case 'polygon': {
+        const xs = geometry.points.map(({ x }) => x)
+        const ys = geometry.points.map(({ y }) => y)
+        return `Lasso ${number}: spans ${percent(Math.min(...xs))}–${percent(Math.max(...xs))} from the left and ${percent(Math.min(...ys))}–${percent(Math.max(...ys))} from the top. Follow its drawn outline.\n${line}`
+      }
+    }
+  })
   const kinds = new Set(regions.map(({ geometry }) => geometry.kind))
   const targets = [
-    kinds.has('point') && 'For a point, target the object at the center of the numbered mark.',
+    !seedream &&
+      kinds.has('point') &&
+      'For each point, find the numbered teal badge in the guide. Edit only the object at that same location in the original. The badge number identifies the instruction. Leave other similar objects unchanged.',
     (kinds.has('rectangle') || kinds.has('polygon')) &&
       'For an outlined region, target its interior.',
     kinds.has('arrow') &&

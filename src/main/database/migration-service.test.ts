@@ -1585,6 +1585,7 @@ describe('application database migrations', () => {
       { id: '0056_compute_kubernetes_workspace' },
       { id: '0057_project_optimization_prompt' },
       { id: '0058_session_schedules' },
+      { id: '0059_session_history' },
       { id: '0060_image_models' },
       { id: '9997_test_suffix' }
     ])
@@ -3382,9 +3383,7 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0058_session_schedules.backup',
-      'open-science.db.before-0059_session_history.backup',
-      'open-science.db.before-0060_image_models.backup',
+      ...MIGRATION_MANIFEST.slice(-2).map(({ id }) => `open-science.db.before-${id}.backup`),
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)

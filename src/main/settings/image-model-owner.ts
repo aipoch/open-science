@@ -81,13 +81,14 @@ export class ImageModelOwner {
     if (!service || !model || !imageServiceMatchesProvider(service, settings.providers))
       return undefined
     const provider = settings.providers.find((entry) => entry.id === service.providerId)
-    const baseUrl = provider ? imageProviderConfiguration(provider)?.baseUrl : service.baseUrl
+    const baseUrl = service.baseUrl ?? (provider && imageProviderConfiguration(provider)?.baseUrl)
     if (!baseUrl || getCustomProviderBaseUrlError(baseUrl)) return undefined
     const keyRef = credentialsFor(service, settings).keyRef
     const apiKey = keyRef ? tryDecryptKey(keyRef) : undefined
     if ((keyRef && !apiKey) || (!apiKey && customProviderRequiresKey(baseUrl))) return undefined
     return {
       serviceId: service.id,
+      serviceName: service.name,
       providerId: service.providerId,
       adapter: service.adapter,
       baseUrl,
@@ -155,6 +156,7 @@ export class ImageModelOwner {
 // Host-only execution snapshot; never include this in a renderer settings response.
 export type ResolvedImageModel = {
   serviceId: string
+  serviceName?: string
   providerId?: string
   adapter: ImageAdapterKind
   baseUrl: string

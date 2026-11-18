@@ -119,11 +119,11 @@ it('stores encrypted custom credentials, masks snapshots, and requires a new key
 
 it('links official credentials without copying them and cascades account deletion even with preserve handling', async () => {
   await repository.upsertProvider({
-    id: 'minimax-account',
+    id: 'fixture-account',
     type: 'official',
     vendorId: 'minimax',
     region: 'china',
-    name: 'MiniMax China',
+    name: 'Fixture account',
     keyRef: 'enc:opaque',
     keyMask: '••••test'
   })
@@ -354,3 +354,49 @@ it.each(['openai', 'bailian', 'volcengine'] as const)(
     ).rejects.toThrow('Invalid image')
   }
 )
+
+it('keeps the legacy Bailian address and accepts official workspace URLs for both credential modes', async () => {
+  const vendor = IMAGE_VENDOR_CATALOG.find(({ id }) => id === 'bailian')!
+  const baseUrl = 'https://llm-example.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
+  const qwen = {
+    kind: 'save' as const,
+    id: service.id,
+    name: vendor.label,
+    vendorId: vendor.id,
+    adapter: vendor.adapter,
+    models: vendor.models
+  }
+  const account = {
+    id: 'bailian-account',
+    name: 'Bailian',
+    type: 'official' as const,
+    vendorId: vendor.id,
+    region: 'china',
+    keyRef: 'enc:Y2hhdC1rZXk='
+  }
+  await repository.upsertProvider(account)
+  await owner.mutate({ ...qwen, providerId: account.id })
+  await owner.mutate({ kind: 'bind', binding: { serviceId: qwen.id, modelId: qwen.models[0].id } })
+  expect((await owner.resolve())?.baseUrl).toBe(vendor.regions[0].baseUrl)
+
+  await owner.mutate({ ...qwen, baseUrl, apiKey: 'image-key' })
+  expect(await new ImageModelOwner(new SettingsRepository(directory)).resolve()).toMatchObject({
+    baseUrl,
+    apiKey: 'image-key'
+  })
+  await owner.mutate({ ...qwen, baseUrl, providerId: account.id })
+  expect(await new ImageModelOwner(new SettingsRepository(directory)).resolve()).toMatchObject({
+    baseUrl,
+    apiKey: 'chat-key'
+  })
+  for (const invalid of [
+    baseUrl.replace('.aliyuncs.com/', '.aliyuncs.com.attacker.example/'),
+    baseUrl.replace('https://', 'http://'),
+    baseUrl + '?redirect=elsewhere'
+  ]) {
+    await expect(
+      owner.mutate({ ...qwen, baseUrl: invalid, providerId: account.id })
+    ).rejects.toThrow('Invalid image')
+  }
+  expect((await owner.resolve())?.baseUrl).toBe(baseUrl)
+})

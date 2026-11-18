@@ -2,8 +2,9 @@ import { createContext, useContext } from 'react'
 import type { ImageModelSettingsSnapshot } from '../../../../../shared/image-model-settings'
 import type {
   ImageTask,
-  ImageTaskScope,
+  ImageTaskList,
   ImageTaskStart,
+  ImageTaskStartResult,
   ImageTaskIdentity
 } from '../../../../../shared/image-task'
 import type { ImageEditorDraft } from './image-editor-state'
@@ -13,9 +14,9 @@ export type ImageEditorRuntime = {
   observationErrors?: ReadonlySet<string>
   observationFailures?: ReadonlySet<string>
   checkTask?(scope: ImageTaskIdentity): Promise<ImageTask | undefined>
-  startTask(input: ImageTaskStart): Promise<ImageTask>
+  startTask(input: ImageTaskStart): Promise<ImageTaskStartResult>
   cancelTask(input: ImageTaskIdentity): Promise<void>
-  reloadTasks(scope: ImageTaskScope): Promise<void>
+  reloadTasks(request: ImageTaskList): Promise<ImageTask[]>
 }
 type ImageEditingContextValue = ImageEditorRuntime & {
   drafts: ReadonlyMap<string, ImageEditorDraft>

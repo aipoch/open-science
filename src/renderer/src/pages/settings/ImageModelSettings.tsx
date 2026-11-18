@@ -22,6 +22,7 @@ import type { ImageServicesView } from '../../lib/settings-navigation'
 import {
   IMAGE_MODEL_PRESET_ADAPTERS,
   IMAGE_VENDOR_CATALOG,
+  isQwenWorkspaceBaseUrl,
   type ImageVendorId,
   type ImageAdapterKind,
   type ImageModelPresetId,
@@ -368,6 +369,10 @@ const ImageServiceEditor = ({
     service?.baseUrl ?? vendor?.regions[0].baseUrl ?? ''
   )
   const [baseUrl, setBaseUrl] = useState(service?.baseUrl ?? '')
+  const [workspaceUrl, setWorkspaceUrl] = useState(() => {
+    const url = service?.baseUrl
+    return isQwenWorkspaceBaseUrl(url) ? url : ''
+  })
   const [adapter, setAdapter] = useState<ImageAdapterKind>(service?.adapter ?? 'openai-images')
   const [models, setModels] = useState<ImageServiceModel[]>(
     service?.models ?? [
@@ -382,7 +387,9 @@ const ImageServiceEditor = ({
   const [keyVisible, setKeyVisible] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const provider = snapshot.availableProviders.find((provider) => provider.id === providerId)
-  const selectedBaseUrl = vendor ? officialBaseUrl : baseUrl.trim()
+  const qwen = vendorId === 'bailian'
+  const workspace = qwen ? workspaceUrl.trim().replace(/\/$/, '') : ''
+  const selectedBaseUrl = vendor ? workspace || officialBaseUrl : baseUrl.trim()
   const selectedAdapter = vendor?.adapter ?? adapter
   const presets = (Object.keys(presetLabels) as ImageModelPresetId[]).filter(
     (id) => IMAGE_MODEL_PRESET_ADAPTERS[id] === adapter
@@ -394,12 +401,15 @@ const ImageServiceEditor = ({
     service.adapter === selectedAdapter
   const keyRequired = !providerId && customProviderRequiresKey(selectedBaseUrl) && !reuseKey
   const endpointError = selectedBaseUrl ? getCustomProviderBaseUrlError(selectedBaseUrl) : undefined
-  const invalid = providerId
-    ? !provider
-    : !selectedBaseUrl ||
-      Boolean(endpointError) ||
-      (keyRequired && !apiKey.trim()) ||
-      (!vendor && models.some((model) => !/^[a-zA-Z0-9._:/-]+$/.test(model.wireModelId.trim())))
+  const invalidWorkspace = !!workspace && !isQwenWorkspaceBaseUrl(workspace)
+  const invalid =
+    invalidWorkspace ||
+    (providerId
+      ? !provider
+      : !selectedBaseUrl ||
+        Boolean(endpointError) ||
+        (keyRequired && !apiKey.trim()) ||
+        (!vendor && models.some((model) => !/^[a-zA-Z0-9._:/-]+$/.test(model.wireModelId.trim()))))
   const updateModel = (index: number, patch: Partial<ImageServiceModel>): void =>
     setModels((models) => models.map((model, i) => (i === index ? { ...model, ...patch } : model)))
   return (
@@ -414,7 +424,8 @@ const ImageServiceEditor = ({
             name: name.trim() || vendor?.label || t('Custom HTTP service'),
             adapter: selectedAdapter,
             ...(vendor ? { vendorId: vendor.id } : {}),
-            ...(providerId ? { providerId } : { baseUrl: selectedBaseUrl }),
+            ...(providerId ? { providerId } : {}),
+            ...(!providerId || workspace ? { baseUrl: selectedBaseUrl } : {}),
             models: vendor?.models ?? models
           },
           providerId ? undefined : apiKey
@@ -436,6 +447,7 @@ const ImageServiceEditor = ({
                 snapshot.availableProviders.find((entry) => entry.vendorId === value)?.id
               )
               setOfficialBaseUrl(next?.regions[0].baseUrl ?? '')
+              setWorkspaceUrl('')
               setApiKey('')
               setKeyVisible(false)
             }}
@@ -535,26 +547,38 @@ const ImageServiceEditor = ({
             </Select>
           </div>
         )}
-        {!vendor && (
+        {(!vendor || qwen) && (
           <div className="space-y-1.5">
             <Label className={fieldLabelClassName} htmlFor="image-service-url">
               {t('Base URL')}
             </Label>
             <Input
               id="image-service-url"
-              value={baseUrl}
+              value={qwen ? workspaceUrl : baseUrl}
+              placeholder={
+                qwen
+                  ? 'https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
+                  : undefined
+              }
               maxLength={2048}
               onChange={(event) => {
-                setBaseUrl(event.target.value)
+                if (qwen) setWorkspaceUrl(event.target.value)
+                else setBaseUrl(event.target.value)
                 setApiKey('')
                 setKeyVisible(false)
               }}
-              aria-invalid={Boolean(endpointError)}
+              aria-invalid={invalidWorkspace || Boolean(endpointError)}
             />
-            {endpointError && (
+            {invalidWorkspace ? (
               <p role="alert" className="text-xs text-destructive">
-                {t(endpointError)}
+                {t('Enter a Bailian workspace URL.')}
               </p>
+            ) : (
+              endpointError && (
+                <p role="alert" className="text-xs text-destructive">
+                  {t(endpointError)}
+                </p>
+              )
             )}
           </div>
         )}

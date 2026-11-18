@@ -258,6 +258,7 @@ describe('Artifact Provenance repository architecture', () => {
       [
         'writeGeneratedVersion',
         'replayVersionWithinSession',
+        'recoverStagedImageVersion',
         'replayRoutingPublisher',
         'reconcileSessionWithinSession',
         'hasRecoverableFinalization',

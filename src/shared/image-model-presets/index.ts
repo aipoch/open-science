@@ -5,7 +5,7 @@ import {
 } from '../image-model-settings'
 
 export type ImageOperation = 'generate' | 'edit'
-export type ImageSpatialReference = 'annotated-overlay' | 'separate-reference'
+export type ImageSpatialReference = 'separate-reference' | 'markup'
 export type ImageOptionValue = string | number | boolean
 export type ImageOptionSpec = {
   required?: boolean
@@ -22,6 +22,8 @@ export type ImageOptionSpec = {
       minPixels: number
       maxPixels: number
       maxRatio?: number
+      maxEdge?: number
+      edgeMultiple?: number
       namedSizes?: readonly string[]
     }
   | { kind: 'aspect-ratio'; maxComponent: number; maxRatio: number }
@@ -34,12 +36,28 @@ export type ImageOperationSpec = {
   maxInputEdge?: number
   maxInputRatio?: number
 }
+export function imageInputExceedsLimits(
+  spec: ImageOperationSpec,
+  { sizeBytes, width, height }: { sizeBytes?: number; width?: number; height?: number }
+): boolean {
+  if (sizeBytes !== undefined && sizeBytes > spec.maxInputBytes) return true
+  if (width === undefined || height === undefined) return false
+  const shortest = Math.min(width, height)
+  const longest = Math.max(width, height)
+  return (
+    width * height > spec.maxInputPixels ||
+    (spec.minInputEdge !== undefined && shortest < spec.minInputEdge) ||
+    (spec.maxInputEdge !== undefined && longest > spec.maxInputEdge) ||
+    (spec.maxInputRatio !== undefined && longest > shortest * spec.maxInputRatio)
+  )
+}
+
 export type ImageModelPreset = {
   id: ImageModelPresetId
   adapter: ImageAdapterKind
   operations: {
     generate?: ImageOperationSpec
-    edit?: ImageOperationSpec & { spatial: ImageSpatialReference }
+    edit?: ImageOperationSpec
   }
 }
 
@@ -73,11 +91,26 @@ const editInput = { maxInputBytes: 64 * 1024 * 1024, maxInputPixels: 20_000_000 
 
 // Verified official contracts, 2026-11-14. Generic relays do not inherit these capabilities.
 const openaiOptions: ImageOperationSpec['options'] = {
-  size: { kind: 'enum', values: ['auto', '1024x1024', '1536x1024', '1024x1536'], default: 'auto' },
-  quality: { kind: 'enum', values: ['auto', 'low', 'medium', 'high'], default: 'auto' },
+  size: {
+    kind: 'size',
+    auto: true,
+    minPixels: 655360,
+    maxPixels: 8294400,
+    maxRatio: 3,
+    maxEdge: 3840,
+    edgeMultiple: 16,
+    default: 'auto',
+    namedSizes: ['1024x1024', '1536x1024', '1024x1536', '1536x864']
+  },
+  quality: {
+    kind: 'enum',
+    values: ['auto', 'low', 'medium', 'high', 'xhigh', 'max'],
+    default: 'auto'
+  },
   complexity: { kind: 'enum', values: ['low', 'medium', 'high'], default: 'high' },
   output_format: { kind: 'enum', values: ['png', 'jpeg', 'webp'], default: 'png' },
-  output_compression: { kind: 'integer', min: 0, max: 100 }
+  output_compression: { kind: 'integer', min: 0, max: 100, default: 100 },
+  background: { kind: 'enum', values: ['auto', 'opaque', 'transparent'], default: 'auto' }
 }
 const qwenOptions: ImageOperationSpec['options'] = {
   size: { kind: 'size', auto: true, minPixels: 512 * 512, maxPixels: 2048 * 2048, maxRatio: 8 },
@@ -97,7 +130,8 @@ const seedreamOptions: ImageOperationSpec['options'] = {
     maxRatio: 16,
     default: '2K'
   },
-  output_format: { kind: 'enum', values: ['png', 'jpeg'], default: 'jpeg' },
+  output_format: { kind: 'enum', values: ['png', 'jpeg'], default: 'png' },
+  background: { kind: 'enum', values: ['auto', 'opaque', 'transparent'], default: 'auto' },
   watermark: { kind: 'boolean', default: true }
 }
 
@@ -113,7 +147,13 @@ export const IMAGE_MODEL_PRESETS: Readonly<Record<ImageModelPresetId, ImageModel
           disable_prompt_enhanced: { kind: 'boolean', default: false }
         }
       },
-      edit: { ...editInput, options: officialOptions, spatial: 'separate-reference' }
+      edit: {
+        ...editInput,
+        minInputEdge: 128,
+        maxInputEdge: 8192,
+        maxInputRatio: 4,
+        options: officialOptions
+      }
     }
   },
   'minimax-h3/sglang': {
@@ -121,7 +161,7 @@ export const IMAGE_MODEL_PRESETS: Readonly<Record<ImageModelPresetId, ImageModel
     adapter: IMAGE_MODEL_PRESET_ADAPTERS['minimax-h3/sglang'],
     operations: {
       generate: { ...noInput, options: localOptions },
-      edit: { ...editInput, options: localOptions, spatial: 'annotated-overlay' }
+      edit: { ...editInput, options: localOptions }
     }
   },
   'openai/gpt-image-2.6': {
@@ -132,8 +172,7 @@ export const IMAGE_MODEL_PRESETS: Readonly<Record<ImageModelPresetId, ImageModel
       edit: {
         ...editInput,
         maxInputBytes: 14 * 1024 * 1024,
-        options: openaiOptions,
-        spatial: 'annotated-overlay'
+        options: openaiOptions
       }
     }
   },
@@ -153,8 +192,7 @@ export const IMAGE_MODEL_PRESETS: Readonly<Record<ImageModelPresetId, ImageModel
         maxInputBytes: 10 * 1024 * 1024,
         maxInputEdge: 8000,
         maxInputRatio: 10,
-        options: qwenOptions,
-        spatial: 'annotated-overlay'
+        options: qwenOptions
       }
     }
   },
@@ -168,8 +206,7 @@ export const IMAGE_MODEL_PRESETS: Readonly<Record<ImageModelPresetId, ImageModel
         maxInputBytes: 30 * 1024 * 1024,
         minInputEdge: 15,
         maxInputRatio: 16,
-        options: seedreamOptions,
-        spatial: 'annotated-overlay'
+        options: seedreamOptions
       }
     }
   },
@@ -185,6 +222,36 @@ export function getImageModelPreset(presetId: string): ImageModelPreset | undefi
   return Object.hasOwn(IMAGE_MODEL_PRESETS, presetId)
     ? IMAGE_MODEL_PRESETS[presetId as ImageModelPresetId]
     : undefined
+}
+
+export function imageEditSpatialReference(
+  presetId: ImageModelPresetId,
+  wireModelId: string,
+  sourcePixels: number
+): ImageSpatialReference {
+  if (
+    presetId === 'openai/gpt-image-2.6' &&
+    (wireModelId === 'gpt-image-2.6-sunburst' || wireModelId === 'gpt-image-2.6-flare') &&
+    sourcePixels <= 16_777_216
+  )
+    return 'markup'
+  return 'separate-reference'
+}
+
+export function isImageOptionApplicable(
+  spec: ImageOperationSpec,
+  key: string,
+  options: Readonly<Record<string, ImageOptionValue>>
+): boolean {
+  if (key === 'aspect_ratio' || key === 'area')
+    return options.size === undefined || options.size === 'auto'
+  if (key === 'output_compression') {
+    const format = options.output_format ?? spec.options.output_format?.default
+    return format === 'jpeg' || format === 'jpg' || format === 'webp'
+  }
+  if (key === 'enable_thinking' || key === 'prompt_extend_mode')
+    return options.prompt_extend !== false
+  return true
 }
 
 export type ImageOptionsValidation =
@@ -229,6 +296,9 @@ function validOption(spec: ImageOptionSpec, value: unknown): value is ImageOptio
         Number.isSafeInteger(pixels) &&
         pixels >= spec.minPixels &&
         pixels <= spec.maxPixels &&
+        (spec.maxEdge === undefined || Math.max(width, height) <= spec.maxEdge) &&
+        (spec.edgeMultiple === undefined ||
+          (width % spec.edgeMultiple === 0 && height % spec.edgeMultiple === 0)) &&
         (spec.maxRatio === undefined ||
           Math.max(width, height) <= Math.min(width, height) * spec.maxRatio)
       )
@@ -304,21 +374,14 @@ export function validateImageModelOptions(
         'disable_prompt_enhanced'
       )
     }
-    if (options.output_format === 'png' && options.output_compression !== undefined) {
-      return invalid(
-        'PNG does not use output_compression. Remove it or choose JPEG/WebP.',
-        'output_compression'
-      )
-    }
   }
   if (
-    preset.id === 'openai/gpt-image-2.6' &&
     options.output_compression !== undefined &&
-    options.output_format !== 'jpeg' &&
-    options.output_format !== 'webp'
-  ) {
+    !isImageOptionApplicable(spec, 'output_compression', options)
+  )
     return invalid('Compression requires JPEG or WebP output.', 'output_compression')
-  }
+  if (options.background === 'transparent' && options.output_format === 'jpeg')
+    return invalid('Transparent output requires PNG or WebP.', 'background')
   if (
     preset.id === 'qwen/image-3.0' &&
     options.prompt_extend === false &&

@@ -108,7 +108,7 @@ const imageExecutionConfiguration = (settings: StoredSettings): unknown => {
     binding,
     adapter: service.adapter,
     providerId: service.providerId,
-    baseUrl: provider ? imageProviderConfiguration(provider)?.baseUrl : service.baseUrl,
+    baseUrl: service.baseUrl ?? (provider && imageProviderConfiguration(provider)?.baseUrl),
     keyRef: provider ? provider.keyRef : service.keyRef,
     wireModelId: model.wireModelId,
     presetId: model.presetId

@@ -77,7 +77,7 @@ it('initializes only canonical table names and reopens without another migration
   client = createProjectDbClient(root)
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     applied: [],
-    to: '0059_session_history'
+    to: '0060_image_models'
   })
   await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
 })
@@ -110,7 +110,8 @@ it('preserves every value, ID, relationship, receipt and unrelated trigger acros
       '0056_compute_kubernetes_workspace',
       '0057_project_optimization_prompt',
       '0058_session_schedules',
-      '0059_session_history'
+      '0059_session_history',
+      '0060_image_models'
     ]
   })
   for (const [index, [, table]] of names.entries())
@@ -183,7 +184,8 @@ it('rolls back names, records and the ledger on failure and restores FK enforcem
       '0056_compute_kubernetes_workspace',
       '0057_project_optimization_prompt',
       '0058_session_schedules',
-      '0059_session_history'
+      '0059_session_history',
+      '0060_image_models'
     ]
   })
 })

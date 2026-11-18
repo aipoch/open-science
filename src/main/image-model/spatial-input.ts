@@ -1,4 +1,5 @@
 import sharp from 'sharp'
+import type { ImageSpatialReference } from '../../shared/image-model-presets'
 import { imageEditSnapshotSchema } from '../../shared/image-edit-contract'
 import {
   ImageModelError,
@@ -14,7 +15,7 @@ const MAX_GUIDE_EDGE = 1280
 export async function annotateImageInput(
   source: ImageRaster,
   input: ImageSpatialInput,
-  compactGuide = false
+  mode: ImageSpatialReference
 ): Promise<ImageRaster> {
   const parsed = spatialSchema.safeParse(input)
   if (
@@ -27,12 +28,12 @@ export async function annotateImageInput(
       'Image regions do not match the oriented source dimensions.'
     )
   const { regions } = parsed.data
-  if (!regions.length) return source
+  const compactGuide = mode === 'separate-reference'
   const scale = compactGuide
     ? Math.min(1, MAX_GUIDE_EDGE / Math.max(source.width, source.height))
     : 1
-  const width = Math.round(source.width * scale)
-  const height = Math.round(source.height * scale)
+  const width = Math.max(1, Math.round(source.width * scale))
+  const height = Math.max(1, Math.round(source.height * scale))
   const stroke = Math.max(2, Math.min(width, height) / 250)
   const radius = Math.max(6, Math.min(width, height) / 60)
   const pixel = (p: { x: number; y: number }): [number, number] => [
@@ -41,11 +42,10 @@ export async function annotateImageInput(
   ]
   const marks = regions
     .map(({ number, geometry }) => {
-      let shape: string
+      let shape = ''
       let anchor: [number, number]
       if (geometry.kind === 'point') {
         anchor = pixel(geometry.point)
-        shape = `<circle cx="${anchor[0]}" cy="${anchor[1]}" r="${radius * 1.6}"/>`
       } else if (geometry.kind === 'polygon') {
         anchor = pixel(geometry.points[0])
         shape = `<polygon points="${geometry.points.map((p) => pixel(p).join(',')).join(' ')}"/>`
@@ -62,17 +62,18 @@ export async function annotateImageInput(
           shape = `<line x1="${anchor[0]}" y1="${anchor[1]}" x2="${end[0]}" y2="${end[1]}"/><polyline points="${arms[0]} ${end.join(',')} ${arms[1]}"/>`
         }
       }
-      const x = Math.max(radius, Math.min(width - radius, anchor[0]))
-      const y = Math.max(radius, Math.min(height - radius, anchor[1]))
-      return `${shape}<circle cx="${x}" cy="${y}" r="${radius}" fill="#ffffff"/><text x="${x}" y="${y}" fill="#006c62" stroke="none" font-family="sans-serif" font-size="${radius * 1.4}" text-anchor="middle" dominant-baseline="central">${number}</text>`
+      const isPoint = geometry.kind === 'point'
+      const badgeRadius = isPoint ? radius * 1.25 : radius
+      const [x, y] = anchor
+      return `${shape}<circle cx="${x}" cy="${y}" r="${badgeRadius}" fill="${isPoint ? '#006c62' : '#ffffff'}" stroke="${isPoint ? '#ffffff' : '#006c62'}"/><text x="${x}" y="${y}" fill="${isPoint ? '#ffffff' : '#006c62'}" stroke="none" font-family="sans-serif" font-size="${badgeRadius * 1.4}" text-anchor="middle" dominant-baseline="central">${number}</text>`
     })
     .join('')
   const overlay = Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><g stroke="#006c62" stroke-width="${stroke}" fill="none">${marks}</g></svg>`
   )
-  const raster = sharp(source.bytes)
+  const raster = mode === 'markup' ? sharp(overlay) : sharp(source.bytes)
   if (scale < 1) raster.resize(width, height, { fit: 'fill' })
-  raster.composite([{ input: overlay }])
+  if (compactGuide) raster.composite([{ input: overlay }])
   const bytes = await (compactGuide ? raster.jpeg({ quality: 82 }) : raster.png()).toBuffer()
   if (bytes.length > MAX_IMAGE_BYTES)
     throw new ImageModelError('UNSUPPORTED_OPTION', 'Annotated image exceeds the input byte limit.')

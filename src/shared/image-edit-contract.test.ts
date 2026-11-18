@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { imageEditSnapshotSchema, type ImageEditSnapshot } from './image-edit-contract'
+import {
+  buildImageEditPrompt,
+  imageEditSnapshotSchema,
+  type ImageEditSnapshot
+} from './image-edit-contract'
 
 const edit = (): ImageEditSnapshot => ({
   version: 1 as const,
@@ -60,4 +64,16 @@ describe('independent image edit snapshot', () => {
   ])('rejects malformed or unsupported spatial task inputs', (input) => {
     expect(imageEditSnapshotSchema.safeParse(input).success).toBe(false)
   })
+})
+
+it('rounds Seedream coordinates without collapsing a rectangle at the image edge', () => {
+  const [rectangle, arrow] = edit().regions
+  rectangle.geometry = {
+    kind: 'rectangle',
+    start: { x: 0.9998, y: 0 },
+    end: { x: 1, y: 0.0001 }
+  }
+  const prompt = buildImageEditPrompt('', [rectangle, arrow], 'separate-reference', 'seedream/5.5')
+  expect(prompt).toContain('图1<bbox>998 0 999 1</bbox>')
+  expect(prompt).toContain('图1<point>999 999</point>')
 })

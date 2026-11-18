@@ -1,4 +1,5 @@
 import { ImageTaskIntegrityError, type ImageTask } from '../../shared/image-task'
+import { ProvenanceIntegrityError } from '../../shared/provenance-read-result'
 import type { ArtifactVersionEvidence } from '../../shared/artifact-provenance'
 import { persistentContentReferences } from '../storage/prisma-content-references'
 import { createLogger } from '@aipoch/diagnostics/node'
@@ -684,11 +685,11 @@ class ArtifactProvenanceRepository {
         messageBranchId: request.messageBranchId,
         promptMessageId: request.promptMessageId,
         artifact: { projectId: request.projectId, sessionId: request.appSessionId },
-        state: { in: ['pending', 'finalized'] }
-      },
-      select: { id: true, artifactId: true }
+        state: { in: ['staging', 'pending', 'finalized'] }
+      }
     })
     if (!row) return undefined
+    if (row.state === 'staging') await this.recoverStagedImageVersion(request, row.id)
     const core = await this.getVersionCore({
       ...request,
       artifactId: row.artifactId,
@@ -718,11 +719,36 @@ class ArtifactProvenanceRepository {
       where: {
         artifactRunId: request.taskId,
         artifact: { projectId: request.projectId, sessionId: request.appSessionId },
-        state: { in: ['pending', 'finalized'] }
-      },
-      select: { id: true }
+        promptMessageId: null,
+        state: { in: ['staging', 'pending', 'finalized'] }
+      }
     })
+    if (row?.state === 'staging') await this.recoverStagedImageVersion(request, row.id)
     return row ? this.publishImageTaskVersion({ ...request, versionId: row.id }) : undefined
+  }
+
+  private async recoverStagedImageVersion(
+    scope: { projectId: string; appSessionId: string },
+    versionId: string
+  ): Promise<void> {
+    await this.withSessionMutation(scope, async () => {
+      const client = await this.options.getClient()
+      const version = await client.artifactVersion.findUnique({
+        where: {
+          id: versionId,
+          artifact: { projectId: scope.projectId, sessionId: scope.appSessionId },
+          state: 'staging'
+        },
+        include: { artifact: true }
+      })
+      if (!version) return
+      await this.stagingRecovery.recoverVersion(
+        requireGeneratedArtifactVersion(version),
+        scope.projectId,
+        scope.appSessionId,
+        version.filename
+      )
+    })
   }
 
   async publishImageTaskVersion(request: {
@@ -742,13 +768,20 @@ class ArtifactProvenanceRepository {
           state: { in: ['pending', 'finalized'] }
         }
       })
-      if (!candidate) throw new Error('Image task output is unavailable.')
-      const core = await this.getVersionCore({ ...request, artifactId: candidate.artifactId })
+      if (!candidate) throw new ImageTaskIntegrityError([request.taskId])
+      const core = await this.getVersionCore({
+        ...request,
+        artifactId: candidate.artifactId
+      }).catch((error: unknown) => {
+        if (error instanceof ProvenanceIntegrityError)
+          throw new ImageTaskIntegrityError([request.taskId])
+        throw error
+      })
       if (
         core.contentStatus.state !== 'available' ||
         core.evidence.image_task_id !== request.taskId
       )
-        throw new Error('Image task output integrity could not be verified.')
+        throw new ImageTaskIntegrityError([request.taskId])
       const version = await client.$transaction(async (tx) => {
         const row = await tx.artifactVersion.findFirst({
           where: {
@@ -757,21 +790,14 @@ class ArtifactProvenanceRepository {
             artifact: { projectId: request.projectId, sessionId: request.appSessionId },
             state: { in: ['pending', 'finalized'] }
           },
-          include: { artifact: { include: { originSession: true } } }
+          include: { artifact: { include: { originSession: true, currentVersion: true } } }
         })
         if (!row || row.artifact.originSession.state !== 'active')
-          throw new Error('Image task output is unavailable.')
+          throw new ImageTaskIntegrityError([request.taskId])
         requireGeneratedArtifactVersion(row)
         const evidence = JSON.parse(row.evidenceJson!) as ArtifactVersionEvidence
         if (evidence.image_task_id !== request.taskId || row.promptMessageId !== null)
-          throw new Error('Artifact Version does not belong to this image task.')
-        const source = await tx.artifactVersion.findFirst({
-          where: {
-            id: request.sourceVersionId,
-            artifactId: row.artifactId,
-            state: 'finalized'
-          }
-        })
+          throw new ImageTaskIntegrityError([request.taskId])
         const published = await tx.artifactVersion.update({
           where: { id: row.id },
           data: {
@@ -779,8 +805,11 @@ class ArtifactProvenanceRepository {
             managedVisibleAt: row.managedVisibleAt ?? this.now()
           }
         })
-        // Keep an independently advanced head; the task still owns its exact published candidate.
-        if (!row.artifact.currentVersionId || row.artifact.currentVersionId === source?.id)
+        // Match conversation publication: newer results become current, but retries cannot roll back.
+        if (
+          !row.artifact.currentVersion ||
+          row.artifact.currentVersion.versionNumber < row.versionNumber
+        )
           await tx.artifactLineage.update({
             where: { id: row.artifactId },
             data: { currentVersionId: row.id }

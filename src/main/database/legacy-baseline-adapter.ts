@@ -509,7 +509,6 @@ const adaptMigrationOperationsForCurrentSchema = async (
       continue
     }
     const adaptedTableNames = new Set<string>()
-    let addsNullableColumns = false
     const tables: (typeof operation.tables)[number][] = []
     for (const table of operation.tables) {
       const current = CURRENT_TARGET_TABLES.get(table.tableName)
@@ -533,8 +532,6 @@ const adaptMigrationOperationsForCurrentSchema = async (
           (column) => existingColumns.has(column) || nullableAdditions.includes(column)
         )
       ) {
-        if (nullableAdditions.some((column) => !existingColumns.has(column)))
-          addsNullableColumns = true
         adaptedTableNames.add(table.tableName)
         currentTableNames.add(table.tableName)
         tables.push({
@@ -556,9 +553,9 @@ const adaptMigrationOperationsForCurrentSchema = async (
     })
     adaptedOperations.push({
       ...operation,
-      // Adding the nullable suffix may now require a rebuild that was previously adopted.
-      // Preserve inbound references with the existing replacement-first rebuild path.
-      version: addsNullableColumns ? 2 : operation.version,
+      // Adopting current DDL can rebuild tables for new columns or constraints. Create the
+      // replacement first so SQLite keeps inbound foreign keys pointed at the original name.
+      version: adaptedTableNames.size > 0 ? 2 : operation.version,
       tables,
       indexes: [...retainedIndexes, ...currentIndexes]
     })

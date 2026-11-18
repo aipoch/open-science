@@ -30,7 +30,7 @@ import {
   exceedsDecodedImagePixelLimit,
   isPixelLimitedRasterMimeType,
   MAX_DECODED_IMAGE_PIXELS,
-  readRasterImageDimensions,
+  readRasterPreviewDimensions,
   type RasterImageDimensions
 } from './raster-image-safety'
 
@@ -340,9 +340,9 @@ class ManagedPreviewResources {
       // the same header read that enforces the decoded-pixel limit.
       let imageDimensions: RasterImageDimensions | undefined
       if (isPixelLimitedRasterMimeType(mimeType)) {
-        const readImageBytes = async (length: number): Promise<Buffer> => {
+        const readImageBytes = async (length: number, offset = 0): Promise<Buffer> => {
           if (trustedLease) {
-            const bytes = await trustedLease.readRange(0, length)
+            const bytes = await trustedLease.readRange(offset, offset + length)
             if (bytes.byteLength !== length) {
               throw new Error('Image preview changed while reading.')
             }
@@ -361,7 +361,7 @@ class ManagedPreviewResources {
                 throw new Error('Image preview changed before reading its dimensions.')
               }
               const bytes = Buffer.allocUnsafe(length)
-              if (length > 0) await readExactRange(fileHandle, bytes, 0)
+              if (length > 0) await readExactRange(fileHandle, bytes, offset)
               const after = snapshotFileStat(await fileHandle.stat({ bigint: true }))
               if (
                 after.size !== fileSnapshot.size ||
@@ -378,7 +378,12 @@ class ManagedPreviewResources {
           }
         }
         const header = await readImageBytes(Math.min(fileSnapshot.size, MAX_IMAGE_HEADER_BYTES))
-        const dimensions = readRasterImageDimensions(header, mimeType)
+        const dimensions = await readRasterPreviewDimensions(
+          header,
+          mimeType,
+          fileSnapshot.size,
+          readImageBytes
+        )
         if (!dimensions) throw new Error('Could not read image preview dimensions safely.')
         const maxPixels = request.imagePreview
           ? MAX_PREVIEW_SOURCE_PIXELS
@@ -392,7 +397,8 @@ class ManagedPreviewResources {
         const thumbnail = request.imagePreview === 'thumbnail'
         if (
           request.imagePreview &&
-          (exceedsDecodedImagePixelLimit(dimensions) ||
+          (dimensions.requiresOrientation ||
+            exceedsDecodedImagePixelLimit(dimensions) ||
             (thumbnail && Math.max(dimensions.width, dimensions.height) > IMAGE_THUMBNAIL_EDGE))
         ) {
           try {

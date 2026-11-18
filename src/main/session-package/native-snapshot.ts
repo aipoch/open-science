@@ -538,9 +538,10 @@ export const mapPackageReferences = (
 ): unknown => {
   if (key === 'imageTasks' && Array.isArray(value))
     return value.map((task) => {
-      const { edit, ...rest } = task
+      const { edit, error, ...rest } = task
       return {
         ...(mapPackageReferences(rest, identities, '', checksums, pooledKeys) as object),
+        ...(error ? { error } : {}),
         edit: mapPackageReferences(edit, identities, 'imageTaskEdit', checksums, pooledKeys)
       }
     })

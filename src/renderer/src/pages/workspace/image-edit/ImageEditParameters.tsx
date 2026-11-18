@@ -31,8 +31,12 @@ import type {
 } from '../../../../../shared/image-model-settings'
 import {
   getImageModelPreset,
+  isImageOptionApplicable,
+  validateImageModelOptions,
   type ImageOptionValue
 } from '../../../../../shared/image-model-presets'
+
+const standardOutputSizes = ['1024x1024', '1280x720', '720x1280', '1536x1024', '1024x1536']
 
 export function ImageEditParameters({
   settings,
@@ -40,6 +44,7 @@ export function ImageEditParameters({
   model,
   options,
   disabled,
+  invalidOption,
   onModel,
   onOptions
 }: {
@@ -48,6 +53,7 @@ export function ImageEditParameters({
   model?: ImageModelBinding
   options: Record<string, ImageOptionValue>
   disabled: boolean
+  invalidOption?: string
   onModel(model: ImageModelBinding, options: Record<string, ImageOptionValue>): void
   onOptions(options: Record<string, ImageOptionValue>): void
 }): React.JSX.Element {
@@ -80,6 +86,20 @@ export function ImageEditParameters({
   }
   const spec = selected ? getImageModelPreset(selected.presetId)?.operations.edit : undefined
   const labels = imageOptionLabels(t)
+  const optionLabels: Record<string, string> = {
+    auto: t('Auto'),
+    low: t('Low'),
+    medium: t('Medium'),
+    high: t('High'),
+    xhigh: t('Extra high'),
+    max: t('Max'),
+    transparent: t('Transparent'),
+    opaque: t('Opaque'),
+    png: 'PNG',
+    jpeg: 'JPEG',
+    jpg: 'JPG',
+    webp: 'WebP'
+  }
   const set = (key: string, value: ImageOptionValue | undefined): void => {
     const next = { ...options }
     if (value === undefined) delete next[key]
@@ -89,9 +109,14 @@ export function ImageEditParameters({
       delete next.area
     }
     if (key === 'aspect_ratio' || key === 'area') delete next.size
-    if (key === 'output_format' && value !== 'jpeg' && value !== 'jpg' && value !== 'webp')
-      delete next.output_compression
-    if (key === 'prompt_extend' && value === false) delete next.enable_thinking
+    if (key === 'output_format' && value === 'jpeg' && next.background === 'transparent')
+      delete next.background
+    if (key === 'background' && value === 'transparent' && next.output_format === 'jpeg')
+      next.output_format = 'png'
+    if (spec) {
+      for (const option of Object.keys(next))
+        if (!isImageOptionApplicable(spec, option, next)) delete next[option]
+    }
     onOptions(next)
   }
   return (
@@ -143,12 +168,13 @@ export function ImageEditParameters({
                 {models.map((candidate) => (
                   <DropdownMenuItem
                     key={candidate.id}
-                    onSelect={() =>
+                    onSelect={() => {
+                      if (service?.entry.id === entry.id && selected?.id === candidate.id) return
                       onModel(
                         { serviceId: entry.id, modelId: candidate.id },
                         candidate.presetId === 'minimax-h3/sglang' ? { size: '1024x1024' } : {}
                       )
-                    }
+                    }}
                     className="min-w-0 gap-2"
                     aria-current={selected?.id === candidate.id && service?.entry.id === entry.id}
                   >
@@ -186,79 +212,97 @@ export function ImageEditParameters({
             >
               <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] items-center gap-x-3 gap-y-3">
                 {Object.entries(spec?.options ?? {})
-                  .filter(([key]) => {
-                    if (key === 'enable_thinking' && options.prompt_extend === false) return false
-                    if (key !== 'output_compression') return true
-                    const format = options.output_format ?? spec?.options.output_format?.default
-                    return format === 'jpeg' || format === 'jpg' || format === 'webp'
-                  })
-                  .map(([key, field]) => (
-                    <div className="contents" key={key}>
-                      <label htmlFor={`${id}-${key}`} className="truncate text-xs text-text-200">
-                        {labels[key] ?? key}
-                      </label>
-                      {field.kind === 'enum' ? (
-                        <Select
-                          value={String(options[key] ?? '__default')}
-                          onValueChange={(value) =>
-                            set(key, value === '__default' ? undefined : value)
-                          }
-                        >
-                          <SelectTrigger id={`${id}-${key}`} className="h-8 min-w-0 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className="z-[90]">
-                            <SelectItem value="__default">{t('Model default')}</SelectItem>
-                            {field.values.map((value) => (
-                              <SelectItem key={value} value={value}>
-                                {value}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : field.kind === 'boolean' ? (
-                        <Switch
-                          id={`${id}-${key}`}
-                          checked={(options[key] ?? field.default) === true}
-                          onCheckedChange={(value) => set(key, value)}
-                        />
-                      ) : (
-                        <Input
-                          id={`${id}-${key}`}
-                          type={field.kind === 'integer' ? 'number' : 'text'}
-                          min={field.kind === 'integer' ? field.min : undefined}
-                          max={field.kind === 'integer' ? field.max : undefined}
-                          maxLength={field.kind === 'text' ? field.maxLength : undefined}
-                          step={field.kind === 'integer' ? 1 : undefined}
-                          value={options[key] === undefined ? '' : String(options[key])}
-                          placeholder={
-                            field.kind === 'size'
-                              ? String(field.default ?? '1024x1024')
-                              : field.kind === 'aspect-ratio'
+                  .filter(([key]) => spec && isImageOptionApplicable(spec, key, options))
+                  .map(([key, field]) => {
+                    const value = String(options[key] ?? '')
+                    let choices = field.kind === 'enum' ? field.values : undefined
+                    if (field.kind === 'size' && selected) {
+                      const sizes = field.namedSizes ?? standardOutputSizes
+                      choices = [...new Set([...sizes, value])].filter(
+                        (size) =>
+                          size &&
+                          size !== 'auto' &&
+                          validateImageModelOptions(selected.presetId, 'edit', { size }).ok
+                      )
+                    }
+                    const selectValue = choices?.includes(value)
+                      ? value
+                      : field.required || (options[key] !== undefined && value !== 'auto')
+                        ? ''
+                        : '__default'
+                    return (
+                      <div className="contents" key={key}>
+                        <label htmlFor={`${id}-${key}`} className="truncate text-xs text-text-200">
+                          {labels[key] ?? key}
+                        </label>
+                        {choices ? (
+                          <Select
+                            value={selectValue}
+                            onValueChange={(value) =>
+                              set(key, value === '__default' ? undefined : value)
+                            }
+                          >
+                            <SelectTrigger
+                              id={`${id}-${key}`}
+                              aria-invalid={invalidOption === key}
+                              className="h-8 min-w-0 text-xs"
+                            >
+                              <SelectValue placeholder={labels[key]} />
+                            </SelectTrigger>
+                            <SelectContent className="z-[90]">
+                              {!field.required ? (
+                                <SelectItem value="__default">{t('Model default')}</SelectItem>
+                              ) : null}
+                              {choices.map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {optionLabels[value] ?? value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : field.kind === 'boolean' ? (
+                          <Switch
+                            id={`${id}-${key}`}
+                            checked={(options[key] ?? field.default) === true}
+                            onCheckedChange={(value) => set(key, value)}
+                          />
+                        ) : (
+                          <Input
+                            id={`${id}-${key}`}
+                            aria-invalid={invalidOption === key}
+                            type={field.kind === 'integer' ? 'number' : 'text'}
+                            min={field.kind === 'integer' ? field.min : undefined}
+                            max={field.kind === 'integer' ? field.max : undefined}
+                            maxLength={field.kind === 'text' ? field.maxLength : undefined}
+                            step={field.kind === 'integer' ? 1 : undefined}
+                            value={options[key] === undefined ? '' : String(options[key])}
+                            placeholder={
+                              field.kind === 'aspect-ratio'
                                 ? '16:9'
                                 : field.default === undefined
                                   ? t('Model default')
                                   : String(field.default)
-                          }
-                          className="h-8 min-w-0 text-xs"
-                          onKeyDown={(event) => {
-                            if (event.key !== 'Escape' && event.key !== 'Tab')
-                              event.stopPropagation()
-                          }}
-                          onChange={(event) =>
-                            set(
-                              key,
-                              event.target.value === ''
-                                ? undefined
-                                : field.kind === 'integer'
-                                  ? Number(event.target.value)
-                                  : event.target.value
-                            )
-                          }
-                        />
-                      )}
-                    </div>
-                  ))}
+                            }
+                            className="h-8 min-w-0 text-xs"
+                            onKeyDown={(event) => {
+                              if (event.key !== 'Escape' && event.key !== 'Tab')
+                                event.stopPropagation()
+                            }}
+                            onChange={(event) =>
+                              set(
+                                key,
+                                event.target.value === ''
+                                  ? undefined
+                                  : field.kind === 'integer'
+                                    ? Number(event.target.value)
+                                    : event.target.value
+                              )
+                            }
+                          />
+                        )}
+                      </div>
+                    )
+                  })}
               </div>
             </DropdownMenuSubContent>
           </DropdownMenuSub>

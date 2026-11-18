@@ -6,6 +6,7 @@ import type {
 import { createUploadVersionReference } from '../../../../../shared/uploads'
 import { createPreviewFileItemForArtifactVersion } from '../preview-file-item'
 import type { ImageTask } from '../../../../../shared/image-task'
+import type { ImageErrorDetail } from '../../../../../shared/image-model-error'
 import { createArtifactVersionLocator } from '../../../../../shared/artifact-version-locator'
 import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import type { ChatSession } from '@/stores/session-store'
@@ -35,6 +36,7 @@ export type ImageEditorDraft = {
   prompt: string
   model?: ImageModelBinding
   options: Record<string, ImageOptionValue>
+  optionsInherited?: boolean
   regions: ImageEditRegion[]
   undo: ImageEditRegion[][]
   redo: ImageEditRegion[][]
@@ -48,7 +50,8 @@ export type ImageEditorDraft = {
     startedAt: number
     preparing: boolean
     stopping?: boolean
-    error?: string
+    error?: ImageErrorDetail
+    recoveryTask?: ImageTask
   }
 }
 
@@ -58,6 +61,7 @@ type ImageVersionDraft = Pick<
   | 'prompt'
   | 'model'
   | 'options'
+  | 'optionsInherited'
   | 'regions'
   | 'undo'
   | 'redo'
@@ -69,21 +73,22 @@ type ImageVersionDraft = Pick<
 
 export const IMAGE_EDITOR_DRAFT_LIMIT = 8
 
+const hasDraftContent = (draft: ImageVersionDraft): boolean =>
+  Boolean(
+    draft.prompt.trim() ||
+    draft.regions.length ||
+    draft.regionDraft ||
+    draft.undo.length ||
+    draft.redo.length ||
+    (!draft.optionsInherited && Object.keys(draft.options).length)
+  )
+
 export function reusableImageDraftKey(
   drafts: ReadonlyMap<string, ImageEditorDraft>
 ): string | undefined {
-  const hasContent = (draft: ImageVersionDraft): boolean =>
-    Boolean(
-      draft.prompt.trim() ||
-      draft.regions.length ||
-      draft.regionDraft ||
-      draft.undo.length ||
-      draft.redo.length ||
-      Object.keys(draft.options).length
-    )
   for (const [key, draft] of drafts) {
-    if (draft.submission || hasContent(draft)) continue
-    if (draft.versionDrafts && [...draft.versionDrafts.values()].some(hasContent)) continue
+    if (draft.submission || hasDraftContent(draft)) continue
+    if (draft.versionDrafts && [...draft.versionDrafts.values()].some(hasDraftContent)) continue
     return key
   }
   return undefined
@@ -103,6 +108,7 @@ export function switchImageEditorSource(
   saved.delete(previous)
   saved.set(previous, {
     inputSource: draft.inputSource,
+    optionsInherited: draft.optionsInherited,
     prompt,
     model,
     options,
@@ -116,10 +122,8 @@ export function switchImageEditorSource(
   })
   const restored = saved.get(source.selectedVersionId!)
   saved.delete(source.selectedVersionId!)
-  while (saved.size > 8) {
-    const empty = [...saved].find(
-      ([, value]) => !value.prompt.trim() && !value.regions.length && !value.regionDraft
-    )
+  if (saved.size > IMAGE_EDITOR_DRAFT_LIMIT) {
+    const empty = [...saved].find(([, value]) => !hasDraftContent(value))
     if (!empty) return { ...draft, sourceSwitchBlocked: true, selectedCandidate: undefined }
     saved.delete(empty[0])
   }
@@ -136,6 +140,7 @@ export function switchImageEditorSource(
     selectedRegion: undefined,
     regionDraft: undefined,
     zoom: undefined,
+    optionsInherited: true,
     ...restored,
     ...(inputSource ? { inputSource } : {}),
     selectedCandidate: undefined,
@@ -190,49 +195,66 @@ export function changeImageRegions(
   return { ...draft, regions, undo: [...draft.undo.slice(-31), draft.regions], redo: [] }
 }
 
+export function imageEditorResultItem(task: ImageTask): PreviewFileItem | undefined {
+  const artifact = task.result
+  if (task.state !== 'succeeded' || !artifact) return undefined
+  return {
+    type: 'file',
+    format: 'image',
+    source: 'artifact',
+    id: artifact.versionId,
+    artifactId: artifact.artifactId,
+    managedFileId: artifact.artifactId,
+    selectedVersionId: artifact.versionId,
+    versionNumber: artifact.versionNumber,
+    projectId: task.projectId,
+    sessionId: task.sessionId,
+    path: createArtifactVersionLocator({
+      projectId: task.projectId,
+      appSessionId: task.sessionId,
+      artifactId: artifact.artifactId,
+      versionId: artifact.versionId
+    }),
+    title: artifact.name,
+    name: artifact.name,
+    mimeType: artifact.mimeType,
+    size: artifact.size
+  }
+}
+
 export function imageEditorCandidates(
   tasks: readonly ImageTask[],
   source: PreviewFileItem
 ): Array<{ item: PreviewFileItem; edit: ImageEditSnapshot; prompt: string }> {
-  const knownVersions = new Set([source.selectedVersionId])
-  const result: Array<{ item: PreviewFileItem; edit: ImageEditSnapshot; prompt: string }> = []
-  for (const task of [...tasks].sort((a, b) => a.createdAt - b.createdAt)) {
-    const artifact = task.result
-    if (
-      task.state !== 'succeeded' ||
-      !artifact ||
-      knownVersions.has(artifact.versionId) ||
-      (!knownVersions.has(task.edit.source.sourceVersionId) &&
-        artifact.artifactId !== (source.artifactId ?? source.managedFileId))
-    )
-      continue
-    knownVersions.add(artifact.versionId)
-    result.push({
-      item: {
-        type: 'file',
-        format: 'image',
-        source: 'artifact',
-        id: artifact.versionId,
-        artifactId: artifact.artifactId,
-        managedFileId: artifact.artifactId,
-        selectedVersionId: artifact.versionId,
-        versionNumber: artifact.versionNumber,
-        projectId: task.projectId,
-        sessionId: task.sessionId,
-        path: createArtifactVersionLocator({
-          projectId: task.projectId,
-          appSessionId: task.sessionId,
-          artifactId: artifact.artifactId,
-          versionId: artifact.versionId
-        }),
-        title: artifact.name,
-        name: artifact.name,
-        mimeType: artifact.mimeType,
-        size: artifact.size
-      },
-      edit: task.edit,
-      prompt: task.prompt
+  const knownVersions = new Set<string>()
+  const pending = [source.selectedVersionId!]
+  const neighbors = new Map<string, string[]>()
+  const completed = [...tasks]
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+    .flatMap((task) => {
+      const item = imageEditorResultItem(task)
+      return item ? [{ item, edit: task.edit, prompt: task.prompt }] : []
     })
+  for (const { item, edit } of completed) {
+    const output = item.selectedVersionId!
+    const input = edit.source.sourceVersionId
+    neighbors.set(input, [...(neighbors.get(input) ?? []), output])
+    neighbors.set(output, [...(neighbors.get(output) ?? []), input])
+    if (item.artifactId === (source.artifactId ?? source.managedFileId)) pending.push(output)
+  }
+  // Follow both directions so reopening a result also finds its earlier edits and siblings.
+  for (const id of pending) {
+    if (knownVersions.has(id)) continue
+    knownVersions.add(id)
+    pending.push(...(neighbors.get(id) ?? []))
+  }
+  const included = new Set([source.selectedVersionId])
+  const result: Array<{ item: PreviewFileItem; edit: ImageEditSnapshot; prompt: string }> = []
+  for (const candidate of completed) {
+    const id = candidate.item.selectedVersionId!
+    if (!knownVersions.has(id) || included.has(id)) continue
+    included.add(id)
+    result.push(candidate)
   }
   return result.slice(-32)
 }

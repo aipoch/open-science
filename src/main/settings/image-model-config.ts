@@ -3,6 +3,7 @@ import { z } from 'zod'
 import {
   IMAGE_MODEL_PRESET_ADAPTERS,
   IMAGE_VENDOR_CATALOG,
+  isQwenWorkspaceBaseUrl,
   type ImageAdapterKind,
   type ImageVendorId,
   type ImageServiceModel
@@ -38,6 +39,11 @@ const serviceFields = {
   vendorId: z.enum(['minimax', 'openai', 'bailian', 'volcengine']).optional(),
   models: z.array(model).min(1).max(16)
 }
+const usesQwenWorkspace = (service: z.infer<typeof serviceShape>): boolean =>
+  service.vendorId === 'bailian' &&
+  service.adapter === 'qwen-images' &&
+  isQwenWorkspaceBaseUrl(service.baseUrl)
+
 const validService = (service: z.infer<typeof serviceShape>): boolean =>
   (!service.vendorId ||
     IMAGE_VENDOR_CATALOG.some(
@@ -45,6 +51,7 @@ const validService = (service: z.infer<typeof serviceShape>): boolean =>
         vendor.id === service.vendorId &&
         vendor.adapter === service.adapter &&
         (service.providerId ||
+          usesQwenWorkspace(service) ||
           vendor.regions.some((region) => region.baseUrl === service.baseUrl)) &&
         service.models.every((model) =>
           vendor.models.some(
@@ -57,7 +64,7 @@ const validService = (service: z.infer<typeof serviceShape>): boolean =>
     (model) => IMAGE_MODEL_PRESET_ADAPTERS[model.presetId] === service.adapter
   ) &&
   (service.providerId !== undefined
-    ? service.baseUrl === undefined
+    ? service.baseUrl === undefined || usesQwenWorkspace(service)
     : Boolean(service.baseUrl && !getCustomProviderBaseUrlError(service.baseUrl)))
 const serviceShape = z.object(serviceFields)
 const storedService = serviceShape

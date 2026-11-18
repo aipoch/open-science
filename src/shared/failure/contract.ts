@@ -9,6 +9,8 @@ export type FailureDiagnostics = Readonly<{
   provider?: string
   model?: string
   requestId?: string
+  providerCode?: string
+  parameter?: string
   raw?: string
 }>
 

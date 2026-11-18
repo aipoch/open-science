@@ -833,6 +833,11 @@ const ArtifactProvenancePanel = ({
     key: string
     value?: ArtifactVersionProvenance
     error?: ProvenanceReadFailure
+    item?: Pick<
+      PreviewFileItem,
+      'artifactId' | 'selectedVersionId' | 'name' | 'projectId' | 'versionNumber'
+    >
+    originSession?: ArtifactLineageProvenance['originSession']
   }>()
   const [requestedTab, setRequestedTab] = useState<ProvenanceTab | undefined>(initialTab)
   const setActiveTab = (tab: ProvenanceTab): void => {
@@ -930,7 +935,24 @@ const ArtifactProvenancePanel = ({
   )
   const coreProvenance =
     provenanceResult?.key === provenanceKey ? provenanceResult.value : undefined
-  const imageProducer = coreProvenance?.evidence?.producer
+  const previousProducer = provenanceResult?.value?.evidence.producer
+  const retainedImage =
+    !coreProvenance &&
+    provenanceResult?.key !== provenanceKey &&
+    provenanceResult?.item?.projectId === projectId &&
+    previousProducer?.state === 'available' &&
+    'kind' in previousProducer &&
+    previousProducer.kind === 'connector' &&
+    previousProducer.connector_id === 'image-model' &&
+    !lineageUnavailable &&
+    !selectedVersionUnavailable &&
+    !(lineageResult?.key === lineageRequestKey && lineageResult.error) &&
+    !isUserEdit &&
+    !isLegacyVersion
+      ? provenanceResult
+      : undefined
+  const displayedCore = coreProvenance ?? retainedImage?.value
+  const imageProducer = displayedCore?.evidence.producer
   const isImageGeneration =
     imageProducer?.state === 'available' &&
     'kind' in imageProducer &&
@@ -940,7 +962,7 @@ const ArtifactProvenancePanel = ({
     'code',
     'environment',
     'reproducibility',
-    ...(coreProvenance?.evidence.image_task_id ? ['messages'] : [])
+    ...(displayedCore?.evidence.image_task_id ? ['messages'] : [])
   ]
   const requestedActiveTab =
     selectedTab ??
@@ -951,8 +973,15 @@ const ArtifactProvenancePanel = ({
       ? 'execution'
       : requestedActiveTab
   const imageArguments = isImageGeneration
-    ? coreProvenance?.evidence?.connector_execution?.normalized_arguments
+    ? displayedCore?.evidence.connector_execution?.normalized_arguments
     : undefined
+  const retainingImageCard = Boolean(retainedImage && activeTab === 'execution' && imageArguments)
+  const displayedVersionNumber = retainedImage
+    ? retainedImage.item?.versionNumber
+    : selectedVersionDescriptor?.versionNumber
+  const displayedOriginSession = retainedImage
+    ? retainedImage.originSession
+    : lineage?.originSession
   const showAllPackages = showAllPackagesKey === provenanceKey
   const notebookExportError =
     notebookExportFailure?.key === provenanceKey ? notebookExportFailure.message : undefined
@@ -1021,6 +1050,14 @@ const ArtifactProvenancePanel = ({
     let active = true
     if (!item.artifactId || !selectedVersionId || !initialLineage || isUserEdit || isLegacyVersion)
       return
+    const loadedItem = {
+      artifactId: item.artifactId,
+      selectedVersionId,
+      name: item.name,
+      projectId,
+      versionNumber: resolveArtifactVersionDescriptor(initialLineage, selectedVersionId)
+        ?.versionNumber
+    }
     void window.api.artifacts
       .getVersionProvenance({
         projectId,
@@ -1030,7 +1067,13 @@ const ArtifactProvenancePanel = ({
       })
       .then(unwrapProvenanceRead)
       .then((value) => {
-        if (active) setProvenanceResult({ key: provenanceKey, value })
+        if (active)
+          setProvenanceResult({
+            key: provenanceKey,
+            value,
+            item: loadedItem,
+            originSession: initialLineage.originSession
+          })
       })
       .catch((failure: unknown) => {
         if (active) {
@@ -1048,6 +1091,7 @@ const ArtifactProvenancePanel = ({
     isUserEdit,
     isLegacyVersion,
     item.artifactId,
+    item.name,
     item.sessionId,
     initialLineage,
     projectId,
@@ -1691,6 +1735,7 @@ const ArtifactProvenancePanel = ({
       onValueChange={(value) => setActiveTab(value as ProvenanceTab)}
       className="flex size-full min-h-0 flex-col bg-bg-000"
       data-testid="artifact-provenance"
+      aria-busy={retainingImageCard || undefined}
     >
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border-300/60 px-2">
         <Button
@@ -1709,7 +1754,7 @@ const ArtifactProvenancePanel = ({
           <ChevronLeft aria-hidden="true" />
         </Button>
         <span className="text-xs font-medium text-text-100">
-          {selectedVersionDescriptor ? `v${selectedVersionDescriptor.versionNumber}` : t('Version')}
+          {displayedVersionNumber !== undefined ? `v${displayedVersionNumber}` : t('Version')}
         </span>
         <Button
           type="button"
@@ -1734,17 +1779,17 @@ const ArtifactProvenancePanel = ({
           <ChevronRight aria-hidden="true" />
         </Button>
         <span className="min-w-0 flex-1 truncate text-xs text-text-300">
-          {lineage?.originSession.state === 'deleted'
+          {displayedOriginSession?.state === 'deleted'
             ? [
                 t('Source session deleted'),
-                lineage.originSession.title,
-                lineage.originSession.deletedAt
-                  ? formatDate(lineage.originSession.deletedAt, 'dateTime')
+                displayedOriginSession.title,
+                displayedOriginSession.deletedAt
+                  ? formatDate(displayedOriginSession.deletedAt, 'dateTime')
                   : undefined
               ]
                 .filter(Boolean)
                 .join(' · ')
-            : lineage?.originSession.title}
+            : displayedOriginSession?.title}
         </span>
         <Button
           type="button"
@@ -1823,7 +1868,12 @@ const ArtifactProvenancePanel = ({
             content={<ExecutionEvidenceDetails key={provenanceKey + ':legacy'} reason="legacy" />}
           />
         ) : null}
-        {!error && !lineageUnavailable && !isUserEdit && !isLegacyVersion && !provenance ? (
+        {!error &&
+        !lineageUnavailable &&
+        !isUserEdit &&
+        !isLegacyVersion &&
+        !provenance &&
+        !retainingImageCard ? (
           <div className="flex h-full items-center justify-center text-text-300">
             <LoaderCircle className="size-4 animate-spin" aria-label={t('Loading Provenance')} />
           </div>
@@ -2142,22 +2192,22 @@ const ArtifactProvenancePanel = ({
             }
           />
         ) : null}
-        {provenance && activeTab === 'execution' && deferredSectionReady ? (
-          isImageGeneration && imageArguments ? (
-            <div className="p-3">
+        {activeTab === 'execution' && deferredSectionReady ? (
+          displayedCore && isImageGeneration && imageArguments ? (
+            <div className="p-3" inert={retainingImageCard}>
               <WorkspaceImageToolCard
                 operation={imageProducer.tool_id === 'edit_image' ? 'edit' : 'generate'}
                 input={{ options: imageArguments.parameters }}
                 inputFilename={
-                  provenance.evidence.inputs.find(
+                  displayedCore.evidence.inputs.find(
                     (entry) => entry.input_file_version_id === imageArguments.sourceVersionId
                   )?.filename
                 }
-                collapseSettings
+                variant="provenance"
                 result={{
-                  artifactId: item.artifactId!,
-                  versionId: selectedVersionId!,
-                  filename: item.name,
+                  artifactId: retainedImage?.item?.artifactId ?? item.artifactId!,
+                  versionId: retainedImage?.item?.selectedVersionId ?? selectedVersionId!,
+                  filename: retainedImage?.item?.name ?? item.name,
                   model:
                     typeof imageArguments.model === 'string' ? imageArguments.model : undefined,
                   width:
@@ -2167,7 +2217,7 @@ const ArtifactProvenancePanel = ({
                 }}
               />
             </div>
-          ) : executionRuns.length > 0 ? (
+          ) : !provenance ? null : executionRuns.length > 0 ? (
             <div>
               {executionTruncation ? (
                 <InlineNotice className="m-2">

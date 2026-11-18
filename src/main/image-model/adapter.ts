@@ -1,6 +1,10 @@
 import { z } from 'zod'
 import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
-import type { ImageOperation, ImageOptionValue } from '../../shared/image-model-presets'
+import type {
+  ImageOperation,
+  ImageOptionValue,
+  ImageSpatialReference
+} from '../../shared/image-model-presets'
 import type { ImageAdapterKind } from '../../shared/image-model-settings'
 import type { ResolvedImageModel } from '../settings/image-model-owner'
 import { ImageModelError, MAX_IMAGE_BYTES, type ImageRaster } from './contract'
@@ -14,13 +18,15 @@ export function encodeImageRequest(
   prompt: string,
   options: Record<string, ImageOptionValue>,
   source?: ImageRaster,
-  guide?: ImageRaster
+  guide?: ImageRaster,
+  spatial?: ImageSpatialReference
 ): { url: string; init: RequestInit; parameters: Record<string, ImageOptionValue> } {
   const generationEndpoint =
     operation === 'generate' || target.adapter === 'qwen-images' || target.adapter === 'seedream'
   const url = `${target.baseUrl.replace(/\/+$/, '')}/images/${generationEndpoint ? 'generations' : 'edits'}`
   const parameters: Record<string, ImageOptionValue> = {
     ...options,
+    ...(target.model.presetId === 'minimax-h3/sglang' ? { output_format: 'png' } : {}),
     ...(target.adapter === 'seedream' ? {} : { n: 1 }),
     ...(target.adapter === 'qwen-images' || target.model.presetId === 'openai/gpt-image-2.6'
       ? {}
@@ -34,11 +40,12 @@ export function encodeImageRequest(
     body.set('model', target.model.wireModelId)
     body.set('prompt', prompt)
     for (const [key, value] of Object.entries(parameters)) body.set(key, String(value))
-    body.set(
-      'image',
-      new Blob([new Uint8Array(source!.bytes)], { type: 'image/png' }),
-      'source.png'
-    )
+    for (const [index, raster] of (guide ? [source!, guide] : [source!]).entries())
+      body.append(
+        'image',
+        new Blob([new Uint8Array(raster.bytes)], { type: raster.mime }),
+        `reference-${index + 1}.${raster.mime.slice('image/'.length)}`
+      )
     return { url, init: { method: 'POST', headers, body }, parameters }
   }
   const body = JSON.stringify({
@@ -47,16 +54,17 @@ export function encodeImageRequest(
     ...parameters,
     ...(source
       ? target.adapter === 'qwen-images' || target.adapter === 'seedream'
-        ? { image: imageDataUrl(source) }
+        ? { image: guide ? [imageDataUrl(source), imageDataUrl(guide)] : imageDataUrl(source) }
         : {
-            images: (guide ? [source, guide] : [source]).map((image) => ({
+            images: (guide && spatial !== 'markup' ? [source, guide] : [source]).map((image) => ({
               image_url: imageDataUrl(image)
-            }))
+            })),
+            ...(guide && spatial === 'markup' ? { markup: { image_url: imageDataUrl(guide) } } : {})
           }
       : {})
   })
   if (target.adapter === 'minimax' && Buffer.byteLength(body) > MAX_IMAGE_BYTES)
-    throw new ImageModelError('UNSUPPORTED_OPTION', 'The encoded image request exceeds 64 MiB.')
+    throw new ImageModelError('SOURCE_LIMIT_EXCEEDED', 'The encoded image request exceeds 64 MiB.')
   return {
     url,
     init: { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body },
@@ -120,6 +128,10 @@ const responseSchema = z.object({
     )
     .length(1)
 })
+const base64Characters = new Uint8Array(128)
+for (const character of 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/')
+  base64Characters[character.charCodeAt(0)] = 1
+
 export function readImageResult(value: unknown): { bytes: Buffer } | { url: string } {
   const parsed = responseSchema.safeParse(value)
   if (!parsed.success) throw new Error('Invalid image response.')
@@ -137,10 +149,14 @@ export function readImageResult(value: unknown): { bytes: Buffer } | { url: stri
       !data.length ||
       data.length % 4 !== 0 ||
       data.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 ||
-      invalidPadding ||
-      !/^[A-Za-z0-9+/]*={0,2}(?![\s\S])/u.test(data)
+      invalidPadding
     )
       throw new Error('Invalid image encoding.')
+    const end = data.length - (tail.endsWith('==') ? 2 : tail.endsWith('=') ? 1 : 0)
+    // RegExp legacy match state would retain the full multi-megabyte input after parsing.
+    for (let index = 0; index < end; index++) {
+      if (!base64Characters[data.charCodeAt(index)]) throw new Error('Invalid image encoding.')
+    }
     const bytes = Buffer.from(data, 'base64')
     if (bytes.length > MAX_IMAGE_BYTES) throw new Error('Image byte limit exceeded.')
     return { bytes }

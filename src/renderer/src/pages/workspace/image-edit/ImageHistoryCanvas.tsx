@@ -1,4 +1,5 @@
-import { RotateCcw, Scan, ZoomIn, ZoomOut } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { RotateCcw, Shrink, ZoomIn, ZoomOut } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -123,8 +124,7 @@ export function ImageHistoryCanvas({
     node: ImageHistoryNode,
     selected: boolean,
     select: () => void,
-    edit: () => void,
-    resultNumber?: number
+    edit: () => void
   ): ReactNode
   moreAction?: ReactNode
   relatedAction(node: ImageHistoryNode): ReactNode
@@ -234,7 +234,7 @@ export function ImageHistoryCanvas({
 
   const tileList = (nodes: ImageHistoryNode[]): ReactNode => (
     <ul>
-      {nodes.map((node, index) => {
+      {nodes.map((node) => {
         const id = keyOf(node)
         const point = byId.get(id)!
         return (
@@ -302,8 +302,7 @@ export function ImageHistoryCanvas({
                 node,
                 current === id,
                 () => setActiveId(id),
-                () => onEdit(node),
-                nodes !== roots && nodes.length > 1 ? index + 1 : undefined
+                () => onEdit(node)
               )}
             </div>
             {node.children.length ? tileList(node.children) : null}
@@ -366,7 +365,7 @@ export function ImageHistoryCanvas({
                       cx={from.x}
                       cy={from.y}
                       r="3.5"
-                      className="fill-bg-100"
+                      className="fill-background"
                       stroke="currentColor"
                       strokeWidth="1.5"
                       vectorEffect="non-scaling-stroke"
@@ -379,49 +378,71 @@ export function ImageHistoryCanvas({
         </TransformWrapper>
       </div>
       <div className="flex shrink-0 items-center gap-1 border-t border-border-300/40 bg-bg-000 px-2 py-1.5">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          title={t('Zoom out')}
-          aria-label={t('Zoom out')}
-          onClick={() => view.current?.zoomOut(0.2, 0)}
-        >
-          <ZoomOut className="size-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          title={t('Zoom in')}
-          aria-label={t('Zoom in')}
-          onClick={() => view.current?.zoomIn(0.2, 0)}
-        >
-          <ZoomIn className="size-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          title={t('Reset zoom')}
-          aria-label={t('Reset zoom')}
-          onClick={() => fit()}
-        >
-          <Scan className="size-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          title={t('Reset layout')}
-          aria-label={t('Reset layout')}
-          onClick={() => {
-            setOffsets(new Map())
-            fit(false)
-          }}
-        >
-          <RotateCcw className="size-4" />
-        </Button>
+        <TooltipProvider delayDuration={0} disableHoverableContent>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="text-text-100 hover:text-text-000"
+                aria-label={t('Zoom out')}
+                onClick={() => view.current?.zoomOut(0.2, 0)}
+              >
+                <ZoomOut aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Zoom out')}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="text-text-100 hover:text-text-000"
+                aria-label={t('Zoom in')}
+                onClick={() => view.current?.zoomIn(0.2, 0)}
+              >
+                <ZoomIn aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Zoom in')}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="text-text-100 hover:text-text-000"
+                aria-label={t('Reset zoom')}
+                onClick={() => fit()}
+              >
+                <Shrink aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Reset zoom')}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="text-text-100 hover:text-text-000"
+                aria-label={t('Reset layout')}
+                onClick={() => {
+                  setOffsets(new Map())
+                  fit(false)
+                }}
+              >
+                <RotateCcw aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Reset layout')}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         {moreAction}
         {active ? relatedAction(active.node) : null}
         <Button

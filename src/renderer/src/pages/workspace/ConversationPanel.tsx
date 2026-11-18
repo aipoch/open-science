@@ -1020,6 +1020,10 @@ const ConversationPanel = ({
     onChange: (doc) => onValidatedDraftDocChange(doc, undefined, false)
   })
 
+  const annotationDropError = annotationDrop.error
+    ? t('Could not move this annotation. It may have changed or the target is full.')
+    : undefined
+  const fileDropError = fileMentionDrop.error ? t('Could not resolve file version.') : undefined
   const composerNotices = useComposerNotices({
     sessionId: activeSession?.id,
     authenticationResolved: view.authenticationRecovery?.required === false,
@@ -1072,6 +1076,24 @@ const ConversationPanel = ({
             : undefined,
         failure: composerFailure,
         detail: composerErrorDetail
+      },
+      {
+        id: 'annotation-drop',
+        message: annotationDropError,
+        summary: annotationDropError ? { title: annotationDropError } : undefined,
+        failure: { category: 'input', diagnostics: {} }
+      },
+      {
+        id: 'file-drop',
+        message: fileDropError,
+        summary: fileDropError ? { title: fileDropError } : undefined,
+        failure: { category: 'input', diagnostics: {} }
+      },
+      {
+        id: 'stop',
+        message: stopError,
+        summary: stopError ? { title: stopError } : undefined,
+        failure: { category: 'internal', diagnostics: {} }
       },
       {
         id: 'authentication',
@@ -2413,23 +2435,13 @@ const ConversationPanel = ({
                             {t('Add to main conversation')}
                           </div>
                         ) : null}
-                        {annotationDrop.error ? (
-                          <p role="alert" className="text-xs text-danger-000">
-                            {t(
-                              'Could not move this annotation. It may have changed or the target is full.'
-                            )}
-                          </p>
-                        ) : null}
+
                         {fileMentionDrop.over ? (
                           <div className="rounded-md border border-primary px-2 py-1 text-xs text-text-200">
                             {t('Drop to mention in chat')}
                           </div>
                         ) : null}
-                        {fileMentionDrop.error ? (
-                          <p role="alert" className="text-xs text-danger-000">
-                            {t('Could not resolve file version.')}
-                          </p>
-                        ) : null}
+
                         {specialistComposerColor && selectedSpecialist ? (
                           <span
                             key={selectedSpecialist.id}
@@ -3500,11 +3512,6 @@ const ConversationPanel = ({
                                         )}
                                       </SplitButtonPrimary>
                                     </PopoverAnchor>
-                                    {stopError ? (
-                                      <span className="sr-only" role="alert">
-                                        {stopError}
-                                      </span>
-                                    ) : null}
 
                                     <>
                                       <Tooltip>
@@ -3762,15 +3769,6 @@ const ConversationPanel = ({
                                   </TooltipContent>
                                 </Tooltip>
                               </>
-                            ) : null}
-                            {stopError ? (
-                              <span
-                                className="max-w-48 whitespace-normal [overflow-wrap:anywhere] text-[11px] text-danger-000"
-                                role="alert"
-                                title={stopError}
-                              >
-                                {stopError}
-                              </span>
                             ) : null}
                           </div>
                         </div>

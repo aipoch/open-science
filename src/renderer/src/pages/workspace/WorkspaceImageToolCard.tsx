@@ -8,8 +8,10 @@ import { Button } from '@/components/ui/button'
 import * as Dialog from '@/components/ui/dialog'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { ErrorNotice } from '@/components/error-notice'
+import { cn } from '@/lib/utils'
 import { useCachedPreviewImage } from './previews/useCachedPreviewImage'
 import { useNearViewport } from './previews/useNearViewport'
+import { ProjectFileMentionButton } from './ProjectFileMentionButton'
 import { WorkspaceCollapsiblePanel } from './WorkspaceCollapsiblePanel'
 import { imageOptionLabels, imageToolInput, type ImageToolResult } from './image-tool-presentation'
 
@@ -20,7 +22,7 @@ export const WorkspaceImageToolCard = ({
   error,
   pending = false,
   inputFilename,
-  collapseSettings = false
+  variant = 'conversation'
 }: {
   operation: 'generate' | 'edit'
   input: unknown
@@ -28,9 +30,10 @@ export const WorkspaceImageToolCard = ({
   result?: ImageToolResult
   pending?: boolean
   inputFilename?: string
-  collapseSettings?: boolean
+  variant?: 'conversation' | 'provenance'
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const isProvenance = variant === 'provenance'
   const [expanded, setExpanded] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const settingsId = useId()
@@ -46,10 +49,19 @@ export const WorkspaceImageToolCard = ({
         )
       : []
   const settings = (
-    <div id={settingsId} className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+    <div
+      id={settingsId}
+      className={cn(
+        'flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground',
+        isProvenance && 'pt-2'
+      )}
+    >
       {options.map(([key, value]) => (
         <span key={key} className="max-w-full truncate" title={String(value)}>
-          {labels[key]}: {String(value)}
+          {labels[key]}:{' '}
+          <span className={isProvenance ? 'font-medium text-foreground' : undefined}>
+            {String(value)}
+          </span>
         </span>
       ))}
     </div>
@@ -57,9 +69,17 @@ export const WorkspaceImageToolCard = ({
   return (
     <section
       data-testid="image-tool-card"
-      className="min-w-0 overflow-hidden rounded-lg border border-border bg-card text-sm"
+      className={cn(
+        'min-w-0 overflow-hidden rounded-lg border border-border bg-card text-sm',
+        isProvenance && 'space-y-2 p-3'
+      )}
     >
-      <div className="flex min-w-0 items-center gap-2 border-b border-border px-3 py-2.5">
+      <div
+        className={cn(
+          'flex min-w-0 items-center gap-2',
+          !isProvenance && 'border-b border-border px-3 py-2.5'
+        )}
+      >
         {pending ? (
           <LoaderCircle
             className="size-4 shrink-0 animate-spin text-primary motion-reduce:animate-none"
@@ -68,17 +88,19 @@ export const WorkspaceImageToolCard = ({
         ) : (
           <ImagePlus className="size-4 shrink-0 text-primary" aria-hidden="true" />
         )}
-        <span className="shrink-0 font-medium">
+        <span className={cn('font-medium', !isProvenance && 'shrink-0')}>
           {operation === 'edit' ? t('Edit image') : t('Image generation')}
         </span>
-        <span
-          className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground"
-          title={filename}
-        >
-          {filename}
-        </span>
+        {!isProvenance ? (
+          <span
+            className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground"
+            title={filename}
+          >
+            {filename}
+          </span>
+        ) : null}
       </div>
-      <div className="space-y-3 p-3">
+      <div className={isProvenance ? 'space-y-2' : 'space-y-3 p-3'}>
         {error ? <ImageErrorNotice error={error} /> : null}
         {prompt ? (
           <div>
@@ -102,41 +124,52 @@ export const WorkspaceImageToolCard = ({
           </div>
         ) : null}
         {result?.model || (result?.width && result.height) || inputFilename ? (
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            {result?.model ? <span>{result.model}</span> : null}
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            {result?.model ? (
+              <span className="max-w-full truncate" title={result.model}>
+                {result.model}
+              </span>
+            ) : null}
             {result?.width && result.height ? (
-              <span>
+              <span className="whitespace-nowrap tabular-nums">
                 {result.width} × {result.height}
               </span>
             ) : null}
             {inputFilename ? (
-              <span className="max-w-full truncate" title={inputFilename}>
+              <span
+                className={cn('max-w-full truncate', isProvenance && 'basis-full')}
+                title={inputFilename}
+              >
                 {t('Source image')}: {inputFilename}
               </span>
             ) : null}
           </div>
         ) : null}
         {options.length > 0 ? (
-          collapseSettings ? (
-            <>
+          isProvenance ? (
+            <div className="border-t border-border pt-1">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 aria-expanded={settingsOpen}
                 aria-controls={settingsOpen ? settingsId : undefined}
-                className="w-full justify-between px-0 text-xs text-text-200"
+                className="-ml-1.5 gap-1.5 px-1.5 text-xs text-muted-foreground aria-expanded:bg-transparent"
                 onClick={() => setSettingsOpen(!settingsOpen)}
               >
-                {t('Output settings')}
                 <ChevronDown
-                  className={`size-3.5 transition-transform motion-reduce:transition-none ${settingsOpen ? 'rotate-180' : ''}`}
+                  aria-hidden="true"
+                  className={cn(
+                    'size-3.5 transition-transform motion-reduce:transition-none',
+                    !settingsOpen && '-rotate-90'
+                  )}
                 />
+                {t('Output settings')}
               </Button>
               <WorkspaceCollapsiblePanel isOpen={settingsOpen}>
                 {settings}
               </WorkspaceCollapsiblePanel>
-            </>
+            </div>
           ) : (
             settings
           )
@@ -191,7 +224,7 @@ const ImageToolOutputContent = ({
   return (
     <div
       ref={setElement}
-      className="mx-1 mb-2 mt-2 w-fit max-w-full overflow-hidden rounded-lg border border-border bg-card p-2 md:ml-[30px]"
+      className="mx-1 mb-2 mt-2 flex w-fit max-w-full items-start gap-1 overflow-hidden rounded-lg border border-border bg-card p-2 md:ml-[30px]"
       data-testid="image-tool-output"
     >
       {image.status === 'ready' ? (
@@ -199,7 +232,7 @@ const ImageToolOutputContent = ({
           <Dialog.Trigger asChild>
             <button
               type="button"
-              className="block max-w-full cursor-zoom-in overflow-hidden rounded-md focus-visible:outline-2 focus-visible:outline-ring"
+              className="block min-w-0 max-w-full cursor-zoom-in overflow-hidden rounded-md focus-visible:outline-2 focus-visible:outline-ring"
               aria-label={t('Preview {{name}}', { name: result.filename })}
             >
               <img
@@ -251,6 +284,19 @@ const ImageToolOutputContent = ({
           />
         </div>
       )}
+      {image.status === 'ready' ? (
+        <ProjectFileMentionButton
+          target={{
+            id: result.artifactId,
+            source: 'artifact',
+            sourceFileId: result.artifactId,
+            projectId,
+            name: result.filename,
+            path: result.versionId,
+            versionId: result.versionId
+          }}
+        />
+      ) : null}
     </div>
   )
 }

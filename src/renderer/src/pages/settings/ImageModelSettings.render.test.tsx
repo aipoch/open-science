@@ -5,31 +5,26 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
 import { ImageModelSelector, ImageServicesPanel } from './ImageModelSettings'
 import { useImageModelSettings } from './use-image-model-settings'
-import type {
-  ImageModelSettingsMutation,
-  ImageModelSettingsSnapshot
+import {
+  IMAGE_VENDOR_CATALOG,
+  type ImageModelSettingsMutation,
+  type ImageModelSettingsSnapshot
 } from '../../../../shared/image-model-settings'
 
 if (!Element.prototype.hasPointerCapture) Element.prototype.hasPointerCapture = () => false
 if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => undefined
+const officialVendor = IMAGE_VENDOR_CATALOG.find((vendor) => vendor.id === 'minimax')!
 const snapshot: ImageModelSettingsSnapshot = {
   services: [],
   availableProviders: [
     {
       id: 'account',
-      name: 'MiniMax China',
+      name: 'Fixture account',
       vendorId: 'minimax',
       maskedKey: '••••1234',
       adapter: 'minimax',
-      baseUrl: 'https://api.minimax.cn/v1',
-      models: [
-        {
-          id: 'MiniMax-H3-Image',
-          label: 'MiniMax H3 Image',
-          wireModelId: 'MiniMax-H3-Image',
-          presetId: 'minimax-h3/official'
-        }
-      ]
+      baseUrl: 'https://images.example/v1',
+      models: officialVendor.models
     }
   ]
 }
@@ -80,7 +75,7 @@ it('saves a keyless local service with distinct presets and navigates back only 
   fireEvent.change(screen.getByLabelText('Base URL'), {
     target: { value: 'http://localhost:3000/v1' }
   })
-  fireEvent.change(screen.getByLabelText('Model ID'), { target: { value: 'local/H3' } })
+  fireEvent.change(screen.getByLabelText('Model ID'), { target: { value: 'local/image' } })
   fireEvent.pointerDown(screen.getByLabelText('Interface preset'), {
     button: 0,
     pointerType: 'mouse',
@@ -96,7 +91,7 @@ it('saves a keyless local service with distinct presets and navigates back only 
   expect(navigate).not.toHaveBeenCalled()
   expect(
     screen.getAllByLabelText('Model ID').map((input) => (input as HTMLInputElement).value)
-  ).toEqual(['local/H3', 'other/model'])
+  ).toEqual(['local/image', 'other/model'])
   fireEvent.click(screen.getByText('Save'))
   await waitFor(() => expect(navigate).toHaveBeenCalledWith({ kind: 'image-services' }))
   rerender(<ImageServicesPanel view={{ kind: 'image-services' }} navigate={navigate} />)
@@ -106,7 +101,7 @@ it('saves a keyless local service with distinct presets and navigates back only 
       kind: 'save',
       baseUrl: 'http://localhost:3000/v1',
       models: [
-        expect.objectContaining({ wireModelId: 'local/H3', presetId: 'minimax-h3/sglang' }),
+        expect.objectContaining({ wireModelId: 'local/image', presetId: 'minimax-h3/sglang' }),
         expect.objectContaining({ wireModelId: 'other/model', presetId: 'openai-images/generic' })
       ]
     })
@@ -170,7 +165,7 @@ it('discards typed custom credentials when switching to an official account', as
     pointerType: 'mouse',
     ctrlKey: false
   })
-  fireEvent.click(await screen.findByRole('option', { name: 'MiniMax' }))
+  fireEvent.click(await screen.findByRole('option', { name: officialVendor.label }))
   expect((screen.getByLabelText('API key') as HTMLInputElement).value).toBe('••••1234')
   expect(screen.queryByLabelText('Base URL')).toBeNull()
   fireEvent.click(screen.getByText('Save'))
@@ -197,9 +192,9 @@ it('switches provider models without carrying custom credentials and uses the ac
   fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'draft-secret' } })
   fireEvent.click(screen.getByLabelText('Show API key'))
   fireEvent.pointerDown(providerSelect, { button: 0, pointerType: 'mouse', ctrlKey: false })
-  fireEvent.click(await screen.findByRole('option', { name: 'MiniMax' }))
+  fireEvent.click(await screen.findByRole('option', { name: officialVendor.label }))
   expect(screen.getByText('Supported models')).toBeTruthy()
-  expect(screen.getByTitle('MiniMax-H3-Image')).toBeTruthy()
+  expect(screen.getByTitle(officialVendor.models[0].wireModelId)).toBeTruthy()
   expect(screen.queryByLabelText('Model ID')).toBeNull()
   fireEvent.pointerDown(providerSelect, { button: 0, pointerType: 'mouse', ctrlKey: false })
   fireEvent.click(await screen.findByRole('option', { name: 'Custom HTTP service' }))
@@ -209,11 +204,11 @@ it('switches provider models without carrying custom credentials and uses the ac
   expect(key.value).toBe('')
   expect(key.type).toBe('password')
   fireEvent.pointerDown(providerSelect, { button: 0, pointerType: 'mouse', ctrlKey: false })
-  fireEvent.click(await screen.findByRole('option', { name: 'MiniMax' }))
+  fireEvent.click(await screen.findByRole('option', { name: officialVendor.label }))
   fireEvent.click(screen.getByText('Save'))
   await waitFor(() => expect(save).toHaveBeenCalledOnce())
   expect(save).toHaveBeenCalledWith(
-    expect.objectContaining({ name: 'MiniMax', providerId: 'account' })
+    expect.objectContaining({ name: officialVendor.label, providerId: 'account' })
   )
 })
 
@@ -231,6 +226,15 @@ it.each([
   fireEvent.click(await screen.findByRole('option', { name: label }))
   expect(screen.getByText(model)).toBeTruthy()
   expect((screen.getByText('Save') as HTMLButtonElement).disabled).toBe(true)
+  const workspaceUrl = 'https://llm-test.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
+  if (vendorId === 'bailian') {
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://example.com' }
+    })
+    expect(screen.getByText('Enter a Bailian workspace URL.')).toBeTruthy()
+    expect((screen.getByText('Save') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: workspaceUrl } })
+  }
   fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'image-only-secret' } })
   fireEvent.click(screen.getByText('Save'))
   await waitFor(() => expect(save).toHaveBeenCalledOnce())
@@ -238,6 +242,7 @@ it.each([
     expect.objectContaining({ vendorId, adapter, apiKey: 'image-only-secret' })
   )
   expect(save.mock.calls[0][0]).not.toHaveProperty('providerId')
+  if (vendorId === 'bailian') expect(save.mock.calls[0][0]).toMatchObject({ baseUrl: workspaceUrl })
 })
 
 it('switches a reused credential to a separate image key without modifying the account', async () => {
@@ -247,7 +252,7 @@ it('switches a reused credential to a separate image key without modifying the a
     pointerType: 'mouse',
     ctrlKey: false
   })
-  fireEvent.click(await screen.findByRole('option', { name: 'MiniMax' }))
+  fireEvent.click(await screen.findByRole('option', { name: officialVendor.label }))
   fireEvent.pointerDown(screen.getByLabelText('Credentials'), {
     button: 0,
     pointerType: 'mouse',
@@ -269,9 +274,9 @@ it('omits the preset selector when the API format has only one contract', async 
     pointerType: 'mouse',
     ctrlKey: false
   })
-  fireEvent.click(await screen.findByRole('option', { name: 'MiniMax' }))
+  fireEvent.click(await screen.findByRole('option', { name: officialVendor.label }))
   expect(screen.queryByLabelText('Interface preset')).toBeNull()
-  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Local MiniMax' } })
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Local image service' } })
   fireEvent.change(screen.getByLabelText('Base URL'), {
     target: { value: 'http://localhost:3000/v1' }
   })

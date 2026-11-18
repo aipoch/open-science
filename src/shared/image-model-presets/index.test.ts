@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { IMAGE_MODEL_PRESET_ADAPTERS } from '../image-model-settings'
 import {
   getImageModelPreset,
+  imageEditSpatialReference,
   IMAGE_MODEL_PRESETS,
   validateImageModelOptions,
   type ImageOptionsValidation
@@ -170,17 +171,16 @@ describe('image model presets', () => {
     if (result.ok) expect(result.options).not.toBe(input)
   })
 
-  it('uses the MiniMax reference format declared by the preset', () => {
-    for (const [id, spatial] of [
-      ['minimax-h3/official', 'separate-reference'],
-      ['minimax-h3/sglang', 'annotated-overlay']
-    ]) {
-      expect(getImageModelPreset(id)?.operations.edit).toMatchObject({
-        spatial,
-        maxInputBytes: 64 * 1024 * 1024,
-        maxInputPixels: 20_000_000
-      })
-    }
+  it('limits native markup to canonical models and supported source dimensions', () => {
+    expect(
+      imageEditSpatialReference('openai/gpt-image-2.6', 'gpt-image-2.6-flare', 16_777_216)
+    ).toBe('markup')
+    expect(
+      imageEditSpatialReference('openai/gpt-image-2.6', 'gpt-image-2.6-flare', 16_777_217)
+    ).toBe('separate-reference')
+    expect(imageEditSpatialReference('openai/gpt-image-2.6', 'relay/gpt', 100_000)).toBe(
+      'separate-reference'
+    )
     expect(getImageModelPreset('openai-images/generic')?.operations.edit).toBeUndefined()
   })
 })
@@ -188,13 +188,27 @@ describe('image model presets', () => {
 it('validates supplier-specific options without granting generic relays edit capabilities', () => {
   expect(
     validateImageModelOptions('openai/gpt-image-2.6', 'edit', {
-      quality: 'high',
-      complexity: 'low'
+      size: '1536x864',
+      quality: 'xhigh',
+      complexity: 'low',
+      background: 'transparent'
     }).ok
   ).toBe(true)
   expect(
     validateImageModelOptions('openai/gpt-image-2.6', 'edit', { output_compression: 90 }).ok
   ).toBe(false)
+  expect(
+    validateImageModelOptions('openai/gpt-image-2.6', 'edit', { size: '1537x864' })
+  ).toMatchObject({
+    ok: false,
+    option: 'size'
+  })
+  expect(
+    validateImageModelOptions('openai/gpt-image-2.6', 'edit', { size: '4096x2048' })
+  ).toMatchObject({
+    ok: false,
+    option: 'size'
+  })
   expect(validateImageModelOptions('qwen/image-3.0', 'edit', { quality: 'high' }).ok).toBe(false)
   expect(
     validateImageModelOptions('qwen/image-3.0', 'edit', { prompt_extend_mode: 'agent' }).ok
@@ -209,7 +223,19 @@ it('validates supplier-specific options without granting generic relays edit cap
     validateImageModelOptions('qwen/image-3.0', 'generate', { negative_prompt: 'x'.repeat(2001) })
       .ok
   ).toBe(false)
-  expect(validateImageModelOptions('seedream/5.5', 'edit', { size: '1.5K' }).ok).toBe(true)
+  expect(
+    validateImageModelOptions('seedream/5.5', 'edit', { size: '1.5K', background: 'transparent' })
+      .ok
+  ).toBe(true)
+  expect(
+    validateImageModelOptions('seedream/5.5', 'edit', {
+      output_format: 'jpeg',
+      background: 'transparent'
+    })
+  ).toMatchObject({
+    ok: false,
+    option: 'background'
+  })
   expect(validateImageModelOptions('seedream/5.5', 'edit', { size: '512x512' }).ok).toBe(false)
   expect(validateImageModelOptions('seedream/5.5', 'edit', { size: '4K' }).ok).toBe(false)
   expect(validateImageModelOptions('seedream/5.5', 'generate', { n: 1 }).ok).toBe(false)

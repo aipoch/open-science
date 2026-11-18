@@ -11,6 +11,10 @@ import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/aux
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { SettingsService } from '../settings/service'
 import { parseSystemProxyRules } from '../settings/system-proxy'
+import { assertDiskReserve } from '../bounded-file-io'
+import { LOCAL_RESOURCE_BUDGETS, ResourceBudgetExceededError } from '../resource-budget'
+import { availableBytes } from '../storage/usage'
+import { ImageModelError, MAX_IMAGE_BYTES } from '../image-model/contract'
 
 export async function composeImageModel({
   settingsService,
@@ -24,6 +28,9 @@ export async function composeImageModel({
   modules: ApplicationModuleBuilder
 }): Promise<ImageModelService> {
   return modules.add(undefined, () => {
+    // During publication the pending file and the immutable Version briefly coexist.
+    const resultBytes = MAX_IMAGE_BYTES * 2
+    let reservedBytes = 0
     const service = new ImageModelService({
       retainWrite: acquireDataRootWriter,
       results: new ImageResultStore(resolveDataRoot, (context, { artifactId, versionId }) =>
@@ -35,8 +42,27 @@ export async function composeImageModel({
       resolveTarget: (selection) => settingsService.imageModels.resolve(selection),
       fetch: netFetchWithManualRedirect,
       recordUsage: recordAuxiliaryUsage,
-      download: (url, signal) =>
+      reserveResult: async () => {
+        reservedBytes += resultBytes
+        try {
+          assertDiskReserve(
+            await availableBytes(resolveDataRoot()),
+            reservedBytes,
+            LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+          )
+        } catch (error) {
+          reservedBytes -= resultBytes
+          if (!(error instanceof ResourceBudgetExceededError)) throw error
+          throw new ImageModelError('STORAGE_FULL', 'Not enough disk space to save the image.')
+        }
+        return () => {
+          reservedBytes -= resultBytes
+        }
+      },
+      download: (url, signal, providerUrl, reserveDelivery) =>
         downloadImageResult(url, signal, {
+          providerUrl,
+          reserveDelivery,
           resolveProxy: async (target) => {
             const proxy = parseSystemProxyRules(await runtimeNetwork().resolveProxy(target))
             return proxy.HTTPS_PROXY ?? proxy.ALL_PROXY

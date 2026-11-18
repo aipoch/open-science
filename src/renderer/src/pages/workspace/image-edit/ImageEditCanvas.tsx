@@ -317,8 +317,8 @@ export function ImageEditCanvas({
                 disabled={locked}
                 className={`pointer-events-auto absolute grid size-6 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border bg-bg-000 text-xs font-semibold text-text-000 shadow-sm ${active ? 'z-[1] border-primary ring-2 ring-primary/30' : 'border-border-300'}`}
                 style={{
-                  left: `${Math.max(2, Math.min(98, point.x * 100))}%`,
-                  top: `${Math.max(2, Math.min(98, point.y * 100))}%`
+                  left: `${point.x * 100}%`,
+                  top: `${point.y * 100}%`
                 }}
                 aria-label={t('Edit region {{number}}', { number: region.number })}
                 aria-haspopup="dialog"
@@ -334,14 +334,13 @@ export function ImageEditCanvas({
               <Popover key={region.id} open onOpenChange={(open) => !open && onCloseInstruction()}>
                 <PopoverAnchor asChild>{marker}</PopoverAnchor>
                 <PopoverContent
-                  side="right"
-                  align="start"
+                  side="top"
                   sideOffset={8}
                   collisionBoundary={popupBoundary}
                   hideWhenDetached
                   updatePositionStrategy="always"
                   aria-label={t('Edit region {{number}}', { number: region.number })}
-                  className="z-[80] flex w-64 max-w-[calc(100vw-2rem)] items-start gap-1"
+                  className="z-[80] flex w-60 max-w-[var(--radix-popover-content-available-width)] flex-col gap-1 px-0 py-1.5"
                   data-preview-escape-boundary
                   onPointerDown={(event) => event.stopPropagation()}
                   onInteractOutside={(event) => event.preventDefault()}

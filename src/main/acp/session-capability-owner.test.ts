@@ -23,6 +23,8 @@ import {
   type SessionCapabilityProvision
 } from './session-capability-owner'
 
+const imageEditPreset = 'openai/gpt-image-2.6'
+
 const createOwner = (
   overrides: ConstructorParameters<typeof AcpSessionCapabilityOwner>[0] = {}
 ): AcpSessionCapabilityOwner =>
@@ -639,7 +641,7 @@ describe('ACP session capability owner', () => {
         dataRoot: '/data',
         projectId: 'project',
         mcpEntryPath: '/app/main.js',
-        imageMcp: { getPresetId: async () => 'minimax-h3/official' }
+        imageMcp: { getPresetId: async () => imageEditPreset }
       }
     }).provision(request)
     expect(enabled.mcpServers.map((server) => server.name)).toContain('open-science-images')
@@ -647,7 +649,7 @@ describe('ACP session capability owner', () => {
     const image = enabled.mcpServers.find((server) => server.name === 'open-science-images')
     expect(image && 'env' in image ? image.env : []).toContainEqual({
       name: 'OPEN_SCIENCE_IMAGE_PRESET_ID',
-      value: 'minimax-h3/official'
+      value: imageEditPreset
     })
   })
 
@@ -668,7 +670,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
     }
-    for (const value of [undefined, 'minimax-h3/official', undefined]) {
+    for (const value of [undefined, imageEditPreset, undefined]) {
       presetId = value
       await owner.refreshDynamicAvailability()
       expect(owner.toolingAvailability(input).images).toBe(Boolean(value))
@@ -694,7 +696,7 @@ describe('ACP session capability owner', () => {
         dataRoot: '/data',
         projectId: 'project',
         mcpEntryPath: '/app/main.js',
-        imageMcp: { getPresetId: async () => (configured ? 'minimax-h3/official' : undefined) }
+        imageMcp: { getPresetId: async () => (configured ? imageEditPreset : undefined) }
       }
     })
     const request = {
@@ -778,7 +780,7 @@ describe('ACP session capability owner', () => {
         dataRoot: '/data',
         projectId: 'project',
         mcpEntryPath: '/app/main.js',
-        imageMcp: { getPresetId: async () => 'minimax-h3/official' }
+        imageMcp: { getPresetId: async () => imageEditPreset }
       },
       notebook: undefined,
       skillImport: undefined,
@@ -796,7 +798,7 @@ describe('ACP session capability owner', () => {
     expect(provision.mcpServers.map((server) => server.name)).toContain('open-science-images')
     expect(registerImage).toHaveBeenCalledWith(
       'session-image-http',
-      expect.objectContaining({ presetId: 'minimax-h3/official' })
+      expect.objectContaining({ presetId: imageEditPreset })
     )
     provision.commit('session-image-http')
     expect(host.registerReceiptScope).toHaveBeenCalledWith(

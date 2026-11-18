@@ -1,5 +1,11 @@
-import { ImageErrorNotice } from '@/components/image-error-notice'
-import { imageTaskIsActive, type ImageTask } from '../../../../../shared/image-task'
+import type { ComposerNotice } from '@/lib/composer-notice/catalog'
+import { ImageComposerNotices, ImageErrorNotice } from '@/components/image-error-notice'
+import type { ImageErrorDetail } from '../../../../../shared/image-model-error'
+import {
+  imageTaskIsActive,
+  matchesImageTaskSource,
+  type ImageTask
+} from '../../../../../shared/image-task'
 import {
   ArrowLeft,
   ArrowUp,
@@ -38,6 +44,8 @@ import {
 } from '../../../../../shared/image-edit-contract'
 import {
   getImageModelPreset,
+  imageInputExceedsLimits,
+  imageEditSpatialReference,
   validateImageModelOptions
 } from '../../../../../shared/image-model-presets'
 import { useImageEditing } from './image-edit-context'
@@ -47,6 +55,7 @@ import {
   IMAGE_EDITOR_DRAFT_LIMIT,
   reusableImageDraftKey,
   imageEditorCandidates,
+  imageEditorResultItem,
   imageEditorKey,
   imageEditorScope,
   imageEditorSource,
@@ -55,6 +64,7 @@ import {
   type ImageEditorTool
 } from './image-editor-state'
 import { ImageEditCanvas } from './ImageEditCanvas'
+import { imageOptionLabels } from '../image-tool-presentation'
 import { ImageEditParameters } from './ImageEditParameters'
 import { ImageEditHistory } from './ImageEditHistory'
 import { ImageEditComparison } from './ImageEditComparison'
@@ -102,8 +112,10 @@ function ActiveImageEditor({
   const canvasZoom = useRef<ReactZoomPanPinchRef>(null)
   const regionToReveal = useRef<string | undefined>(undefined)
   const sending = useRef(false)
+  const composing = useRef(false)
   const [decodeError, setDecodeError] = useState<string>()
   const [localError, setLocalError] = useState<string>()
+  const [unavailableHistoryVersion, setUnavailableHistoryVersion] = useState<string>()
   const [cancelErrorId, setCancelErrorId] = useState<string>()
   const [comparisonVersion, setComparisonVersion] = useState<string>()
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -115,22 +127,82 @@ function ActiveImageEditor({
     restoreHistoryFocus.current = false
     historyTrigger.current?.focus()
   }, [historyOpen])
+  const { frameId, branchId } = draft.owner
+  const sourceVersionId = draft.source.selectedVersionId
+  const sessionId = session.id
+  const projectId = session.projectId!
   const scopedTasks = useMemo(
     () =>
       owner.tasks.filter(
-        (task) => task.sessionId === session.id && task.branchId === draft.owner.branchId
+        (task) =>
+          task.projectId === projectId &&
+          task.sessionId === sessionId &&
+          task.frameId === frameId &&
+          task.branchId === branchId
       ),
-    [owner.tasks, session.id, draft.owner.branchId]
+    [owner.tasks, projectId, sessionId, frameId, branchId]
   )
+  const recoveryTask = draft.submission?.recoveryTask
   const candidates = useMemo(
     () => imageEditorCandidates(scopedTasks, rootItem),
     [scopedTasks, rootItem]
   )
+  const recentCandidates = candidates.slice(-6)
+  const activeSourceTask = scopedTasks.find(
+    (entry) => entry.edit.source.sourceVersionId === sourceVersionId && imageTaskIsActive(entry)
+  )
   useEffect(() => {
-    void reloadTasks({ projectId: session.projectId!, sessionId: session.id }).catch(() =>
-      setLocalError(t('Image results could not be verified.'))
-    )
-  }, [reloadTasks, session.projectId, session.id, t])
+    let current = true
+    const recovery =
+      frameId && branchId && sourceVersionId ? { frameId, branchId, sourceVersionId } : undefined
+    void reloadTasks({ projectId, sessionId, ...(recovery ? { recovery } : {}) })
+      .then((tasks) => {
+        if (!current) return
+        setUnavailableHistoryVersion(undefined)
+        if (!recovery) return
+        const sourceTasks = tasks.filter(
+          (task) =>
+            task.projectId === projectId &&
+            task.sessionId === sessionId &&
+            matchesImageTaskSource(task, recovery)
+        )
+        if (sourceTasks.some(imageTaskIsActive)) return
+        const latest = sourceTasks[0]
+        if (
+          !latest ||
+          (latest.state !== 'outcome-unknown' && (latest.state !== 'failed' || !latest.error))
+        )
+          return
+        updateDraft(editorKey, (draft) =>
+          draft && !draft.submission && draft.source.selectedVersionId === sourceVersionId
+            ? {
+                ...draft,
+                submission: {
+                  id: latest.id,
+                  startedAt: latest.createdAt,
+                  preparing: false,
+                  recoveryTask: latest
+                }
+              }
+            : draft
+        )
+      })
+      .catch(() => {
+        if (current) setUnavailableHistoryVersion(sourceVersionId)
+      })
+    return () => {
+      current = false
+    }
+  }, [
+    reloadTasks,
+    projectId,
+    sessionId,
+    frameId,
+    branchId,
+    sourceVersionId,
+    editorKey,
+    updateDraft
+  ])
   const selectedCandidate = candidates.find(
     ({ item }) => item.selectedVersionId === draft.selectedCandidate
   )
@@ -139,8 +211,8 @@ function ActiveImageEditor({
   const displayed = selectedImage ?? draft.source
   useLayoutEffect(() => {
     onVersionChange?.(displayed)
-    return () => onVersionChange?.(undefined)
   }, [onVersionChange, displayed])
+  useLayoutEffect(() => () => onVersionChange?.(undefined), [onVersionChange])
   const knownInput =
     scopedTasks.find((entry) => entry.result?.versionId === displayed.selectedVersionId)?.edit
       .source ??
@@ -173,74 +245,75 @@ function ActiveImageEditor({
   const inputSource =
     knownInput ?? (verifiedInput?.item === displayed ? verifiedInput.source : undefined)
   const image = useCachedPreviewImage(displayed)
-  const task = scopedTasks.find(({ id }) => id === draft.submission?.id)
+  const task = scopedTasks.find(({ id }) => id === draft.submission?.id) ?? recoveryTask
   const running = task ? imageTaskIsActive(task) : Boolean(draft.submission?.preparing)
   const observationFailed =
     !!draft.submission && owner.observationFailures?.has(draft.submission.id)
-  const locked =
-    observationFailed ||
-    running ||
-    Boolean(draft.selectedCandidate && draft.selectedCandidate !== 'pending')
+  const locked = observationFailed || running || Boolean(task?.state === 'succeeded' && task.result)
   const showPending = running && !observationFailed && draft.selectedCandidate === 'pending'
   const comparing = !running && !!inputSource && comparisonVersion === displayed.selectedVersionId
   const settled = useRef<string | undefined>(undefined)
   useEffect(() => {
-    const pending = scopedTasks.find(
-      (entry) =>
-        imageTaskIsActive(entry) &&
-        entry.edit.source.sourceVersionId === draft.source.selectedVersionId
-    )
-    if (!draft.submission && pending)
+    if (!draft.submission && activeSourceTask) {
       updateDraft(editorKey, (current) =>
-        current
+        current && !current.submission
           ? {
               ...current,
-              submission: { id: pending.id, startedAt: pending.createdAt, preparing: false },
+              submission: {
+                id: activeSourceTask.id,
+                startedAt: activeSourceTask.createdAt,
+                preparing: false
+              },
               selectedCandidate: 'pending'
             }
           : current
       )
-    if (!task || imageTaskIsActive(task) || settled.current === task.id) return
-    settled.current = task.id
-    updateDraft(editorKey, (current) =>
-      current
-        ? {
+    }
+    if (!task || imageTaskIsActive(task)) return
+    const settlement = JSON.stringify([task.id, task.state])
+    if (settled.current === settlement) return
+    settled.current = settlement
+    const result = imageEditorResultItem(task)
+    updateDraft(editorKey, (current) => {
+      if (!current || current.submission?.id !== task.id) return current
+      if (result)
+        return switchImageEditorSource(
+          {
             ...current,
-            submission: current.submission
-              ? { ...current.submission, preparing: false, stopping: false, error: undefined }
-              : undefined,
-            selectedCandidate: task.result?.versionId
-          }
-        : current
-    )
-  }, [task, scopedTasks, draft.submission, draft.source.selectedVersionId, updateDraft, editorKey])
-  useEffect(() => {
-    if (running || !selectedImage || (task && draft.selectedCandidate !== task.result?.versionId))
-      return
-    updateDraft(editorKey, (current) =>
-      current
-        ? switchImageEditorSource(
-            task?.state === 'succeeded' && task.id === current.submission?.id
-              ? { ...current, prompt: '', regions: [], regionDraft: undefined, undo: [], redo: [] }
-              : current,
-            selectedImage,
-            selectedCandidate?.edit.source
-          )
-        : current
-    )
-  }, [
-    running,
-    selectedImage,
-    selectedCandidate,
-    task,
-    draft.selectedCandidate,
-    editorKey,
-    updateDraft
-  ])
+            optionsInherited: true,
+            prompt: '',
+            regions: [],
+            selectedRegion: undefined,
+            regionDraft: undefined,
+            undo: [],
+            redo: [],
+            selectedCandidate: undefined,
+            submission: undefined
+          },
+          result,
+          task.edit.source
+        )
+      return {
+        ...current,
+        submission: { ...current.submission, preparing: false, stopping: false, error: undefined },
+        selectedCandidate: undefined
+      }
+    })
+  }, [task, activeSourceTask, draft.submission, updateDraft, editorKey])
   const service = settings?.services.find(({ id }) => id === draft.model?.serviceId)
   const model = service?.models.find(({ id }) => id === draft.model?.modelId)
   const editSpec = model && getImageModelPreset(model.presetId)?.operations.edit
+  const outputOptions = model && validateImageModelOptions(model.presetId, 'edit', draft.options)
+  const invalidOutput = outputOptions && !outputOptions.ok ? outputOptions : undefined
   const canEdit = Boolean(service?.configured && editSpec)
+  const sourceLimitExceeded = Boolean(
+    editSpec &&
+    imageInputExceedsLimits(editSpec, {
+      sizeBytes: displayed.size,
+      width: image.status === 'ready' ? image.width : undefined,
+      height: image.status === 'ready' ? image.height : undefined
+    })
+  )
   useEffect(() => {
     if (draft.model || !settings) return
     const available = settings.services.flatMap((entry) =>
@@ -265,6 +338,7 @@ function ActiveImageEditor({
         ? {
             ...current,
             model: initial.binding,
+            optionsInherited: true,
             options: initial.model.presetId === 'minimax-h3/sglang' ? { size: '1024x1024' } : {}
           }
         : current
@@ -402,6 +476,7 @@ function ActiveImageEditor({
       locked ||
       owner.settingsError ||
       !canEdit ||
+      sourceLimitExceeded ||
       !editSpec ||
       !model ||
       !draft.model ||
@@ -413,18 +488,19 @@ function ActiveImageEditor({
       return
     const currentSession = useSessionStore.getState().sessions.find(({ id }) => id === session.id)
     if (imageEditorScope(currentSession) !== imageEditorScope(session)) return
-    const options = validateImageModelOptions(model.presetId, 'edit', draft.options)
-    if (!options.ok) {
-      setLocalError(t('Check the image output settings.'))
-      return
-    }
+    if (!outputOptions?.ok) return
+    const spatial = imageEditSpatialReference(
+      model.presetId,
+      model.wireModelId,
+      image.width * image.height
+    )
     const regionLength = draft.regions.reduce(
       (total, region) => total + region.instruction.length,
       0
     )
     if (
       regionLength > IMAGE_EDIT_TEXT_LIMIT ||
-      !imagePromptFits(buildImageEditPrompt(draft.prompt, draft.regions, editSpec.spatial))
+      !imagePromptFits(buildImageEditPrompt(draft.prompt, draft.regions, spatial, model.presetId))
     ) {
       setLocalError(t('Shorten the image editing instructions.'))
       return
@@ -433,7 +509,7 @@ function ActiveImageEditor({
       version: 1,
       source: imageEditorSource(draft.source),
       model: draft.model,
-      options: options.options,
+      options: outputOptions.options,
       naturalSize: { width: image.width, height: image.height },
       regions: draft.regions
     })
@@ -453,7 +529,7 @@ function ActiveImageEditor({
           : current
       )
     try {
-      await owner.startTask({
+      const result = await owner.startTask({
         id: submission.id,
         projectId: session.projectId!,
         sessionId: session.id,
@@ -462,19 +538,21 @@ function ActiveImageEditor({
         prompt: draft.prompt,
         edit: parsed.data
       })
-      patchSubmission({ preparing: false })
-    } catch (error) {
+      if ('state' in result) patchSubmission({ preparing: false })
+      else {
+        update({ selectedCandidate: undefined })
+        patchSubmission({ preparing: false, stopping: false, error: result.error })
+      }
+    } catch {
       update({ selectedCandidate: undefined })
-      patchSubmission({
-        preparing: false,
-        error: error instanceof Error ? error.message : t('Image editing failed.')
-      })
+      patchSubmission({ preparing: false, stopping: false })
+      setLocalError(t('Image editing failed.'))
     } finally {
       sending.current = false
     }
   }
   const cancel = async (): Promise<void> => {
-    if (!task || !imageTaskIsActive(task) || !draft.submission || draft.submission.stopping) return
+    if (!running || !draft.submission || draft.submission.stopping) return
     const id = draft.submission.id
     setCancelErrorId(undefined)
     update({ submission: { ...draft.submission, stopping: true } })
@@ -500,16 +578,67 @@ function ActiveImageEditor({
     { tool: 'polygon', label: t('Lasso selection'), icon: Lasso },
     { tool: 'arrow', label: t('Draw an arrow'), icon: MoveUpRight }
   ]
-  const failure = observationFailed
-    ? undefined
-    : (localError ?? (task ? undefined : draft.submission?.error))
+  const failure = observationFailed ? undefined : localError
+  const imageError: ImageErrorDetail | undefined =
+    !running && sourceLimitExceeded
+      ? { code: 'SOURCE_LIMIT_EXCEEDED' }
+      : failure
+        ? undefined
+        : (task?.error ?? draft.submission?.error)
+  const notices: ComposerNotice[] = []
+  if (!running && invalidOutput)
+    notices.push({
+      id: 'image-output-settings',
+      source: 'input',
+      occurredAt: 0,
+      failure: { category: 'input', diagnostics: {} },
+      summary: {
+        title: t('Check the image output settings.'),
+        description: invalidOutput.option && imageOptionLabels(t)[invalidOutput.option]
+      }
+    })
+  if (observationFailed)
+    notices.push({
+      id: 'image-observation',
+      source: 'operation',
+      occurredAt: 0,
+      failure: { category: 'service', reason: 'service/image-observation', diagnostics: {} },
+      summary: { title: t('Image results could not be verified.') }
+    })
+  if (running && cancelErrorId && cancelErrorId === draft.submission?.id)
+    notices.push({
+      id: 'image-cancel',
+      source: 'operation',
+      occurredAt: 0,
+      failure: { category: 'service', diagnostics: {} },
+      summary: { title: t('Could not cancel. Try again.') }
+    })
+  if (failure)
+    notices.push({
+      id: 'image-edit',
+      source: 'operation',
+      occurredAt: 0,
+      failure: { category: 'internal', diagnostics: {} },
+      summary: { title: failure }
+    })
+  if (draft.sourceSwitchBlocked)
+    notices.push({
+      id: 'image-draft-limit',
+      source: 'input',
+      occurredAt: 0,
+      failure: { category: 'input', diagnostics: {} },
+      summary: { title: t('Draft limit reached. Send or clear a draft before switching images.') }
+    })
+  const failedTask = task?.error && task.error === imageError ? task : undefined
   const sendUnavailable = owner.settingsError
     ? t('Settings could not be loaded')
     : !canEdit
       ? t('Select an available image model in Settings.')
       : selectedRegion
         ? t('Add an instruction for each marked region.')
-        : undefined
+        : invalidOutput
+          ? t('Check the image output settings.')
+          : undefined
   const showMarks = displayed.selectedVersionId === draft.source.selectedVersionId && !showPending
   const canvasRegions = showMarks
     ? draft.regions.map((region) => (region.id === selectedRegion?.id ? selectedRegion : region))
@@ -520,7 +649,7 @@ function ActiveImageEditor({
     !canvasRegions.some((region) => region.id === selectedRegion.id)
   )
     canvasRegions.push(selectedRegion)
-  const instructionChips = canvasRegions.filter((region) => region.instruction.trim())
+  const instructionChips = showMarks ? draft.regions : []
   const drawingMode = draft.tool !== 'pan' && !locked
   const displayedTask =
     scopedTasks.find(
@@ -599,7 +728,7 @@ function ActiveImageEditor({
   }
   return (
     <div
-      className="flex size-full min-h-0 flex-col bg-bg-000"
+      className="relative flex size-full min-h-0 flex-col bg-muted/40"
       data-testid="image-editor"
       data-preview-context-menu-passthrough
       data-preview-escape-boundary={comparing || undefined}
@@ -617,18 +746,25 @@ function ActiveImageEditor({
         compareButton.current?.focus()
       }}
     >
-      <TooltipProvider>
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border-300/40 px-2 py-1.5">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t('Back to image preview')}
-            onClick={() => updateDraft(editorKey, () => undefined)}
-            disabled={running}
-          >
-            <ArrowLeft className="size-4" />
-          </Button>
+      <TooltipProvider delayDuration={0} disableHoverableContent>
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border-300/40 bg-bg-000 px-2 py-1.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Back to image preview')}
+                  onClick={() => updateDraft(editorKey, () => undefined)}
+                  disabled={running}
+                >
+                  <ArrowLeft className="size-4" />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{t('Back to image preview')}</TooltipContent>
+          </Tooltip>
           <div className="flex items-center gap-0.5">
             {tools.map(({ tool, label, icon: Icon }) => (
               <Tooltip key={tool}>
@@ -678,42 +814,39 @@ function ActiveImageEditor({
                 <TooltipContent className="z-[80]">{t('Compare with input image')}</TooltipContent>
               </Tooltip>
             ) : null}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label={t('Undo')}
-              disabled={locked || comparing || !draft.undo.length}
-              onClick={() => undo()}
-            >
-              <Undo2 className="size-3.5" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label={t('Redo')}
-              disabled={locked || comparing || !draft.redo.length}
-              onClick={() => undo(true)}
-            >
-              <Redo2 className="size-3.5" />
-            </Button>
-            {displayedTask ? (
-              <ImageEditDetails
-                key={displayed.selectedVersionId}
-                item={displayed}
-                edit={displayedTask.edit}
-                prompt={displayedTask.prompt}
-              />
-            ) : null}
+            {[
+              { label: t('Undo'), icon: Undo2, unavailable: !draft.undo.length, redo: false },
+              { label: t('Redo'), icon: Redo2, unavailable: !draft.redo.length, redo: true }
+            ].map(({ label, icon: Icon, unavailable, redo }) => (
+              <Tooltip key={label}>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={label}
+                      disabled={locked || comparing || unavailable}
+                      onClick={() => undo(redo)}
+                    >
+                      <Icon className="size-3.5" />
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{label}</TooltipContent>
+              </Tooltip>
+            ))}
+            <ImageEditDetails
+              key={displayed.selectedVersionId}
+              item={displayed}
+              edit={displayedTask?.edit}
+              prompt={displayedTask?.prompt}
+            />
             {historyButton}
           </div>
         </div>
       </TooltipProvider>
-      <div
-        ref={setCanvasViewport}
-        className="relative min-h-24 flex-1 overflow-hidden bg-muted/40 p-3"
-      >
+      <div ref={setCanvasViewport} className="relative mb-48 min-h-0 flex-1 overflow-hidden p-3">
         {image.status === 'loading' ? (
           <PreviewLoadingContent />
         ) : image.status === 'ready' &&
@@ -761,8 +894,8 @@ function ActiveImageEditor({
                         placeholder={t('Change this region…')}
                         value={selectedRegion.instruction}
                         maxLength={4000}
-                        className="min-h-10 min-w-0 flex-1 resize-none border-0 p-1 text-sm shadow-none focus-visible:ring-0"
-                        rows={2}
+                        className="max-h-28 min-h-0 resize-none overflow-y-auto rounded-none border-0 bg-transparent py-1 text-sm leading-5 shadow-none focus-visible:ring-0 dark:bg-transparent"
+                        rows={1}
                         onChange={(event) =>
                           update({
                             regionDraft: { ...selectedRegion, instruction: event.target.value }
@@ -779,25 +912,27 @@ function ActiveImageEditor({
                           }
                         }}
                       />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={t('Cancel')}
-                        onClick={closeRegion}
-                      >
-                        <X className="size-3.5" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={t('Done')}
-                        disabled={!selectedRegion.instruction.trim()}
-                        onClick={confirmRegion}
-                      >
-                        <Check className="size-3.5" />
-                      </Button>
+                      <div className="flex justify-end gap-1 px-2.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={t('Cancel')}
+                          onClick={closeRegion}
+                        >
+                          <X className="size-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={t('Done')}
+                          disabled={!selectedRegion.instruction.trim()}
+                          onClick={confirmRegion}
+                        >
+                          <Check className="size-3.5" />
+                        </Button>
+                      </div>
                     </>
                   ) : undefined
                 }
@@ -844,7 +979,7 @@ function ActiveImageEditor({
                 size="sm"
                 variant="ghost"
                 aria-label={t('Stop image editing')}
-                disabled={!task || draft.submission.stopping}
+                disabled={draft.submission.stopping}
                 onClick={() => void cancel()}
               >
                 {t('Cancel')}
@@ -853,11 +988,11 @@ function ActiveImageEditor({
           </div>
         ) : null}
       </div>
-      <div className="shrink-0 border-t border-border-300/40">
-        {running && draft.owner.branchId && candidates.length > 0 ? (
+      <div className="absolute inset-x-0 bottom-0 z-20 max-h-[calc(100%-3rem)] overflow-y-auto">
+        {draft.owner.branchId && candidates.length > 0 ? (
           <TooltipProvider>
-            <div className="flex items-center gap-2 px-3 py-2">
-              <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+            <div data-testid="image-recent-results" className="flex items-center gap-2 px-3 py-2">
+              <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 <ImageEditCandidate
                   item={rootItem}
                   label={rootItem.name}
@@ -867,7 +1002,7 @@ function ActiveImageEditor({
                   onSelect={() => selectImage(rootItem)}
                 />
                 {draft.source.selectedVersionId !== rootItem.selectedVersionId &&
-                !candidates.some(
+                !recentCandidates.some(
                   ({ item }) => item.selectedVersionId === draft.source.selectedVersionId
                 ) ? (
                   <ImageEditCandidate
@@ -877,11 +1012,11 @@ function ActiveImageEditor({
                     onSelect={() => selectImage(draft.source)}
                   />
                 ) : null}
-                {candidates.map((candidate, index) => (
+                {recentCandidates.map((candidate, index) => (
                   <ImageEditCandidate
                     key={candidate.item.selectedVersionId}
                     {...candidate}
-                    label={t('Candidate {{number}}', { number: index + 1 })}
+                    label={t('Result {{number}}', { number: index + 1 })}
                     selected={
                       !showPending &&
                       displayed.selectedVersionId === candidate.item.selectedVersionId
@@ -894,50 +1029,51 @@ function ActiveImageEditor({
           </TooltipProvider>
         ) : null}
         <div className="space-y-2 p-3 empty:hidden">
-          {draft.sourceSwitchBlocked ? (
-            <ErrorNotice
-              inline
-              level="warning"
-              title={t('Draft limit reached. Send or clear a draft before switching images.')}
-            />
-          ) : null}
-          {scopedTasks.some((entry) => entry.error?.code === 'SOURCE_UNAVAILABLE') ? (
+          {(unavailableHistoryVersion !== undefined &&
+            unavailableHistoryVersion === sourceVersionId) ||
+          scopedTasks.some((entry) => entry.error?.code === 'SOURCE_UNAVAILABLE') ? (
             <ErrorNotice inline level="warning" title={t('Some image results are unavailable.')} />
           ) : null}
           {draft.submission && owner.observationErrors?.has(draft.submission.id) ? (
             <ErrorNotice inline level="warning" title={t('Reconnecting to image task…')} />
           ) : null}
-          {observationFailed ? (
-            <ErrorNotice
-              inline
-              level="warning"
-              title={t('Image results could not be verified.')}
-              primaryButton={{
-                label: t('Refresh'),
-                onClick: () => {
-                  if (draft.submission)
-                    void owner
-                      .checkTask?.({
-                        projectId: session.projectId!,
-                        sessionId: session.id,
-                        id: draft.submission.id
-                      })
-                      .catch(() => {})
+          {imageError?.code === 'CANCELLED' ? <ImageErrorNotice error={imageError} /> : null}
+          <ImageComposerNotices
+            error={imageError?.code === 'CANCELLED' || observationFailed ? undefined : imageError}
+            task={
+              failedTask
+                ? {
+                    id: failedTask.id,
+                    updatedAt: failedTask.updatedAt,
+                    ...failedTask.executionModel
+                  }
+                : undefined
+            }
+            notices={notices}
+            handlers={{
+              refresh: {
+                run: async () => {
+                  const id = draft.submission?.id
+                  if (!id) return
+                  const next = await owner.checkTask?.({
+                    projectId,
+                    sessionId,
+                    id
+                  })
+                  if (!recoveryTask) return
+                  updateDraft(editorKey, (current) =>
+                    current?.submission?.id === id
+                      ? { ...current, submission: { ...current.submission, recoveryTask: next } }
+                      : current
+                  )
                 }
-              }}
-            />
-          ) : null}
-          {running && task && cancelErrorId === task.id ? (
-            <ErrorNotice inline level="warning" title={t('Could not cancel. Try again.')} />
-          ) : null}
-          {task?.error && !failure ? <ImageErrorNotice error={task.error} /> : null}
-          {failure ? (
-            <ErrorNotice inline title={t('Image editing failed.')} description={failure} />
-          ) : null}
+              }
+            }}
+          />
           {!running ? (
-            <div className="rounded-xl border border-border-300/70 bg-bg-000 p-2 shadow-sm focus-within:border-border-200">
+            <div className="flex flex-col rounded-xl border border-border-300/70 bg-bg-000 p-2 shadow-sm focus-within:border-border-200">
               {instructionChips.length ? (
-                <div className="mb-1 flex max-h-20 flex-wrap gap-1 overflow-auto">
+                <div className="mb-1 flex max-h-14 shrink-0 flex-wrap gap-1 overflow-y-auto">
                   {instructionChips.map((region) => (
                     <div
                       key={region.id}
@@ -974,13 +1110,21 @@ function ActiveImageEditor({
                 disabled={locked}
                 maxLength={IMAGE_EDIT_TEXT_LIMIT}
                 rows={2}
-                className="min-h-12 max-h-32 resize-none border-0 p-1 text-sm shadow-none focus-visible:ring-0"
+                className="field-sizing-fixed h-11 min-h-11 shrink-0 resize-none overflow-y-auto border-0 p-1 text-sm shadow-none focus-visible:ring-0"
                 onChange={(event) => update({ prompt: event.target.value })}
+                onCompositionStart={() => {
+                  composing.current = true
+                }}
+                onCompositionEnd={() => {
+                  composing.current = false
+                }}
                 onKeyDown={(event) => {
                   if (
                     event.key === 'Enter' &&
-                    (event.metaKey || event.ctrlKey) &&
-                    !event.nativeEvent.isComposing
+                    !event.shiftKey &&
+                    !composing.current &&
+                    !event.nativeEvent.isComposing &&
+                    event.nativeEvent.keyCode !== 229
                   ) {
                     event.preventDefault()
                     void submit()
@@ -993,13 +1137,14 @@ function ActiveImageEditor({
                   settingsError={owner.settingsError}
                   model={draft.model}
                   options={draft.options}
+                  invalidOption={invalidOutput?.option}
                   disabled={locked}
                   onModel={(model, options) => {
-                    update({ model, options })
+                    update({ model, options, optionsInherited: true })
                     setLocalError(undefined)
                   }}
                   onOptions={(options) => {
-                    update({ options })
+                    update({ options, optionsInherited: false })
                     setLocalError(undefined)
                   }}
                 />
@@ -1016,6 +1161,10 @@ function ActiveImageEditor({
                           aria-label={t('Send image edit')}
                           disabled={
                             Boolean(sendUnavailable) ||
+                            image.status !== 'ready' ||
+                            !image.width ||
+                            !image.height ||
+                            sourceLimitExceeded ||
                             locked ||
                             (!draft.prompt.trim() && !draft.regions.length) ||
                             draft.regions.some(({ instruction }) => !instruction.trim())
