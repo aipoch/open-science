@@ -1,3 +1,4 @@
+import { composeImageTasks } from './composition/image-tasks'
 import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
 import { PromptOptimizationService } from './projects/prompt-optimization'
 import { ScheduleRunSessions } from './schedules/run-session'
@@ -9,6 +10,7 @@ import { createScheduleExecution } from './schedules/execution'
 import { getProjectDbClient as getScheduleDatabase } from './projects/prisma-client'
 import { resolveConfigRoot as scheduleConfigRoot } from './storage-root'
 import { composeResearchFilm } from './composition/research-film'
+import { composeImageModel } from './composition/image-model'
 import { createLocalModelApi } from './local-models/owner'
 import { registerLocalModelIpcHandlers } from './desktop-surface-declarations'
 import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
@@ -304,6 +306,12 @@ export const createApplicationModules = async (
     runtimeRef,
     modules
   })
+  const imageModel = await composeImageModel({
+    managedFileVersionService: uploadStorage.managedFileVersionService,
+    ...settingsBootstrap,
+    ...sessionFoundation,
+    modules
+  })
   const sessionPackages = await composeSessionPackages({
     ...settingsBootstrap,
     ...storageStartup,
@@ -311,6 +319,7 @@ export const createApplicationModules = async (
     ...sessionFoundation,
     getDetectSessionExportBlockingSessions: () =>
       projectLifecycle.detectSessionExportBlockingSessions,
+    readImageTasks: (scope) => imageTasks.list(scope, true),
     modules
   })
   const managedFiles = composeManagedFiles({
@@ -318,6 +327,8 @@ export const createApplicationModules = async (
     managedFileVersionService: uploadStorage.managedFileVersionService,
     ...sessionFoundation,
     getNotebookInputRegistry: () => sessionAuthority.notebookInputRegistry,
+    captureImageGenerationPreviewScope: (request) =>
+      notebookBridge.notebookRpcServer.captureImageGenerationPreviewScope(request),
     // Catalog access begins after composition, sharing the application's sole Literature owner.
     readLiteratureItems: (itemIds) => researchCatalog.literatureCatalog.getMany(itemIds)
   })
@@ -366,6 +377,13 @@ export const createApplicationModules = async (
     resolveTarget: settingsBootstrap.resolveSessionAgentTarget,
     runner: optimizationRunner
   })
+  const imageTasks = await composeImageTasks({
+    imageModel,
+    managedFiles,
+    sessionAuthority,
+    sessionRepository: sessionFoundation.sessionRepository,
+    modules
+  })
   const researchFilm = await composeResearchFilm({
     previewResources: managedFiles.previewResources,
     ...settingsBootstrap,
@@ -384,6 +402,7 @@ export const createApplicationModules = async (
   declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModels))
   const scheduleRepository = new ScheduleRepository(() => getScheduleDatabase(scheduleConfigRoot()))
   const projectLifecycle = composeProjectLifecycle({
+    imageTasks,
     promptOptimization,
     scheduleRepository,
     applicationEvents,
@@ -537,6 +556,7 @@ export const createApplicationModules = async (
     ...computeAdmission,
     ...agentControls,
     ...delegation,
+    imageModel,
     modules,
     composition
   })
@@ -838,6 +858,7 @@ export const createApplicationModules = async (
   sessionAuthority.reviewerCommandOwnerRef.current = reviewerCommandOwner
   const commandDependencies = composeCommandDependencies({
     schedules,
+    imageTasks,
     localeOwner,
     reportUploadProgress,
     sideChatCommands,

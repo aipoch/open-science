@@ -152,37 +152,40 @@ describe('PreviewImageContent', () => {
     })
   })
 
-  it('streams an image larger than the cache budget without copying it into a Blob', async () => {
-    vi.mocked(window.api.previewResources.acquire).mockResolvedValue({
-      id: 'resource-1',
-      url: 'open-science-preview://resource-1/photo.png',
-      size: 80 * 1024 * 1024,
-      mimeType: 'image/png',
-      version: 1
-    })
-    const fetchImage = vi.fn().mockResolvedValue(createCachedImageFetchResponse())
-    vi.stubGlobal('fetch', fetchImage)
+  it.each([{ size: 80 * 1024 * 1024 }, { size: 1000, width: 8000, height: 4000 }])(
+    'streams an image larger than the cache budget (%o)',
+    async (dimensions) => {
+      vi.mocked(window.api.previewResources.acquire).mockResolvedValue({
+        id: 'resource-1',
+        url: 'open-science-preview://resource-1/photo.png',
+        ...dimensions,
+        mimeType: 'image/png',
+        version: 1
+      })
+      const fetchImage = vi.fn().mockResolvedValue(createCachedImageFetchResponse())
+      vi.stubGlobal('fetch', fetchImage)
 
-    root = createRoot(container)
-    await act(async () => {
-      root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
-    })
+      root = createRoot(container)
+      await act(async () => {
+        root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
+      })
 
-    expect(fetchImage).not.toHaveBeenCalled()
-    const image = container.querySelector('img')
-    expect(image?.getAttribute('src')).toBe('open-science-preview://resource-1/photo.png')
-    expect(image?.getAttribute('alt')).toBe('photo.png')
-    expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+      expect(fetchImage).not.toHaveBeenCalled()
+      const image = container.querySelector('img')
+      expect(image?.getAttribute('src')).toBe('open-science-preview://resource-1/photo.png')
+      expect(image?.getAttribute('alt')).toBe('photo.png')
+      expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
 
-    await act(async () => root.unmount())
-    expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
+      await act(async () => root.unmount())
+      expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
 
-    root = createRoot(container)
-    await act(async () => {
-      root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
-    })
-    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
-  })
+      root = createRoot(container)
+      await act(async () => {
+        root.render(<PreviewImageContent path="/workspace/photo.png" name="photo.png" />)
+      })
+      expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
+    }
+  )
 
   it('acquires upload-sourced images through the unified resource API', async () => {
     root = createRoot(container)
@@ -219,15 +222,15 @@ describe('PreviewImageContent', () => {
     expect(container.textContent).toContain("Image couldn't be loaded for preview")
   })
 
-  it('caches display bytes instead of the original size and evicts by decoded memory', async () => {
+  it('reuses a small display preview even when the original exceeds the cache budget', async () => {
     vi.mocked(window.api.previewResources.acquire).mockResolvedValue({
       id: 'large-image',
       url: 'open-science-preview://large-image/figure.png',
       size: 1000,
       mimeType: 'image/png',
       version: 1,
-      width: 8000,
-      height: 4000
+      width: 800,
+      height: 400
     })
     root = createRoot(container)
     const preview = (
@@ -239,7 +242,7 @@ describe('PreviewImageContent', () => {
     await act(async () => root.unmount())
     root = createRoot(container)
     await act(async () => root.render(preview))
-    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
   })
 
   it('falls back when the managed image URL cannot be decoded', async () => {

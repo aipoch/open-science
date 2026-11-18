@@ -7,7 +7,8 @@ import type { ArtifactFile, ArtifactWriteEncoding } from '../../shared/artifacts
 import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
 import type {
   AppGeneratedArtifactProducer,
-  ArtifactRpcCapabilityBinding
+  ArtifactRpcCapabilityBinding,
+  ArtifactRpcMethod
 } from '../../shared/artifact-provenance'
 import type { ArtifactRunContext } from '../artifacts/mcp-server'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
@@ -130,6 +131,7 @@ type ArtifactTurnOwnerOptions = {
     binding: ArtifactRpcCapabilityBinding,
     isOwnerActive: () => boolean
   ) => string
+  allowedMethods?: readonly ArtifactRpcMethod[]
   revokeRpcCapability?: (token: string) => Promise<void> | void
   provenance?: ArtifactTurnProvenance
   writeHandoffFile?: (filePath: string, content: string) => Promise<void>
@@ -256,7 +258,7 @@ class ArtifactTurnOwner {
             notebookDataDir: turn.notebookArtifactSourceScope?.notebookDataDir,
             notebookSessionRoot: turn.notebookArtifactSourceScope?.notebookSessionRoot
           },
-          allowedMethods: ['artifactSaveVersion']
+          allowedMethods: this.options.allowedMethods ?? ['artifactSaveVersion']
         },
         () =>
           turn.phase === 'open' &&

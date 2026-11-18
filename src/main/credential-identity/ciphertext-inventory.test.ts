@@ -308,6 +308,7 @@ describe('read-only ciphertext inventory', () => {
       version: 2,
       providers: [{ keyRef: ref('old-provider') }],
       classification: { services: [{ keyRef: ref('classification-key') }] },
+      imageServices: [{ keyRef: ref('image-key') }],
       connectors: { customMcpServers: [{ envRefs: { TOKEN: ref('old-env') } }] }
     })
     const credentials = JSON.stringify({
@@ -331,6 +332,7 @@ describe('read-only ciphertext inventory', () => {
     expect(readCredentialCiphertexts(paths).map((b) => b.toString())).toEqual([
       'old-provider',
       'classification-key',
+      'image-key',
       'old-env',
       'old-oauth'
     ])

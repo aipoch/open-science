@@ -22,9 +22,15 @@
     "src/shared/network-proxy.ts",
     "src/main/settings/compute-grant-port.ts",
     "src/main/settings/document-store.ts",
-    "src/main/settings/local-shell-runtime-contract.ts"
+    "src/main/settings/local-shell-runtime-contract.ts",
+    "src/main/settings/record-codec.ts"
   ],
-  "consumerModules": ["settings_provider_accounts", "settings_service_facade", "compute_service"],
+  "consumerModules": [
+    "settings_provider_accounts",
+    "settings_service_facade",
+    "compute_service",
+    "desktop_composition"
+  ],
   "testFiles": {
     "owner": [
       "src/main/settings/settings-backend.architecture.test.ts",
@@ -265,9 +271,11 @@
       "src/main/settings/settings-snapshot-commit-owner.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/settings/image-model-owner.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Image service persistence adds schema and account-reference validation beyond the reviewed source boundary; retain full CI until the expanded boundary is reviewed."
 }

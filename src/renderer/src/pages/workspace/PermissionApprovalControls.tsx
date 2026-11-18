@@ -1,4 +1,11 @@
 import { scheduleToolPresentation } from './schedules/schedule-tool-presentation'
+import {
+  findImageToolSourceName,
+  imageToolOperation,
+  readImageToolSource,
+  type ImageSourceSession
+} from './image-tool-presentation'
+import { WorkspaceImageToolCard } from './WorkspaceImageToolCard'
 import { formatNetworkHostname } from '../../../../shared/notebook-network-settings'
 import {
   SplitButton,
@@ -70,6 +77,7 @@ type PermissionApprovalControlsProps = {
   // Session locator for the notebook env badge; optional so the controls render standalone
   // (isolation tests, sessions without notebook context).
   notebookLookup?: NotebookSessionRequest
+  imageSourceSession?: ImageSourceSession
 }
 
 type PermissionApprovalCardProps = Omit<PermissionApprovalControlsProps, 'requests'> & {
@@ -724,6 +732,7 @@ const PermissionApprovalCard = ({
   onRespond,
   embedded = false,
   notebookLookup,
+  imageSourceSession,
   disabled = false,
   onSubmitted
 }: PermissionApprovalCardProps): React.JSX.Element => {
@@ -778,6 +787,64 @@ const PermissionApprovalCard = ({
     runtimeSelection && typeof runtimeSelection.previousRuntimeId === 'string'
       ? String(runtimeSelection.previousLabel || runtimeSelection.previousRuntimeId)
       : undefined
+  const imageOperation = imageToolOperation(
+    request.mcpIdentity,
+    request.providerToolName,
+    request.title
+  )
+  const source = imageOperation === 'edit' ? readImageToolSource(request.rawInput) : undefined
+  const sourceName = findImageToolSourceName(source, imageSourceSession)
+  const [resolvedImageSource, setResolvedImageSource] = useState<{ key: string; name: string }>()
+  const sourceFileId = source?.fileId
+  const sourceVersionId = source?.versionId
+  const sourceKind = source?.kind
+  const lookupProjectId = notebookLookup?.projectId
+  const lookupSessionId = notebookLookup?.sessionId
+  const sourceLookupKey = JSON.stringify([
+    sourceKind,
+    sourceFileId,
+    sourceVersionId,
+    lookupProjectId,
+    lookupSessionId
+  ])
+  useEffect(() => {
+    if (
+      sourceName ||
+      !sourceKind ||
+      !sourceFileId ||
+      !sourceVersionId ||
+      !lookupProjectId ||
+      !lookupSessionId
+    )
+      return
+    let active = true
+    void window.api?.previewResources
+      ?.acquire({
+        source: sourceKind === 'artifact-version' ? 'artifact' : 'upload',
+        projectId: lookupProjectId,
+        fileId: sourceFileId,
+        versionId: sourceVersionId,
+        imagePreview: 'thumbnail',
+        ...(sourceKind === 'artifact-version' ? { imageGenerationSessionId: lookupSessionId } : {})
+      })
+      .then((resource) => {
+        if (active && resource.filename)
+          setResolvedImageSource({ key: sourceLookupKey, name: resource.filename })
+        return window.api.previewResources.release({ resourceId: resource.id })
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [
+    sourceName,
+    sourceKind,
+    sourceFileId,
+    sourceVersionId,
+    lookupProjectId,
+    lookupSessionId,
+    sourceLookupKey
+  ])
   const permCode = codeReview || selectedLabel ? undefined : extractPermissionCode(request)
   // A skills/load_skill approval names the skill being loaded; the section resolves the SKILL.md
   // document (managed catalog first, then the connector-aware main resolver) and falls back to the
@@ -1115,6 +1182,16 @@ const PermissionApprovalCard = ({
             </details>
           )}
         </div>
+      ) : imageOperation ? (
+        <WorkspaceImageToolCard
+          key={requestId}
+          operation={imageOperation}
+          input={request.rawInput}
+          inputFilename={
+            sourceName ??
+            (resolvedImageSource?.key === sourceLookupKey ? resolvedImageSource.name : undefined)
+          }
+        />
       ) : notebookSummary || fileSummary ? (
         <div key={requestId} className="space-y-2">
           <WorkspaceToolSummaryCard
@@ -1281,6 +1358,7 @@ const PermissionApprovalControls = ({
   onRespond,
   embedded = false,
   notebookLookup,
+  imageSourceSession,
   disabled = false
 }: PermissionApprovalControlsProps): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -1316,6 +1394,7 @@ const PermissionApprovalControls = ({
           onRespond={onRespond}
           embedded={embedded}
           notebookLookup={notebookLookup}
+          imageSourceSession={imageSourceSession}
           disabled={disabled}
           onSubmitted={(requestId) => {
             focusReturnFromRef.current = requestId

@@ -100,6 +100,9 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
           runRegistry: artifactRunRegistry,
           issueRpcCapability: options.artifacts.issueRpcCapability,
           revokeRpcCapability: options.artifacts.revokeRpcCapability,
+          ...(options.artifacts.enableImageGeneration
+            ? { allowedMethods: ['artifactSaveVersion', 'imageGenerate'] as const }
+            : {}),
           provenance: options.artifacts.provenance,
           ...(options.notebook
             ? {

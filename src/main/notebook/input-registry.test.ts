@@ -873,6 +873,144 @@ describe('NotebookInputRegistry', () => {
     expect(() => lease.getRunInputFiles()).toThrow(/closed/i)
   })
 
+  it('opens only the current producer output unless the exact Version is attached to the turn', async () => {
+    const registry = await setup()
+    await createArtifact({
+      projectId: 'project-1',
+      sessionId: 'source-session',
+      artifactId: 'image-a',
+      versionId: 'image-v1',
+      filename: 'image.png',
+      content: 'image-content'
+    })
+    const scope = {
+      appSessionId: 'source-session',
+      artifactRunId: 'artifact-run-source',
+      rootFrameId: 'root-source',
+      agentFrameId: 'agent-source',
+      messageBranchId: 'branch-source',
+      runtimeSegmentId: 'runtime-source',
+      promptMessageId: 'prompt-source',
+      assertActive: () => {}
+    }
+    const request = {
+      projectId: 'project-1',
+      sourceKind: 'artifact-version' as const,
+      sourceFileId: 'image-a',
+      inputFileVersionId: 'image-v1',
+      scope
+    }
+    const opened = await registry.openTurnContent(request)
+    expect(opened?.input).toMatchObject({
+      inputFileVersionId: 'image-v1',
+      association: 'resolver-accessed'
+    })
+    expect(Buffer.from(await opened!.lease.readRange(0, opened!.lease.size)).toString()).toBe(
+      'image-content'
+    )
+    await opened!.lease.close()
+    for (const field of [
+      'appSessionId',
+      'artifactRunId',
+      'rootFrameId',
+      'agentFrameId',
+      'messageBranchId',
+      'runtimeSegmentId',
+      'promptMessageId'
+    ]) {
+      await expect(
+        registry.openTurnContent({ ...request, scope: { ...scope, [field]: 'other' } })
+      ).resolves.toBeUndefined()
+    }
+    await expect(
+      registry.openTurnContent({ ...request, sourceFileId: 'forged-file' })
+    ).resolves.toBeUndefined()
+    await expect(
+      registry.openTurnContent({ ...request, projectId: 'project-2' })
+    ).resolves.toBeUndefined()
+
+    const nextScope = { ...scope, artifactRunId: 'next-run', promptMessageId: 'next-prompt' }
+    await registry.registerTurn({
+      projectId: request.projectId,
+      appSessionId: scope.appSessionId,
+      promptMessageId: nextScope.promptMessageId,
+      uploads: [],
+      references: [
+        {
+          id: 'image-a',
+          sourceFileId: 'image-a',
+          versionId: 'image-v1',
+          source: 'artifact',
+          name: 'image.png',
+          path: '/ignored'
+        }
+      ]
+    })
+    const attached = await registry.openTurnContent({ ...request, scope: nextScope })
+    expect(attached?.input.inputFileVersionId).toBe('image-v1')
+    await attached!.lease.close()
+    registry.clearSession(scope.appSessionId)
+    await expect(
+      registry.openTurnContent({ ...request, scope: nextScope })
+    ).resolves.toBeUndefined()
+  })
+
+  it('requires exact turn registration for Upload input and rejects another Session', async () => {
+    const registry = await setup()
+    await createUpload({
+      projectId: 'project-1',
+      sessionId: 'source-session',
+      uploadFileId: 'image-upload',
+      versionId: 'image-upload-v1',
+      filename: 'image.png',
+      content: 'image-content'
+    })
+    const scope = {
+      appSessionId: 'source-session',
+      artifactRunId: 'run',
+      rootFrameId: 'root',
+      agentFrameId: 'agent',
+      messageBranchId: 'branch',
+      runtimeSegmentId: 'segment',
+      promptMessageId: 'prompt',
+      assertActive: () => {}
+    }
+    const request = {
+      projectId: 'project-1',
+      sourceKind: 'upload-version' as const,
+      sourceFileId: 'image-upload',
+      inputFileVersionId: 'image-upload-v1',
+      scope
+    }
+    await expect(registry.openTurnContent(request)).resolves.toBeUndefined()
+    const turn = {
+      projectId: 'project-1',
+      appSessionId: scope.appSessionId,
+      promptMessageId: scope.promptMessageId,
+      references: [],
+      uploads: [
+        {
+          id: 'image-upload',
+          versionId: 'image-upload-v1',
+          versionNumber: 1,
+          sessionId: scope.appSessionId,
+          name: 'image.png',
+          originalName: 'image.png',
+          path: '/ignored',
+          size: 13
+        }
+      ]
+    }
+    await registry.registerTurn(turn)
+    const opened = await registry.openTurnContent(request)
+    expect(opened?.input.sourceKind).toBe('upload-version')
+    await opened!.lease.close()
+    await registry.registerTurn({ ...turn, appSessionId: 'another-session' })
+    await expect(
+      registry.openTurnContent({ ...request, scope: { ...scope, appSessionId: 'another-session' } })
+    ).resolves.toBeUndefined()
+  })
+
   it('adds validated workflow Artifact Versions to a run and de-duplicates turn inputs', async () => {
     const registry = await setup()
     await createArtifact({

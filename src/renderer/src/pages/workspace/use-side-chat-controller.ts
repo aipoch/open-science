@@ -176,6 +176,10 @@ const useOwnedSideChatRuntime = (persistence: SideChatPersistence): SideChatRunt
       annotations: current?.annotations,
       running: snapshot.running,
       error: snapshot.error ? errorText(snapshot.error) : undefined,
+      errorDetails:
+        snapshot.error && current?.errorDetails?.message === errorText(snapshot.error)
+          ? current.errorDetails
+          : undefined,
       persistenceError: snapshot.persistenceError,
       notice: snapshot.notice
     }),
@@ -345,10 +349,12 @@ const useOwnedSideChatRuntime = (persistence: SideChatPersistence): SideChatRunt
           else entries.push(tool)
           next = { ...next, entries }
         } else if (event.kind === 'error') {
+          const message = event.text ?? event.title ?? 'Side chat failed.'
           next = {
             ...next,
             running: false,
-            error: event.text ?? event.title ?? 'Side chat failed.'
+            error: message,
+            errorDetails: event.failure ? { message, failure: event.failure } : undefined
           }
         } else if (event.kind === 'stop') {
           next = { ...next, running: false }
@@ -570,6 +576,7 @@ const useOwnedSideChatRuntime = (persistence: SideChatPersistence): SideChatRunt
         liveTurnUserEntryId: userEntryId,
         running: true,
         notice: undefined,
+        errorDetails: undefined,
         error: undefined
       }
       update(chatId, next)
