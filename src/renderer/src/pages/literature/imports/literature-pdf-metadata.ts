@@ -1,3 +1,4 @@
+import { lookupCachedLiteratureMetadata } from '../literature-metadata-lookup'
 import type { LiteratureRendererApi, LiteratureRendererHost } from '../renderer-host'
 import {
   createLiteratureIdentifierUrl,
@@ -61,47 +62,6 @@ const prominentPdfTitle = (items: readonly PdfTextItem[]): string => {
   return ''
 }
 
-const DOI_CACHE_SIZE = 32
-const DOI_CACHE_MS = 5 * 60_000
-const doiCaches = new WeakMap<
-  LiteratureRendererApi['literature']['lookupMetadata'],
-  Map<string, { expires: number; result: Promise<LiteratureItemInput> }>
->()
-
-const lookupPdfDoi = (
-  api: Pick<LiteratureRendererApi, 'literature'>,
-  doi: string
-): Promise<LiteratureItemInput> => {
-  const lookup = api.literature.lookupMetadata
-  let cache = doiCaches.get(lookup)
-  if (!cache) {
-    cache = new Map()
-    doiCaches.set(lookup, cache)
-  }
-  const cached = cache.get(doi)
-  if (cached && cached.expires > Date.now()) {
-    cache.delete(doi)
-    cache.set(doi, cached)
-    return cached.result
-  }
-  const result = lookup(doi)
-  // The TTL covers reusable results, not time spent waiting for the network.
-  const entry = { expires: Number.POSITIVE_INFINITY, result }
-  cache.delete(doi)
-  cache.set(doi, entry)
-  while (cache.size > DOI_CACHE_SIZE) cache.delete(cache.keys().next().value!)
-  const entries = cache
-  void result.then(
-    () => {
-      entry.expires = Date.now() + DOI_CACHE_MS
-    },
-    () => {
-      if (entries.get(doi) === entry) entries.delete(doi)
-    }
-  )
-  return result
-}
-
 const hasMetadataValue = (value: unknown): boolean =>
   typeof value === 'string'
     ? value.trim().length > 0
@@ -122,7 +82,7 @@ const completeLiteraturePdfDraft = async (
   const rejected = new Set<(typeof identifiers)[number]>()
   for (const identifier of identifiers) {
     try {
-      const resolved = await lookupPdfDoi(
+      const resolved = await lookupCachedLiteratureMetadata(
         api,
         identifier.scheme === 'pmid' ? `pmid:${identifier.value}` : identifier.value
       )
@@ -413,7 +373,7 @@ const extractLiteraturePdfDraft = async (
           const rawDoi = PUBLICATION_DOI_PATTERN.exec(text)?.[1]
           const doi = rawDoi ? extractedDoi(rawDoi) : ''
           if (doi && firstPageTitle.length >= 20) {
-            const resolved = await lookupPdfDoi(api, doi)
+            const resolved = await lookupCachedLiteratureMetadata(api, doi)
             // A valid DOI may belong to a cited paper. Require the complete prominent title,
             // not the embedded Title, a substring in the abstract, or a fuzzy title match.
             if (comparableTitle(resolved.title) === comparableTitle(firstPageTitle)) {

@@ -1,4 +1,4 @@
-import { CitationLookupLoading } from './CitationLookupLoading'
+import { CitationLookupLoading, CitationPageActionLabel } from './CitationLookupLoading'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { CitationLookupError } from './CitationLookupError'
@@ -128,7 +128,10 @@ export function LiteratureCitationStatus({
                       disabled={button.disabled || button.loading}
                       aria-busy={button.loading || undefined}
                     >
-                      {button.loading ? t('Loading…') : button.label}
+                      <CitationPageActionLabel
+                        loading={Boolean(button.loading)}
+                        retryLabel={button.label}
+                      />
                     </Button>
                   </div>
                 )
@@ -145,7 +148,7 @@ export function LiteratureCitationStatus({
             aria-busy={busy === direction || undefined}
             onClick={() => void load(direction, nextOffset)}
           >
-            {busy === direction ? t('Loading…') : t('Load more')}
+            <CitationPageActionLabel loading={busy === direction} />
           </Button>
         </div>
       ) : !result && !busy ? (

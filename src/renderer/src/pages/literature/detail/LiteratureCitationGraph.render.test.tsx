@@ -1269,15 +1269,15 @@ it('renders radial relationship regions with arrowheads matching edge emphasis',
     'circle'
   )
   expect(
-    within(screen.getByRole('region', { name: 'Selected paper' })).getByText('References')
-  ).toBeTruthy()
+    within(screen.getByRole('region', { name: 'Selected paper' })).queryByText('References')
+  ).toBeNull()
   const legendId = references.getAttribute('aria-describedby')!.split(/\s+/)[0]
   expect(document.getElementById(legendId)?.textContent).toContain('Papers this paper references')
   const arrowMeaning = screen.getByText('A → B means A cites B.')
   expect(svg.getAttribute('aria-describedby')).toBe(arrowMeaning.id)
   expect(arrowMeaning.classList.contains('sr-only')).toBe(false)
 })
-it('renders mutual citations as one selectable paper with two differently curved true edges and a text badge', async () => {
+it('renders mutual citations as one selectable paper with two differently curved true edges', async () => {
   related.mockImplementation(async (request) => result(request, { records: [record('b')] }))
   render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
   await waitFor(() =>
@@ -1314,7 +1314,9 @@ it('renders mutual citations as one selectable paper with two differently curved
   expect(paths.every((path) => path.dataset.edgeBend === '28')).toBe(true)
   fireEvent.click(screen.getByRole('button', { name: 'Select Paper b' }))
   expect(
-    within(screen.getByRole('region', { name: 'Selected paper' })).getByText('Both directions')
+    within(screen.getByRole('region', { name: 'Selected paper' })).getByRole('heading', {
+      name: 'Paper b'
+    })
   ).toBeTruthy()
   const mutualNode = screen.getByRole('button', { name: 'Select Paper b' })
   expect(mutualNode.querySelector('[data-node-mark]')?.getAttribute('data-node-kind')).toBe('both')
@@ -2097,8 +2099,8 @@ it('shows loaded papers beside the graph, retries within their group and restore
   fireEvent.scroll(scroll)
   fireEvent.click(within(list).getByRole('button', { name: 'Paper c' }))
   expect(scroll.scrollTop).toBe(220)
-  expect(screen.queryByRole('button', { name: 'Set as center' })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Add to Inbox' })).toBeNull()
+  expect(within(list).getByRole('button', { name: 'Set as center' })).toBeTruthy()
+  expect(within(list).getByRole('button', { name: 'Add to Inbox' })).toBeTruthy()
   fireEvent.click(within(list).getByRole('button', { name: 'View details' }))
   expect(screen.queryByRole('region', { name: 'Paper list' })).toBeNull()
   expect(screen.getByRole('button', { name: 'Select Paper c' }).getAttribute('aria-pressed')).toBe(
@@ -2124,7 +2126,7 @@ it('discloses the paper list separately and returns to selected details without 
   fireEvent.click(listToggle)
   expect(listToggle.getAttribute('aria-expanded')).toBe('true')
   expect(within(details).getByRole('button', { name: /Paper b.*Selected journal/ })).toBeTruthy()
-  expect(within(details).queryByRole('button', { name: 'Add to Inbox' })).toBeNull()
+  expect(within(details).getByRole('button', { name: 'Add to Inbox' })).toBeTruthy()
   showCategory('citations')
   const list = within(details).getByRole('region', { name: 'Paper list' })
   fireEvent.click(within(list).getByRole('button', { name: 'Paper c' }))
@@ -2286,4 +2288,70 @@ it('keeps category scroll independent while retaining both graph directions and 
   expect(screen.getByRole('button', { name: 'Select Paper c' })).toBeTruthy()
   expect(related).toHaveBeenCalledTimes(2)
   expect(transact).not.toHaveBeenCalled()
+})
+
+it('resolves visible details once and ignores a previous paper returning late', async () => {
+  const first = record('b')
+  const second = record('c')
+  first.item.identifiers = [{ scheme: 'pmid', value: '100', isPrimary: true }]
+  second.item.identifiers = [{ scheme: 'pmid', value: '101', isPrimary: true }]
+  const late = deferred<typeof first.item>()
+  const lookup = vi
+    .fn()
+    .mockReturnValueOnce(late.promise)
+    .mockResolvedValueOnce({ ...second.item, abstract: 'Verified abstract' })
+  Object.assign(window.api.literature, { lookupMetadata: lookup })
+  related.mockImplementation(async (request) =>
+    result(request, { records: [request.direction === 'references' ? first : second] })
+  )
+  render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
+  const list = within(await screen.findByRole('region', { name: 'Paper list' }))
+  fireEvent.click(await list.findByRole('button', { name: 'Paper b' }))
+  expect(lookup).not.toHaveBeenCalled()
+  fireEvent.click(list.getByRole('button', { name: 'View details' }))
+  expect(lookup).toHaveBeenCalledExactlyOnceWith('pmid:100')
+  fireEvent.click(screen.getByRole('button', { name: 'Select Paper c' }))
+  await screen.findByText('Verified abstract')
+  await act(async () => late.resolve({ ...first.item, abstract: 'Late abstract' }))
+  expect(screen.queryByText('Late abstract')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Back to list' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Selected paper' }))
+  await screen.findByText('Verified abstract')
+  expect(lookup.mock.calls.map(([key]) => key)).toEqual(['pmid:100', 'pmid:101'])
+  expect(transact).not.toHaveBeenCalled()
+})
+
+it('keeps the citation when metadata belongs to another paper and retries on request', async () => {
+  const ref = record('b')
+  ref.item.identifiers = [{ scheme: 'pmid', value: '100', isPrimary: true }]
+  related.mockImplementation(async (request) => result(request, { records: [ref] }))
+  const lookup = vi
+    .fn()
+    .mockResolvedValueOnce({ ...ref.item, identifiers: [], abstract: 'Unrelated abstract' })
+    .mockResolvedValueOnce({ ...ref.item, abstract: 'Correct abstract' })
+  Object.assign(window.api.literature, { lookupMetadata: lookup })
+  render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Select Paper b' }))
+  await screen.findByText('Lookup failed')
+  expect(screen.queryByText('Unrelated abstract')).toBeNull()
+  expect(screen.getByRole('heading', { name: 'Paper b' })).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await screen.findByText('Correct abstract')
+  expect(transact).not.toHaveBeenCalled()
+})
+
+it('stages the selected row and recenters directly from its actions', async () => {
+  render(<LiteratureCitationGraph item={item} onSaved={vi.fn()} />)
+  const list = within(await screen.findByRole('region', { name: 'Paper list' }))
+  fireEvent.click(await list.findByRole('button', { name: 'Paper b' }))
+  fireEvent.click(list.getByRole('button', { name: 'Add to Inbox' }))
+  await list.findByText('In Inbox')
+  expect(transact).toHaveBeenCalledTimes(1)
+  const saved = list.getByRole('button', { name: 'Add to Inbox' })
+  expect(saved.getAttribute('aria-disabled')).toBe('true')
+  fireEvent.click(saved)
+  expect(transact).toHaveBeenCalledTimes(1)
+  fireEvent.click(list.getByRole('button', { name: 'Set as center' }))
+  await screen.findByText('Temporary center')
+  expect(related.mock.calls.some(([request]) => request.seedPaperId === paperId('b'))).toBe(true)
 })

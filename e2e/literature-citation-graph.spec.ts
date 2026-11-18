@@ -98,7 +98,18 @@ test('Electron graph desktop canvas, details and independent paper list', async 
   await openCitationGraph(page, url)
   await captureGraph(graphApp, info, 'electron-graph-desktop-initial')
   await verifyCitationDesktopLayout(page, async () => {
+    const frame = page.locator('[data-current-frame="true"]')
+    const details = frame.getByRole('button', { name: 'View details' })
+    await expect(details).toHaveText('View details')
+    for (const label of ['Set as center', 'Add to Inbox']) {
+      await frame.getByRole('button', { name: label, exact: true }).hover()
+      await expect(page.getByRole('tooltip')).toHaveText(label)
+    }
     await page.screenshot({ path: info.outputPath('electron-graph-list-selection.png') })
+    await page.mouse.move(0, 0)
+    await frame.locator('[data-citation-paper-id][aria-pressed="true"]').focus()
+    await page.keyboard.press('Tab')
+    await expect(page.getByRole('tooltip')).toHaveText('Add to Inbox')
   })
   await captureGraph(graphApp, info, 'electron-graph-desktop-selected')
 })

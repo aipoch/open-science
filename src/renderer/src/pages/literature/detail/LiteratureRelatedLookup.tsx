@@ -1,4 +1,4 @@
-import { CitationLookupLoading } from './CitationLookupLoading'
+import { CitationLookupLoading, CitationPageActionLabel } from './CitationLookupLoading'
 import { CitationLookupError } from './CitationLookupError'
 import { CitationAbstract } from './LiteratureDetailText'
 import { fullCreatorLabel, publicationSummary } from '../literature-item-display'
@@ -15,7 +15,7 @@ import {
 } from '@aipoch/literature-discovery/contracts'
 import { Tabs } from 'radix-ui'
 import { createPortal } from 'react-dom'
-import { BookOpen, Quote, LoaderCircle } from 'lucide-react'
+import { BookOpen, Quote } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -193,7 +193,6 @@ function LiteratureRelatedSession(
             source={source}
             requestRelated={requestRelated}
             onSaved={props.onSaved}
-            onOpenInbox={props.onOpenInbox}
             onSavingChange={handleSavingChange}
             disabled={referenceInvalidated}
             onReferenceChanged={invalidateReference}
@@ -657,8 +656,7 @@ function LiteratureRelatedList({
               disabled={disabled || busy || saving}
               onClick={() => void lookup(direction, result.nextOffset, result.resolutionToken)}
             >
-              {busy ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : null}
-              {busy ? t('Loading…') : t('Load more')}
+              <CitationPageActionLabel loading={busy} />
             </Button>
           </div>
         ) : null}

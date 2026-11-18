@@ -20,7 +20,7 @@ export function citationGraphResult(
         { creatorType: 'author', nameMode: 'person', familyName: `Author ${id}`, givenName: 'Ada' }
       ],
       issuedYear: 2024,
-      abstract: 'An inspectable abstract. '.repeat(80),
+      abstract: id === 1101 ? '' : 'An inspectable abstract. '.repeat(80),
       containerTitle: 'Graph interaction journal',
       identifiers: [{ scheme: 'pmid', value: String(id) }],
       url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`

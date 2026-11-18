@@ -179,6 +179,8 @@
     "src/renderer/src/pages/literature/detail/useCitationGraphController.ts",
     "src/renderer/src/pages/literature/detail/LiteratureCitationCanvas.tsx",
     "src/renderer/src/pages/literature/detail/LiteratureCitationInspector.tsx",
+    "src/renderer/src/pages/literature/detail/CitationPaperDetails.tsx",
+    "src/renderer/src/pages/literature/literature-metadata-lookup.ts",
     "src/renderer/src/pages/literature/detail/LiteratureCitationStatus.tsx",
     "src/renderer/src/pages/literature/detail/useCitationSource.ts",
     "src/renderer/src/pages/literature/detail/CitationLookupError.tsx",

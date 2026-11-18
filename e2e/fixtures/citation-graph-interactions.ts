@@ -103,24 +103,18 @@ export async function verifyCitationDirectionTabs(page: Page): Promise<void> {
     expect(box.height).toBeGreaterThanOrEqual(28)
     await expect(tab).toBeVisible()
   }
-  const styles = await tabs.locator('[role="tab"]').evaluateAll((elements) =>
-    elements.map((element) => {
-      const style = getComputedStyle(element)
-      return {
-        selected: element.getAttribute('aria-selected') === 'true',
-        variant: element.getAttribute('data-variant'),
-        backgroundColor: style.backgroundColor,
-        color: style.color
-      }
-    })
-  )
-  const selected = styles.find((style) => style.selected)
-  const inactive = styles.find((style) => !style.selected)
-  expect(selected).toBeDefined()
-  expect(inactive).toBeDefined()
-  expect(
-    selected!.backgroundColor !== inactive!.backgroundColor || selected!.color !== inactive!.color
-  ).toBe(true)
+  await expect
+    .poll(() =>
+      tabs.evaluate((list) => {
+        const active = list.querySelector('[aria-selected="true"]')
+        const inactive = list.querySelector('[aria-selected="false"]')
+        if (!active || !inactive) return false
+        const a = getComputedStyle(active)
+        const b = getComputedStyle(inactive)
+        return a.backgroundColor !== b.backgroundColor || a.color !== b.color
+      })
+    )
+    .toBe(true)
 }
 
 type CitationEdgeState = 'ordinary' | 'selected' | 'citations' | 'selected-citations'
@@ -322,6 +316,8 @@ export async function verifyCitationDesktopLayout(
     .filter({ hasText: paperTitle(1101) })
   const more = inspector.getByRole('button', { name: 'Load more' })
   await expect(more).toBeInViewport({ ratio: 1 })
+  await expect(more.locator('svg')).toHaveCount(0)
+  await expect(inspector.getByRole('button', { name: 'Open Inbox' })).toHaveCount(0)
   await listedPaper.click()
   await expect(node(page, 1101)).toHaveAttribute('aria-pressed', 'true')
   await expect(listedPaper).toHaveAttribute('aria-pressed', 'true')
@@ -337,6 +333,11 @@ export async function verifyCitationDesktopLayout(
   await expect(list).toHaveAttribute('aria-expanded', 'false')
   await expect(
     inspector.getByRole('heading', { name: paperTitle(1101), exact: true })
+  ).toBeVisible()
+  await expect(
+    inspector.getByText(
+      'Metadata supplied by the browser fixture, with no external provider requests.'
+    )
   ).toBeVisible()
   await expect(frame.locator('[data-citation-inspector-title]')).toBeFocused()
   await expectReadableSelectedLabel(page)

@@ -31,7 +31,6 @@ export type GraphProps = {
   item: LiteratureItemView
   onSaved(): void
   onSavingChange?(saving: boolean): void
-  onOpenInbox?(): void
   onReferenceChanged?(): void
   referenceInvalidated?: boolean
   isReferenceInvalidated?: () => boolean
@@ -271,7 +270,7 @@ function CitationGraphSession({
 }
 
 type CitationGraphFrameProps = CitationGraphControllerProps &
-  Pick<GraphProps, 'onOpenInbox' | 'visible' | 'source'> & { onRestart(): void }
+  Pick<GraphProps, 'visible' | 'source'> & { onRestart(): void }
 
 function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element {
   const controller = useCitationGraphController({
@@ -413,7 +412,6 @@ function CitationGraphCenter(props: CitationGraphFrameProps): React.JSX.Element 
           onRestart={props.onRestart}
           marker={marker}
           visible={visible}
-          onOpenInbox={props.onOpenInbox}
         />
       </Tabs.Content>
     </Tabs.Root>

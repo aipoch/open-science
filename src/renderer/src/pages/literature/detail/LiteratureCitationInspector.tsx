@@ -1,19 +1,21 @@
-import { CitationAbstract } from './LiteratureDetailText'
+import { CitationPaperDetails } from './CitationPaperDetails'
 import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, Inbox, FileText, LoaderCircle } from 'lucide-react'
-import { Tabs } from 'radix-ui'
-import { Button } from '@/components/ui/button'
-import { ExternalTextLink } from '@/components/ExternalTextLink'
-import { LiteratureIdentifiers } from './LiteratureIdentifiers'
 import {
-  creatorLabel,
-  fullCreatorLabel,
-  publicationCitation,
-  getExternalLiteratureUrl
-} from '../literature-item-display'
+  ArrowLeft,
+  ChevronRight,
+  Inbox,
+  FileText,
+  LoaderCircle,
+  Crosshair,
+  Check
+} from 'lucide-react'
+import { Tabs } from 'radix-ui'
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
+import { creatorLabel } from '../literature-item-display'
 import { LiteratureCitationStatus, type CitationStatusModel } from './LiteratureCitationStatus'
-import type { CitationGraphNode, CitationGraphRelation } from './citation-graph'
+import type { CitationGraphNode } from './citation-graph'
 import type { CitationGraphController } from './useCitationGraphController'
 
 export type CitationInspectorModel = Pick<
@@ -36,6 +38,40 @@ export type CitationInspectorModel = Pick<
 
 export type CitationInspectorHandle = { focus(): void; showDetails(): void }
 
+function PaperAction({
+  label,
+  hint = label,
+  disabled,
+  onClick,
+  children
+}: {
+  label: string
+  hint?: string
+  disabled: boolean
+  onClick(): void
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={label}
+          aria-disabled={disabled || undefined}
+          className="hover:bg-primary/15 hover:text-primary focus-visible:bg-primary/15 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+          onClick={() => {
+            if (!disabled) onClick()
+          }}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{hint}</TooltipContent>
+    </Tooltip>
+  )
+}
+
 export function LiteratureCitationInspector({
   model,
   statusModel,
@@ -46,7 +82,6 @@ export function LiteratureCitationInspector({
   expanded,
   onExpandedChange,
   toggle,
-  onOpenInbox,
   ref
 }: {
   model: CitationInspectorModel
@@ -58,7 +93,6 @@ export function LiteratureCitationInspector({
   expanded: boolean
   onExpandedChange(expanded: boolean): void
   toggle: React.RefObject<HTMLButtonElement | null>
-  onOpenInbox?(): void
   ref: React.Ref<CitationInspectorHandle>
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -75,9 +109,6 @@ export function LiteratureCitationInspector({
     setSelected,
     exploreSelected
   } = model
-  const selectedItem = selectedNode?.record.item
-  const authors = selectedItem && fullCreatorLabel(selectedItem)
-  const publication = selectedItem && publicationCitation(selectedItem)
   const [listOpen, setListOpen] = useState(true)
   const [listDirection, setListDirection] = useState<'references' | 'citations'>('references')
   const direction = model.filter === 'all' ? listDirection : model.filter
@@ -134,14 +165,18 @@ export function LiteratureCitationInspector({
         ?.focus({ preventScroll: true })
     }
   }, [listOpen, direction, expanded])
-  const relationLabel = (relation: CitationGraphRelation): string =>
-    relation === 'references'
-      ? t('References')
-      : relation === 'citations'
-        ? t('Papers citing this paper')
-        : relation === 'both'
-          ? t('Both directions')
-          : t('Current center')
+  const receiptText = !receipt
+    ? undefined
+    : receipt === 'failed'
+      ? t('Could not add this reference. Try again.')
+      : receipt.kind === 'item' || receipt.state === 'accepted'
+        ? t('Already in Library')
+        : receipt.state === 'dismissed'
+          ? t('Previously dismissed; review it in Inbox.')
+          : t('In Inbox')
+  const saveDisabled = blocked || (receipt !== undefined && receipt !== 'failed')
+  const centerDisabled = blocked || !canExplore
+  const saveLabel = saving ? t('Saving…') : t('Add to Inbox')
   const paperRow = (node: CitationGraphNode): React.JSX.Element => (
     <li
       key={node.id}
@@ -175,9 +210,47 @@ export function LiteratureCitationInspector({
         </span>
       </button>
       {selectedNode?.id === node.id ? (
-        <Button size="sm" variant="ghost" className="mb-1 ml-4 text-primary" onClick={focusDetails}>
-          {t('View details')}
-        </Button>
+        <div className="px-2 pb-1.5 pl-5">
+          <div className="flex items-center gap-1">
+            <TooltipProvider disableHoverableContent>
+              <PaperAction
+                label={saveLabel}
+                hint={receiptText ?? saveLabel}
+                disabled={saveDisabled}
+                onClick={() => void save()}
+              >
+                {saving ? (
+                  <LoaderCircle aria-hidden="true" className="motion-safe:animate-spin" />
+                ) : receipt && receipt !== 'failed' ? (
+                  <Check aria-hidden="true" />
+                ) : (
+                  <Inbox aria-hidden="true" />
+                )}
+              </PaperAction>
+              <PaperAction
+                label={t('Set as center')}
+                disabled={centerDisabled}
+                onClick={exploreSelected}
+              >
+                <Crosshair aria-hidden="true" />
+              </PaperAction>
+            </TooltipProvider>
+            <Button
+              size="sm"
+              variant="link"
+              className="ml-auto focus-visible:underline"
+              onClick={focusDetails}
+            >
+              {t('View details')}
+              <ChevronRight aria-hidden="true" />
+            </Button>
+          </div>
+          {receiptText ? (
+            <p role="status" className="text-xs text-muted-foreground">
+              {receiptText}
+            </p>
+          ) : null}
+        </div>
       ) : null}
     </li>
   )
@@ -243,18 +316,6 @@ export function LiteratureCitationInspector({
                 <span className="truncate">{t('Back to list')}</span>
               </>
             )}
-          </Button>
-        ) : null}
-        {expanded && onOpenInbox ? (
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={t('Open Inbox')}
-            title={t('Open Inbox')}
-            disabled={saving}
-            onClick={onOpenInbox}
-          >
-            <Inbox className="size-4" aria-hidden="true" />
           </Button>
         ) : null}
       </div>
@@ -343,49 +404,12 @@ export function LiteratureCitationInspector({
             {selectedNode?.record.item.title ?? t('Selected paper')}
           </h3>
           {selectedNode && !listOpen ? (
-            <div className="space-y-4">
-              <div className="flex flex-col items-start gap-2">
-                <div className="flex min-w-0 flex-col items-start gap-1 text-xs leading-relaxed">
-                  {authors ? (
-                    <span title={authors} className="line-clamp-2 min-w-0 break-words">
-                      {authors}
-                    </span>
-                  ) : null}
-                  {publication ? (
-                    <span className="break-words text-muted-foreground">{publication}</span>
-                  ) : null}
-                </div>
-                <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <span
-                    aria-hidden="true"
-                    className={`size-2 rounded-full ${selectedNode.relation === 'references' ? 'bg-chart-1' : selectedNode.relation === 'citations' ? 'bg-chart-3' : selectedNode.relation === 'center' ? 'bg-muted-foreground' : 'bg-chart-1 ring-2 ring-chart-3'}`}
-                  />
-                  {relationLabel(selectedNode.relation)}
-                </p>
-              </div>
-              <div className="flex flex-col items-start gap-2">
-                <LiteratureIdentifiers
-                  identifiers={selectedNode.record.item.identifiers}
-                  className="text-xs"
-                />
-                {getExternalLiteratureUrl(selectedNode.record.item.url) ? (
-                  <ExternalTextLink
-                    href={selectedNode.record.item.url}
-                    className="text-xs text-muted-foreground"
-                  >
-                    {t('Open in {{source}}', {
-                      source: selectedNode.record.paperId.startsWith('europe-pmc:')
-                        ? t('Europe PMC')
-                        : 'OpenCitations'
-                    })}
-                  </ExternalTextLink>
-                ) : null}
-              </div>
-              <CitationAbstract
-                text={selectedNode.record.item.abstract}
-                className="border-t border-border-300 pt-3 [&>summary]:font-medium"
+            expanded && visible ? (
+              <CitationPaperDetails
+                key={selectedNode.record.paperId}
+                record={selectedNode.record}
               />
-            </div>
+            ) : null
           ) : !selectedNode && !listOpen ? (
             <p className="text-sm text-muted-foreground">
               {t('Select a paper to view its details.')}
@@ -429,7 +453,7 @@ export function LiteratureCitationInspector({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={blocked || !canExplore}
+                  disabled={centerDisabled}
                   onClick={() => {
                     exploreSelected()
                   }}
@@ -439,25 +463,15 @@ export function LiteratureCitationInspector({
               ) : null}
               {!selectedNode.center || temporaryCenter ? (
                 <>
-                  <Button
-                    size="sm"
-                    disabled={blocked || (receipt !== undefined && receipt !== 'failed')}
-                    onClick={() => void save()}
-                  >
-                    {saving ? t('Saving…') : t('Add to Inbox')}
+                  <Button size="sm" disabled={saveDisabled} onClick={() => void save()}>
+                    {saveLabel}
                   </Button>
                 </>
               ) : null}
             </div>
-            {receipt ? (
+            {receiptText ? (
               <p role="status" className="text-xs">
-                {receipt === 'failed'
-                  ? t('Could not add this reference. Try again.')
-                  : receipt.kind === 'item' || receipt.state === 'accepted'
-                    ? t('Already in Library')
-                    : receipt.state === 'dismissed'
-                      ? t('Previously dismissed; review it in Inbox.')
-                      : t('In Inbox')}
+                {receiptText}
               </p>
             ) : null}
           </div>

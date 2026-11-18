@@ -1,4 +1,4 @@
-import { LoaderCircle } from 'lucide-react'
+import { LoaderCircle, RotateCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { LiteratureRelatedRequest } from '@aipoch/literature-discovery/contracts'
 
@@ -37,5 +37,27 @@ export function CitationLookupLoading({
         ))}
       </div>
     </div>
+  )
+}
+
+export function CitationPageActionLabel({
+  loading,
+  retryLabel
+}: {
+  loading: boolean
+  retryLabel?: string
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const Icon = loading ? LoaderCircle : retryLabel ? RotateCw : undefined
+  return (
+    <>
+      {loading ? t('Loading…') : (retryLabel ?? t('Load more'))}
+      {Icon && (
+        <Icon
+          aria-hidden="true"
+          className={loading ? 'size-4 motion-safe:animate-spin' : 'size-4'}
+        />
+      )}
+    </>
   )
 }
