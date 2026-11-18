@@ -17,7 +17,7 @@ import {
 } from '../../shared/org-cases'
 import { PACKAGE_MAX_BYTES } from '../../shared/session-package'
 import { PackageCapacityError } from './capacity'
-import { OrgCaseService } from './org-cases'
+import { OrgCaseFailure, OrgCaseService } from './org-cases'
 
 function sha256Hex(content: Buffer): string {
   return createHash('sha256').update(content).digest('hex')
@@ -888,5 +888,97 @@ describe('OrgCaseService', () => {
     ).toMatchObject({
       original_filename: ''
     })
+  })
+
+  it('uploads cases via uploadLabCase, maps server errors cleanly, and aborts on connection switch', async () => {
+    let view: LabView = {
+      state: 'authenticated',
+      serverUrl: 'https://lab.example.com',
+      accountName: 'Alice',
+      orgId: 'org_1'
+    }
+    const created: OrgCaseDetail = {
+      ...makeCaseItem('case_uploaded', 'ABCD1234'),
+      original_filename: 'case.science'
+    }
+
+    let rejectPendingUpload: ((reason?: unknown) => void) | undefined
+    const uploadLabCase = vi.fn(
+      async (_input: unknown, signal?: AbortSignal): Promise<OrgCaseDetail> => {
+        if (uploadLabCase.mock.calls.length === 1) return created
+        return new Promise<OrgCaseDetail>((_resolve, reject) => {
+          rejectPendingUpload = reject
+          signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+        })
+      }
+    )
+
+    const service = new OrgCaseService({
+      getLabView: () => view,
+      listLabCases: vi.fn(),
+      getLabCase: vi.fn(),
+      getLabCaseDownload: vi.fn(),
+      uploadLabCase,
+      enqueuePackageFile: vi.fn(),
+      tempRootDir: tempRoot
+    })
+
+    await expect(
+      service.uploadCase({
+        archivePath: '/tmp/case.science',
+        filename: 'case.science',
+        name: 'Case 1',
+        clientUploadId: 'upload-12345678'
+      })
+    ).resolves.toMatchObject({ id: 'case_uploaded', code: 'ABCD1234' })
+
+    const inFlight = service.uploadCase({
+      archivePath: '/tmp/case.science',
+      filename: 'case.science',
+      name: 'Case 2',
+      clientUploadId: 'upload-87654321'
+    })
+    await vi.waitFor(() => expect(rejectPendingUpload).toBeTypeOf('function'))
+    view = { state: 'signedOut', serverUrl: 'https://lab.example.com' }
+    service.handleLabViewChanged(view)
+    await expect(inFlight).rejects.toMatchObject({
+      name: 'OrgCaseFailure',
+      errorCode: 'signed-out'
+    })
+
+    view = {
+      state: 'authenticated',
+      serverUrl: 'https://lab.example.com',
+      accountName: 'Alice',
+      orgId: 'org_1'
+    }
+    service.handleLabViewChanged(view)
+
+    const errorCases: Array<[number, string, string]> = [
+      [409, 'UPLOAD_IN_PROGRESS', 'upload-in-progress'],
+      [413, 'PACKAGE_TOO_LARGE', 'package-too-large'],
+      [422, 'UNSUPPORTED_PACKAGE', 'unsupported-package'],
+      [400, 'PACKAGE_INVALID', 'package-invalid'],
+      [408, 'UPLOAD_TIMEOUT', 'upload-timeout'],
+      [403, 'SEAT_REQUIRED', 'seat-required'],
+      [429, 'UPLOAD_BUSY', 'rate-limited'],
+      [503, 'STORAGE_NOT_CONFIGURED', 'storage-not-configured']
+    ]
+
+    for (const [status, reason, expectedCode] of errorCases) {
+      uploadLabCase.mockRejectedValueOnce(
+        Object.assign(new Error(reason), { code: 'server-error', status, reason })
+      )
+      await expect(
+        service.uploadCase({
+          archivePath: '/tmp/case.science',
+          filename: 'case.science',
+          name: 'Case Err',
+          clientUploadId: 'upload-12345678'
+        })
+      ).rejects.toSatisfy(
+        (error: unknown) => error instanceof OrgCaseFailure && error.errorCode === expectedCode
+      )
+    }
   })
 })

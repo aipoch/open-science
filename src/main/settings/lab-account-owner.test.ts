@@ -1263,4 +1263,64 @@ describe('Lab account owner', () => {
     await expect(second).resolves.toMatchObject({ page: 1 })
     expect(api.refreshToken).toHaveBeenCalledTimes(1)
   })
+
+  it('retries uploadCase once after single-flight refresh on 401 and succeeds with the rotated token', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const credentials = new LabCredentialStore(dir)
+    await seedSession(credentials)
+    const api = createApi()
+    api.refreshToken.mockResolvedValueOnce({
+      accessToken: 'at_upload_refreshed',
+      refreshToken: 'rt_upload_refreshed',
+      expiresIn: 900,
+      tokenExpiresAt: Date.now() + 900_000
+    })
+
+    const uploadedDetail = {
+      id: 'case_uploaded_1',
+      name: 'Uploaded Research',
+      code: '7Q2M9X4B',
+      description: '',
+      size_bytes: 128,
+      sha256: 'c'.repeat(64),
+      created_at: '2026-11-18T00:00:00Z',
+      owner: { id: 'usr_1', display_name: 'Alice' },
+      can_delete: true,
+      original_filename: 'uploaded.science',
+      summary: {
+        schema_version: 1,
+        features: [],
+        file_count: 1,
+        total_bytes: 128,
+        excluded_files: 0,
+        omission_count: 0,
+        omissions: []
+      }
+    }
+
+    const uploadCase = vi.fn(async (_serverUrl: string, token: string) => {
+      if (token === 'at_1') {
+        throw new LabApiError('unauthorized', 'expired', 401, 'SESSION_INVALID')
+      }
+      return uploadedDetail
+    })
+    Object.assign(api, { uploadCase })
+
+    const { owner } = await createOwner(dir, api)
+    await owner.check()
+
+    const result = await owner.uploadCase({
+      archivePath: '/tmp/uploaded.science',
+      filename: 'uploaded.science',
+      name: 'Uploaded Research',
+      clientUploadId: 'upload-12345678'
+    })
+
+    expect(result).toMatchObject({ id: 'case_uploaded_1', code: '7Q2M9X4B' })
+    expect(uploadCase).toHaveBeenCalledTimes(2)
+    expect(uploadCase.mock.calls[0]?.[1]).toBe('at_1')
+    expect(uploadCase.mock.calls[1]?.[1]).toBe('at_upload_refreshed')
+    expect(api.refreshToken).toHaveBeenCalledTimes(1)
+  })
 })

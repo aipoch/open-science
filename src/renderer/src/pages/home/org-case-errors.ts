@@ -154,6 +154,56 @@ export function describeOrgCaseError(
         canOpenLabSettings: false,
         canRetry: true
       }
+    case 'package-too-large':
+      return {
+        level: 'error',
+        title: t('Package exceeds upload limit'),
+        description: t(
+          'This Session package exceeds the maximum upload size allowed by your Lab server.'
+        ),
+        canOpenLabSettings: false,
+        canRetry: false
+      }
+    case 'package-invalid':
+      return {
+        level: 'error',
+        title: t('Invalid package or case details'),
+        description: t(
+          'Lab rejected the package or case details. Check the case name and try again.'
+        ),
+        canOpenLabSettings: false,
+        canRetry: true
+      }
+    case 'unsupported-package':
+      return {
+        level: 'error',
+        title: t('Unsupported package format'),
+        description: t(
+          'This Lab server rejected the package format as unsupported. Check the server version or package contents.'
+        ),
+        canOpenLabSettings: false,
+        canRetry: false
+      }
+    case 'upload-in-progress':
+      return {
+        level: 'warning',
+        title: t('Upload still processing'),
+        description: t(
+          'Lab is still processing this upload. Wait a moment and refresh organization cases before retrying.'
+        ),
+        canOpenLabSettings: false,
+        canRetry: true
+      }
+    case 'upload-timeout':
+      return {
+        level: 'warning',
+        title: t('Upload timed out'),
+        description: t(
+          'Uploading or validating the organization case timed out. Check your connection and try again.'
+        ),
+        canOpenLabSettings: false,
+        canRetry: true
+      }
     case 'url-expired':
       return {
         level: 'warning',

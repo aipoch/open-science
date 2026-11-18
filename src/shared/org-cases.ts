@@ -4,8 +4,28 @@ import type { LabView } from './lab'
 export const ORG_CASE_DEFAULT_PAGE_SIZE = 20
 export const ORG_CASE_MAX_PAGE_SIZE = 50
 export const ORG_CASE_MAX_QUERY_LENGTH = 200
+export const ORG_CASE_NAME_MAX_LENGTH = 200
+export const ORG_CASE_DESCRIPTION_MAX_LENGTH = 4000
 export const ORG_CASE_ID_REGEX = /^[A-Za-z0-9_-]{3,96}$/
 const SHA256_HEX_REGEX = /^[0-9a-f]{64}$/i
+
+export function unicodeCharacterLength(value: string): number {
+  return Array.from(value).length
+}
+
+export function clampOrgCaseName(value: string | undefined, fallback = 'Session'): string {
+  const cleanFallback = Array.from((fallback || 'Session').replaceAll('\0', '').trim())
+    .slice(0, ORG_CASE_NAME_MAX_LENGTH)
+    .join('')
+    .trim()
+  const cleaned = (value ?? '').replaceAll('\0', '').trim()
+  if (!cleaned) return cleanFallback || 'Session'
+  return (
+    Array.from(cleaned).slice(0, ORG_CASE_NAME_MAX_LENGTH).join('').trim() ||
+    cleanFallback ||
+    'Session'
+  )
+}
 
 export function isValidOrgCaseId(value: string): boolean {
   return ORG_CASE_ID_REGEX.test(value)
@@ -148,6 +168,41 @@ export const orgCaseDownloadTicketSchema = z.object({
   code: z.string().min(1)
 })
 
+export const orgCaseUploadMetadataSchema = z
+  .object({
+    name: z
+      .string()
+      .refine((value) => !value.includes('\0'), {
+        message: 'Case name must not contain NUL characters.'
+      })
+      .transform((value) => value.trim())
+      .refine((value) => value.length >= 1, {
+        message: 'Case name is required.'
+      })
+      .refine((value) => unicodeCharacterLength(value) <= ORG_CASE_NAME_MAX_LENGTH, {
+        message: `Case name must be at most ${ORG_CASE_NAME_MAX_LENGTH} characters.`
+      }),
+    description: z
+      .string()
+      .refine((value) => !value.includes('\0'), {
+        message: 'Case description must not contain NUL characters.'
+      })
+      .transform((value) => value.trim())
+      .refine((value) => unicodeCharacterLength(value) <= ORG_CASE_DESCRIPTION_MAX_LENGTH, {
+        message: `Case description must be at most ${ORG_CASE_DESCRIPTION_MAX_LENGTH} characters.`
+      })
+      .default('')
+  })
+  .strict()
+
+export const orgCaseUploadedSummarySchema = z
+  .object({
+    id: orgCaseIdSchema,
+    name: z.string().min(1),
+    code: z.string().min(1)
+  })
+  .strict()
+
 export const orgCaseErrorCodeSchema = z.enum([
   'unconfigured',
   'signed-out',
@@ -162,6 +217,11 @@ export const orgCaseErrorCodeSchema = z.enum([
   'account-disabled',
   'no-organization',
   'rate-limited',
+  'package-too-large',
+  'package-invalid',
+  'unsupported-package',
+  'upload-in-progress',
+  'upload-timeout',
   'network',
   'timeout',
   'cancelled',
@@ -181,6 +241,8 @@ export type OrgCasesPage = z.infer<typeof orgCasesPageSchema>
 export type OrgCaseDetail = z.infer<typeof orgCaseDetailSchema>
 export type OrgCaseDownloadTicket = z.infer<typeof orgCaseDownloadTicketSchema>
 export type ListOrgCasesQuery = z.infer<typeof listOrgCasesQuerySchema>
+export type OrgCaseUploadMetadata = z.infer<typeof orgCaseUploadMetadataSchema>
+export type OrgCaseUploadedSummary = z.infer<typeof orgCaseUploadedSummarySchema>
 export type OrgCaseErrorCode = z.infer<typeof orgCaseErrorCodeSchema>
 
 export type OrgCaseDownloadState =

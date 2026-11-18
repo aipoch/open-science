@@ -17,7 +17,7 @@ import type {
   OrgCaseDownloadTicket,
   OrgCasesPage
 } from '../../shared/org-cases'
-import { LabApi, LabApiError } from './lab-api'
+import { LabApi, LabApiError, type UploadOrgCaseInput } from './lab-api'
 import { LabCredentialStore, type LabPreviousSelection } from './lab-credential-store'
 import { LabOAuthController } from './lab-oauth'
 import { assertLabModelCatalog, assertLabServerUrlLength } from './lab-resource-limits'
@@ -400,6 +400,12 @@ export class LabAccountOwner {
   async getCaseDownload(caseId: string, signal?: AbortSignal): Promise<OrgCaseDownloadTicket> {
     return this.withAuthorizedCaseRequest(signal, (serverUrl, accessToken) =>
       this.api.getCaseDownload(serverUrl, accessToken, caseId, signal)
+    )
+  }
+
+  async uploadCase(input: UploadOrgCaseInput, signal?: AbortSignal): Promise<OrgCaseDetail> {
+    return this.withAuthorizedCaseRequest(signal, (serverUrl, accessToken) =>
+      this.api.uploadCase(serverUrl, accessToken, input, signal)
     )
   }
 

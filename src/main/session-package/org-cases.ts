@@ -23,6 +23,7 @@ import {
   type OrgCasesPage
 } from '../../shared/org-cases'
 import { PACKAGE_MAX_BYTES } from '../../shared/session-package'
+import type { UploadOrgCaseInput } from '../settings/lab-api'
 import { assertPackageCapacity, PackageCapacityError } from './capacity'
 
 type LabErrorShape = Error & {
@@ -36,6 +37,7 @@ export type OrgCaseServiceOptions = {
   listLabCases: (query: ListOrgCasesQuery, signal?: AbortSignal) => Promise<OrgCasesPage>
   getLabCase: (caseId: string, signal?: AbortSignal) => Promise<OrgCaseDetail>
   getLabCaseDownload: (caseId: string, signal?: AbortSignal) => Promise<OrgCaseDownloadTicket>
+  uploadLabCase?: (input: UploadOrgCaseInput, signal?: AbortSignal) => Promise<OrgCaseDetail>
   enqueuePackageFile: (
     path: string,
     onReleased?: () => void,
@@ -51,7 +53,7 @@ export type OrgCaseServiceOptions = {
   now?: () => number
 }
 
-class OrgCaseFailure extends Error {
+export class OrgCaseFailure extends Error {
   constructor(
     readonly errorCode: OrgCaseErrorCode,
     message?: string
@@ -162,6 +164,7 @@ export class OrgCaseService {
   private disposed = false
   private activeListController: AbortController | null = null
   private readonly detailControllers = new Set<AbortController>()
+  private readonly uploadControllers = new Set<AbortController>()
   private activeDownload: ActiveDownload | null = null
 
   constructor(private readonly options: OrgCaseServiceOptions) {
@@ -279,6 +282,70 @@ export class OrgCaseService {
       return { ok: false, errorCode: this.mapLabError(error) }
     } finally {
       this.detailControllers.delete(controller)
+    }
+  }
+
+  async uploadCase(input: UploadOrgCaseInput, signal?: AbortSignal): Promise<OrgCaseDetail> {
+    this.syncConnectionState()
+    if (this.disposed || signal?.aborted) {
+      throw new OrgCaseFailure('cancelled')
+    }
+
+    const view = this.options.getLabView()
+    if (view.state !== 'authenticated') {
+      throw new OrgCaseFailure(mapAuthUnavailableCode(view))
+    }
+    if (!this.options.uploadLabCase) {
+      throw new OrgCaseFailure('unconfigured')
+    }
+
+    const startServerUrl = view.serverUrl
+    const controller = new AbortController()
+    this.uploadControllers.add(controller)
+    const epoch = this.connectionEpoch
+    const combinedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+
+    try {
+      const detail = await this.options.uploadLabCase(input, combinedSignal)
+      this.syncConnectionState()
+      const currentView = this.options.getLabView()
+      if (
+        !this.disposed &&
+        currentView.state === 'expired' &&
+        currentView.serverUrl === startServerUrl
+      ) {
+        throw new OrgCaseFailure('expired')
+      }
+      if (this.disposed || epoch !== this.connectionEpoch || combinedSignal.aborted) {
+        throw new OrgCaseFailure('cancelled')
+      }
+      return detail
+    } catch (error) {
+      this.syncConnectionState()
+      if (signal?.aborted) {
+        throw new OrgCaseFailure('cancelled')
+      }
+      const currentView = this.options.getLabView()
+      if (
+        !this.disposed &&
+        currentView.state === 'expired' &&
+        currentView.serverUrl === startServerUrl
+      ) {
+        throw new OrgCaseFailure('expired')
+      }
+      if (
+        !this.disposed &&
+        epoch !== this.connectionEpoch &&
+        currentView.state !== 'authenticated'
+      ) {
+        throw new OrgCaseFailure(mapAuthUnavailableCode(currentView))
+      }
+      if (this.disposed || epoch !== this.connectionEpoch || controller.signal.aborted) {
+        throw new OrgCaseFailure('cancelled')
+      }
+      throw new OrgCaseFailure(this.mapLabError(error))
+    } finally {
+      this.uploadControllers.delete(controller)
     }
   }
 
@@ -539,6 +606,11 @@ export class OrgCaseService {
     }
     this.detailControllers.clear()
 
+    for (const controller of this.uploadControllers) {
+      controller.abort()
+    }
+    this.uploadControllers.clear()
+
     const active = this.activeDownload
     if (active) {
       active.controller.abort()
@@ -581,10 +653,18 @@ export class OrgCaseService {
     if (reason === 'ORG_INACTIVE') return 'org-inactive'
     if (reason === 'ACCOUNT_DISABLED') return 'account-disabled'
     if (reason === 'UNAUTHENTICATED' || reason === 'SESSION_INVALID') return 'expired'
+    if (reason === 'UPLOAD_IN_PROGRESS') return 'upload-in-progress'
+    if (reason === 'UPLOAD_TIMEOUT') return 'upload-timeout'
+    if (reason === 'PACKAGE_TOO_LARGE' || reason === 'REQUEST_TOO_LARGE') return 'package-too-large'
+    if (reason === 'UNSUPPORTED_PACKAGE') return 'unsupported-package'
+    if (reason === 'PACKAGE_INVALID' || reason === 'INVALID_REQUEST') return 'package-invalid'
 
     if (labError.status === 400) return 'invalid-response'
     if (labError.status === 403) return 'forbidden'
     if (labError.status === 404) return 'not-found'
+    if (labError.status === 408) return 'upload-timeout'
+    if (labError.status === 413) return 'package-too-large'
+    if (labError.status === 422) return 'unsupported-package'
     if (labError.status === 429) return 'rate-limited'
     if (labError.status === 503) return 'storage-unavailable'
     if (labError.status === 401 || labError.code === 'unauthorized') {

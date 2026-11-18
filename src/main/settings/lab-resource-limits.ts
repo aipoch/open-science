@@ -10,6 +10,8 @@ export const LAB_RESOURCE_LIMITS = Object.freeze({
   bootstrapTimeoutMs: 8_000,
   usageTimeoutMs: 8_000,
   logoutTimeoutMs: 5_000,
+  // Package upload and server-side validation/object storage transfer can legitimately take minutes.
+  caseUploadTimeoutMs: 20 * 60_000,
   // Registration window from POST /api/auth/login-attempts. The server expires it after five
   // minutes; the client must not outlive it either.
   loginWindowMs: 5 * 60_000,

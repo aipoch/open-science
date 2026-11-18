@@ -1,3 +1,7 @@
+import { randomUUID } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import { stat } from 'node:fs/promises'
+import { Readable } from 'node:stream'
 import { fetchProviderRequest, readBoundedResponseText } from '@aipoch/providers/transport'
 
 import type {
@@ -14,6 +18,7 @@ import {
   ORG_CASE_MAX_QUERY_LENGTH,
   isValidOrgCaseId,
   normalizeOrgCaseSearchQuery,
+  orgCaseUploadMetadataSchema,
   parseOrgCaseDetailResponse,
   parseOrgCaseDownloadTicket,
   parseOrgCasesPage,
@@ -45,6 +50,88 @@ type FetchLike = typeof globalThis.fetch
 type LabApiOptions = {
   fetch?: FetchLike
   now?: () => number
+  caseUploadTimeoutMs?: number
+}
+
+export type UploadOrgCaseInput = Readonly<{
+  archivePath: string
+  filename: string
+  name: string
+  description?: string
+  clientUploadId: string
+  onProgress?: (completedBytes: number, totalBytes: number) => void
+}>
+
+const CLIENT_UPLOAD_ID_REGEX = /^[A-Za-z0-9._:-]{8,64}$/
+const UPLOAD_PROGRESS_THROTTLE_MS = 100
+
+const sanitizeMultipartFilename = (filename: string): string => {
+  const cleaned = filename.replace(/["\\\r\n\0]/g, '').trim()
+  if (!cleaned) return 'session.science'
+  return /\.science$/i.test(cleaned) ? cleaned : `${cleaned}.science`
+}
+
+const createCaseMultipartBody = (
+  input: UploadOrgCaseInput,
+  metadata: { name: string; description: string },
+  fileSize: number,
+  signal: AbortSignal
+): { boundary: string; body: ReadableStream<Uint8Array> } => {
+  const boundary = `----OpenScienceBoundary${randomUUID().replace(/-/g, '')}`
+  const safeFilename = sanitizeMultipartFilename(input.filename)
+  const fields: Array<[string, string]> = [
+    ['name', metadata.name],
+    ...(metadata.description ? [['description', metadata.description] as [string, string]] : []),
+    ['client_upload_id', input.clientUploadId]
+  ]
+  const preambleText =
+    fields
+      .map(
+        ([fieldName, fieldValue]) =>
+          `--${boundary}\r\nContent-Disposition: form-data; name="${fieldName}"\r\n\r\n${fieldValue}\r\n`
+      )
+      .join('') +
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeFilename}"\r\nContent-Type: application/octet-stream\r\n\r\n`
+  const preamble = Buffer.from(preambleText, 'utf8')
+  const epilogue = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8')
+
+  const iterator = (async function* (): AsyncGenerator<Uint8Array> {
+    if (signal.aborted) throw new LabApiError('cancelled', 'The Lab request was cancelled.')
+    const fileStream = createReadStream(input.archivePath, {
+      highWaterMark: 256 * 1024
+    })
+    const onAbort = (): void => {
+      fileStream.destroy()
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    let completedBytes = 0
+    let lastProgressAt = 0
+    input.onProgress?.(0, fileSize)
+    try {
+      yield preamble
+      for await (const rawChunk of fileStream) {
+        if (signal.aborted) throw new LabApiError('cancelled', 'The Lab request was cancelled.')
+        const chunk = rawChunk as Uint8Array
+        completedBytes = Math.min(fileSize, completedBytes + chunk.byteLength)
+        const now = Date.now()
+        if (completedBytes >= fileSize || now - lastProgressAt >= UPLOAD_PROGRESS_THROTTLE_MS) {
+          lastProgressAt = now
+          if (!signal.aborted) input.onProgress?.(completedBytes, fileSize)
+        }
+        yield chunk
+      }
+      if (signal.aborted) throw new LabApiError('cancelled', 'The Lab request was cancelled.')
+      yield epilogue
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+      fileStream.destroy()
+    }
+  })()
+
+  return {
+    boundary,
+    body: Readable.toWeb(Readable.from(iterator)) as unknown as ReadableStream<Uint8Array>
+  }
 }
 
 export type LabTokenResponse = Readonly<{
@@ -128,6 +215,7 @@ const errorCodeFrom = (status: number, body: unknown): { code: LabErrorCode; rea
   const deviceLimitText = `${oauthError ?? ''} ${description ?? ''}`.toLowerCase()
   if (deviceLimitText.includes('device limit')) return { code: 'device-limit', reason }
   if (status === 401) return { code: 'unauthorized', reason }
+  if (status === 408) return { code: 'timeout', reason }
   if (status === 429) return { code: 'rate-limited', reason }
   if (status >= 500) return { code: 'server-error', reason }
   return { code: 'server-error', reason }
@@ -136,6 +224,7 @@ const errorCodeFrom = (status: number, body: unknown): { code: LabErrorCode; rea
 export class LabApi {
   private readonly fetch: FetchLike
   private readonly now: () => number
+  private readonly caseUploadTimeoutMs: number
 
   constructor(options: LabApiOptions = {}) {
     const baseFetch = options.fetch ?? (netFetchStandard as unknown as FetchLike)
@@ -147,6 +236,8 @@ export class LabApi {
         redirect: 'error'
       })
     this.now = options.now ?? Date.now
+    this.caseUploadTimeoutMs =
+      options.caseUploadTimeoutMs ?? LAB_RESOURCE_LIMITS.caseUploadTimeoutMs
   }
 
   async registerLoginAttempt(input: RegisterLoginAttemptInput): Promise<{
@@ -430,17 +521,97 @@ export class LabApi {
     return parsed
   }
 
+  async uploadCase(
+    serverUrl: string,
+    accessToken: string,
+    input: UploadOrgCaseInput,
+    signal?: AbortSignal
+  ): Promise<OrgCaseDetail> {
+    if (!CLIENT_UPLOAD_ID_REGEX.test(input.clientUploadId)) {
+      throw new LabApiError('invalid-response', 'Invalid organization case upload identifier.')
+    }
+    const parsedMeta = orgCaseUploadMetadataSchema.safeParse({
+      name: input.name,
+      description: input.description ?? ''
+    })
+    if (!parsedMeta.success) {
+      throw new LabApiError(
+        'invalid-response',
+        parsedMeta.error.issues[0]?.message ?? 'Invalid organization case metadata.',
+        400,
+        'INVALID_REQUEST'
+      )
+    }
+    const fileStats = await stat(input.archivePath).catch(() => null)
+    if (!fileStats || !fileStats.isFile() || fileStats.size <= 0) {
+      throw new LabApiError(
+        'invalid-response',
+        'The packaged session archive could not be read.',
+        400,
+        'PACKAGE_INVALID'
+      )
+    }
+
+    const body = await this.executeRequest(
+      `${serverUrl}/api/cases`,
+      (requestSignal) => {
+        const { boundary, body: multipartBody } = createCaseMultipartBody(
+          input,
+          parsedMeta.data,
+          fileStats.size,
+          requestSignal
+        )
+        return {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${accessToken}`,
+            'content-type': `multipart/form-data; boundary=${boundary}`
+          },
+          body: multipartBody as unknown as BodyInit,
+          duplex: 'half'
+        } as RequestInit
+      },
+      this.caseUploadTimeoutMs,
+      {
+        signal,
+        timeoutMessage: 'Uploading the organization case timed out.'
+      }
+    )
+    const parsed = parseOrgCaseDetailResponse(body)
+    if (!parsed) {
+      throw new LabApiError('invalid-response', 'Lab returned invalid organization case details.')
+    }
+    return parsed
+  }
+
   private async request(
     url: string,
     init: RequestInit,
     timeoutMs: number,
     options: { allowEmpty?: boolean; signal?: AbortSignal; maxResponseBytes?: number } = {}
   ): Promise<Record<string, unknown>> {
+    return this.executeRequest(url, () => init, timeoutMs, options)
+  }
+
+  private async executeRequest(
+    url: string,
+    buildInit: (signal: AbortSignal) => RequestInit,
+    timeoutMs: number,
+    options: {
+      allowEmpty?: boolean
+      signal?: AbortSignal
+      maxResponseBytes?: number
+      timeoutMessage?: string
+    } = {}
+  ): Promise<Record<string, unknown>> {
     return withDeadline(
       async (signal) => {
+        if (signal.aborted) {
+          throw new LabApiError('cancelled', 'The Lab request was cancelled.')
+        }
         let response: Response
         try {
-          response = await fetchProviderRequest(this.fetch, url, { ...init, signal })
+          response = await fetchProviderRequest(this.fetch, url, { ...buildInit(signal), signal })
         } catch (error) {
           if (error instanceof LabApiError) throw error
           if (error instanceof TypeError && /redirect/i.test(error.message)) {
@@ -463,7 +634,10 @@ export class LabApi {
           )
         } catch {
           if (signal.aborted)
-            throw new LabApiError('timeout', 'The Lab server did not respond in time.')
+            throw new LabApiError(
+              'timeout',
+              options.timeoutMessage ?? 'The Lab server did not respond in time.'
+            )
           throw new LabApiError('invalid-response', 'Lab returned an unreadable response.')
         }
         if (!response.ok) {
@@ -486,7 +660,7 @@ export class LabApi {
         }
       },
       timeoutMs,
-      'The Lab request timed out.',
+      options.timeoutMessage ?? 'The Lab request timed out.',
       options.signal
     )
   }

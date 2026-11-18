@@ -1,3 +1,4 @@
+import type { OrgCaseUploadMetadata } from '../../shared/org-cases'
 import type { PackageFileSelection } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
 import { createLogger } from '@aipoch/diagnostics/node'
@@ -40,6 +41,7 @@ export class SessionPackageOperation {
   private importQueueFull = false
   private browserTransfers: BrowserPackageTransfer[] = []
   private selection?: (selection: PackageFileSelection) => void
+  private selectedUploadTarget?: OrgCaseUploadMetadata
   private lastProgressAt = 0
   private completion: Promise<unknown> = Promise.resolve()
   async close(): Promise<void> {
@@ -284,10 +286,15 @@ export class SessionPackageOperation {
     return pending
   }
 
+  get uploadTarget(): OrgCaseUploadMetadata | undefined {
+    return this.selectedUploadTarget ? { ...this.selectedUploadTarget } : undefined
+  }
+
   selectFiles = (
     files: PackageSelectableFile[],
     budgetSignal?: AbortSignal,
-    summary?: PackageSelectionSummary
+    summary?: PackageSelectionSummary,
+    sessionTitle?: string
   ): Promise<PackageFileSelection> => {
     const signal =
       this.controller &&
@@ -311,6 +318,7 @@ export class SessionPackageOperation {
       state: 'awaiting-selection',
       files,
       summary,
+      ...(sessionTitle !== undefined ? { sessionTitle: sessionTitle.slice(0, 1000) } : {}),
       progress: { phase: 'selecting' }
     }
     this.publish()
@@ -387,7 +395,18 @@ export class SessionPackageOperation {
         )
       if (files.some((file) => file.requiredForEvidence && keys.has(file.storageKey)))
         throw new Error('Invalid package selection.')
-      this.current = { ...this.current, state: 'running', files: undefined, summary: undefined }
+      if ((request.destination === 'org-case') !== Boolean(request.orgCase))
+        throw new Error('Invalid package selection.')
+      this.selectedUploadTarget =
+        request.destination === 'org-case' && request.orgCase ? { ...request.orgCase } : undefined
+      this.current = {
+        ...this.current,
+        state: 'running',
+        files: undefined,
+        summary: undefined,
+        sessionTitle: undefined,
+        exportDestination: request.destination ?? 'local'
+      }
       this.selection({
         excludedStorageKeys: [...keys],
         includePdfNotes: request.includePdfNotes === true,
@@ -462,15 +481,18 @@ export class SessionPackageOperation {
     work: (signal: AbortSignal) => Promise<T>,
     importTarget?: PackageOperationSnapshot['importTarget'],
     requiresRecovery?: () => boolean,
-    downloadSlug?: string
+    downloadSlug?: string,
+    exportDestination?: PackageOperationSnapshot['exportDestination']
   ): Promise<T> {
     if (this.controller) throw new Error('A Session package operation is already in progress.')
+    this.selectedUploadTarget = undefined
     const controller = new AbortController()
     this.controller = controller
     this.current = {
       id: randomUUID(),
       kind,
       session,
+      ...(exportDestination ? { exportDestination } : {}),
       importTarget,
       state: 'running',
       ...(downloadSlug ? { useCaseDownload: { slug: downloadSlug, completedBytes: 0 } } : {}),
@@ -492,6 +514,7 @@ export class SessionPackageOperation {
         state: 'succeeded',
         files: undefined,
         summary: undefined,
+        sessionTitle: undefined,
         importPreview: undefined
       }
       this.diagnostic.complete(this.diagnosticFields())
@@ -505,6 +528,7 @@ export class SessionPackageOperation {
         state: controller.signal.aborted && !recoveryRequired ? 'cancelled' : 'failed',
         files: undefined,
         summary: undefined,
+        sessionTitle: undefined,
         importPreview: undefined,
         error:
           controller.signal.aborted && !recoveryRequired
@@ -521,6 +545,7 @@ export class SessionPackageOperation {
       this.diagnostic = undefined
       this.diagnosticSnapshot = undefined
       this.selection = undefined
+      this.selectedUploadTarget = undefined
       this.importResponse = undefined
       this.controller = undefined
       this.publish()

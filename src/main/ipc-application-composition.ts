@@ -817,6 +817,8 @@ export const createApplicationModules = async (
     getLabCase: (caseId, signal) => settingsBootstrap.settingsService.getLabCase(caseId, signal),
     getLabCaseDownload: (caseId, signal) =>
       settingsBootstrap.settingsService.getLabCaseDownload(caseId, signal),
+    uploadLabCase: (input, signal) =>
+      settingsBootstrap.settingsService.uploadLabCase(input, signal),
     enqueuePackageFile: (path, onReleased, validateBeforeTarget) =>
       sessionPackageSurfaces.sessionPackageDesktop.enqueueFile(
         path,
@@ -832,6 +834,10 @@ export const createApplicationModules = async (
       applicationEvents.publish('sessions:org-case-download-changed', snapshot),
     downloadFetch: netFetchStandard
   })
+  const unregisterOrgCaseUploader =
+    sessionPackageSurfaces.sessionPackageDesktop.registerOrgCaseUploader?.((input, signal) =>
+      orgCases.uploadCase(input, signal)
+    )
   const unregisterOrgTransferCheck = sessionPackageSurfaces.registerExternalTransferCheck?.(() =>
     orgCases.hasActiveDownload()
   )
@@ -844,6 +850,7 @@ export const createApplicationModules = async (
     name: 'org-cases',
     capability: cases,
     dispose: () => {
+      unregisterOrgCaseUploader?.()
       unregisterOrgTransferCheck?.()
       unsubscribeOrgCasesLabSync?.()
       cases.dispose()

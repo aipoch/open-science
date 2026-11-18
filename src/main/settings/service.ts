@@ -47,6 +47,7 @@ import type {
   OrgCasesPage
 } from '../../shared/org-cases'
 import { LabAccountOwner } from './lab-account-owner'
+import type { UploadOrgCaseInput } from './lab-api'
 import { ProviderTransportOwner } from './provider-transport-owner'
 import {
   HarnessSessionOwner,
@@ -1847,6 +1848,10 @@ class SettingsService {
 
   getLabCaseDownload(caseId: string, signal?: AbortSignal): Promise<OrgCaseDownloadTicket> {
     return this.lab.getCaseDownload(caseId, signal)
+  }
+
+  uploadLabCase(input: UploadOrgCaseInput, signal?: AbortSignal): Promise<OrgCaseDetail> {
+    return this.lab.uploadCase(input, signal)
   }
 
   async setLabServer(request: SetLabServerRequest): Promise<LabView> {

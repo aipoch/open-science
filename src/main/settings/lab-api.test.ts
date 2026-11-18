@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { LabApi, LabApiError } from './lab-api'
@@ -323,5 +326,204 @@ describe('Lab API client', () => {
       credentials: 'omit',
       redirect: 'error'
     })
+  })
+
+  it('streams a .science package via POST /api/cases with progress and parses the created case', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lab-api-upload-'))
+    const archivePath = join(dir, 'sample.science')
+    const payload = Buffer.from('PK\x03\x04-synthetic-science-archive-bytes')
+    writeFileSync(archivePath, payload)
+
+    try {
+      const created = {
+        id: 'case_upload_1',
+        name: 'Uploaded Experiment',
+        code: '9A2B3C4D',
+        description: 'Key workflow notes',
+        size_bytes: payload.byteLength,
+        sha256: 'b'.repeat(64),
+        created_at: '2026-11-18T00:00:00Z',
+        owner: { id: 'usr_1', display_name: 'Alice' },
+        can_delete: true,
+        original_filename: 'experiment-2026-11-18.science',
+        summary: {
+          schema_version: 1,
+          features: [],
+          file_count: 1,
+          total_bytes: payload.byteLength,
+          excluded_files: 0,
+          omission_count: 0,
+          omissions: []
+        }
+      }
+
+      let capturedRaw = ''
+      const capturedHeaders: Record<string, string> = {}
+      const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+        const headers = new Headers(init?.headers)
+        headers.forEach((value, key) => {
+          capturedHeaders[key] = value
+        })
+        capturedRaw = Buffer.from(
+          await new Response(init?.body as BodyInit).arrayBuffer()
+        ).toString('utf8')
+        return jsonResponse(201, { case: created })
+      })
+
+      const progressEvents: Array<[number, number]> = []
+      const api = new LabApi({ fetch: fetchMock })
+      const result = await api.uploadCase(SERVER, 'tok-upload', {
+        archivePath,
+        filename: 'experiment-2026-11-18.science',
+        name: '  Uploaded Experiment  ',
+        description: '  Key workflow notes  ',
+        clientUploadId: 'upload-12345678',
+        onProgress: (completed, total) => progressEvents.push([completed, total])
+      })
+
+      expect(result).toMatchObject({
+        id: 'case_upload_1',
+        name: 'Uploaded Experiment',
+        code: '9A2B3C4D',
+        description: 'Key workflow notes',
+        original_filename: 'experiment-2026-11-18.science'
+      })
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`${SERVER}/api/cases`)
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+        method: 'POST',
+        credentials: 'omit',
+        redirect: 'error',
+        duplex: 'half'
+      })
+      expect(capturedHeaders.authorization).toBe('Bearer tok-upload')
+      expect(capturedHeaders['content-type']).toMatch(
+        /^multipart\/form-data; boundary=----OpenScienceBoundary/
+      )
+      expect(capturedRaw).toContain('name="name"\r\n\r\nUploaded Experiment\r\n')
+      expect(capturedRaw).toContain('name="description"\r\n\r\nKey workflow notes\r\n')
+      expect(capturedRaw).toContain('name="client_upload_id"\r\n\r\nupload-12345678\r\n')
+      expect(capturedRaw).toContain(
+        'name="file"; filename="experiment-2026-11-18.science"\r\nContent-Type: application/octet-stream\r\n\r\nPK\x03\x04-synthetic-science-archive-bytes\r\n'
+      )
+      expect(progressEvents[0]).toEqual([0, payload.byteLength])
+      expect(progressEvents.at(-1)).toEqual([payload.byteLength, payload.byteLength])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('validates upload inputs locally and preserves Lab HTTP failure codes on uploadCase', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lab-api-upload-err-'))
+    const archivePath = join(dir, 'empty.science')
+    const validPath = join(dir, 'valid.science')
+    writeFileSync(archivePath, Buffer.alloc(0))
+    writeFileSync(validPath, Buffer.from('valid-bytes'))
+
+    try {
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(jsonResponse(409, { error: { code: 'UPLOAD_IN_PROGRESS' } }))
+        .mockResolvedValueOnce(jsonResponse(413, { error: { code: 'PACKAGE_TOO_LARGE' } }))
+        .mockResolvedValueOnce(jsonResponse(408, { error: { code: 'UPLOAD_TIMEOUT' } }))
+        .mockResolvedValueOnce(jsonResponse(401, { error: { code: 'SESSION_INVALID' } }))
+
+      const api = new LabApi({ fetch: fetchMock })
+
+      await expect(
+        api.uploadCase(SERVER, 'tok', {
+          archivePath: validPath,
+          filename: 'a.science',
+          name: 'Valid',
+          clientUploadId: 'bad id!'
+        })
+      ).rejects.toMatchObject({ code: 'invalid-response' })
+
+      await expect(
+        api.uploadCase(SERVER, 'tok', {
+          archivePath,
+          filename: 'empty.science',
+          name: 'Valid',
+          clientUploadId: 'upload-12345678'
+        })
+      ).rejects.toMatchObject({ status: 400, reason: 'PACKAGE_INVALID' })
+
+      expect(fetchMock).not.toHaveBeenCalled()
+
+      await expect(
+        api.uploadCase(SERVER, 'tok', {
+          archivePath: validPath,
+          filename: 'valid.science',
+          name: 'Valid',
+          clientUploadId: 'upload-12345678'
+        })
+      ).rejects.toMatchObject({ status: 409, reason: 'UPLOAD_IN_PROGRESS' })
+
+      await expect(
+        api.uploadCase(SERVER, 'tok', {
+          archivePath: validPath,
+          filename: 'valid.science',
+          name: 'Valid',
+          clientUploadId: 'upload-12345679'
+        })
+      ).rejects.toMatchObject({ status: 413, reason: 'PACKAGE_TOO_LARGE' })
+
+      await expect(
+        api.uploadCase(SERVER, 'tok', {
+          archivePath: validPath,
+          filename: 'valid.science',
+          name: 'Valid',
+          clientUploadId: 'upload-12345680'
+        })
+      ).rejects.toMatchObject({ code: 'timeout', status: 408, reason: 'UPLOAD_TIMEOUT' })
+
+      await expect(
+        api.uploadCase(SERVER, 'tok', {
+          archivePath: validPath,
+          filename: 'valid.science',
+          name: 'Valid',
+          clientUploadId: 'upload-12345681'
+        })
+      ).rejects.toMatchObject({ code: 'unauthorized', status: 401 })
+
+      const aborted = new AbortController()
+      aborted.abort()
+      await expect(
+        api.uploadCase(
+          SERVER,
+          'tok',
+          {
+            archivePath: validPath,
+            filename: 'valid.science',
+            name: 'Valid',
+            clientUploadId: 'upload-12345682'
+          },
+          aborted.signal
+        )
+      ).rejects.toMatchObject({ code: 'cancelled' })
+
+      const midController = new AbortController()
+      fetchMock.mockImplementationOnce(async (_url, init) => {
+        const reader = (init?.body as ReadableStream<Uint8Array>).getReader()
+        await reader.read()
+        midController.abort()
+        await reader.read().catch(() => undefined)
+        throw new DOMException('Aborted', 'AbortError')
+      })
+      await expect(
+        api.uploadCase(
+          SERVER,
+          'tok',
+          {
+            archivePath: validPath,
+            filename: 'valid.science',
+            name: 'Valid',
+            clientUploadId: 'upload-12345683'
+          },
+          midController.signal
+        )
+      ).rejects.toMatchObject({ code: 'cancelled' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
